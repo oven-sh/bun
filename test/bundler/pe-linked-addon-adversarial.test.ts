@@ -215,17 +215,25 @@ function exceptionDirectory(pe: Buffer): { begin: number; end: number; unwind: n
   return out;
 }
 
-// The fixed-size handler index that follows the metadata header, resolved to the pairs it points at.
-function handlerIndex(m: Buffer): { rvaBase: number; imageSize: number; handlers: [number, number][] }[] {
+// One handler-index entry: the unwind info's RVA in the exe, the displaced handler's RVA in the
+// exe, and the addon-relative RVA of the record the trampoline presents to that handler.
+type Redirect = [unwindInfo: number, handler: number, view: number];
+
+// The fixed-size index that follows the metadata header, resolved to the handler lists it points
+// at. `sectionSize` is the addon's image plus the appendix of chained-record copies.
+function handlerIndex(m: Buffer): { rvaBase: number; sectionSize: number; handlers: Redirect[] }[] {
   const count = m.readUInt32LE(8);
   const out = [];
   for (let i = 0; i < count; i++) {
     const rec = 12 + i * 16;
     const pos = m.readUInt32LE(rec + 8);
     const n = m.readUInt32LE(rec + 12);
-    const handlers: [number, number][] = [];
-    for (let j = 0; j < n; j++) handlers.push([m.readUInt32LE(pos + j * 8), m.readUInt32LE(pos + j * 8 + 4)]);
-    out.push({ rvaBase: m.readUInt32LE(rec), imageSize: m.readUInt32LE(rec + 4), handlers });
+    const handlers: Redirect[] = [];
+    for (let j = 0; j < n; j++) {
+      const at = pos + j * 12;
+      handlers.push([m.readUInt32LE(at), m.readUInt32LE(at + 4), m.readUInt32LE(at + 8)]);
+    }
+    out.push({ rvaBase: m.readUInt32LE(rec), sectionSize: m.readUInt32LE(rec + 4), handlers });
   }
   return out;
 }
@@ -268,8 +276,8 @@ describe("pe.addLinkedAddon adversarial input", () => {
     // Metadata: 'BLNK' magic, version, count, then the handler index (this addon has no
     // exception directory, so no handlers) and the addon record.
     const m = Buffer.from(res.metadata!);
-    expect([m.readUInt32LE(0), m.readUInt32LE(4), m.readUInt32LE(8)]).toEqual([0x4b4e4c42, 2, 1]);
-    expect(handlerIndex(m)).toEqual([{ rvaBase: 2 * SECT_ALIGN, imageSize: 2 * SECT_ALIGN, handlers: [] }]);
+    expect([m.readUInt32LE(0), m.readUInt32LE(4), m.readUInt32LE(8)]).toEqual([0x4b4e4c42, 3, 1]);
+    expect(handlerIndex(m)).toEqual([{ rvaBase: 2 * SECT_ALIGN, sectionSize: 2 * SECT_ALIGN, handlers: [] }]);
     // The host had no exception directory and the addon contributed nothing, so none was created.
     expect(exceptionDirectory(Buffer.from(res.output!))).toBeNull();
   });
@@ -676,6 +684,8 @@ const PDATA = 0x180;
 const HANDLER = 0x004; // any RVA inside the image will do as the "real" handler
 const TRAMPOLINE = 0x1234; // pretend RVA of the host's exported trampoline
 const RVA_BASE = 2 * SECT_ALIGN; // where makeHost places the addon (see the baseline test)
+const IMAGE_SIZE = TEXT_RVA + SECT_ALIGN; // makeAddon's SizeOfImage; chained-record copies are appended here
+const HANDLER_RVA = RVA_BASE + TEXT_RVA + HANDLER; // the displaced handler, as the index records it
 
 type Entry = [begin: number, end: number, unwind: number];
 
@@ -726,11 +736,12 @@ describe("pe.addLinkedAddon exception directory", () => {
     // The unwind info inside the merged image now names the trampoline...
     expect(bn0Bytes(output, TEXT_RVA + UNWIND_A, 8)).toEqual([0x09, 0, 0, 0, ...u32s([TRAMPOLINE])]);
     // ...and the metadata tells the trampoline where the real handler went.
+    // A plain record is presented to the handler as itself, so nothing was appended.
     expect(handlerIndex(Buffer.from(r.metadata!))).toEqual([
       {
         rvaBase: RVA_BASE,
-        imageSize: 2 * SECT_ALIGN,
-        handlers: [[RVA_BASE + TEXT_RVA + UNWIND_A, RVA_BASE + TEXT_RVA + HANDLER]],
+        sectionSize: IMAGE_SIZE,
+        handlers: [[RVA_BASE + TEXT_RVA + UNWIND_A, HANDLER_RVA, TEXT_RVA + UNWIND_A]],
       },
     ]);
   });
@@ -747,23 +758,40 @@ describe("pe.addLinkedAddon exception directory", () => {
     );
     expect(bn0Bytes(output, TEXT_RVA + UNWIND_A + 4, 4)).toEqual(u32s([TRAMPOLINE]));
     // An exception in function B is dispatched with B's entry, so the trampoline has to be able to
-    // find the handler starting from UNWIND_B as well as from UNWIND_A.
-    expect(handlerIndex(Buffer.from(r.metadata!))[0].handlers).toEqual([
-      [RVA_BASE + TEXT_RVA + UNWIND_A, RVA_BASE + TEXT_RVA + HANDLER],
-      [RVA_BASE + TEXT_RVA + UNWIND_B, RVA_BASE + TEXT_RVA + HANDLER],
+    // find the handler starting from UNWIND_B as well as from UNWIND_A. What it presents for B is a
+    // copy of UNWIND_B appended after the image whose embedded entry stayed addon-relative, and the
+    // copy resolves too, since a collided unwind re-dispatches with whatever was presented.
+    const copy = IMAGE_SIZE;
+    expect(handlerIndex(Buffer.from(r.metadata!))[0]).toEqual({
+      rvaBase: RVA_BASE,
+      sectionSize: IMAGE_SIZE + 16,
+      handlers: [
+        [RVA_BASE + TEXT_RVA + UNWIND_A, HANDLER_RVA, TEXT_RVA + UNWIND_A],
+        [RVA_BASE + TEXT_RVA + UNWIND_B, HANDLER_RVA, copy],
+        [RVA_BASE + copy, HANDLER_RVA, copy],
+      ],
+    });
+    expect(bn0Bytes(output, copy, 16)).toEqual([
+      0x01 | (4 << 3),
+      0,
+      0,
+      0,
+      ...u32s([TEXT_RVA, TEXT_RVA + 8, TEXT_RVA + UNWIND_A]),
     ]);
+    expect(sectionHeaders(output).find(s => s.name === ".bn0")!.rawSize).toBeGreaterThanOrEqual(IMAGE_SIZE + 16);
   });
 
   test("only the chained entry is listed; its primary's handler is still recorded for it", () => {
     const r = peLinkAddon(makeHost(), makeAddon(withPdata([functionB])), "x", TRAMPOLINE);
     expect(expectSafe(r)).toBe("merged");
     expect(handlerIndex(Buffer.from(r.metadata!))[0].handlers).toEqual([
-      [RVA_BASE + TEXT_RVA + UNWIND_A, RVA_BASE + TEXT_RVA + HANDLER],
-      [RVA_BASE + TEXT_RVA + UNWIND_B, RVA_BASE + TEXT_RVA + HANDLER],
+      [RVA_BASE + TEXT_RVA + UNWIND_A, HANDLER_RVA, TEXT_RVA + UNWIND_A],
+      [RVA_BASE + TEXT_RVA + UNWIND_B, HANDLER_RVA, IMAGE_SIZE],
+      [RVA_BASE + IMAGE_SIZE, HANDLER_RVA, IMAGE_SIZE],
     ]);
   });
 
-  test("a chain ending in handler-free unwind info records nothing", () => {
+  test("a chain ending in handler-free unwind info records nothing and copies nothing", () => {
     const r = peLinkAddon(
       makeHost(),
       makeAddon(b => {
@@ -773,7 +801,11 @@ describe("pe.addLinkedAddon exception directory", () => {
       "x",
     );
     expect(expectSafe(r)).toBe("merged");
-    expect(handlerIndex(Buffer.from(r.metadata!))[0].handlers).toEqual([]);
+    expect(handlerIndex(Buffer.from(r.metadata!))[0]).toEqual({
+      rvaBase: RVA_BASE,
+      sectionSize: IMAGE_SIZE,
+      handlers: [],
+    });
   });
 
   // One .pdata entry whose unwind info is the head of `hops` chained records (each 16 bytes, placed
@@ -798,10 +830,26 @@ describe("pe.addLinkedAddon exception directory", () => {
   test("a chain of 32 links is merged and every link resolves to the handler", () => {
     const r = peLinkAddon(makeHost(), withChain(32), "x", TRAMPOLINE);
     expect(expectSafe(r)).toBe("merged");
-    const handlers = handlerIndex(Buffer.from(r.metadata!))[0].handlers;
-    expect(handlers).toHaveLength(33);
+    const output = Buffer.from(r.output!);
+    const { sectionSize, handlers } = handlerIndex(Buffer.from(r.metadata!))[0];
+    // 32 chained records, their primary, and a copy of each chained record.
+    expect(handlers).toHaveLength(65);
+    expect(sectionSize).toBe(IMAGE_SIZE + 32 * 16);
     expect(handlers.map(h => h[0])).toEqual([...handlers.map(h => h[0])].sort((a, b) => a - b));
-    expect(new Set(handlers.map(h => h[1]))).toEqual(new Set([RVA_BASE + TEXT_RVA + HANDLER]));
+    expect(new Set(handlers.map(h => h[1]))).toEqual(new Set([HANDLER_RVA]));
+    // The copies chain to each other (addon-relative) and end at the primary, so a walk that starts
+    // from what the trampoline presents for the first link sees the same chain Windows saw, in the
+    // addon's own terms.
+    const viewOf = (unwindRva: number) => handlers.find(h => h[0] === RVA_BASE + unwindRva)![2];
+    let record = viewOf(TEXT_RVA + 0x200);
+    for (let hop = 0; hop < 32; hop++) {
+      expect(record).toBeGreaterThanOrEqual(IMAGE_SIZE);
+      const [flags, , , , ...rest] = bn0Bytes(output, record, 16);
+      expect(flags).toBe(0x01 | (4 << 3));
+      expect(rest.slice(0, 8)).toEqual(u32s([TEXT_RVA + 0, TEXT_RVA + 8]));
+      record = Buffer.from(rest.slice(8, 12)).readUInt32LE(0);
+    }
+    expect(record).toBe(TEXT_RVA + UNWIND_A);
   });
 
   test("a chain of 33 links is skipped", () => {

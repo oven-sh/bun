@@ -319,9 +319,10 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       const blobLen = Number(bunL.readBigUInt64LE(0));
       expect(blobLen).toBeGreaterThan(12);
       expect(bunL.readUInt32LE(8)).toBe(0x4b4e4c42); // 'BLNK'
-      expect(bunL.readUInt32LE(12)).toBe(2); // version
+      expect(bunL.readUInt32LE(12)).toBe(3); // version
       expect(bunL.readUInt32LE(16)).toBe(1); // one addon
-      // Handler index record: rva_base, image_size, handler list offset (into the blob), count.
+      // Index record: rva_base, section size (the image; no chained records, so nothing was appended),
+      // handler list offset (into the blob), count.
       const handlersPos = bunL.readUInt32LE(28);
       expect([bunL.readUInt32LE(20), bunL.readUInt32LE(24), bunL.readUInt32LE(32)]).toEqual([
         bn0.virtualAddress,
@@ -418,11 +419,14 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       expect(trampoline).not.toBe(bn0.virtualAddress + 0x1000);
       expect(trampoline).toBeGreaterThan(0);
       expect(trampoline).toBeLessThan(bn0.virtualAddress); // inside bun.exe proper
-      // The blob starts at section offset 8, so blob offsets are section offsets minus 8.
-      expect([bunL.readUInt32LE(8 + handlersPos), bunL.readUInt32LE(8 + handlersPos + 4)]).toEqual([
-        unwindRva,
-        bn0.virtualAddress + 0x1000,
-      ]);
+      // The blob starts at section offset 8, so blob offsets are section offsets minus 8. The entry
+      // is (unwind info in the exe, displaced handler in the exe, record to present as an addon
+      // RVA); a plain record is presented as itself.
+      expect([
+        bunL.readUInt32LE(8 + handlersPos),
+        bunL.readUInt32LE(8 + handlersPos + 4),
+        bunL.readUInt32LE(8 + handlersPos + 8),
+      ]).toEqual([unwindRva, bn0.virtualAddress + 0x1000, 0x1000 + 0x140]);
     },
     timeout,
   );

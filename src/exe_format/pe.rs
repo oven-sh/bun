@@ -715,6 +715,8 @@ pub struct LinkedAddon {
     pub rva_base: u32,
     /// The addon's `SizeOfImage`.
     pub image_size: u32,
+    /// Bytes of `.bnN` the addon occupies: `image_size` plus the unwind appendix (`FunctionTable`).
+    pub section_size: u32,
     /// `AddressOfEntryPoint` (DllMain), or 0 when the addon has none.
     pub entry_point: u32,
     /// bun.exe's `ImageBase` the relocations were applied against.
@@ -733,12 +735,15 @@ pub struct LinkedAddon {
     pub export_api_version: u32, // node_api_module_get_api_version_v1
 }
 
-/// The exception handler an unwind info (or the chain it starts) named before the build replaced it
-/// with the trampoline. Both are bun.exe RVAs.
+/// One entry of the index `Bun__linkedAddonExceptionHandler` searches.
 #[derive(Copy, Clone)]
 pub struct HandlerRedirect {
+    /// bun.exe RVA of an unwind info as a table entry (or a re-dispatched copy) names it.
     pub unwind_info: u32,
+    /// bun.exe RVA of the handler the build displaced from it, or from the end of its chain.
     pub handler: u32,
+    /// Addon RVA of the record to present to that handler (`Patched::view`).
+    pub view: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -1024,11 +1029,18 @@ impl PEFile {
             }
         }
 
-        let Some((function_table, handlers)) =
+        let Some(function_table) =
             collect_function_table(&addon, &mut image, rva_base, exception_handler)
         else {
             return Ok(None);
         };
+        image.extend_from_slice(&function_table.appendix);
+        let Ok(section_size) = u32::try_from(image.len()) else {
+            return Ok(None);
+        };
+        if rva_base as u64 + section_size as u64 > i32::MAX as u64 {
+            return Ok(None);
+        }
 
         let mut exports = LinkedExports::default();
         scan_exports(&addon, |name, fn_rva| match name {
@@ -1051,6 +1063,7 @@ impl PEFile {
             name: virtual_path.to_vec(),
             rva_base,
             image_size: addon_image,
+            section_size,
             entry_point: if entry_rva != 0 {
                 rva_base + entry_rva
             } else {
@@ -1060,8 +1073,8 @@ impl PEFile {
             sections: section_infos,
             relocs,
             imports,
-            function_table,
-            handlers,
+            function_table: function_table.entries,
+            handlers: function_table.handlers,
             export_register: exports.register,
             export_api_version: exports.api_version,
         }))
@@ -1530,10 +1543,10 @@ fn collect_function_table(
     image: &mut [u8],
     rva_base: u32,
     trampoline: u32,
-) -> Option<(Vec<u8>, Vec<HandlerRedirect>)> {
+) -> Option<FunctionTable> {
     let dir = addon.dir(IMAGE_DIRECTORY_ENTRY_EXCEPTION);
     if dir.size == 0 {
-        return Some((Vec::new(), Vec::new()));
+        return Some(FunctionTable::default());
     }
     let arm64 = addon.pe.machine == IMAGE_FILE_MACHINE_ARM64;
     let entry_size = function_table_entry_size(addon.pe.machine);
@@ -1546,6 +1559,8 @@ fn collect_function_table(
         rva_base,
         trampoline,
         visited: BTreeMap::new(),
+        appendix: Vec::new(),
+        appendix_rva: u32::try_from(image.len()).ok()?,
     };
     let mut table: Vec<u8> = Vec::with_capacity(dir.size as usize);
     let mut previous_begin: Option<u32> = None;
@@ -1578,32 +1593,76 @@ fn collect_function_table(
             table.extend_from_slice(&(unwind + rva_base).to_le_bytes());
         }
     }
-    Some((table, patcher.into_redirects()))
+    Some(patcher.finish(table))
+}
+
+#[derive(Default)]
+struct FunctionTable {
+    /// The exception-directory entries rebased to bun.exe RVAs.
+    entries: Vec<u8>,
+    handlers: Vec<HandlerRedirect>,
+    /// Appended to the addon's image: see `UnwindPatcher::appendix`.
+    appendix: Vec<u8>,
 }
 
 /// ntdll gives up unwinding a frame after following this many chained unwind infos.
 const UNWIND_CHAIN_LIMIT: u32 = 32;
 
+/// What `patch_x64` / `patch_arm64` made of one unwind info.
+#[derive(Copy, Clone)]
+struct Patched {
+    /// The exception handler its chain ends in, if any.
+    handler: Option<u32>,
+    /// Addon RVA of the record the trampoline hands the handler: the record itself, or for a
+    /// chained record its copy in the appendix.
+    view: u32,
+}
+
 struct UnwindPatcher {
     rva_base: u32,
     trampoline: u32,
-    /// Addon RVA of each unwind info rewritten so far (what a table entry, and so the trampoline's
-    /// `DISPATCHER_CONTEXT.FunctionEntry`, names it by) and the handler its chain ends in.
-    visited: BTreeMap<u32, Option<u32>>,
+    /// Keyed by the addon RVA of each unwind info rewritten so far, which is also how the table
+    /// entries name it.
+    visited: BTreeMap<u32, Patched>,
+    /// A chained record is read both by Windows, against bun.exe's base, when it looks a frame up,
+    /// and by code that sees the frame through the trampoline, against the addon's base: its own
+    /// handler during a collided unwind, or a C++ frame handler walking to the primary function.
+    /// The record in the image serves the first; this holds a copy per chained record with the
+    /// embedded entry left addon-relative for the second. Laid out after the image in `.bnN`.
+    appendix: Vec<u8>,
+    /// Addon RVA at which `appendix` begins (the addon's `SizeOfImage`).
+    appendix_rva: u32,
 }
 
 impl UnwindPatcher {
-    /// Sorted by `unwind_info`, as `LinkedNodeModule.rs` binary-searches them.
-    fn into_redirects(self) -> Vec<HandlerRedirect> {
-        self.visited
-            .into_iter()
-            .filter_map(|(unwind_info, handler)| {
-                Some(HandlerRedirect {
-                    unwind_info: unwind_info + self.rva_base,
-                    handler: handler? + self.rva_base,
-                })
-            })
-            .collect()
+    fn finish(self, entries: Vec<u8>) -> FunctionTable {
+        let mut handlers = Vec::new();
+        for (unwind_info, patched) in &self.visited {
+            let Some(handler) = patched.handler else {
+                continue;
+            };
+            let handler = handler + self.rva_base;
+            handlers.push(HandlerRedirect {
+                unwind_info: unwind_info + self.rva_base,
+                handler,
+                view: patched.view,
+            });
+            if patched.view != *unwind_info {
+                // Windows re-dispatches a collided unwind with the entry the trampoline presented,
+                // so the copy has to resolve as well.
+                handlers.push(HandlerRedirect {
+                    unwind_info: patched.view + self.rva_base,
+                    handler,
+                    view: patched.view,
+                });
+            }
+        }
+        handlers.sort_unstable_by_key(|h| h.unwind_info);
+        FunctionTable {
+            entries,
+            handlers,
+            appendix: self.appendix,
+        }
     }
 
     /// Points the handler RVA stored at `field` at the trampoline; returns the displaced handler.
@@ -1618,13 +1677,13 @@ impl UnwindPatcher {
 
     /// x64 UNWIND_INFO: version:3/flags:5, prolog size, code count, frame register, then the codes
     /// (padded to an even count), then either the chained RUNTIME_FUNCTION or the handler RVA.
-    /// Returns the handler the chain starting here ends in; `None` if the data is malformed.
-    fn patch_x64(&mut self, image: &mut [u8], unwind_rva: u32, depth: u32) -> Option<Option<u32>> {
+    /// `None` if the data is malformed.
+    fn patch_x64(&mut self, image: &mut [u8], unwind_rva: u32, depth: u32) -> Option<Patched> {
         const UNW_FLAG_EHANDLER: u8 = 1;
         const UNW_FLAG_UHANDLER: u8 = 2;
         const UNW_FLAG_CHAININFO: u8 = 4;
-        if let Some(&handler) = self.visited.get(&unwind_rva) {
-            return Some(handler);
+        if let Some(&patched) = self.visited.get(&unwind_rva) {
+            return Some(patched);
         }
         if depth > UNWIND_CHAIN_LIMIT {
             return None;
@@ -1636,7 +1695,7 @@ impl UnwindPatcher {
             return None;
         }
         let tail = at + 4 + (code_count + (code_count & 1)) * 2;
-        let handler = if flags & UNW_FLAG_CHAININFO != 0 {
+        let patched = if flags & UNW_FLAG_CHAININFO != 0 {
             let chained = image.get(tail..tail + 12)?;
             let (begin, end, unwind) = (
                 read_u32_le(chained, 0),
@@ -1646,19 +1705,53 @@ impl UnwindPatcher {
             if end <= begin || end > image.len() as u32 || unwind & 1 != 0 {
                 return None;
             }
-            let handler = self.patch_x64(image, unwind, depth + 1)?;
+            let target = self.patch_x64(image, unwind, depth + 1)?;
+            let view = if target.handler.is_some() {
+                self.copy_chained(&image[at..tail], begin, end, target.view)?
+            } else {
+                unwind_rva // never presented: the chain has no handler to forward to
+            };
             for (i, value) in [begin, end, unwind].into_iter().enumerate() {
                 let field = tail + i * 4;
                 image[field..field + 4].copy_from_slice(&(value + self.rva_base).to_le_bytes());
             }
-            handler
-        } else if flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER) != 0 {
-            Some(self.redirect(image, tail)?)
+            Patched {
+                handler: target.handler,
+                view,
+            }
         } else {
-            None
+            let handler = if flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER) != 0 {
+                Some(self.redirect(image, tail)?)
+            } else {
+                None
+            };
+            Patched {
+                handler,
+                view: unwind_rva,
+            }
         };
-        self.visited.insert(unwind_rva, handler);
-        Some(handler)
+        self.visited.insert(unwind_rva, patched);
+        Some(patched)
+    }
+
+    /// Appends a copy of a chained record (`head_and_codes` followed by the embedded entry, all
+    /// addon-relative) and returns the addon RVA of the copy.
+    fn copy_chained(
+        &mut self,
+        head_and_codes: &[u8],
+        begin: u32,
+        end: u32,
+        view: u32,
+    ) -> Option<u32> {
+        // Every copy is a multiple of 4 bytes (the codes are padded to an even count), so they
+        // stay 4-byte aligned as UNWIND_INFO requires.
+        let offset = u32::try_from(self.appendix.len()).ok()?;
+        let rva = self.appendix_rva.checked_add(offset)?;
+        self.appendix.extend_from_slice(head_and_codes);
+        for value in [begin, end, view] {
+            self.appendix.extend_from_slice(&value.to_le_bytes());
+        }
+        Some(rva)
     }
 
     /// ARM64 .xdata: header word (X at bit 20, E at bit 21, epilog count and code words above),
@@ -1691,7 +1784,13 @@ impl UnwindPatcher {
         } else {
             None
         };
-        self.visited.insert(xdata_rva, handler);
+        self.visited.insert(
+            xdata_rva,
+            Patched {
+                handler,
+                view: xdata_rva,
+            },
+        );
         Some(())
     }
 }
@@ -1706,20 +1805,22 @@ fn addon_section_name(index: u32) -> [u8; 8] {
 }
 
 pub const LINKED_MAGIC: u32 = 0x4B4E_4C42; // 'BLNK'
-pub const LINKED_VERSION: u32 = 2;
-/// Bytes per addon in the handler index that follows the blob header.
+pub const LINKED_VERSION: u32 = 3;
+/// Bytes per addon in the index that follows the blob header.
 pub const LINKED_INDEX_ENTRY_SIZE: usize = 16;
+/// Bytes per `HandlerRedirect` in an addon's handler list.
+pub const LINKED_HANDLER_ENTRY_SIZE: usize = 12;
 
 /// `.bunL` blob, read back by LinkedNodeModule.rs. All integers little-endian, strings u32-length
 /// prefixed:
 ///   header      magic, version, addon count
-///   index       per addon: rva_base, image_size, blob offset of its handler list, handler count
+///   index       per addon: rva_base, section_size, blob offset of its handler list, handler count
 ///               (fixed size, so the exception trampoline can search it without parsing the rest)
 ///   records     per addon: name, rva_base, image_size, entry_point, preferred_base (u64),
 ///               export_register, export_api_version, sections (count, then rva/size/protect),
 ///               relocs (as a string), imports (count, then name, is_host byte, entries of
 ///               iat_rva, u16 ordinal, name)
-///   handlers    per addon: `HandlerRedirect` pairs
+///   handlers    per addon: `HandlerRedirect` triples (unwind_info, handler, view), sorted
 pub fn serialize_linked_addons(addons: &[LinkedAddon]) -> Vec<u8> {
     fn w_u32(b: &mut Vec<u8>, v: u32) {
         b.extend_from_slice(&v.to_le_bytes());
@@ -1768,16 +1869,17 @@ pub fn serialize_linked_addons(addons: &[LinkedAddon]) -> Vec<u8> {
     let mut handlers_offset = buf.len() + addons.len() * LINKED_INDEX_ENTRY_SIZE + records.len();
     for a in addons {
         w_u32(&mut buf, a.rva_base);
-        w_u32(&mut buf, a.image_size);
+        w_u32(&mut buf, a.section_size);
         w_len(&mut buf, handlers_offset);
         w_len(&mut buf, a.handlers.len());
-        handlers_offset += a.handlers.len() * 8;
+        handlers_offset += a.handlers.len() * LINKED_HANDLER_ENTRY_SIZE;
     }
     buf.extend_from_slice(&records);
     for a in addons {
         for h in &a.handlers {
             w_u32(&mut buf, h.unwind_info);
             w_u32(&mut buf, h.handler);
+            w_u32(&mut buf, h.view);
         }
     }
     buf

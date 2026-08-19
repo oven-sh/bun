@@ -890,6 +890,9 @@ pub mod kernel32 {
             lpBaseAddress: LPCVOID,
             dwSize: usize,
         ) -> BOOL;
+        /// `RtlPcToFileHeader` (`winnt.h`): stores and returns the base of the loaded
+        /// image containing `PcValue`, or null when no image contains it.
+        pub fn RtlPcToFileHeader(PcValue: LPVOID, BaseOfImage: *mut LPVOID) -> LPVOID;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;

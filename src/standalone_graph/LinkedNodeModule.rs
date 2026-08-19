@@ -20,19 +20,24 @@
 //! inside the exe image, and routed their exception handlers through
 //! `Bun__linkedAddonExceptionHandler` below.
 //!
-//! Addons with real `__declspec(thread)` storage are never merged: no userspace
-//! API hands out a loader TLS slot. Neither are addons importing
-//! `_CxxThrowException`: `RtlPcToFileHeader` only walks the loader's module list,
-//! so C++ throw/catch type matching would resolve against bun.exe's base. Both,
-//! like any bind failure here, take the tempfile plus `LoadLibraryExW` fallback.
+//! A C++ throw locates the thrown type's metadata relative to the image that
+//! `RtlPcToFileHeader` reports for the throw site, which for merged code would
+//! be bun.exe. Addons linked against the static CRT (node-gyp's default) import
+//! that function themselves, and step 2 binds the import to `pc_to_file_header`
+//! below, which reports the addon. Addons linked against the CRT DLLs throw
+//! through `vcruntime140.dll`'s own import, which cannot be redirected, so the
+//! build leaves addons that import `_CxxThrowException` out of the merge.
+//! Addons with real `__declspec(thread)` storage are left out too: no userspace
+//! API hands out a loader TLS slot. Both, like any bind failure here, take the
+//! tempfile plus `LoadLibraryExW` fallback.
 //!
 //! Not detectable at build time, so such addons need
-//! `BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1`: a statically linked (`/MT`) C++
-//! throw, a `DllMain` that relies on `DLL_THREAD_ATTACH`/`DETACH` or on
-//! `DLL_PROCESS_DETACH` at exit (neither is delivered to a merged addon, so its
-//! `atexit` handlers and static destructors do not run when the process exits),
-//! and static initializers that `dlopen` another merged addon (V8-style
-//! `NODE_MODULE` Init functions run inside `DllMain`, under `LOCK`).
+//! `BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1`: a `DllMain` that relies on
+//! `DLL_THREAD_ATTACH`/`DETACH` or on `DLL_PROCESS_DETACH` at exit (neither is
+//! delivered to a merged addon, so its `atexit` handlers and static destructors
+//! do not run when the process exits), and static initializers that `dlopen`
+//! another merged addon (V8-style `NODE_MODULE` Init functions run inside
+//! `DllMain`, under `LOCK`).
 
 #![cfg(windows)]
 
@@ -42,8 +47,8 @@ use core::mem::size_of;
 
 use bun_core::scoped_log;
 use bun_exe_format::pe::{
-    Bun__getLinkedAddonsPEData, Bun__getLinkedAddonsPELength, LINKED_INDEX_ENTRY_SIZE,
-    LINKED_MAGIC, LINKED_VERSION,
+    Bun__getLinkedAddonsPEData, Bun__getLinkedAddonsPELength, LINKED_HANDLER_ENTRY_SIZE,
+    LINKED_INDEX_ENTRY_SIZE, LINKED_MAGIC, LINKED_VERSION,
 };
 use bun_sys::windows::disposition::ExceptionContinueSearch;
 use bun_threading::Mutex;
@@ -541,6 +546,9 @@ fn bind_imports(base: *mut u8, entry: &Entry, self_h: *mut c_void) -> Result<(),
                         ordinal as usize as *const core::ffi::c_char,
                     )
                 }
+            } else if sym == b"RtlPcToFileHeader" {
+                let shim: PcToFileHeader = pc_to_file_header;
+                shim as usize as *mut c_void
             } else {
                 if sym.len() >= name_buf.len() {
                     return Err(BindError::ImportNameTooLong);
@@ -663,14 +671,24 @@ type ExceptionRoutine =
 /// Words in an exception-directory entry: x64 RUNTIME_FUNCTION or ARM64's begin + unwind pair.
 const FUNCTION_ENTRY_WORDS: usize = if cfg!(target_arch = "aarch64") { 2 } else { 3 };
 
-struct Redirect {
+/// One addon's entry in the fixed-size index at the start of the blob (`pe::serialize_linked_addons`).
+/// Read without `LOCK`: the blob is immutable, and these readers run inside exception dispatch.
+struct IndexEntry {
     rva_base: u32,
-    handler: u32,
+    /// Bytes of `.bnN` the addon occupies, image plus unwind appendix.
+    section_size: u32,
+    handlers_pos: usize,
+    handler_count: usize,
 }
 
-/// Finds the handler the build displaced from the unwind info at `unwind_info` (a bun.exe RVA).
-fn find_redirect(unwind_info: u32) -> Option<Redirect> {
-    let blob = blob()?;
+impl IndexEntry {
+    fn contains(&self, rva: u32) -> bool {
+        rva >= self.rva_base && rva - self.rva_base < self.section_size
+    }
+}
+
+/// Calls `f` for each addon until it returns `Some`.
+fn find_in_index<T>(blob: &[u8], mut f: impl FnMut(&IndexEntry) -> Option<T>) -> Option<T> {
     let mut r = Reader {
         bytes: blob,
         pos: 0,
@@ -680,36 +698,92 @@ fn find_redirect(unwind_info: u32) -> Option<Redirect> {
     }
     let count = r.u32_().ok()?;
     for _ in 0..count {
-        let rva_base = r.u32_().ok()?;
-        let image_size = r.u32_().ok()?;
-        let handlers_pos = r.u32_().ok()? as usize;
-        let handler_count = r.u32_().ok()? as usize;
-        let in_span = |rva: u32| rva >= rva_base && rva - rva_base < image_size;
-        if !in_span(unwind_info) {
-            continue;
-        }
-        let pair_at = |index: usize| -> Option<(u32, u32)> {
-            let mut pair = Reader {
-                bytes: blob,
-                pos: handlers_pos.checked_add(index.checked_mul(8)?)?,
-            };
-            Some((pair.u32_().ok()?, pair.u32_().ok()?))
+        let entry = IndexEntry {
+            rva_base: r.u32_().ok()?,
+            section_size: r.u32_().ok()?,
+            handlers_pos: r.u32_().ok()? as usize,
+            handler_count: r.u32_().ok()? as usize,
         };
-        let (mut lo, mut hi) = (0, handler_count);
+        if let Some(found) = f(&entry) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+struct Redirect {
+    rva_base: u32,
+    /// bun.exe RVA of the addon's own handler.
+    handler: u32,
+    /// Addon RVA of the record to present to it (`pe::HandlerRedirect::view`).
+    view: u32,
+}
+
+/// Finds the handler the build displaced from the unwind info at `unwind_info` (a bun.exe RVA).
+fn find_redirect(unwind_info: u32) -> Option<Redirect> {
+    let blob = blob()?;
+    find_in_index(blob, |addon| {
+        if !addon.contains(unwind_info) {
+            return None;
+        }
+        let entry_at = |index: usize| -> Option<(u32, u32, u32)> {
+            let mut entry = Reader {
+                bytes: blob,
+                pos: addon
+                    .handlers_pos
+                    .checked_add(index.checked_mul(LINKED_HANDLER_ENTRY_SIZE)?)?,
+            };
+            Some((entry.u32_().ok()?, entry.u32_().ok()?, entry.u32_().ok()?))
+        };
+        let (mut lo, mut hi) = (0, addon.handler_count);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            let (key, handler) = pair_at(mid)?;
+            let (key, handler, view) = entry_at(mid)?;
             match key.cmp(&unwind_info) {
                 core::cmp::Ordering::Equal => {
-                    return in_span(handler).then_some(Redirect { rva_base, handler });
+                    let valid = addon.contains(handler) && view < addon.section_size;
+                    return valid.then_some(Redirect {
+                        rva_base: addon.rva_base,
+                        handler,
+                        view,
+                    });
                 }
                 core::cmp::Ordering::Less => lo = mid + 1,
                 core::cmp::Ordering::Greater => hi = mid,
             }
         }
-        return None;
+        None
+    })
+}
+
+type PcToFileHeader = unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> *mut c_void;
+
+/// Bound in place of a merged addon's `RtlPcToFileHeader` import. The real one answers from the
+/// loader's module list, so for a pc inside a merged addon it returns bun.exe's base; the addon's
+/// statically linked C++ throw uses the answer to resolve the thrown type's RVAs, which are
+/// relative to the addon. Everything outside the merged addons gets the real answer.
+unsafe extern "system" fn pc_to_file_header(
+    pc: *mut c_void,
+    base_of_image: *mut *mut c_void,
+) -> *mut c_void {
+    // SAFETY: kernel32 call with null (self) module name.
+    let exe_base = unsafe { kernel32::GetModuleHandleW(core::ptr::null()) } as usize;
+    let merged = blob().and_then(|blob| {
+        find_in_index(blob, |addon| {
+            let addon_base = exe_base.checked_add(addon.rva_base as usize)?;
+            let offset = (pc as usize).checked_sub(addon_base)?;
+            (offset < addon.section_size as usize).then_some(addon_base as *mut c_void)
+        })
+    });
+    match merged {
+        Some(base) => {
+            // SAFETY: callers pass a valid out-pointer, as the real function requires too.
+            unsafe { *base_of_image = base };
+            base
+        }
+        // SAFETY: forwarding the caller's arguments unchanged.
+        None => unsafe { kernel32::RtlPcToFileHeader(pc, base_of_image) },
     }
-    None
 }
 
 /// The exception handler the build installed in every merged unwind info (see `pe.rs`). Forwards to
@@ -751,9 +825,12 @@ pub unsafe extern "system" fn Bun__linkedAddonExceptionHandler(
         // SAFETY: the re-dispatched context is already in the addon's terms; forward it unchanged.
         return unsafe { handler(record, frame, context, dispatcher) };
     }
-    for word in &mut entry {
+    // The code range becomes addon-relative; the unwind info is whichever record the build chose
+    // to present (a chained record's addon-relative copy, otherwise the record itself).
+    for word in &mut entry[..FUNCTION_ENTRY_WORDS - 1] {
         *word = word.wrapping_sub(redirect.rva_base);
     }
+    entry[FUNCTION_ENTRY_WORDS - 1] = redirect.view;
     // SAFETY: `dispatcher` is valid for the duration of this call; `entry` outlives the handler call
     // and is unhooked again before it goes out of scope.
     unsafe {

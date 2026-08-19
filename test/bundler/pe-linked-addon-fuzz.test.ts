@@ -754,16 +754,7 @@ function expectedImage(gen: Generated, rvaBase: number, trampoline: number): Buf
   }
   for (const lib of model.imports) for (const e of lib.entries) image.writeBigUInt64LE(0n, e.iatRva);
   // Unwind infos reachable from the table are rewritten; unreachable ones are left alone.
-  const reachable = new Set<number>();
-  for (const f of model.pdata) {
-    if (model.machine === MACHINE_ARM64 && (f.unwind & 3) !== 0) continue;
-    let current = model.unwindInfos.get(f.unwind);
-    while (current && !reachable.has(current.rva)) {
-      reachable.add(current.rva);
-      current = current.chainTo === undefined ? undefined : model.unwindInfos.get(current.chainTo);
-    }
-  }
-  for (const unwindRva of reachable) {
+  for (const unwindRva of reachableUnwindInfos(model)) {
     const info = model.unwindInfos.get(unwindRva)!;
     if (info.chainTo !== undefined) {
       const at = info.rva + info.chainFieldAt!;
@@ -777,8 +768,8 @@ function expectedImage(gen: Generated, rvaBase: number, trampoline: number): Buf
   return image;
 }
 
-function expectedHandlers(model: Model, rvaBase: number): [number, number][] {
-  const out: [number, number][] = [];
+/** Addon RVAs of every unwind info the table entries lead to, following chains. */
+function reachableUnwindInfos(model: Model): Set<number> {
   const reachable = new Set<number>();
   for (const f of model.pdata) {
     if (model.machine === MACHINE_ARM64 && (f.unwind & 3) !== 0) continue;
@@ -788,11 +779,72 @@ function expectedHandlers(model: Model, rvaBase: number): [number, number][] {
       current = current.chainTo === undefined ? undefined : model.unwindInfos.get(current.chainTo);
     }
   }
-  for (const unwindRva of reachable) {
-    const handler = chainHandler(unwindRva, model.unwindInfos);
-    if (handler !== undefined) out.push([unwindRva + rvaBase, handler + rvaBase]);
+  return reachable;
+}
+
+type Redirect = [unwindInfo: number, handler: number, view: number];
+
+/**
+ * Checks the handler index and the appendix of chained-record copies against the model. Every
+ * reachable record whose chain ends in a handler gets an entry; a plain record is presented as
+ * itself, a chained record as a copy placed after the image whose embedded entry chains, in addon
+ * terms, to whatever its target is presented as; and each copy gets an entry of its own. The copies
+ * have to tile the appendix exactly. `merged` is the whole `.bnN` payload, `prefix` the model's
+ * image (a copy's header and codes are byte-identical to its original's).
+ */
+function checkHandlers(
+  model: Model,
+  rvaBase: number,
+  handlers: Redirect[],
+  sectionSize: number,
+  merged: Buffer,
+  prefix: Buffer,
+) {
+  const byKey = new Map(handlers.map(h => [h[0], h]));
+  expect(byKey.size).toBe(handlers.length);
+  expect(handlers.map(h => h[0])).toEqual([...handlers.map(h => h[0])].sort((a, b) => a - b));
+
+  const withHandler = [...reachableUnwindInfos(model)].filter(
+    rva => chainHandler(rva, model.unwindInfos) !== undefined,
+  );
+  const copies: { at: number; size: number }[] = [];
+  let expectedEntries = 0;
+  for (const rva of withHandler) {
+    const info = model.unwindInfos.get(rva)!;
+    const entry = byKey.get(rva + rvaBase);
+    expect(entry, `no entry for unwind info 0x${rva.toString(16)}`).toBeDefined();
+    expect(entry![1]).toBe(chainHandler(rva, model.unwindInfos)! + rvaBase);
+    expectedEntries++;
+    if (info.chainTo === undefined) {
+      expect(entry![2]).toBe(rva);
+      continue;
+    }
+    const view = entry![2];
+    const size = info.chainFieldAt! + 12;
+    expect(view).toBeGreaterThanOrEqual(model.sizeOfImage);
+    expect(view + size).toBeLessThanOrEqual(sectionSize);
+    copies.push({ at: view, size });
+    expectedEntries++;
+    expect(byKey.get(view + rvaBase)).toEqual([view + rvaBase, entry![1], view]);
+    const copy = merged.subarray(view, view + size);
+    expect(copy.subarray(0, info.chainFieldAt!).equals(prefix.subarray(rva, rva + info.chainFieldAt!))).toBe(true);
+    const targetView = byKey.get(info.chainTo + rvaBase)![2];
+    expect([
+      copy.readUInt32LE(info.chainFieldAt!),
+      copy.readUInt32LE(info.chainFieldAt! + 4),
+      copy.readUInt32LE(info.chainFieldAt! + 8),
+    ]).toEqual([info.chainBegin!, info.chainEnd!, targetView]);
   }
-  return out.sort((a, b) => a[0] - b[0]);
+  expect(handlers).toHaveLength(expectedEntries);
+
+  copies.sort((a, b) => a.at - b.at);
+  let next = model.sizeOfImage;
+  for (const c of copies) {
+    expect(c.at).toBe(next);
+    next += c.size;
+  }
+  expect(next).toBe(sectionSize);
+  expect(merged.length).toBe(sectionSize);
 }
 
 interface BlobRecord {
@@ -806,10 +858,9 @@ interface BlobRecord {
   sections: { rva: number; size: number; protect: number }[];
   relocs: Buffer;
   imports: { name: string; isHost: boolean; entries: { iatRva: number; ordinal: number; name: string }[] }[];
-  handlers: [number, number][];
 }
 
-function parseBlob(blob: Buffer): BlobRecord {
+function parseBlob(blob: Buffer): { record: BlobRecord; sectionSize: number; handlers: Redirect[] } {
   let pos = 0;
   const u32 = () => {
     const v = blob.readUInt32LE(pos);
@@ -823,10 +874,10 @@ function parseBlob(blob: Buffer): BlobRecord {
     return s;
   };
   expect(u32()).toBe(0x4b4e4c42);
-  expect(u32()).toBe(2);
+  expect(u32()).toBe(3);
   expect(u32()).toBe(1);
   const indexRvaBase = u32();
-  const indexImageSize = u32();
+  const sectionSize = u32();
   const handlersPos = u32();
   const handlerCount = u32();
   const name = str().toString("latin1");
@@ -853,24 +904,28 @@ function parseBlob(blob: Buffer): BlobRecord {
     }
     imports.push({ name: libName, isHost, entries });
   }
-  expect([indexRvaBase, indexImageSize, handlersPos]).toEqual([rvaBase, imageSize, pos]);
-  const handlers: [number, number][] = [];
+  expect([indexRvaBase, handlersPos]).toEqual([rvaBase, pos]);
+  expect(sectionSize).toBeGreaterThanOrEqual(imageSize);
+  const handlers: Redirect[] = [];
   for (let i = 0; i < handlerCount; i++) {
-    handlers.push([blob.readUInt32LE(pos), blob.readUInt32LE(pos + 4)]);
-    pos += 8;
+    handlers.push([blob.readUInt32LE(pos), blob.readUInt32LE(pos + 4), blob.readUInt32LE(pos + 8)]);
+    pos += 12;
   }
   expect(pos).toBe(blob.length);
   return {
-    name,
-    rvaBase,
-    imageSize,
-    entryPoint,
-    preferredBase,
-    exportRegister,
-    exportApiVersion,
-    sections,
-    relocs,
-    imports,
+    record: {
+      name,
+      rvaBase,
+      imageSize,
+      entryPoint,
+      preferredBase,
+      exportRegister,
+      exportApiVersion,
+      sections,
+      relocs,
+      imports,
+    },
+    sectionSize,
     handlers,
   };
 }
@@ -947,15 +1002,17 @@ function checkMergedAgainstModel(host: Host, gen: Generated, result: ReturnType<
   expect(headers.map(h => h.name)).toEqual([".text", ".bn0", ".bunL"]);
   const bn0 = headers[1];
   expect(bn0.va).toBe(rvaBase);
-  expect(bn0.virtualSize).toBe(model.sizeOfImage);
-  const merged = output.subarray(bn0.rawPtr, bn0.rawPtr + model.sizeOfImage);
+  const { record, sectionSize, handlers } = parseBlob(Buffer.from(result.metadata!));
+  expect(bn0.virtualSize).toBe(sectionSize);
+  const merged = output.subarray(bn0.rawPtr, bn0.rawPtr + sectionSize);
   const wanted = expectedImage(gen, rvaBase, TRAMPOLINE);
-  if (!merged.equals(wanted)) {
-    const at = merged.findIndex((b, i) => b !== wanted[i]);
+  const imagePart = merged.subarray(0, model.sizeOfImage);
+  if (!imagePart.equals(wanted)) {
+    const at = imagePart.findIndex((b, i) => b !== wanted[i]);
     throw new Error(`merged image differs from the model at addon RVA 0x${at.toString(16)}`);
   }
+  checkHandlers(model, rvaBase, handlers, sectionSize, merged, wanted);
 
-  const record = parseBlob(Buffer.from(result.metadata!));
   expect(record).toEqual({
     name,
     rvaBase,
@@ -977,7 +1034,6 @@ function checkMergedAgainstModel(host: Host, gen: Generated, result: ReturnType<
       isHost: lib.isHost,
       entries: lib.entries.map(e => ({ iatRva: e.iatRva + rvaBase, ordinal: e.ordinal, name: e.name })),
     })),
-    handlers: expectedHandlers(model, rvaBase),
   });
 
   const arm64 = host.machine === MACHINE_ARM64;

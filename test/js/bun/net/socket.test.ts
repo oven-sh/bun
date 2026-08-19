@@ -4086,3 +4086,59 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
     expect(endCount).toBe(1);
   });
 });
+
+describe("allowHalfOpen socket shut down after the peer's FIN", () => {
+  // Once end() has been delivered the poll drops readable interest and, with
+  // nothing queued, settles with no events armed. shutdown() must re-arm it so
+  // the fully-closed state is delivered; unfixed, the libuv backend stranded.
+  it("closes when shutdown() runs after the poll has settled", async () => {
+    const ended = Promise.withResolvers<Socket>();
+    const drained = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open() {},
+        data() {},
+        end: s => ended.resolve(s),
+        // The EOF path arms one writable wakeup; this is the last event the
+        // socket emits before it goes idle.
+        drain: () => drained.resolve(),
+        error(_s, e) {
+          ended.reject(e);
+          drained.reject(e);
+          closed.reject(e);
+        },
+        close: () => closed.resolve(),
+      },
+    });
+
+    const peerClosed = Promise.withResolvers<void>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: {
+        open: s => s.shutdown(), // FIN
+        data() {},
+        end() {},
+        error: (_s, e) => peerClosed.reject(e),
+        close: () => peerClosed.resolve(),
+      },
+    });
+
+    const victim = await ended.promise;
+    await drained.promise;
+    // Going idle is not observable from JS: after drain returns, usockets drops
+    // the poll's events, and the event loop's next poll phase then consumes the
+    // FIN's final re-report. Two loop turns get past that poll phase; shutting
+    // down any earlier still finds an armed wakeup and passes without the fix.
+    for (let i = 0; i < 2; i++) await new Promise<void>(r => setImmediate(r));
+    victim.shutdown();
+    await closed.promise;
+    await peerClosed.promise;
+  });
+});

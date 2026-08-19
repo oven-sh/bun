@@ -724,12 +724,11 @@ int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) {
 }
 
 void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
-    /* Todo: should we emit on_close if calling shutdown on an already half-closed socket?
-     * We need more states in that case, we need to track RECEIVED_FIN
-     * so far, the app has to track this and call close as needed */
     if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
-        us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+        /* After read_eof the poll may be at 0 events; re-arm READABLE so the SHUT_DOWN eof branch closes us. */
+        us_poll_change(&s->p, s->group->loop,
+                       s->read_eof ? LIBUS_SOCKET_READABLE : (us_poll_events(&s->p) & LIBUS_SOCKET_READABLE));
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
 #ifdef LIBUS_USE_KQUEUE
         if (!(us_poll_events(&s->p) & LIBUS_SOCKET_READABLE)) {

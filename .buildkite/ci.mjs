@@ -516,7 +516,7 @@ function getBuildCommand(target, options, mode) {
  * @returns {Step}
  */
 function getBuildBunStep(platform, options) {
-  const { os, arch } = platform;
+  const { arch } = platform;
   // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.
   const nasmSetup =
     arch === "x64"

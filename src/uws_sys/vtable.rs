@@ -307,8 +307,11 @@ impl<H: Handler> Trampolines<H> {
 
     /// `code` reaches every handler in `SystemErrno` numbering: uSockets
     /// hands over the OS code (`SO_ERROR`; a WSA code on Windows) and this is
-    /// the one place it is mapped. A failed lookup passes its resolver code
-    /// through untouched; the handler reads `dns_error` for that case.
+    /// the one place it is mapped, as `SocketGroup::connect` maps the error of
+    /// a dial that failed outright, so both exits of this crate agree. A failed
+    /// lookup passes its resolver code through untouched; the handler reads
+    /// `dns_error` for that case, which is why the parameter stays a `c_int`
+    /// rather than a `SystemErrno`.
     extern "C" fn on_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
         let code = bun_errno::connect_errno(code) as c_int;
         if H::HAS_EXT {

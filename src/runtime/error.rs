@@ -36,10 +36,10 @@ pub enum Error {
     DNSResolveFailed,
     #[error("ConnectionClosed")]
     ConnectionClosed,
-    /// A dial that failed before there was a socket; `errno` is the OS
-    /// error uSockets returned for it (see `bun_uws::ConnectResult::Failed`).
+    /// A dial that failed before there was a socket; `errno` is its error
+    /// (see `bun_uws::ConnectResult::Failed`).
     #[error("FailedToOpenSocket")]
-    FailedToOpenSocket { errno: i32 },
+    FailedToOpenSocket { errno: bun_errno::SystemErrno },
     #[error("TooManyRedirects")]
     TooManyRedirects,
     #[error("ConnectionRefused")]

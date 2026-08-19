@@ -1674,7 +1674,17 @@ describe("inbound stream lifecycle", () => {
 // (end() without a body, or the empty frame that follows a body once no trailers are coming); the
 // queue writes the two through different branches, so both shapes are covered below.
 describe("stream release after a queued END_STREAM", () => {
-  const STREAMS = 4;
+  const STREAMS = 8;
+  // JSC scans the machine stack conservatively. The dispatch that completes a stream leaves copies
+  // of the stream's address (and of its request and response objects, which point back at it) all
+  // over the stack region that the frames of a later collection occupy. A copy under a slot that
+  // those frames do not write keeps the stream alive although nothing references it, and it does so
+  // on every pass, because every pass lays the frames out the same way. One such stream per run was
+  // seen on linux x64 and darwin arm64 (a different one on each; it is collected as soon as the
+  // collection is started from a differently shaped stack, and each shape tried pinned some copy in
+  // some setup). The leak these cases guard against keeps every stream alive, so they assert that
+  // the streams are collectable, allowing for the pinned ones, instead of requiring all of them gone.
+  const PINNED_BY_STACK_SCAN = 2;
   // The peer advertises a 1 KiB stream window: a 4 KiB body cannot be written in one go, so its
   // tail (the frame carrying END_STREAM) is queued and flushed as the peer's WINDOW_UPDATEs arrive.
   const WINDOW = 1024;
@@ -1689,11 +1699,12 @@ describe("stream release after a queued END_STREAM", () => {
     return `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
   }
 
+  /** Collects until at most PINNED_BY_STACK_SCAN of `refs` are alive (or gives up) and reports how many are. */
   async function liveCount(refs: WeakRef<object>[]): Promise<number> {
     const live = () => refs.filter(ref => ref.deref() !== undefined).length;
     // A completed stream's JS teardown is spread over a few immediates, and a WeakRef target
     // survives the job that dereferenced it, so every pass gets a fresh turn before collecting.
-    for (let i = 0; i < 50 && live() > 0; i++) {
+    for (let i = 0; i < 50 && live() > PINNED_BY_STACK_SCAN; i++) {
       await new Promise(resolve => setImmediate(resolve));
       await gcTick();
     }
@@ -1743,7 +1754,7 @@ describe("stream release after a queued END_STREAM", () => {
         tailQueued: Array(STREAMS).fill(true),
         received: Array(STREAMS).fill(BODY.length),
       });
-      expect(await liveCount(refs)).toBe(0);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(PINNED_BY_STACK_SCAN);
     } finally {
       client.close();
       server.close();
@@ -1811,7 +1822,9 @@ describe("stream release after a queued END_STREAM", () => {
         finish(stream);
       });
     });
-    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBe(0);
+    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBeLessThanOrEqual(
+      PINNED_BY_STACK_SCAN,
+    );
   });
 
   // The compat API's responses wait for trailers, so after the body END_STREAM always goes out on an
@@ -1831,7 +1844,9 @@ describe("stream release after a queued END_STREAM", () => {
       req.resume();
       req.on("end", () => res.end("ok"));
     });
-    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBe(0);
+    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBeLessThanOrEqual(
+      PINNED_BY_STACK_SCAN,
+    );
   });
 
   test("client streams whose request body outgrew the server's window are released", async () => {
@@ -1872,7 +1887,7 @@ describe("stream release after a queued END_STREAM", () => {
         tailQueued: Array(STREAMS).fill(true),
         uploaded: Array(STREAMS).fill(BODY.length),
       });
-      expect(await liveCount(refs)).toBe(0);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(PINNED_BY_STACK_SCAN);
     } finally {
       client.close();
       server.close();

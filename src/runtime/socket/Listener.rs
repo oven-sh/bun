@@ -1463,7 +1463,6 @@ impl Listener {
                 default_data,
                 allow_half_open,
                 pause_on_connect,
-                port,
                 promise_value,
             )
         } else {
@@ -1478,7 +1477,6 @@ impl Listener {
                 default_data,
                 allow_half_open,
                 pause_on_connect,
-                port,
                 promise_value,
             )
         }
@@ -1560,7 +1558,6 @@ fn connect_finish<const IS_SSL: bool>(
     default_data: JSValue,
     allow_half_open: bool,
     pause_on_connect: bool,
-    port: Option<u16>,
     promise_value: JSValue,
 ) -> JsResult<JSValue> {
     let vm = handlers.vm;
@@ -1653,45 +1650,17 @@ fn connect_finish<const IS_SSL: bool>(
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
         Err(err) => {
-            // The OS error uSockets returned for the dial, in SystemErrno
-            // numbering; a failure that is not a dial has no code.
-            let raw = match err {
-                crate::Error::FailedToOpenSocket { errno } => errno,
-                _ => 0,
+            // The dial's error; a failure that is not a dial has none and is
+            // reported as a refused connect. `handle_connect_error` applies
+            // the same `.code` rule to it as to a connect that failed later,
+            // so a sync and an async failure report alike.
+            let mut errno = match err {
+                crate::Error::FailedToOpenSocket { errno } => errno as c_int,
+                _ => bun_sys::SystemErrno::ECONNREFUSED as c_int,
             };
-            let mut os_errno = bun_errno::connect_errno(raw) as c_int;
-            if port.is_none() {
-                if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
-                    os_errno = bun_sys::unix_connect_errno(os_errno, path);
-                }
+            if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
+                errno = bun_sys::unix_connect_errno(errno, path);
             }
-            let errno = if port.is_none() {
-                // Preserve the real errno from the failed connect(2) on a unix path:
-                // connecting to an existing non-socket file is ENOTSOCK, a
-                // permission-denied path is EACCES, a missing one is ENOENT.
-                if os_errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
-                    // libuv reports UV_EINVAL for a pipe path it cannot express.
-                    bun_sys::SystemErrno::EINVAL as c_int
-                } else {
-                    os_errno
-                }
-            } else {
-                // A synchronous TCP connect failure is almost always the local
-                // bind() (localAddress/localPort) failing - preserve the errnos a
-                // bind() meaningfully produces (EADDRINUSE: port busy,
-                // EADDRNOTAVAIL: address not local, EACCES: privileged port,
-                // EINVAL: address family mismatch); everything else stays
-                // ECONNREFUSED. Mirrors handle_connect_error's whitelist.
-                if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
-                    || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int
-                    || os_errno == bun_sys::SystemErrno::EACCES as c_int
-                    || os_errno == bun_sys::SystemErrno::EINVAL as c_int
-                {
-                    os_errno
-                } else {
-                    bun_sys::SystemErrno::ECONNREFUSED as c_int
-                }
-            };
             {
                 let this = socket;
                 let handled = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);

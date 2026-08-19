@@ -909,9 +909,9 @@ mod sock_c {
 #[derive(strum::IntoStaticStr, Debug)]
 pub enum ConnectError {
     /// The dial failed before uSockets had a socket to report on; `errno` is
-    /// the OS error uSockets returned for the call that failed, as for
-    /// [`ConnectResult::Failed`], e.g. `ENOENT` for a missing unix socket path.
-    FailedToOpenSocket { errno: i32 },
+    /// the error of the call that failed, as for [`ConnectResult::Failed`],
+    /// e.g. `ENOENT` for a missing unix socket path.
+    FailedToOpenSocket { errno: bun_errno::SystemErrno },
 }
 impl From<ConnectError> for crate::Error {
     fn from(_: ConnectError) -> Self {

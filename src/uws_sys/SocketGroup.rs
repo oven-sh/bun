@@ -7,6 +7,7 @@
 //! read/written directly by C (loop.c walks `head_sockets`/`iterator`,
 //! context.c flips `linked`).
 
+use bun_errno::SystemErrno;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
@@ -85,11 +86,12 @@ pub enum ConnectResult {
     Socket(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),
     /// The dial failed before there was a socket to report on; `errno` is the
-    /// OS error of the call that failed (`socket`, `bind`, `connect`, or
-    /// building the unix address), as uSockets read it: errno on POSIX, a
-    /// WSA/Win32 code on Windows. Never 0.
+    /// error of the call that failed (`socket`, `bind`, `connect`, or building
+    /// the unix address), mapped from the OS code with
+    /// [`bun_errno::connect_errno`] like the code the connect error callback
+    /// receives, so both exits report in one numbering.
     Failed {
-        errno: c_int,
+        errno: SystemErrno,
     },
 }
 
@@ -253,7 +255,9 @@ impl SocketGroup {
             )
         };
         if ptr.is_null() {
-            return ConnectResult::Failed { errno };
+            return ConnectResult::Failed {
+                errno: bun_errno::connect_errno(errno),
+            };
         }
         if has_dns_resolved != 0 {
             ConnectResult::Socket(ptr.cast::<us_socket_t>())
@@ -262,7 +266,7 @@ impl SocketGroup {
         }
     }
 
-    /// `Err` is the OS error of a dial that failed outright, as for
+    /// `Err` is the error of a dial that failed outright, as for
     /// [`ConnectResult::Failed`].
     pub fn connect_unix(
         &mut self,
@@ -271,7 +275,7 @@ impl SocketGroup {
         path: &[u8],
         options: c_int,
         socket_ext_size: c_int,
-    ) -> Result<*mut us_socket_t, c_int> {
+    ) -> Result<*mut us_socket_t, SystemErrno> {
         let mut errno: c_int = 0;
         // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
         let s = unsafe {
@@ -286,7 +290,11 @@ impl SocketGroup {
                 &raw mut errno,
             )
         };
-        if s.is_null() { Err(errno) } else { Ok(s) }
+        if s.is_null() {
+            Err(bun_errno::connect_errno(errno))
+        } else {
+            Ok(s)
+        }
     }
 
     pub fn from_fd(

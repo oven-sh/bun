@@ -30,10 +30,10 @@ pub enum Error {
     ERR_TLS_CERT_ALTNAME_INVALID,
     #[error("ConnectionClosed")]
     ConnectionClosed,
-    /// A dial that failed before there was a socket; `errno` is the OS
-    /// error uSockets returned for it (see `bun_uws::ConnectResult::Failed`).
+    /// A dial that failed before there was a socket; `errno` is its error
+    /// (see `bun_uws::ConnectResult::Failed`).
     #[error("FailedToOpenSocket")]
-    FailedToOpenSocket { errno: i32 },
+    FailedToOpenSocket { errno: bun_errno::SystemErrno },
     #[error("MissingCredentials")]
     MissingCredentials,
     #[error("InvalidMethod")]

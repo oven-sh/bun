@@ -403,11 +403,13 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
 });
 
 // The error Bun.connect() reports for a dial that fails. handle_connect_error
-// builds it from one table (bun_errno::connect_errno_code): the codes a unix
-// path or a local bind can produce keep their name, every other errno is
-// reported as ECONNREFUSED. The errno itself comes from connect(2) and has to
-// survive the close of the failed socket (bsd.c stores it in *error before
-// bsd_close_socket runs), which is what the rows with a close rule check.
+// builds it from one table (bun_errno::connect_errno_code), whether the dial
+// failed inside connect(2) or later: the codes a unix path or a local bind
+// can produce, and ECONNRESET, keep their name, every other errno is reported
+// as ECONNREFUSED. The errno itself comes from connect(2);
+// bsd_create_connect_socket hands it back through its error out-param before
+// it closes the failed socket, so what that close leaves in errno is never
+// read. The rows with a close rule check that.
 describe.skipIf(skip)("connect() reports the errno the failed dial left", () => {
   type ErrnoName = keyof typeof osConstants.errno;
   // [dial, errno connect(2) fails with (null: the real connect(2) runs, and the
@@ -475,6 +477,9 @@ describe.skipIf(skip)("connect() reports the errno the failed dial left", () => 
       ["unix", "EPERM", null, "ECONNREFUSED"],
       ["tcp", "EADDRINUSE", null, "EADDRINUSE"],
       ["tcp", "EADDRNOTAVAIL", null, "EADDRNOTAVAIL"],
+      // Kept by the table; before, a dial that failed inside connect(2) went
+      // through a narrower list and reported ECONNREFUSED for it.
+      ["tcp", "ECONNRESET", null, "ECONNRESET"],
       ["tcp", "ENETUNREACH", null, "ECONNREFUSED"],
       ["tcp", "ETIMEDOUT", null, "ECONNREFUSED"],
     ];

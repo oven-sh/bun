@@ -41,7 +41,6 @@ const MIRI_CRATES = [
   "bun_ast",
   "bun_paths",
   "bun_hash",
-  "bun_valkey",
   "bun_base64",
   "bun_clap",
   "bun_dispatch",

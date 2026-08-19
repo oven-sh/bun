@@ -13,12 +13,13 @@ type PerSocket = { buf: Buffer; replied: boolean };
 /**
  * Mock server: answers HELLO, then answers the first GET with `reply`. When
  * `splitAt` is inside the reply it is split there across two event-loop turns
- * so the client's empty-read-buffer stack path sees a partial frame.
+ * so the client's empty-read-buffer stack path sees a partial frame; "bytes"
+ * sends one byte per turn so the reply scanner resumes at every offset.
  * Subsequent commands get `+OK`.
  */
 function createReplyServer(
   reply: string,
-  splitAt: number = reply.length,
+  splitAt: number | "bytes" = reply.length,
   hello: string = HELLO,
 ): TCPSocketListener<PerSocket> {
   return Bun.listen<PerSocket>({
@@ -65,12 +66,23 @@ function createReplyServer(
             s.write(hello);
           } else if (cmd === "GET" && !st.replied) {
             st.replied = true;
-            s.write(reply.slice(0, splitAt));
-            s.flush();
-            if (splitAt < reply.length) {
-              // Yield twice so the first write reaches the client's `on_data`
-              // before the second is sent.
-              setImmediate(() => setImmediate(() => s.write(reply.slice(splitAt))));
+            if (splitAt === "bytes") {
+              const bytes = Buffer.from(reply, "latin1");
+              const writeByte = (i: number) => {
+                if (i >= bytes.length) return;
+                s.write(bytes.subarray(i, i + 1));
+                s.flush();
+                setImmediate(() => setImmediate(() => writeByte(i + 1)));
+              };
+              writeByte(0);
+            } else {
+              s.write(reply.slice(0, splitAt));
+              s.flush();
+              if (splitAt < reply.length) {
+                // Yield twice so the first write reaches the client's `on_data`
+                // before the second is sent.
+                setImmediate(() => setImmediate(() => s.write(reply.slice(splitAt))));
+              }
             }
           } else {
             s.write(`+OK${CRLF}`);
@@ -93,56 +105,66 @@ async function withClient<T>(server: TCPSocketListener<PerSocket>, body: (client
   }
 }
 
-describe.concurrent("Valkey reply decoding", () => {
-  test("RESP2 null array (*-1) resolves null", async () => {
-    const server = createReplyServer(`*-1${CRLF}`);
-    await withClient(server, async client => {
-      expect(await client.get("k")).toBeNull();
-      expect(await client.send("PING", [])).toBe("OK");
-    });
-  });
+type Decoded = { value: unknown } | { rejects: { code: string; message?: string }; connectionFails?: boolean };
 
-  test("RESP2 null array nested in an array resolves a null element", async () => {
-    const server = createReplyServer(`*2${CRLF}*-1${CRLF}$3${CRLF}abc${CRLF}`);
-    await withClient(server, async client => {
-      expect(await client.get("k")).toEqual([null, "abc"]);
-      expect(await client.send("PING", [])).toBe("OK");
-    });
-  });
+// One entry per RESP frame shape the decoder changed. Each is sent whole and
+// one byte per socket read, so both the tree parser and the reply scanner see
+// every torn prefix.
+const FRAMES: [name: string, frame: string, expected: Decoded][] = [
+  ["RESP2 null array (*-1)", `*-1${CRLF}`, { value: null }],
+  ["RESP2 null array nested in an array", `*2${CRLF}*-1${CRLF}$3${CRLF}abc${CRLF}`, { value: [null, "abc"] }],
+  ["RESP2 null bulk string ($-1)", `$-1${CRLF}`, { value: null }],
+  ["RESP3 null (_)", `_${CRLF}`, { value: null }],
+  [
+    "RESP3 null with trailing bytes (_junk)",
+    `_junk${CRLF}`,
+    { rejects: { code: "ERR_REDIS_INVALID_RESPONSE" }, connectionFails: true },
+  ],
+  ["big number above 2^53", `(9007199254740993${CRLF}`, { value: 9007199254740993n }],
+  ["negative big number", `(-42${CRLF}`, { value: -42n }],
+  ["big number above 2^64", `(340282366920938463463374607431768211456${CRLF}`, { value: 2n ** 128n }],
+  ["big number with a non-integer payload", `(12abc${CRLF}`, { value: "12abc" }],
+  [
+    "simple error (-ERR)",
+    `-ERR unknown command${CRLF}`,
+    { rejects: { code: "ERR_REDIS_INVALID_RESPONSE", message: "ERR unknown command" } },
+  ],
+  [
+    "blob error (!)",
+    `!21${CRLF}SYNTAX invalid syntax${CRLF}`,
+    { rejects: { code: "ERR_REDIS_INVALID_RESPONSE", message: "SYNTAX invalid syntax" } },
+  ],
+];
 
-  test("RESP3 null (_) with trailing bytes is a protocol error", async () => {
-    const server = createReplyServer(`_junk${CRLF}`);
-    await withClient(server, async client => {
-      const err = await client.get("k").then(
-        () => null,
-        e => e,
+describe.concurrent.each([
+  ["whole", (reply: string) => createReplyServer(reply)],
+  ["one byte per read", (reply: string) => createReplyServer(reply, "bytes")],
+])("Valkey reply decoding, frame sent %s", (_mode, serve) => {
+  test.each(FRAMES)("%s", async (_name, frame, expected) => {
+    await withClient(serve(frame), async client => {
+      const outcome = await client.get("k").then(
+        value => ({ value }),
+        error => ({ error }),
       );
-      expect(err).toBeInstanceOf(Error);
-      expect(err.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+      if ("value" in expected) {
+        expect(outcome).toEqual({ value: expected.value });
+        expect(typeof (outcome as { value: unknown }).value).toBe(typeof expected.value);
+      } else {
+        expect(outcome).toHaveProperty("error");
+        const { error } = outcome as { error: Error & { code: string } };
+        expect(error).toBeInstanceOf(Error);
+        expect(error.code).toBe(expected.rejects.code);
+        if (expected.rejects.message !== undefined) expect(error.message).toBe(expected.rejects.message);
+      }
+      if (!("connectionFails" in expected && expected.connectionFails)) {
+        expect(await client.send("PING", [])).toBe("OK");
+      }
     });
   });
+});
 
-  test.each([
-    ["9007199254740993", 9007199254740993n],
-    ["-42", -42n],
-    ["340282366920938463463374607431768211456", 2n ** 128n],
-  ])("BigNumber (%s) resolves a BigInt", async (digits, expected) => {
-    const server = createReplyServer(`(${digits}${CRLF}`);
-    await withClient(server, async client => {
-      const value = await client.get("k");
-      expect(typeof value).toBe("bigint");
-      expect(value).toBe(expected);
-    });
-  });
-
-  test("BigNumber with a non-integer payload resolves the text as a string", async () => {
-    const server = createReplyServer(`(12abc${CRLF}`);
-    await withClient(server, async client => {
-      expect(await client.get("k")).toBe("12abc");
-    });
-  });
-
-  test("BigNumber resolves a Buffer for getBuffer", async () => {
+describe.concurrent("Valkey reply decoding", () => {
+  test("big number resolves a Buffer of the digits for getBuffer", async () => {
     const server = createReplyServer(`(9007199254740993${CRLF}`);
     await withClient(server, async client => {
       const value = await client.getBuffer("k");
@@ -186,34 +208,6 @@ describe.concurrent("Valkey reply decoding", () => {
       expect(result[0]).toBe("OK");
       expect(result[1]).toBeInstanceOf(Error);
       expect(result[1].message).toBe("WRONGTYPE wrong kind");
-      expect(await client.send("PING", [])).toBe("OK");
-    });
-  });
-
-  test("simple error (-ERR) rejects with ERR_REDIS_INVALID_RESPONSE", async () => {
-    const server = createReplyServer(`-ERR unknown command${CRLF}`);
-    await withClient(server, async client => {
-      const err = await client.get("k").then(
-        () => null,
-        e => e,
-      );
-      expect(err).toBeInstanceOf(Error);
-      expect(err.code).toBe("ERR_REDIS_INVALID_RESPONSE");
-      expect(err.message).toBe("ERR unknown command");
-      expect(await client.send("PING", [])).toBe("OK");
-    });
-  });
-
-  test("blob error (!) rejects with ERR_REDIS_INVALID_RESPONSE and the server text", async () => {
-    const server = createReplyServer(`!21${CRLF}SYNTAX invalid syntax${CRLF}`);
-    await withClient(server, async client => {
-      const err = await client.get("k").then(
-        () => null,
-        e => e,
-      );
-      expect(err).toBeInstanceOf(Error);
-      expect(err.code).toBe("ERR_REDIS_INVALID_RESPONSE");
-      expect(err.message).toBe("SYNTAX invalid syntax");
       expect(await client.send("PING", [])).toBe("OK");
     });
   });

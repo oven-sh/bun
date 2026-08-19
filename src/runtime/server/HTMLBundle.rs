@@ -317,7 +317,10 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    bun_core::handle_oom(route.schedule_bundle(server));
+                    if !bun_core::handle_oom(route.schedule_bundle(server)) {
+                        // A plugin's `setup()` stopped the server; `resp` is closed.
+                        return;
+                    }
                     continue;
                 }
                 State::Building(_) => {
@@ -388,7 +391,8 @@ impl Route {
         }
     }
 
-    /// Schedule a bundle to be built.
+    /// Schedule a bundle to be built. `false` means the server was stopped
+    /// while loading plugins: nothing was scheduled and the state is unchanged.
     ///
     /// Entering `State::Building` counts as a pending request on the server:
     /// the plugin load and the build finish on later event-loop turns and call
@@ -397,8 +401,9 @@ impl Route {
     /// on the route's behalf; the clients waiting in `pending_responses` only
     /// count as connections and can disconnect at any time. `finish_building`
     /// releases the pending request when the route leaves `State::Building`.
-    fn schedule_bundle(&self, mut server: AnyServer) -> Result<(), crate::Error> {
+    fn schedule_bundle(&self, mut server: AnyServer) -> Result<bool, crate::Error> {
         match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(self.as_ctx_ptr())) {
+            GetOrStartLoadResult::Stopped => return Ok(false),
             GetOrStartLoadResult::Err => {
                 self.state.set(State::Err(Log::init()));
             }
@@ -412,7 +417,7 @@ impl Route {
                 self.state.set(State::Building(None));
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Leaves `State::Building`: answers the requests that arrived while the

@@ -3863,12 +3863,6 @@ impl AnyServer {
         any_server_dispatch!(self, |s| &s.config)
     }
 
-    /// `stop(true)` has run: every connection is closed and no response can be written.
-    #[inline]
-    pub(crate) fn terminated(&self) -> bool {
-        any_server_dispatch!(self, |s| s.flags.contains(ServerFlags::TERMINATED))
-    }
-
     /// Same gate as [`NewServer::js_value_for_dispatch`].
     #[inline]
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {

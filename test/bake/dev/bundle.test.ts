@@ -1162,6 +1162,83 @@ devTest('working "use client" file imported from another "use client" file', {
     await dev.fetch("/").equals("page");
   },
 });
+// Dropping the directive from a boundary that another client component still imports must keep its client-graph node (debug assert / tombstoned import).
+devTest('removing "use client" from a file imported by another "use client" file', {
+  framework: {
+    fileSystemRouterTypes: [
+      {
+        root: "routes",
+        style: "nextjs-pages",
+        serverEntryPoint: "./framework/server.ts",
+        clientEntryPoint: "./framework/client.ts",
+      },
+    ],
+    serverComponents: {
+      separateSSRGraph: true,
+      serverRuntimeImportSource: "./framework/server.ts",
+      serverRegisterClientReferenceExport: "registerClientReference",
+    },
+  },
+  files: {
+    "framework/server.ts": `
+      export function render(req, meta) {
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        return new Response("<!DOCTYPE html><html><body>" + meta.pageModule.default() + scripts + "</body></html>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+    "framework/client.ts": `
+      console.log("marker: " + document.body.textContent);
+    `,
+    "routes/index.ts": `
+      import { comp } from '../components/Comp';
+      export default () => 'page ' + typeof comp;
+    `,
+    "components/Comp.ts": `
+      "use client";
+      import { sibling } from './Sibling';
+      export const comp = sibling;
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<body>page object<");
+    // Only the server copy is re-bundled here; the client copy stays because Comp's client build imports it.
+    await dev.write("components/Sibling.ts", `export const sibling = 2;`);
+    await dev.fetch("/").expect.toInclude("<body>page object<");
+    await using c = await dev.client("/");
+    await c.expectMessage("marker: page object");
+  },
+});
+// A route first requested while another route's bundle is in flight, whose files that bundle already covers, has nothing left to bundle when its turn comes.
+devTest("route deferred to the next bundle with no stale files left is answered", {
+  framework: minimalFramework,
+  files: {
+    "routes/a.ts": `
+      import { b } from './b';
+      export default function (req, meta) {
+        return new Response('a: ' + b);
+      }
+    `,
+    "routes/b.ts": `
+      export const b = "B";
+      export default function (req, meta) {
+        return new Response('b: ' + b);
+      }
+    `,
+  },
+  async test(dev) {
+    // /b arrives while /a's bundle (which includes routes/b.ts) is still building.
+    await Promise.all([dev.fetch("/a").equals("a: B"), dev.fetch("/b").equals("b: B")]);
+  },
+});
 // `checkRouteFailures` must start from an empty `failures_added`, not the previous bundle's list.
 devTest("route marked by an earlier failure does not report another route's errors", {
   framework: minimalFramework,

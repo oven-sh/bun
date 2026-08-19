@@ -915,6 +915,8 @@ pub enum GetOrStartLoadResult<'a> {
     Ready(Option<&'a JSBundler::Plugin>),
     Pending,
     Err,
+    /// A plugin's `setup()` ran synchronously and called `server.stop(true)`; the caller's connection is closed.
+    Stopped,
 }
 
 pub enum ServePluginsCallback<'a> {
@@ -974,49 +976,45 @@ impl ServePlugins {
         }
     }
 
-    pub(crate) fn get_or_start_load(
-        &mut self,
-        global: &JSGlobalObject,
-        cb: ServePluginsCallback<'_>,
-    ) -> JsResult<GetOrStartLoadResult<'_>> {
-        loop {
-            match &mut self.state {
-                ServePluginsState::Unqueued(_) => {
-                    self.load_and_resolve_plugins(global)?;
-                    // could jump to any branch if synchronously resolved
-                    continue;
-                }
-                ServePluginsState::Pending {
-                    html_bundle_routes,
-                    dev_server,
-                    ..
-                } => {
-                    match cb {
-                        ServePluginsCallback::HtmlBundleRoute(route) => {
-                            // SAFETY: caller passed a live `&mut Route` coerced to `*mut`; we
-                            // bump its intrusive refcount before storing so it outlives the
-                            // pending state. Write provenance is preserved for the later
-                            // `&mut *route` in handle_on_resolve/handle_on_reject.
-                            unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(route) };
-                            html_bundle_routes.push(route);
-                        }
-                        ServePluginsCallback::DevServer(server) => {
-                            let server = bun_ptr::BackRef::new_mut(server);
-                            debug_assert!(dev_server.is_none_or(|existing| existing == server)); // one dev server per server
-                            *dev_server = Some(server);
-                        }
-                    }
-                    return Ok(GetOrStartLoadResult::Pending);
-                }
-                ServePluginsState::Loaded(_) => break,
-                ServePluginsState::Err => return Ok(GetOrStartLoadResult::Err),
-            }
+    /// Starts the load if nothing started it yet. Plugin `setup()` may run, and even settle, before this returns.
+    pub(crate) fn start_load(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        if matches!(self.state, ServePluginsState::Unqueued(_)) {
+            self.load_and_resolve_plugins(global)?;
         }
-        // NOTE: split out of the loop so the `Loaded` arm's borrow of
-        // `self.state` doesn't conflict with the `Unqueued` arm's `&mut self`.
+        Ok(())
+    }
+
+    /// After [`start_load`]: the loaded plugins, or registers `cb` to be told when the pending load settles.
+    pub(crate) fn get_or_register(
+        &mut self,
+        cb: ServePluginsCallback<'_>,
+    ) -> GetOrStartLoadResult<'_> {
         match &mut self.state {
-            ServePluginsState::Loaded(plugins) => Ok(GetOrStartLoadResult::Ready(Some(plugins))),
-            _ => unreachable!(),
+            ServePluginsState::Unqueued(_) => unreachable!("start_load() leaves Unqueued"),
+            ServePluginsState::Pending {
+                html_bundle_routes,
+                dev_server,
+                ..
+            } => {
+                match cb {
+                    ServePluginsCallback::HtmlBundleRoute(route) => {
+                        // SAFETY: caller passed a live `&mut Route` coerced to `*mut`; we
+                        // bump its intrusive refcount before storing so it outlives the
+                        // pending state. Write provenance is preserved for the later
+                        // `&mut *route` in handle_on_resolve/handle_on_reject.
+                        unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(route) };
+                        html_bundle_routes.push(route);
+                    }
+                    ServePluginsCallback::DevServer(server) => {
+                        let server = bun_ptr::BackRef::new_mut(server);
+                        debug_assert!(dev_server.is_none_or(|existing| existing == server)); // one dev server per server
+                        *dev_server = Some(server);
+                    }
+                }
+                GetOrStartLoadResult::Pending
+            }
+            ServePluginsState::Loaded(plugins) => GetOrStartLoadResult::Ready(Some(plugins)),
+            ServePluginsState::Err => GetOrStartLoadResult::Err,
         }
     }
 
@@ -1420,6 +1418,7 @@ where
     /// - .ready if no plugin has to be loaded
     /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
     /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
+    /// - .stopped if a plugin's `setup()` stopped this server; `callback` was not stored.
     pub(crate) fn get_or_load_plugins(
         &mut self,
         callback: ServePluginsCallback<'_>,
@@ -1438,13 +1437,19 @@ where
             // `ServePlugins::init` (heap::alloc); intrusive refcount permits
             // mutation through any owner. No other `&mut ServePlugins` is live
             // on this (single-threaded) JS thread for the call's duration.
-            return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
-                Ok(r) => r,
+            let plugins = unsafe { &mut *p.as_ptr() };
+            match plugins.start_load(&global) {
+                Ok(()) => {}
                 Err(JsError::Thrown | JsError::Terminated) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            };
+            }
+            // A synchronous `setup()` in there may have called `server.stop(true)`.
+            if self.flags.contains(ServerFlags::TERMINATED) {
+                return GetOrStartLoadResult::Stopped;
+            }
+            return plugins.get_or_register(callback);
         }
         // no plugins
         GetOrStartLoadResult::Ready(None)

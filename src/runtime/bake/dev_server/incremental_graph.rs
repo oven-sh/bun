@@ -798,7 +798,21 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     "Client graph's SCB was already deleted",
                                 ))
                             });
-                        client_graph.disconnect_and_delete_file(directory_watchers, client_index);
+                        if client_graph.edge_lists[client_index.get() as usize]
+                            .first_dep
+                            .is_some()
+                        {
+                            // Other client files still import it: keep the node as a plain, stale client module; `start_next_bundle_if_present` rebuilds it.
+                            let f = &mut client_graph.bundled_files.values_mut()
+                                [client_index.get() as usize];
+                            f.is_hmr_root = false;
+                            f.is_client_component_boundary = false;
+                            client_graph.ensure_stale_bit_capacity(false)?;
+                            client_graph.stale_files.set(client_index.get() as usize);
+                        } else {
+                            client_graph
+                                .disconnect_and_delete_file(directory_watchers, client_index);
+                        }
                         self.bundled_files.values_mut()[file_index.get() as usize]
                             .is_client_component_boundary = false;
                         self.dev_incremental_result()

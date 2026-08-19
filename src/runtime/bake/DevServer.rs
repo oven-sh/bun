@@ -2015,12 +2015,15 @@ fn ensure_route_is_bundled_inner<Ctx: EnsureRouteCtx>(
                                         crate::server::ServePluginsCallback::DevServer(dev),
                                     );
                                 match load_result {
+                                    crate::server::GetOrStartLoadResult::Stopped => {
+                                        // This request's connection is closed, so it must not be deferred or answered.
+                                        *sync_plugin_pin = Some(pin);
+                                        return Ok(());
+                                    }
                                     crate::server::GetOrStartLoadResult::Pending => {
                                         // Released by `ServePlugins::handle_on_resolve/reject` once the callback into this DevServer has returned.
                                         pin.keep();
                                         dev.plugin_state = PluginState::Pending;
-                                        plugin = PluginState::Pending;
-                                        continue 'plugin;
                                     }
                                     crate::server::GetOrStartLoadResult::Err => {
                                         *sync_plugin_pin = Some(pin);
@@ -2035,10 +2038,6 @@ fn ensure_route_is_bundled_inner<Ctx: EnsureRouteCtx>(
                                             )
                                         });
                                     }
-                                }
-                                // A synchronous `setup()` may have called `server.stop(true)`: this request's connection is closed, so it must not be deferred or answered.
-                                if server.terminated() {
-                                    return Ok(());
                                 }
                                 plugin = dev.plugin_state;
                                 continue 'plugin;
@@ -3108,7 +3107,7 @@ impl DeferredRequest {
         }
     }
 
-    /// Deinitializes state by aborting the connection.
+    /// Client-disconnect path (uws `on_aborted` / `RequestContext::on_abort`): the response is already gone.
     fn abort(&mut self) {
         deferred_request::debug_log_dr!(
             "DeferredRequest(0x{:x}) abort",
@@ -3116,7 +3115,7 @@ impl DeferredRequest {
         );
         let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
         match handler {
-            Handler::ServerHandler(saved) => {
+            Handler::ServerHandler(mut saved) => {
                 deferred_request::debug_log_dr!(
                     "  request url: {}",
                     // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
@@ -3125,14 +3124,29 @@ impl DeferredRequest {
                 saved
                     .ctx
                     .set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
-                // Note: saved.js_request (jsc::Strong) drops at end of arm
-                drop(saved);
+                // Releases `defer_request`'s `ctx.ref_()`; `on_abort` drops the context's own ref after this returns.
+                saved.deinit();
+            }
+            Handler::BundledHtmlPage(_) | Handler::Aborted => {}
+        }
+    }
+
+    /// Server-side abandonment (plugin load failed, bundle-completion OOM): answer 500 and release the request.
+    fn fail(&mut self) {
+        deferred_request::debug_log_dr!(
+            "DeferredRequest(0x{:x}) fail",
+            std::ptr::from_ref(self) as usize
+        );
+        match ::core::mem::replace(&mut self.handler, Handler::Aborted) {
+            Handler::ServerHandler(mut saved) => {
+                saved.response.write_status(b"500 Internal Server Error");
+                saved.response.write_header_int(b"Content-Length", 0);
+                // Drops the context's own ref; `deinit` then drops `defer_request`'s.
+                saved.ctx.end_without_body(true);
+                saved.deinit();
             }
             Handler::BundledHtmlPage(r) => {
-                // Reached from JS event-loop tasks (on_plugins_rejected, the
-                // bundle-completion OOM cleanup defer), so end_without_body
-                // alone cannot close the socket; write Content-Length so the
-                // client has framing.
+                // Runs from a JS task, not a uws handler, so give the client explicit framing.
                 r.response.write_status(b"500 Internal Server Error");
                 r.response.write_header_int(b"Content-Length", 0);
                 r.response.end_without_body(true);
@@ -3796,14 +3810,14 @@ fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
     if !current_bundle.requests.first.is_null() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
-            "current_bundle.requests.first != null. this leaves pending requests without an error page!",
+            "current_bundle.requests.first != null. answering the pending requests with a bare 500",
         );
     }
     while let Some(node) = current_bundle.requests.pop_first() {
         // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
         // initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
-        req.abort();
+        req.fail();
         req.deref_();
     }
 }
@@ -4853,11 +4867,37 @@ pub(super) fn finalize_bundle(
     // so the outer unlock guard sees a locked state again.
     scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
 
+    let requests = ::core::mem::take(&mut current_bundle!().requests);
+    let promise = ::core::mem::take(&mut current_bundle!().promise);
+    answer_deferred_requests(dev, requests, promise)
+}
+
+/// Every file these waiters need is bundled: mark their routes `Loaded`, resolve the promise, replay the requests.
+fn answer_deferred_requests(
+    dev: &mut DevServer,
+    mut requests: deferred_request::List,
+    mut promise: DeferredPromise,
+) -> JsResult<()> {
+    let requests_ptr: *mut deferred_request::List = &raw mut requests;
+    // Note: separate copy for the `defer!` capture so the body keeps reborrowing through `requests_ptr`.
+    let requests_ptr_defer = requests_ptr;
+    // Whatever an early return leaves behind still gets an answer and its slot back.
+    scopeguard::defer! {
+        // SAFETY: `requests` is a local that outlives this guard; no borrow of it is live when the guard runs.
+        while let Some(node) = unsafe { &mut *requests_ptr_defer }.pop_first() {
+            // SAFETY: `pop_first` returns a live node whose `data` was initialized by `defer_request`.
+            let req = unsafe { (*node).data.assume_init_mut() };
+            req.fail();
+            req.deref_();
+        }
+    };
+
     // Set all the deferred routes to the .loaded state up front
     {
-        let mut node = current_bundle!().requests.first;
+        // SAFETY: `requests_ptr` is the local above; read-only walk.
+        let mut node = unsafe { &*requests_ptr }.first;
         while !node.is_null() {
-            // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it;
+            // SAFETY: node is an intrusive list node valid while `requests` holds it;
             // `data` was initialized by `defer_request`.
             let n = unsafe { &*node };
             // SAFETY: `data` was initialized by `defer_request` before being linked.
@@ -4867,36 +4907,23 @@ pub(super) fn finalize_bundle(
         }
     }
 
-    if current_bundle!().promise.strong.has_value() {
-        // SAFETY: see `current_bundle!` SAFETY; guard runs before the outer `finalize_bundle_cleanup` defer.
-        // Note: copy the raw ptr so `defer!`'s by-ref capture does not
-        // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
-        let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-        scopeguard::defer! {
-            // SAFETY: `cb_ptr_defer` points into `dev.current_bundle`, live until the outer `finalize_bundle_cleanup` defer runs.
-            unsafe { (*cb_ptr_defer).promise.deinit_idempotently() }
-        };
-        current_bundle!()
-            .promise
-            .set_route_bundle_state(dev, route_bundle::State::Loaded);
+    if promise.strong.has_value() {
+        promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
+        let mut strong = promise.strong.take();
+        promise.deinit_idempotently();
         let vm = dev.vm();
         let _exit = vm.enter_event_loop_scope();
-        current_bundle!()
-            .promise
-            .strong
-            .resolve(vm.global(), JSValue::TRUE)?;
+        strong.resolve(vm.global(), JSValue::TRUE)?;
     }
 
-    while let Some(node) = current_bundle!().requests.pop_first() {
+    // SAFETY: `requests_ptr` is the local above; the guard's borrow is not live here.
+    while let Some(node) = unsafe { &mut *requests_ptr }.pop_first() {
         // SAFETY: `pop_first` hands back ownership of the intrusive node;
         // `data` was initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
         let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
         // SAFETY: the node stays alive until `deref_()` releases it below.
         scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
-
-        let rb = dev.route_bundle_ptr(req.route_bundle_index);
-        rb.server_state = route_bundle::State::Loaded;
 
         // Note: `SavedRequest` is move-only (`Strong` field). Take the
         // handler by value so the `Saved` payload moves into the union; the
@@ -4936,13 +4963,17 @@ impl DevServer {
         debug_assert!(self.current_bundle.is_none());
         self.emit_visualizer_message_if_needed();
 
+        // A demoted client component that other client files still import kept a stale client copy; rebuild it now.
+        let mut entry_points = EntryPointList::empty();
+        self.append_demoted_client_files(&mut entry_points)
+            .expect("oom");
+
         // If there were pending requests, begin another bundle.
         if self.next_bundle.reload_event.is_some()
             || !self.next_bundle.requests.first.is_null()
             || self.next_bundle.promise.strong.has_value()
+            || !entry_points.set.is_empty()
         {
-            let mut entry_points = EntryPointList::empty();
-
             let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
                 'brk: {
                     // SAFETY: `event` points into `*self.watcher_atomics` (its
@@ -4994,19 +5025,115 @@ impl DevServer {
             // conflicting with the `keys()` iterator borrow.
             for i in 0..self.next_bundle.route_queue.len() {
                 let route_bundle_index = self.next_bundle.route_queue.keys()[i];
-                let rb = self.route_bundle_ptr(route_bundle_index);
-                rb.server_state = route_bundle::State::Bundling;
                 self.append_route_entry_points_if_not_stale(&mut entry_points, route_bundle_index)
                     .expect("oom");
             }
 
             if !entry_points.set.is_empty() {
+                for i in 0..self.next_bundle.route_queue.len() {
+                    let route_bundle_index = self.next_bundle.route_queue.keys()[i];
+                    self.route_bundle_ptr(route_bundle_index).server_state =
+                        route_bundle::State::Bundling;
+                }
                 self.start_async_bundle(entry_points, is_reload, timer)
                     .expect("oom");
+            } else {
+                // Every queued file was bundled as part of an earlier bundle, so nothing is left to wait for.
+                self.next_bundle.route_queue.clear_retaining_capacity();
+                let requests = ::core::mem::take(&mut self.next_bundle.requests);
+                let promise = ::core::mem::take(&mut self.next_bundle.promise);
+                if self.bundling_failures.is_empty() {
+                    crate::dispatch::fold(answer_deferred_requests(self, requests, promise));
+                } else {
+                    crate::dispatch::fold(
+                        self.answer_deferred_requests_with_failures(requests, promise),
+                    );
+                }
+                return;
             }
 
             self.next_bundle.route_queue.clear_retaining_capacity();
         }
+    }
+
+    /// Counterpart of `finalize_bundle`'s failure branch for waiters that never got a bundle of their own.
+    fn answer_deferred_requests_with_failures(
+        &mut self,
+        mut requests: deferred_request::List,
+        mut promise: DeferredPromise,
+    ) -> JsResult<()> {
+        let self_ptr: *mut DevServer = self;
+        let requests_ptr: *mut deferred_request::List = &raw mut requests;
+        // Note: separate copy for the `defer!` capture so the body keeps reborrowing through `requests_ptr`.
+        let requests_ptr_defer = requests_ptr;
+        scopeguard::defer! {
+            // SAFETY: `requests` is a local that outlives this guard; no borrow of it is live when the guard runs.
+            while let Some(node) = unsafe { &mut *requests_ptr_defer }.pop_first() {
+                // SAFETY: `pop_first` returns a live node whose `data` was initialized by `defer_request`.
+                let req = unsafe { (*node).data.assume_init_mut() };
+                req.fail();
+                req.deref_();
+            }
+        };
+
+        if promise.strong.has_value() {
+            promise.set_route_bundle_state(self, route_bundle::State::PossibleBundlingFailures);
+            let strong = promise.strong.take();
+            promise.deinit_idempotently();
+            let global = self.global();
+            // SAFETY: `self_ptr` is `self`; `send_serialized_failures` never touches `bundling_failures`.
+            let failures = unsafe { (*self_ptr).bundling_failures.values() };
+            self.send_serialized_failures(
+                DevResponse::Promise(PromiseResponse {
+                    promise: strong,
+                    global,
+                }),
+                failures,
+                None,
+            )?;
+        }
+
+        // SAFETY: `requests_ptr` is the local above; the guard's borrow is not live here.
+        while let Some(node) = unsafe { &mut *requests_ptr }.pop_first() {
+            // SAFETY: `pop_first` hands back ownership of the node; `data` was initialized by `defer_request`.
+            let req = unsafe { (*node).data.assume_init_mut() };
+            let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
+            // SAFETY: the node stays alive until `deref_()` releases it below.
+            scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
+
+            self.route_bundle_ptr(req.route_bundle_index).server_state =
+                route_bundle::State::PossibleBundlingFailures;
+            let resp = match &mut req.handler {
+                Handler::Aborted => continue,
+                Handler::ServerHandler(saved) => {
+                    let resp = saved.response;
+                    saved.deinit();
+                    resp
+                }
+                Handler::BundledHtmlPage(ram) => ram.response,
+            };
+            // SAFETY: same as the promise arm above.
+            let failures = unsafe { (*self_ptr).bundling_failures.values() };
+            self.send_serialized_failures(DevResponse::Http(resp), failures, None)?;
+        }
+        Ok(())
+    }
+
+    fn append_demoted_client_files(
+        &mut self,
+        entry_points: &mut EntryPointList,
+    ) -> crate::Result<()> {
+        for i in 0..self.incremental_result.client_components_removed.len() {
+            let server_index = self.incremental_result.client_components_removed[i].get() as usize;
+            let path = &self.server_graph.bundled_files.keys()[server_index];
+            let Some(client_index) = self.client_graph.bundled_files.get_index(path) else {
+                continue;
+            };
+            if self.client_graph.stale_files.is_set(client_index) {
+                entry_points.append_js(path, bake::Graph::Client)?;
+            }
+        }
+        Ok(())
     }
 
     /// Note: The log is not consumed here
@@ -6555,11 +6682,27 @@ impl DevServer {
             // `data` was initialized by `defer_request`.
             unsafe {
                 let d = (*item).data.assume_init_mut();
-                d.abort();
+                d.fail();
                 d.deref_();
             }
         }
+        // Back to `Unqueued` so the next request for these routes reaches the `PluginState::Err` arm.
+        for &route_bundle_index in self.next_bundle.route_queue.keys() {
+            self.route_bundles[route_bundle_index.get() as usize].server_state =
+                route_bundle::State::Unqueued;
+        }
         self.next_bundle.route_queue.clear_retaining_capacity();
+        if self.next_bundle.promise.strong.has_value() {
+            let mut promise = ::core::mem::take(&mut self.next_bundle.promise);
+            promise.set_route_bundle_state(self, route_bundle::State::Unqueued);
+            let vm = self.vm();
+            let global = vm.global();
+            let _exit = vm.enter_event_loop_scope();
+            let rejected = promise
+                .strong
+                .reject(global, BunString::static_("Plugin error").to_js(global));
+            crate::dispatch::fold(rejected);
+        }
         // TODO: allow recovery from this state
         Ok(())
     }

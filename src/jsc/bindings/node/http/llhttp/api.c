@@ -39,104 +39,9 @@ void llhttp_init(llhttp_t* parser, llhttp_type_t type,
     parser->settings = (void*)settings;
 }
 
-#if defined(__wasm__)
-
-extern int wasm_on_message_begin(llhttp_t* p);
-extern int wasm_on_url(llhttp_t* p, const char* at, size_t length);
-extern int wasm_on_status(llhttp_t* p, const char* at, size_t length);
-extern int wasm_on_header_field(llhttp_t* p, const char* at, size_t length);
-extern int wasm_on_header_value(llhttp_t* p, const char* at, size_t length);
-extern int wasm_on_headers_complete(llhttp_t* p, int status_code,
-    uint8_t upgrade, int should_keep_alive);
-extern int wasm_on_body(llhttp_t* p, const char* at, size_t length);
-extern int wasm_on_message_complete(llhttp_t* p);
-
-static int wasm_on_headers_complete_wrap(llhttp_t* p)
-{
-    return wasm_on_headers_complete(p, p->status_code, p->upgrade,
-        llhttp_should_keep_alive(p));
-}
-
-const llhttp_settings_t wasm_settings = {
-    .on_message_begin = wasm_on_message_begin,
-    .on_url = wasm_on_url,
-    .on_status = wasm_on_status,
-    .on_header_field = wasm_on_header_field,
-    .on_header_value = wasm_on_header_value,
-    .on_headers_complete = wasm_on_headers_complete_wrap,
-    .on_body = wasm_on_body,
-    .on_message_complete = wasm_on_message_complete,
-};
-
-llhttp_t* llhttp_alloc(llhttp_type_t type)
-{
-    llhttp_t* parser = malloc(sizeof(llhttp_t));
-    llhttp_init(parser, type, &wasm_settings);
-    return parser;
-}
-
-void llhttp_free(llhttp_t* parser)
-{
-    free(parser);
-}
-
-#endif // defined(__wasm__)
-
-/* Some getters required to get stuff from the parser */
-
-uint8_t llhttp_get_type(llhttp_t* parser)
-{
-    return parser->type;
-}
-
-uint8_t llhttp_get_http_major(llhttp_t* parser)
-{
-    return parser->http_major;
-}
-
-uint8_t llhttp_get_http_minor(llhttp_t* parser)
-{
-    return parser->http_minor;
-}
-
-uint8_t llhttp_get_method(llhttp_t* parser)
-{
-    return parser->method;
-}
-
-int llhttp_get_status_code(llhttp_t* parser)
-{
-    return parser->status_code;
-}
-
-uint8_t llhttp_get_upgrade(llhttp_t* parser)
-{
-    return parser->upgrade;
-}
-
-void llhttp_reset(llhttp_t* parser)
-{
-    llhttp_type_t type = parser->type;
-    const llhttp_settings_t* settings = parser->settings;
-    void* data = parser->data;
-    uint16_t lenient_flags = parser->lenient_flags;
-
-    llhttp__internal_init(parser);
-
-    parser->type = type;
-    parser->settings = (void*)settings;
-    parser->data = data;
-    parser->lenient_flags = lenient_flags;
-}
-
 llhttp_errno_t llhttp_execute(llhttp_t* parser, const char* data, size_t len)
 {
     return llhttp__internal_execute(parser, data, data + len);
-}
-
-void llhttp_settings_init(llhttp_settings_t* settings)
-{
-    memset(settings, 0, sizeof(*settings));
 }
 
 llhttp_errno_t llhttp_finish(llhttp_t* parser)
@@ -192,11 +97,6 @@ void llhttp_resume_after_upgrade(llhttp_t* parser)
     parser->error = 0;
 }
 
-llhttp_errno_t llhttp_get_errno(const llhttp_t* parser)
-{
-    return parser->error;
-}
-
 const char* llhttp_get_error_reason(const llhttp_t* parser)
 {
     return parser->reason;
@@ -223,32 +123,6 @@ const char* llhttp_errno_name(llhttp_errno_t err)
         abort();
     }
 #undef HTTP_ERRNO_GEN
-}
-
-const char* llhttp_method_name(llhttp_method_t method)
-{
-#define HTTP_METHOD_GEN(NUM, NAME, STRING) \
-    case HTTP_##NAME:                      \
-        return #STRING;
-    switch (method) {
-        HTTP_ALL_METHOD_MAP(HTTP_METHOD_GEN)
-    default:
-        abort();
-    }
-#undef HTTP_METHOD_GEN
-}
-
-const char* llhttp_status_name(llhttp_status_t status)
-{
-#define HTTP_STATUS_GEN(NUM, NAME, STRING) \
-    case HTTP_STATUS_##NAME:               \
-        return #STRING;
-    switch (status) {
-        HTTP_STATUS_MAP(HTTP_STATUS_GEN)
-    default:
-        abort();
-    }
-#undef HTTP_STATUS_GEN
 }
 
 void llhttp_set_lenient_headers(llhttp_t* parser, int enabled)
@@ -516,18 +390,4 @@ int llhttp__on_reset(llhttp_t* s, const char* p, const char* endp)
     int err;
     CALLBACK_MAYBE(s, on_reset);
     return err;
-}
-
-/* Private */
-
-void llhttp__debug(llhttp_t* s, const char* p, const char* endp,
-    const char* msg)
-{
-    if (p == endp) {
-        fprintf(stderr, "p=%p type=%d flags=%02x next=null debug=%s\n", s, s->type,
-            s->flags, msg);
-    } else {
-        fprintf(stderr, "p=%p type=%d flags=%02x next=%02x   debug=%s\n", s,
-            s->type, s->flags, *p, msg);
-    }
 }

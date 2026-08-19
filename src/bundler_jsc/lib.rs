@@ -5,7 +5,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 // Bridge types — re-exported from `bun_jsc` now that it `cargo check`s.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc::{ErrorableString, JSGlobalObject, JSValue, JsError, JsResult, VM};
+pub use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 
 #[path = "source_map_mode_jsc.rs"]
 pub mod source_map_mode_jsc;

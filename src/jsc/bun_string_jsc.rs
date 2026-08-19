@@ -26,7 +26,6 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn JSC__createError(global: &JSGlobalObject, str_: &String) -> JSValue;
     safe fn JSC__createTypeError(global: &JSGlobalObject, str_: &String) -> JSValue;
-    safe fn JSC__createRangeError(global: &JSGlobalObject, str_: &String) -> JSValue;
 }
 
 // ── bun.String methods ──────────────────────────────────────────────────────
@@ -45,12 +44,6 @@ pub fn to_error_instance(this: &String, global_object: &JSGlobalObject) -> JSVal
 
 pub(crate) fn to_type_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
     let result = JSC__createTypeError(global_object, this);
-    this.deref();
-    result
-}
-
-pub(crate) fn to_range_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
-    let result = JSC__createRangeError(global_object, this);
     this.deref();
     result
 }

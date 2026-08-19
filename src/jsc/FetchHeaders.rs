@@ -35,8 +35,7 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__count(arg0: &FetchHeaders, arg1: &mut u32, arg2: &mut u32);
     safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
     // safe: `arg0`/`arg1` are opaque handles to C++-owned request structs
-    // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data — same
-    // round-trip contract as `Zig__GlobalObject__resetModuleRegistryMap`.
+    // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data.
     safe fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void)
     -> *mut FetchHeaders;
     safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
@@ -47,13 +46,6 @@ unsafe extern "C" {
         arg3: *const ZigString,
         arg4: u32,
     ) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createValue(
-        arg0: *const JSGlobalObject,
-        arg1: *mut StringPointer,
-        arg2: *mut StringPointer,
-        arg3: *const ZigString,
-        arg4: u32,
-    ) -> JSValue;
     // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
     // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.
     safe fn WebCore__FetchHeaders__deref(arg0: &mut FetchHeaders);
@@ -145,18 +137,6 @@ impl FetchHeaders {
         let p =
             unsafe { WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_) };
         NonNull::new(p)
-    }
-
-    pub fn from(
-        global: &JSGlobalObject,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: &ZigString,
-        count_: u32,
-    ) -> JSValue {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only.
-        unsafe { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
     }
 
     pub fn is_empty(&mut self) -> bool {

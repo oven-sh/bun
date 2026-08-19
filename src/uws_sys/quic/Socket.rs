@@ -18,7 +18,6 @@ unsafe extern "C" {
     safe fn us_quic_socket_make_stream(s: &mut Socket);
     safe fn us_quic_socket_streams_avail(s: &mut Socket) -> c_uint;
     fn us_quic_socket_status(s: *mut Socket, buf: *mut u8, len: c_uint) -> c_int;
-    safe fn us_quic_socket_close(s: &mut Socket);
     safe fn us_quic_socket_ext(s: &mut Socket) -> *mut c_void;
 }
 
@@ -45,13 +44,8 @@ impl Socket {
         }
     }
 
-    #[inline]
-    pub fn close(&mut self) {
-        us_quic_socket_close(self)
-    }
-
     /// `conn_ext_size` bytes of caller storage co-allocated with the socket.
-    /// Unset until the caller writes to it after `connect`/`on_open`; the
+    /// Unset until the caller writes to it after `connect`; the
     /// `Option<NonNull<T>>` slot pattern lets callbacks early-return on a null ext.
     #[inline]
     pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {

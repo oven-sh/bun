@@ -1,6 +1,5 @@
 use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
 
-use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JsResult};
 
 bun_opaque::opaque_ffi! {
@@ -66,19 +65,5 @@ unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
         drop(unsafe { bun_core::heap::take(ct.as_ptr()) });
         // SAFETY: `task` is the C++ job handed over for exactly one run/destroy.
         unsafe { JSCDeferredWorkTask::destroy(task) };
-    }
-}
-
-/// # Safety
-/// `paused` must point to a live `bool`; C++ writes `true` through it from a
-/// callback inside `tick()`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
-    crate::mark_binding!();
-    // SAFETY: see fn contract.
-    unsafe {
-        VirtualMachine::get()
-            .event_loop_mut()
-            .tick_while_paused(paused.cast_const());
     }
 }

@@ -56,16 +56,6 @@ template<> struct JSConverter<IDLDOMString> {
         return JSC::jsStringWithCache(JSC::getVM(&lexicalGlobalObject), value);
     }
 
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const UncachedString& value)
-    {
-        return JSC::jsString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const OwnedString& value)
-    {
-        return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
-
     static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const URL& value)
     {
         return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string());
@@ -76,26 +66,6 @@ template<> struct Converter<IDLByteString> : DefaultConverter<IDLByteString> {
     static String convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         return valueToByteString(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLByteString> {
-    static constexpr bool needsState = true;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const String& value)
-    {
-        return JSC::jsStringWithCache(JSC::getVM(&lexicalGlobalObject), value);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const UncachedString& value)
-    {
-        return JSC::jsString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const OwnedString& value)
-    {
-        return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string);
     }
 };
 
@@ -119,16 +89,6 @@ template<> struct JSConverter<IDLUSVString> {
         return JSC::jsStringWithCache(JSC::getVM(&lexicalGlobalObject), value);
     }
 
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const UncachedString& value)
-    {
-        return JSC::jsString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const OwnedString& value)
-    {
-        return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
-
     static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const URL& value)
     {
         return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string());
@@ -144,47 +104,6 @@ template<typename T> struct Converter<IDLAtomStringAdaptor<T>> : DefaultConverte
         static_assert(std::is_same<T, IDLDOMString>::value, "This adaptor is only supported for IDLDOMString at the moment.");
 
         return value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject).data;
-    }
-};
-
-template<typename T> struct JSConverter<IDLAtomStringAdaptor<T>> {
-    static constexpr bool needsState = true;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const AtomString& value)
-    {
-        return JSConverter<T>::convert(lexicalGlobalObject, value);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const String& value)
-    {
-        return JSConverter<T>::convert(lexicalGlobalObject, value);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const URL& value)
-    {
-        return JSConverter<T>::convert(lexicalGlobalObject, value.string());
-    }
-};
-
-template<typename T> struct Converter<IDLRequiresExistingAtomStringAdaptor<T>> : DefaultConverter<IDLRequiresExistingAtomStringAdaptor<T>> {
-    static AtomString convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        static_assert(std::is_same<T, IDLDOMString>::value, "This adaptor is only supported for IDLDOMString at the moment.");
-
-        return value.toString(&lexicalGlobalObject)->toExistingAtomString(&lexicalGlobalObject).data;
-    }
-};
-
-template<typename T> struct JSConverter<IDLRequiresExistingAtomStringAdaptor<T>> {
-    static constexpr bool needsState = true;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const AtomString& value)
-    {
-        static_assert(std::is_same<T, IDLDOMString>::value, "This adaptor is only supported for IDLDOMString at the moment.");
-
-        return JSConverter<T>::convert(lexicalGlobalObject, value);
     }
 };
 

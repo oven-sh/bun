@@ -617,6 +617,8 @@ impl SystemErrnoInit for Win32Error {
 }
 
 impl SystemErrno {
+    /// Length of the dense head of the enum; the sparse `UV_*` range follows.
+    #[cfg(test)]
     pub(crate) const MAX: usize = 138;
 
     /// Windows' libuv-mapped errno set spells this `ENOTSUP`; alias the POSIX

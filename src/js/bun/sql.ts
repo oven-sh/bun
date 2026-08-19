@@ -387,10 +387,7 @@ const SQL: typeof Bun.SQL = function SQL(
       finished.resolve();
       settle(value);
     }
-    // reserved_sql.close({ timeout }) waits on reservedTransaction, so it holds a promise per
-    // transaction that only fulfills. No handler may be attached to the caller's promise:
-    // that hides a rejection the caller ignores, and a .finally() chain on it rejects a
-    // second promise that nobody handles when the caller did handle the first one.
+    // Never attach a handler to the caller's promise: it changes which rejections are reported as unhandled.
     function runReservedTransaction(callback: TransactionCallback, options: string | undefined, distributed: boolean) {
       const { promise, resolve, reject } = Promise.withResolvers();
       const finished = Promise.withResolvers<void>();

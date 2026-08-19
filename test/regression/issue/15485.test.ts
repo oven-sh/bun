@@ -100,7 +100,6 @@ mock.module("@vscode/debugadapter", () => ({
     sendResponse() {}
     sendRequest() {}
   },
-  OutputEvent: class {},
 }));
 
 // Stub the adapter package so the test does not pull in its "ws" dependency.

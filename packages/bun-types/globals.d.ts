@@ -1830,11 +1830,21 @@ interface FormData {
   set(name: string, value: string): void;
   set(name: string, blobValue: Blob, filename?: string): void;
   forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
-  keys(): IterableIterator<string>;
-  values(): IterableIterator<string>;
-  entries(): IterableIterator<[string, string]>;
+  /** Returns an iterator over the `[name, value]` pairs of every entry in the list. Same as {@link FormData.entries}. */
+  [Symbol.iterator](): FormDataIterator<[string, Bun.FormDataEntryValue]>;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/entries) */
+  entries(): FormDataIterator<[string, Bun.FormDataEntryValue]>;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/keys) */
+  keys(): FormDataIterator<string>;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/values) */
+  values(): FormDataIterator<Bun.FormDataEntryValue>;
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
+
+// Declared exactly as in lib.dom.d.ts so that the two declarations merge when lib.dom is loaded.
+interface FormDataIterator<T> extends IteratorObject<T, BuiltinIteratorReturn, unknown> {
+  [Symbol.iterator](): FormDataIterator<T>;
+}
 
 interface EventSource extends Bun.__internal.LibEmptyOrEventSource {}
 declare var EventSource: Bun.__internal.UseLibDomIfAvailable<

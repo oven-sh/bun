@@ -306,6 +306,9 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         require: mod.require.bind(mod),
       };
       mod.exports = null;
+    } else {
+      // A fresh exports object, as on the first evaluation, so keys the new version dropped do not linger.
+      mod.cjs.exports = {};
     }
     if (importer) {
       mod.importers.add(importer);
@@ -318,8 +321,11 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};
+      mod.exports = null;
       throw e;
     }
+    // The cached ESM view binds getters to the exports object it was built over; drop it so getEsmExports rebuilds it over this evaluation's.
+    mod.exports = null;
     mod.state = State.Loaded;
   } else {
     // ESM
@@ -417,6 +423,9 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         require: mod.require.bind(mod),
       };
       mod.exports = null;
+    } else {
+      // A fresh exports object, as on the first evaluation, so keys the new version dropped do not linger.
+      mod.cjs.exports = {};
     }
     if (importer) {
       mod.importers.add(importer);
@@ -429,8 +438,11 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};
+      mod.exports = null;
       throw e;
     }
+    // The cached ESM view binds getters to the exports object it was built over; drop it so getEsmExports rebuilds it over this evaluation's.
+    mod.exports = null;
     mod.state = State.Loaded;
     return mod;
   } else {
@@ -705,7 +717,8 @@ type HMREvent =
 export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
   Object.assign(unloadedModuleRegistry, modules);
 
-  emitEvent("bun:beforeUpdate", null);
+  // A throwing handler must not leave the new code unapplied; its error is rethrown once the update is done.
+  const beforeUpdateError = emitUpdateEvent("bun:beforeUpdate");
 
   /** Every module this update replaces with a new copy: disposed of, then evaluated again. */
   const toReload = new Set<HMRModule>();
@@ -798,18 +811,21 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
       }
-      outer: while (current.importers.size > 0) {
+      const walked = new Set<HMRModule>();
+      outer: while (current.importers.size > 0 && !walked.has(current)) {
+        walked.add(current);
         path.push(current.id);
         inner: for (const importer of current.importers) {
           if (importer.selfAccept) continue inner;
           if (importer.depAccepts?.[current.id]) continue inner;
+          if (walked.has(importer)) continue inner;
           current = importer;
           continue outer;
         }
-        DEBUG.ASSERT(false);
+        // Every importer accepts or was already walked (an import cycle): the path ends here.
         break;
       }
-      path.push(current.id);
+      if (path[path.length - 1] !== current.id) path.push(current.id);
       DEBUG.ASSERT(path.length > 0);
       message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 1 ? "," : "."}\n`;
       for (let i = 2, len = path.length; i < len; i++) {
@@ -932,8 +948,9 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     refreshRuntime.performReactRefresh();
   }
 
-  emitEvent("bun:afterUpdate", null);
-  if (acceptError) throw acceptError.error;
+  const afterUpdateError = emitUpdateEvent("bun:afterUpdate");
+  const firstError = beforeUpdateError ?? acceptError ?? afterUpdateError;
+  if (firstError) throw firstError.error;
 }
 
 /** Whether `mod` is reachable from itself through static imports of modules in `through`. */
@@ -978,6 +995,21 @@ export function emitEvent(event: HMREvent, data: any) {
   for (const handler of handlers) {
     handler(data);
   }
+}
+
+/** Runs every handler; the first one that throws is reported after the others ran, like dispose and accept callbacks. */
+function emitUpdateEvent(event: HMREvent): { error: unknown } | null {
+  const handlers = eventHandlers[event];
+  if (!handlers) return null;
+  let first: { error: unknown } | null = null;
+  for (const handler of [...handlers]) {
+    try {
+      handler(null);
+    } catch (error) {
+      first ??= { error };
+    }
+  }
+  return first;
 }
 
 export function onEvent(event: HMREvent, cb) {

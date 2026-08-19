@@ -787,8 +787,8 @@ devTest("server: an accept callback that throws does not stop the others", {
     `,
     "a.ts": `
       import "./d";
-      import.meta.hot.accept("./d", () => {
-        throw new Error("a accept boom");
+      import.meta.hot.accept("./d", newModule => {
+        throw new Error("a accept boom " + newModule.d);
       });
     `,
     "b.ts": `
@@ -805,11 +805,12 @@ devTest("server: an accept callback that throws does not stop the others", {
   },
   async test(dev) {
     expect(await dev.fetch("/").json()).toStrictEqual([]);
+    // Match the printed error line, not the code-frame echo of the throw statement, so each update's failure is seen once.
     await dev.write("d.ts", `export const d = "d2";`);
-    await dev.output.waitForLine(/a accept boom/);
+    await dev.output.waitForLine(/a accept boom d2/);
     expect(await dev.fetch("/").json()).toStrictEqual(["b accepted d2"]);
     await dev.write("d.ts", `export const d = "d3";`);
-    await dev.output.waitForLine(/a accept boom/);
+    await dev.output.waitForLine(/a accept boom d3/);
     expect(await dev.fetch("/").json()).toStrictEqual(["b accepted d2", "b accepted d3"]);
   },
 });
@@ -1864,5 +1865,118 @@ devTest("dev.write resolves only after a reload it triggers has loaded the new p
     await c.expectReload(() => dev.write("index.ts", `globalThis.marker = "v2";`));
     // Acked by the reloaded page once connected; the abandoned page's bun:afterUpdate would see undefined here.
     expect(await c.js`globalThis.marker`).toBe("v2");
+  },
+});
+
+devTest("editing an imported JSON file updates importers without a reload", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import data, { value } from "./data.json";
+      console.log("json:" + data.value + ":" + value);
+      globalThis.readJson = () => "live:" + data.value + ":" + value;
+      import.meta.hot.accept();
+    `,
+    "data.json": `{ "value": 1 }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("json:1:1");
+    await dev.patch("data.json", { find: "1", replace: "2" });
+    await c.expectMessage("json:2:2");
+    expect(await c.js<string>`readJson()`).toBe("live:2:2");
+    await dev.patch("data.json", { find: "2", replace: "3" });
+    await c.expectMessage("json:3:3");
+    expect(await c.js<string>`readJson()`).toBe("live:3:3");
+  },
+});
+devTest("editing a CommonJS module updates ESM importers without a reload", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import dep from "./dep.cjs";
+      console.log("cjs:" + dep.value);
+      globalThis.readCjs = () => "live:" + dep.value;
+      import.meta.hot.accept();
+    `,
+    "dep.cjs": `module.exports = { value: 1 };`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("cjs:1");
+    await dev.patch("dep.cjs", { find: "1", replace: "2" });
+    await c.expectMessage("cjs:2");
+    expect(await c.js<string>`readCjs()`).toBe("live:2");
+    await dev.patch("dep.cjs", { find: "2", replace: "3" });
+    await c.expectMessage("cjs:3");
+    expect(await c.js<string>`readCjs()`).toBe("live:3");
+  },
+});
+devTest("keys removed from a CommonJS module disappear after a hot update", {
+  // `exports.x = ...` modules mutate the same exports object across reloads unless the runtime resets it.
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import * as dep from "./dep.cjs";
+      console.log("inc:" + dep.a + ":" + dep.b);
+      globalThis.readInc = () => "live:" + dep.a + ":" + (dep.b === undefined ? "gone" : dep.b);
+      globalThis.incKeys = () => Object.keys(dep).sort().join(",");
+      import.meta.hot.accept();
+    `,
+    "dep.cjs": `
+      exports.a = 1;
+      exports.b = 2;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("inc:1:2");
+    expect(await c.js<string>`incKeys()`).toBe("a,b,default");
+    await dev.write("dep.cjs", `exports.a = 10;`);
+    await c.expectMessage("inc:10:undefined");
+    expect(await c.js<string>`readInc()`).toBe("live:10:gone");
+    expect(await c.js<string>`incKeys()`).toBe("a,default");
+  },
+});
+
+devTest("an unaccepted update inside an import cycle behind a self-accepting importer reloads the page", {
+  // X <-> B cycle; A (self-accepting) shields B's other exit. The "not accepted" path walk used to spin here.
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./A";
+      import { x } from "./X";
+      console.log("x:" + x);
+    `,
+    "A.ts": `
+      import { b } from "./B";
+      console.log("a:" + b);
+      import.meta.hot.accept();
+    `,
+    "B.ts": `
+      import { x } from "./X";
+      export const b = "b(" + x + ")";
+      export const getB = () => b;
+    `,
+    "X.ts": `
+      import { getB } from "./B";
+      export const x = "x1";
+      export const readB = () => getB();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a:b(x1)", "x:x1");
+    await c.expectReload(async () => {
+      await dev.write(
+        "X.ts",
+        `
+          import { getB } from "./B";
+          export const x = "x2";
+          export const readB = () => getB();
+        `,
+      );
+    });
+    await c.expectMessage("a:b(x2)", "x:x2");
   },
 });

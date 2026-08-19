@@ -1296,11 +1296,12 @@ describe("workspace paths longer than the path buffer", () => {
   const MAX_PATH_BYTES = isMacOS ? 1024 : 4096;
 
   // Creates a chain of directories below `parent` and returns the one whose absolute path is `length` bytes long.
+  // Lengths are counted in bytes, not in characters: the temporary directory may contain non-ASCII characters.
   function makeDirectoryOfLength(parent: string, length: number): string {
     let dir = parent;
-    while (dir.length < length) {
+    while (Buffer.byteLength(dir) < length) {
       // Bytes left after the separator. Unless this is the last component, leave room for "/" and one more byte.
-      const left = length - dir.length - 1;
+      const left = length - Buffer.byteLength(dir) - 1;
       const name = Buffer.alloc(left <= 255 ? left : Math.min(255, left - 2), "d").toString();
       dir = join(dir, name);
       mkdirSync(dir);
@@ -1318,9 +1319,9 @@ describe("workspace paths longer than the path buffer", () => {
       const tooLong = join(
         root,
         "packages",
-        Buffer.alloc(MAX_PATH_BYTES - 6 - root.length - "/packages/".length, "x").toString(),
+        Buffer.alloc(MAX_PATH_BYTES - 6 - Buffer.byteLength(root) - "/packages/".length, "x").toString(),
       );
-      expect(tooLong).toHaveLength(MAX_PATH_BYTES - 6);
+      expect(Buffer.byteLength(tooLong)).toBe(MAX_PATH_BYTES - 6);
       mkdirSync(join(root, "packages", "ok"), { recursive: true });
       mkdirSync(tooLong);
       await Bun.write(join(root, "package.json"), JSON.stringify({ name: "ws-long", workspaces: ["packages/*"] }));

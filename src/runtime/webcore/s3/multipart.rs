@@ -204,9 +204,7 @@ impl MultiPartUpload {
         self.root_ptr().cast::<c_void>()
     }
 
-    /// The registry entry through which the VM's stop phase reaches this
-    /// upload. Registered by its creators (`writable_stream` / `upload_stream`)
-    /// right after construction, removed in `Drop`.
+    /// Registered by `writable_stream` / `upload_stream`, removed in `Drop`.
     pub(crate) fn active_handle(&self) -> crate::jsc_hooks::ActiveHandle {
         crate::jsc_hooks::ActiveHandle::S3Upload(
             self.root
@@ -215,24 +213,17 @@ impl MultiPartUpload {
         )
     }
 
-    /// VM teardown's stop phase and the `bun test --isolate` swap (JS thread).
-    /// Nothing will write to or end this upload any more: between parts it
-    /// has no request out, so nothing else ever finishes it. Failing it settles
-    /// its promises, frees the buffered bytes and releases the refs of whatever
-    /// feeds it (`S3UploadStreamWrapper::resolve`, the `writer()` sink). A part
-    /// or commit request still out on the HTTP thread holds its own ref and
-    /// drops it when the VM gets the response back (`state == Finished`).
+    /// VM teardown's stop phase and the `bun test --isolate` swap (JS thread):
+    /// nothing feeds this upload any more, so fail it. A request still out drops
+    /// its own ref when its response finds `state == Finished`.
     ///
     /// # Safety
     /// `this` is live (registered ⇒ not yet dropped); JS thread. May free it.
     pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract. `fail` releases the upload's own ref through
-        // `&self`; the guard holds the allocation until that borrow has ended.
+        // SAFETY: fn contract; `fail` releases the upload's own ref through `&self`.
         let _keep_alive = unsafe { bun_ptr::ScopedRef::<Self>::new(this) };
-        // SAFETY: kept live by the guard. Idempotent once `state == Finished`.
+        // SAFETY: kept live by the guard.
         let failed = unsafe { &*this }.fail(s3_simple_request::VM_SHUTDOWN);
-        // The stop phase is this call's dispatcher: during teardown every
-        // promise settle reports the termination, which the fold stands down on.
         crate::dispatch::fold(failed);
     }
 }
@@ -607,9 +598,8 @@ impl MultiPartUpload {
         }
         if self.state.get() != State::Finished {
             let old_state = self.state.replace(State::Finished);
-            // The upload's own ref is released whatever settling the promises
-            // reported (during VM teardown every settle reports `Terminated`),
-            // as `done` and `on_commit_multi_part_request` do.
+            // The deref must run after the callback, whatever it reported
+            // (`Terminated` during teardown), as in `done`:
             let settled =
                 (self.callback)(S3UploadResult::Failure(err), self.callback_context.get());
             if old_state == State::MultipartCompleted {

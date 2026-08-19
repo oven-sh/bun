@@ -129,8 +129,7 @@ pub(crate) enum ActiveHandle {
     /// An S3 request / streaming download out on the HTTP thread; same.
     S3Request(ptr::NonNull<crate::webcore::s3::simple_request::S3HttpSimpleTask>),
     S3Download(ptr::NonNull<crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask>),
-    /// An S3 upload fed by a stream or a `writer()`. Between parts it has no
-    /// request out, so only stopping it ends it; stopping fails it.
+    /// An S3 upload; between parts nothing of it is out on the HTTP thread.
     S3Upload(ptr::NonNull<crate::webcore::s3::MultiPartUpload>),
     /// A `Bun.build` running on the bundle thread with this VM's plugins/env.
     Bundle(ptr::NonNull<crate::api::js_bundle_completion_task::JSBundleCompletionTask>),

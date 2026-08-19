@@ -3060,6 +3060,9 @@ impl TestCommand {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
+        // `global_exit()` diverges without unwinding this frame; free the file lists here so LeakSanitizer does not see them as leaked.
+        drop(changed_module_graph_files);
+        drop(all_test_files);
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;

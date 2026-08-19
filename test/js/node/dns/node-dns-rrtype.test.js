@@ -12,7 +12,7 @@ describe.each([
   ["dns.promises.resolve", rrtype => dns_promises.resolve("localhost", rrtype)],
   ["dns.promises.Resolver#resolve", rrtype => new dns_promises.Resolver().resolve("localhost", rrtype)],
 ])("%s", (_, fn) => {
-  it.each(["a", "aaaa", "txt", "Mx", ""])("with rrtype %p throws ERR_INVALID_ARG_VALUE", rrtype => {
+  it.each(["a", "aaaa", "txt", "Mx", "", "BOGUS"])("with rrtype %p throws ERR_INVALID_ARG_VALUE", rrtype => {
     expect(() => fn(rrtype)).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_ARG_VALUE",

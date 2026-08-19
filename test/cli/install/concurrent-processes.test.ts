@@ -11,9 +11,17 @@ import { join } from "path";
 // on disk.
 describe("package manager processes that share a project", () => {
   const registry = new VerdaccioRegistry();
+  // One package cache for every process these tests start, filled before the tests run. The
+  // tests are about processes that share a project; two projects that fill one cache with the
+  // same package at the same time is a different race (the CI runner points every process at
+  // one cache), and the project lock does not serialize different projects on purpose.
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(tmpdirSync(), "cache") };
+  const PACKAGES = ["no-deps@1.0.0", "a-dep@1.0.1", "is-number@1.0.0", "left-pad@1.0.0", "lifecycle-postinstall@1.0.0"];
 
   beforeAll(async () => {
     await registry.start();
+    const { packageDir } = await registry.createTestDir();
+    succeeded(await run(packageDir, "add", ...PACKAGES));
   });
 
   afterAll(() => {
@@ -24,7 +32,7 @@ describe("package manager processes that share a project", () => {
     await using proc = spawn({
       cmd: [bunExe(), ...args],
       cwd,
-      env: bunEnv,
+      env,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -33,20 +41,24 @@ describe("package manager processes that share a project", () => {
     return { args, stdout, stderr, exitCode };
   }
 
+  // The command exited 0 without reporting an error. A failure shows the whole output.
+  function succeeded({ args, stdout, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
+    expect({ args, exitCode, output: exitCode === 0 && !stderr.includes("error:") ? "" : stdout + stderr }).toEqual({
+      args,
+      exitCode: 0,
+      output: "",
+    });
+  }
+
   async function installed(cwd: string) {
-    const { stderr, exitCode } = await run(cwd, "install");
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
+    succeeded(await run(cwd, "install"));
   }
 
   // `bun add` reads package.json a few milliseconds after it starts and writes it back once the
   // package is installed. `bun remove` started at the same time writes in between.
   async function addAndRemoveTogether(cwd: string) {
-    const [add, remove] = await Promise.all([run(cwd, "add", "is-number@1.0.0"), run(cwd, "remove", "a-dep")]);
-    for (const result of [add, remove]) {
-      expect(result.stderr).not.toContain("error:");
-      expect(result.exitCode).toBe(0);
-    }
+    const results = await Promise.all([run(cwd, "add", "is-number@1.0.0"), run(cwd, "remove", "a-dep")]);
+    for (const result of results) succeeded(result);
   }
 
   test.concurrent("bun add and bun remove started together both reach package.json and bun.lock", async () => {
@@ -63,9 +75,7 @@ describe("package manager processes that share a project", () => {
     }).toEqual({ "a-dep": false, "is-number": true });
 
     // bun.lock was written by whichever process ran second, from the other one's result.
-    const frozen = await run(packageDir, "install", "--frozen-lockfile");
-    expect(frozen.stderr).not.toContain("error:");
-    expect(frozen.exitCode).toBe(0);
+    succeeded(await run(packageDir, "install", "--frozen-lockfile"));
   });
 
   // The package.json of the workspace the command runs in is read while the project root is
@@ -84,9 +94,7 @@ describe("package manager processes that share a project", () => {
     await addAndRemoveTogether(appDir);
 
     expect((await file(appPackageJson).json()).dependencies).toEqual({ "no-deps": "1.0.0", "is-number": "1.0.0" });
-    const frozen = await run(packageDir, "install", "--frozen-lockfile");
-    expect(frozen.stderr).not.toContain("error:");
-    expect(frozen.exitCode).toBe(0);
+    succeeded(await run(packageDir, "install", "--frozen-lockfile"));
   });
 
   test.concurrent("installs of one project started together install and run each package once", async () => {
@@ -101,9 +109,7 @@ describe("package manager processes that share a project", () => {
     );
 
     const results = await Promise.all(Array.from({ length: 4 }, () => run(packageDir, "install")));
-    expect(
-      results.map(({ stderr, exitCode }) => ({ stderr: stderr.includes("error:") ? stderr : "", exitCode })),
-    ).toEqual(results.map(() => ({ stderr: "", exitCode: 0 })));
+    for (const result of results) succeeded(result);
     // The first install runs the script, which writes "postinstall!". The others find the package
     // installed and leave it alone. A second run of the script writes "postinstall exists!".
     expect(await file(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt")).text()).toBe(
@@ -115,72 +121,98 @@ describe("package manager processes that share a project", () => {
     });
   });
 
-  test.concurrent("a second process waits for the one that holds the project", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir({
-      files: {
-        "hold.js": `
-          const fs = require("fs");
-          fs.writeFileSync("postinstall-started", "");
-          while (!fs.existsSync("release")) Bun.sleepSync(5);
-        `,
-      },
-    });
-    // The root postinstall script runs while the install still holds the project.
-    await write(
-      packageJson,
-      JSON.stringify({
-        name: "held",
-        dependencies: { "no-deps": "1.0.0" },
-        scripts: { postinstall: `${bunExe()} hold.js` },
-      }),
-    );
-
-    await using install = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const installOutput = Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
-    while (!existsSync(join(packageDir, "postinstall-started"))) {
-      expect(install.exitCode).toBeNull();
-      await Bun.sleep(5);
-    }
-
-    await using add = spawn({
-      cmd: [bunExe(), "add", "left-pad@1.0.0"],
-      cwd: packageDir,
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const addStdout = add.stdout.text();
-    // Resolves as soon as the message shows up, or with everything `bun add` wrote if it finished
-    // without it. The stream is read to its end either way.
-    const waitingMessage = new Promise<string>(async resolve => {
-      let stderr = "";
-      for await (const chunk of add.stderr) {
-        stderr += Buffer.from(chunk).toString();
-        if (stderr.includes("Waiting for another bun process to finish in ")) resolve(stderr);
+  // The same lost update, with the order forced. `bun remove` writes package.json after the root
+  // scripts ran, so a remove held in its postinstall script still has its edit in memory while
+  // the add arrives. Before the lock the add went through at once and the remove then wrote its
+  // stale copy over it. Now the add waits and starts from the remove's result.
+  for (const where of ["the project root", "a workspace package"]) {
+    test.concurrent(`a bun add that arrives while bun remove holds ${where} waits, and both edits land`, async () => {
+      const dependencies = { "no-deps": "1.0.0", "a-dep": "1.0.1" };
+      const postinstall = `${bunExe()} hold.js`;
+      const { packageDir, packageJson } = await registry.createTestDir({
+        files: {
+          // Holds only the process started with HOLD in its environment; `bun install` and `bun
+          // add` below run it too. The test writes "release"; the deadline only bounds the
+          // damage if it never does.
+          "hold.js": `
+            const fs = require("fs");
+            if (!process.env.HOLD) process.exit(0);
+            fs.writeFileSync("postinstall-started", "");
+            const deadline = Date.now() + 30_000;
+            while (!fs.existsSync("release") && Date.now() < deadline) Bun.sleepSync(5);
+          `,
+        },
+      });
+      let cwd = packageDir;
+      let editedPackageJson = packageJson;
+      if (where === "the project root") {
+        await write(packageJson, JSON.stringify({ name: "held", dependencies, scripts: { postinstall } }));
+      } else {
+        await write(
+          packageJson,
+          JSON.stringify({ name: "root", workspaces: ["packages/*"], scripts: { postinstall } }),
+        );
+        cwd = join(packageDir, "packages", "app");
+        editedPackageJson = join(cwd, "package.json");
+        await write(editedPackageJson, JSON.stringify({ name: "app", dependencies }));
       }
-      resolve(stderr);
+      await installed(packageDir);
+
+      const removeArgs = ["remove", "a-dep"];
+      await using remove = spawn({
+        cmd: [bunExe(), ...removeArgs],
+        cwd,
+        env: { ...env, HOLD: "1" },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const removeOutput = Promise.all([remove.stdout.text(), remove.stderr.text(), remove.exited]);
+      while (!existsSync(join(packageDir, "postinstall-started"))) {
+        expect(remove.exitCode).toBeNull();
+        await Bun.sleep(5);
+      }
+
+      const addArgs = ["add", "is-number@1.0.0"];
+      await using add = spawn({
+        cmd: [bunExe(), ...addArgs],
+        cwd,
+        env,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const addStdout = add.stdout.text();
+      // Settles when the message shows up, or when `bun add` closes its stderr without it.
+      // `addStderr` is the whole stream either way.
+      const stderrSoFar: string[] = [];
+      const sawMessage = Promise.withResolvers<void>();
+      const addStderr = (async () => {
+        for await (const chunk of add.stderr) {
+          stderrSoFar.push(Buffer.from(chunk).toString());
+          if (stderrSoFar.join("").includes("Waiting for another bun process")) sawMessage.resolve();
+        }
+        sawMessage.resolve();
+        return stderrSoFar.join("");
+      })();
+      await sawMessage.promise;
+      // Captured before the release, so a failed assertion does not leave hold.js waiting for it.
+      const whileHeld = { stderr: stderrSoFar.join(""), addExitCode: add.exitCode };
+      await write(join(packageDir, "release"), "");
+      const [removeStdout, removeStderr, removeExitCode] = await removeOutput;
+      const addResult = { args: addArgs, stdout: await addStdout, stderr: await addStderr, exitCode: await add.exited };
+
+      // Both commands exit 0 either way. What differs is what is left in package.json.
+      expect((await file(editedPackageJson).json()).dependencies).toEqual({ "no-deps": "1.0.0", "is-number": "1.0.0" });
+      expect(whileHeld).toEqual({
+        stderr: expect.stringContaining(`Waiting for another bun process to finish in ${packageDir}`),
+        addExitCode: null,
+      });
+      succeeded({ args: removeArgs, stdout: removeStdout, stderr: removeStderr, exitCode: removeExitCode });
+      succeeded(addResult);
+      succeeded(await run(packageDir, "install", "--frozen-lockfile"));
     });
-    expect(await waitingMessage).toContain(`Waiting for another bun process to finish in ${packageDir}`);
-    expect(add.exitCode).toBeNull();
-
-    await write(join(packageDir, "release"), "");
-    const [, installStderr, installExitCode] = await installOutput;
-    expect(installStderr).not.toContain("error:");
-    expect(installExitCode).toBe(0);
-
-    const addExitCode = await add.exited;
-    expect(await addStdout).toContain("installed left-pad@1.0.0");
-    expect(addExitCode).toBe(0);
-    expect((await file(packageJson).json()).dependencies).toEqual({ "no-deps": "1.0.0", "left-pad": "1.0.0" });
-  });
+  }
 
   // The install holds the project while its scripts run. The nested `bun add` runs under that
   // lock instead of waiting for it. (`--ignore-scripts` keeps the nested add from running this
@@ -196,10 +228,9 @@ describe("package manager processes that share a project", () => {
       }),
     );
 
-    const { stderr, exitCode } = await run(packageDir, "install");
-    expect(stderr).not.toContain("error:");
-    expect(stderr).not.toContain("Waiting for another bun process");
-    expect(exitCode).toBe(0);
+    const result = await run(packageDir, "install");
+    succeeded(result);
+    expect(result.stderr).not.toContain("Waiting for another bun process");
     expect((await file(packageJson).json()).dependencies).toEqual({ "no-deps": "1.0.0", "left-pad": "1.0.0" });
     expect(existsSync(join(packageDir, "node_modules", "left-pad"))).toBe(true);
   });
@@ -209,7 +240,7 @@ describe("package manager processes that share a project", () => {
   test.concurrent.skipIf(isWindows)("cold bunx runs of one package started together all run it", async () => {
     const tempDir = tmpdirSync();
     const cwd = tmpdirSync();
-    const env = {
+    const bunxEnv = {
       ...bunEnv,
       TMPDIR: tempDir,
       BUN_TMPDIR: tempDir,
@@ -223,16 +254,16 @@ describe("package manager processes that share a project", () => {
         await using proc = spawn({
           cmd: [bunExe(), "x", "what-bin@1.0.0"],
           cwd,
-          env,
+          env: bunxEnv,
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stderr: stderr.includes("error:") ? stdout + stderr : "", exitCode };
+        return { exitCode, output: exitCode === 0 && !stderr.includes("error:") ? "" : stdout + stderr };
       }),
     );
-    expect(results).toEqual(results.map(() => ({ stderr: "", exitCode: 0 })));
+    expect(results).toEqual(results.map(() => ({ exitCode: 0, output: "" })));
     // what-bin writes this file into the directory it runs in.
     expect(await file(join(cwd, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
   });

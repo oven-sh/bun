@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
@@ -42,7 +42,9 @@ describe("snapshot files written by several processes", () => {
     const PAD = Buffer.alloc(Number(process.env.PAD), "#").toString();
     ${Array.from({ length: count }, (_, i) => `test("k${i}", () => expect({ i: ${i}, s: PAD }).toMatchSnapshot());`).join("\n")}
     test("waits", () => {
-      if (process.env.WAIT_FOR) while (!existsSync(process.env.WAIT_FOR)) Bun.sleepSync(5);
+      // The test writes WAIT_FOR. The deadline only bounds the damage if it never does.
+      const deadline = Date.now() + 30_000;
+      if (process.env.WAIT_FOR) while (!existsSync(process.env.WAIT_FOR) && Date.now() < deadline) Bun.sleepSync(5);
     });
   `;
 
@@ -81,11 +83,11 @@ describe("snapshot files written by several processes", () => {
     // Both processes start with no .snap file. The one with the short values records its
     // snapshots, then waits in its last test until the one with the long values has written
     // the file, and writes its own, shorter, file last.
-    const short = runTest(String(dir), { PAD: "4", WAIT_FOR: release });
+    await using short = runTest(String(dir), { PAD: "4", WAIT_FOR: release });
     const long = await finished(runTest(String(dir), { PAD: "400" }));
+    fs.writeFileSync(release, "");
     expect(long.stderr).toContain(`snapshots: +${COUNT} added`);
     expect(long.exitCode).toBe(0);
-    fs.writeFileSync(release, "");
     const shortResult = await finished(short);
     expect(shortResult.stderr).toContain(`snapshots: +${COUNT} added`);
     expect(shortResult.exitCode).toBe(0);
@@ -142,9 +144,9 @@ describe("a .snap file that does not parse", () => {
     ${Array.from({ length: COUNT }, (_, i) => `test("k${i}", () => expect({ i: ${i}, s: "x".repeat(${i % 50}) }).toMatchSnapshot());`).join("\n")}
   `;
 
-  async function runTest(dir: string) {
+  async function runTest(dir: string, ...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "./a.test.ts"],
+      cmd: [bunExe(), "test", ...args, "./a.test.ts"],
       cwd: dir,
       env: { ...bunEnv, CI: "false" },
       stdin: "ignore",
@@ -175,7 +177,7 @@ describe("a .snap file that does not parse", () => {
     expect(fs.readFileSync(snapPath, "utf8")).toBe(torn);
 
     // Re-reading and re-parsing the file for every test used hundreds of megabytes for 300 tests.
-    expect(result.maxRSS - intact.maxRSS).toBeLessThan(64 * 1024 * 1024);
+    expect(result.maxRSS - intact.maxRSS).toBeLessThan((isASAN ? 128 : 64) * 1024 * 1024);
   });
 
   test("--update-snapshots replaces it", async () => {
@@ -184,15 +186,7 @@ describe("a .snap file that does not parse", () => {
     fs.mkdirSync(join(String(dir), "__snapshots__"));
     fs.writeFileSync(snapPath, "exports[`torn");
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--update-snapshots", "./a.test.ts"],
-      cwd: String(dir),
-      env: { ...bunEnv, CI: "false" },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await runTest(String(dir), "--update-snapshots");
     expect(stderr).not.toContain("Failed to parse snapshot file");
     expect(stderr).toContain(`snapshots: +${COUNT} added`);
     expect(exitCode).toBe(0);

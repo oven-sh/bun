@@ -492,11 +492,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
                     if (connect_error == 0) {
-#ifdef _WIN32
-                        connect_error = WSAECONNRESET;
-#else
-                        connect_error = ECONNRESET;
-#endif
+                        connect_error = LIBUS_ECONNRESET;
                     }
                 }
                 us_internal_socket_after_open((struct us_socket_t *) p, connect_error);
@@ -914,12 +910,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                      * writable dispatch disables writable polling again once
                      * the buffer is drained, so this does not busy-poll. */
                     us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
-#ifdef LIBUS_USE_KQUEUE
-                    /* The change above deleted the read filter; without a sentinel
-                     * the peer's later RST is never reported (the one-shot write
-                     * filter may already be consumed) and the socket strands. */
-                    us_internal_kqueue_socket_arm_read_sentinel(s);
-#endif
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
                 } else {
                     /* Half-open not allowed, or a hangup (both directions down, level-triggered):
@@ -931,8 +921,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
             }
-            /* Such as epollerr or EV_ERROR */
-            if (error && s) {
+            /* Such as epollerr or EV_ERROR. A handler above (on_data, on_end, or the
+             * close they triggered) may already have closed this socket: its fd number
+             * is free again, and a socket that handler opened can own it by now, so the
+             * SO_ERROR read below would consume that socket's error (a refused connect
+             * then reports ECONNRESET). Nothing is left to close in that case. */
+            if (error && s && !us_socket_is_closed(s)) {
                 /* Peer-initiated error event — same rationale as the recv-error
                  * branch above: bypass us_internal_ssl_close so on_handshake
                  * isn't fired for a passive close. The poll flag only says THAT
@@ -941,9 +935,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * callers would either misread as an errno or drop entirely.
                  * Values 0..2 collide with the libus CloseCode enum that JS
                  * filters out as self-initiated; SO_ERROR can't be EPERM/ENOENT
-                 * for an established TCP socket, so clamp them defensively. */
+                 * for an established TCP socket, so clamp them defensively.
+                 * The fallback must be in LIBUS_ERR's numbering (internal.h):
+                 * Windows does not reliably latch a received RST in SO_ERROR
+                 * (see us_internal_libuv_peer_reset_probe), so it is taken
+                 * there, and the CRT's ECONNRESET reached JS as ESHUTDOWN. */
                 int socket_error = us_socket_get_error(s);
-                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : ECONNRESET, NULL);
+                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : LIBUS_ECONNRESET, NULL);
                 return;
             }
             break;

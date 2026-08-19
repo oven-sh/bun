@@ -53,6 +53,33 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)
 }
 
+/// The error behind a close that the event loop initiated: the `recv()`
+/// failure or `SO_ERROR` that uSockets closed the socket with (`> 2`, see
+/// `on_close`). uSockets reports it in the platform's own numbering: an errno
+/// on POSIX, a WSA code (`WSAECONNRESET` = 10054) on Windows. `sys::Error`
+/// stores `SystemErrno` discriminants, so the WSA code has to be mapped first
+/// or the error reaches JS with no `code` at all.
+fn read_error_from_close_code(code: c_int) -> sys::Error {
+    #[cfg(not(windows))]
+    {
+        sys::Error::from_code_int(code, sys::Tag::read)
+    }
+    #[cfg(windows)]
+    {
+        // Winsock reports a reset as WSAECONNRESET or, once the local stack
+        // has torn the connection down, WSAECONNABORTED. libuv reports both
+        // as ECONNRESET on the read path (uv__process_tcp_read_req), so Node
+        // sees one code on every platform; same here. A code the table does
+        // not name still closed the connection, so it is reported the same way
+        // rather than as a code-less error.
+        let errno = match sys::SystemErrno::init(code.unsigned_abs()) {
+            Some(errno) if errno != sys::SystemErrno::ECONNABORTED => errno,
+            _ => sys::SystemErrno::ECONNRESET,
+        };
+        sys::Error::new(errno, sys::Tag::read)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
@@ -2141,18 +2168,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut js_error: JSValue = JSValue::UNDEFINED;
         // `err` is overloaded: when WE closed the socket it's a libus
         // CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
-        // close was driven by a recv() failure (loop.c:664) or a poll error
-        // (loop.c's EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the
-        // actual errno. Neither producer can yield EPERM(1)/ENOENT(2) — recv
+        // close was driven by a recv() failure or a poll error (loop.c's
+        // EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the actual
+        // error code. Neither producer can yield EPERM(1)/ENOENT(2) — recv
         // never returns them and the poll-error branch clamps them away — so
-        // values >2 are real read errnos and 0/1/2 are self-initiated closes
+        // values >2 are real read errors and 0/1/2 are self-initiated closes
         // that must not surface as a JS read error (matching Node's
         // onStreamRead, which only sees errors that came from uv_read_cb).
         if err > 2 {
-            js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
-                &sys::Error::from_code_int(err, sys::Tag::read),
-                &global,
-            );
+            js_error =
+                <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {

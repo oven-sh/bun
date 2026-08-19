@@ -26,7 +26,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { bunExeName, type Abi, type Arch, type Config, type OS } from "./config.ts";
+import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeCpuTargetFlags } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
@@ -1084,11 +1084,6 @@ export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]):
     vars: { llvm_bin: llvmBin, ar: cfg.ar },
   });
   return [out, ...rustObjects];
-}
-
-/** `${buildDir}/${exe}.linker-map` — lld's `-Wl,-Map=` output (see flags.ts). */
-export function linkerMapPath(cfg: Config): string {
-  return join(cfg.buildDir, `${bunExeName(cfg)}.linker-map`);
 }
 
 /**

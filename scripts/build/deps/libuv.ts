@@ -19,9 +19,13 @@ import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 // instead of aborting on AssignProcessToJobObject failure (oven-sh/libuv#12),
 // closes the process/thread handles on that error path (oven-sh/libuv#13), and
 // uv__split_path allocates with uv__malloc instead of _wcsdup so the buffer
-// can be uv__free'd under uv_replace_allocator (oven-sh/libuv#14).
+// can be uv__free'd under uv_replace_allocator (oven-sh/libuv#14), Winsock /
+// console-resize watcher / suspend-resume detection initialized on first use
+// instead of in uv__init, with uv__winsock_ensure() for callers that reach
+// ws2_32 directly (oven-sh/libuv#15), and LoadLibraryExW for those lazy
+// loads (oven-sh/libuv#16).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "0c89a51e2de5c42cca40e3bccc1e8542e157087c";
+const LIBUV_COMMIT = "8023581113b276e7c1aee3f82da57ca0893faab1";
 
 // prettier-ignore
 const SHARED = [

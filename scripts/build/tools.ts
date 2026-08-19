@@ -541,25 +541,15 @@ export function resolveLlvmToolchain(
     mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // nasm: windows-x64 targets only. BoringSSL's win-x64 assembly is NASM
-  // syntax (perlasm emits gas .S everywhere else, including win-aarch64).
-  // clang's integrated assembler can't read NASM, and OPENSSL_NO_ASM is a
-  // 5-10× crypto perf hit, so this is required when targeting win-x64.
-  let nasm: string | undefined;
-  if (msvcTarget) {
-    nasm = findTool({
-      names: ["nasm"],
-      // boringssl's win-x64 .asm needs nasm; win-aarch64 uses gas .S.
-      // `arch` here is the HOST arch — the target isn't known yet inside
-      // resolveToolchain(). compile.ts:nasm() asserts at the use site
-      // with the same hint, so a missing nasm still fails clearly.
-      required: false,
-      hint:
-        os === "windows"
-          ? "Install from https://nasm.us or `winget install NASM.NASM`"
-          : "Install nasm from your distro (apt install nasm) or https://nasm.us",
-    })?.path;
-  }
+  // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
+  const nasm = findTool({
+    names: ["nasm"],
+    required: false,
+    hint:
+      os === "windows"
+        ? "Install from https://nasm.us or `winget install NASM.NASM`"
+        : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
+  })?.path;
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().

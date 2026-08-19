@@ -37,10 +37,10 @@ import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
+import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
-import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
+import { emitRust, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
@@ -516,10 +516,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs, ...depChecks],
-    // Declare the `-Wl,-Map=` side-product so `perf` symbolication picks it
-    // up. Linux release only — the map flag itself is gated identically in
-    // flags.ts.
-    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+    // Declare the maps the release link writes as side-products (`perf`
+    // symbolication on linux; the order file tracer's symbol table on windows).
+    linkerMapOutputs: linkerMapOutputs(cfg),
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
@@ -663,7 +662,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
-    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+    linkerMapOutputs: linkerMapOutputs(cfg),
   });
 
   // Strip + smoke test — same as full mode.
@@ -740,7 +739,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
-    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+    linkerMapOutputs: linkerMapOutputs(cfg),
   });
 
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);

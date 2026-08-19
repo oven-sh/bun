@@ -4487,6 +4487,13 @@ JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* glob
     return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));
 }
 
+// Decimal integer literal (Latin-1) -> BigInt. Returns the empty value when
+// the text is not a valid StringToBigInt input.
+JSC::EncodedJSValue JSC__JSValue__bigIntFromLatin1(JSC::JSGlobalObject* globalObject, const uint8_t* ptr, size_t len)
+{
+    return JSC::JSValue::encode(JSC::JSBigInt::stringToBigInt(globalObject, WTF::StringView(std::span { reinterpret_cast<const char*>(ptr), len })));
+}
+
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
 {
     JSC::JSValue value = JSC::JSValue::decode(val);

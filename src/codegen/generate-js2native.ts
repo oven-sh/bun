@@ -66,6 +66,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
   "jest.rs": "runtime/test_runner/jest.rs",
+  "memory_pressure.rs": "runtime/node/memory_pressure.rs",
   "mysql.rs": "sql_jsc/mysql.rs",
   "napi_body.rs": "runtime/napi/napi_body.rs",
   "node_assert_binding.rs": "runtime/node/node_assert_binding.rs",

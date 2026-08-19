@@ -131,7 +131,7 @@ impl PerMessageDeflate {
     }
 
     fn can_use_libdeflate(len: usize) -> bool {
-        if feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get() {
+        if feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get() == Some(true) {
             return false;
         }
 

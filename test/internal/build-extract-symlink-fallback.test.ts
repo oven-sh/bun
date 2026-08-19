@@ -4,9 +4,11 @@
  * Developer Mode or elevation, bsdtar extracts every other entry of the
  * zstd dep archive and exits 1 on its two symlink test fixtures
  * (tests/cli-tests/bin/{unzstd,zstdcat} -> zstd), killing the build
- * (oven-sh/bun#39669). The fallback: after a failure, list the archive's
- * symlink entries and retry with each excluded; with none, or with a name
- * that cannot be excluded literally (--exclude is a glob), rethrow.
+ * (oven-sh/bun#39669). The fallback, opt-in via skipUnusedSymlinks (the
+ * dep-archive fetch sets it, archives whose symlinks may matter do not):
+ * after a failure, list the archive's symlink entries and retry with each
+ * excluded; with none, or with a name that cannot be excluded literally
+ * (--exclude is a glob), rethrow.
  *
  * The privilege failure can't be reproduced on a POSIX host (and on Windows
  * tarExe is an absolute System32 path), so these tests put a fake `tar` on
@@ -151,7 +153,7 @@ test.skipIf(cannotRunFakeTar)(
     mkdirSync(dest);
 
     const { lines } = await withFakeTar(String(dir), tarWithoutSymlinkPrivilege, () =>
-      withLogCaptured(() => extractTarGz(tarball, dest)),
+      withLogCaptured(() => extractTarGz(tarball, dest, 1, { skipUnusedSymlinks: true })),
     );
 
     // Everything the build reads is there; only the two fixtures are skipped.
@@ -172,7 +174,7 @@ test.skipIf(cannotRunFakeTar)("an archive with no symlinks rethrows the original
   mkdirSync(dest);
 
   const { result: err, lines } = await withFakeTar(String(dir), tarThatAlwaysFailsExtraction, () =>
-    withLogCaptured(() => rejection(extractTarGz(tarball, dest))),
+    withLogCaptured(() => rejection(extractTarGz(tarball, dest, 1, { skipUnusedSymlinks: true }))),
   );
 
   expect(err).toBeInstanceOf(BuildError);
@@ -188,7 +190,7 @@ test.skipIf(cannotRunFakeTar)("a retry that still fails reports both attempts", 
   mkdirSync(dest);
 
   const { result: err, lines } = await withFakeTar(String(dir), tarThatAlwaysFailsExtraction, () =>
-    withLogCaptured(() => rejection(extractTarGz(tarball, dest))),
+    withLogCaptured(() => rejection(extractTarGz(tarball, dest, 1, { skipUnusedSymlinks: true }))),
   );
 
   expect(err).toBeInstanceOf(BuildError);
@@ -208,11 +210,30 @@ test.skipIf(cannotRunFakeTar)("a symlink name with a glob metacharacter declines
   mkdirSync(dest);
 
   const { result: err, lines } = await withFakeTar(String(dir), tarThatAlwaysFailsExtraction, () =>
-    withLogCaptured(() => rejection(extractTarGz(tarball, dest))),
+    withLogCaptured(() => rejection(extractTarGz(tarball, dest, 1, { skipUnusedSymlinks: true }))),
   );
 
   expect(err).toBeInstanceOf(BuildError);
   expect((err as BuildError).message).toStartWith("tar extraction failed (exit 1):");
   expect((err as BuildError).message).toContain("boom: disk full");
+  expect(lines).toEqual([]);
+});
+
+test.skipIf(cannotRunFakeTar)("without the opt-in, a symlink failure is not retried", async () => {
+  using dir = tempDir("extract-symlink", {});
+  const tarball = makeTarball(String(dir), { symlinks: ["unzstd", "zstdcat"] });
+  const dest = join(String(dir), "out");
+  mkdirSync(dest);
+
+  // Archives whose symlinks may matter (prebuilt WebKit, the xwin sysroot)
+  // extract without skipUnusedSymlinks: a quiet success with entries missing
+  // would be worse than the failure.
+  const { result: err, lines } = await withFakeTar(String(dir), tarWithoutSymlinkPrivilege, () =>
+    withLogCaptured(() => rejection(extractTarGz(tarball, dest))),
+  );
+
+  expect(err).toBeInstanceOf(BuildError);
+  expect((err as BuildError).message).toStartWith("tar extraction failed (exit 1):");
+  expect((err as BuildError).message).toContain("Cannot create");
   expect(lines).toEqual([]);
 });

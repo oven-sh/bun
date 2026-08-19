@@ -1858,7 +1858,19 @@ fn root_package_json_source(
         root_package_json_path.as_bytes(),
         Default::default(),
     ) {
-        WorkspacePackageJsonCacheResult::Entry(entry) => return Ok(entry.source.clone()),
+        WorkspacePackageJsonCacheResult::Entry(entry) => {
+            // The parser reads an empty file as `{}`. For the root that would
+            // install nothing and delete the lockfile, which is the wrong
+            // answer when the file was truncated by an interrupted write.
+            if entry.source.contents.is_empty() {
+                Output::err_generic(
+                    "failed to parse '{}': file is empty",
+                    (bstr::BStr::new(root_package_json_path.as_bytes()),),
+                );
+                Global::exit(1);
+            }
+            return Ok(entry.source.clone());
+        }
         WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };

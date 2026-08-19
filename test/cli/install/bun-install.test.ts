@@ -5221,7 +5221,11 @@ describe.concurrent("bun-install", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toStartWith("bun install v1.");
-      return { stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode };
+      return {
+        stderr: normalizeBunSnapshot(stderr, String(dir)),
+        exitCode,
+        lockfileKept: await exists(join(String(dir), "bun.lock")),
+      };
     }
 
     const unparseable = (packageJsonPath: string) => writeFile(packageJsonPath, "foo");
@@ -5229,6 +5233,8 @@ describe.concurrent("bun-install", () => {
       await rm(packageJsonPath);
       await mkdir(packageJsonPath);
     };
+    // What a writer that died between truncating and writing leaves behind.
+    const empty = (packageJsonPath: string) => writeFile(packageJsonPath, "");
 
     for (const [lockfile, withLockfile] of [
       ["with a bun.lock", true],
@@ -5252,6 +5258,17 @@ describe.concurrent("bun-install", () => {
         const { stderr, exitCode } = await installWithBrokenRootPackageJson(withLockfile, unreadable);
         expect(stderr).toBe("EISDIR: failed to read '<dir>/package.json'");
         expect(exitCode).toBe(1);
+      });
+
+      // An empty file parses as `{}` elsewhere. For the root that would mean "no
+      // dependencies", and bun install would delete the lockfile.
+      it(`rejects an empty file and keeps the lockfile ${lockfile}`, async () => {
+        const result = await installWithBrokenRootPackageJson(withLockfile, empty);
+        expect(result).toEqual({
+          stderr: "error: failed to parse '<dir>/package.json': file is empty",
+          exitCode: 1,
+          lockfileKept: withLockfile,
+        });
       });
     }
   });

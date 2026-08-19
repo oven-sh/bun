@@ -932,15 +932,27 @@ function wsEmitClose(server) {
   server.emit("close");
 }
 
-function abortHandshake(socket, code, message, headers = {}) {
-  // node:http gives an 'upgrade' socket no ServerResponse, and a closed socket has no native handle.
-  const response = socket._httpMessage || socket[kBunInternals];
-  if (!response) {
-    socket.destroy();
-    return;
-  }
+/**
+ * Handle socket errors.
+ *
+ * @private
+ */
+function socketOnError() {
+  this.destroy();
+}
 
-  message = message || lazyHttp().STATUS_CODES[code];
+/**
+ * Close the connection when preconditions are not fulfilled.
+ *
+ * @param {Duplex} socket The socket of the upgrade request
+ * @param {Number} code The HTTP response status code
+ * @param {String} [message] The HTTP response body
+ * @param {Object} [headers] Additional HTTP response headers
+ * @private
+ */
+function abortHandshake(socket, code, message, headers) {
+  const { STATUS_CODES } = lazyHttp();
+  message = message || STATUS_CODES[code];
   headers = {
     Connection: "close",
     "Content-Type": "text/html",
@@ -948,19 +960,38 @@ function abortHandshake(socket, code, message, headers = {}) {
     ...headers,
   };
 
-  response.writeHead(code, headers);
-  response.write(message);
-  response.end();
+  // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
+  const response = socket._httpMessage;
+  if (response) {
+    response.writeHead(code, headers);
+    response.write(message);
+    response.end();
+    return;
+  }
+
+  // Another WebSocketServer on the same http.Server has already taken this connection.
+  if (socket[kBunInternals]?.upgraded) return;
+
+  socket.once("finish", socket.destroy);
+
+  socket.end(
+    `HTTP/1.1 ${code} ${STATUS_CODES[code]}\r\n` +
+      Object.keys(headers)
+        .map(h => `${h}: ${headers[h]}`)
+        .join("\r\n") +
+      "\r\n\r\n" +
+      message,
+  );
 }
 
-function abortHandshakeOrEmitwsClientError(server, req, socket, code, message) {
+function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, headers) {
   if (server.listenerCount("wsClientError")) {
     const err = new Error(message);
     Error.captureStackTrace(err, abortHandshakeOrEmitwsClientError);
 
     server.emit("wsClientError", err, socket, req);
   } else {
-    abortHandshake(socket, code, message);
+    abortHandshake(socket, code, message, headers);
   }
 }
 
@@ -1584,7 +1615,8 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   handleUpgrade(req, socket, head, cb) {
-    // socket.on("error", socketOnError);
+    // Stays attached after the upgrade: node:http removed its own listener at the handoff.
+    socket.on("error", socketOnError);
 
     const key = req.headers["sec-websocket-key"];
     const version = +req.headers["sec-websocket-version"];
@@ -1610,7 +1642,9 @@ class WebSocketServer extends EventEmitter {
 
     if (version !== 8 && version !== 13) {
       const message = "Missing or invalid Sec-WebSocket-Version header";
-      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message, {
+        "Sec-WebSocket-Version": "13, 8",
+      });
       return;
     }
 

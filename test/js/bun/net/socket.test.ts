@@ -4278,3 +4278,79 @@ describe.concurrent("close() error after the peer resets the connection", () => 
     expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
   });
 });
+
+// The event that carries a peer's reset is dispatched in two steps: the read loop runs
+// data(), then the dispatcher closes the socket with its SO_ERROR. When data() already
+// closed the socket, its fd number is free again and a socket opened in the meantime
+// (here: from close()) can own it. Reading SO_ERROR from that number consumed the new
+// socket's error, and its refused connect reported ECONNRESET.
+//
+// The fd arrangement in the fixture is what makes the stale read land on the new socket
+// on POSIX, where a new socket gets the lowest free number. The outcome it checks, a
+// refused connect reports ECONNREFUSED, holds on every platform, so it is not skipped
+// anywhere: on Windows the fixture is only that check.
+describe.concurrent("a socket closed by data() while its peer's reset is being dispatched", () => {
+  it("does not consume the connect error of a socket opened from close()", async () => {
+    const source = `
+      import { closeSync, openSync } from "node:fs";
+
+      // A port nothing listens on. The established connection keeps it bound, so no
+      // listener can take it while the test runs.
+      const sink = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      const holder = await Bun.connect({ hostname: "127.0.0.1", port: sink.port, socket: { data() {} } });
+      const refusedPort = holder.localPort;
+
+      const outcome = Promise.withResolvers();
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket) {
+            socket.terminate();
+          },
+          close() {
+            Bun.connect({
+              hostname: "127.0.0.1",
+              port: refusedPort,
+              socket: {
+                data() {},
+                open: () => outcome.resolve("open"),
+                connectError: (_socket, error) => outcome.resolve(error.code),
+              },
+            }).catch(() => {});
+          },
+        },
+      });
+
+      // The connect opened from close() takes the lowest free fd number, and
+      // peer.terminate() below frees the peer's number first. So the accepted socket
+      // has to get a lower number than the peer: reserve one (any file does) before the
+      // peer's socket is created and free it again before the event loop accepts.
+      const reserved = openSync(import.meta.path, "r");
+      const connecting = Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+      closeSync(reserved);
+      const peer = await connecting;
+      // Both are queued before the event loop runs again, so the accepted socket's next
+      // event carries the data and the reset together.
+      peer.write("x");
+      peer.terminate();
+
+      console.log(await outcome.promise);
+      holder.terminate();
+      sink.stop(true);
+      server.stop(true);
+    `;
+    // Its own process: the fd numbers have to line up as described in the fixture.
+    using dir = tempDir("socket-close-during-reset", { "fixture.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "ECONNREFUSED\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});

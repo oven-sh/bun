@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
@@ -1288,4 +1288,58 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.stdout).not.toContain("Bun is");
     expect(r.exitCode).toBe(1);
   });
+});
+
+describe("workspace paths longer than the path buffer", () => {
+  // The size of bun's fixed path buffers (MAX_PATH_BYTES in src/bun_core/util.rs), which is also the longest path
+  // the OS takes. On Windows it is 98302 bytes, longer than any path that can exist there.
+  const MAX_PATH_BYTES = isMacOS ? 1024 : 4096;
+
+  // Creates a chain of directories below `parent` and returns the one whose absolute path is `length` bytes long.
+  function makeDirectoryOfLength(parent: string, length: number): string {
+    let dir = parent;
+    while (dir.length < length) {
+      // Bytes left after the separator. Unless this is the last component, leave room for "/" and one more byte.
+      const left = length - dir.length - 1;
+      const name = Buffer.alloc(left <= 255 ? left : Math.min(255, left - 2), "d").toString();
+      dir = join(dir, name);
+      mkdirSync(dir);
+    }
+    return dir;
+  }
+
+  test.skipIf(isWindows)(
+    "a member whose package.json path does not fit is reported and the other members still run",
+    async () => {
+      using base = tempDir("filter-long-path", {});
+      const root = makeDirectoryOfLength(String(base), MAX_PATH_BYTES - 196);
+      // The member directory itself fits, so the workspace walk reads it. Only its package.json, 13 bytes further,
+      // does not fit.
+      const tooLong = join(
+        root,
+        "packages",
+        Buffer.alloc(MAX_PATH_BYTES - 6 - root.length - "/packages/".length, "x").toString(),
+      );
+      expect(tooLong).toHaveLength(MAX_PATH_BYTES - 6);
+      mkdirSync(join(root, "packages", "ok"), { recursive: true });
+      mkdirSync(tooLong);
+      await Bun.write(join(root, "package.json"), JSON.stringify({ name: "ws-long", workspaces: ["packages/*"] }));
+      await Bun.write(
+        join(root, "packages", "ok", "package.json"),
+        JSON.stringify({ name: "ok", scripts: { present: "echo ok-ran" } }),
+      );
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--filter", "*", "present"],
+        env: bunEnv,
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("ENAMETOOLONG");
+      expect(stdout).toContain("ok present: ok-ran");
+      expect(exitCode).toBe(0);
+    },
+  );
 });

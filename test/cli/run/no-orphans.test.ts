@@ -330,6 +330,9 @@ test.concurrent.skipIf(!isPosix)(
   "--no-orphans: clean exit reaps children spawned by Workers during the exit",
   async () => {
     using dir = tempDir("no-orphans-workers", {
+      // Pre-created so that a run in which no child got to write still fails
+      // on the assertions below rather than on reading the file.
+      pids: "",
       "exit-while-workers-spawn.js": `
         import { Worker, isMainThread, parentPort } from "node:worker_threads";
         import { appendFileSync } from "node:fs";

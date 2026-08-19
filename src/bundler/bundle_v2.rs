@@ -3078,6 +3078,8 @@ pub mod bv2_impl {
 
         pub(crate) fn on_after_decrement_scan_counter(&mut self) {
             if self.asynchronous && self.is_done() {
+                // Whichever decrement completes the bundle finishes it under the bundle's AST allocator, including a deferred plugin hop that holds no scope of its own.
+                let _ast_alloc = self.enter_async_ast_scope();
                 let dev = self
                     .dev_server
                     .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
@@ -5442,10 +5444,13 @@ pub mod bv2_impl {
 
                 for entry_point in &self.graph.entry_points {
                     if css_asts[entry_point.get() as usize].is_some() {
+                        // A stylesheet the server graph re-enqueued (its importer is cached and not in this bundle) still belongs to the server graph.
                         start.css_entry_points.put(
                             Index::init(entry_point.get()),
                             CssEntryPointMeta {
-                                imported_on_server: false,
+                                imported_on_server: targets[entry_point.get() as usize]
+                                    .bake_graph()
+                                    != crate::bake_types::Graph::Client,
                             },
                         )?;
                     }

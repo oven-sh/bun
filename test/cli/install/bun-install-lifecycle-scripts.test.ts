@@ -2322,11 +2322,22 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
-    // Without a node-gyp dependency, the `node-gyp` on the PATH of a lifecycle script is the script
-    // that `bun install` writes to its temp dir, and that script runs `bun x node-gyp`. bunx
-    // installs the package outside of the project, where the project's bunfig.toml does not apply,
-    // so the registry has to come from the environment. The registry's node-gyp@latest writes
-    // `build.node` into the directory it runs in.
+    // The three tests that use this check what `bun install` itself puts on the PATH of lifecycle
+    // scripts, so the scripts get exactly `path` to search on top of that. The env can also carry
+    // PATH under another spelling (`Path` on Windows), and a spawned bun keeps whichever spelling it
+    // reads last, so all of them go.
+    function envWithPath(env: Record<string, string>, path: string): Record<string, string> {
+      return {
+        ...Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== "PATH")),
+        PATH: path,
+      };
+    }
+
+    // Without a node-gyp dependency, the `node-gyp` that a lifecycle script finds is the script that
+    // `bun install` writes to its temp dir, which runs `bun x node-gyp` with the `bun` that
+    // `bun install` put next to its `node`. bunx installs the package outside of the project, where
+    // the project's bunfig.toml does not apply, so the registry has to come from the environment.
+    // The registry's node-gyp@latest writes the directory it runs in to `build.node`.
     function envForBunx(env: Record<string, string>): Record<string, string> {
       return { ...env, BUN_CONFIG_REGISTRY: verdaccio.registryUrl() };
     }
@@ -2346,6 +2357,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           },
         }),
       );
+      // A PATH that is not empty, but has no node, bun or node-gyp on it: `bun install` has to add
+      // its directories to it. ("ensureTempNodeGypScript works" starts from an empty PATH.)
+      const emptyDir = join(packageDir, "empty");
+      await mkdir(emptyDir);
 
       await using proc = spawn({
         cmd: [bunExe(), "install"],
@@ -2354,16 +2369,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         stdout: "ignore",
         stdin: "ignore",
         stderr: "pipe",
-        env: envForBunx(testEnv),
+        env: envForBunx(envWithPath(testEnv, emptyDir)),
       });
 
       const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       expect(splitErrLines(err)).toEqual(["No packages! Deleted empty lockfile", "", "$ node-gyp --version", ""]);
-      // if node-gyp isn't available, it would return a non-zero exit code
       expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
-      expect(await exists(join(packageDir, "build.node"))).toBeTrue();
+      expect(await file(join(packageDir, "build.node")).text()).toBe(join(packageDir, "build.node"));
     });
 
     // if this test fails, `electron` might be removed from the default list
@@ -3667,21 +3681,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
     });
 
-    // The two tests below check what `bun install` itself puts on the PATH of lifecycle scripts, so
-    // they start from an empty PATH. NODE and npm_node_execpath have to go as well: `bun install`
-    // uses the node they point at instead of providing its own, and `bun run` (so also `bun bd`)
-    // sets both of them.
-    function envWithoutNode(env: Record<string, string>): Record<string, string> {
-      const { NODE, npm_node_execpath, ...rest } = env;
-      return { ...rest, PATH: "" };
-    }
-
     test("node -p should work in postinstall scripts", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-      const postinstall = `node -p "require('fs').writeFileSync('postinstall.txt', 'postinstall')"`;
+      // With an empty PATH, the only `node` the script can find is the one `bun install` provides,
+      // which is `bun install`'s own binary. A real node has no `process.versions.bun`.
+      const postinstall = `node -p "require('fs').writeFileSync('postinstall.txt', process.versions.bun)"`;
       await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall } }));
 
       await using proc = spawn({
@@ -3690,7 +3697,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         stdout: "pipe",
         stdin: "ignore",
         stderr: "pipe",
-        env: envWithoutNode(testEnv),
+        env: envWithPath(testEnv, ""),
       });
 
       const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -3704,7 +3711,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
-      expect(await file(join(packageDir, "postinstall.txt")).text()).toBe("postinstall");
+      expect(await file(join(packageDir, "postinstall.txt")).text()).toBe(process.versions.bun);
     });
 
     test("ensureTempNodeGypScript works", async () => {
@@ -3730,7 +3737,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         stdout: "ignore",
         stderr: "pipe",
         stdin: "ignore",
-        env: envForBunx(envWithoutNode(testEnv)),
+        env: envForBunx(envWithPath(testEnv, "")),
       });
 
       const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -3738,7 +3745,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
-      expect(await exists(join(packageDir, "build.node"))).toBeTrue();
+      expect(await file(join(packageDir, "build.node")).text()).toBe(join(packageDir, "build.node"));
     });
 
     test("bun pm trust and untrusted on missing package", async () => {

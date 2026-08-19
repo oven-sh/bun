@@ -1848,17 +1848,7 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!parsingContextValue.isEmpty() && !parsingContextValue.isUndefined()) {
-            if (parsingContextValue.isNull() || !parsingContextValue.isObject())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-
-            JSObject* context = asObject(parsingContextValue);
-            auto* zigGlobalObject = defaultGlobalObject(globalObject);
-            JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
-
-            if (scopeValue.isUndefined())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-
-            parsingContext = dynamicDowncast<NodeVMGlobalObject>(scopeValue);
+            parsingContext = getGlobalObjectFromContext(globalObject, parsingContextValue, false);
             if (!parsingContext)
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 

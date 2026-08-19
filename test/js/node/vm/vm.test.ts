@@ -1366,6 +1366,15 @@ describe("DONT_CONTEXTIFY", () => {
       ),
     ).toEqual([true, "number", "function"]);
   });
+
+  test("compileFunction accepts a DONT_CONTEXTIFY context as parsingContext", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const fn = compileFunction("return [globalThis === g, Array]", ["g"], { parsingContext: ctx });
+    const [isContextGlobal, ctxArray] = fn(ctx);
+    expect(isContextGlobal).toBe(true);
+    expect(ctxArray).toBe(ctx.Array);
+    expect(ctxArray).not.toBe(Array);
+  });
 });
 
 test("Loader is not defined in vm context", () => {

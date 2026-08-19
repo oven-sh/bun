@@ -4,13 +4,15 @@ import { bunEnv, bunExe } from "harness";
 // A broken Console builtin aborts the whole process the moment `node:console`
 // is loaded, so this has to be a spawned fixture: an in-process test in
 // console.test.ts would take the test runner down with it.
-test("console.Console#table renders Map and Set iterators", async () => {
+test("console.Console#table renders Maps, Map iterators and Set iterators", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `const { Console } = require("node:console");
        const c = new Console({ stdout: process.stdout, stderr: process.stderr, colorMode: false });
+       c.table(new Map([["a", 1], ["b", 2]]));
+       c.table(new Map());
        c.table(new Map([["a", 1], ["b", 2]]).entries());
        c.table(new Set([7, 8]).values());`,
     ],
@@ -24,7 +26,17 @@ test("console.Console#table renders Map and Set iterators", async () => {
     expect(stderr).toBe("");
   }
   expect(stdout).toMatchInlineSnapshot(`
-    "┌───────────────────┬────────────┐
+    "┌───────────────────┬─────┬────────┐
+    │ (iteration index) │ Key │ Values │
+    ├───────────────────┼─────┼────────┤
+    │         0         │ 'a' │   1    │
+    │         1         │ 'b' │   2    │
+    └───────────────────┴─────┴────────┘
+    ┌───────────────────┬─────┬────────┐
+    │ (iteration index) │ Key │ Values │
+    ├───────────────────┼─────┼────────┤
+    └───────────────────┴─────┴────────┘
+    ┌───────────────────┬────────────┐
     │ (iteration index) │   Values   │
     ├───────────────────┼────────────┤
     │         0         │ [ 'a', 1 ] │

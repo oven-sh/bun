@@ -18,9 +18,9 @@
 //!        JS runtime actually starts; commands that never spin up an event
 //!        loop are short-lived enough not to need it.
 //!
-//!   2. On any clean exit (`Global.exit` → `Bun__onExit`), closes the spawn
-//!      gate, then walks the process tree rooted at `getpid()` and SIGKILLs
-//!      every descendant so children Bun spawned don't outlive it.
+//!   2. On any clean exit (`Global.exit` → `Bun__onExit`), walks the process
+//!      tree rooted at `getpid()` and SIGKILLs every descendant so children
+//!      Bun spawned don't outlive it.
 //!      - macOS: libproc `proc_listchildpids()`.
 //!      - Linux: `/proc/<pid>/task/*/children`.
 //!
@@ -384,8 +384,8 @@ extern "C" fn on_process_exit() {
 ///      and unlike SIGTERM can't be trapped or ignored.
 /// A frozen process can neither exit (so its pid can't be reused) nor fork
 /// (so its child set is stable while we recurse), which is what makes the
-/// verify step sufficient. `self`, the only unfrozen process, is past
-/// `spawn_gate::close()` (or still single-threaded, from `enable`).
+/// verify step sufficient. The only forking process is `self`, and we're in
+/// the exit handler, past `spawn_gate::close()`: not forking.
 fn kill_descendants() {
     #[cfg(unix)]
     {

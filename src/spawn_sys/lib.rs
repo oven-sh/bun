@@ -181,10 +181,7 @@ pub mod pdeathsig {
     }
 }
 
-/// Closed by the no-orphans exit callback before it kills our descendants, so
-/// a Worker cannot spawn one after the callback has listed them. Covers every
-/// `posix_spawn::spawn_z` caller (`bun_core::spawn_sync_inherit`, tier-0 and
-/// synchronous, is the one spawn path outside it).
+/// Closed at no-orphans exit so a Worker cannot spawn once the tree walk runs.
 #[cfg(unix)]
 pub mod spawn_gate {
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

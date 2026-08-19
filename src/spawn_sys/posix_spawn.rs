@@ -618,7 +618,7 @@ pub mod posix_spawn {
         argv: *const *const c_char,
         envp: *const *const c_char,
     ) -> sys::Result<pid_t> {
-        // Held until this returns, i.e. until the child exists.
+        // Every runtime spawn passes here, except `bun_core::spawn_sync_inherit`.
         let Some(_in_flight) = crate::spawn_gate::enter() else {
             return sys::Result::Err(
                 sys::Error::from_code(sys::E::ECANCELED, SYSCALL_POSIX_SPAWN)

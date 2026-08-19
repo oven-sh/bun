@@ -209,4 +209,34 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       await sql.close({ timeout: 0.1 });
     }
   });
+
+  // The finished transaction's `tx` object must not keep the dropped client
+  // (and so its slot) alive through the settle callbacks that pin the client
+  // while the transaction runs.
+  test("a tx kept after its reserved begin() finished does not keep the dropped client's slot", async () => {
+    await container.ready;
+    const sql = new SQL({ url: url(), max: 1, idleTimeout: 5 });
+    try {
+      let escaped: unknown;
+      await (async () => {
+        const client = await sql.reserve();
+        await client.begin(async tx => {
+          escaped = tx;
+          await tx`select 1`;
+        });
+      })();
+
+      let result: unknown = "pending";
+      sql`select 5 as v`.then(
+        ([{ v }]) => (result = v),
+        e => (result = e),
+      );
+      for (let i = 0; i < 50 && result === "pending"; i++) {
+        await collectOnce();
+      }
+      expect({ result, escapedIsFunction: typeof escaped }).toEqual({ result: 5, escapedIsFunction: "function" });
+    } finally {
+      await sql.close({ timeout: 0.1 });
+    }
+  });
 });

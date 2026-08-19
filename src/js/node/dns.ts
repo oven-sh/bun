@@ -120,10 +120,7 @@ function stripZoneId(host) {
   return pct === -1 ? host : host.slice(0, pct);
 }
 
-// The address uv_inet_pton would parse out of `ip`, in the form ares_inet_pton
-// accepts, or null. uv_inet_pton only strips a zone id when parsing as IPv6, so
-// "1.2.3.4%x" is invalid while "fe80::1%br_lan" is fe80::1 even though isIP()
-// rejects the underscore in the zone.
+// uv_inet_pton semantics: a zone id is dropped from an IPv6 literal, whatever it contains.
 function normalizeIP(ip) {
   if (isIP(ip) === 4) return ip;
   const bare = stripZoneId(ip);

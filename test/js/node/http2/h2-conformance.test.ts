@@ -7,12 +7,13 @@
 // Connection-level cases only here (no HPACK required): preface, SETTINGS handshake/ack, PING,
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
+import { getProtectedObjects } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -1674,15 +1675,7 @@ describe("inbound stream lifecycle", () => {
 // (end() without a body, or the empty frame that follows a body once no trailers are coming); the
 // queue writes the two through different branches, so both shapes are covered below.
 describe("stream release after a queued END_STREAM", () => {
-  // JSC scans the machine stack conservatively. Completing a stream leaves copies of the stream's
-  // address (and of its request and response objects, which point back at it) in the stack region
-  // that the frames of a later collection occupy, and a copy under a slot those frames never write
-  // keeps the stream alive for as long as the collections keep being started the same way. On the
-  // full file on darwin aarch64, the last stream stays alive through all 50 passes of liveCount and
-  // the one before it through dozens of them (on linux x64 the last one does with `-t`), and three
-  // streams were seen alive after one pass. The leak these cases guard against keeps every stream
-  // alive. So the cases pass once fewer than half of the streams are left, which is far from both.
-  const STREAMS = 16;
+  const STREAMS = 4;
   // The peer advertises a 1 KiB stream window: a 4 KiB body cannot be written in one go, so its
   // tail (the frame carrying END_STREAM) is queued and flushed as the peer's WINDOW_UPDATEs arrive.
   const WINDOW = 1024;
@@ -1697,16 +1690,47 @@ describe("stream release after a queued END_STREAM", () => {
     return `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
   }
 
-  /** Collects until fewer than half of `refs` are alive (or gives up) and reports how many are. */
-  async function liveCount(refs: WeakRef<object>[]): Promise<number> {
-    const live = () => refs.filter(ref => ref.deref() !== undefined).length;
-    // A completed stream's JS teardown is spread over a few immediates, and a WeakRef target
-    // survives the job that dereferenced it, so every pass gets a fresh turn before collecting.
-    for (let i = 0; i < 50 && live() >= STREAMS / 2; i++) {
+  /**
+   * How many Strong handles native code holds on Http2Stream objects right now. A stream's JS
+   * object is rooted that way from the moment the stream exists until free_resources drops the
+   * handles (two per server stream, one per client stream). So a stream that is not released keeps
+   * showing up here for as long as its session lives, and a released one is gone at once, the
+   * handles being dropped rather than collected, which is what makes these counts exact.
+   */
+  function rootedStreams(): number {
+    return getProtectedObjects().filter(o => o instanceof Duplex && /Http2Stream$/.test(o.constructor.name)).length;
+  }
+
+  /**
+   * The count to measure against: the handles on the streams the case has set up so far. Whatever
+   * earlier activity left behind is finalized first, and a release that is still on its way (a
+   * stream's last handle goes one immediate after the stream closes) is given time to land, so that
+   * neither can land inside the measurement.
+   */
+  async function settledRootedStreams(): Promise<number> {
+    Bun.gc(true);
+    let count = rootedStreams();
+    for (let i = 0; i < 50; i++) {
       await new Promise(resolve => setImmediate(resolve));
-      await gcTick();
+      const next = rootedStreams();
+      if (next === count) break;
+      count = next;
     }
-    return live();
+    return count;
+  }
+
+  /** How many handles beyond `baseline` are still held once the releases have had time to land. */
+  async function rootedBeyond(baseline: number): Promise<number> {
+    for (let i = 0; i < 50 && rootedStreams() !== baseline; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    return rootedStreams() - baseline;
+  }
+
+  /** Tears the session down before the case ends, so that its releases cannot land inside the next case's measurement. */
+  async function closeAll(client: http2.ClientHttp2Session, server: http2.Http2Server): Promise<void> {
+    client.destroy();
+    await new Promise(resolve => server.close(resolve));
   }
 
   /**
@@ -1728,34 +1752,40 @@ describe("stream release after a queued END_STREAM", () => {
     });
     req.on("close", () => resolve({ received, queuedAtResponse }));
     req.end(body);
-    return { ref: new WeakRef<object>(req), closed: promise };
+    return promise;
   }
 
   test("server streams whose response outgrew the client's window are released", async () => {
-    const refs: WeakRef<object>[] = [];
+    const rootedWhileOpen: number[] = [];
     const queuedAfterEnd: number[] = [];
     const server = http2.createServer();
     server.on("stream", stream => {
-      refs.push(new WeakRef(stream));
+      rootedWhileOpen.push(rootedStreams());
       stream.respond({ ":status": 200 });
       stream.end(BODY);
       queuedAfterEnd.push(stream.session!.state.outboundQueueSize!);
     });
     const client = http2.connect(await listen(server), { settings: { initialWindowSize: WINDOW } });
     try {
+      const baseline = await settledRootedStreams();
       const received: number[] = [];
       for (let i = 0; i < STREAMS; i++) {
-        received.push((await roundTrip(client, { ":path": "/" }).closed).received);
+        received.push((await roundTrip(client, { ":path": "/" })).received);
       }
-      // The premise: each response left part of its body queued, and the queue then delivered it.
-      expect({ tailQueued: queuedAfterEnd.map(n => n > 0), received }).toEqual({
+      // The premise: each stream was rooted while it was open, each response left part of its body
+      // queued, and the queue then delivered it.
+      expect({
+        rooted: rootedWhileOpen.map(n => n > baseline),
+        tailQueued: queuedAfterEnd.map(n => n > 0),
+        received,
+      }).toEqual({
+        rooted: Array(STREAMS).fill(true),
         tailQueued: Array(STREAMS).fill(true),
         received: Array(STREAMS).fill(BODY.length),
       });
-      expect(await liveCount(refs)).toBeLessThan(STREAMS / 2);
+      expect(await rootedBeyond(baseline)).toBe(0);
     } finally {
-      client.close();
-      server.close();
+      await closeAll(client, server);
     }
   });
 
@@ -1765,11 +1795,12 @@ describe("stream release after a queued END_STREAM", () => {
    * response, and with it a non-empty outbound queue, until the session goes away), then runs
    * STREAMS ordinary requests on the same session. `server` must answer "/stalled" with
    * STALLED_BODY and report through `stalledFinished` whether that response ever finished; every
-   * other request must register its stream in `refs`. Resolves to how many of `refs` survived GC.
+   * other request must push `rootedStreams()` onto `rootedWhileOpen` while its stream is open.
+   * Resolves to how many handles those requests left behind.
    */
-  async function liveAfterRequestsBehindStalledResponse(
+  async function rootedAfterRequestsBehindStalledResponse(
     server: http2.Http2Server,
-    refs: WeakRef<object>[],
+    rootedWhileOpen: number[],
     stalledFinished: () => boolean,
   ): Promise<number> {
     const client = http2.connect(await listen(server));
@@ -1778,20 +1809,20 @@ describe("stream release after a queued END_STREAM", () => {
       let stalledError: Error | null = null;
       stalled.on("error", err => (stalledError = err));
       await once(stalled, "response");
+      const baseline = await settledRootedStreams();
       for (let i = 0; i < STREAMS; i++) {
-        await roundTrip(client, { ":path": "/" }).closed;
+        await roundTrip(client, { ":path": "/" });
       }
-      expect(refs).toHaveLength(STREAMS);
-      const live = await liveCount(refs);
-      // The premise: the stalled stream is still open (not errored or reset into releasing the
-      // queue) and its response was still queued while the other requests were answered.
+      const beyond = await rootedBeyond(baseline);
+      // The premise: every request's stream was rooted while it was open, and the stalled stream is
+      // still open (not errored or reset into releasing the queue) with its response still queued,
+      // as it was while the other requests were answered.
+      expect(rootedWhileOpen.map(n => n > baseline)).toEqual(Array(STREAMS).fill(true));
       expect(stalledError).toBeNull();
       expect(stalledFinished()).toBe(false);
-      stalled.close();
-      return live;
+      return beyond;
     } finally {
-      client.close();
-      server.close();
+      await closeAll(client, server);
     }
   }
 
@@ -1799,7 +1830,7 @@ describe("stream release after a queued END_STREAM", () => {
     ['end("ok")', (stream: http2.ServerHttp2Stream) => stream.end("ok")],
     ["end() without a body", (stream: http2.ServerHttp2Stream) => stream.end()],
   ])("server streams answered with %s behind another stream's stalled response are released", async (_, finish) => {
-    const refs: WeakRef<object>[] = [];
+    const rootedWhileOpen: number[] = [];
     let stalledFinished = false;
     const server = http2.createServer();
     server.on("stream", (stream, headers) => {
@@ -1811,7 +1842,7 @@ describe("stream release after a queued END_STREAM", () => {
         stream.end(STALLED_BODY);
         return;
       }
-      refs.push(new WeakRef(stream));
+      rootedWhileOpen.push(rootedStreams());
       stream.resume();
       // Answer once the request's END_STREAM has been processed, like a handler that consumes the
       // request body does: the queued response is then the only thing the stream still waits for.
@@ -1820,13 +1851,13 @@ describe("stream release after a queued END_STREAM", () => {
         finish(stream);
       });
     });
-    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBeLessThan(STREAMS / 2);
+    expect(await rootedAfterRequestsBehindStalledResponse(server, rootedWhileOpen, () => stalledFinished)).toBe(0);
   });
 
   // The compat API's responses wait for trailers, so after the body END_STREAM always goes out on an
   // empty DATA frame of its own.
   test("server streams answered through the compat API behind another stream's stalled response are released", async () => {
-    const refs: WeakRef<object>[] = [];
+    const rootedWhileOpen: number[] = [];
     let stalledFinished = false;
     const server = http2.createServer((req, res) => {
       if (req.url === "/stalled") {
@@ -1836,18 +1867,19 @@ describe("stream release after a queued END_STREAM", () => {
         res.end(STALLED_BODY);
         return;
       }
-      refs.push(new WeakRef(res.stream));
+      rootedWhileOpen.push(rootedStreams());
       req.resume();
       req.on("end", () => res.end("ok"));
     });
-    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBeLessThan(STREAMS / 2);
+    expect(await rootedAfterRequestsBehindStalledResponse(server, rootedWhileOpen, () => stalledFinished)).toBe(0);
   });
 
   test("client streams whose request body outgrew the server's window are released", async () => {
-    const refs: WeakRef<object>[] = [];
+    const rootedWhileOpen: number[] = [];
     const uploaded: Promise<number>[] = [];
     const server = http2.createServer({ settings: { initialWindowSize: WINDOW } });
     server.on("stream", stream => {
+      rootedWhileOpen.push(rootedStreams());
       // Answer as soon as the headers arrive, so the server's END_STREAM reaches the client while
       // the client still has the body's tail queued, and keep reading the body so that tail really
       // is flushed from the queue (an upload nobody reads gets reset instead, and a reset releases
@@ -1869,22 +1901,25 @@ describe("stream release after a queued END_STREAM", () => {
     try {
       // The server's window applies to requests opened after its SETTINGS frame has been received.
       await once(client, "remoteSettings");
+      const baseline = await settledRootedStreams();
       const queuedAtResponse: number[] = [];
       for (let i = 0; i < STREAMS; i++) {
-        const { ref, closed } = roundTrip(client, { ":method": "POST", ":path": "/" }, BODY);
-        refs.push(ref);
-        queuedAtResponse.push((await closed).queuedAtResponse);
+        queuedAtResponse.push((await roundTrip(client, { ":method": "POST", ":path": "/" }, BODY)).queuedAtResponse);
       }
-      // The premise: each response arrived while the request's tail was still queued, and the queue
-      // then delivered that tail.
-      expect({ tailQueued: queuedAtResponse.map(n => n > 0), uploaded: await Promise.all(uploaded) }).toEqual({
+      // The premise: each stream was rooted while it was open, each response arrived while the
+      // request's tail was still queued, and the queue then delivered that tail.
+      expect({
+        rooted: rootedWhileOpen.map(n => n > baseline),
+        tailQueued: queuedAtResponse.map(n => n > 0),
+        uploaded: await Promise.all(uploaded),
+      }).toEqual({
+        rooted: Array(STREAMS).fill(true),
         tailQueued: Array(STREAMS).fill(true),
         uploaded: Array(STREAMS).fill(BODY.length),
       });
-      expect(await liveCount(refs)).toBeLessThan(STREAMS / 2);
+      expect(await rootedBeyond(baseline)).toBe(0);
     } finally {
-      client.close();
-      server.close();
+      await closeAll(client, server);
     }
   });
 });

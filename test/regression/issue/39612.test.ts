@@ -93,21 +93,16 @@ mock.module("@vscode/debugadapter", () => ({
 }));
 
 // Stub the adapter package so the test does not pull in its "ws" dependency.
-mock.module(
-  path.join(import.meta.dir, "../../../packages/bun-debug-adapter-protocol/index.ts"),
-  () => ({
-    getAvailablePort: async () => 0,
-    getRandomId: () => "id",
-    TCPSocketSignal: class {},
-    UnixSignal: class {},
-    WebSocketDebugAdapter: class {},
-    NodeSocketDebugAdapter: class {},
-  }),
-);
+mock.module(path.join(import.meta.dir, "../../../packages/bun-debug-adapter-protocol/index.ts"), () => ({
+  getAvailablePort: async () => 0,
+  getRandomId: () => "id",
+  TCPSocketSignal: class {},
+  UnixSignal: class {},
+  WebSocketDebugAdapter: class {},
+  NodeSocketDebugAdapter: class {},
+}));
 
-const { registerDebugger, debugCommand } = await import(
-  "../../../packages/bun-vscode/src/features/debug.ts"
-);
+const { registerDebugger, debugCommand } = await import("../../../packages/bun-vscode/src/features/debug.ts");
 
 registerDebugger({ subscriptions: { push() {} } } as any);
 

@@ -1475,8 +1475,10 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { (*this).this_jsvalue.finalize() };
         // SAFETY: `this` is live; the JS-wrapper +1 (released last) keeps ref_count > 0
         // across whatever ref the producer drops in response.
-        if unsafe { (*this).ref_count } > 1 {
-            unsafe { (*this).context.wrapper_finalized() };
+        unsafe {
+            if (*this).ref_count > 1 {
+                (*this).context.wrapper_finalized();
+            }
         }
         // SAFETY: `this` is live; the JS-wrapper ref below still pins the count.
         if unsafe { (*this).context.finalize_detach() } {

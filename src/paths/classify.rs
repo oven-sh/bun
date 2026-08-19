@@ -12,6 +12,9 @@ pub struct RelPathFacts {
     pub has_sep: bool,
     /// Any `.` anywhere (including inside names like `a.b`).
     pub has_dot: bool,
+    /// Some component is exactly `.` or `..`; names like `a.b` or `...` don't
+    /// count.
+    pub has_dot_component: bool,
     /// `..` resolution climbs above the segment's own start: the running
     /// component depth (name +1, `..` −1, `.`/empty 0) ever goes negative.
     pub climbs_above_start: bool,
@@ -24,19 +27,27 @@ pub fn classify_rel_t<T: PathChar>(rel: &[T], fmt: PathFormat) -> RelPathFacts {
     let mut facts = RelPathFacts {
         has_sep: false,
         has_dot: false,
+        has_dot_component: false,
         climbs_above_start: false,
     };
     let mut depth = 0isize; // net component depth so far
     let mut dots = 0usize; // `.` count in the current component
     let mut other = false; // non-dot chars in the current component
+    fn close_component(dots: usize, other: bool, facts: &mut RelPathFacts, depth: &mut isize) {
+        match (other, dots) {
+            (false, 0) => {}
+            (false, 1) => facts.has_dot_component = true,
+            (false, 2) => {
+                facts.has_dot_component = true;
+                *depth -= 1;
+            }
+            _ => *depth += 1,
+        }
+    }
     for &c in rel {
         if fmt.is_sep(c) {
             facts.has_sep = true;
-            if other || dots > 2 {
-                depth += 1;
-            } else if dots == 2 {
-                depth -= 1;
-            }
+            close_component(dots, other, &mut facts, &mut depth);
             dots = 0;
             other = false;
             if depth < 0 {
@@ -49,9 +60,7 @@ pub fn classify_rel_t<T: PathChar>(rel: &[T], fmt: PathFormat) -> RelPathFacts {
             other = true;
         }
     }
-    if dots == 2 && !other {
-        depth -= 1; // trailing `..` component applies its −1 too
-    }
+    close_component(dots, other, &mut facts, &mut depth);
     facts.climbs_above_start = depth < 0;
     facts
 }
@@ -122,5 +131,64 @@ mod tests {
         check("..", P, (false, true, true));
         check("a/../b", P, (true, true, false));
         check("a/..", P, (true, true, false));
+    }
+
+    #[track_caller]
+    fn check_dot_component(rel: &str, fmt: PathFormat, want: bool) {
+        assert_eq!(
+            classify_rel_t(rel.as_bytes(), fmt).has_dot_component,
+            want,
+            "{rel:?} {fmt:?}"
+        );
+        let wide: Vec<u16> = rel.encode_utf16().collect();
+        assert_eq!(
+            classify_rel_t(&wide, fmt).has_dot_component,
+            want,
+            "{rel:?} {fmt:?} (u16)"
+        );
+    }
+
+    #[test]
+    fn dot_components() {
+        use PathFormat::Windows as W;
+        for rel in [
+            ".",
+            "..",
+            ".\\",
+            "..\\",
+            ".\\a",
+            "../a",
+            "a\\.",
+            "a/..",
+            "a\\.\\b",
+            "a\\..\\b",
+            "a\\\\..",
+            "C:\\a\\..\\b",
+            "\\\\?\\C:\\a\\.",
+        ] {
+            check_dot_component(rel, W, true);
+        }
+        // Dots inside a name, and three or more dots, are ordinary names.
+        for rel in [
+            "",
+            "a",
+            "a\\",
+            "a.b",
+            ".a",
+            "a.",
+            "..a",
+            "a..",
+            "...",
+            "a\\...\\b",
+            ".hidden\\x",
+            "a.b\\c.d",
+            "C:\\a.b\\c",
+        ] {
+            check_dot_component(rel, W, false);
+        }
+        // Under the posix format a backslash is part of the name.
+        check_dot_component("a/./b", PathFormat::Posix, true);
+        check_dot_component("a\\.", PathFormat::Posix, false);
+        check_dot_component(".\\a", PathFormat::Posix, false);
     }
 }

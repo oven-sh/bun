@@ -1277,7 +1277,8 @@ impl UpdateInteractiveCommand {
     fn update_viewport(state: &mut MultiSelectState<'_>) {
         // Ensure cursor is visible with context (2 packages below, 2 above if possible)
         let context_below: usize = 2;
-        let context_above: usize = 1;
+        // A 1-row viewport has no room for context above the cursor.
+        let context_above: usize = 1usize.min(state.viewport_height.saturating_sub(1));
 
         // If cursor is below viewport
         if state.cursor >= state.viewport_start + state.viewport_height {
@@ -1303,7 +1304,8 @@ impl UpdateInteractiveCommand {
                 }
             };
 
-            state.viewport_start = desired_start;
+            // Never scroll past the cursor (align-bottom can at a 1-row viewport).
+            state.viewport_start = desired_start.min(state.cursor);
         }
         // If cursor is above viewport
         else if state.cursor < state.viewport_start {

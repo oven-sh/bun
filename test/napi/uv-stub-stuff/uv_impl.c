@@ -420,6 +420,20 @@ static void *send_after_a_while(void *arg) {
   return NULL;
 }
 
+// uv_async_init, as a thrown error when it fails so that a test fails there
+// and not on the events the uninitialised handle would then produce.
+static bool init_async(napi_env env, uv_loop_t *loop, uv_async_t *handle,
+                       uv_async_cb cb) {
+  int rc = uv_async_init(loop, handle, cb);
+  if (rc != 0) {
+    char message[64];
+    snprintf(message, sizeof(message), "uv_async_init returned %d", rc);
+    napi_throw_error(env, NULL, message);
+    return false;
+  }
+  return true;
+}
+
 // testAsync(useDefaultLoop, sendFromThread, callback): events
 //   async 1 1      first callback; the three sends coalesced into it
 //   async 2 1      the callback's own send
@@ -437,11 +451,11 @@ static napi_value test_async(napi_env env, napi_callback_info info) {
   struct async_test *test = calloc(1, sizeof(*test));
   reporter_init(&test->reporter, env, args[2]);
   test->handle.data = test; // set before init, as addons commonly do
-  int rc = uv_async_init(get_loop(env, use_default_loop), &test->handle,
-                         async_test_cb);
-  if (rc != 0 || test->handle.data != test ||
-      uv_handle_get_loop((uv_handle_t *)&test->handle) !=
-          get_loop(env, use_default_loop) ||
+  uv_loop_t *loop = get_loop(env, use_default_loop);
+  if (!init_async(env, loop, &test->handle, async_test_cb))
+    return NULL;
+  if (test->handle.data != test ||
+      uv_handle_get_loop((uv_handle_t *)&test->handle) != loop ||
       uv_handle_get_type((uv_handle_t *)&test->handle) != UV_ASYNC) {
     napi_throw_error(env, NULL, "uv_async_init did not set the handle up");
     return NULL;
@@ -479,7 +493,8 @@ static napi_value test_async_close_with_send_pending(napi_env env,
   get_args(env, info, args, 1);
   struct async_test *test = calloc(1, sizeof(*test));
   reporter_init(&test->reporter, env, args[0]);
-  uv_async_init(get_loop(env, false), &test->handle, async_test_cb);
+  if (!init_async(env, get_loop(env, false), &test->handle, async_test_cb))
+    return NULL;
   uv_handle_set_data((uv_handle_t *)&test->handle, test);
   uv_async_send(&test->handle);
   uv_close((uv_handle_t *)&test->handle, async_test_close_cb);
@@ -546,7 +561,8 @@ static napi_value test_async_stress(napi_env env, napi_callback_info info) {
   struct stress_test *test = calloc(1, sizeof(*test));
   reporter_init(&test->reporter, env, args[0]);
   test->handle.data = test;
-  uv_async_init(get_loop(env, false), &test->handle, stress_async_cb);
+  if (!init_async(env, get_loop(env, false), &test->handle, stress_async_cb))
+    return NULL;
   if (pthread_create(&test->sender, NULL, stress_sender, test) != 0) {
     napi_throw_error(env, NULL, "pthread_create failed");
     return NULL;
@@ -561,7 +577,9 @@ static uv_async_t unref_test_handle;
 // process must exit although the handle is never closed.
 static napi_value test_async_ref(napi_env env, napi_callback_info info) {
   uv_handle_t *handle = (uv_handle_t *)&unref_test_handle;
-  uv_async_init(get_loop(env, false), &unref_test_handle, unused_async_cb);
+  if (!init_async(env, get_loop(env, false), &unref_test_handle,
+                  unused_async_cb))
+    return NULL;
   int32_t observed[6];
   observed[0] = uv_has_ref(handle);
   uv_unref(handle);

@@ -81,8 +81,8 @@ enum DispatchState {
     Running = 2,
 }
 
-/// What a `uv_loop_t*` points at. Lives in the VM's `RuntimeState`, so as long
-/// as the VM: forever for the main thread's, like libuv's default loop.
+/// What a `uv_loop_t*` points at. Lives in the VM's `RuntimeState`, so exactly
+/// as long as the VM does ([`Self::of_vm`]).
 #[repr(C)]
 pub(crate) struct UvLoop {
     /// `uv_loop_t.data`: the addon's, read and written by it (offset 0 as in uv.h).
@@ -113,12 +113,13 @@ impl UvLoop {
         }
     }
 
-    /// Null once a Worker's VM has torn its `RuntimeState` down.
+    /// Null before `init_runtime_state` and after `VirtualMachine::destroy`, which
+    /// clears the field before it frees the state.
     ///
     /// # Safety
-    /// `vm` is live or never freed. Any thread: `runtime_state` is written before
-    /// the VM runs script and again only by a Worker's teardown, after which, as
-    /// with libuv, the addon must not use that loop.
+    /// `vm`'s allocation is still there (the main thread's always is). Any thread:
+    /// between those two writes `runtime_state` is constant, and an addon's
+    /// cleanup hooks, where it stops its threads, run before the second one.
     pub(crate) unsafe fn of_vm(vm: *const VirtualMachine) -> *mut UvLoop {
         // SAFETY: fn contract.
         let state = unsafe { (*vm).runtime_state }.cast::<RuntimeState>();

@@ -506,6 +506,23 @@ test("auto-mock of a primitive CJS module keeps the raw value", async () => {
   expect(ns.default).toBe(42);
 });
 
+test("auto-mock of exotic exports doesn't mutate the real object", async () => {
+  jest.mock("./auto-mock-fixture-array.cjs");
+
+  // The array passes through the walker unchanged, and the mock install
+  // must not write a self-referencing `default` onto the real object.
+  const arr = require("./auto-mock-fixture-array.cjs");
+  expect(Array.isArray(arr)).toBe(true);
+  expect(arr).toEqual([1, 2, 3]);
+  expect(Object.prototype.hasOwnProperty.call(arr, "default")).toBe(false);
+  expect(Object.keys(arr)).toEqual(["0", "1", "2"]);
+
+  // Default import and requireMock resolve to the same untouched array.
+  const ns = await import("./auto-mock-fixture-array.cjs");
+  expect(ns.default).toBe(arr);
+  expect(jest.requireMock("./auto-mock-fixture-array.cjs")).toBe(arr);
+});
+
 test("factory mocks shaped { __esModule, default } unwrap to the default for require()", () => {
   // Fresh require of the mock already unwrapped this shape (the
   // commonJSModule branch of handleVirtualModuleResult).

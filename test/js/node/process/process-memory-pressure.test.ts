@@ -78,12 +78,17 @@ const canReadCgroupEvents = (() => {
   }
 })();
 
+// Every injected counter sits this far above anything the real file can hold.
+// The real file stays polled while a test injects, so a real notification
+// that lands between two steps reads as lower counts and changes nothing.
+const FAR_ABOVE_REAL = 1_000_000_000_000;
+
 function memoryEvents(
   counters: Partial<Record<"low" | "high" | "max" | "oom" | "oom_kill" | "oom_group_kill", number>>,
 ) {
   const all = { low: 0, high: 0, max: 0, oom: 0, oom_kill: 0, oom_group_kill: 0, ...counters };
   return Object.entries(all)
-    .map(([key, value]) => `${key} ${value}\n`)
+    .map(([key, value]) => `${key} ${FAR_ABOVE_REAL + value}\n`)
     .join("");
 }
 
@@ -222,7 +227,8 @@ describe.concurrent("process.on('memoryPressure')", () => {
   test.skipIf(!canReadCgroupEvents)("cgroup memory.events changes map to levels with a holdoff", async () => {
     // Each step: [file content, holdoff clock in ms, levels the listener must see].
     // The counters accumulate from step to step, as they do in the real file.
-    const steps: [string, number, string[]][] = [];
+    // A null content removes and re-adds the listener, which sets up a new source.
+    const steps: [string | null, number, string[]][] = [];
     let counters: Parameters<typeof memoryEvents>[0] = {};
     const moved = (changed: typeof counters, atMs: number, emitted: string[], extraLines = "") => {
       counters = { ...counters, ...changed };
@@ -241,13 +247,23 @@ describe.concurrent("process.on('memoryPressure')", () => {
     moved({}, 9000, [], "some_future_counter 7\n"); // a counter Bun does not classify moved
     moved({ high: 8 }, 9000, ["warning"], "no_value\nsome_future_counter x\n"); // bad lines are skipped, the rest still counts
     steps.push([memoryEvents({ high: 1 }), 9000, []]); // a short read: below the counts already seen
+    steps.push([null, 0, []]);
+    steps.push([memoryEvents({}), 0, []]); // the new source takes its own baseline from the first injection
+    steps.push([memoryEvents({ high: 1 }), 0, ["warning"]]); // and starts with no holdoff
     const { stdout, stderr, exitCode } = await run(/* js */ `
       const { memoryPressureInjectCgroupEvents } = require("bun:internal-for-testing");
       const emitted = [];
-      process.on("memoryPressure", level => emitted.push(level));
+      const listener = level => emitted.push(level);
+      process.on("memoryPressure", listener);
       const results = [];
       for (const [body, atMs] of ${JSON.stringify(steps.map(([body, atMs]) => [body, atMs]))}) {
-        const injected = memoryPressureInjectCgroupEvents(body, atMs);
+        let injected = null;
+        if (body === null) {
+          process.off("memoryPressure", listener);
+          process.on("memoryPressure", listener);
+        } else {
+          injected = memoryPressureInjectCgroupEvents(body, atMs);
+        }
         // The source queues the event on the event loop. Let it run.
         await new Promise(resolve => setImmediate(resolve));
         results.push({ injected, emitted: emitted.splice(0) });
@@ -255,7 +271,9 @@ describe.concurrent("process.on('memoryPressure')", () => {
       process.stdout.write(JSON.stringify(results));
     `);
     expect(stderr.trim()).toBe("");
-    expect(JSON.parse(stdout)).toEqual(steps.map(([, , emitted]) => ({ injected: true, emitted })));
+    expect(JSON.parse(stdout)).toEqual(
+      steps.map(([body, , emitted]) => ({ injected: body === null ? null : true, emitted })),
+    );
     expect(exitCode).toBe(0);
   });
 

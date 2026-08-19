@@ -445,6 +445,9 @@ mod posix {
             seen: Counters,
             last_warning: Option<Instant>,
             last_critical: Option<Instant>,
+            /// Origin of the `bun:internal-for-testing` clock, once a test
+            /// has taken this source over.
+            injected_epoch: Option<Instant>,
         }
 
         impl CgroupEvents {
@@ -460,6 +463,7 @@ mod posix {
                     seen,
                     last_warning: None,
                     last_critical: None,
+                    injected_epoch: None,
                 })
             }
 
@@ -497,12 +501,21 @@ mod posix {
                 Some(lvl)
             }
 
-            /// For `bun:internal-for-testing`: replace what `open` read with
-            /// `counters` and forget any holdoff.
-            pub(in crate::node::memory_pressure) fn reset(&mut self, counters: Counters) {
-                self.seen = counters;
-                self.last_warning = None;
-                self.last_critical = None;
+            /// For `bun:internal-for-testing`. The first call on a source makes
+            /// `counters` its baseline and starts the clock `at_ms` is read on.
+            pub(in crate::node::memory_pressure) fn inject(
+                &mut self,
+                counters: Counters,
+                at_ms: u64,
+            ) -> Option<i32> {
+                let Some(epoch) = self.injected_epoch else {
+                    self.injected_epoch = Some(Instant::now());
+                    self.seen = counters;
+                    self.last_warning = None;
+                    self.last_critical = None;
+                    return None;
+                };
+                self.observe(counters, epoch + Duration::from_millis(at_ms))
             }
         }
 
@@ -724,10 +737,8 @@ pub(crate) fn js_armed_sources(global: &JSGlobalObject, _frame: &CallFrame) -> J
     })
 }
 
-/// `memoryPressureInjectCgroupEvents(text, atMs)`: the first call makes
-/// `text` the baseline the cgroup source compares against. Each later call
-/// is a notification with `text` as the file content at `atMs` on the
-/// holdoff clock. `false` when no cgroup source is installed.
+/// `memoryPressureInjectCgroupEvents(text, atMs)`: see `CgroupEvents::inject`.
+/// `false` when no cgroup source is installed.
 #[bun_jsc::host_fn]
 pub(crate) fn js_inject_cgroup_events(
     global: &JSGlobalObject,
@@ -735,24 +746,16 @@ pub(crate) fn js_inject_cgroup_events(
 ) -> JsResult<JSValue> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        use std::time::{Duration, Instant};
-        static CLOCK_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-
         let [text, at_ms] = frame.arguments_as_array::<2>();
         let text = bun_core::OwnedString::new(text.to_bun_string(global)?);
         let counters = posix::Counters::parse(text.to_utf8().slice());
+        let at_ms = at_ms.to_int32().max(0) as u64;
 
         let vm = global.bun_vm().as_mut();
         let Some(events) = posix::watcher_mut(vm).and_then(|w| w.cgroup.as_mut()) else {
             return Ok(JSValue::js_boolean(false));
         };
-        let Some(start) = CLOCK_START.get() else {
-            CLOCK_START.get_or_init(Instant::now);
-            events.reset(counters);
-            return Ok(JSValue::js_boolean(true));
-        };
-        let at = *start + Duration::from_millis(at_ms.to_int32().max(0) as u64);
-        if let Some(lvl) = events.observe(counters, at) {
+        if let Some(lvl) = events.inject(counters, at_ms) {
             vm.enqueue_task(pressure_task(lvl));
         }
         Ok(JSValue::js_boolean(true))

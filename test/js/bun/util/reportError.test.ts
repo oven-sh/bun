@@ -213,6 +213,81 @@ Bun v<bun-version>`,
     });
   });
 
+  test.concurrent("--console-depth 0 (unlimited) prints every level", async () => {
+    // 12 levels of `o`, more than the formatter's default depth of 8.
+    const levels = 12;
+    const lines = ["error", "{"];
+    for (let i = 1; i <= levels; i++) lines.push(`${"  ".repeat(i)}o: {`);
+    lines.push(`${"  ".repeat(levels + 1)}leaf: 1,`);
+    for (let i = levels; i >= 1; i--) lines.push(`${"  ".repeat(i)}},`);
+    lines.push("}", "", "Bun v<bun-version>");
+    const code = `let o = { leaf: 1 }; for (let i = 0; i < ${levels}; i++) o = { o }; reportError(o);`;
+    expect(await run(["--console-depth", "0", "-e", code])).toEqual({
+      stdout: "",
+      stderr: lines.join("\n"),
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("--console-depth 0 on a value deeper than the stack: the script continues", async () => {
+    // The property walk throws a stack overflow RangeError partway down. The
+    // printer has to clear it, or reportError() throws it into the script.
+    // The partial dump is several MB, so stderr is not captured.
+    const code = `
+      let o = { leaf: 1 };
+      for (let i = 0; i < 20000; i++) o = { o };
+      try {
+        reportError(o);
+        console.log("after");
+      } catch (e) {
+        console.log("caught " + e.name);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--console-depth", "0", "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("after\n");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
+
+  // An Error does not read the console depth: its own properties print at
+  // depth 1, and every cause prints. A change that makes more of this output
+  // follow the console depth has to update these on purpose.
+  test.concurrent("an uncaught Error prints its properties and causes as before", async () => {
+    const code = `
+      const e = new Error("root", { cause: new Error("c1", { cause: new Error("c2", { cause: new Error("c3") }) }) });
+      e.deep = { a: { b: { c: 1 } } };
+      throw e;
+    `;
+    const { stdout, stderr, exitCode } = await run(["-e", code]);
+    expect(stderr).toContain("error: root\n deep: {\n  a: [Object ...],\n},\n");
+    expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([
+      "error: root",
+      "error: c1",
+      "error: c2",
+      "error: c3",
+    ]);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("an uncaught AggregateError prints each Error member as before", async () => {
+    const code = `throw new AggregateError([new Error("m1"), new Error("m2"), new Error("m3")], "agg");`;
+    const { stdout, stderr, exitCode } = await run(["-e", code]);
+    expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([
+      "error: m1",
+      "error: m2",
+      "error: m3",
+    ]);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent(
     "bun test: a test that rejects with the value, and an unhandled rejection during a test",
     async () => {

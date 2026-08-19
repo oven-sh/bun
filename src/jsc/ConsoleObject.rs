@@ -1686,7 +1686,7 @@ pub mod formatter {
             }
         }
 
-        /// An uncaught value that is not an `Error` is printed whole, at the console depth.
+        /// The error handler prints at the console depth, as `console.error` does.
         pub fn for_error_handler(global_this: &'a JSGlobalObject) -> Self {
             let mut formatter = Self::new(global_this);
             formatter.max_depth = console_depth();

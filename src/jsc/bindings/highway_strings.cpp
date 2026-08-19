@@ -975,17 +975,124 @@ size_t IndexOfNeedsEscapeForJavaScriptStringImplQuote(const uint8_t* HWY_RESTRIC
 
 // --- Substring search (memmem / memrmem, 8- and 16-bit) --------------------
 //
-// Two-anchor SIMD filter: vectors at candidate + anchor_a and + anchor_b are
-// ANDed so only positions where both rare bytes (MemMemPickAnchors) line up
-// are memcmp'd. A false-positive budget bounds memcmp work at ~2·|haystack|
-// and hands the remainder to MemMemTwoWayFallback for a linear worst case.
+// Two-anchor SIMD filter: the vector at candidate + one anchor is compared
+// first (one load per N starts while nothing matches); only blocks with a hit
+// also load the other anchor, and only positions where both rare bytes
+// (MemMemPickAnchors) line up are memcmp'd. A false-positive budget bounds
+// memcmp work at ~2·|haystack| bytes and hands the remainder to
+// MemMemTwoWayFallback for a linear worst case.
 static constexpr size_t kNotFound = ~static_cast<size_t>(0);
 static constexpr size_t kFallback = ~static_cast<size_t>(1);
 
+template<typename T>
+static HWY_INLINE bool LoadEq(const uint8_t* a, const uint8_t* b)
+{
+    T x, y;
+    memcpy(&x, a, sizeof(T));
+    memcpy(&y, b, sizeof(T));
+    return x == y;
+}
+
+// Candidate verification. Short needles are compared with overlapping scalar
+// loads that stay inside [a, a+n): glibc's EVEX memcmp uses a masked 32-byte
+// load for n < 32, which takes a microcode assist whenever the masked-off
+// tail reaches into a non-resident page (a match at the end of a buffer).
 template<typename Char>
 static HWY_INLINE bool MemMemVerify(const Char* haystack, size_t pos, const Char* needle, size_t needle_len)
 {
-    return memcmp(haystack + pos, needle, needle_len * sizeof(Char)) == 0;
+    const uint8_t* a = reinterpret_cast<const uint8_t*>(haystack + pos);
+    const uint8_t* b = reinterpret_cast<const uint8_t*>(needle);
+    const size_t n = needle_len * sizeof(Char);
+    if (n >= 32) return memcmp(a, b, n) == 0;
+    if (n >= 16) return LoadEq<uint64_t>(a, b) && LoadEq<uint64_t>(a + 8, b + 8) && LoadEq<uint64_t>(a + n - 16, b + n - 16) && LoadEq<uint64_t>(a + n - 8, b + n - 8);
+    if (n >= 8) return LoadEq<uint64_t>(a, b) && LoadEq<uint64_t>(a + n - 8, b + n - 8);
+    if (n >= 4) return LoadEq<uint32_t>(a, b) && LoadEq<uint32_t>(a + n - 4, b + n - 4);
+    if (n >= 2) return LoadEq<uint16_t>(a, b) && LoadEq<uint16_t>(a + n - 2, b + n - 2);
+    return n == 0 || a[0] == b[0];
+}
+
+// One filter step over the N candidate starts [i, i+N).
+template<class D, typename Char = hn::TFromD<D>>
+static HWY_INLINE size_t MemMemBlockForward(D d, const Char* haystack, size_t i,
+    const Char* needle, size_t needle_len, size_t anchor_a, size_t anchor_b,
+    hn::Vec<D> va, hn::Vec<D> vb, size_t* budget, size_t* resume)
+{
+    const auto eq_a = hn::Eq(hn::LoadU(d, haystack + i + anchor_a), va);
+    if (HWY_LIKELY(hn::AllFalse(d, eq_a))) return kNotFound;
+    auto mask = hn::And(eq_a, hn::Eq(hn::LoadU(d, haystack + i + anchor_b), vb));
+    while (!hn::AllFalse(d, mask)) {
+        const size_t pos = i + static_cast<size_t>(hn::FindKnownFirstTrue(d, mask));
+        if (MemMemVerify(haystack, pos, needle, needle_len)) return pos;
+        if (HWY_UNLIKELY(*budget <= needle_len)) {
+            *resume = pos + 1;
+            return kFallback;
+        }
+        *budget -= needle_len;
+        mask = hn::AndNot(hn::SetOnlyFirst(mask), mask);
+    }
+    return kNotFound;
+}
+
+template<class D, typename Char = hn::TFromD<D>>
+static HWY_INLINE size_t MemMemBlockReverse(D d, const Char* haystack, size_t i,
+    const Char* needle, size_t needle_len, size_t anchor_a, size_t anchor_b,
+    hn::Vec<D> va, hn::Vec<D> vb, size_t* budget, size_t* resume)
+{
+    const auto eq_b = hn::Eq(hn::LoadU(d, haystack + i + anchor_b), vb);
+    if (HWY_LIKELY(hn::AllFalse(d, eq_b))) return kNotFound;
+    auto mask = hn::And(eq_b, hn::Eq(hn::LoadU(d, haystack + i + anchor_a), va));
+    while (!hn::AllFalse(d, mask)) {
+        const size_t lane = hn::FindKnownLastTrue(d, mask);
+        const size_t pos = i + lane;
+        if (MemMemVerify(haystack, pos, needle, needle_len)) return pos;
+        if (HWY_UNLIKELY(*budget <= needle_len)) {
+            *resume = pos == 0 ? 0 : pos - 1;
+            return kFallback;
+        }
+        *budget -= needle_len;
+        mask = hn::And(mask, hn::FirstN(d, lane));
+    }
+    return kNotFound;
+}
+
+// Requires end (= number of candidate starts) >= Lanes(d): the last block
+// overlaps the one before it instead of leaving a scalar tail. Every lane's
+// start < end, so both anchor loads are in bounds.
+template<class D, typename Char = hn::TFromD<D>>
+static HWY_INLINE size_t MemMemForwardVec(D d, const Char* haystack, size_t end,
+    const Char* needle, size_t needle_len, size_t anchor_a, size_t anchor_b,
+    size_t* budget, size_t* resume)
+{
+    const size_t N = hn::Lanes(d);
+    const auto va = hn::Set(d, needle[anchor_a]);
+    const auto vb = hn::Set(d, needle[anchor_b]);
+    size_t i = 0;
+    for (; i + N <= end; i += N) {
+        size_t r = MemMemBlockForward(d, haystack, i, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
+        if (r != kNotFound) return r;
+    }
+    if (i < end)
+        return MemMemBlockForward(d, haystack, end - N, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
+    return kNotFound;
+}
+
+template<class D, typename Char = hn::TFromD<D>>
+static HWY_INLINE size_t MemMemReverseVec(D d, const Char* haystack, size_t end,
+    const Char* needle, size_t needle_len, size_t anchor_a, size_t anchor_b,
+    size_t* budget, size_t* resume)
+{
+    const size_t N = hn::Lanes(d);
+    const auto va = hn::Set(d, needle[anchor_a]);
+    const auto vb = hn::Set(d, needle[anchor_b]);
+    size_t i = end;
+    while (i >= N) {
+        i -= N;
+        size_t r = MemMemBlockReverse(d, haystack, i, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
+        if (r != kNotFound) return r;
+    }
+    if (i > 0)
+        return MemMemBlockReverse(d, haystack, 0, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
+    return kNotFound;
 }
 
 template<typename Char>
@@ -993,38 +1100,24 @@ size_t MemMemForward(const Char* haystack, size_t haystack_len,
     const Char* needle, size_t needle_len,
     size_t anchor_a, size_t anchor_b, size_t* resume)
 {
+    size_t budget = haystack_len * 2 + needle_len * 32;
+    const size_t end = haystack_len - needle_len + 1;
+
     const hn::ScalableTag<Char> d;
-    const size_t N = hn::Lanes(d);
-    const auto va = hn::Set(d, needle[anchor_a]);
-    const auto vb = hn::Set(d, needle[anchor_b]);
-    const size_t last_start = haystack_len - needle_len;
+    if (end >= hn::Lanes(d))
+        return MemMemForwardVec(d, haystack, end, needle, needle_len, anchor_a, anchor_b, &budget, resume);
+    const hn::CappedTag<Char, 16 / sizeof(Char)> d128;
+    if (end >= hn::Lanes(d128))
+        return MemMemForwardVec(d128, haystack, end, needle, needle_len, anchor_a, anchor_b, &budget, resume);
 
-    size_t budget = (haystack_len * 2) / needle_len + 32;
-
-    size_t i = 0;
-    // Every lane's start <= last_start, so both anchor loads are in bounds.
-    while (i + N <= last_start + 1) {
-        auto mask = hn::And(hn::Eq(hn::LoadU(d, haystack + i + anchor_a), va),
-            hn::Eq(hn::LoadU(d, haystack + i + anchor_b), vb));
-        while (!hn::AllFalse(d, mask)) {
-            const size_t lane = static_cast<size_t>(hn::FindKnownFirstTrue(d, mask));
-            const size_t pos = i + lane;
-            if (MemMemVerify(haystack, pos, needle, needle_len)) return pos;
-            if (HWY_UNLIKELY(--budget == 0)) {
-                *resume = pos + 1;
-                return kFallback;
-            }
-            mask = hn::AndNot(hn::SetOnlyFirst(mask), mask);
-        }
-        i += N;
-    }
-    for (; i <= last_start; ++i) {
+    for (size_t i = 0; i < end; ++i) {
         if (haystack[i + anchor_a] == needle[anchor_a] && haystack[i + anchor_b] == needle[anchor_b]) {
             if (MemMemVerify(haystack, i, needle, needle_len)) return i;
-            if (HWY_UNLIKELY(--budget == 0)) {
+            if (HWY_UNLIKELY(budget <= needle_len)) {
                 *resume = i + 1;
                 return kFallback;
             }
+            budget -= needle_len;
         }
     }
     return kNotFound;
@@ -1035,38 +1128,24 @@ size_t MemMemReverse(const Char* haystack, size_t haystack_len,
     const Char* needle, size_t needle_len,
     size_t anchor_a, size_t anchor_b, size_t* resume)
 {
+    size_t budget = haystack_len * 2 + needle_len * 32;
+    const size_t end = haystack_len - needle_len + 1;
+
     const hn::ScalableTag<Char> d;
-    const size_t N = hn::Lanes(d);
-    const auto va = hn::Set(d, needle[anchor_a]);
-    const auto vb = hn::Set(d, needle[anchor_b]);
-    const size_t last_start = haystack_len - needle_len;
+    if (end >= hn::Lanes(d))
+        return MemMemReverseVec(d, haystack, end, needle, needle_len, anchor_a, anchor_b, &budget, resume);
+    const hn::CappedTag<Char, 16 / sizeof(Char)> d128;
+    if (end >= hn::Lanes(d128))
+        return MemMemReverseVec(d128, haystack, end, needle, needle_len, anchor_a, anchor_b, &budget, resume);
 
-    size_t budget = (haystack_len * 2) / needle_len + 32;
-
-    size_t i = last_start + 1;
-    while (i >= N) {
-        i -= N;
-        auto mask = hn::And(hn::Eq(hn::LoadU(d, haystack + i + anchor_a), va),
-            hn::Eq(hn::LoadU(d, haystack + i + anchor_b), vb));
-        while (!hn::AllFalse(d, mask)) {
-            const size_t lane = hn::FindKnownLastTrue(d, mask);
-            const size_t pos = i + lane;
-            if (MemMemVerify(haystack, pos, needle, needle_len)) return pos;
-            if (HWY_UNLIKELY(--budget == 0)) {
-                *resume = pos == 0 ? 0 : pos - 1;
-                return kFallback;
-            }
-            mask = hn::And(mask, hn::FirstN(d, lane));
-        }
-    }
-    // Remaining starts [0, i); at most N-1 of them.
-    while (i-- > 0) {
+    for (size_t i = end; i-- > 0;) {
         if (haystack[i + anchor_a] == needle[anchor_a] && haystack[i + anchor_b] == needle[anchor_b]) {
             if (MemMemVerify(haystack, i, needle, needle_len)) return i;
-            if (HWY_UNLIKELY(--budget == 0)) {
+            if (HWY_UNLIKELY(budget <= needle_len)) {
                 *resume = i == 0 ? 0 : i - 1;
                 return kFallback;
             }
+            budget -= needle_len;
         }
     }
     return kNotFound;
@@ -2138,6 +2217,43 @@ size_t DecodeHex16Impl(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT
     return out_len;
 }
 
+// In-place byte swap of every sizeof(T)-byte element (Buffer.swap16/32/64).
+// `data` need not be aligned to T.
+template<typename T>
+static void BSwapImpl(uint8_t* HWY_RESTRICT data, size_t len)
+{
+    const D8 d8;
+    const hn::Repartition<T, D8> dt;
+    const size_t N = hn::Lanes(d8);
+    size_t i = 0;
+    for (; i + 2 * N <= len; i += 2 * N) {
+        const auto v0 = hn::BitCast(dt, hn::LoadU(d8, data + i));
+        const auto v1 = hn::BitCast(dt, hn::LoadU(d8, data + i + N));
+        hn::StoreU(hn::BitCast(d8, hn::ReverseLaneBytes(v0)), d8, data + i);
+        hn::StoreU(hn::BitCast(d8, hn::ReverseLaneBytes(v1)), d8, data + i + N);
+    }
+    if (i + N <= len) {
+        const auto v = hn::BitCast(dt, hn::LoadU(d8, data + i));
+        hn::StoreU(hn::BitCast(d8, hn::ReverseLaneBytes(v)), d8, data + i);
+        i += N;
+    }
+    for (; i < len; i += sizeof(T)) {
+        T val;
+        memcpy(&val, data + i, sizeof(T));
+        if constexpr (sizeof(T) == 2)
+            val = __builtin_bswap16(val);
+        else if constexpr (sizeof(T) == 4)
+            val = __builtin_bswap32(val);
+        else
+            val = __builtin_bswap64(val);
+        memcpy(data + i, &val, sizeof(T));
+    }
+}
+
+void BSwap16Impl(uint8_t* HWY_RESTRICT data, size_t len) { BSwapImpl<uint16_t>(data, len); }
+void BSwap32Impl(uint8_t* HWY_RESTRICT data, size_t len) { BSwapImpl<uint32_t>(data, len); }
+void BSwap64Impl(uint8_t* HWY_RESTRICT data, size_t len) { BSwapImpl<uint64_t>(data, len); }
+
 // Implementation for WebSocket mask application
 void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uint8_t* HWY_RESTRICT output, const uint8_t* HWY_RESTRICT input, size_t length, bool skip_mask)
 {
@@ -2194,6 +2310,9 @@ namespace bun {
 
 // Define the dispatch tables. The names here must exactly match
 // the *Impl function names defined within the HWY_NAMESPACE block above.
+HWY_EXPORT(BSwap16Impl);
+HWY_EXPORT(BSwap32Impl);
+HWY_EXPORT(BSwap64Impl);
 HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
 HWY_EXPORT(CopyAsciiPrefixImpl);
 HWY_EXPORT(CopyU16ToU8Impl);
@@ -2423,6 +2542,21 @@ void highway_fill_with_skip_mask(
     bool skip_mask) // Whether to skip masking
 {
     HWY_DYNAMIC_DISPATCH(FillWithSkipMaskImpl)(mask, mask_len, output, input, length, skip_mask);
+}
+
+void highway_bswap16(uint8_t* data, size_t len)
+{
+    HWY_DYNAMIC_DISPATCH(BSwap16Impl)(data, len);
+}
+
+void highway_bswap32(uint8_t* data, size_t len)
+{
+    HWY_DYNAMIC_DISPATCH(BSwap32Impl)(data, len);
+}
+
+void highway_bswap64(uint8_t* data, size_t len)
+{
+    HWY_DYNAMIC_DISPATCH(BSwap64Impl)(data, len);
 }
 
 size_t highway_visible_latin1_width(const uint8_t* HWY_RESTRICT input, size_t len)

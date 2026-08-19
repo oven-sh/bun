@@ -537,8 +537,7 @@ impl FetchTasklet {
     /// VM teardown's stop phase (JS thread): abort the transport. The HTTP
     /// thread then fails the request promptly — started or still queued — and
     /// hands the tasklet back through its final callback, which teardown
-    /// waits for before the handle closes. A request body still streaming in
-    /// from a native source is ended here as well.
+    /// waits for before the handle closes.
     ///
     /// # Safety
     /// `this` is live (registered ⇒ not yet deinit'd); JS thread. May free it.
@@ -2482,11 +2481,9 @@ impl FetchTasklet {
         }
     }
 
-    /// Stop-phase [`Self::cancel_request_body_sink`] for a `ByteStream` /
-    /// `FileReader` body: unpipes the source without running script. At
-    /// teardown nothing else ends such a sink (a JS pump's controller cell
-    /// runs the sink's `finalize` instead). Returns whether the caller took
-    /// over the sink's ref on the tasklet and must release it.
+    /// Stop phase: nothing else ends a `ByteStream` / `FileReader` sink at
+    /// teardown (a JS pump's controller cell runs the sink's `finalize`).
+    /// Returns whether the caller must release the sink's ref on the tasklet.
     fn detach_native_request_body_sink(&mut self) -> bool {
         let global_this = self.global_this;
         let Some(sink) = self.sink_mut() else {

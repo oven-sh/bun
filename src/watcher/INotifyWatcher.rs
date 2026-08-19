@@ -358,6 +358,28 @@ impl INotifyWatcher {
         Ok(&self.eventlist_ptrs[..count as usize])
     }
 
+    /// Unparks the thread blocked in `read`/the futex: adding a watch bumps `watch_count`, removing it queues an `IN_IGNORED` event.
+    pub(crate) fn wake(&self) {
+        if self.fd == Fd::INVALID {
+            return;
+        }
+        let old_count = self.watch_count.fetch_add(1, Ordering::Release);
+        // SAFETY: fd is a valid inotify fd; the path is a NUL-terminated literal.
+        let wd = unsafe {
+            bun_sys::linux::inotify_add_watch(
+                self.fd.native(),
+                c"/".as_ptr(),
+                bun_sys::linux::IN::DELETE_SELF,
+            )
+        };
+        if old_count == 0 {
+            Futex::wake(&self.watch_count, 10);
+        }
+        if wd >= 0 {
+            bun_sys::linux::inotify_rm_watch(self.fd.native(), wd);
+        }
+    }
+
     pub(crate) fn stop(&mut self) {
         bun_core::scoped_log!(watcher, "{} stop", self.fd);
         if self.fd != Fd::INVALID {

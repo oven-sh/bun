@@ -263,24 +263,17 @@ impl WindowsWatcher {
             bun_core::scoped_log!(watcher, "failed to open directory for watching: {}", err.0);
             return Err(Error::CreateFileFailed.into());
         }
-        let handle_guard = scopeguard::guard(handle, |h| unsafe {
-            // SAFETY: handle was successfully opened by NtCreateFile above.
-            let _ = w::CloseHandle(h);
-        });
+        // Stored immediately so `Drop` (`stop`) closes it if the rest of init fails.
+        self.watcher.dir_handle = handle;
 
-        self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
+        self.iocp = w::CreateIoCompletionPort(handle, ptr::null_mut(), 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
-        let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
-            // SAFETY: iocp handle was successfully created above.
-            let _ = w::CloseHandle(h);
-        });
 
         // Materializing an uninit `[u8; N]` by value is immediate UB, and constructing a 64KiB
         // `DirWatcher` temporary on the stack defeats the in-place-init intent. Assign fields in
         // place instead — `buf` was already zero-initialised by `Default` and is an output buffer
         // filled by ReadDirectoryChangesW before any read.
         self.watcher.overlapped = bun_core::ffi::zeroed::<w::OVERLAPPED>();
-        self.watcher.dir_handle = *handle_guard;
 
         self.buf[..root.len()].copy_from_slice(root);
         let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
@@ -293,9 +286,6 @@ impl WindowsWatcher {
             root.len()
         };
 
-        // disarm the cleanup scopeguards on success
-        scopeguard::ScopeGuard::into_inner(iocp_guard);
-        scopeguard::ScopeGuard::into_inner(handle_guard);
         Ok(())
     }
 
@@ -377,6 +367,13 @@ impl WindowsWatcher {
                     ..Default::default()
                 });
             }
+        }
+    }
+
+    /// Unparks the thread blocked in `GetQueuedCompletionStatus`; the null overlapped makes `next` return an error and the loop exit.
+    pub(crate) fn wake(&self) {
+        if self.iocp != w::INVALID_HANDLE_VALUE {
+            w::kernel32::PostQueuedCompletionStatus(self.iocp, 0, 0, ptr::null_mut());
         }
     }
 

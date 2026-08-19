@@ -294,6 +294,8 @@ impl Watcher {
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
                 me.mutex.unlock();
+                // The thread frees the Watcher (and its fds) once it observes `running == false`.
+                me.platform.wake();
                 false
             } else {
                 if close_descriptors && me.running.load() {

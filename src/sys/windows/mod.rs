@@ -56,6 +56,13 @@ pub mod kernel32 {
             lpOverlapped: *mut *mut OVERLAPPED,
             dwMilliseconds: DWORD,
         ) -> BOOL;
+        // safe: by-value args; a null overlapped is a valid manual completion packet.
+        pub safe fn PostQueuedCompletionStatus(
+            CompletionPort: HANDLE,
+            dwNumberOfBytesTransferred: DWORD,
+            dwCompletionKey: ULONG_PTR,
+            lpOverlapped: *mut OVERLAPPED,
+        ) -> BOOL;
         pub fn ReadDirectoryChangesW(
             hDirectory: HANDLE,
             lpBuffer: *mut c_void,

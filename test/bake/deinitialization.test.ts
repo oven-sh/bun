@@ -110,25 +110,40 @@ test("dev server deinitializes itself when its initialization fails", async () =
     "app.ts": `console.log(BROKEN_DEFINE);`,
     "init-failure-fixture.ts": `
       import { getDevServerDeinitCount } from "bun:internal-for-testing";
+      import { readdirSync } from "node:fs";
       import html from "./index.html";
 
-      function serveAndFail(options) {
+      // Windows watcher handles are not fds, so only posix can count them.
+      const fdCount = process.platform === "win32" ? () => 0 : () => readdirSync(process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd").length;
+      // Every fd the failed server opened must be closed again; the watcher thread closes its own, so wait for it.
+      async function fdCountSettles(expected) {
+        const deadline = Date.now() + 5000;
+        let count = fdCount();
+        while (count !== expected && Date.now() < deadline) {
+          await Bun.sleep(10);
+          count = fdCount();
+        }
+        return count - expected;
+      }
+
+      async function serveAndFail(options) {
         const before = getDevServerDeinitCount();
+        const fdsBefore = fdCount();
         let message = "Bun.serve() did not throw";
         try {
           Bun.serve({ port: 0, development: true, fetch: () => new Response("unreachable"), ...options }).stop(true);
         } catch (e) {
           message = e.message;
         }
-        return { message, deinits: getDevServerDeinitCount() - before };
+        return { message, deinits: getDevServerDeinitCount() - before, leakedFds: await fdCountSettles(fdsBefore) };
       }
 
       console.log(
         JSON.stringify({
           // Fails while the per-graph bundlers are configured (the bunfig define).
-          bundlerConfig: serveAndFail({ routes: { "/": html } }),
-          // Gets further: fails when the framework's entry points are resolved.
-          frameworkResolve: serveAndFail({
+          bundlerConfig: await serveAndFail({ routes: { "/": html } }),
+          // Gets further: fails when the framework's entry points are resolved (the watcher thread has started by then).
+          frameworkResolve: await serveAndFail({
             app: {
               framework: {
                 fileSystemRouterTypes: [{ root: "pages", style: "nextjs-pages", serverEntryPoint: "./missing-entry.ts" }],
@@ -151,8 +166,8 @@ test("dev server deinitializes itself when its initialization fails", async () =
 
   // Each failed Bun.serve() must tear down the dev server it was building.
   expect(JSON.parse(stdout)).toEqual({
-    bundlerConfig: { message: "ParserError while initializing development server", deinits: 1 },
-    frameworkResolve: { message: "Framework is missing required files!", deinits: 1 },
+    bundlerConfig: { message: "ParserError while initializing development server", deinits: 1, leakedFds: 0 },
+    frameworkResolve: { message: "Framework is missing required files!", deinits: 1, leakedFds: 0 },
   });
   expect(stderr).toContain("Failed to resolve './missing-entry.ts' for framework (server side entrypoint)");
   // Under ASAN, LeakSanitizer turns anything the failed servers left behind into a non-zero exit.

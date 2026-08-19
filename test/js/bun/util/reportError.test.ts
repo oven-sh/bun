@@ -140,8 +140,12 @@ describe("an uncaught value that is not an Error is printed at the console depth
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: normalizeBunSnapshot(stdout, String(dir)),
+      stderr: normalizeBunSnapshot(stderr, String(dir)),
+      exitCode,
+    };
   }
 
   const atDepth2 = `error
@@ -174,42 +178,45 @@ Bun v<bun-version>`;
     ["uncaught exception", `throw ${value}`],
     ["member of an uncaught AggregateError", `reportError(new AggregateError([${value}]))`],
   ])("%s", async (_, code) => {
-    const { stderr, exitCode } = await run(["-e", code]);
-    expect(stderr).toBe(atDepth2);
-    expect(exitCode).toBe(1);
+    expect(await run(["-e", code])).toEqual({ stdout: "", stderr: atDepth2, exitCode: 1 });
   });
 
   test.concurrent("--console-depth 1 prints one level", async () => {
-    const { stderr, exitCode } = await run(["--console-depth", "1", "-e", `reportError(${value})`]);
-    expect(stderr).toBe(`error
+    expect(await run(["--console-depth", "1", "-e", `reportError(${value})`])).toEqual({
+      stdout: "",
+      stderr: `error
 {
   a: {
     b: [Object ...],
   },
 }
 
-Bun v<bun-version>`);
-    expect(exitCode).toBe(1);
+Bun v<bun-version>`,
+      exitCode: 1,
+    });
   });
 
   test.concurrent("--console-depth 3 prints three levels", async () => {
-    const { stderr, exitCode } = await run(["--console-depth", "3", "-e", `reportError(${value})`]);
-    expect(stderr).toBe(atDepth3);
-    expect(exitCode).toBe(1);
+    expect(await run(["--console-depth", "3", "-e", `reportError(${value})`])).toEqual({
+      stdout: "",
+      stderr: atDepth3,
+      exitCode: 1,
+    });
   });
 
   test.concurrent("bunfig console.depth = 3 prints three levels", async () => {
-    const { stderr, exitCode } = await run(["-e", `reportError(${value})`], {
-      "bunfig.toml": "[console]\ndepth = 3\n",
+    const files = { "bunfig.toml": "[console]\ndepth = 3\n" };
+    expect(await run(["-e", `reportError(${value})`], files)).toEqual({
+      stdout: "",
+      stderr: atDepth3,
+      exitCode: 1,
     });
-    expect(stderr).toBe(atDepth3);
-    expect(exitCode).toBe(1);
   });
 
   test.concurrent(
     "bun test: a test that rejects with the value, and an unhandled rejection during a test",
     async () => {
-      const { stderr, exitCode } = await run(["test", "./depth.test.ts"], {
+      const files = {
         "depth.test.ts": `
         import { test } from "bun:test";
         const value = ${value};
@@ -223,9 +230,10 @@ Bun v<bun-version>`);
           await new Promise(resolve => setTimeout(resolve, 0));
         });
       `,
-      });
-      expect(stderr).toMatchInlineSnapshot(`
-"depth.test.ts:
+      };
+      expect(await run(["test", "./depth.test.ts"], files)).toEqual({
+        stdout: "bun test <version> (<revision>)",
+        stderr: `depth.test.ts:
 error
 {
   a: {
@@ -247,9 +255,9 @@ error
 
  0 pass
  2 fail
-Ran 2 tests across 1 file."
-`);
-      expect(exitCode).toBe(1);
+Ran 2 tests across 1 file.`,
+        exitCode: 1,
+      });
     },
   );
 });

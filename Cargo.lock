@@ -466,14 +466,9 @@ dependencies = [
  "bun_paths",
  "bun_ptr",
  "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "scopeguard",
  "strum",
  "thiserror",
- "typed-arena",
 ]
 
 [[package]]
@@ -1405,17 +1400,11 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
- "bun_collections",
  "bun_core",
- "const_format",
- "enum-map",
- "enumset",
  "libc",
- "scopeguard",
  "smallvec",
  "strum",
  "thiserror",
- "typed-arena",
 ]
 
 [[package]]
@@ -1524,10 +1513,6 @@ dependencies = [
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1554,11 +1539,6 @@ dependencies = [
  "bun_sha_hmac",
  "bun_sql",
  "bun_uws",
- "bun_uws_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "scopeguard",
  "strum",
  "thiserror",
@@ -2895,12 +2875,6 @@ dependencies = [
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "typed-arena"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typenum"

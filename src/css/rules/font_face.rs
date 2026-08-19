@@ -76,7 +76,7 @@ impl FontFaceProperty {
             FontFaceProperty::Custom(custom) => {
                 custom.name.to_css(dest)?;
                 dest.delim(b':', false)?;
-                custom.value.to_css(dest, true)
+                custom.value.to_css(dest)
             }
         }
     }

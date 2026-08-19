@@ -664,31 +664,21 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       const getIndexArray = length => Array.from({ length }, (_, i) => _inspect(i));
 
       const mapIter = isMapIterator(tabularData);
-      let isKeyValue = false;
       let i = 0;
 
-      if (isKeyValue || $isMap(tabularData)) {
+      if ($isMap(tabularData)) {
         const keys = [];
         const values = [];
         let length = 0;
-        if (mapIter) {
-          for (; i < tabularData.length / 2; ++i) {
-            ArrayPrototypePush.$call(keys, _inspect(tabularData[i * 2]));
-            ArrayPrototypePush.$call(values, _inspect(tabularData[i * 2 + 1]));
-            length++;
-          }
-        } else {
-          for (const { 0: k, 1: v } of tabularData) {
-            ArrayPrototypePush.$call(keys, _inspect(k));
-            ArrayPrototypePush.$call(values, _inspect(v));
-            length++;
-          }
+        for (const { 0: k, 1: v } of tabularData) {
+          ArrayPrototypePush.$call(keys, _inspect(k));
+          ArrayPrototypePush.$call(values, _inspect(v));
+          length++;
         }
         return final([iterKey, keyKey, valuesKey], [getIndexArray(length), keys, values]);
       }
 
       const setIter = isSetIterator(tabularData);
-      // if (setIter) tabularData = previewEntries(tabularData);
 
       const setlike = setIter || mapIter || $isSet(tabularData);
       if (setlike) {

@@ -179,15 +179,13 @@ impl core::error::Error for PrintErr {}
 /// signal (the *kind* lives in `Printer.error_kind`).
 pub(crate) type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
 
-pub use dependencies::Dependency;
-
 // Re-export the hub types at the crate root so `bun_css::Foo` paths resolve
 // for css_jsc / bundler.
 pub use css_parser::{
     DefaultAtRule, LocalsResultsMap, MinifyOptions, Parser, ParserFlags, ParserInput,
     ParserOptions, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult,
 };
-pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
+pub use printer::{ImportInfo, Printer, PrinterOptions};
 /// Dependent crates name this `ImportRecordHandler`; the surviving type is
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;

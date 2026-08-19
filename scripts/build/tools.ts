@@ -86,8 +86,6 @@ export interface ToolSpec {
   paths?: string[];
   /** Version constraint, e.g. `">=21.1.0 <22.0.0"`. */
   version?: string;
-  /** How to get the version. `"--version"` (default) or `"version"` (go/zig style). */
-  versionArg?: string;
   /** If true, throws BuildError when not found. */
   required: boolean;
   /** Extra hint text for the error message. */
@@ -154,12 +152,12 @@ function isExecutable(p: string): boolean {
  * string describing why parsing failed (starts with a digit → version,
  * otherwise → failure reason for the rejection log).
  */
-function getToolVersion(exe: string, versionArg: string): { version: string } | { reason: string } {
+function getToolVersion(exe: string): { version: string } | { reason: string } {
   // stdio ignore on stdin: on Windows CI the parent's stdin can be a
   // handle that blocks the child's CRT init. --version never reads stdin.
   // 30s timeout: cold start of a large binary (clang is 100+ MB) through
   // Defender scan-on-access can legitimately exceed 5s on a busy CI box.
-  const result = spawnSync(exe, [versionArg], {
+  const result = spawnSync(exe, ["--version"], {
     encoding: "utf8",
     timeout: 30_000,
     stdio: ["ignore", "pipe", "pipe"],
@@ -212,7 +210,6 @@ export function clangTargetArch(clang: string): Arch | undefined {
 export function findTool(spec: ToolSpec): FoundTool | undefined {
   const exeSuffix = process.platform === "win32" ? ".exe" : "";
   const searchPaths = [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
-  const versionArg = spec.versionArg ?? "--version";
   const rejections: Rejection[] = [];
 
   for (const name of spec.names) {
@@ -222,7 +219,7 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
       if (!isExecutable(full)) continue;
 
       if (spec.version !== undefined) {
-        const v = getToolVersion(full, versionArg);
+        const v = getToolVersion(full);
         if ("reason" in v) {
           rejections.push({ path: full, reason: v.reason });
           continue;
@@ -392,8 +389,6 @@ export function resolveLlvmToolchain(
   | "ld64Lld"
   | "rustLld"
   | "rustLlvmVersion"
-  | "rustSysroot"
-  | "rustHostTriple"
   | "strip"
   | "llvmStrip"
   | "nm"
@@ -552,7 +547,7 @@ export function resolveLlvmToolchain(
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+  const { rustLld, rustLlvmVersion } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -579,8 +574,6 @@ export function resolveLlvmToolchain(
     ld64Lld,
     rustLld,
     rustLlvmVersion,
-    rustSysroot,
-    rustHostTriple,
     strip,
     llvmStrip,
     nm,
@@ -635,15 +628,8 @@ export interface CargoToolchain {
  * doesn't have the expected layout (e.g. distro-packaged rustc without the
  * `rust-lld` component).
  */
-export function findRustLld(os: OS): {
-  rustLld: string | undefined;
-  rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
-  rustHostTriple: string | undefined;
-} {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+export function findRustLld(os: OS): { rustLld: string | undefined; rustLlvmVersion: string | undefined } {
+  const none = { rustLld: undefined, rustLlvmVersion: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
@@ -714,7 +700,7 @@ export function findRustLld(os: OS): {
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion };
 
   const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
   const candidate =
@@ -724,7 +710,7 @@ export function findRustLld(os: OS): {
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+  return { rustLld, rustLlvmVersion };
 }
 
 /**

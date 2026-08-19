@@ -413,7 +413,6 @@ export default {
   getLazy,
   guardCallback,
   isInsideNodeModules,
-  reportUncaughtException,
   resistStopPropagation,
 
   hasObserver,
@@ -428,7 +427,6 @@ export default {
   kClusterOwner: Symbol("kClusterOwner"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kWeakHandler: Symbol("kWeak"),
-  kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kCustomPromisifyArgsSymbol: Symbol("customPromisifyArgs"),
   kEmptyObject,
   kInternalSendOptions,

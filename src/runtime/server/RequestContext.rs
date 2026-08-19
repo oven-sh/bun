@@ -3256,13 +3256,12 @@ where
         if let Some(err) = err {
             // No status committed yet: the upstream producer (e.g. a
             // suspended `HTMLRewriter` transform whose async handler
-            // rejected) failed before any bytes were emitted. Detach the
-            // ByteStream state and hand the error to the server's
-            // `error()` hook so it can supply the response.
+            // rejected) failed before any bytes were emitted. Drop the
+            // stream and hand the error to the server's `error()` hook so it
+            // can supply the response.
             if !this.flags.has_written_status() {
                 let global_this = this.server().global_this();
                 let js_err = err.to_js(global_this);
-                this.byte_stream.set(None);
                 this.response_body_readable_stream_ref
                     .with_mut(|s| s.deinit());
                 this.run_error_handler(js_err);

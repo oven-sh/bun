@@ -517,45 +517,39 @@ describe.skipIf((!isDebug && !isASAN) || isWindows)("a worker goes while a reque
   `;
 
   for (const row of ROWS) {
-    test.concurrent(
-      row.name,
-      async () => {
-        using dir = tempDir("worker-upload-teardown", {});
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", host(row, path.join(String(dir), "fifo"))],
-          env: {
-            ...bunEnv,
-            BUN_DEBUG_FetchTasklet: "1",
-            BUN_DESTRUCT_VM_ON_EXIT: "1",
-            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-            LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
-          },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        // The debug log lines share stdout with the host's own line.
-        const output = stdout + stderr;
-        const deinits = isDebug ? (output.match(/^\[fetchtasklet\] deinit$/gm)?.length ?? 0) : "release build";
-        const expectedDeinits = isDebug ? row.fetches : "release build";
-        expect({
-          workerExit: output.match(/^worker exit code: (\d+)$/m)?.[1],
-          deinits,
-          sanitizer: output.includes("Sanitizer"),
-          exitCode,
-          // On a failure, everything the host printed.
-          detail: exitCode === 0 && deinits === expectedDeinits ? "" : output,
-        }).toEqual({
-          workerExit: row.terminate ? "1" : "0",
-          deinits: expectedDeinits,
-          sanitizer: false,
-          exitCode: 0,
-          detail: "",
-        });
-      },
-      // LSan symbolizes its report against the debug binary on failure, which
-      // alone can take tens of seconds.
-      90_000,
-    );
+    test.concurrent(row.name, async () => {
+      using dir = tempDir("worker-upload-teardown", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", host(row, path.join(String(dir), "fifo"))],
+        env: {
+          ...bunEnv,
+          BUN_DEBUG_FetchTasklet: "1",
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The debug log lines share stdout with the host's own line.
+      const output = stdout + stderr;
+      const deinits = isDebug ? (output.match(/^\[fetchtasklet\] deinit$/gm)?.length ?? 0) : "release build";
+      const expectedDeinits = isDebug ? row.fetches : "release build";
+      expect({
+        workerExit: output.match(/^worker exit code: (\d+)$/m)?.[1],
+        deinits,
+        sanitizer: output.includes("Sanitizer"),
+        exitCode,
+        // On a failure, everything the host printed.
+        detail: exitCode === 0 && deinits === expectedDeinits ? "" : output,
+      }).toEqual({
+        workerExit: row.terminate ? "1" : "0",
+        deinits: expectedDeinits,
+        sanitizer: false,
+        exitCode: 0,
+        detail: "",
+      });
+    });
   }
 });

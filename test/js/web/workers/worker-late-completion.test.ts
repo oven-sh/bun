@@ -439,12 +439,13 @@ describe.skipIf(!isASAN || isWindows)("terminate() while a request body is still
   // and an upstream whose body never ends), a FIFO the host keeps open so the
   // worker's reader gets bytes but never EOF, and one worker that starts the
   // upload. The host terminates the worker when the target has the first chunk.
-  const host = (body: string) => `
+  const host = (body: string, fifo: string) => `
     const { Worker } = require("node:worker_threads");
     const { execFileSync } = require("node:child_process");
     const fs = require("node:fs");
-    execFileSync("mkfifo", ["fifo"]);
-    const fifoFd = fs.openSync("fifo", "r+");
+    const fifo = ${JSON.stringify(fifo)};
+    execFileSync("mkfifo", [fifo]);
+    const fifoFd = fs.openSync(fifo, "r+");
     fs.writeSync(fifoFd, Buffer.alloc(64, 1));
     const firstChunk = Promise.withResolvers();
     const target = Bun.serve({
@@ -465,7 +466,7 @@ describe.skipIf(!isASAN || isWindows)("terminate() while a request body is still
     const worker = new Worker(
       'const { workerData } = require("node:worker_threads");' +
       '(async () => { const body = ' + ${JSON.stringify(body)} + '; fetch(workerData.target, { method: "POST", body }).catch(() => {}); })();',
-      { eval: true, workerData: { target: target.url.href, upstream: upstream.url.href, fifo: "fifo" } },
+      { eval: true, workerData: { target: target.url.href, upstream: upstream.url.href, fifo } },
     );
     worker.on("error", e => { console.error("worker error:", e); process.exit(1); });
     await firstChunk.promise;
@@ -481,8 +482,7 @@ describe.skipIf(!isASAN || isWindows)("terminate() while a request body is still
       async () => {
         using dir = tempDir("worker-terminate-upload", {});
         await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", host(body)],
-          cwd: String(dir),
+          cmd: [bunExe(), "-e", host(body, path.join(String(dir), "fifo"))],
           env: {
             ...bunEnv,
             BUN_DESTRUCT_VM_ON_EXIT: "1",

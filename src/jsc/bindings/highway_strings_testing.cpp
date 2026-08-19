@@ -89,11 +89,8 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         size_t r = highway_memrmem(haystack, len, needle, needle_len);
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(r == static_cast<size_t>(-1) ? -1.0 : static_cast<double>(r))));
     } else if (op == "memmem16"_s || op == "memrmem16"_s) {
-        // Byte views reinterpreted as UTF-16 code units; result is in code units.
-        if ((len | needle_len) & 1 || (reinterpret_cast<uintptr_t>(haystack) | reinterpret_cast<uintptr_t>(needle)) & 1) {
-            throwRangeError(globalObject, scope, "memmem16 needs 2-byte aligned, even-length views"_s);
-            return {};
-        }
+        // Byte views reinterpreted as UTF-16 code units (any alignment, odd byte
+        // dropped, as JSBuffer.cpp does); result is in code units.
         auto* h16 = reinterpret_cast<const uint16_t*>(haystack);
         auto* n16 = reinterpret_cast<const uint16_t*>(needle);
         size_t r = op == "memmem16"_s ? highway_memmem16(h16, len / 2, n16, needle_len / 2) : highway_memrmem16(h16, len / 2, n16, needle_len / 2);

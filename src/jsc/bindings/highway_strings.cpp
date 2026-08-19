@@ -1013,15 +1013,17 @@ static HWY_INLINE bool MemMemVerify(const Char* haystack, size_t pos, const Char
     return n == 0 || a[0] == b[0];
 }
 
-// One filter step over the N candidate starts [i, i+N).
+// One filter step over the N candidate starts [i, i+N), ignoring the first
+// `skip` (already covered by the previous block when the tail block overlaps).
 template<class D, typename Char = hn::TFromD<D>>
-static HWY_INLINE size_t MemMemBlockForward(D d, const Char* haystack, size_t i,
+static HWY_INLINE size_t MemMemBlockForward(D d, const Char* haystack, size_t i, size_t skip,
     const Char* needle, size_t needle_len, size_t anchor_a, size_t anchor_b,
     hn::Vec<D> va, hn::Vec<D> vb, size_t* budget, size_t* resume)
 {
     const auto eq_a = hn::Eq(hn::LoadU(d, haystack + i + anchor_a), va);
     if (HWY_LIKELY(hn::AllFalse(d, eq_a))) return kNotFound;
     auto mask = hn::And(eq_a, hn::Eq(hn::LoadU(d, haystack + i + anchor_b), vb));
+    mask = hn::AndNot(hn::FirstN(d, skip), mask);
     while (!hn::AllFalse(d, mask)) {
         const size_t pos = i + static_cast<size_t>(hn::FindKnownFirstTrue(d, mask));
         if (MemMemVerify(haystack, pos, needle, needle_len)) return pos;
@@ -1035,15 +1037,16 @@ static HWY_INLINE size_t MemMemBlockForward(D d, const Char* haystack, size_t i,
     return kNotFound;
 }
 
-// As above, last match first.
+// As above, last match first; only the first `valid` lanes are candidates.
 template<class D, typename Char = hn::TFromD<D>>
-static HWY_INLINE size_t MemMemBlockReverse(D d, const Char* haystack, size_t i,
+static HWY_INLINE size_t MemMemBlockReverse(D d, const Char* haystack, size_t i, size_t valid,
     const Char* needle, size_t needle_len, size_t anchor_a, size_t anchor_b,
     hn::Vec<D> va, hn::Vec<D> vb, size_t* budget, size_t* resume)
 {
     const auto eq_b = hn::Eq(hn::LoadU(d, haystack + i + anchor_b), vb);
     if (HWY_LIKELY(hn::AllFalse(d, eq_b))) return kNotFound;
     auto mask = hn::And(eq_b, hn::Eq(hn::LoadU(d, haystack + i + anchor_a), va));
+    mask = hn::And(mask, hn::FirstN(d, valid));
     while (!hn::AllFalse(d, mask)) {
         const size_t lane = hn::FindKnownLastTrue(d, mask);
         const size_t pos = i + lane;
@@ -1059,9 +1062,9 @@ static HWY_INLINE size_t MemMemBlockReverse(D d, const Char* haystack, size_t i,
 }
 
 // Requires end (= number of candidate starts) >= Lanes(d): the last block
-// overlaps the one before it instead of leaving a scalar tail, and the budget
-// is credited for the starts it re-tests. Every lane's start < end, so both
-// anchor loads are in bounds.
+// overlaps the one before it (already-tested lanes masked off) instead of
+// leaving a scalar tail. Every lane's start < end, so both anchor loads are
+// in bounds.
 template<bool kForward, class D, typename Char = hn::TFromD<D>>
 static HWY_INLINE size_t MemMemSearchVec(D d, const Char* haystack, size_t end,
     const Char* needle, size_t needle_len, size_t anchor_a, size_t anchor_b,
@@ -1073,23 +1076,21 @@ static HWY_INLINE size_t MemMemSearchVec(D d, const Char* haystack, size_t end,
     if constexpr (kForward) {
         size_t i = 0;
         for (; i + N <= end; i += N) {
-            size_t r = MemMemBlockForward(d, haystack, i, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
+            size_t r = MemMemBlockForward(d, haystack, i, 0, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
             if (r != kNotFound) return r;
         }
         if (i < end) {
-            *budget += (i - (end - N)) * needle_len;
-            return MemMemBlockForward(d, haystack, end - N, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
+            return MemMemBlockForward(d, haystack, end - N, i - (end - N), needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
         }
     } else {
         size_t i = end;
         while (i >= N) {
             i -= N;
-            size_t r = MemMemBlockReverse(d, haystack, i, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
+            size_t r = MemMemBlockReverse(d, haystack, i, N, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
             if (r != kNotFound) return r;
         }
         if (i > 0) {
-            *budget += (N - i) * needle_len;
-            return MemMemBlockReverse(d, haystack, 0, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
+            return MemMemBlockReverse(d, haystack, 0, i, needle, needle_len, anchor_a, anchor_b, va, vb, budget, resume);
         }
     }
     return kNotFound;
@@ -2198,9 +2199,17 @@ static HWY_INLINE size_t BSwapLanes(D8T d8, uint8_t* HWY_RESTRICT data, size_t i
 {
     const hn::Repartition<T, D8T> dt;
     const size_t N = hn::Lanes(d8);
-    for (; i + N <= len; i += N) {
+    // Two independent chains per iteration; clang does not unroll this itself.
+    for (; i + 2 * N <= len; i += 2 * N) {
+        const auto v0 = hn::BitCast(dt, hn::LoadU(d8, data + i));
+        const auto v1 = hn::BitCast(dt, hn::LoadU(d8, data + i + N));
+        hn::StoreU(hn::BitCast(d8, hn::ReverseLaneBytes(v0)), d8, data + i);
+        hn::StoreU(hn::BitCast(d8, hn::ReverseLaneBytes(v1)), d8, data + i + N);
+    }
+    if (i + N <= len) {
         const auto v = hn::BitCast(dt, hn::LoadU(d8, data + i));
         hn::StoreU(hn::BitCast(d8, hn::ReverseLaneBytes(v)), d8, data + i);
+        i += N;
     }
     return i;
 }

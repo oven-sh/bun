@@ -36,7 +36,9 @@ export const highwayStringsForTesting: (
     | "indexOfAny"
     | "lastIndexOfAny"
     | "memmem"
-    | "memrmem",
+    | "memrmem"
+    | "memmem16"
+    | "memrmem16",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);

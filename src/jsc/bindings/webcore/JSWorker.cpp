@@ -162,6 +162,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     // Founding an env tree swaps the parent's process.env, so it is deferred until
     // every option has validated (below).
     bool shareEnv = false;
+    JSValue envValue {};
     JSValue nodeWorkerObject {};
     if (callFrame->argumentCount() == 3) {
         nodeWorkerObject = callFrame->argument(2);
@@ -251,7 +252,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             shareEnv = shareEnvValue.toBoolean(lexicalGlobalObject);
         }
 
-        auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
+        envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         // Recognize the SHARE_ENV registry symbol directly so `new globalThis.Worker(url, { env: SHARE_ENV })`
         // (which bypasses the node:worker_threads wrapper) shares env instead of throwing
@@ -263,40 +264,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             }
         }
 
-        if (!shareEnv) {
-            if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
-                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
-            }
-            JSObject* envObject = nullptr;
-
-            if (envValue && envValue.isCell()) {
-                envObject = dynamicDowncast<JSC::JSObject>(envValue);
-            } else if (globalObject->m_processEnvObject.isInitialized()) {
-                envObject = globalObject->processEnvObject();
-            }
-
-            if (envObject) {
-                if (!envObject->staticPropertiesReified()) {
-                    envObject->reifyAllStaticProperties(globalObject);
-                    RETURN_IF_EXCEPTION(throwScope, {});
-                }
-
-                JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-                envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
-                RETURN_IF_EXCEPTION(throwScope, {});
-
-                HashMap<String, String> env;
-
-                for (const auto& key : keys) {
-                    JSValue value = envObject->get(lexicalGlobalObject, key);
-                    RETURN_IF_EXCEPTION(throwScope, {});
-                    String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
-                    RETURN_IF_EXCEPTION(throwScope, {});
-                    env.add(key.impl()->isolatedCopy(), str);
-                }
-
-                options.env.emplace(WTF::move(env));
-            }
+        if (!shareEnv && envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
+            return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
         }
 
         // needed to match the coercion behavior of `String(value)`, which returns a descriptive
@@ -335,6 +304,42 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             });
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
+        }
+    }
+
+    // The worker starts from a copy of this thread's process.env as it is now,
+    // whether or not an options object was passed. Without a copy the worker
+    // falls back to the environment the process was launched with.
+    if (!shareEnv) {
+        JSObject* envObject = nullptr;
+
+        if (envValue && envValue.isCell()) {
+            envObject = dynamicDowncast<JSC::JSObject>(envValue);
+        } else if (globalObject->m_processEnvObject.isInitialized()) {
+            envObject = globalObject->processEnvObject();
+        }
+
+        if (envObject) {
+            if (!envObject->staticPropertiesReified()) {
+                envObject->reifyAllStaticProperties(globalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
+
+            JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+            envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(throwScope, {});
+
+            HashMap<String, String> env;
+
+            for (const auto& key : keys) {
+                JSValue value = envObject->get(lexicalGlobalObject, key);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
+                RETURN_IF_EXCEPTION(throwScope, {});
+                env.add(key.impl()->isolatedCopy(), str);
+            }
+
+            options.env.emplace(WTF::move(env));
         }
     }
 

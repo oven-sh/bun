@@ -128,8 +128,10 @@ export const libjpegTurbo: Dependency = {
       defines: {
         BUN_8BIT_ONLY: true,
         ...(cfg.arm64 ? { NEON_INTRINSICS: true } : {}),
-        // jpeg_nbits.h only picks the clz intrinsic on ARM; without it x64
-        // ships a 64 KB jpeg_nbits_table for the same floor(log2)+1 result.
+        // jpeg_nbits.h only defines this itself on Arm. The C Huffman encoders
+        // (jcphuff.c always, jchuff.c when SIMD is off) then use bsr instead of
+        // jpeg_nbits_table. The 64 KB table still ships on x64: jchuff-sse2.asm
+        // carries its own copy.
         ...(cfg.arm64 ? {} : { USE_CLZ_INTRINSIC: true }),
       },
       headers: {

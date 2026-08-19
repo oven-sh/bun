@@ -258,8 +258,9 @@ export function cc(n: Ninja, cfg: Config, src: string, opts: Omit<CompileOpts, "
 }
 
 /**
- * Assemble a NASM-syntax `.asm` file. Returns absolute path to the .obj
- * output. Windows-x64 only — gas-syntax `.S` goes through cc().
+ * Assemble a NASM-syntax `.asm` file (BoringSSL win-x64, libjpeg-turbo x86_64
+ * SIMD). Returns absolute path to the object output. gas-syntax `.S` goes
+ * through cc().
  */
 export function nasm(
   n: Ninja,

@@ -113,7 +113,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
              * the natural failure path would have, which detaches the
              * wrapper. The handler then closes; if it doesn't, the
              * force-drain below catches it. */
-            us_dispatch_connect_error(s, ECONNABORTED);
+            us_dispatch_connect_error(s, LIBUS_ECONNABORTED);
             if (!us_socket_is_closed(s)) {
                 us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
             }
@@ -703,8 +703,12 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct sockaddr_storage addr;
         init_addr_with_port(c->addrinfo_head, c->port, &addr);
         /* The deferred-DNS path does not carry a local binding. */
-        int unused_error = 0;
-        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options, &unused_error);
+        /* Why this candidate failed. Not reported: the dial goes on with the
+         * next address, and when none connects after_open/after_resolve report
+         * LIBUS_ECONNREFUSED. Read it here, not LIBUS_ERR after the call: the
+         * failed socket has been closed by then. */
+        int candidate_error = 0;
+        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options, &candidate_error);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
             continue;
         }
@@ -773,7 +777,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
          * real connect failure must not be reported as a caller abort. */
-        c->error = ECONNREFUSED;
+        c->error = LIBUS_ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
@@ -800,7 +804,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     if (connect_error != 0) {
                         error = connect_error;
                     } else if (error == WSAENOTCONN) {
-                        error = WSAECONNREFUSED;
+                        error = LIBUS_ECONNREFUSED;
                     }
                     break;
                 }
@@ -825,7 +829,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                      * us_connecting_socket_close defaults c->error to
                      * ECONNABORTED (caller abort) and never invalidates the
                      * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
+                    c->error = LIBUS_ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }

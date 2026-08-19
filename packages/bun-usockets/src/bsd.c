@@ -1982,7 +1982,7 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 
 int bsd_last_error_or_refused(void) {
     int err = LIBUS_ERR;
-    return err ? err : ECONNREFUSED;
+    return err ? err : LIBUS_ECONNREFUSED;
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options, int *error) {

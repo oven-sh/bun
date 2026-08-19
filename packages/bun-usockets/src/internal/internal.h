@@ -84,11 +84,18 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
 #define LIBUS_ECONNRESET WSAECONNRESET
+/* The codes uSockets fills in itself for a connect it ended or gave up on,
+ * in that same numbering, so a caller can treat every connect error code
+ * alike. */
+#define LIBUS_ECONNABORTED WSAECONNABORTED
+#define LIBUS_ECONNREFUSED WSAECONNREFUSED
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
 #define LIBUS_ECONNRESET ECONNRESET
+#define LIBUS_ECONNABORTED ECONNABORTED
+#define LIBUS_ECONNREFUSED ECONNREFUSED
 #endif
 #include <stdbool.h>
 /* Poll type and what it polls for */

@@ -210,7 +210,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     }
     if (!c->error) {
         // if we have no error, we have to set that we were aborted aka we called close
-        c->error = ECONNABORTED;
+        c->error = LIBUS_ECONNABORTED;
     }
     struct us_socket_group_t *group = c->group;
 
@@ -250,7 +250,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     if (c->addrinfo_req) {
         /* Invalidate the cache entry for a refused connect (addresses may be
          * stale) and for a resolver failure (never cache a negative result). */
-        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED || c->error_is_dns);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == LIBUS_ECONNREFUSED || c->error_is_dns);
         c->addrinfo_req = 0;
     }
     us_dispatch_connecting_error(c, c->error);

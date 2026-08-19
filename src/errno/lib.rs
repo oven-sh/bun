@@ -306,11 +306,11 @@ pub fn from_errno(errno: i32) -> SystemErrno {
 
 /// The error of a failed `connect(2)`, in `SystemErrno` numbering. `raw` is
 /// the code as uSockets reports it: the socket's `SO_ERROR` in the connect
-/// error callback, or what a dial that failed outright left in errno. On
-/// Windows that is a WSA or Win32 code (`WSAETIMEDOUT`, `ERROR_PATH_NOT_FOUND`
-/// for an empty unix path), so it goes through the Win32 table there. A code
-/// the table does not know, and the `ECONNREFUSED` uSockets fills in itself
-/// when no address reported a code (a CRT errno on Windows), come out as
+/// error callback, the error out-param of a dial that failed outright, or the
+/// code uSockets fills in itself (`LIBUS_ECONNABORTED`, `LIBUS_ECONNREFUSED`).
+/// On Windows all of those are WSA or Win32 codes (`WSAETIMEDOUT`,
+/// `ERROR_PATH_NOT_FOUND` for an empty unix path), so it goes through the
+/// Win32 table there. A code the table does not know comes out as
 /// `ECONNREFUSED`.
 pub fn connect_errno(raw: i32) -> SystemErrno {
     #[cfg(windows)]
@@ -590,9 +590,12 @@ mod errno_name_tests {
                 connect_errno(i32::from(W::PATH_NOT_FOUND.0)),
                 SystemErrno::ENOENT
             );
-            // The CRT's ECONNREFUSED, which uSockets fills in itself when no
-            // address reported a code. It is not a Win32 code.
-            assert_eq!(connect_errno(107), SystemErrno::ECONNREFUSED);
+            // What uSockets fills in itself for a dial the caller aborted
+            // (LIBUS_ECONNABORTED, a WSA code on Windows).
+            assert_eq!(
+                connect_errno(i32::from(W::WSAECONNABORTED.0)),
+                SystemErrno::ECONNABORTED
+            );
             assert_eq!(connect_errno(-1), SystemErrno::ECONNREFUSED);
         }
         #[cfg(not(windows))]

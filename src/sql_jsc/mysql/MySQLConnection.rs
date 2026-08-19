@@ -75,16 +75,9 @@ pub struct MySQLConnection {
     full_auth_requested: bool,
 
     auth_data: Vec<u8>,
-    // PERF: database/user/password/options could be sub-slices into options_buf
-    // (single backing allocation). Only options_buf would need to be
-    // Box<[u8]>; the others could be ranges into it. Restore the
-    // single-buffer layout and revert init()'s database/username/password/options
-    // params from Box<[u8]> back to &[u8] (1 caller-side alloc, not 5).
     database: Box<[u8]>,
     user: Box<[u8]>,
     password: Box<[u8]>,
-    _options: Box<[u8]>,
-    options_buf: Box<[u8]>,
     secure: Option<*mut SslCtx>,
     tls_config: SSLConfig,
     tls_status: TLSStatus,
@@ -117,8 +110,6 @@ impl Default for MySQLConnection {
             database: Box::default(),
             user: Box::default(),
             password: Box::default(),
-            _options: Box::default(),
-            options_buf: Box::default(),
             secure: None,
             tls_config: SSLConfig::default(),
             tls_status: TLSStatus::None,
@@ -138,8 +129,6 @@ impl MySQLConnection {
         database: Box<[u8]>,
         username: Box<[u8]>,
         password: Box<[u8]>,
-        options: Box<[u8]>,
-        options_buf: Box<[u8]>,
         tls_config: SSLConfig,
         secure: Option<*mut SslCtx>,
         ssl_mode: SSLMode,
@@ -149,8 +138,6 @@ impl MySQLConnection {
             database,
             user: username,
             password,
-            _options: options,
-            options_buf,
             socket: Socket::SocketTcp(uws::SocketTCP::detached()),
             queue: MySQLRequestQueue::init(),
             statements: PreparedStatementsMap::default(),
@@ -321,7 +308,6 @@ impl MySQLConnection {
         let _read_buffer = core::mem::take(&mut self.read_buffer);
         let statements = core::mem::take(&mut self.statements);
         let _tls_config = core::mem::take(&mut self.tls_config);
-        let _options_buf = core::mem::take(&mut self.options_buf);
 
         for stmt in statements.values() {
             // The map holds an intrusive ref on every cached prepared statement;
@@ -338,7 +324,6 @@ impl MySQLConnection {
             // SAFETY: FFI — secure is an owned SSL_CTX* freed exactly once here
             unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
         }
-        // _options_buf dropped at scope exit (Box<[u8]> frees via Drop)
     }
 
     pub(crate) fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {

@@ -95,6 +95,10 @@ static JSValue scriptFetchParametersToImportAttributes(JSGlobalObject* globalObj
     case JSC::ScriptFetchParameters::Type::JavaScript:
         obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "javascript"_s));
         break;
+    case JSC::ScriptFetchParameters::Type::Text:
+        // Unreachable with BUN_JSC_ADDITIONS (`type: "text"` parses as HostDefined); kept so the switch stays exhaustive.
+        obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "text"_s));
+        break;
     case JSC::ScriptFetchParameters::Type::HostDefined:
         obj->putDirect(vm, vm.propertyNames->type, jsString(vm, params->hostDefinedImportType()));
         break;
@@ -604,7 +608,8 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
 {
     UNUSED_PARAM(globalObject);
     auto* errorInstance = dynamicDowncast<ErrorInstance>(error);
-    if (!errorInstance)
+    // Stack overflow and out-of-memory ParserErrors have no position to point at.
+    if (!errorInstance || parseError.line() < 0)
         return;
 
     // The caller's toErrorObject() already materialized the stack (running any
@@ -985,7 +990,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         nullptr, // defaultLanguage
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
-        nullptr,
+        &Zig::GlobalObject::deriveShadowRealmGlobalObject,
         &codeForEval,
         &canCompileStrings,
         &trustedScriptStructure,

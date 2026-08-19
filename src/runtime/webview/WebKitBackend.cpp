@@ -474,6 +474,7 @@ void HostClient::rejectAllAndMarkDead(const WTF::String& reason)
         settleSlot(g, v, v->m_pendingEval, false, err);
         settleSlot(g, v, v->m_pendingScreenshot, false, err);
         settleSlot(g, v, v->m_pendingMisc, false, err);
+        v->m_closed = true;
     }
     viewsById.clear();
     updateKeepAlive();

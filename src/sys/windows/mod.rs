@@ -368,8 +368,6 @@ pub use bun_windows_sys::externs::FILE_FLAG_BACKUP_SEMANTICS;
 pub use bun_windows_sys::externs::GetFileInformationByHandle;
 pub use bun_windows_sys::externs::OPEN_EXISTING;
 
-pub use bun_windows_sys::externs::CommandLineToArgvW;
-
 unsafe extern "system" {
     // safe: `HANDLE` is a by-value opaque; bad handle → FILE_TYPE_UNKNOWN +
     // GetLastError, no UB.

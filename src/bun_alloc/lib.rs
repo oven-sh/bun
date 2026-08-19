@@ -241,16 +241,6 @@ pub mod default_alloc {
         }
     }
 
-    #[inline]
-    pub fn calloc(count: usize, size: usize) -> *mut c_void {
-        if cfg!(bun_asan) {
-            // SAFETY: `libc::calloc` has no input preconditions; null on failure.
-            unsafe { libc::calloc(count, size) }
-        } else {
-            crate::mimalloc::mi_calloc(count, size)
-        }
-    }
-
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]

@@ -163,20 +163,6 @@ static Bun__version_with_sha: CStrPtr = CStrPtr(
         .as_ptr()
         .cast::<c_char>(),
 );
-// Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
-// The C++ code in BunProcess.cpp uses the generated header directly
-#[unsafe(no_mangle)]
-static Bun__versions_uws: CStrPtr = CStrPtr(
-    const_format::concatcp!(Environment::GIT_SHA, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
-#[unsafe(no_mangle)]
-static Bun__versions_usockets: CStrPtr = CStrPtr(
-    const_format::concatcp!(Environment::GIT_SHA, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
 #[unsafe(no_mangle)]
 static Bun__version_sha: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")

@@ -65,11 +65,7 @@ bun_core::comptime_string_map! {
 /// pointer copy; only an explicit override (`/** @jsx foo */`, tsconfig
 /// `jsxFactory`, …) materialises an `Owned` boxed slice.
 ///
-/// A list always has at least one member: the parser turns `factory[0]` into
-/// an identifier without checking. Every producer of an override
-/// (`Pragma::member_list_to_components_if_different`, tsconfig's
-/// `parse_member_expression_for_jsx`) keeps the previous list when the
-/// override text has no members.
+/// Never empty: the parser reads `factory[0]` without a check.
 #[derive(Debug, Clone)]
 pub enum MemberList {
     Static(&'static [&'static [u8]]),
@@ -254,15 +250,9 @@ impl Pragma {
         Cow::Owned(out)
     }
 
-    /// `"React.createElement"` => `["React", "createElement"]`.
-    ///
-    /// Returns a copy of `original` when `new` names the same members, so an
-    /// override that spells out the default keeps the allocation-free
-    /// `Static` list.
-    ///
-    /// Returns `None` when `new` has no members (`""`, `"."`, `".."`). The
-    /// parser reads the first member of the list unconditionally, so the
-    /// caller keeps `original` in that case instead of storing an empty list.
+    /// `"React.createElement"` => `["React", "createElement"]`, or a copy of
+    /// `original` (no allocation for `Static`) when `new` names the same
+    /// members. `None` when `new` has no members, for example `"."`.
     pub fn member_list_to_components_if_different(
         original: &MemberList,
         new: &[u8],

@@ -701,12 +701,9 @@ impl TSConfigJSON {
         true
     }
 
-    /// `"React.createElement"` => `["React", "createElement"]`.
-    ///
-    /// Returns `None` when `text` is not a dotted chain of identifiers. The
-    /// caller then leaves the factory (or fragment) unset, so the default
-    /// stays in effect: the parser needs at least one member. An empty
-    /// `text` is treated as unset without a warning.
+    /// `"React.createElement"` => `["React", "createElement"]`. `None` (after
+    /// a warning, unless `text` is empty) when `text` is not a dotted chain
+    /// of identifiers.
     pub(crate) fn parse_member_expression_for_jsx(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,

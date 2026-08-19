@@ -39,14 +39,6 @@ interface ReserveAbortState {
   onAbort: (() => void) | null;
 }
 
-/// Bound as `this` to the callback shared by the timer and the pending work of reserved.close({ timeout }).
-interface ReservedCloseState {
-  state: TransactionState;
-  pooledConnection: { close(): void };
-  timer: ReturnType<typeof setTimeout> | null;
-  resolve: () => void;
-}
-
 function settleReservedTransaction(
   reservedTransaction: Set<Promise<void>>,
   finished: { promise: Promise<void>; resolve: () => void },
@@ -58,21 +50,19 @@ function settleReservedTransaction(
   settle(value);
 }
 
-function closeReservedConnection(state: TransactionState, pooledConnection: { close(): void }) {
-  // already closed, or release() gave the connection back to the pool in the meantime
-  if (state.connectionState & ReservedConnectionState.closed) return;
-  state.connectionState |= ReservedConnectionState.closed;
-  for (const query of state.queries) {
-    query.cancel();
-  }
-  // the close handler attached in onReserveConnected returns the pool slot
-  pooledConnection.close();
+function onPendingWorkSettled(timer: ReturnType<typeof setTimeout>, resolve: () => void) {
+  clearTimeout(timer);
+  resolve();
 }
 
-function settleReservedClose(this: ReservedCloseState) {
-  clearTimeout(this.timer!);
-  closeReservedConnection(this.state, this.pooledConnection);
-  this.resolve();
+/// The grace period of close({ timeout }): resolves once `pending` has settled or after `timeout` seconds.
+function waitForPendingWork(pending: PromiseLike<unknown>[], timeout: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const timer = setTimeout(resolve, timeout * 1000);
+  timer.unref(); // dont block the event loop
+  // allSettled: one rejected query must not cut the grace period short for the rest
+  Promise.allSettled(pending).then(onPendingWorkSettled.bind(null, timer, resolve));
+  return promise;
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
@@ -503,18 +493,18 @@ const SQL: typeof Bun.SQL = function SQL(
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
         if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers<void>();
-          const closeState: ReservedCloseState = { state, pooledConnection, timer: null, resolve };
-          const settle = settleReservedClose.bind(closeState);
-          // the timeout is a ceiling: close as soon as the pending work settles, or when it fires
-          closeState.timer = setTimeout(settle, timeout * 1000);
-          closeState.timer.unref(); // dont block the event loop
-          // allSettled: one failing query must not close the connection under the others
-          Promise.allSettled([...reserveQueries, ...reservedTransaction]).then(settle);
-          return promise;
+          await waitForPendingWork([...reserveQueries, ...reservedTransaction], timeout);
+          // release() or a disconnect may have ended the reservation while we waited
+          if (state.connectionState & ReservedConnectionState.closed) return;
         }
       }
-      closeReservedConnection(state, pooledConnection);
+      state.connectionState |= ReservedConnectionState.closed;
+      for (const query of reserveQueries) {
+        (query as Query<any, any>).cancel();
+      }
+      // the close handler attached above returns the pool slot
+      pooledConnection.close();
+
       return Promise.$resolve(undefined);
     };
     reserved_sql.release = () => {

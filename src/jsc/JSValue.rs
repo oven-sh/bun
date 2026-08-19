@@ -677,11 +677,12 @@ impl JSValue {
         if unsigned.is_empty() || !unsigned.iter().all(u8::is_ascii_digit) {
             return Ok(None);
         }
+        // Only text StringToBigInt accepts gets here, so empty means it threw (too large).
         let value = host_fn::from_js_host_call(global, || {
             // SAFETY: `digits` is a live slice for the duration of the call.
             unsafe { JSC__JSValue__bigIntFromLatin1(global, digits.as_ptr(), digits.len()) }
         })?;
-        Ok((!value.is_empty()).then_some(value))
+        Ok(Some(value))
     }
     /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
     /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate

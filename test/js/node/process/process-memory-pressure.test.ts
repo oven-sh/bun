@@ -233,9 +233,11 @@ describe.concurrent("process.on('memoryPressure')", () => {
     moved({ high: 7 }, 0, []); // another one inside the warning holdoff
     moved({ oom: 1 }, 0, ["critical"]); // a warning does not hold off an OOM
     moved({ oom_kill: 2 }, 0, []); // another OOM inside the critical holdoff
-    moved({ max: 1 }, 1000, []); // reclaim 1 s after a critical
+    moved({ max: 1 }, 1000, []); // reclaim inside both holdoffs
     moved({ low: 1 }, 2000, ["warning"]); // reclaim once exactly the holdoff has passed
     moved({ oom_group_kill: 1 }, 2000, ["critical"]); // an OOM 2 s after the previous one
+    moved({ oom: 2 }, 4000, ["critical"]); // an OOM 2 s after that one
+    moved({ max: 2 }, 5000, []); // reclaim 3 s after the last warning, but 1 s after a critical
     moved({}, 9000, [], "some_future_counter 7\n"); // a counter Bun does not classify moved
     moved({ high: 8 }, 9000, ["warning"], "no_value\nsome_future_counter x\n"); // bad lines are skipped, the rest still counts
     steps.push([memoryEvents({ high: 1 }), 9000, []]); // a short read: below the counts already seen

@@ -181,40 +181,20 @@ pub mod pdeathsig {
     }
 }
 
-/// Closed at no-orphans exit so a Worker cannot spawn once the tree walk runs.
+/// Closed at no-orphans exit so a Worker cannot add a child the tree walk misses.
 #[cfg(unix)]
 pub mod spawn_gate {
-    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
+    use core::sync::atomic::{AtomicBool, Ordering};
 
     static CLOSED: AtomicBool = AtomicBool::new(false);
-    static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
-    pub(crate) struct InFlight(());
-
-    impl Drop for InFlight {
-        fn drop(&mut self) {
-            IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
-        }
-    }
-
-    /// Count, then read the flag. `close` does the reverse: no spawn is missed.
-    pub(crate) fn enter() -> Option<InFlight> {
-        IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
-        if CLOSED.load(Ordering::SeqCst) {
-            IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
-            return None;
-        }
-        Some(InFlight(()))
-    }
-
-    /// Refuse new spawns, wait for in-flight ones. Bounded so exit cannot hang.
+    /// Call before the walk lists our children. Never reopens.
     pub fn close() {
         CLOSED.store(true, Ordering::SeqCst);
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while IN_FLIGHT.load(Ordering::SeqCst) != 0 && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_micros(100));
-        }
+    }
+
+    pub(crate) fn is_closed() -> bool {
+        CLOSED.load(Ordering::SeqCst)
     }
 }
 

@@ -317,18 +317,22 @@ async function waitUntilAllDead(pids: number[], timeoutMs: number): Promise<numb
 // running, and spawning, until the process is gone. The exit handler lists
 // bun's children once before it kills them, so a child a Worker spawned after
 // that listing used to outlive bun. The handler now closes the spawn gate
-// first (a later spawn fails with ECANCELED, and one already in flight is
-// waited for), so every child either is listed and killed or never exists.
+// first: a later spawn fails with ECANCELED, and a spawn that was in flight
+// kills the child it created. So every child is either listed or killed by
+// its spawner.
 //
 // Each child appends its own pid to the pidfile before it execs sleep, so a
 // child that lives long enough to matter is always on the list, whether or
-// not the Worker that spawned it got to run again before exit.
+// not the Worker that spawned it got to run again before exit. A spawn
+// failure other than ECANCELED is appended too, so the test cannot pass
+// because the workers failed to spawn.
 test.concurrent.skipIf(!isPosix)(
   "--no-orphans: clean exit reaps children spawned by Workers during the exit",
   async () => {
     using dir = tempDir("no-orphans-workers", {
       "exit-while-workers-spawn.js": `
         import { Worker, isMainThread, parentPort } from "node:worker_threads";
+        import { appendFileSync } from "node:fs";
         const workerCount = 4;
         if (isMainThread) {
           let hot = 0;
@@ -346,8 +350,9 @@ test.concurrent.skipIf(!isPosix)(
                 cmd: ["/bin/sh", "-c", 'echo $$ >> "$0"; exec sleep 30', process.env.PIDFILE],
                 stdio: ["ignore", "ignore", "ignore"],
               });
-            } catch {
-              // ECANCELED once the exit handler has closed the gate.
+            } catch (e) {
+              // ECANCELED is expected once the exit handler has closed the gate.
+              if (e.code !== "ECANCELED") appendFileSync(process.env.PIDFILE, "error " + e.code + "\\n");
             }
             if (++spawned === 10) parentPort.postMessage("hot");
             setTimeout(spawnOne, 0);
@@ -365,15 +370,16 @@ test.concurrent.skipIf(!isPosix)(
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const children = readFileSync(pidfile, "utf8").split("\n").filter(Boolean).map(Number);
+    const lines = readFileSync(pidfile, "utf8").split("\n").filter(Boolean);
+    const spawnErrors = lines.filter(line => !/^\d+$/.test(line));
+    const children = lines.filter(line => /^\d+$/.test(line)).map(Number);
     // A child killed before its echo is not on the list, so the count varies;
     // this only proves the workers were spawning.
     expect(children.length).toBeGreaterThan(0);
     const survivors = await waitUntilAllDead(children, 10000);
     reap(...survivors);
     if (exitCode !== 0) console.error(stderr);
-    expect(survivors).toEqual([]);
-    expect(exitCode).toBe(0);
+    expect({ spawnErrors, survivors, exitCode }).toEqual({ spawnErrors: [], survivors: [], exitCode: 0 });
   },
 );
 

@@ -384,8 +384,8 @@ extern "C" fn on_process_exit() {
 ///      and unlike SIGTERM can't be trapped or ignored.
 /// A frozen process can neither exit (so its pid can't be reused) nor fork
 /// (so its child set is stable while we recurse), which is what makes the
-/// verify step sufficient. The only forking process is `self`, and we're in
-/// the exit handler, past `spawn_gate::close()`: not forking.
+/// verify step sufficient. The only forking process is `self`, and past
+/// `spawn_gate::close()` a child it still creates is killed by its spawner.
 fn kill_descendants() {
     #[cfg(unix)]
     {

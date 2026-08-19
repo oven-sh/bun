@@ -5160,12 +5160,8 @@ impl VirtualMachine {
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
-        // An AggregateError prints its members in place of itself. With no
-        // member to print it falls through and prints like any other error:
-        // no own `errors` object (user code deleted it, or this is the copy
-        // `JSModuleLoader::duplicateError` throws when a module that already
-        // failed to load is imported again), or one that is empty or not
-        // iterable.
+        // Prints the members in place of the AggregateError. `errors` can be missing without
+        // user code: `JSModuleLoader::duplicateError` replays a failed module load without it.
         if value.is_aggregate_error(global_ref)
             && let Some(errors) = value.get_errors_property(global_ref)
         {
@@ -5226,9 +5222,6 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            // `for_each` throws when `errors` is not iterable or its iterator
-            // throws. That exception is dropped; a pending termination is left
-            // in place and ends the print.
             if errors
                 .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
                 .is_err()
@@ -5239,6 +5232,7 @@ impl VirtualMachine {
             if ctx.printed_member {
                 return;
             }
+            // `errors` is empty or not iterable: print the AggregateError itself.
         }
 
         let was_internal = self.print_error_from_maybe_private_data(

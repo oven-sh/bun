@@ -140,16 +140,12 @@ export async function renderRoutesForProdStatic(
         if (paramGetter[Symbol.asyncIterator] != undefined) {
           for await (const params of paramGetter) {
             result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
-            if ($isPromise(result) && $isPromisePending(result)) {
-              await result;
-            }
+            if ($isPromise(result)) await result;
           }
         } else if (paramGetter[Symbol.iterator] != undefined) {
           for (const params of paramGetter) {
             result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
-            if ($isPromise(result) && $isPromisePending(result)) {
-              await result;
-            }
+            if ($isPromise(result)) await result;
           }
         } else {
           await Promise.all(

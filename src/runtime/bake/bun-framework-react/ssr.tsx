@@ -107,19 +107,23 @@ export function renderToStaticHtml(
   const Root = () => React.use(promise);
   let pipe: (stream: any) => void;
   let abort: ((reason?: any) => void) | undefined;
+  let aborted = false;
   ({ pipe, abort } = renderToPipeableStream(<Root />, {
     bootstrapModules,
     // Only begin flowing HTML once all of it is ready. This tells React
     // to not emit the flight chunks, just the entire HTML.
     onAllReady: () => pipe(stream),
-    // `onAllReady` never fires after an error, so abort the render and reject the result here.
+    // `onAllReady` never fires after an error, so reject the result here and abort the render once; Fizz's `abort()` calls `onError` again for every task it cancels.
     onError(error) {
+      stream.destroy(signal.aborted ?? error);
       if (!signal.aborted) {
         signal.aborted = error;
         signal.abort?.();
       }
-      abort?.();
-      stream.destroy(signal.aborted ?? error);
+      if (!aborted) {
+        aborted = true;
+        queueMicrotask(() => abort?.(error));
+      }
     },
   }));
   return stream.result;

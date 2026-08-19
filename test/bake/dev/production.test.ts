@@ -2085,9 +2085,11 @@ export const innerSeenByOuter = () => Inner;
 export function Outer() {
   return <div id="outer"><Inner /></div>;
 }`,
-        "components/Inner.tsx": `"use client";
-
-export function Inner() {
+        // Padded so its parse finishes after Outer's: Outer then resolves ./Inner before the server-discovered build of Inner is a boundary, which is the order that used to produce two Inner chunks.
+        "components/Inner.tsx":
+          `"use client";\n` +
+          "// padding\n".repeat(20000) +
+          `export function Inner() {
   return <span className="inner">inner module marker</span>;
 }`,
         // Loads the client chunks the RSC payload points at for Inner and Outer.
@@ -2102,8 +2104,8 @@ console.log(JSON.stringify({ outerImportsSameInner: outer.innerSeenByOuter() ===
         "package.json": JSON.stringify({ "name": "test-app", "version": "1.0.0" }),
       });
 
-      // Repeat the build so both parse orders get a chance to happen.
-      for (let attempt = 0; attempt < 3; attempt++) {
+      // The padding makes the aliasing order the likely one; two builds still give the other order a chance.
+      for (let attempt = 0; attempt < 2; attempt++) {
         rmSync(path.join(dir, "dist"), { recursive: true, force: true });
 
         const build = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).env(bunEnv).throws(false);

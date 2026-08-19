@@ -250,6 +250,16 @@ export async function downloadWithRetry(
  * checks miss the change entirely. With -m, everything extracted is "now",
  * so any .o built BEFORE this extraction is correctly stale.
  *
+ * ## Symlink fallback
+ *
+ * Creating a symlink needs privilege on Windows (Developer Mode or an
+ * elevated shell). Some dep archives carry symlinks the build never reads —
+ * zstd ships two test fixtures under tests/cli-tests/ — and bsdtar extracts
+ * every other entry, then exits 1 on just those. So the happy path runs
+ * unchanged, and only after a failure do we list the archive for symlink
+ * entries and retry with each excluded. An archive with no symlinks failed
+ * for some other reason and the original error is rethrown.
+ *
  * @param stripComponents How many top-level dirs to strip. 1 for github
  *   archives. 0 for tarballs that are already flat (e.g. prebuilt WebKit
  *   has `bun-webkit/` that the caller wants to keep for a rename step).
@@ -270,11 +280,51 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
     });
   }
   if (result.status !== 0) {
-    throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
+    const symlinks = listSymlinkEntries(tarball);
+    if (symlinks.length === 0) {
+      throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
+    }
+    console.log(
+      `tar exited ${result.status}; retrying without ${symlinks.length} symlink ` +
+        `${symlinks.length === 1 ? "entry" : "entries"}: ${symlinks.join(", ")}`,
+    );
+    const retry = spawnSync(tarExe, [...args, ...symlinks.map(entry => `--exclude=${entry}`)], {
+      stdio: ["ignore", "ignore", "pipe"],
+      encoding: "utf8",
+    });
+    if (retry.status !== 0) {
+      throw new BuildError(
+        `tar extraction failed even with symlink entries excluded:\n` +
+          `  first attempt (exit ${result.status}): ${result.stderr}\n` +
+          `  retry (exit ${retry.status}): ${retry.error?.message ?? retry.stderr}`,
+        { file: tarball },
+      );
+    }
   }
 
   const entries = await readdir(dest);
   assert(entries.length > 0, `tar extracted nothing from ${tarball}`, { hint: "Tarball may be corrupt" });
+}
+
+/**
+ * Archive entries that are symlinks, in archive order. Empty when the
+ * listing itself fails (the caller then rethrows its original error).
+ *
+ * `-tv` marks a symlink with `l` in the mode column, but the entry name is
+ * awkward to parse out of the verbose line (variable date columns, a
+ * ` -> target` suffix). `-t` prints one bare name per line in the same
+ * order, so pair the two listings by index instead.
+ */
+function listSymlinkEntries(tarball: string): string[] {
+  const list = (flags: string) =>
+    spawnSync(tarExe, [flags, tarball], { stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" });
+  const verbose = list("-tzvf");
+  const names = list("-tzf");
+  if (verbose.status !== 0 || names.status !== 0) return [];
+  const modes = verbose.stdout.split(/\r?\n/).filter(Boolean);
+  const entries = names.stdout.split(/\r?\n/).filter(Boolean);
+  if (modes.length !== entries.length) return [];
+  return entries.filter((_, i) => modes[i]!.startsWith("l"));
 }
 
 /**

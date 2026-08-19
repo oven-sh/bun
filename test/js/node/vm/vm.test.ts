@@ -1356,6 +1356,14 @@ describe("DONT_CONTEXTIFY", () => {
     expect((thrown as Error)?.name).toBe("EvalError");
   });
 
+  test("invalid contextCodeGeneration is rejected when reusing a DONT_CONTEXTIFY context", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const invalid = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(() => new Script("1").runInNewContext(ctx, { contextCodeGeneration: 123 })).toThrow(invalid);
+    expect(() => new Script("1").runInNewContext(ctx, { contextCodeGeneration: { strings: 123 } })).toThrow(invalid);
+    expect(() => runInNewContext("1", ctx, { contextCodeGeneration: 123 })).toThrow(invalid);
+  });
+
   test("var/function declarations work via runInNewContext", () => {
     expect(
       runInNewContext(

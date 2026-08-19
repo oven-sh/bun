@@ -550,19 +550,19 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
-    // vm.ts runInNewContext() passes the DONT_CONTEXTIFY global created by createContext().
-    if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(contextObjectValue)) {
-        if (auto* existing = dynamicDowncast<NodeVMGlobalObject>(proxy->target()); existing && existing->isNotContextified()) {
-            RELEASE_AND_RETURN(scope, runInContext(existing, script, proxy, callFrame->argument(1)));
-        }
-    }
-
     JSValue contextOptionsArg = callFrame->argument(1);
     NodeVMContextOptions contextOptions {};
     JSValue importer;
 
     getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // vm.ts runInNewContext() passes the DONT_CONTEXTIFY global created by createContext().
+    if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(contextObjectValue)) {
+        if (auto* existing = dynamicDowncast<NodeVMGlobalObject>(proxy->target()); existing && existing->isNotContextified()) {
+            RELEASE_AND_RETURN(scope, runInContext(existing, script, proxy, contextOptionsArg));
+        }
+    }
 
     contextOptions.notContextified = notContextified;
 

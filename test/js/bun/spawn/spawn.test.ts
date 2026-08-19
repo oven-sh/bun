@@ -1673,6 +1673,22 @@ describe("option combinations", () => {
 describe("uid/gid", () => {
   const isRoot = process.getuid?.() === 0;
 
+  // NaN used to be coerced to 0, so a uid from a failed lookup ran the child as root.
+  it("rejects a NaN uid/gid before spawning", () => {
+    expect(() => spawn({ cmd: [bunExe(), "--version"], env: bunEnv, uid: NaN })).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "uid" is out of range. It must be an integer. Received NaN',
+      }),
+    );
+    expect(() => spawn({ cmd: [bunExe(), "--version"], env: bunEnv, gid: NaN })).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "gid" is out of range. It must be an integer. Received NaN',
+      }),
+    );
+  });
+
   it.if(isPosix && isRoot)("applies uid and gid to the child", async () => {
     await using proc = spawn({ cmd: ["id", "-u"], uid: 65534, gid: 65534, stdout: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

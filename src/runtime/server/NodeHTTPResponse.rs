@@ -735,8 +735,7 @@ impl NodeHTTPResponse {
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
-        // A tunnel stays open, and ws may still upgrade it later, so keep a context whose
-        // headers were already copied out of the request. upgrade() resets it itself.
+        // ws may still upgrade an open tunnel: keep a context whose request pointer is detached.
         let tunneled = self.flags.get().contains(Flags::TUNNELED);
         self.upgrade_context.with_mut(|c| {
             if !tunneled || !c.request.is_null() {

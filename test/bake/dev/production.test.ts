@@ -880,6 +880,122 @@ export function Btn() { return <button className="btn">hi</button>; }`,
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("the same stylesheet with an onResolve plugin on .css imports is still emitted once", async () => {
+    // Every stylesheet import goes through the plugin's success path instead of the built-in resolver.
+    const dir = await tempDirWithBakeDeps("bake-production-client-css-plugin", {
+      "src/index.tsx": `export default {
+  app: {
+    framework: "react",
+    plugins: [{ name: "p", setup(b) { b.onResolve({ filter: /\\.css$/ }, a => ({ path: require("path").join(a.resolveDir ?? require("path").dirname(a.importer), a.path) })); } }],
+  },
+};`,
+      "pages/index.tsx": `import { Btn } from "../components/Btn";
+export default function IndexPage() { return <main><Btn /></main>; }`,
+      "pages/both.tsx": `import "../components/btn.css";
+import { Btn } from "../components/Btn";
+export default function BothPage() { return <main><Btn /></main>; }`,
+      "components/Btn.tsx": `"use client";
+import "./btn.css";
+export function Btn() { return <button className="btn">hi</button>; }`,
+      "components/btn.css": `.btn { color: red }`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("Multiple files share the same output path");
+
+    const cssFiles = readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"));
+    expect(cssFiles).toHaveLength(1);
+    const stylesheets = async (page: string) =>
+      [...(await Bun.file(path.join(dir, "dist", page)).text()).matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g)].map(
+        tag => tag[0].match(/\bhref="([^"]*)"/)?.[1],
+      );
+    expect({
+      index: await stylesheets("index.html"),
+      both: await stylesheets("both/index.html"),
+    }).toEqual({
+      index: [`/_bun/${cssFiles[0]}`],
+      both: [`/_bun/${cssFiles[0]}`],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("css imported on the server gets browser-target processing", async () => {
+    // The page puts the stylesheet in the server graph, but the emitted CSS is a browser asset.
+    const dir = await tempDirWithBakeDeps("bake-production-server-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import "../styles.css";
+export default function IndexPage() { return <div>Hello World</div>; }`,
+      "styles.css": `.box:fullscreen { color: red; }`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("error:");
+
+    const cssFiles = readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", "_bun", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
+    expect(css).toContain(":fullscreen");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("css imported from both a page and a 'use client' component is bundled once", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-shared-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import "../styles.css";
+import Client from "../components/Client";
+export default function IndexPage() { return <div>Hello <Client /></div>; }`,
+      "components/Client.tsx": `"use client";
+import "../styles.css";
+export default function Client() { return <span>client</span>; }`,
+      "styles.css": `.box:fullscreen { color: red; }`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("Multiple files share the same output path");
+
+    const cssFiles = readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"));
+    expect(cssFiles).toHaveLength(1);
+    expect(await Bun.file(path.join(dir, "dist", "_bun", cssFiles[0])).text()).toContain(":-webkit-full-screen");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("css is printed with browser targets", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-css-print-targets", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import "../styles.css";
+export default function IndexPage() { return <div className="a"><div className="b">Hello World</div></div>; }`,
+      "styles.css": `:root { color-scheme: light dark; }
+.a { .b { color: light-dark(white, black); } }`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("error:");
+
+    const cssFiles = readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", "_bun", cssFiles[0])).text();
+    // Nesting is flattened, and both halves of the light-dark() polyfill are present: definitions from minify, rewritten references from print.
+    expect(css).toContain(".a .b");
+    expect(css).toMatch(/--buncss-light:\s*initial/);
+    expect(css).toMatch(/prefers-color-scheme:\s*dark/);
+    expect(css).toContain("var(--buncss-light");
+    expect(css).not.toContain("light-dark(");
+    expect(exitCode).toBe(0);
+  });
+
   test("importing useState server-side", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-react-import", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
@@ -1192,6 +1308,32 @@ export default function IndexPage() { return <div><Box>hydrated</Box><pre>{text}
     expect(rsc.readUInt32LE(0)).toBe(0);
     expect(inlined.equals(rsc.subarray(4))).toBe(true);
     expect(inlined.includes(Buffer.from([0xff, 0xfe, 0x00, 0x41]))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a NUL byte in a flight row is escaped in the inline flight script", async () => {
+    // All zeroes is valid UTF-8, so this row takes the quoted-string form, and HTML would turn a raw NUL into U+FFFD.
+    const dir = await tempDirWithBakeDeps("bake-production-flight-nul", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `export default function IndexPage() {
+  return <div data-z={new Uint8Array(8)}>x</div>;
+}`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+
+    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(html).not.toContain('atob("');
+    expect(html.includes("\0")).toBe(false);
+    const inlined = Buffer.concat(inlineFlightChunks(html).map(chunk => Buffer.from(chunk as any)));
+    const rsc = Buffer.from(await Bun.file(path.join(dir, "dist", "index.rsc")).arrayBuffer());
+    expect(rsc.readUInt32LE(0)).toBe(0);
+    expect(inlined.equals(rsc.subarray(4))).toBe(true);
+    expect(inlined.includes(Buffer.alloc(8))).toBe(true);
     expect(exitCode).toBe(0);
   });
 

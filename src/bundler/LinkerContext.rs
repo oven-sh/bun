@@ -1271,6 +1271,8 @@ pub struct LinkerOptions {
     pub(crate) css_chunking: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
+    /// Target CSS chunks are printed for; copied from `BundleOptions::css_target`. Bake's `target` is the server target while stylesheets ship to the browser.
+    pub(crate) css_target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
@@ -1312,6 +1314,7 @@ impl Default for LinkerOptions {
             css_chunking: false,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
+            css_target: Target::Browser,
             compile_mode: CompileMode::None,
             metafile: false,
             metafile_json_path: b"",

@@ -1480,3 +1480,133 @@ devTest("failed css root imported by a later script gets no chunk", {
     await c.style(".a").color.expect.toBe("#00f");
   },
 });
+
+// The primary transpiler targets the server, but stylesheets ship to the browser: minify and print both use browser targets.
+devTest("stylesheets linked from html are minified and printed for browser targets", {
+  files: {
+    // nesting is flattened and light-dark() is polyfilled
+    "nested.html": emptyHtmlFile({
+      styles: ["nested.css"],
+      body: `<div class="a"><div class="b">hello</div></div>`,
+    }),
+    "nested.css": `
+      .a {
+        .b {
+          color: light-dark(white, black);
+        }
+      }
+    `,
+    // an external @import stays external and its media condition is downleveled; nothing fetches the URL
+    "external.html": emptyHtmlFile({
+      styles: ["external.css"],
+      body: `<div class="a">hello</div>`,
+    }),
+    "external.css": `
+      @import url("https://example.com/x.css") screen and (width >= 500px);
+      .a {
+        color: red;
+      }
+    `,
+    // an external @import behind a conditional internal @import keeps its nesting through a data: URL wrapper, printed separately from the chunk body
+    "wrapped.html": emptyHtmlFile({
+      styles: ["wrapped.css"],
+      body: `<div class="a">hello</div>`,
+    }),
+    "wrapped.css": `
+      @import "./wrapped-mid.css" screen and (width >= 500px);
+      .a {
+        color: red;
+      }
+    `,
+    "wrapped-mid.css": `
+      @import url("https://example.com/x.css") (width <= 300px);
+    `,
+    // the deduplicated copy of a repeated conditional @import leaves a bare "@layer foo;" statement wrapped in the import's media condition
+    "layer.html": emptyHtmlFile({
+      styles: ["layer.css"],
+      body: `<div class="b">hello</div>`,
+    }),
+    "layer.css": `
+      @import "./layer-dup.css" layer(foo) screen and (width >= 500px);
+      @import "./layer-other.css";
+      @import "./layer-dup.css" layer(foo) screen and (width >= 500px);
+    `,
+    "layer-dup.css": `
+      .b {
+        color: blue;
+      }
+    `,
+    "layer-other.css": `
+      .c {
+        color: green;
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      const css = await servedCss(dev, "/nested");
+      expect(css).toContain(".a .b");
+      expect(css).not.toContain("light-dark(");
+    }
+    {
+      const css = await servedCss(dev, "/external");
+      expect(css).toContain('@import "https://example.com/x.css" screen and (min-width: 500px)');
+      expect(css).not.toContain(">=");
+    }
+    {
+      const css = await servedCss(dev, "/wrapped");
+      expect(css).toContain("data:text/css");
+      expect(css).toContain("(min-width: 500px)");
+      expect(css).toContain("max-width");
+      expect(css).not.toContain(">=");
+      expect(css).not.toContain("<=");
+    }
+    {
+      const css = await servedCss(dev, "/layer");
+      expect(css).toContain("@layer foo;");
+      expect(css).toContain("(min-width: 500px)");
+      expect(css).not.toContain(">=");
+    }
+  },
+});
+
+// A stylesheet imported by a server-side route file is still served to the browser.
+devTest("framework route stylesheets are minified and printed for browser targets", {
+  framework: minimalFramework,
+  files: {
+    "routes/fullscreen.ts": routeRespondingWithStyles("fullscreen.css"),
+    "fullscreen.css": `
+      .box:fullscreen {
+        color: red;
+      }
+    `,
+    "routes/scheme.ts": routeRespondingWithStyles("scheme.css"),
+    "scheme.css": `
+      :root {
+        color-scheme: light dark;
+      }
+      .a {
+        color: light-dark(white, black);
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      const styles: string[] = await dev.fetch("/fullscreen").json();
+      expect(styles).toHaveLength(1);
+      const css = await fetchCss(dev, styles[0]);
+      expect(css).toContain(":-webkit-full-screen");
+      expect(css).toContain(":fullscreen");
+    }
+    // The light-dark() polyfill injects the variable definitions and the prefers-color-scheme toggle at minify and rewrites the references at print; references without definitions drop the declaration in every browser.
+    {
+      const styles: string[] = await dev.fetch("/scheme").json();
+      expect(styles).toHaveLength(1);
+      const css = await fetchCss(dev, styles[0]);
+      expect(css).toMatch(/--buncss-light:\s*initial/);
+      expect(css).toMatch(/prefers-color-scheme:\s*dark/);
+      expect(css).toContain("var(--buncss-light");
+      expect(css).not.toContain("light-dark(");
+    }
+  },
+});

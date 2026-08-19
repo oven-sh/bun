@@ -1552,6 +1552,22 @@ impl<'a> BundleOptions<'a> {
         b"react-refresh",
     ];
 
+    /// Whether this bundle has a client graph alongside server graphs (dev server or `bun build --app`); `framework` is set on every bake transpiler, including frameworks without server components.
+    #[inline]
+    pub(crate) fn is_bake_build(&self) -> bool {
+        self.framework.is_some() || self.has_dev_server()
+    }
+
+    /// The target stylesheets are minified and printed for. Bake builds ship every stylesheet to the browser even when a server graph imports it; minify and print must agree because the `light-dark()` polyfill injects definitions at minify and rewrites references at print.
+    #[inline]
+    pub(crate) fn css_target(&self) -> Target {
+        if self.is_bake_build() {
+            Target::Browser
+        } else {
+            self.target
+        }
+    }
+
     pub(crate) fn load_defines(
         &mut self,
         arena: &bun_alloc::Arena,

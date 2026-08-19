@@ -326,17 +326,41 @@ impl<'a> BundleV2<'a> {
         self.graph.path_to_source_index_map(target)
     }
 
-    /// The graph an imported file is built in. A production server-components build shares one copy of each stylesheet across the server, SSR and client graphs so it is emitted once.
-    pub(crate) fn target_for_imported_file(
-        &self,
-        importer_target: options::Target,
+    /// Bake builds register a non-JS file's source index in every graph's path map so client, server and SSR imports of one stylesheet or asset resolve to one copy; the gate must match `BundleOptions::css_target`, since identical minify output makes per-graph copies collide on the content-hashed output path. JS stays per-graph (target affects DCE); HTML stays per-graph (server-side HTML imports become per-target manifest modules).
+    pub(crate) fn share_non_js_source_index_across_graphs(
+        &mut self,
+        target: options::Target,
         loader: Loader,
-    ) -> options::Target {
-        if loader.is_css() && self.dev_server.is_none() && self.transpiler.options.server_components
+        path_text: &[u8],
+        source_index: IndexInt,
+    ) {
+        if !self.transpiler.options.is_bake_build()
+            || loader.is_javascript_like()
+            || loader == Loader::Html
         {
-            return Target::Browser;
+            return;
         }
-        importer_target
+        let main_target = self.transpiler.options.target;
+        let separate_ssr = self
+            .framework
+            .as_ref()
+            .and_then(|f| f.server_components.as_ref())
+            .is_some_and(|sc| sc.separate_ssr_graph);
+        let (ta, tb) = match target {
+            Target::Browser => (main_target, Target::ServerComponentsSsr),
+            Target::ServerComponentsSsr => (main_target, Target::Browser),
+            _ => (Target::Browser, Target::ServerComponentsSsr),
+        };
+        self.graph
+            .path_to_source_index_map(ta)
+            .put(path_text, source_index)
+            .expect("oom");
+        if separate_ssr {
+            self.graph
+                .path_to_source_index_map(tb)
+                .put(path_text, source_index)
+                .expect("oom");
+        }
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
@@ -2616,36 +2640,8 @@ pub mod bv2_impl {
                     }
                 }
 
-                // For non-javascript files, make all of these files share indices.
-                // For example, it is silly to bundle index.css depended on by client+server twice.
-                // It makes sense to separate these for JS because the target affects DCE
-                if self.transpiler.options.server_components && !loader.is_javascript_like() {
-                    // reshaped for borrowck — cannot hold two `&mut` into
-                    // `self.graph` simultaneously, so re-derive the map per insert.
-                    let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    let main_target = self.transpiler.options.target;
-                    let separate_ssr = self
-                        .framework
-                        .as_ref()
-                        .unwrap()
-                        .server_components
-                        .as_ref()
-                        .unwrap()
-                        .separate_ssr_graph;
-                    let (ta, tb) = match target {
-                        Target::Browser => (main_target, Target::ServerComponentsSsr),
-                        Target::ServerComponentsSsr => (main_target, Target::Browser),
-                        _ => (Target::Browser, Target::ServerComponentsSsr),
-                    };
-                    self.path_to_source_index_map(ta)
-                        .put(&key_text, idx)
-                        .expect("oom");
-                    if separate_ssr {
-                        self.path_to_source_index_map(tb)
-                            .put(&key_text, idx)
-                            .expect("oom");
-                    }
-                }
+                // It is silly to bundle index.css depended on by client+server twice.
+                self.share_non_js_source_index_across_graphs(target, loader, path.text, idx);
             }
 
             if let Some(source_index) = out_source_index {
@@ -3014,6 +3010,7 @@ pub mod bv2_impl {
             this.linker.options.top_level_dir =
                 unsafe { interned_slice(this.transpiler.options.top_level_dir()) };
             this.linker.options.target = this.transpiler.options.target;
+            this.linker.options.css_target = this.transpiler.options.css_target();
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
@@ -4957,6 +4954,12 @@ pub mod bv2_impl {
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
+                            this.share_non_js_source_index_across_graphs(
+                                resolve.import_record.original_target,
+                                loader,
+                                path.text,
+                                source_index.get(),
+                            );
                             let task_val = ParseTask {
                                 // SAFETY: `from_mut(this)` is the live bundle (write provenance);
                                 // outlives the task.
@@ -6310,7 +6313,6 @@ pub mod bv2_impl {
                                 .unwrap_or(Loader::File)
                         });
                         import_record.loader = Some(import_record_loader);
-                        let target = self.target_for_imported_file(target, import_record_loader);
 
                         if let Some(id) =
                             self.path_to_source_index_map(target).get(path_primary.text)
@@ -6679,7 +6681,6 @@ pub mod bv2_impl {
                     break 'brk resolved_loader;
                 };
                 import_record.loader = Some(import_record_loader);
-                let target = self.target_for_imported_file(target, import_record_loader);
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
@@ -6787,16 +6788,14 @@ pub mod bv2_impl {
                 });
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
-                let map_target = if is_html_entrypoint {
-                    Target::Browser
-                } else {
-                    self.target_for_imported_file(target, loader)
-                };
                 // Select map and perform get_or_put, capturing the slot as a raw ptr
                 // so the &mut on self.graph is released before we touch other fields.
                 let (found_existing, value_ptr): (bool, *mut IndexInt) = {
-                    let map: &mut PathToSourceIndexMap =
-                        self.graph.path_to_source_index_map(map_target);
+                    let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
+                        self.graph.path_to_source_index_map(Target::Browser)
+                    } else {
+                        self.graph.path_to_source_index_map(target)
+                    };
                     let existing = map.get_or_put(key).expect("oom");
                     (
                         existing.found_existing,
@@ -6834,6 +6833,13 @@ pub mod bv2_impl {
                     unsafe {
                         *value_ptr = new_task.source_index.get();
                     }
+
+                    self.share_non_js_source_index_across_graphs(
+                        target,
+                        loader,
+                        new_task.path.text,
+                        new_task.source_index.get(),
+                    );
 
                     diff += 1;
 
@@ -6954,13 +6960,10 @@ pub mod bv2_impl {
                 drop(value);
             }
 
+            // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
+            // so borrowck sees it as disjoint from `self.graph.input_files` above.
+            let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
-                let map_target = record.loader.map_or(ctx.target, |loader| {
-                    self.target_for_imported_file(ctx.target, loader)
-                });
-                // Inlined `self.path_to_source_index_map(map_target)` (== `&mut self.graph.build_graphs[target]`)
-                // so borrowck sees it as disjoint from `self.graph.input_files` above.
-                let path_to_source_index_map = &mut self.graph.build_graphs[map_target];
                 if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()

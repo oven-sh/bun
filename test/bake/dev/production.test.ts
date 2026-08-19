@@ -462,12 +462,14 @@ export default function Docs() {
     expect(exitCode).toBe(1);
   });
 
-  test("rejects a fileSystemRouterTypes[n].prefix other than /", async () => {
-    using dir = tempDir("bake-production-prefix", {
-      "server.ts": `export function render() { return new Response("unused"); }
+  test(
+    "rejects a fileSystemRouterTypes[n].prefix other than /",
+    async () => {
+      using dir = tempDir("bake-production-prefix", {
+        "server.ts": `export function render() { return new Response("unused"); }
 export function prerender(meta) { return { files: { "/index.html": String(meta.pageModule.default()) } }; }`,
-      "routes/index.ts": `export default () => "index";`,
-      "bun.app.ts": `
+        "routes/index.ts": `export default () => "index";`,
+        "bun.app.ts": `
         const { prefix } = JSON.parse(process.env.PREFIX_JSON!);
         export default {
           app: {
@@ -477,28 +479,32 @@ export function prerender(meta) { return { files: { "/index.html": String(meta.p
           },
         };
       `,
-    });
+      });
 
-    // TypeError message when rejected, otherwise the exit code.
-    const build = async (prefix: string | null) => {
-      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
-        .cwd(String(dir))
-        .env({ ...bunEnv, PREFIX_JSON: JSON.stringify({ prefix }) })
-        .quiet()
-        .throws(false);
-      return stderr.toString().match(/TypeError: (.*)/)?.[1] ?? exitCode;
-    };
-    const prefixes = [null, "/", "/docs", ""];
-    const results = await Promise.all(prefixes.map(async prefix => [prefix, await build(prefix)]));
+      // TypeError message when rejected, otherwise the exit code.
+      const build = async (prefix: string | null) => {
+        const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+          .cwd(String(dir))
+          .env({ ...bunEnv, PREFIX_JSON: JSON.stringify({ prefix }) })
+          .quiet()
+          .throws(false);
+        return stderr.toString().match(/TypeError: (.*)/)?.[1] ?? exitCode;
+      };
+      const prefixes = [null, "/", "/docs", ""];
+      const results = await Promise.all(prefixes.map(async prefix => [prefix, await build(prefix)]));
 
-    const rejected = `'fileSystemRouterTypes[0].prefix' other than "/" is not supported yet`;
-    expect(Object.fromEntries(results)).toStrictEqual({ null: 0, "/": 0, "/docs": rejected, "": rejected });
-  });
+      const rejected = `'fileSystemRouterTypes[0].prefix' other than "/" is not supported yet`;
+      expect(Object.fromEntries(results)).toStrictEqual({ null: 0, "/": 0, "/docs": rejected, "": rejected });
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
-  test("an unhandled rejection from the config file fails the build", async () => {
-    // Custom framework: no react install needed; the rejection is printed by the VM and must set the exit code.
-    using dir = tempDir("bake-production-unhandled-rejection", {
-      "bun.app.ts": `
+  test(
+    "an unhandled rejection from the config file fails the build",
+    async () => {
+      // Custom framework: no react install needed; the rejection is printed by the VM and must set the exit code.
+      using dir = tempDir("bake-production-unhandled-rejection", {
+        "bun.app.ts": `
         Promise.reject(new Error("unhandled-boom"));
         process.on("exit", code => console.log("exit event: " + code));
         export default {
@@ -509,21 +515,23 @@ export function prerender(meta) { return { files: { "/index.html": String(meta.p
           },
         };
       `,
-      "server-entry.ts": `
+        "server-entry.ts": `
         export function render(req, meta) { return new Response(String(meta.pageModule.default())); }
         export async function prerender(meta) { return { files: { "/index.html": String(meta.pageModule.default()) } }; }
       `,
-      "pages/index.ts": `export default () => "homepage";`,
-    });
-    const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
-      .cwd(String(dir))
-      .env(bunEnv)
-      .quiet()
-      .throws(false);
-    expect(stderr.toString()).toContain("unhandled-boom");
-    expect(stdout.toString()).toContain("exit event: 1");
-    expect(exitCode).toBe(1);
-  });
+        "pages/index.ts": `export default () => "homepage";`,
+      });
+      const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+        .cwd(String(dir))
+        .env(bunEnv)
+        .quiet()
+        .throws(false);
+      expect(stderr.toString()).toContain("unhandled-boom");
+      expect(stdout.toString()).toContain("exit event: 1");
+      expect(exitCode).toBe(1);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
   // The bundler's diagnostics are the whole report for a build it rejects; it then exits 1 through the build VM.
   describe.concurrent("a build the bundler rejects", () => {
@@ -839,46 +847,50 @@ export default function ManifestPage() {
     });
   });
 
-  test("a stylesheet imported by a client component is emitted once and linked from its pages", async () => {
-    // Btn.tsx is built for both the client and the SSR graph; both/ also imports the stylesheet from a server component.
-    const dir = await tempDirWithBakeDeps("bake-production-client-css", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `import { Btn } from "../components/Btn";
+  test(
+    "a stylesheet imported by a client component is emitted once and linked from its pages",
+    async () => {
+      // Btn.tsx is built for both the client and the SSR graph; both/ also imports the stylesheet from a server component.
+      const dir = await tempDirWithBakeDeps("bake-production-client-css", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `import { Btn } from "../components/Btn";
 export default function IndexPage() { return <main><Btn /></main>; }`,
-      "pages/both.tsx": `import "../components/btn.css";
+        "pages/both.tsx": `import "../components/btn.css";
 import { Btn } from "../components/Btn";
 export default function BothPage() { return <main><Btn /></main>; }`,
-      "components/Btn.tsx": `"use client";
+        "components/Btn.tsx": `"use client";
 import "./btn.css";
 export function Btn() { return <button className="btn">hi</button>; }`,
-      "components/btn.css": `.btn { color: red }`,
-    });
+        "components/btn.css": `.btn { color: red }`,
+      });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    if (exitCode !== 0) {
-      expect(stderr.toString()).toBe("");
-    }
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      if (exitCode !== 0) {
+        expect(stderr.toString()).toBe("");
+      }
 
-    const cssFiles = readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"));
-    expect(cssFiles).toHaveLength(1);
-    expect(await Bun.file(path.join(dir, "dist", "_bun", cssFiles[0])).text()).toContain(".btn");
+      const cssFiles = readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"));
+      expect(cssFiles).toHaveLength(1);
+      expect(await Bun.file(path.join(dir, "dist", "_bun", cssFiles[0])).text()).toContain(".btn");
 
-    const stylesheets = async (page: string) =>
-      [...(await Bun.file(path.join(dir, "dist", page)).text()).matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g)].map(
-        tag => tag[0].match(/\bhref="([^"]*)"/)?.[1],
-      );
-    expect({
-      index: await stylesheets("index.html"),
-      both: await stylesheets("both/index.html"),
-    }).toEqual({
-      index: [`/_bun/${cssFiles[0]}`],
-      both: [`/_bun/${cssFiles[0]}`],
-    });
-    expect(exitCode).toBe(0);
-  });
+      const stylesheets = async (page: string) =>
+        [
+          ...(await Bun.file(path.join(dir, "dist", page)).text()).matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g),
+        ].map(tag => tag[0].match(/\bhref="([^"]*)"/)?.[1]);
+      expect({
+        index: await stylesheets("index.html"),
+        both: await stylesheets("both/index.html"),
+      }).toEqual({
+        index: [`/_bun/${cssFiles[0]}`],
+        both: [`/_bun/${cssFiles[0]}`],
+      });
+      expect(exitCode).toBe(0);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
   test.concurrent("the same stylesheet with an onResolve plugin on .css imports is still emitted once", async () => {
     // Every stylesheet import goes through the plugin's success path instead of the built-in resolver.
@@ -1263,85 +1275,99 @@ export default function IndexPage() {
     return self.__bun_f ?? [];
   }
 
-  test.concurrent("a carriage return in a long server string is escaped in the inline flight script", async () => {
-    // Flight emits strings of 1024+ chars as raw text rows, so the CR is not JSON-escaped for us.
-    const dir = await tempDirWithBakeDeps("bake-production-flight-cr", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "components/Box.tsx": `"use client";
+  test.concurrent(
+    "a carriage return in a long server string is escaped in the inline flight script",
+    async () => {
+      // Flight emits strings of 1024+ chars as raw text rows, so the CR is not JSON-escaped for us.
+      const dir = await tempDirWithBakeDeps("bake-production-flight-cr", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "components/Box.tsx": `"use client";
 export default function Box({ children }) { return <b>{children}</b>; }`,
-      "pages/index.tsx": `import Box from "../components/Box";
+        "pages/index.tsx": `import Box from "../components/Box";
 const text = Buffer.alloc(1500, "line one\\r\\n").toString();
 export default function IndexPage() { return <div><Box>hydrated</Box><pre>{text}</pre></div>; }`,
-    });
+      });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      if (exitCode !== 0) expect(stderr.toString()).toBe("");
 
-    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
-    expect(inlineFlightChunks(html).join("")).toContain("line one\r\nline one\r\n");
-    expect(exitCode).toBe(0);
-  });
+      const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+      expect(inlineFlightChunks(html).join("")).toContain("line one\r\nline one\r\n");
+      expect(exitCode).toBe(0);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
-  test.concurrent("a binary flight row is inlined as base64 that matches index.rsc", async () => {
-    // A TypedArray prop makes Flight emit raw bytes that are not valid UTF-8.
-    const dir = await tempDirWithBakeDeps("bake-production-flight-binary", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `export default function IndexPage() {
+  test.concurrent(
+    "a binary flight row is inlined as base64 that matches index.rsc",
+    async () => {
+      // A TypedArray prop makes Flight emit raw bytes that are not valid UTF-8.
+      const dir = await tempDirWithBakeDeps("bake-production-flight-binary", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `export default function IndexPage() {
   return <div data-b={new Uint8Array([0xff, 0xfe, 0x00, 0x41])}>x</div>;
 }`,
-    });
+      });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      if (exitCode !== 0) expect(stderr.toString()).toBe("");
 
-    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
-    expect(html).toContain('atob("');
-    const inlined = Buffer.concat(inlineFlightChunks(html).map(chunk => Buffer.from(chunk as any)));
-    const rsc = Buffer.from(await Bun.file(path.join(dir, "dist", "index.rsc")).arrayBuffer());
-    // No stylesheets, so index.rsc is a zero header followed by the flight payload.
-    expect(rsc.readUInt32LE(0)).toBe(0);
-    expect(inlined.equals(rsc.subarray(4))).toBe(true);
-    expect(inlined.includes(Buffer.from([0xff, 0xfe, 0x00, 0x41]))).toBe(true);
-    expect(exitCode).toBe(0);
-  });
+      const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+      expect(html).toContain('atob("');
+      const inlined = Buffer.concat(inlineFlightChunks(html).map(chunk => Buffer.from(chunk as any)));
+      const rsc = Buffer.from(await Bun.file(path.join(dir, "dist", "index.rsc")).arrayBuffer());
+      // No stylesheets, so index.rsc is a zero header followed by the flight payload.
+      expect(rsc.readUInt32LE(0)).toBe(0);
+      expect(inlined.equals(rsc.subarray(4))).toBe(true);
+      expect(inlined.includes(Buffer.from([0xff, 0xfe, 0x00, 0x41]))).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
-  test.concurrent("a NUL byte in a flight row is escaped in the inline flight script", async () => {
-    // All zeroes is valid UTF-8, so this row takes the quoted-string form, and HTML would turn a raw NUL into U+FFFD.
-    const dir = await tempDirWithBakeDeps("bake-production-flight-nul", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `export default function IndexPage() {
+  test.concurrent(
+    "a NUL byte in a flight row is escaped in the inline flight script",
+    async () => {
+      // All zeroes is valid UTF-8, so this row takes the quoted-string form, and HTML would turn a raw NUL into U+FFFD.
+      const dir = await tempDirWithBakeDeps("bake-production-flight-nul", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `export default function IndexPage() {
   return <div data-z={new Uint8Array(8)}>x</div>;
 }`,
-    });
+      });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      if (exitCode !== 0) expect(stderr.toString()).toBe("");
 
-    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
-    expect(html).not.toContain('atob("');
-    expect(html.includes("\0")).toBe(false);
-    const inlined = Buffer.concat(inlineFlightChunks(html).map(chunk => Buffer.from(chunk as any)));
-    const rsc = Buffer.from(await Bun.file(path.join(dir, "dist", "index.rsc")).arrayBuffer());
-    expect(rsc.readUInt32LE(0)).toBe(0);
-    expect(inlined.equals(rsc.subarray(4))).toBe(true);
-    expect(inlined.includes(Buffer.alloc(8))).toBe(true);
-    expect(exitCode).toBe(0);
-  });
+      const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+      expect(html).not.toContain('atob("');
+      expect(html.includes("\0")).toBe(false);
+      const inlined = Buffer.concat(inlineFlightChunks(html).map(chunk => Buffer.from(chunk as any)));
+      const rsc = Buffer.from(await Bun.file(path.join(dir, "dist", "index.rsc")).arrayBuffer());
+      expect(rsc.readUInt32LE(0)).toBe(0);
+      expect(inlined.equals(rsc.subarray(4))).toBe(true);
+      expect(inlined.includes(Buffer.alloc(8))).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
-  test.concurrent("a Promise prop that settles after the HTML is ready is still written to index.rsc", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-late-flight", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      // Only `use()`d after mount, so server rendering never waits on it.
-      "components/Late.tsx": `"use client";
+  test.concurrent(
+    "a Promise prop that settles after the HTML is ready is still written to index.rsc",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-late-flight", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        // Only `use()`d after mount, so server rendering never waits on it.
+        "components/Late.tsx": `"use client";
 import { use, useEffect, useState } from "react";
 function Inner({ p }: { p: Promise<string> }) { return <span>{use(p)}</span>; }
 export function Late({ p }: { p: Promise<string> }) {
@@ -1349,29 +1375,33 @@ export function Late({ p }: { p: Promise<string> }) {
   useEffect(() => setMounted(true), []);
   return <div>{mounted ? <Inner p={p} /> : "not-mounted"}</div>;
 }`,
-      "pages/index.tsx": `import { Late } from "../components/Late";
+        "pages/index.tsx": `import { Late } from "../components/Late";
 export default function IndexPage() {
   const p = new Promise<string>(resolve => setTimeout(() => resolve("LATE_VALUE"), 50));
   return <main><h1>hello</h1><Late p={p} /></main>;
 }`,
-    });
+      });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      if (exitCode !== 0) expect(stderr.toString()).toBe("");
 
-    expect(await Bun.file(path.join(dir, "dist", "index.rsc")).text()).toContain('"LATE_VALUE"');
-    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
-    expect(inlineFlightChunks(html).join("")).toContain('"LATE_VALUE"');
-    expect(exitCode).toBe(0);
-  });
+      expect(await Bun.file(path.join(dir, "dist", "index.rsc")).text()).toContain('"LATE_VALUE"');
+      const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+      expect(inlineFlightChunks(html).join("")).toContain('"LATE_VALUE"');
+      expect(exitCode).toBe(0);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
-  test.concurrent("several large Suspense boundaries pre-render", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-suspense-boundaries", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `import { Suspense } from "react";
+  test.concurrent(
+    "several large Suspense boundaries pre-render",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-suspense-boundaries", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `import { Suspense } from "react";
 async function Part({ id }: { id: string }) {
   await Promise.resolve();
   await Promise.resolve();
@@ -1386,20 +1416,22 @@ export default function IndexPage() {
     </main>
   );
 }`,
-    });
+      });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      if (exitCode !== 0) expect(stderr.toString()).toBe("");
 
-    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
-    for (const id of ["PART_A", "PART_B", "PART_C"]) {
-      expect(html).toContain(`${id}:${id}${id}`);
-    }
-    expect(exitCode).toBe(0);
-  });
+      const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+      for (const id of ["PART_A", "PART_B", "PART_C"]) {
+        expect(html).toContain(`${id}:${id}${id}`);
+      }
+      expect(exitCode).toBe(0);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
   test("don't include client code if fully static route", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-client-js", {
@@ -1442,58 +1474,62 @@ export default function IndexPage() {
     expect(htmlContent).not.toContain('<script type="module"');
   });
 
-  test("prerendered index.rsc lists exactly the route's own stylesheets in its header", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-rsc-css-header", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `import "./a.css";
+  test(
+    "prerendered index.rsc lists exactly the route's own stylesheets in its header",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-rsc-css-header", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `import "./a.css";
 export default function IndexPage() {
   return <div>index</div>;
 }`,
-      "pages/other.tsx": `import "./b.css";
+        "pages/other.tsx": `import "./b.css";
 export default function OtherPage() {
   return <div>other</div>;
 }`,
-      "pages/plain.tsx": `export default function PlainPage() {
+        "pages/plain.tsx": `export default function PlainPage() {
   return <div>plain</div>;
 }`,
-      "pages/a.css": `.a { color: red; }`,
-      "pages/b.css": `.b { color: blue; }`,
-    });
+        "pages/a.css": `.a { color: red; }`,
+        "pages/b.css": `.b { color: blue; }`,
+      });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    if (exitCode !== 0) {
-      expect(stderr.toString()).toBe("");
-    }
-    expect(exitCode).toBe(0);
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      if (exitCode !== 0) {
+        expect(stderr.toString()).toBe("");
+      }
+      expect(exitCode).toBe(0);
 
-    const cssByRule: Record<string, string> = {};
-    for (const file of readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"))) {
-      const text = await Bun.file(path.join(dir, "dist", "_bun", file)).text();
-      cssByRule[text.includes(".a") ? "a" : "b"] = `/_bun/${file}`;
-    }
+      const cssByRule: Record<string, string> = {};
+      for (const file of readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"))) {
+        const text = await Bun.file(path.join(dir, "dist", "_bun", file)).text();
+        cssByRule[text.includes(".a") ? "a" : "b"] = `/_bun/${file}`;
+      }
 
-    const route = async (route: string) => {
-      const html = await Bun.file(path.join(dir, "dist", route, "index.html")).text();
-      const links = [...html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g)].map(
-        tag => tag[0].match(/\bhref="([^"]*)"/)?.[1],
-      );
-      // Decode index.rsc the way client.tsx does: little-endian uint32 byte length, then the "\n"-joined list.
-      const buf = Buffer.from(await Bun.file(path.join(dir, "dist", route, "index.rsc")).arrayBuffer());
-      const header = buf.readUInt32LE(0);
-      const rsc = header > 0 ? buf.toString("utf8", 4, 4 + header).split("\n") : [];
-      // React flight rows start with a numeric id like "0:".
-      expect(buf.toString("utf8", 4 + header)).toMatch(/^\d+:/);
-      return { links, rsc };
-    };
-    expect({ index: await route(""), other: await route("other"), plain: await route("plain") }).toEqual({
-      index: { links: [cssByRule.a], rsc: [cssByRule.a] },
-      other: { links: [cssByRule.b], rsc: [cssByRule.b] },
-      plain: { links: [], rsc: [] },
-    });
-  });
+      const route = async (route: string) => {
+        const html = await Bun.file(path.join(dir, "dist", route, "index.html")).text();
+        const links = [...html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g)].map(
+          tag => tag[0].match(/\bhref="([^"]*)"/)?.[1],
+        );
+        // Decode index.rsc the way client.tsx does: little-endian uint32 byte length, then the "\n"-joined list.
+        const buf = Buffer.from(await Bun.file(path.join(dir, "dist", route, "index.rsc")).arrayBuffer());
+        const header = buf.readUInt32LE(0);
+        const rsc = header > 0 ? buf.toString("utf8", 4, 4 + header).split("\n") : [];
+        // React flight rows start with a numeric id like "0:".
+        expect(buf.toString("utf8", 4 + header)).toMatch(/^\d+:/);
+        return { links, rsc };
+      };
+      expect({ index: await route(""), other: await route("other"), plain: await route("plain") }).toEqual({
+        index: { links: [cssByRule.a], rsc: [cssByRule.a] },
+        other: { links: [cssByRule.b], rsc: [cssByRule.b] },
+        plain: { links: [], rsc: [] },
+      });
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
   test("a custom framework without server components builds and keeps its client entry", async () => {
     using dir = tempDir("bake-production-custom-framework", {
@@ -1536,9 +1572,11 @@ export async function prerender(meta: any) {
     expect(exitCode).toBe(0);
   });
 
-  test("a route file that is not a script is reported by name", async () => {
-    using dir = tempDir("bake-production-non-js-route", {
-      "bun.app.ts": `export default {
+  test(
+    "a route file that is not a script is reported by name",
+    async () => {
+      using dir = tempDir("bake-production-non-js-route", {
+        "bun.app.ts": `export default {
         app: {
           framework: {
             fileSystemRouterTypes: [
@@ -1547,29 +1585,31 @@ export async function prerender(meta: any) {
           },
         },
       };`,
-      "pages/index.tsx": `export default function Home() { return "homepage"; }`,
-      "pages/style.css": `body { color: red; }`,
-      "pages/doc.html": `<!doctype html><html><body>static</body></html>`,
-      "server-entry.ts": `export function render(req: Request, meta: any) {
+        "pages/index.tsx": `export default function Home() { return "homepage"; }`,
+        "pages/style.css": `body { color: red; }`,
+        "pages/doc.html": `<!doctype html><html><body>static</body></html>`,
+        "server-entry.ts": `export function render(req: Request, meta: any) {
   return new Response(String(meta.pageModule.default()));
 }
 export async function prerender(meta: any) {
   return { files: { "/index.html": "<!DOCTYPE html><html><body>" + String(meta.pageModule.default()) + "</body></html>" } };
 }`,
-    });
+      });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
-      .cwd(String(dir))
-      .env(bunEnv)
-      .throws(false);
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+        .cwd(String(dir))
+        .env(bunEnv)
+        .throws(false);
 
-    for (const file of ["pages/style.css", "pages/doc.html"]) {
-      expect(stderr.toString()).toContain(
-        `error: "${platformPath(file)}" is not a JavaScript or TypeScript file, so it cannot be a route`,
-      );
-    }
-    expect(exitCode).toBe(1);
-  });
+      for (const file of ["pages/style.css", "pages/doc.html"]) {
+        expect(stderr.toString()).toContain(
+          `error: "${platformPath(file)}" is not a JavaScript or TypeScript file, so it cannot be a route`,
+        );
+      }
+      expect(exitCode).toBe(1);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
   // --debug-no-minify names an entry in the project root `_bun/./[name].[hash].js`; module keys must normalise that like the resolver does.
   test.skipIf(!hasBakeDebuggingFeatures)(
@@ -1617,93 +1657,95 @@ export async function prerender(meta: any) {
   );
 
   // A successful build leaves through `on_exit` + `global_exit`: 'exit' handlers, process.exitCode, and VM teardown under BUN_DESTRUCT_VM_ON_EXIT.
-  describe.concurrent("exits through the build VM", () => {
-    const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" };
+  describe.concurrent(
+    "exits through the build VM",
+    () => {
+      const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" };
 
-    const onExitConfig = `
+      const onExitConfig = `
       process.on("exit", code => console.log("exit event: " + code));
       export default { app: { framework: "react" } };
     `;
 
-    const timeout = 30_000 * WAIT_MULTIPLIER;
+      const timeout = 30_000 * WAIT_MULTIPLIER;
 
-    test(
-      "a rendered build runs 'exit' handlers and exits with process.exitCode",
-      async () => {
-        const dir = await tempDirWithBakeDeps("bake-production-exit-rendered", {
-          "app.ts": onExitConfig,
-          "pages/index.tsx": `
+      test(
+        "a rendered build runs 'exit' handlers and exits with process.exitCode",
+        async () => {
+          const dir = await tempDirWithBakeDeps("bake-production-exit-rendered", {
+            "app.ts": onExitConfig,
+            "pages/index.tsx": `
             process.exitCode = 3;
             export default function IndexPage() {
               return <div>Hello World</div>;
             }
           `,
-        });
+          });
 
-        const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
-          .cwd(dir)
-          .env(env)
-          .quiet()
-          .throws(false);
+          const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
+            .cwd(dir)
+            .env(env)
+            .quiet()
+            .throws(false);
 
-        expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
-        expect(stdout.toString()).toBe("done\nexit event: 3\n");
-        expect(exitCode).toBe(3);
-      },
-      timeout,
-    );
+          expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
+          expect(stdout.toString()).toBe("done\nexit event: 3\n");
+          expect(exitCode).toBe(3);
+        },
+        timeout,
+      );
 
-    test(
-      "a build with nothing to render runs 'exit' handlers",
-      async () => {
-        const dir = await tempDirWithBakeDeps("bake-production-exit-no-routes", {
-          "app.ts": onExitConfig,
-        });
+      test(
+        "a build with nothing to render runs 'exit' handlers",
+        async () => {
+          const dir = await tempDirWithBakeDeps("bake-production-exit-no-routes", {
+            "app.ts": onExitConfig,
+          });
 
-        const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
-          .cwd(dir)
-          .env(env)
-          .quiet()
-          .throws(false);
+          const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
+            .cwd(dir)
+            .env(env)
+            .quiet()
+            .throws(false);
 
-        expect(stdout.toString()).toBe("done\nexit event: 0\n");
-        expect(exitCode).toBe(0);
-      },
-      timeout,
-    );
+          expect(stdout.toString()).toBe("done\nexit event: 0\n");
+          expect(exitCode).toBe(0);
+        },
+        timeout,
+      );
 
-    // Like `bun build`, the build does not wait for ref'd handles a config or route module leaves behind.
-    test(
-      "a rendered build exits without draining a timer left running by the config module",
-      async () => {
-        const dir = await tempDirWithBakeDeps("bake-production-exit-interval", {
-          "app.ts": `
+      // Like `bun build`, the build does not wait for ref'd handles a config or route module leaves behind.
+      test(
+        "a rendered build exits without draining a timer left running by the config module",
+        async () => {
+          const dir = await tempDirWithBakeDeps("bake-production-exit-interval", {
+            "app.ts": `
             setInterval(() => {}, 1000);
             ${onExitConfig}
           `,
-          "pages/index.tsx": `export default function IndexPage() { return <div>Hello World</div>; }`,
-        });
+            "pages/index.tsx": `export default function IndexPage() { return <div>Hello World</div>; }`,
+          });
 
-        const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
-          .cwd(dir)
-          .env(env)
-          .quiet()
-          .throws(false);
+          const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
+            .cwd(dir)
+            .env(env)
+            .quiet()
+            .throws(false);
 
-        expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
-        expect(stdout.toString()).toBe("done\nexit event: 0\n");
-        expect(exitCode).toBe(0);
-      },
-      timeout,
-    );
+          expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
+          expect(stdout.toString()).toBe("done\nexit event: 0\n");
+          expect(exitCode).toBe(0);
+        },
+        timeout,
+      );
 
-    // These natives are freed by wrapper finalizers, so a build that exits without destroying its VM leaves them for LeakSanitizer.
-    test.skipIf(!isASAN)(
-      "a rendered build frees the natives its JS objects own",
-      async () => {
-        const dir = await tempDirWithBakeDeps("bake-production-exit-teardown", {
-          "app.ts": `export default { app: { framework: "react" } };`,
-          "pages/index.tsx": `
+      // These natives are freed by wrapper finalizers, so a build that exits without destroying its VM leaves them for LeakSanitizer.
+      test.skipIf(!isASAN)(
+        "a rendered build frees the natives its JS objects own",
+        async () => {
+          const dir = await tempDirWithBakeDeps("bake-production-exit-teardown", {
+            "app.ts": `export default { app: { framework: "react" } };`,
+            "pages/index.tsx": `
             export default function IndexPage() {
               globalThis.keepUntilExit = [
                 new TextDecoder(),
@@ -1714,33 +1756,35 @@ export async function prerender(meta: any) {
               return <div>Hello World</div>;
             }
           `,
-        });
+          });
 
-        const { stdout, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
-          .cwd(dir)
-          .env({
-            ...env,
-            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-            LSAN_OPTIONS: [
-              bunEnv.LSAN_OPTIONS,
-              `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../leaksan.supp")}`,
-            ]
-              .filter(Boolean)
-              .join(":"),
-          })
-          .quiet()
-          .throws(false);
+          const { stdout, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+            .cwd(dir)
+            .env({
+              ...env,
+              ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+              LSAN_OPTIONS: [
+                bunEnv.LSAN_OPTIONS,
+                `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../leaksan.supp")}`,
+              ]
+                .filter(Boolean)
+                .join(":"),
+            })
+            .quiet()
+            .throws(false);
 
-        expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
-        expect(stdout.toString()).toBe("done\n");
-        const leaked = ["TextDecoder", "Blob", "ImmediateObject", "CryptoHasher"].filter(type =>
-          stderr.toString().includes(type),
-        );
-        expect(leaked).toStrictEqual([]);
-      },
-      timeout,
-    );
-  });
+          expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
+          expect(stdout.toString()).toBe("done\n");
+          const leaked = ["TextDecoder", "Blob", "ImmediateObject", "CryptoHasher"].filter(type =>
+            stderr.toString().includes(type),
+          );
+          expect(leaked).toStrictEqual([]);
+        },
+        timeout,
+      );
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
   // These use --debug-no-minify / --debug-dump-server-files, which only canary and debug builds accept.
   describe.concurrent.skipIf(!hasBakeDebuggingFeatures)("output files that cannot be written", () => {
@@ -2223,11 +2267,13 @@ export default async function IndexPage() {
     expect(html).toContain("<li>one module instance</li>");
   });
 
-  test("import() of the bundle root while rendering rejects", async () => {
-    // "/" from a "bake:/_bun/*.js" chunk normalises to the one-character key "/" once the "bake:" prefix is stripped.
-    const dir = await tempDirWithBakeDeps("bake-production-import-root", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `let outcome = "not attempted";
+  test(
+    "import() of the bundle root while rendering rejects",
+    async () => {
+      // "/" from a "bake:/_bun/*.js" chunk normalises to the one-character key "/" once the "bake:" prefix is stripped.
+      const dir = await tempDirWithBakeDeps("bake-production-import-root", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `let outcome = "not attempted";
 try {
   await import(process.env.ROOT_SPECIFIER!);
   outcome = "loaded";
@@ -2235,20 +2281,22 @@ try {
   outcome = "rejected";
 }
 export default function IndexPage() { return <h1>{outcome}</h1>; }`,
-    });
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--app", "./src/index.tsx"],
-      cwd: dir,
-      env: { ...bunEnv, ROOT_SPECIFIER: "/" },
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("<h1>rejected</h1>");
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./src/index.tsx"],
+        cwd: dir,
+        env: { ...bunEnv, ROOT_SPECIFIER: "/" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("<h1>rejected</h1>");
+      expect(exitCode).toBe(0);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 
   describe("route scan errors", () => {
     async function build(dir: string) {

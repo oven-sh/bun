@@ -326,7 +326,7 @@ impl<'a> BundleV2<'a> {
         self.graph.path_to_source_index_map(target)
     }
 
-    /// Bake builds register a non-JS file's source index in every graph's path map so client, server and SSR imports of one stylesheet or asset resolve to one copy; the gate must match `BundleOptions::css_target`, since identical minify output makes per-graph copies collide on the content-hashed output path. JS stays per-graph (target affects DCE); HTML stays per-graph (server-side HTML imports become per-target manifest modules).
+    /// `bun build --app` registers a stylesheet's or asset's source index in every graph's path map so client, server and SSR imports resolve to one copy; per-graph copies print identically (`BundleOptions::css_target`) and would collide on the content-hashed output path. JS stays per-graph (target affects DCE); HTML stays per-graph (server-side HTML imports become per-target manifest modules).
     pub(crate) fn share_non_js_source_index_across_graphs(
         &mut self,
         target: options::Target,
@@ -334,9 +334,10 @@ impl<'a> BundleV2<'a> {
         path_text: &[u8],
         source_index: IndexInt,
     ) {
-        if !self.transpiler.options.is_bake_build()
-            || loader.is_javascript_like()
-            || loader == Loader::Html
+        // The dev server's IncrementalGraph tracks a stylesheet per importing graph, so it keeps per-graph copies.
+        if self.framework.is_none()
+            || self.dev_server.is_some()
+            || !(loader.is_css() || loader == Loader::File)
         {
             return;
         }

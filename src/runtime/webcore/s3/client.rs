@@ -1325,14 +1325,16 @@ fn download_stream(
     task_ptr
 }
 
+/// The two fields `on_stream_cancelled` clears are cells: the stream's sink can cancel
+/// the download from inside `on_data`, while `callback` is delivering.
 pub struct S3DownloadStreamWrapper {
-    pub readable_stream_ref: ReadableStreamStrong,
+    pub readable_stream_ref: JsCell<ReadableStreamStrong>,
     pub path: Box<[u8]>,
     pub global: GlobalRef, // JSC_BORROW
     /// Non-owning. The task frees itself on the main thread once `has_more == false`,
     /// which first drops this wrapper (clearing the stream's producer handle), so this
     /// pointer is never observed dangling from `on_stream_cancelled`.
-    pub task: *mut S3HttpDownloadStreamingTask,
+    pub task: Cell<*mut S3HttpDownloadStreamingTask>,
 }
 
 impl S3DownloadStreamWrapper {
@@ -1355,7 +1357,7 @@ impl S3DownloadStreamWrapper {
             }
         });
 
-        if let Some(readable) = self_.readable_stream_ref.get() {
+        if let Some(readable) = self_.readable_stream_ref.get().get() {
             // BACKREF: see `Source::bytes()` — payload live while the
             // readable stream is rooted. R-2: `&` — `on_data` re-enters JS.
             if let Some(bytes) = readable.ptr.bytes() {
@@ -1387,18 +1389,17 @@ impl S3DownloadStreamWrapper {
         }
     }
 
-    pub(crate) fn on_stream_cancelled(&mut self) {
-        let self_ = self;
+    pub(crate) fn on_stream_cancelled(&self) {
         // Release the Strong ref so the ReadableStream can be GC'd.
         // The download may still be in progress, but the callback will
         // see readable_stream_ref.get() return null and skip data delivery.
         // When the download finishes (has_more == false), deinit() will
         // clean up the remaining resources.
-        self_.readable_stream_ref.deinit();
+        self.readable_stream_ref.with_mut(|s| s.deinit());
         // Abort the in-flight HTTP request so the HTTP thread delivers a final
         // callback with `has_more == false`, which frees the task and this wrapper.
         // Without this, a server that never sends the terminal chunk would leak both.
-        let task = core::mem::replace(&mut self_.task, core::ptr::null_mut());
+        let task = self.task.replace(core::ptr::null_mut());
         if !task.is_null() {
             // SAFETY: task is live until its own `on_response` frees it on this thread,
             // which has not happened yet (it would have dropped this wrapper first).
@@ -1432,7 +1433,7 @@ impl Drop for S3DownloadStreamWrapper {
     fn drop(&mut self) {
         // Clear the ByteStream's producer handle before `readable_stream_ref`
         // drops so the stream never calls back into a freed wrapper.
-        if let Some(readable) = self.readable_stream_ref.get() {
+        if let Some(readable) = self.readable_stream_ref.get().get() {
             if let Some(bytes) = readable.ptr.bytes() {
                 bytes
                     .parent_const()
@@ -1473,16 +1474,16 @@ pub(crate) fn readable_stream(
     let readable_value = reader_mut.to_readable_stream(global_this)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
-        readable_stream_ref: ReadableStreamStrong::init(
+        readable_stream_ref: JsCell::new(ReadableStreamStrong::init(
             ReadableStream {
                 ptr: ReadableStreamPtr::Bytes(&raw mut reader_mut.context),
                 value: readable_value,
             },
             global_this,
-        ),
+        )),
         path: Box::<[u8]>::from(path),
         global: global_static,
-        task: core::ptr::null_mut(),
+        task: Cell::new(core::ptr::null_mut()),
     });
 
     reader_mut
@@ -1508,7 +1509,7 @@ pub(crate) fn readable_stream(
         // SAFETY: on the success path `download_stream` only schedules work onto the HTTP
         // thread; the wrapper is freed via `opaque_callback` on this (main) thread, which
         // cannot run until we return to the event loop, so `wrapper` is still live here.
-        unsafe { (*wrapper).task = task };
+        unsafe { (*wrapper).task.set(task) };
     }
     Ok(readable_value)
 }

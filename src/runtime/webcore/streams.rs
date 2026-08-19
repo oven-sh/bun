@@ -957,10 +957,11 @@ impl SourceHandle {
             SourceHandle::Subprocess(p) => p.on_close(err),
             // SAFETY: live backref; cleared before the pointee is freed.
             SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::FetchResponseBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
+            // Shared refs: both can be reached from inside the producer's own delivery
+            // (`ByteStream::detach_finished_sink` under `on_data`), so neither may form a
+            // second `&mut` to it.
+            SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
             SourceHandle::TestingCancelOnDrain(_) => {}
@@ -1016,8 +1017,7 @@ impl SourceHandle {
     /// sweep: arms must not run JS.
     pub fn consumer_collected(&mut self) {
         match *self {
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::FetchResponseBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
+            SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
             // Remaining variants do not act on this signal.
             SourceHandle::None
             | SourceHandle::JSController(_)

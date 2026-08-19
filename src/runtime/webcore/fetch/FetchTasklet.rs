@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -111,14 +112,17 @@ pub struct FetchTasklet {
     /// response weak ref we need this to track the response JS lifetime
     pub(crate) response: jsc::Weak<FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
-    // Response is intrusively refcounted; modeled as a raw ptr.
-    pub(crate) native_response: Option<*mut Response>,
+    // Response is intrusively refcounted; modeled as a raw ptr. `Cell`, like
+    // `response_stream_source`: `on_stream_cancelled` releases it from inside a delivery.
+    pub(crate) native_response: Cell<Option<*mut Response>>,
     /// A counted ref on the response body's ByteStream source while this tasklet is its
     /// `producer`: the body is delivered and unhooked through native memory, not through JS
     /// wrappers that GC destroys in any order. It does not keep the stream reachable
     /// (`SourceContext::native_ref_roots_wrapper`); once the stream's consumers are gone, the
-    /// source cancels us through `SourceHandle::consumer_collected`.
-    pub(crate) response_stream_source: Option<NonNull<crate::webcore::byte_stream::Source>>,
+    /// source cancels us through `SourceHandle::consumer_collected`. `Cell`: the stream's
+    /// sink can cancel us (`on_stream_cancelled`, a shared ref) from inside `on_data`, while
+    /// the delivery that called it is on the stack.
+    pub(crate) response_stream_source: Cell<Option<NonNull<crate::webcore::byte_stream::Source>>>,
     pub(crate) request_headers: Headers,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
@@ -585,7 +589,7 @@ impl FetchTasklet {
 
     fn get_current_response(&self) -> Option<*mut Response> {
         // we need a body to resolve the promise when buffering
-        if let Some(response) = self.native_response {
+        if let Some(response) = self.native_response.get() {
             return Some(response);
         }
 
@@ -826,7 +830,7 @@ impl FetchTasklet {
                 Self::release_response_stream_source(source);
                 return Ok(());
             }
-        } else if let Some(source) = self.response_stream_source {
+        } else if let Some(source) = self.response_stream_source.get() {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream_source");
             // The delivery holds its own ref: a sink's handlers run inside `on_data` and can
             // cancel the body, which drops the producer ref (`on_stream_cancelled`), and a GC
@@ -837,7 +841,7 @@ impl FetchTasklet {
             bytes.size_hint.set(self.get_size_hint());
             let chunk = self.scheduled_response_buffer.list.as_slice();
             bytes.on_data(Self::temporary_chunk(chunk, false));
-            if self.response_stream_source.is_some() {
+            if self.response_stream_source.get().is_some() {
                 self.update_keep_alive_for_body_consumer(&bytes);
             }
             Self::release_response_stream_source(source);
@@ -1620,7 +1624,7 @@ impl FetchTasklet {
             unsafe {
                 let source = crate::webcore::readable_stream::NewSource::from_context_ptr(bytes);
                 (*source).increment_count();
-                this.response_stream_source = NonNull::new(source);
+                this.response_stream_source.set(NonNull::new(source));
             }
         }
         // A ByteStream now drains scheduled_response_buffer per chunk; undo any
@@ -1698,9 +1702,7 @@ impl FetchTasklet {
 
     /// Stop being the producer. The source stays pinned by our ref, so the caller can still
     /// deliver a terminal chunk before `release_response_stream_source`. Touches no JS cell.
-    fn take_response_stream_source(
-        &mut self,
-    ) -> Option<NonNull<crate::webcore::byte_stream::Source>> {
+    fn take_response_stream_source(&self) -> Option<NonNull<crate::webcore::byte_stream::Source>> {
         let source = self.response_stream_source.take()?;
         // SAFETY: still pinned by the ref from `on_readable_stream_available`.
         unsafe { (*source.as_ptr()).producer.set(SourceHandle::None) };
@@ -1716,16 +1718,17 @@ impl FetchTasklet {
 
     /// Unhook from the response ByteStream (the stream can outlive us) and release it.
     /// Touches no JS cell.
-    fn clear_stream_handlers(&mut self) {
+    fn clear_stream_handlers(&self) {
         if let Some(source) = self.take_response_stream_source() {
             Self::release_response_stream_source(source);
         }
     }
 
-    /// `reader.cancel()` / `body.cancel()`, and the stream's wrapper being collected
-    /// (`SourceHandle::consumer_collected`). The latter runs inside a GC sweep: everything
-    /// here is native state, as in `on_response_finalize`.
-    pub(crate) fn on_stream_cancelled(&mut self) {
+    /// `reader.cancel()` / `body.cancel()`, a sink that is done with the body, and the
+    /// stream's wrapper being collected (`SourceHandle::consumer_collected`). The sink case
+    /// runs inside one of our own deliveries and the last one inside a GC sweep, hence the
+    /// shared ref: everything here is native state, as in `on_response_finalize`.
+    pub(crate) fn on_stream_cancelled(&self) {
         if self.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
@@ -1863,7 +1866,7 @@ impl FetchTasklet {
         )
     }
 
-    fn ignore_remaining_response_body(&mut self) {
+    fn ignore_remaining_response_body(&self) {
         bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
@@ -1878,7 +1881,7 @@ impl FetchTasklet {
         {
             self.schedule_receive_resume();
         }
-        if let Some(http_) = self.http.as_mut() {
+        if let Some(http_) = self.http.as_deref() {
             if !aborted {
                 http_.enable_response_body_streaming();
             }
@@ -1924,7 +1927,7 @@ impl FetchTasklet {
         // Response is intrusively refcounted; bump for native_response.
         // SAFETY: `response` is the live heap allocation owned by JSC after
         // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.
-        self.native_response = Some(Response::ref_(response));
+        self.native_response.set(Some(Response::ref_(response)));
         // Response-owned listener so abort still errors the body after this tasklet detaches its own.
         if let Some(signal) = self.abort_signal() {
             // SAFETY: `response` is the live heap allocation owned by JSC.
@@ -1951,8 +1954,8 @@ impl FetchTasklet {
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
             response: jsc::Weak::default(),
-            native_response: None,
-            response_stream_source: None,
+            native_response: Cell::new(None),
+            response_stream_source: Cell::new(None),
             request_headers: fetch_options.headers,
             promise,
             concurrent_task: ConcurrentTask::default(),
@@ -2338,7 +2341,7 @@ impl FetchTasklet {
         FetchTasklet::deref(this_ptr);
     }
 
-    fn abort_task(&mut self) {
+    fn abort_task(&self) {
         // Idempotent: reader.cancel() and an AbortSignal can both reach here for
         // the same fetch. Only the first abort enqueues a shutdown; a second
         // would append a redundant ShutdownMessage for an already-closing socket.
@@ -2347,7 +2350,7 @@ impl FetchTasklet {
         }
         self.tracker.did_cancel(&self.global_this);
 
-        if let Some(http_) = self.http.as_mut() {
+        if let Some(http_) = self.http.as_deref() {
             http::http_thread().schedule_shutdown(http_);
         }
     }
@@ -2655,7 +2658,7 @@ impl FetchTasklet {
     pub(crate) fn on_response_finalize(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
         let this = self;
-        if let Some(response) = this.native_response {
+        if let Some(response) = this.native_response.get() {
             // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
             let body = unsafe { (*response).get_body_value() };
             // Three scenarios:
@@ -2667,7 +2670,8 @@ impl FetchTasklet {
             // 3. We never started buffering, in which case we should ignore the body.
             //
             // Inside a finalizer: decide from native state only.
-            if !matches!(body, BodyValue::Locked(_)) || this.response_stream_source.is_some() {
+            if !matches!(body, BodyValue::Locked(_)) || this.response_stream_source.get().is_some()
+            {
                 // Scenario 1: the stream outlives its Response while something consumes it;
                 // its own collection cancels the body (`SourceHandle::consumer_collected`).
                 return;

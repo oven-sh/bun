@@ -280,7 +280,9 @@ impl<'a> AsyncHTTP<'a> {
         &MAX_SIMULTANEOUS_REQUESTS
     }
 
-    pub fn enable_response_body_streaming(&mut self) {
+    /// A store into the caller's signal `Store`, not into `self`; shared so the
+    /// JS side can flip it from a callback that only has a shared tasklet.
+    pub fn enable_response_body_streaming(&self) {
         self.signals.store(
             crate::signals::Field::ResponseBodyStreaming,
             true,

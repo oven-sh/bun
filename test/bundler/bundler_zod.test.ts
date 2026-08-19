@@ -325,7 +325,7 @@ itBundled("zod/FoldedStringsKeepEverySegment", {
       ]);
       console.log(Lit.safeParse("a").success, Lit.safeParse("ab").success);
       console.log(En.safeParse("x").success, En.safeParse("xy").success);
-      console.log(Prefix.safeParse("preXXX").success, Prefix.safeParse("prefixXXX").success);
+      console.log(Prefix.safeParse("pre-rest").success, Prefix.safeParse("prefix-rest").success);
       console.log(Def.parse(undefined));
       console.log(Tagged.safeParse({ kind: "o", value: "v" }).success, Tagged.safeParse({ kind: "ok", value: "v" }).success);
     `,

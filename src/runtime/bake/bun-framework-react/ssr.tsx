@@ -73,9 +73,7 @@ export function renderToHtml(
             signal.aborted = error;
             abort();
             if (signal.abort) signal.abort();
-            if (stream) {
-              stream.controller.close();
-            }
+            stream?.finalize();
           }
         },
       }));
@@ -160,6 +158,9 @@ class RscInjectionStream extends EventEmitter {
   rscChunks: Uint8Array[] = [];
   /** If all RSC chunks have been processed */
   rscHasEnded = false;
+  /** Fizz has written everything but `tail`, which is held back until the last RSC chunk is in. */
+  htmlHasEnded = false;
+  tail = "";
   /** Shared state for decoding RSC data into UTF-8 strings */
   decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -178,17 +179,23 @@ class RscInjectionStream extends EventEmitter {
     this.finalize = () => {
       if (this.finalized) return;
       this.finalized = true;
+      if (this.tail) controller.write(this.tail);
+      controller.flush();
       controller.close();
       resolve();
     };
     this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));
+    // Fizz can finish before Flight has serialized a Promise prop that SSR never read, so wait for both.
     rscPayload.on("end", () => {
       this.rscHasEnded = true;
+      if (this.htmlHasEnded) this.finalize();
     });
     rscPayload.on("error", err => {
       this.rscHasEnded = true;
+      // The HTML is already complete; close it off rather than fail the response.
+      if (this.htmlHasEnded) return this.finalize();
       this.finalized = true;
       // Close the controller
       controller.close();
@@ -216,14 +223,9 @@ class RscInjectionStream extends EventEmitter {
       this.html = HtmlState.Boundary;
       this.drainRscChunks();
     } else if (endsWithClosingBody(data)) {
-      // The HTML is about to finish. When this happens there cannot be more RSC
-      // chunks, since if that was truly the case, the HTML wouldn't be done.
-      const { controller } = this;
-      controller.write(data.subarray(0, data.length - closingBodyTag.length));
-      this.drainRscChunks();
-      controller.write(closingBodyTag);
-      controller.flush();
-      this.finalize();
+      this.controller.write(data.subarray(0, data.length - closingBodyTag.length));
+      this.tail = closingBodyTag;
+      this.endHtml();
     } else {
       this.controller.write(data);
       this.html = HtmlState.Flowing;
@@ -286,10 +288,18 @@ class RscInjectionStream extends EventEmitter {
   destroy(e) {}
 
   end() {
-    // `write` normally finalizes on `</body></html>`; this only matters if Fizz's last write changes shape.
-    if (this.finalized) return;
+    // `write` normally sees `</body></html>`; this only matters if Fizz's last write changes shape.
+    this.endHtml();
+  }
+
+  /** The HTML is done. RSC chunks that arrive from now on are written directly, and the last one closes the stream. */
+  endHtml() {
+    if (this.htmlHasEnded || this.finalized) return;
+    this.htmlHasEnded = true;
+    this.html = HtmlState.Boundary;
     this.drainRscChunks();
-    this.finalize();
+    if (this.rscHasEnded) this.finalize();
+    else this.controller.flush();
   }
 }
 
@@ -431,6 +441,8 @@ function toSingleQuote(str: string): string {
       .replace(/\n/g, "\\n")
       // LS and PS are legal in string literals since ES2019; CR and LF are not.
       .replace(/\r/g, "\\r")
+      // The HTML tokenizer turns a NUL in script text into U+FFFD. `\0` would form an octal escape before a digit.
+      .replace(/\0/g, "\\x00")
       // Escape closing script tags and HTML comments in JS content.
       .replace(/<!--/g, "<\\!--")
       .replace(/<\/(script)/gi, "</\\$1")

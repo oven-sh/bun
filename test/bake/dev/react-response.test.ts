@@ -444,3 +444,36 @@ devTest("streaming = true flushes every outlined Suspense boundary", {
     expect(response.status).toBe(200);
   },
 });
+
+// Fizz finishes before Flight serializes a Promise prop that SSR never reads; the document waits for that row.
+devTest("a Promise prop that settles after the HTML is ready is still inlined", {
+  framework: "react",
+  files: {
+    // Only `use()`d after mount, so server rendering never waits on it.
+    "components/Late.tsx": `
+      "use client";
+      import { use, useEffect, useState } from "react";
+      function Inner({ p }: { p: Promise<string> }) { return <span>{use(p)}</span>; }
+      export function Late({ p }: { p: Promise<string> }) {
+        const [mounted, setMounted] = useState(false);
+        useEffect(() => setMounted(true), []);
+        return <div>{mounted ? <Inner p={p} /> : "not-mounted"}</div>;
+      }
+    `,
+    "pages/index.tsx": `
+      import { Late } from "../components/Late";
+      export default function IndexPage() {
+        const p = new Promise<string>(resolve => setTimeout(() => resolve("LATE_VALUE"), 50));
+        return <main><h1>hello</h1><Late p={p} /></main>;
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const text = await response.text();
+    expect(text).toContain("not-mounted");
+    expect(text).toMatch(/\.push\('(?:[^'\\]|\\.)*"LATE_VALUE"/);
+    expect(text.trimEnd().endsWith("</body></html>")).toBe(true);
+    expect(response.status).toBe(200);
+  },
+});

@@ -360,6 +360,36 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     }
   });
 
+  // Same overlap with a transaction that fails. close() must wait for the ROLLBACK, and
+  // the failure is the caller's to handle: bun:test fails this test if close()'s wait
+  // reports it as an unhandled rejection as well.
+  test("reserved.close({ timeout }) waits for a failing transaction without reporting its handled error", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const failing = reserved
+        .begin(async tx => {
+          await tx.unsafe("SELECT 'T1a'");
+          throw new Error("t1-app-error");
+        })
+        .catch(err => err.message);
+      const closed = reserved.close({ timeout: 60 });
+      expect(await failing).toBe("t1-app-error");
+      await closed;
+      reserved.release();
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "ROLLBACK" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // Runs in a child process: bun:test would turn any unhandled rejection into a test
   // failure, and the second half of this contract is that one rejection IS reported.
   test("a rejected reserved begin() is reported as unhandled only when the caller ignores it", async () => {

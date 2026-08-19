@@ -293,7 +293,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return reject(err);
     }
 
-    let reservedTransaction = new Set();
+    let reservedTransaction = new Set<Promise<void>>();
 
     const state: TransactionState = {
       connectionState: ReservedConnectionState.acceptQueries,
@@ -378,23 +378,29 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.array = sql.array;
     reserved_sql.listen = listen;
     reserved_sql.notify = makeNotify(reserved_sql);
-    function settleReservedTransaction(transaction_promise: Promise<any>, settle: (value: any) => void, value: any) {
-      reservedTransaction.delete(transaction_promise);
+    function settleReservedTransaction(
+      finished: { promise: Promise<void>; resolve: () => void },
+      settle: (value: any) => void,
+      value: any,
+    ) {
+      reservedTransaction.delete(finished.promise);
+      finished.resolve();
       settle(value);
     }
-    // reserved_sql.close({ timeout }) waits on reservedTransaction. Entries are removed
-    // from the settle functions, not from a handler on the returned promise: a handler
-    // marks the caller's promise as handled (hiding a rejection the caller ignores), and
-    // a .finally() chain rejects a second promise that nobody handles.
+    // reserved_sql.close({ timeout }) waits on reservedTransaction, so it holds a promise per
+    // transaction that only fulfills. No handler may be attached to the caller's promise:
+    // that hides a rejection the caller ignores, and a .finally() chain on it rejects a
+    // second promise that nobody handles when the caller did handle the first one.
     function runReservedTransaction(callback: TransactionCallback, options: string | undefined, distributed: boolean) {
       const { promise, resolve, reject } = Promise.withResolvers();
-      reservedTransaction.add(promise);
+      const finished = Promise.withResolvers<void>();
+      reservedTransaction.add(finished.promise);
       // lets just reuse the same code path as the transaction begin
       onTransactionConnected(
         callback,
         options,
-        settleReservedTransaction.bind(null, promise, resolve),
-        settleReservedTransaction.bind(null, promise, reject),
+        settleReservedTransaction.bind(null, finished, resolve),
+        settleReservedTransaction.bind(null, finished, reject),
         true,
         distributed,
         null,

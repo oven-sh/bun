@@ -428,8 +428,11 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
 // goes is released unrun too, and has to drop its ref then. A ref that is not
 // dropped leaves the whole request behind (tasklet, AsyncHTTP, sink, stream
 // buffer); one dropped twice frees it while the HTTP thread still hands it
-// back. The oracle is the tasklet's own teardown log line: one `deinit` per
-// fetch the worker made (debug builds only), plus LSan and ASAN on that build.
+// back. The oracle on a debug build is the tasklet's own teardown log line:
+// one `deinit` per fetch the worker made. The ASAN build is a release build
+// without that log; there the rows run for ASAN itself and for LSan, which
+// reports the response-body row's leak (the others stay reachable to it
+// through stale JS heap memory).
 //
 // Each row's upload is mid-flight by construction: the target server holds
 // the request open and the host terminates the worker once the first body
@@ -533,16 +536,18 @@ describe.skipIf((!isDebug && !isASAN) || isWindows)("a worker goes while a reque
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         // The debug log lines share stdout with the host's own line.
         const output = stdout + stderr;
+        const deinits = isDebug ? (output.match(/^\[fetchtasklet\] deinit$/gm)?.length ?? 0) : "release build";
+        const expectedDeinits = isDebug ? row.fetches : "release build";
         expect({
           workerExit: output.match(/^worker exit code: (\d+)$/m)?.[1],
-          deinits: output.match(/^\[fetchtasklet\] deinit$/gm)?.length ?? 0,
+          deinits,
           sanitizer: output.includes("Sanitizer"),
           exitCode,
           // On a failure, everything the host printed.
-          detail: exitCode === 0 ? "" : output,
+          detail: exitCode === 0 && deinits === expectedDeinits ? "" : output,
         }).toEqual({
           workerExit: row.terminate ? "1" : "0",
-          deinits: row.fetches,
+          deinits: expectedDeinits,
           sanitizer: false,
           exitCode: 0,
           detail: "",

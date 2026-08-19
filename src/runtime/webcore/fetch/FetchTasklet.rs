@@ -70,9 +70,8 @@ impl FetchTaskletDeinitHop {
     }
 }
 
-/// The "request body buffer drained → resume the body stream" hop
-/// (`on_write_request_data_drain`): same pointer, its own tag, carrying the
-/// +1 that `resume_request_data_stream` drops.
+/// The "request body buffer drained" hop (`on_write_request_data_drain`):
+/// same pointer, its own tag, carrying a ref that running or releasing it drops.
 #[repr(transparent)]
 pub struct FetchTaskletDrainHop(FetchTasklet);
 impl Taskable for FetchTaskletDrainHop {
@@ -2302,8 +2301,7 @@ impl FetchTasklet {
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     fn on_write_request_data_drain(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_ref(this);
-        // Held by the hop until `resume_request_data_stream` (or its release
-        // unrun) drops it.
+        // The hop's ref.
         this_ref.ref_();
         let task = ConcurrentTask::create_from(this.cast::<FetchTaskletDrainHop>());
         this_ref

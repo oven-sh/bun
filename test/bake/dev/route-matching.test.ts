@@ -63,8 +63,9 @@ devTest("the query string is not part of the route path", {
     await dev.fetch("/joe/posts").equals("posts:joe");
     await dev.fetch("/joe/posts?tab=1").equals("posts:joe");
     await dev.fetch("/joe/posts/?tab=1").equals("posts:joe");
-    // A pathname that embeds a URL is still origin-form.
-    await dev.fetch("/echo/https://example.com/a?q=1").equals("rest:https:,example.com,a");
+    // A pathname with a scheme-like segment is still origin-form (`//` itself is rejected: empty segments never match).
+    await dev.fetch("/echo/mailto:someone@example.com/a?q=1").equals("rest:mailto:someone@example.com,a");
+    expect((await dev.fetch("/echo/https://example.com/a?q=1")).status).toBe(404);
   },
 });
 

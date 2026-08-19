@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
-import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, openSync, readFileSync, writeSync } from "node:fs";
 
-// process.on("memoryPressure") is a Bun extension. These tests drive the
-// emit path synthetically via bun:internal-for-testing since real OS memory
-// pressure cannot be induced reliably (and PSI trigger creation requires
-// CAP_SYS_RESOURCE on Linux kernels before 6.6, which CI containers lack).
-// The one test that arms a real PSI trigger first checks that this process
-// is allowed to create one, and is skipped otherwise.
+// process.on("memoryPressure") is a Bun extension. Real OS memory pressure
+// cannot be induced reliably, so these tests drive the emit path through
+// bun:internal-for-testing. The tests that set up a real OS source first
+// check that this process may use that source (a PSI trigger needs
+// CAP_SYS_RESOURCE before kernel 6.4, and most CI containers deny writes to
+// /proc/pressure), and are skipped otherwise.
 
 async function run(src: string) {
   await using proc = Bun.spawn({
@@ -20,7 +20,28 @@ async function run(src: string) {
   return { stdout, stderr, exitCode };
 }
 
-function canArmPsiTriggerAt(path: string): boolean {
+// The cgroup v2 file Bun would use: the one in the cgroup named by the 0::
+// line of /proc/self/cgroup, or the one at the mount root when that path is
+// not visible from here (a container that shares the host's cgroup namespace).
+function ownCgroupFile(name: string): string | undefined {
+  if (!isLinux) return undefined;
+  let cgroup: string;
+  try {
+    cgroup = readFileSync("/proc/self/cgroup", "utf8");
+  } catch {
+    return undefined;
+  }
+  const entry = cgroup.split("\n").find(line => line.startsWith("0::"));
+  if (entry === undefined) return undefined;
+  const rest = entry.slice("0::".length).replace(/^\//, "");
+  const own = `/sys/fs/cgroup/${rest}${rest ? "/" : ""}${name}`;
+  if (rest && existsSync(own)) return own;
+  const root = `/sys/fs/cgroup/${name}`;
+  return existsSync(root) ? root : undefined;
+}
+
+function canArmPsiTriggerAt(path: string | undefined): boolean {
+  if (path === undefined) return false;
   let fd: number;
   try {
     fd = openSync(path, constants.O_RDWR | constants.O_NONBLOCK);
@@ -40,20 +61,30 @@ function canArmPsiTriggerAt(path: string): boolean {
 }
 
 // The same two files, in the same order, that Bun tries when a listener is
-// added: the system-wide PSI file, then this process's own cgroup v2 file.
-function canArmPsiTrigger(): boolean {
-  if (!isLinux) return false;
-  if (canArmPsiTriggerAt("/proc/pressure/memory")) return true;
-  let cgroup: string;
+// added: the system-wide PSI file, then this process's own cgroup file.
+const canArmPsiTrigger =
+  isLinux && (canArmPsiTriggerAt("/proc/pressure/memory") || canArmPsiTriggerAt(ownCgroupFile("memory.pressure")));
+
+// memory.events exists in every cgroup except the root, and reading it is
+// enough: the notification comes from kernfs, not from a trigger we write.
+const canReadCgroupEvents = (() => {
+  const path = ownCgroupFile("memory.events");
+  if (path === undefined) return false;
   try {
-    cgroup = readFileSync("/proc/self/cgroup", "utf8");
+    readFileSync(path);
+    return true;
   } catch {
     return false;
   }
-  const entry = cgroup.split("\n").find(line => line.startsWith("0::"));
-  if (entry === undefined) return false;
-  const rest = entry.slice("0::".length).replace(/^\//, "");
-  return canArmPsiTriggerAt(`/sys/fs/cgroup/${rest}${rest ? "/" : ""}memory.pressure`);
+})();
+
+function memoryEvents(
+  counters: Partial<Record<"low" | "high" | "max" | "oom" | "oom_kill" | "oom_group_kill", number>>,
+) {
+  const all = { low: 0, high: 0, max: 0, oom: 0, oom_kill: 0, oom_group_kill: 0, ...counters };
+  return Object.entries(all)
+    .map(([key, value]) => `${key} ${value}\n`)
+    .join("");
 }
 
 describe.concurrent("process.on('memoryPressure')", () => {
@@ -153,21 +184,64 @@ describe.concurrent("process.on('memoryPressure')", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(!canArmPsiTrigger())("first listener arms a PSI trigger on Linux", async () => {
+  // Which real OS sources the first listener sets up, and that the last
+  // removal tears them down again. Each source is asserted only where this
+  // test process has just confirmed the OS allows it.
+  const expectedSources = [...(canArmPsiTrigger ? ["psi"] : []), ...(canReadCgroupEvents ? ["cgroup"] : [])];
+  test.skipIf(expectedSources.length === 0)(`first listener arms ${expectedSources.join(" and ")}`, async () => {
     const { stdout, stderr, exitCode } = await run(/* js */ `
-      const { memoryPressureWatcherHasOsBackend } = require("bun:internal-for-testing");
+      const { memoryPressureArmedSources } = require("bun:internal-for-testing");
       const h = () => {};
-      const before = memoryPressureWatcherHasOsBackend();
+      const before = memoryPressureArmedSources();
       process.on("memoryPressure", h);
-      const armed = memoryPressureWatcherHasOsBackend();
+      const armed = memoryPressureArmedSources();
       process.off("memoryPressure", h);
-      const after = memoryPressureWatcherHasOsBackend();
+      const after = memoryPressureArmedSources();
       process.stdout.write(JSON.stringify({ before, armed, after }));
     `);
-    expect({ stdout, stderr: stderr.trim() }).toEqual({
-      stdout: JSON.stringify({ before: false, armed: true, after: false }),
-      stderr: "",
+    expect(stderr.trim()).toBe("");
+    const { before, armed, after } = JSON.parse(stdout);
+    expect({ before, after, armed: expectedSources.filter(source => armed.includes(source)) }).toEqual({
+      before: [],
+      after: [],
+      armed: expectedSources,
     });
+    expect(exitCode).toBe(0);
+  });
+
+  // memory.events is a set of counters that only grow. The kernel signals the
+  // file on every change, so Bun classifies the change and rate limits each
+  // level. The clock argument drives the holdoff so nothing here waits.
+  test.skipIf(!canReadCgroupEvents)("cgroup memory.events changes map to levels with a holdoff", async () => {
+    // [file content, holdoff clock in ms, levels the listener must see]
+    const steps: [Parameters<typeof memoryEvents>[0], number, string[]][] = [
+      [{}, 0, []], // what Bun read when it armed: no change
+      [{ high: 1 }, 0, ["warning"]], // reclaim at memory.high
+      [{ high: 2 }, 0, []], // same level inside the holdoff
+      [{ high: 2, oom: 1 }, 0, ["critical"]], // a warning does not hold off an OOM
+      [{ high: 2, oom_kill: 1 }, 0, []], // a second OOM inside the holdoff
+      [{ high: 2, oom_kill: 1, max: 1 }, 1000, []], // reclaim 1 s after a critical
+      [{ high: 2, oom_kill: 1, max: 1, low: 1 }, 2000, ["warning"]], // 2 s after it
+      [{ high: 2, oom_kill: 1, max: 1, low: 1, oom_group_kill: 1 }, 2000, ["critical"]], // 2 s after the last OOM
+      [{ high: 2, oom_kill: 1, max: 1, low: 1, oom_group_kill: 1 }, 9000, []], // nothing changed
+      [{ high: 1 }, 9000, []], // below what Bun has seen (a short read)
+    ];
+    const input = steps.map(([counters, atMs]) => [memoryEvents(counters), atMs]);
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { memoryPressureInjectCgroupEvents } = require("bun:internal-for-testing");
+      const emitted = [];
+      process.on("memoryPressure", level => emitted.push(level));
+      const results = [];
+      for (const [body, atMs] of ${JSON.stringify(input)}) {
+        const injected = memoryPressureInjectCgroupEvents(body, atMs);
+        // The source queues the event on the event loop. Let it run.
+        await new Promise(resolve => setImmediate(resolve));
+        results.push({ injected, emitted: emitted.splice(0) });
+      }
+      process.stdout.write(JSON.stringify(results));
+    `);
+    expect(stderr.trim()).toBe("");
+    expect(JSON.parse(stdout)).toEqual(steps.map(([, , emitted]) => ({ injected: true, emitted })));
     expect(exitCode).toBe(0);
   });
 

@@ -673,18 +673,28 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
-// True when the installed watcher registered a real OS source (a PSI trigger
-// on Linux). The watcher installs silently without one when the kernel
-// refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.
-export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction(
-  "memory_pressure.rs",
-  "jsWatcherHasOsBackend",
-  0,
-);
+// The OS sources the installed watcher holds: "psi" and/or "cgroup" on Linux,
+// "memorystatus" on macOS, "notification" on Windows. The watcher installs
+// silently with no source when the OS refuses every one of them, so
+// isMemoryPressureWatcherInstalled() cannot tell.
+export const memoryPressureArmedSources: () => ("psi" | "cgroup" | "memorystatus" | "notification")[] =
+  $newRustFunction("memory_pressure.rs", "jsArmedSources", 0);
 
 // The exact bytes Bun writes to /proc/pressure/memory to arm its trigger.
 // null where there is no PSI backend (everything except Linux).
 export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
+
+// Linux. Feed a memory.events file body to the installed "cgroup" source as if
+// the kernel had signalled it. atMs is the holdoff clock reading for this
+// notification, on a clock that starts at the first call, so a test drives
+// the holdoff without waiting. The listener sees exactly what the real
+// notification would produce. Returns false when no "cgroup" source is
+// installed.
+export const memoryPressureInjectCgroupEvents: (text: string, atMs?: number) => boolean = $newRustFunction(
+  "memory_pressure.rs",
+  "jsInjectCgroupEvents",
+  2,
+);
 
 export const getEventLoopStats: () => {
   activeTasks: number;

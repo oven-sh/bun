@@ -4410,6 +4410,9 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
           },
         });
         const clientData = Promise.withResolvers();
+        // Set before the final end(): from then on the client closing is
+        // expected, not a failure (end() can dispatch close synchronously).
+        let finishing = false;
         const client = await Bun.connect({
           hostname: "127.0.0.1",
           port: server.port,
@@ -4417,8 +4420,18 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
             data(s, buf) {
               clientData.resolve(buf.toString());
             },
-            error() {},
-            close() {},
+            // A dying client would leave clientData pending until the
+            // parent timeout with the cause unprinted: fail fast instead.
+            error(s, e) {
+              console.log("FAIL client error " + (e?.code || e));
+              process.exit(1);
+            },
+            close() {
+              if (!finishing) {
+                console.log("FAIL client closed early");
+                process.exit(1);
+              }
+            },
           },
         });
         await opened.promise;
@@ -4434,8 +4447,13 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
         }
         paused.resume();
         const got = await gotData.promise;
-        paused.write("pong");
+        const wrote = paused.write("pong");
+        if (wrote < 0) {
+          console.log("FAIL write returned " + wrote);
+          process.exit(1);
+        }
         const echoed = await clientData.promise;
+        finishing = true;
         client.end();
         console.log("OK " + got + " " + echoed);
         process.exit(0);
@@ -4810,6 +4828,9 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
             },
           },
         });
+        // Set when the clean teardown starts: from then on the client
+        // closing is expected, not a failure.
+        let finishing = false;
         const client = await Bun.connect({
           hostname: "127.0.0.1",
           port: server.port,
@@ -4819,8 +4840,18 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
               clientGotReply.resolve(buf.toString());
             },
             end() {},
-            error() {},
-            close() {},
+            // A dying client would leave clientGotReply pending until the
+            // parent timeout with the cause unprinted: fail fast instead.
+            error(s, e) {
+              console.log("FAIL client error " + (e?.code || e));
+              process.exit(1);
+            },
+            close() {
+              if (!finishing) {
+                console.log("FAIL client closed early");
+                process.exit(1);
+              }
+            },
           },
         });
         await opened.promise;
@@ -4837,13 +4868,18 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
           process.exit(1);
         }
         // Still usable for writes after surviving parked.
-        victim.write("reply");
+        const wrote = victim.write("reply");
+        if (wrote < 0) {
+          console.log("FAIL write returned " + wrote);
+          process.exit(1);
+        }
         const got = await clientGotReply.promise;
         if (got !== "reply") {
           console.log("FAIL reply corrupted: " + got);
           process.exit(1);
         }
         // Answer the FIN: both directions done, clean teardown.
+        finishing = true;
         victim.end();
         await gone.promise;
         const bad = sawError || closeError;

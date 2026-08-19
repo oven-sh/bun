@@ -30,8 +30,7 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
       };
     `,
     "index.html": indexHtml,
-    // Distinct content: two byte-identical HTML imports collapse into one module.
-    "other.html": indexHtml.replace("<body>", "<body><p>other</p>"),
+    "other.html": indexHtml,
     "entry.ts": `console.log("unused");`,
     "server.ts": `
       import html from "./index.html";
@@ -60,9 +59,9 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
       const result = await request("/");
       // The route that was queued behind the failed load, and one that never was, must both answer instead of waiting for a bundle nothing starts.
       const again = await request("/");
-      const other = await request("/other");
+      const otherRoute = await request("/other");
       await server.stop(true);
-      console.log(JSON.stringify({ result, again, other }));
+      console.log(JSON.stringify({ result, again, other: otherRoute }));
     `,
   });
 

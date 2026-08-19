@@ -231,13 +231,11 @@ impl FileExt for File {
                     }
                     _ => ZigString::from_utf8(path_like.slice()).to_slice_clone(),
                 };
-                // The `*Binding` arg is unused in `AsyncFSTask::create`.
-                let binding = node_fs::Binding::default();
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
                 // task is created on the JS thread that owns it.
                 Ok(node_fs::async_::Unlink::create(
                     global_this,
-                    &binding,
+                    node_fs::Binding::for_vm(global_this),
                     node_fs::args::Unlink {
                         path: PathLike::EncodedSlice(encoded_slice),
                     },

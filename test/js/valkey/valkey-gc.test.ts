@@ -265,8 +265,8 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   // ValkeyClient::close() releases connect()'s keep-alive ref and runs the
   // close event by hand. One case per entry into that branch: close() while
   // the dial is pending, and the connection timeout firing during it. The
-  // command in the offline queue tells the two apart: connect() itself is
-  // always rejected as connection-closed. The client is created from a
+  // connect() promise and the command in the offline queue are rejected with
+  // the same error, which tells the two apart. The client is created from a
   // macrotask for the same reason as the workers'.
   function closePendingDial(options: object, body: string, stdout: string) {
     return expectCleanExit(
@@ -308,7 +308,7 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
       closePendingDial(
         { connectionTimeout: 1 },
         "",
-        "ERR_REDIS_CONNECTION_CLOSED ERR_REDIS_CONNECTION_TIMEOUT 1 false",
+        "ERR_REDIS_CONNECTION_TIMEOUT ERR_REDIS_CONNECTION_TIMEOUT 1 false",
       ),
     timeout,
   );

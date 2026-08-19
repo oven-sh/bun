@@ -40,10 +40,13 @@ interface ReserveAbortState {
   onAbort: (() => void) | null;
 }
 
+/// `_client` is bound so the reserved client stays reachable, and so is not collected and
+/// released by reservationRegistry, until its transaction settles.
 function settleReservedTransaction(
   reservedTransaction: Set<Promise<void>>,
   finished: { promise: Promise<void>; resolve: () => void },
   settle: (value: any) => void,
+  _client: unknown,
   value: any,
 ) {
   reservedTransaction.delete(finished.promise);
@@ -333,6 +336,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   // Never attach a handler to the caller's promise: it changes which rejections are reported as unhandled.
   function runReservedTransaction(
+    client: unknown,
     reservedTransaction: Set<Promise<void>>,
     pooledConnection,
     callback: TransactionCallback,
@@ -346,8 +350,8 @@ const SQL: typeof Bun.SQL = function SQL(
     onTransactionConnected(
       callback,
       options,
-      settleReservedTransaction.bind(null, reservedTransaction, finished, resolve),
-      settleReservedTransaction.bind(null, reservedTransaction, finished, reject),
+      settleReservedTransaction.bind(null, reservedTransaction, finished, resolve, client),
+      settleReservedTransaction.bind(null, reservedTransaction, finished, reject, client),
       true,
       distributed,
       null,
@@ -453,7 +457,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      return runReservedTransaction(reservedTransaction, pooledConnection, callback, name, true);
+      return runReservedTransaction(reserved_sql, reservedTransaction, pooledConnection, callback, name, true);
     };
     reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
@@ -474,7 +478,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      return runReservedTransaction(reservedTransaction, pooledConnection, callback, options, false);
+      return runReservedTransaction(reserved_sql, reservedTransaction, pooledConnection, callback, options, false);
     };
 
     reserved_sql.flush = () => {

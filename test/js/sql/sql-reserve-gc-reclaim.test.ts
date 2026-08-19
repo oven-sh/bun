@@ -103,7 +103,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       const [{ pid }] = await client`select pg_backend_pid() as pid`;
       await admin`select pg_terminate_backend(${pid})`;
       // Rejects once the client has observed the close.
-      await expect(client`select 1`).rejects.toBeDefined();
+      await expect(client`select 1`).rejects.toBeInstanceOf(Error);
     })();
 
     for (let i = 0; i < 50 && !collected; i++) {
@@ -116,5 +116,55 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect((await sql`select 1 as v`)[0].v).toBe(1);
     using again = await sql.reserve();
     expect((await again`select 2 as v`)[0].v).toBe(2);
+  });
+
+  // `client.begin()` returned without the caller holding `client`: the running
+  // transaction must keep the client alive, or collecting it would hand the
+  // connection, with its transaction still open, to the next pool caller.
+  test("a dropped client is not collected while its begin() is running, and is reclaimed after", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5 });
+
+    let collected = false;
+    const observer = new FinalizationRegistry(() => (collected = true));
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    let served = false;
+    let servedDuringTransaction: boolean | null = null;
+    const transaction = (async () => {
+      const client = await sql.reserve();
+      observer.register(client, undefined);
+      return client.begin(async tx => {
+        await tx`select 1`;
+        started.resolve();
+        await gate.promise;
+        // A plain query wrongly served on this connection was written before
+        // this statement, so it has been answered by the time this resolves.
+        await tx`select 2`;
+        servedDuringTransaction = served;
+      });
+    })();
+    await started.promise;
+
+    // Nothing but the running transaction references the client now.
+    for (let i = 0; i < 10; i++) {
+      Bun.gc(true);
+      await Bun.sleep(10);
+    }
+    expect(collected).toBe(false);
+
+    const parked = sql`select 3 as v`.then(rows => ((served = true), rows));
+    gate.resolve();
+    await transaction;
+    expect(servedDuringTransaction).toBe(false);
+
+    // Once the transaction has settled the client is collectable and its
+    // slot comes back, which is what lets the parked query run.
+    for (let i = 0; i < 50 && !served; i++) {
+      Bun.gc(true);
+      await Bun.sleep(10);
+    }
+    expect(collected).toBe(true);
+    expect((await parked)[0].v).toBe(3);
   });
 });

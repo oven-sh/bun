@@ -310,13 +310,16 @@ pub fn from_errno(errno: i32) -> SystemErrno {
 /// code uSockets fills in itself (`LIBUS_ECONNABORTED`, `LIBUS_ECONNREFUSED`).
 /// On Windows all of those are WSA or Win32 codes (`WSAETIMEDOUT`,
 /// `ERROR_PATH_NOT_FOUND` for an empty unix path), so it goes through the
-/// Win32 table there. A code the table does not know comes out as
-/// `ECONNREFUSED`.
+/// Win32 table there. A code the table does not know, and a value that is not
+/// a code at all (0, or a negative number), come out as `ECONNREFUSED`.
 pub fn connect_errno(raw: i32) -> SystemErrno {
+    let Ok(code) = u32::try_from(raw) else {
+        return SystemErrno::ECONNREFUSED;
+    };
     #[cfg(windows)]
-    let errno = u32::try_from(raw).ok().and_then(SystemErrno::init);
+    let errno = SystemErrno::init(code);
     #[cfg(not(windows))]
-    let errno = SystemErrno::init(i64::from(raw));
+    let errno = SystemErrno::init(i64::from(code));
     match errno {
         None | Some(SystemErrno::SUCCESS) => SystemErrno::ECONNREFUSED,
         Some(errno) => errno,
@@ -596,7 +599,6 @@ mod errno_name_tests {
                 connect_errno(i32::from(W::WSAECONNABORTED.0)),
                 SystemErrno::ECONNABORTED
             );
-            assert_eq!(connect_errno(-1), SystemErrno::ECONNREFUSED);
         }
         #[cfg(not(windows))]
         {
@@ -611,6 +613,12 @@ mod errno_name_tests {
         }
         assert_eq!(connect_errno(0), SystemErrno::ECONNREFUSED);
         assert_eq!(connect_errno(i32::MAX), SystemErrno::ECONNREFUSED);
+        // Not codes: connect errors are never reported negated.
+        assert_eq!(connect_errno(-1), SystemErrno::ECONNREFUSED);
+        assert_eq!(
+            connect_errno(-(SystemErrno::ENOENT as i32)),
+            SystemErrno::ECONNREFUSED
+        );
     }
 
     #[test]

@@ -61,8 +61,11 @@ JSC::JSObject* createConstantsObject(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     return createConstantsObject(vm, globalObject, prototype, rows);
 }
 
-// For a PropertyCallback row (or .lut.h entry) on the parent object: the child
-// object is built from `rows` when the parent property is first read.
+// Builds the null-prototype object for `rows` as the value of a property of
+// `owner`. As a .lut.h entry of a static-table object (process.binding(
+// 'constants')) it runs when that property is first read; as a propertyCallback
+// row of another table (os.errno and friends) it runs while that table's object
+// is built.
 template<const auto& rows>
 JSC::JSValue constantsObjectCallback(JSC::VM& vm, JSC::JSObject* owner)
 {

@@ -602,7 +602,7 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
     let srvError;
     const srv = dgram.createSocket("udp4");
     try {
-      srv.on("error", err => (srvError = err));
+      srv.on("error", err => (srvError ??= err));
       await new Promise((resolve, reject) => {
         srv.once("error", reject);
         srv.bind(0, "127.0.0.1", resolve);
@@ -743,8 +743,10 @@ describe("dns.lookupService rejects non-IP address strings", () => {
     // lookupService() resolves PTR through the default resolver, so point it at a
     // local NXDOMAIN responder in a child process. The responder records each name.
     const wire = [];
+    let srvError;
     const srv = dgram.createSocket("udp4");
     try {
+      srv.on("error", err => (srvError ??= err));
       await new Promise((resolve, reject) => {
         srv.once("error", reject);
         srv.bind(0, "127.0.0.1", resolve);
@@ -780,6 +782,7 @@ describe("dns.lookupService rejects non-IP address strings", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(srvError).toBeUndefined();
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual([
         {

@@ -160,6 +160,15 @@ enum {
      * unconnected socket it also makes the next send fail for a datagram
      * bound to a different, live peer. */
     LIBUS_UDP_LINUX_RECVERR = 128,
+    /* Bind a UDP host that resolves to both families on its IPv4 address
+     * rather than the IPv6 one bsd_create_listen_socket would pick. A TCP
+     * client tries every address a name resolves to, so a listener's choice
+     * of family is invisible to it; a datagram goes to exactly one address,
+     * so a UDP socket has to bind where its peers send. Bun.udpSocket's peers
+     * are IPv4 unless configured otherwise (default hostname "0.0.0.0", and
+     * us_udp_socket_connect tries IPv4 first), so it sets this. HTTP/3 does
+     * not: its UDP socket has to follow the TCP listener's family. */
+    LIBUS_UDP_PREFER_IPV4 = 256,
 };
 
 /* Library types publicly available */

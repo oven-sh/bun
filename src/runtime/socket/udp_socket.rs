@@ -685,7 +685,8 @@ impl UDPSocket {
                 on_recv_error,
                 hostname_z.as_ptr(),
                 config.port,
-                config.flags,
+                // This API's peers are IPv4 unless configured otherwise; see the flag's definition.
+                config.flags | uws::LIBUS_UDP_PREFER_IPV4,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )

@@ -30,6 +30,8 @@ pub const LIBUS_LISTEN_REUSE_PORT: core::ffi::c_int = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
 pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: core::ffi::c_int = 32;
+/// UDP bind: a host with both families binds its IPv4 address (rationale in `libusockets.h`).
+pub const LIBUS_UDP_PREFER_IPV4: core::ffi::c_int = 256;
 
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;

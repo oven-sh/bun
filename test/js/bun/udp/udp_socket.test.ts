@@ -1,9 +1,16 @@
-import { udpSocket } from "bun";
+import { dns, udpSocket } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, disableAggressiveGCScope, isWindows, randomPort } from "harness";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
+
+// Whether getaddrinfo(), which is what udpSocket() resolves hostnames with,
+// gives "localhost" an IPv6 address here. Debian, macOS and Windows do;
+// Ubuntu's hosts file maps it to 127.0.0.1 only.
+const localhostHasIPv6 = (await dns.lookup("localhost", { backend: "libc", socketType: "udp" })).some(
+  ({ family }) => family === 6,
+);
 
 describe("udpSocket()", () => {
   test.each(["setTTL", "setMulticastTTL"])(
@@ -252,6 +259,190 @@ describe("udpSocket()", () => {
       });
     },
   );
+
+  // On most hosts files "localhost" resolves to both 127.0.0.1 and ::1. A
+  // datagram goes to exactly one of them, and everything this API creates by
+  // default is IPv4 (the default hostname is "0.0.0.0"), so a hostname has to
+  // mean its IPv4 address on both the bind and the connect side or the two
+  // ends of a pair silently land on different loopbacks. Where "localhost" is
+  // IPv4-only these cases still hold, they just cannot fail the old way.
+  describe("hostname resolves to the same address on both ends", () => {
+    type Received = { data: string; port: number; address: string };
+
+    async function listen(hostname: string) {
+      const { promise, resolve, reject } = Promise.withResolvers<Received>();
+      const server = await udpSocket({
+        hostname,
+        socket: {
+          data(_socket, data, port, address) {
+            resolve({ data: data.toString(), port, address });
+          },
+          error(_socket, error) {
+            reject(error);
+          },
+        },
+      });
+      return { server, received: promise };
+    }
+
+    // Loopback UDP is reliable in practice but not guaranteed, so re-send
+    // (like the send tests above do) until the server reports a datagram. A
+    // datagram sent to the wrong loopback address never arrives, so that case
+    // is caught by the address assertions before anything is sent.
+    async function sendUntilReceived(received: Promise<Received>, send: () => void): Promise<Received> {
+      let settled = false;
+      const observed = received.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      while (!settled) {
+        send();
+        await Promise.race([observed, Bun.sleep(10)]);
+      }
+      return received;
+    }
+
+    test.each([
+      ["localhost", { address: "127.0.0.1", family: "IPv4" }],
+      ["127.0.0.1", { address: "127.0.0.1", family: "IPv4" }],
+      ["::1", { address: "::1", family: "IPv6" }],
+    ])("binding %s lands on %j", async (hostname, expected) => {
+      const socket = await udpSocket({ hostname });
+      try {
+        expect(socket.address).toEqual({ ...expected, port: socket.port });
+      } finally {
+        socket.close();
+      }
+    });
+
+    type Pairing = {
+      /** What the server binds. */
+      server: string;
+      /** Client options; `connectTo` defaults to the server's hostname. */
+      client: { hostname?: string; flags?: number; connectTo?: string };
+      /** The address the pair meets on: what the server's hostname bound, and
+       * therefore where the server sees the client's datagram come from. */
+      loopback: string;
+      /** The client's view of the same address. */
+      remote: { address: string; family: string };
+    };
+
+    async function expectPairToMeet({
+      server: serverHostname,
+      client: { connectTo = serverHostname, ...clientOptions },
+      loopback,
+      remote,
+    }: Pairing) {
+      const { server, received } = await listen(serverHostname);
+      try {
+        expect(server.address.address).toBe(loopback);
+        const client = await udpSocket({ ...clientOptions, connect: { hostname: connectTo, port: server.port } });
+        try {
+          expect(client.remoteAddress).toEqual({ ...remote, port: server.port });
+          expect(await sendUntilReceived(received, () => client.send("hello"))).toEqual({
+            data: "hello",
+            port: client.port,
+            address: loopback,
+          });
+        } finally {
+          client.close();
+        }
+      } finally {
+        server.close();
+      }
+    }
+
+    test.each<Pairing & { label: string }>([
+      {
+        label: "default client connected to the server's hostname",
+        server: "localhost",
+        client: {},
+        loopback: "127.0.0.1",
+        remote: { address: "127.0.0.1", family: "IPv4" },
+      },
+      {
+        // The same IPv4 address bind picked, in the form a dual-stack socket
+        // addresses it, whatever order the resolver returned the two in.
+        label: "dual-stack client connected to the server's hostname",
+        server: "localhost",
+        client: { hostname: "::" },
+        loopback: "127.0.0.1",
+        remote: { address: "::ffff:127.0.0.1", family: "IPv6" },
+      },
+      {
+        label: "dual-stack client connected to an IPv4 literal",
+        server: "127.0.0.1",
+        client: { hostname: "::", connectTo: "127.0.0.1" },
+        loopback: "127.0.0.1",
+        remote: { address: "::ffff:127.0.0.1", family: "IPv6" },
+      },
+      {
+        label: "dual-stack client connected to an IPv6 literal",
+        server: "::1",
+        client: { hostname: "::", connectTo: "::1" },
+        loopback: "::1",
+        remote: { address: "::1", family: "IPv6" },
+      },
+    ])("$label", expectPairToMeet);
+
+    // These clients cannot address IPv4 peers at all, so the hostname's IPv4
+    // address is skipped in favor of its IPv6 one. That needs a hostname that
+    // has one, which "localhost" does not everywhere.
+    test.skipIf(!localhostHasIPv6).each<Pairing & { label: string }>([
+      {
+        label: "client bound to ::1 connected to a hostname gets its IPv6 address",
+        server: "::1",
+        client: { hostname: "::1", connectTo: "localhost" },
+        loopback: "::1",
+        remote: { address: "::1", family: "IPv6" },
+      },
+      {
+        // `flags` is the usockets option word node:dgram's `ipv6Only` sets;
+        // 8 is LIBUS_SOCKET_IPV6_ONLY.
+        label: "IPv6-only client connected to a hostname gets its IPv6 address",
+        server: "::1",
+        client: { hostname: "::", flags: 8, connectTo: "localhost" },
+        loopback: "::1",
+        remote: { address: "::1", family: "IPv6" },
+      },
+    ])("$label", expectPairToMeet);
+
+    test("a server bound by hostname receives datagrams sent to 127.0.0.1", async () => {
+      const { server, received } = await listen("localhost");
+      try {
+        expect(server.address.address).toBe("127.0.0.1");
+        const client = await udpSocket({});
+        try {
+          expect(await sendUntilReceived(received, () => client.send("hello", server.port, "127.0.0.1"))).toEqual({
+            data: "hello",
+            port: client.port,
+            address: "127.0.0.1",
+          });
+        } finally {
+          client.close();
+        }
+      } finally {
+        server.close();
+      }
+    });
+
+    test.each([
+      ["the default (IPv4) socket", "::1", {}],
+      ["a socket bound to ::1", "127.0.0.1", { hostname: "::1" }],
+      ["an IPv6-only socket", "127.0.0.1", { hostname: "::", flags: 8 }],
+    ])("%s cannot connect to %s", async (_, hostname, options) => {
+      let error: any;
+      try {
+        (await udpSocket({ ...options, connect: { hostname, port: 1 } })).close();
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeDefined();
+      // udp_socket.rs reports connect failures on Windows through the
+      // getaddrinfo mapping, so only the POSIX code is precise.
+      if (!isWindows) expect(error.code).toBe("EAFNOSUPPORT");
+    });
+  });
 
   const validateRecv = (socket, data, port, address, binaryType, bytes) => {
     // This test file takes 1 minute in CI because we are running GC too much.

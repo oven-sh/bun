@@ -1111,6 +1111,7 @@ install_build_essentials() {
 	brew)
 		install_packages \
 			ninja \
+			nasm \
 			pkg-config \
 			golang
 		;;

@@ -1137,3 +1137,51 @@ PredictorSub10_AVX2  [AVX, AVX2]
 PredictorSub11_AVX2  [AVX, AVX2]
 PredictorSub12_AVX2  [AVX, AVX2]
 PredictorSub13_AVX2  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# libjpeg-turbo x86_64 AVX2 kernels (vendor/libjpeg-turbo/simd/x86_64/*-avx2.asm).
+# Gate: jpeg_simd_cpu_support() in simd/x86_64/jsimdcpu.asm checks CPUID leaf 7
+# AVX2 and XGETBV YMM state and sets JSIMD_AVX2; simd/x86_64/jsimd.c only
+# dispatches to a jsimd_*_avx2 kernel when init_simd() saw that bit. The SSE2
+# kernels are baseline and need no entries.
+# (38 symbols)
+# ----------------------------------------------------------------------------
+jsimd_convsamp_avx2                      [AVX, AVX2]
+jsimd_extbgr_gray_convert_avx2           [AVX, AVX2]
+jsimd_extbgr_ycc_convert_avx2            [AVX, AVX2]
+jsimd_extbgrx_gray_convert_avx2          [AVX, AVX2]
+jsimd_extbgrx_ycc_convert_avx2           [AVX, AVX2]
+jsimd_extrgb_gray_convert_avx2           [AVX, AVX2]
+jsimd_extrgb_ycc_convert_avx2            [AVX, AVX2]
+jsimd_extrgbx_gray_convert_avx2          [AVX, AVX2]
+jsimd_extrgbx_ycc_convert_avx2           [AVX, AVX2]
+jsimd_extxbgr_gray_convert_avx2          [AVX, AVX2]
+jsimd_extxbgr_ycc_convert_avx2           [AVX, AVX2]
+jsimd_extxrgb_gray_convert_avx2          [AVX, AVX2]
+jsimd_extxrgb_ycc_convert_avx2           [AVX, AVX2]
+jsimd_fdct_islow_avx2                    [AVX, AVX2]
+jsimd_h2v1_downsample_avx2               [AVX, AVX2]
+jsimd_h2v1_extbgr_merged_upsample_avx2   [AVX, AVX2]
+jsimd_h2v1_extbgrx_merged_upsample_avx2  [AVX, AVX2]
+jsimd_h2v1_extrgb_merged_upsample_avx2   [AVX, AVX2]
+jsimd_h2v1_extrgbx_merged_upsample_avx2  [AVX, AVX2]
+jsimd_h2v1_extxbgr_merged_upsample_avx2  [AVX, AVX2]
+jsimd_h2v1_extxrgb_merged_upsample_avx2  [AVX, AVX2]
+jsimd_h2v1_fancy_upsample_avx2           [AVX, AVX2]
+jsimd_h2v1_merged_upsample_avx2          [AVX, AVX2]
+jsimd_h2v1_upsample_avx2                 [AVX, AVX2]
+jsimd_h2v2_downsample_avx2               [AVX, AVX2]
+jsimd_h2v2_fancy_upsample_avx2           [AVX, AVX2]
+jsimd_h2v2_upsample_avx2                 [AVX, AVX2]
+jsimd_idct_islow_avx2                    [AVX, AVX2]
+jsimd_quantize_avx2                      [AVX, AVX2]
+jsimd_rgb_gray_convert_avx2              [AVX, AVX2]
+jsimd_rgb_ycc_convert_avx2               [AVX, AVX2]
+jsimd_ycc_extbgr_convert_avx2            [AVX, AVX2]
+jsimd_ycc_extbgrx_convert_avx2           [AVX, AVX2]
+jsimd_ycc_extrgb_convert_avx2            [AVX, AVX2]
+jsimd_ycc_extrgbx_convert_avx2           [AVX, AVX2]
+jsimd_ycc_extxbgr_convert_avx2           [AVX, AVX2]
+jsimd_ycc_extxrgb_convert_avx2           [AVX, AVX2]
+jsimd_ycc_rgb_convert_avx2               [AVX, AVX2]

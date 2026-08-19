@@ -73,45 +73,36 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
 }
 
 function runFileCommand(resource?: vscode.Uri): void {
-  launchFile(RUN_CONFIGURATION, resource);
+  const file = resource ?? vscode.window.activeTextEditor?.document.uri;
+  if (file) launch(RUN_CONFIGURATION, file, file.fsPath);
 }
 
 function debugFileCommand(resource?: vscode.Uri): void {
-  launchFile(DEBUG_CONFIGURATION, resource);
+  const file = resource ?? vscode.window.activeTextEditor?.document.uri;
+  if (file) launch(DEBUG_CONFIGURATION, file, file.fsPath);
 }
 
-// Launches `resource`, or the file in the active editor. The configurations
-// above use `${workspaceFolder}`, which VS Code resolves against the folder
-// passed to `startDebugging`. In a multi-root or empty window a file that no
-// folder owns leaves that variable unresolvable, so the cwd is set here: the
-// folder that owns the file, else the file's own directory (what js-debug does
-// for a file opened without a folder).
-function launchFile(configuration: vscode.DebugConfiguration, resource?: vscode.Uri): void {
-  const uri = resource ?? vscode.window.activeTextEditor?.document.uri;
-  if (!uri) return;
+// Debugs a script of the package.json shown in the active editor (the hover
+// link and the code lens in package.json files call this).
+export function debugCommand(script: string): void {
+  const packageJson = vscode.window.activeTextEditor?.document.uri;
+  if (packageJson) launch(DEBUG_CONFIGURATION, packageJson, script);
+}
 
-  const folder = vscode.workspace.getWorkspaceFolder(uri);
-  const program = uri.fsPath;
+// `document` is the file to run, or the package.json that holds the script.
+// The configurations above set cwd to `${workspaceFolder}`, which VS Code
+// resolves only against the folder passed here, or the single folder of a
+// single-root window. With no such folder (multi-root window, or no folder at
+// all) the cwd is the document's own directory, as js-debug does for a file
+// without a folder. resolveDebugConfiguration below fills in `runtime`,
+// scoped to the same folder.
+function launch(configuration: vscode.DebugConfiguration, document: vscode.Uri, program: string): void {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const folder = vscode.workspace.getWorkspaceFolder(document) ?? (folders.length === 1 ? folders[0] : undefined);
   vscode.debug.startDebugging(folder, {
     ...configuration,
     program,
-    cwd: folder?.uri.fsPath ?? path.dirname(program),
-    runtime: getRuntime(folder ?? uri),
-  });
-}
-
-// `command` is a package.json script, not a path, so the folder comes from the
-// editor that shows the package.json. Like launchFile, the cwd is concrete:
-// the folder that owns the package.json, else the package.json's own
-// directory, so a package.json that no folder owns still launches.
-export function debugCommand(command: string): void {
-  const packageJson = vscode.window.activeTextEditor?.document.uri;
-  const folder = packageJson && vscode.workspace.getWorkspaceFolder(packageJson);
-  vscode.debug.startDebugging(folder, {
-    ...DEBUG_CONFIGURATION,
-    program: command,
-    cwd: folder?.uri.fsPath ?? (packageJson && path.dirname(packageJson.fsPath)),
-    runtime: getRuntime(folder ?? packageJson),
+    cwd: folder?.uri.fsPath ?? path.dirname(document.fsPath),
   });
 }
 

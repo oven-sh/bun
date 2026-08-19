@@ -603,10 +603,23 @@ describe("fetch() receive backpressure — body stream nothing is reading", () =
   // The other half of the rule: a small body nobody reads is still taken off the socket, so
   // the keep-alive connection goes back to the pool instead of staying pinned under it.
   test("small unread bodies complete and their connection is reused", async () => {
+    // The body trails the headers in several packets, so it reaches a stream nothing reads
+    // chunk by chunk; the client has to keep taking it (it is under the high-water mark) for
+    // the response to finish and the connection to go back to the pool. A client that parks
+    // on the first unread chunk needs a new connection for every request here.
+    const PART = 32 * 1024;
+    const PARTS = 4;
     let connections = 0;
-    const srv = createServer((_req, res) => {
-      res.setHeader("content-length", String(16 * 1024));
-      res.end(Buffer.alloc(16 * 1024, 65));
+    let finished = Promise.resolve();
+    const srv = createServer(async (_req, res) => {
+      finished = new Promise(r => res.on("finish", () => r()));
+      res.setHeader("content-length", String(PART * PARTS));
+      res.flushHeaders();
+      for (let i = 0; i < PARTS; i++) {
+        await new Promise(r => setTimeout(r, 2));
+        res.write(Buffer.alloc(PART, 65));
+      }
+      res.end();
     }).on("connection", () => connections++);
     srv.listen(0);
     await once(srv, "listening");
@@ -617,8 +630,9 @@ describe("fetch() receive backpressure — body stream nothing is reading", () =
         const res = await fetch(url);
         expect(res.status).toBe(200);
         void res.body;
+        await finished;
       }
-      // Not exactly 1: a request can start before the previous body's last packet landed.
+      // Not exactly 1: a request can start before the previous body's last packet was taken.
       expect(connections).toBeLessThan(N / 2);
     } finally {
       srv.closeAllConnections();

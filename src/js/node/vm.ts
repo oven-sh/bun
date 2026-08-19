@@ -122,8 +122,7 @@ function runInNewContext(code, context, options) {
   return createScript(code, options).runInNewContext(context, options);
 }
 
-// runInNewContext's option names differ from createContext's; remap before
-// handing to createContext (matches Node's lib/vm.js getContextOptions).
+// Mirrors Node's lib/vm.js getContextOptions.
 function getContextOptions(options) {
   if (!options) return {};
   const { contextName, contextOrigin, contextCodeGeneration, microtaskMode } = options;

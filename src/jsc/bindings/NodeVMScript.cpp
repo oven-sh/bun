@@ -350,9 +350,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         }
     }
 
-    // Set the contextified object before evaluating. A DONT_CONTEXTIFY context
-    // runs against the bare global (no sandbox interception), so leave
-    // m_sandbox unset there.
+    // A DONT_CONTEXTIFY context has no sandbox; its global is used directly.
     if (!globalObject->isNotContextified()) {
         globalObject->setContextifiedObject(contextifiedObject);
     }
@@ -552,9 +550,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
-    // vm.runInNewContext(code, DONT_CONTEXTIFY) hands us the vanilla context's
-    // global proxy (via createContext); run in that context rather than
-    // wrapping it as a contextified sandbox around a second global.
+    // vm.ts runInNewContext() passes the DONT_CONTEXTIFY global created by createContext().
     if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(contextObjectValue)) {
         if (auto* existing = dynamicDowncast<NodeVMGlobalObject>(proxy->target()); existing && existing->isNotContextified()) {
             RELEASE_AND_RETURN(scope, runInContext(existing, script, proxy, callFrame->argument(1)));

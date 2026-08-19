@@ -1467,9 +1467,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     RETURN_IF_EXCEPTION(scope, {});
 
     if (notContextified) {
-        // DONT_CONTEXTIFY promises a vanilla global with no contextify
-        // interceptors, so hand back the new global's own proxy and leave
-        // m_sandbox unset so the method-table overrides fall through to Base.
+        // The context's own global is the handle; there is no sandbox to install.
         return JSValue::encode(targetContext->globalThis());
     }
 

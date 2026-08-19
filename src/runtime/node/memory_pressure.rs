@@ -477,11 +477,7 @@ mod posix {
             /// The level to emit for the new snapshot, if any. A critical
             /// also silences warnings, so a cgroup that reclaims and OOM-kills
             /// at the same time reports the worse of the two.
-            pub(in crate::node::memory_pressure) fn observe(
-                &mut self,
-                counters: Counters,
-                now: Instant,
-            ) -> Option<i32> {
+            fn observe(&mut self, counters: Counters, now: Instant) -> Option<i32> {
                 let lvl = self.seen.level_of_change(counters)?;
                 self.seen = counters;
                 let quiet = |last: Option<Instant>| {

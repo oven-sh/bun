@@ -1168,6 +1168,9 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
 
   it("leaves a connection alone that another WebSocketServer on the same http.Server took", async () => {
     const server = createServer();
+    // Registered first, so it sees the socket before either WebSocketServer does.
+    let errorListenersBefore = -1;
+    server.on("upgrade", (_req, socket) => (errorListenersBefore = socket.listenerCount("error")));
     const chat = new WebSocketServer({ server, path: "/chat" });
     const other = new WebSocketServer({ server, path: "/other" });
     const connections: unknown[] = [];
@@ -1184,6 +1187,8 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     expect(received).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
     expect(received).not.toContain("HTTP/1.1 400");
     expect(upgrade.socket.destroyed).toBe(false);
+    // Both servers installed the error handler. The socket carries one copy.
+    expect(upgrade.socket.listenerCount("error")).toBe(errorListenersBefore + 1);
     chat.close();
     other.close();
   });

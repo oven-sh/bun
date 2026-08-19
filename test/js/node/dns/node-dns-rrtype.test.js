@@ -12,14 +12,19 @@ describe.each([
   ["dns.promises.resolve", rrtype => dns_promises.resolve("localhost", rrtype)],
   ["dns.promises.Resolver#resolve", rrtype => new dns_promises.Resolver().resolve("localhost", rrtype)],
 ])("%s", (_, fn) => {
-  it.each(["a", "aaaa", "txt", "Mx", "", "BOGUS"])("with rrtype %p throws ERR_INVALID_ARG_VALUE", rrtype => {
-    expect(() => fn(rrtype)).toThrow(
-      expect.objectContaining({
-        code: "ERR_INVALID_ARG_VALUE",
-        message: `The argument 'rrtype' is invalid. Received '${rrtype}'`,
-      }),
-    );
-  });
+  // "constructor" and "toString" only miss the lookup table because it has a
+  // null prototype. They guard that clause.
+  it.each(["a", "aaaa", "txt", "Mx", "", "BOGUS", "constructor", "toString"])(
+    "with rrtype %p throws ERR_INVALID_ARG_VALUE",
+    rrtype => {
+      expect(() => fn(rrtype)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: `The argument 'rrtype' is invalid. Received '${rrtype}'`,
+        }),
+      );
+    },
+  );
 
   it.each(["A", "AAAA", "ANY", "CAA", "CNAME", "MX", "NS", "PTR", "SOA", "SRV", "TXT"])(
     "with rrtype %p does not throw synchronously",

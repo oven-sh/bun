@@ -400,13 +400,14 @@ mod shim {
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
-    /// The response is done with its natively piped body. A body still
-    /// mid-stream is cancelled: it stayed locked to this response.
     #[inline]
     pub(super) fn byte_stream_unpipe(s: NonNull<ByteStream>) {
-        // The caller has just `take()`n `self.byte_stream` and still holds
-        // `response_body_readable_stream_ref`, which keeps the pointee alive.
-        bun_ptr::BackRef::from(s).detach_finished_sink()
+        // The lone caller has just `take()`n the pointer out of
+        // `self.byte_stream`; the allocation is kept alive by
+        // `response_body_readable_stream_ref` (BackRef invariant: pointee
+        // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
+        // (interior-mutable `JsCell<SinkHandle>`), so shared deref is sufficient.
+        bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
 use crate::server::DevErrorPage;
@@ -1393,14 +1394,6 @@ where
                 );
             }
             return;
-        }
-
-        // A natively piped body has nobody left to take it. The deref balances
-        // the ref `do_render_with_body` took for the pipe: `end_chunk`, which
-        // releases it otherwise, cannot run once the sink is gone.
-        if let Some(stream) = this.byte_stream.take() {
-            shim::byte_stream_unpipe(stream);
-            this.deref();
         }
 
         // if we can, free the request now.

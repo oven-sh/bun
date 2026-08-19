@@ -26,9 +26,8 @@ pub enum NativeWireResult {
     /// Not a native source (no `Bytes`/`File` backing, or it already has a
     /// sink). Fall through to the JS-pump path.
     NotNative,
-    /// The source was already done or errored, or the sink took no more than
-    /// the bytes buffered so far (the source is cancelled then). The sink was
-    /// not left installed; the caller runs its own end-of-stream handling.
+    /// The source was already done or errored. The sink was not left
+    /// installed; the caller runs its own end-of-stream handling.
     EndedInline(Option<streams::StreamError>),
 }
 
@@ -181,10 +180,6 @@ impl ReadableStream {
         Ok(Some((out_stream1, out_stream2)))
     }
 
-    pub fn to_js(&self) -> JSValue {
-        self.value
-    }
-
     /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_js_direct`.
     pub fn reload_tag(&mut self) {
         *self = ReadableStream::from_js_direct(self.value).unwrap_or(ReadableStream {
@@ -324,15 +319,6 @@ impl ReadableStream {
                 byte_stream.parent_const().set_sink_owner(owner_cell);
                 byte_stream.sink.set(sink);
                 byte_stream.sink_paused.set(false);
-                // The wrapper's `sinkOwner` slot is now what roots `owner_cell`, so a producer
-                // holding the source must keep the wrapper alive too. Before the first write,
-                // which can run script.
-                // SAFETY: `Source::Bytes` is the wrapper's whole `m_ctx` allocation, live while
-                // the stream is; `byte_stream` is a back-reference, so no borrow is live here.
-                unsafe {
-                    let source = NewSource::from_context_ptr(NonNull::from(byte_stream).as_ptr());
-                    (*source).root_wrapper_if_needed();
-                }
                 self.lock_native(global);
                 byte_stream.signal_consumer_attached();
 
@@ -352,7 +338,7 @@ impl ReadableStream {
                     match sink.write(&chunk) {
                         Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
                         Writable::Done | Writable::Err(_) => {
-                            byte_stream.detach_finished_sink();
+                            byte_stream.sink.set(SinkHandle::None);
                             return NativeWireResult::EndedInline(None);
                         }
                         _ => {}
@@ -760,6 +746,7 @@ pub trait SourceContext: Sized {
     const NAME: &'static str;
     /// `setRefUnrefFn != null`
     const SUPPORTS_REF: bool = false;
+
     // ─── codegen accessors (`.classes.ts` → `generated_classes.rs`) ───────────
     // Each context binds its per-type codegen module via `source_context_codegen!`.
     /// `js_${NAME}InternalReadableStreamSource::to_js` — `ptr` is the
@@ -796,15 +783,6 @@ pub trait SourceContext: Sized {
 
     /// `setRefUnrefFn` — default no-op.
     fn set_ref_unref(&mut self, _enable: bool) {}
-
-    /// Whether a native ref on the source must also keep the JS wrapper alive
-    /// ([`NewSource::root_wrapper_if_needed`]). `FileReader`: always, its read
-    /// completion calls the wrapper's `onClose`. `ByteStream`: only while the
-    /// wrapper roots a wired sink; otherwise the producer's ref would pin a
-    /// stream nobody can reach for as long as the body lasts.
-    fn native_ref_roots_wrapper(&self) -> bool {
-        true
-    }
 
     /// `drainInternalBuffer` — default returns empty.
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
@@ -866,8 +844,8 @@ pub struct NewSource<C: SourceContext> {
     pub global_this: Option<bun_ptr::BackRef<JSGlobalObject>>,
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
-    /// [`JsRef::upgrade`]d to `Strong` by [`Self::root_wrapper_if_needed`] while a
-    /// native ref is held and the context needs the wrapper for it, and
+    /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
+    /// native I/O ref is held (FileReader `waiting_for_on_reader_done`), and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
@@ -1158,19 +1136,10 @@ impl<C: SourceContext> NewSource<C> {
 
     pub fn increment_count(&mut self) {
         self.ref_count += 1;
-        self.root_wrapper_if_needed();
-    }
-
-    /// Root the wrapper while a ref beyond its own is held and the context wants
-    /// that ([`SourceContext::native_ref_roots_wrapper`]). Called when either
-    /// input changes: [`Self::increment_count`], and
-    /// [`ReadableStream::wire_native_sink`]. [`Self::decrement_count`] drops the
-    /// root once only the wrapper's own ref remains (a sink that goes away
-    /// mid-body closes the producer, `ByteStream::detach_finished_sink`).
-    pub fn root_wrapper_if_needed(&mut self) {
-        if self.ref_count <= 1 || !self.context.native_ref_roots_wrapper() {
-            return;
-        }
+        // A ref beyond the JS wrapper's own is held (in practice a FileReader
+        // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
+        // `on_js_close`, reached from `on_reader_done` off the event loop with
+        // no JS frame on the stack, never reads a dead-but-unswept cell.
         if let Some(global) = self.global_this.as_deref() {
             if self.this_jsvalue.is_not_empty() {
                 self.this_jsvalue.upgrade(global);

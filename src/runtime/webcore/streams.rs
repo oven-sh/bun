@@ -957,11 +957,10 @@ impl SourceHandle {
             SourceHandle::Subprocess(p) => p.on_close(err),
             // SAFETY: live backref; cleared before the pointee is freed.
             SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
-            // Shared refs: both can be reached from inside the producer's own delivery
-            // (`ByteStream::detach_finished_sink` under `on_data`), so neither may form a
-            // second `&mut` to it.
-            SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
-            SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::FetchResponseBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
             SourceHandle::TestingCancelOnDrain(_) => {}
@@ -999,26 +998,6 @@ impl SourceHandle {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),
             // Remaining variants leave `on_start` at the trait default (no-op).
-            SourceHandle::None
-            | SourceHandle::JSController(_)
-            | SourceHandle::ServerRequestBody(_)
-            | SourceHandle::ByteStream(_)
-            | SourceHandle::FileReader(_)
-            | SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_)
-            | SourceHandle::HTMLRewriter(_)
-            | SourceHandle::TestingCancelOnDrain(_) => {}
-        }
-    }
-
-    /// The source's JS wrapper was collected and no native consumer is attached:
-    /// nothing can read what the producer delivers from now on. Called from a GC
-    /// sweep: arms must not run JS.
-    pub fn consumer_collected(&mut self) {
-        match *self {
-            SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
-            // Remaining variants do not act on this signal.
             SourceHandle::None
             | SourceHandle::JSController(_)
             | SourceHandle::ServerRequestBody(_)
@@ -2154,9 +2133,6 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
-    fn done(&self) -> bool {
-        self.is_done()
-    }
 }
 
 pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
@@ -2567,9 +2543,6 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
-    }
-    fn done(&self) -> bool {
-        self.done
     }
 }
 

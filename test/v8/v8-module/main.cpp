@@ -435,6 +435,7 @@ class GlobalTestWrapper {
 public:
   static void set(const FunctionCallbackInfo<Value> &info);
   static void get(const FunctionCallbackInfo<Value> &info);
+  static void store(Isolate *isolate, Local<Value> new_value);
   static void cleanup(void *unused);
 
 private:
@@ -463,7 +464,36 @@ void GlobalTestWrapper::get(const FunctionCallbackInfo<Value> &info) {
   }
 }
 
+void GlobalTestWrapper::store(Isolate *isolate, Local<Value> new_value) {
+  value.Reset(isolate, new_value);
+}
+
 void GlobalTestWrapper::cleanup(void *unused) { value.Reset(); }
+
+// Native data property whose getter returns the holder it was invoked on and
+// whose setter stores it where global_get() can read it, so JS can check what
+// receiver the accessor callbacks see for different ways of reaching them.
+static void holder_getter(Local<Name> property,
+                          const PropertyCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(info.HolderV2());
+}
+
+static void holder_setter(Local<Name> property, Local<Value> value,
+                          const PropertyCallbackInfo<void> &info) {
+  GlobalTestWrapper::store(info.GetIsolate(), info.HolderV2());
+}
+
+void create_object_with_holder_accessor(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<ObjectTemplate> obj_t = ObjectTemplate::New(isolate);
+  obj_t->SetNativeDataProperty(String::NewFromUtf8Literal(isolate, "holder"),
+                               holder_getter, holder_setter);
+
+  info.GetReturnValue().Set(obj_t->NewInstance(context).ToLocalChecked());
+}
 
 void test_many_v8_locals(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
@@ -1887,6 +1917,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_function_template_set_class_name);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
+  NODE_SET_METHOD(exports, "create_object_with_holder_accessor",
+                  create_object_with_holder_accessor);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);

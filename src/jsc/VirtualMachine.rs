@@ -2824,8 +2824,6 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            // accessed here (no overlapping `&mut EventLoop`).
-            self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -2848,7 +2846,6 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            self.event_loop_mut().perform_gc();
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
@@ -4888,7 +4885,6 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(entry_path)?;
-        self.event_loop_mut().perform_gc();
         self.event_loop_mut()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
@@ -4908,7 +4904,6 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -4931,7 +4926,6 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            self.event_loop_mut().perform_gc();
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
@@ -6814,12 +6808,8 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js()
 }
 
-/// LAYERING: moved DOWN from `bun_bundler_jsc::PluginRunner` so
-/// `resolve_maybe_needs_trailing_slash` can consult `Bun.plugin()` resolvers
-/// without a `bun_jsc → bun_bundler_jsc` cycle. The body only touches
-/// `JSGlobalObject`/`JSValue`/`bun_core::String`, all of which live at this
-/// tier; `bun_bundler_jsc` re-exports this fn for its own callers.
-pub fn plugin_runner_on_resolve_jsc(
+/// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
+pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
     namespace: bun_core::String,
     specifier: bun_core::String,

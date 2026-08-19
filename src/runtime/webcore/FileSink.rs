@@ -446,10 +446,18 @@ impl FileSink {
 
             // `end()`'s Pending flush branch leaves the writer running; finish the
             // teardown here regardless of `pending.state` (native path has no promise).
-            if (*this).done.get() && status == WriteStatus::Drained {
-                (*this).writer.with_mut(|w| w.end());
-            } else if (*this).done.get() && status == WriteStatus::EndOfFile && !has_pending_data {
-                (*this).writer.with_mut(|w| w.close());
+            //
+            // Not on `status`: `run_pending`/`src.ready()` above can re-enter
+            // `write()` (a short write buffers the tail) and then `end()` (flush
+            // Pending, sets `done`). `status` predates that, so a close on a stale
+            // `Drained` drops the tail. Re-read the buffer instead; draining the
+            // tail calls back here and finishes the teardown.
+            if (*this).done.get() && !(*this).writer.get().has_pending_data() {
+                if status == WriteStatus::EndOfFile {
+                    (*this).writer.with_mut(|w| w.close());
+                } else {
+                    (*this).writer.with_mut(|w| w.end());
+                }
             }
 
             if status == WriteStatus::EndOfFile {
@@ -1312,9 +1320,6 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     fn source(&mut self) -> Option<&mut streams::SourceHandle> {
         // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
         Some(unsafe { self.source.get_mut() })
-    }
-    fn done(&self) -> bool {
-        self.done.get()
     }
     fn pending_state_is_pending(&self) -> bool {
         self.pending.get().state == streams::PendingState::Pending

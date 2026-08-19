@@ -394,9 +394,6 @@ static char* toFileURI(std::span<const char> span)
 
 extern "C" size_t Bun__process_dlopen_count;
 
-// "Fire and forget" wrapper around unlink for c usage that handles EINTR
-extern "C" void Bun__unlink(const char*, size_t);
-
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
@@ -471,54 +468,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #else
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
-    bool deleteAfter = false;
     [[maybe_unused]] bool fromEmbedded = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.transferToWTFString();
-            deleteAfter = !filename.startsWith("/proc/"_s);
+            // The extracted file is content-hashed and shared across dlopens
+            // and restarts (#29587), so it is never deleted here.
             fromEmbedded = true;
         }
     }
 
     RETURN_IF_EXCEPTION(scope, {});
-
-    // For bun build --compile, we copy the .node file to a temp directory.
-    // It's best to delete it as soon as we can.
-    // https://github.com/oven-sh/bun/issues/19550
-    const auto tryToDeleteIfNecessary = [&]() {
-#if OS(WINDOWS)
-        if (deleteAfter) {
-            // Only call it once
-            deleteAfter = false;
-            if (filename.is8Bit()) {
-                filename.convertTo16Bit();
-            }
-
-            // Convert to 16-bit with a sentinel zero value.
-            auto span = filename.span16();
-            auto dupeZ = new wchar_t[span.size() + 1];
-            if (dupeZ) {
-                memcpy(dupeZ, span.data(), span.size_bytes());
-                dupeZ[span.size()] = L'\0';
-
-                // We can't immediately delete the file on Windows.
-                // Instead, we mark it for deletion on reboot.
-                MoveFileExW(
-                    dupeZ,
-                    NULL, // NULL destination means delete
-                    MOVEFILE_DELAY_UNTIL_REBOOT);
-                delete[] dupeZ;
-            }
-        }
-#else
-        if (deleteAfter) {
-            deleteAfter = false;
-            Bun__unlink(utf8.data(), utf8.length());
-        }
-#endif
-    };
 
     // Handle known yet-to-be-working in Bun
     {
@@ -544,8 +505,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
-
-// On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
 #if OS(LINUX)
     // A glibc-linked addon loaded into a musl process segfaults inside the
@@ -568,8 +527,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
-
-    tryToDeleteIfNecessary();
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
@@ -604,18 +561,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         WTF::String msg = errorBuilder.toString();
         if (messageBuffer)
             LocalFree(messageBuffer); // Free the buffer allocated by FormatMessageW
-
-        // Since we're relying on LastError(), we have to delete after checking for errors
-        tryToDeleteIfNecessary();
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
-
-#if OS(WINDOWS)
-    tryToDeleteIfNecessary();
-#endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
         // Module self-registered via static constructor(s).
@@ -2922,9 +2872,32 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+// node:worker_threads worker: process.stdout/stderr forward to the parent Worker's
+// worker.stdout/stderr over a MessagePort; process.stdin is port-fed for { stdin: true }
+// and otherwise an already-ended Readable (never the process-wide fd 0). fd 0/1/2 selects the port.
+static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, JSObject* ports, int fd)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSFunction* getStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetNodeWorkerStdioStreamCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    args.append(processObject);
+    args.append(JSC::jsNumber(fd));
+    args.append(ports);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStream, JSC::getCallData(getStream), globalObject->globalThis(), args);
+    if (auto* exception = scope.exception()) {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return jsUndefined();
+    }
+    return result;
+}
+
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
+    if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
+        return constructNodeWorkerStdioStream(globalObject, processObject, ports, fd);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
@@ -2988,6 +2961,8 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
+    if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
+        return constructNodeWorkerStdioStream(globalObject, processObject, ports, 0);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -4128,12 +4103,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     //    arrayBuffers: 9386
     // }
 
+    size_t heapTotal = vm.heap.blockBytesAllocated();
     result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(heapTotal));
 
-    // heap.size() loops through every cell...
-    // TODO: add a binding for heap.sizeAfterLastCollection()
-    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
+    // heap.size() walks every block of the heap, so report the size JSC measured
+    // at the end of the most recent collection instead. Nothing requests a
+    // collection while Bun starts up, and until the first one nothing has been
+    // freed either, so the whole heap counts as used. (external is measured by
+    // collections too and stays 0 until then.)
+    size_t heapUsed = WebCore::clientData(vm)->heapSizeAfterLastCollection();
+    result->putDirectOffset(vm, 2, JSC::jsNumber(heapUsed ? heapUsed : heapTotal));
 
     result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 
@@ -4859,8 +4839,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 
 /* Source for Process.lut.h
 @begin processObjectTable
-  _debugEnd                        Process_stubEmptyFunction                           Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
   _eval                            processGetEval                                      CustomAccessor
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
   _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
@@ -4868,8 +4846,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
   _rawDebug                        constructRawDebug                                   PropertyCallback
-  _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
-  _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   abort                            Process_functionAbort                               Function 1
   allowedNodeEnvironmentFlags      constructAllowedNodeEnvironmentFlags                PropertyCallback
@@ -4989,6 +4965,15 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+
+    // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.
+    if (!WebCore::clientData(vm)->isNodeWorkerVM()) {
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_debugEnd"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_debugProcess"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_startProfilerIdleNotifier"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_stopProfilerIdleNotifier"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+    }
+
     // Node's addReadOnlyProcessAlias: read-only so `process.noDeprecation = false`
     // is ignored, but a per-Process property — a Worker must not flip the main
     // thread. Unflagged it stays an ordinary undefined slot user code can set.

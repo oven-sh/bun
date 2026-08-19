@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 const env = {
   ...bunEnv,
@@ -327,6 +327,172 @@ describe("bundler", () => {
       env,
       stdout: "a.js executed\na loaded from entry\nb.js executed\nb.js imports a {}\nb loaded from entry, value: B",
     },
+  });
+
+  // An `import()` target only referenced from a part that tree shaking removes
+  // must not get a chunk. `define` turns the gate into a compile-time `false`.
+  const deadDynamicImportFiles = {
+    "/main.ts": /* ts */ `
+      import { openSecretDialog } from './launchers.ts'
+      if (FEATURE_SECRET) {
+        openSecretDialog().then(x => console.log(x))
+      }
+      console.log("main")
+    `,
+    "/launchers.ts": /* ts */ `
+      export async function openSecretDialog() {
+        const { SecretDialog } = await import('./secret.ts')
+        return SecretDialog()
+      }
+    `,
+    "/secret.ts": /* ts */ `
+      export function SecretDialog() { return 'internal only' }
+    `,
+  };
+
+  const jsFilesIn = (api: BundlerTestBundleAPI) =>
+    readdirSync(api.outdir)
+      .filter(f => f.endsWith(".js"))
+      .sort();
+
+  // The chunk holding secret.ts, which must be separate from the entry point.
+  const secretChunk = (api: BundlerTestBundleAPI) => {
+    const chunk = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes("internal only"));
+    expect(chunk).toBeDefined();
+    expect(chunk).not.toBe("main.js");
+    return chunk!;
+  };
+
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`splitting/DeadDynamicImportTargetGetsNoChunk-${backend}`, {
+      files: deadDynamicImportFiles,
+      entryPoints: ["/main.ts"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      metafile: true,
+      backend,
+      define: { FEATURE_SECRET: "false" },
+      assertNotPresent: { "/out/main.js": "internal only" },
+      onAfterBundle(api) {
+        expect(jsFilesIn(api)).toEqual(["main.js"]);
+        const metafile = JSON.parse(api.readFile("/metafile.json"));
+        expect(Object.keys(metafile.inputs).some(k => k.endsWith("secret.ts"))).toBe(false);
+        expect(Object.keys(metafile.outputs)).toHaveLength(1);
+      },
+      run: { file: "/out/main.js", stdout: "main" },
+    });
+  }
+
+  itBundled("splitting/DeadDynamicImportTargetNoSplittingReference", {
+    files: deadDynamicImportFiles,
+    entryPoints: ["/main.ts"],
+    outdir: "/out",
+    format: "esm",
+    define: { FEATURE_SECRET: "false" },
+    assertNotPresent: { "/out/main.js": "internal only" },
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+    },
+    run: { file: "/out/main.js", stdout: "main" },
+  });
+
+  // With tree shaking off every `import()` target keeps its chunk, as before.
+  itBundled("splitting/DeadDynamicImportTargetKeptWithoutTreeShaking", {
+    files: deadDynamicImportFiles,
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    treeShaking: false,
+    // The CLI has no flag to disable tree shaking.
+    backend: "api",
+    outdir: "/out",
+    format: "esm",
+    define: { FEATURE_SECRET: "false" },
+    onAfterBundle(api) {
+      secretChunk(api);
+    },
+    run: { file: "/out/main.js", stdout: "main" },
+  });
+
+  itBundled("splitting/LiveDynamicImportTargetStillGetsChunk", {
+    files: deadDynamicImportFiles,
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    define: { FEATURE_SECRET: "true" },
+    onAfterBundle(api) {
+      api.expectFile("/out/main.js").toContain(`import("./${secretChunk(api)}")`);
+    },
+    run: { file: "/out/main.js", stdout: "main\ninternal only" },
+  });
+
+  // live → import() → a → import() → b: liveness has to propagate through the
+  // dynamically imported chunk, not just from the user entry point.
+  itBundled("splitting/DynamicImportChainLiveness", {
+    files: {
+      "/main.ts": /* ts */ `
+        import { loadA, loadDeadA } from './launchers.ts'
+        if (FEATURE) loadDeadA()
+        loadA().then(x => console.log(x))
+        console.log("main")
+      `,
+      "/launchers.ts": /* ts */ `
+        export async function loadA() { return (await import('./a.ts')).a() }
+        export async function loadDeadA() { return (await import('./dead-a.ts')).a() }
+      `,
+      "/a.ts": /* ts */ `
+        export async function a() { return "a:" + (await import('./b.ts')).b() }
+      `,
+      "/b.ts": /* ts */ `
+        export function b() { return "b" }
+      `,
+      "/dead-a.ts": /* ts */ `
+        export async function a() { return "DEAD_A:" + (await import('./dead-b.ts')).b() }
+      `,
+      "/dead-b.ts": /* ts */ `
+        export function b() { return "DEAD_B" }
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    define: { FEATURE: "false" },
+    onAfterBundle(api) {
+      const contents = jsFilesIn(api).map(f => api.readFile("/out/" + f));
+      expect(contents.filter(c => c.includes('"a:"'))).toHaveLength(1);
+      expect(contents.filter(c => c.includes('return "b"'))).toHaveLength(1);
+      const all = contents.join("\n");
+      expect(all).not.toContain("DEAD_A");
+      expect(all).not.toContain("DEAD_B");
+    },
+    run: { file: "/out/main.js", stdout: "main\na:b" },
+  });
+
+  // A dead `import()` target that live code also imports statically stays in
+  // the output (it is live), and keeps its own chunk because it is an entry point.
+  itBundled("splitting/DeadDynamicImportTargetAlsoStaticallyImported", {
+    files: {
+      ...deadDynamicImportFiles,
+      "/main.ts": /* ts */ `
+        import { openSecretDialog } from './launchers.ts'
+        import { SecretDialog } from './secret.ts'
+        if (FEATURE_SECRET) {
+          openSecretDialog().then(x => console.log(x))
+        }
+        console.log("main", SecretDialog())
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    define: { FEATURE_SECRET: "false" },
+    onAfterBundle(api) {
+      api.expectFile("/out/main.js").toContain(`from "./${secretChunk(api)}"`);
+    },
+    run: { file: "/out/main.js", stdout: "main internal only" },
   });
 
   // N same-named cross-chunk exports must get unique aliases in O(N) total

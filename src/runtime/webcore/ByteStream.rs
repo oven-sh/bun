@@ -86,14 +86,6 @@ impl readable_stream::SourceContext for ByteStream {
     fn deinit_fn(&mut self) {
         Self::finalize(self)
     }
-    fn finalize_detach(&mut self) -> bool {
-        Self::on_wrapper_finalized(self);
-        false
-    }
-    /// The wrapper roots a natively wired sink (`sinkOwner`), nothing else.
-    fn native_ref_roots_wrapper(&self) -> bool {
-        self.sink.get().is_some()
-    }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
         Self::drain(self)
     }
@@ -186,26 +178,6 @@ impl ByteStream {
         self.sink_paused.set(false);
     }
 
-    /// The sink takes nothing more (its write answered `Done`/`Err`, or it is being torn
-    /// down). The stream stays locked to it, so a producer still mid-body is closed, as
-    /// [`Self::cancel_from_sink`] does for a sink that closes itself.
-    pub(crate) fn detach_finished_sink(&self) {
-        if self.has_received_last_chunk.get() {
-            self.unpipe_without_deref();
-        } else {
-            self.cancel_from_sink(None);
-        }
-    }
-
-    /// [`Self::detach_finished_sink`] for a sink this stream ends itself. `end` only
-    /// detaches the sink (see `FileSink::end_from_stream`), so the producer, which still
-    /// holds the source, is closed after it.
-    fn end_finished_sink(&self, sink: SinkHandle, err: Option<streams::StreamError>) {
-        self.unpipe_without_deref();
-        sink.end(err);
-        self.detach_finished_sink();
-    }
-
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
     pub fn resume(&self) {
         if !self.sink_paused.get() {
@@ -232,11 +204,13 @@ impl ByteStream {
                     return;
                 }
                 streams::Writable::Err(e) => {
-                    self.end_finished_sink(sink, Some(streams::StreamError::Error(e)));
+                    self.sink.set(SinkHandle::None);
+                    sink.end(Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.end_finished_sink(sink, None);
+                    self.sink.set(SinkHandle::None);
+                    sink.end(None);
                     return;
                 }
                 _ => {}
@@ -244,6 +218,15 @@ impl ByteStream {
         }
 
         self.signal_drained();
+
+        // A synchronous producer (RewriterPipe) may have pushed its remaining
+        // output through `on_data` just now. If one of those writes hit
+        // backpressure, the chunks after it (and the end) were buffered; the
+        // sink's next drain ack comes back here and delivers them. Ending now
+        // would drop them.
+        if self.sink_paused.get() {
+            return;
+        }
 
         if self.has_received_last_chunk.get() && self.sink.get().is_some() {
             self.sink.set(SinkHandle::None);
@@ -282,8 +265,8 @@ impl ByteStream {
         Vec::<u8>::move_from_list(list)
     }
 
-    /// A native sink was wired, or a pull went pending: a consumer now waits
-    /// for bytes (`FetchTasklet::on_consumer_attached` refs the loop for it).
+    /// Called by native fast-paths after wiring `self.sink`. Restores
+    /// producer-side backpressure if it was already dropped (BufferAll).
     pub fn signal_consumer_attached(&self) {
         self.parent_const().producer.get().start();
     }
@@ -329,11 +312,15 @@ impl ByteStream {
                     self.sink_paused.set(true);
                 }
                 streams::Writable::Err(e) => {
-                    self.end_finished_sink(sink, Some(streams::StreamError::Error(e)));
+                    self.sink.set(SinkHandle::None);
+                    self.sink_paused.set(false);
+                    sink.end(Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.end_finished_sink(sink, None);
+                    self.sink.set(SinkHandle::None);
+                    self.sink_paused.set(false);
+                    sink.end(None);
                     return;
                 }
                 _ => {
@@ -644,7 +631,6 @@ impl ByteStream {
         // Raw borrow of a JS-owned buffer; rooted by `set_value`.
         self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
         self.set_value(view);
-        self.signal_consumer_attached();
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
         // returned `streams::Result::Pending` raw-backref needs.
@@ -685,16 +671,6 @@ impl ByteStream {
     fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(ByteStream)
         self.buffer.get().capacity()
-    }
-
-    /// `NewSource::finalize`: nothing JS-side can pull from this source again.
-    /// A `sink` or a `buffer_action` does not hold the wrapper and still takes
-    /// the bytes; without one, tell the producer. Runs inside a GC sweep.
-    fn on_wrapper_finalized(&self) {
-        if self.sink.get().is_some() || self.buffer_action.get().is_some() {
-            return;
-        }
-        self.parent_const().producer.get().consumer_collected();
     }
 
     /// NOTE: not `impl Drop` — `ByteStream` is the `context` payload of a `.classes.ts`

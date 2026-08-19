@@ -368,20 +368,24 @@ describe("@types/bun integration test", () => {
   });
 
   // Runs on debug builds too: spawning tsc over a single file is cheap,
-  // unlike the in-process LanguageService runs above.
-  describe("Bun.mmap", () => {
-    test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
+  // unlike the in-process LanguageService runs above. The fixture/ files carry
+  // the full assertions for these declarations; this is the check of them that
+  // a debug build still runs.
+  describe("tsc over a single file", () => {
+    test("Bun.mmap offset/size and the EventSource constructor are accepted", async () => {
+      const checkDir = join(TEMP_DIR, "single-file-check");
       const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
+      tsconfig.include = ["check.ts"];
       tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
       await mkdir(checkDir, { recursive: true });
       await makeTree(checkDir, {
         "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
+        "check.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
            view satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
+           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;
+           new EventSource("http://localhost:3000/events", { withCredentials: true }) satisfies EventSource;
+           EventSource.CLOSED satisfies 2;`,
       });
 
       await using proc = Bun.spawn({

@@ -153,7 +153,15 @@ pub(crate) fn resp_value_to_js_with_options(
 
             Ok(js_obj)
         }
-        // Always a string: an i64 that fits does not fit a JS number above 2^53.
-        RESPValue::BigNumber(str) => valkey_str_to_js_value(global, str, options),
+        // BigInt when the payload is an integer literal; modules and Lua can
+        // put anything after `(`, so other text stays a string.
+        RESPValue::BigNumber(str) => {
+            if !options.return_as_buffer
+                && let Some(big) = JSValue::big_int_from_decimal(global, str)?
+            {
+                return Ok(big);
+            }
+            valkey_str_to_js_value(global, str, options)
+        }
     }
 }

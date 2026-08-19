@@ -123,12 +123,22 @@ describe.concurrent("Valkey reply decoding", () => {
   });
 
   test.each([
-    ["9007199254740993", "9007199254740993"],
-    ["42", "42"],
-  ])("BigNumber (%s) resolves the digits as a string", async (digits, expected) => {
+    ["9007199254740993", 9007199254740993n],
+    ["-42", -42n],
+    ["340282366920938463463374607431768211456", 2n ** 128n],
+  ])("BigNumber (%s) resolves a BigInt", async (digits, expected) => {
     const server = createReplyServer(`(${digits}${CRLF}`);
     await withClient(server, async client => {
-      expect(await client.get("k")).toBe(expected);
+      const value = await client.get("k");
+      expect(typeof value).toBe("bigint");
+      expect(value).toBe(expected);
+    });
+  });
+
+  test("BigNumber with a non-integer payload resolves the text as a string", async () => {
+    const server = createReplyServer(`(12abc${CRLF}`);
+    await withClient(server, async client => {
+      expect(await client.get("k")).toBe("12abc");
     });
   });
 

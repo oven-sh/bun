@@ -342,7 +342,7 @@ The client automatically converts Redis responses to JavaScript values:
 - Simple strings are returned as JavaScript strings
 - Null bulk strings and null arrays are returned as `null`
 - Array responses are returned as JavaScript arrays
-- Big number responses (RESP3) are returned as JavaScript strings, so no digits are lost
+- Big number responses (RESP3) are returned as `BigInt` (a string when the payload is not an integer literal; a `Buffer` of the digits with `getBuffer`)
 - Error responses throw JavaScript errors with appropriate error codes
 - Boolean responses (RESP3) are returned as JavaScript booleans
 - Map responses (RESP3) are returned as JavaScript objects

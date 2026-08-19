@@ -7,6 +7,19 @@ import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 
+// One GC pass from a timer callback, resolved one macrotask later so the
+// registry callbacks it queued have run. GC from the awaiting continuation
+// itself can still see the settled work's stale stack slots (conservative
+// scanning) and keep the object alive for a while on release builds.
+function collectOnce(): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(() => {
+    Bun.gc(true);
+    setTimeout(resolve, 0);
+  }, 0);
+  return promise;
+}
+
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   const url = () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
 
@@ -32,12 +45,10 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
           ([{ v }]) => (result = v),
           e => (result = e),
         );
-        // Drive GC until the FinalizationRegistry releases the slot; give up
-        // after a bounded number of sweeps instead of waiting on wall-clock
-        // time.
+        // Drive GC until the registry releases the slot, with a bounded number
+        // of passes.
         for (let i = 0; i < 50 && result === "pending"; i++) {
-          Bun.gc(true);
-          await Bun.sleep(10);
+          await collectOnce();
         }
         await Promise.race([probe, Promise.resolve()]);
         expect(result).toBe(42);
@@ -71,8 +82,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     let parked: Promise<{ v: number }[]>;
     try {
       for (let i = 0; i < 50 && !collected; i++) {
-        Bun.gc(true);
-        await Bun.sleep(10);
+        await collectOnce();
       }
       expect(collected).toBe(true);
 
@@ -107,8 +117,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     })();
 
     for (let i = 0; i < 50 && !collected; i++) {
-      Bun.gc(true);
-      await Bun.sleep(10);
+      await collectOnce();
     }
     expect(collected).toBe(true);
 
@@ -123,48 +132,52 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   // connection, with its transaction still open, to the next pool caller.
   test("a dropped client is not collected while its begin() is running, and is reclaimed after", async () => {
     await container.ready;
-    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5 });
-
-    let collected = false;
-    const observer = new FinalizationRegistry(() => (collected = true));
-    const started = Promise.withResolvers<void>();
+    // Force-closed in the finally: on a regression the parked query below
+    // never runs, and a graceful close would wait for it.
+    const sql = new SQL({ url: url(), max: 1, idleTimeout: 5 });
     const gate = Promise.withResolvers<void>();
-    let served = false;
-    let servedDuringTransaction: boolean | null = null;
-    const transaction = (async () => {
-      const client = await sql.reserve();
-      observer.register(client, undefined);
-      return client.begin(async tx => {
-        await tx`select 1`;
-        started.resolve();
-        await gate.promise;
-        // A plain query wrongly served on this connection was written before
-        // this statement, so it has been answered by the time this resolves.
-        await tx`select 2`;
-        servedDuringTransaction = served;
-      });
-    })();
-    await started.promise;
+    try {
+      let collected = false;
+      const observer = new FinalizationRegistry(() => (collected = true));
+      const started = Promise.withResolvers<void>();
+      let served = false;
+      let servedDuringTransaction: boolean | null = null;
+      const transaction = (async () => {
+        const client = await sql.reserve();
+        observer.register(client, undefined);
+        return client.begin(async tx => {
+          await tx`select 1`;
+          started.resolve();
+          await gate.promise;
+          // A plain query wrongly served on this connection was written before
+          // this statement, so it has been answered by the time this resolves.
+          await tx`select 2`;
+          servedDuringTransaction = served;
+        });
+      })();
+      await started.promise;
 
-    // Nothing but the running transaction references the client now.
-    for (let i = 0; i < 10; i++) {
-      Bun.gc(true);
-      await Bun.sleep(10);
+      // Nothing but the running transaction references the client now.
+      for (let i = 0; i < 10; i++) {
+        await collectOnce();
+      }
+      expect(collected).toBe(false);
+
+      const parked = sql`select 3 as v`.then(rows => ((served = true), rows));
+      gate.resolve();
+      await transaction;
+      expect(servedDuringTransaction).toBe(false);
+
+      // Once the transaction has settled the client is collectable and its
+      // slot comes back, which is what lets the parked query run.
+      for (let i = 0; i < 50 && !served; i++) {
+        await collectOnce();
+      }
+      expect({ collected, served }).toEqual({ collected: true, served: true });
+      expect((await parked)[0].v).toBe(3);
+    } finally {
+      gate.resolve();
+      await sql.close({ timeout: 0.1 });
     }
-    expect(collected).toBe(false);
-
-    const parked = sql`select 3 as v`.then(rows => ((served = true), rows));
-    gate.resolve();
-    await transaction;
-    expect(servedDuringTransaction).toBe(false);
-
-    // Once the transaction has settled the client is collectable and its
-    // slot comes back, which is what lets the parked query run.
-    for (let i = 0; i < 50 && !served; i++) {
-      Bun.gc(true);
-      await Bun.sleep(10);
-    }
-    expect(collected).toBe(true);
-    expect((await parked)[0].v).toBe(3);
   });
 });

@@ -30,6 +30,10 @@ bun_output::define_scoped_log!(debug, Redis, visible);
 /// Connection flags to track Valkey client state
 pub struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
+    /// Set by `disconnect()` while a dial is in flight and taken by that
+    /// dial's `on_close`: uSockets reports the aborted dial as a connect
+    /// error (`ECONNABORTED`), and the user asked for that close.
+    pub(crate) close_aborted_dial: bool,
     pub(crate) is_selecting_db_internal: bool,
     pub(crate) enable_offline_queue: bool,
     pub(crate) enable_auto_reconnect: bool,
@@ -37,11 +41,6 @@ pub struct ConnectionFlags {
     /// or `fail()`, so it overlaps `Disconnected` and `Connecting`; that is why
     /// it is not a `Status` variant.
     pub(crate) is_reconnecting: bool,
-    /// Sticky until `on_open`/`connect()`. `fail()` closes the socket outright
-    /// (see `close()`), so by the time it returns the close callback has run
-    /// (`on_close` reads this to skip the retry policy) and this overlaps
-    /// `Disconnected`.
-    pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
     pub(crate) finalized: bool,
     // This flag is a slight hack to allow returning the client instance in the
@@ -60,11 +59,11 @@ impl Default for ConnectionFlags {
     fn default() -> Self {
         Self {
             is_manually_closed: false,
+            close_aborted_dial: false,
             is_selecting_db_internal: false,
             enable_offline_queue: true,
             enable_auto_reconnect: true,
             is_reconnecting: false,
-            failed: false,
             enable_auto_pipelining: true,
             finalized: false,
             connection_promise_returns_client: false,
@@ -197,7 +196,7 @@ impl Address {
         group: &mut SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
-    ) -> Result<AnySocket, crate::Error> {
+    ) -> Result<AnySocket, uws::ConnectError> {
         if is_tls {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
@@ -233,6 +232,34 @@ impl Address {
             };
             Ok(AnySocket::SocketTcp(sock))
         }
+    }
+}
+
+/// Why `on_close` runs. Its message rejects the commands the close leaves
+/// unanswered, and is the failure the connect() promise and `onclose` get
+/// unless `fail()` recorded one first or the retries are used up.
+#[derive(Clone, Copy)]
+pub(crate) enum CloseReason<'a> {
+    /// The socket of a connection went away: closed by the peer, `close()`
+    /// or `fail()`.
+    SocketClosed,
+    /// The dial never produced a connection; `message` is the errno/resolver
+    /// text, e.g. `connect ECONNREFUSED 127.0.0.1:6379`. A `terminal` dial is
+    /// one no retry can make succeed (the TLS context cannot be built), so
+    /// the retry policy is skipped whatever `autoReconnect` says.
+    DialFailed { message: &'a [u8], terminal: bool },
+}
+
+impl<'a> CloseReason<'a> {
+    pub(crate) fn message(self) -> &'a [u8] {
+        match self {
+            Self::SocketClosed => b"Connection closed",
+            Self::DialFailed { message, .. } => message,
+        }
+    }
+
+    fn is_terminal(self) -> bool {
+        matches!(self, Self::DialFailed { terminal: true, .. })
     }
 }
 
@@ -274,6 +301,21 @@ pub struct ValkeyClient {
     pub(crate) max_retries: u32, // Maximum retry attempts
 
     pub(crate) flags: ConnectionFlags,
+
+    /// The error of the failure that closed this connection, `Some` from
+    /// `fail_with_js_value` until the next `connect()`/`on_open`. It is the
+    /// one value the rejected commands, the connect() promise and `onclose`
+    /// all get. `fail()` closes the socket outright (see `close()`), so by the
+    /// time it returns the close callback has run (`on_close` reads this to
+    /// skip the retry policy) and this overlaps `Disconnected`.
+    ///
+    /// A `Strong` because the value has to live from `fail_with_js_value`
+    /// through the socket close dispatch to `on_valkey_close`, a chain that
+    /// allocates and can collect, while it may have no other referent (no
+    /// command was queued) and a `JSValue` in this boxed client is not
+    /// scanned. Dropped with the client; cleared on the next dial so a
+    /// client that failed once does not root its error for good.
+    pub(crate) failure: Option<bun_jsc::Strong>,
 
     // Auto-pipelining
     pub(crate) auto_flusher: AutoFlusher,
@@ -438,7 +480,7 @@ impl ValkeyClient {
 
     /// Get the appropriate timeout interval based on connection state
     pub(crate) fn get_timeout_interval(&self) -> u32 {
-        if self.flags.failed {
+        if self.failure.is_some() {
             return 0;
         }
         match self.status {
@@ -548,7 +590,7 @@ impl ValkeyClient {
     /// Mark the connection as failed with error message
     pub(crate) fn fail(&mut self, message: &[u8], err: RedisError) -> JsResult<()> {
         debug!("failed: {}: {:?}", bstr::BStr::new(message), err);
-        if self.flags.failed {
+        if self.failure.is_some() {
             return Ok(());
         }
 
@@ -581,10 +623,10 @@ impl ValkeyClient {
         global_this: &JSGlobalObject,
         jsvalue: JSValue,
     ) -> JsResult<()> {
-        if self.flags.failed {
+        if self.failure.is_some() {
             return Ok(());
         }
-        self.flags.failed = true;
+        self.failure = Some(bun_jsc::Strong::create(jsvalue, global_this));
         self.flags.is_reconnecting = false;
         let val = Self::reject_all_pending_commands(
             &mut self.in_flight,
@@ -595,7 +637,7 @@ impl ValkeyClient {
 
         // A failure the client detected itself (idle timeout, protocol or
         // handshake error) has always been a deliberate close; `on_close` reads
-        // `failed` and skips the retry policy.
+        // `failure` and skips the retry policy.
         let closed = self.close(uws::CloseCode::Failure); // unconditionally, whatever `val` is
         val.and(closed)
     }
@@ -655,12 +697,12 @@ impl ValkeyClient {
         // client outlives this scope.
         let _socket_ref = unsafe { RefPtr::from_raw(self.parent_ptr()) };
         self.status = Status::Disconnected;
-        let closed = self.on_close();
+        let closed = self.on_close(CloseReason::SocketClosed);
         thrown.and(closed)
     }
 
     /// Handle connection closed event
-    pub fn on_close(&mut self) -> JsResult<()> {
+    pub(crate) fn on_close(&mut self, reason: CloseReason<'_>) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
         // A partial reply can never complete now; left in place it counts as
@@ -668,10 +710,19 @@ impl ValkeyClient {
         self.read_buffer.clear_and_free();
         self.reply_scanner.reset();
 
-        // A manual close or a failure the client detected itself: no retry.
-        if self.flags.is_manually_closed || self.flags.failed {
+        // A dial `close()` aborted did not fail; see `close_aborted_dial`.
+        let message = if core::mem::take(&mut self.flags.close_aborted_dial) {
+            CloseReason::SocketClosed.message()
+        } else {
+            reason.message()
+        };
+
+        // A manual close, a failure the client detected itself or a dial no
+        // retry can fix: no retry. After `fail()` this `fail` is a no-op and
+        // `on_valkey_close` reports the recorded failure.
+        if self.flags.is_manually_closed || self.failure.is_some() || reason.is_terminal() {
             debug!("skip reconnecting since the connection is manually closed or failed");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
+            self.fail(message, RedisError::ConnectionClosed)?;
             self.on_valkey_close()?;
             return Ok(());
         }
@@ -679,7 +730,7 @@ impl ValkeyClient {
         // If auto reconnect is disabled, just fail
         if !self.flags.enable_auto_reconnect {
             debug!("skip reconnecting since auto reconnect is disabled");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
+            self.fail(message, RedisError::ConnectionClosed)?;
             self.on_valkey_close()?;
             return Ok(());
         }
@@ -690,10 +741,23 @@ impl ValkeyClient {
 
         if delay_ms == 0 || self.retry_attempts > self.max_retries {
             debug!("Max retries reached or retry strategy returned 0, giving up reconnection");
-            self.fail(
-                b"Max reconnection attempts reached",
-                RedisError::ConnectionClosed,
-            )?;
+            // Giving up is the outcome, so it is the message; the last attempt's
+            // reason, the only one anybody could still ask about, is its `cause`.
+            const GAVE_UP: &[u8] = b"Max reconnection attempts reached";
+            if self.flags.finalized {
+                // `fail()` cannot make JS values here and defers the rejections.
+                self.fail(GAVE_UP, RedisError::ConnectionClosed)?;
+            } else {
+                let global_this = self.global_object();
+                let err = valkey_error_to_js(&global_this, GAVE_UP, RedisError::ConnectionClosed);
+                // Non-enumerable, as `new Error(message, { cause })` makes it.
+                err.put_non_enumerable(
+                    &global_this,
+                    b"cause",
+                    valkey_error_to_js(&global_this, message, RedisError::ConnectionClosed),
+                );
+                self.fail_with_js_value(&global_this, err)?;
+            }
             self.on_valkey_close()?;
             return Ok(());
         }
@@ -706,7 +770,7 @@ impl ValkeyClient {
         self.flags.is_reconnecting = true;
         self.flags.is_selecting_db_internal = false;
 
-        self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
+        self.reject_in_flight_commands(message, RedisError::ConnectionClosed)?;
 
         // Signal reconnect timer should be started
         self.on_valkey_reconnect();
@@ -1298,7 +1362,7 @@ impl ValkeyClient {
         // A fresh socket has opened, so reset per-connection state. Without
         // this, `send()` would permanently reject with "Connection has failed"
         // after a previous connection exhausted retries (#29925).
-        self.flags.failed = false;
+        self.failure = None;
         self.flags.is_selecting_db_internal = false;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
@@ -1473,7 +1537,7 @@ impl ValkeyClient {
     /// Why `send()` would reject a command outright instead of sending or
     /// queueing it in the current state, or `None` when it would be accepted.
     pub(crate) fn send_rejection(&self) -> Option<&'static str> {
-        if self.flags.failed {
+        if self.failure.is_some() {
             return Some("Connection has failed");
         }
         if self.status != Status::Connected && !self.flags.enable_offline_queue {
@@ -1498,6 +1562,9 @@ impl ValkeyClient {
     pub(crate) fn disconnect(&mut self) -> JsResult<()> {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
+        if self.status == Status::Connecting {
+            self.flags.close_aborted_dial = true;
+        }
         match self.status {
             Status::Connected | Status::Connecting => self.close(uws::CloseCode::FastShutdown),
             // Between retries: the manual flag makes the close terminal.

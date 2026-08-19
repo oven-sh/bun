@@ -570,10 +570,10 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
     }
 }
 
-// Returns false when a JS exception is pending (header conversion or
-// validation threw); the Rust callers branch on the return value.
+// Throws when header conversion or validation fails; the Rust caller checks
+// through its own scope (from_js_host_call_generic in write_head_internal).
 template<bool isSSL>
-static bool NodeHTTPServer__writeHead(
+static void NodeHTTPServer__writeHead(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
@@ -583,8 +583,7 @@ static bool NodeHTTPServer__writeHead(
     uWS::HttpResponse<isSSL>* response)
 {
     auto& vm = globalObject->vm();
-    // Not a ThrowScope: the Rust caller has no scope to acknowledge its simulated throw with (see NAPI_PREAMBLE).
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* headersObject = headersObjectValue.getObject();
     if (!response->uWS::template AsyncSocket<isSSL>::isCorked() && response->getBufferedAmount() == 0) {
@@ -608,9 +607,9 @@ static bool NodeHTTPServer__writeHead(
     if (headersObject) {
         if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
             if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return true;
+            return;
         }
 
         // A flat [name, value, name, value, ...] array. Used by node:http's
@@ -622,14 +621,14 @@ static bool NodeHTTPServer__writeHead(
             unsigned length = pairsArray->length();
             for (unsigned i = 0; i + 1 < length; i += 2) {
                 JSValue nameValue = pairsArray->getIndex(globalObject, i);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
                 JSValue headerValue = pairsArray->getIndex(globalObject, i + 1);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
 
                 String name = nameValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
                 String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
 
                 // node:http marks framing decisions with a NUL-named sentinel
                 // pair instead of a real header: value "1" = close-delimited
@@ -660,14 +659,14 @@ static bool NodeHTTPServer__writeHead(
 
                 writeResponseHeader<isSSL>(response, name, value);
             }
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
             if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return true;
+            return;
         }
 
         if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
             headersObject->reifyAllStaticProperties(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
         }
 
         auto* structure = headersObject->structure();
@@ -691,31 +690,29 @@ static bool NodeHTTPServer__writeHead(
         } else {
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
 
             for (unsigned i = 0; i < propertyNames.size(); ++i) {
                 JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
                 if (!headerValue.isString()) {
                     continue;
                 }
 
                 String key = propertyNames[i].string();
                 String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
 
                 writeResponseHeader<isSSL>(response, key, value);
             }
         }
     }
 
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, void());
     if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-
-    return true;
 }
 
-extern "C" bool NodeHTTPServer__writeHead_http(
+extern "C" void NodeHTTPServer__writeHead_http(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
@@ -724,10 +721,10 @@ extern "C" bool NodeHTTPServer__writeHead_http(
     uint32_t keepAliveTimeoutSecs,
     uWS::HttpResponse<false>* response)
 {
-    return NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
+    NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
 }
 
-extern "C" bool NodeHTTPServer__writeHead_https(
+extern "C" void NodeHTTPServer__writeHead_https(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
@@ -736,7 +733,7 @@ extern "C" bool NodeHTTPServer__writeHead_https(
     uint32_t keepAliveTimeoutSecs,
     uWS::HttpResponse<true>* response)
 {
-    return NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
+    NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(

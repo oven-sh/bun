@@ -1367,7 +1367,7 @@ function settledThroughRoute(name: string) {
   `;
 }
 devTest("an evaluation superseded by a hot update does not publish its outcome", {
-  // Saving a module while its top-level await is pending starts a second evaluation; the first settling later must neither record its failure nor patch importers.
+  // Saving a module while its top-level await is pending starts a second evaluation; the first settling later must neither record its failure nor patch importers, and whoever was waiting on it gets the second one's outcome.
   framework: minimalFramework,
   files: {
     "slow-1.ts": settledThroughRoute("slow-1"),
@@ -1438,8 +1438,9 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
     await command("reject slow-1 v1").equals("settled");
     await command("resolve slow-2 v1").equals("settled");
 
+    // v1 failed after v2 had loaded: the import() that started v1 gets v2, like one made now.
     expect(await command("load slow-1").json()).toStrictEqual({
-      first: "threw: slow-1 v1 failed",
+      first: 'resolved: {"value":"slow-1 v2"}',
       again: 'resolved: {"value":"slow-1 v2"}',
     });
     expect(await command("load reexports-slow-2").json()).toStrictEqual({
@@ -1462,7 +1463,7 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
     await command("resolve slow-4 v1").equals("settled");
 
     expect(await command("load slow-3").json()).toStrictEqual({
-      first: "threw: slow-3 v1 failed",
+      first: 'resolved: {"default":{"value":"slow-3 cjs"},"value":"slow-3 cjs"}',
       again: 'resolved: {"default":{"value":"slow-3 cjs"},"value":"slow-3 cjs"}',
     });
     // Nothing was started under this name, so only `again` is reported.
@@ -1470,7 +1471,7 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
       again: 'resolved: {"value":"slow-4 cjs"}',
     });
 
-    // The importer is saved without the import while waiting on the dependency; the superseded evaluation must neither run the old body nor record the failure.
+    // The importer is saved without the import while waiting on the dependency; the superseded evaluation must neither run the old body nor fail with the dependency.
     await command("start imports-slow-a").equals("started");
     await command("start imports-slow-b").equals("started");
     await dev.write("imports-slow-a.ts", `export const value = "imports-slow-a v2";`);
@@ -1484,7 +1485,7 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
       again: 'resolved: {"value":"imports-slow-a v2"}',
     });
     expect(await command("load imports-slow-b").json()).toStrictEqual({
-      first: "threw: slow-b v1 failed",
+      first: 'resolved: {"value":"imports-slow-b v2"}',
       again: 'resolved: {"value":"imports-slow-b v2"}',
     });
   },
@@ -1565,6 +1566,18 @@ devTest("modules that failed because of a dependency are evaluated again once th
         return new Response("other: " + value);
       }
     `,
+    // `dep` takes its own updates (it reads import.meta.hot.data), so the walk stops there; the route that failed with it must still be evaluated again.
+    "boundary/dep.ts": `
+      import.meta.hot.data.evaluations = (import.meta.hot.data.evaluations ?? 0) + 1;
+      export const value = "broken";
+      if (value === "broken") throw new Error("dep is broken");
+    `,
+    "routes/boundary.ts": `
+      import { value } from "../boundary/dep";
+      export default function () {
+        return new Response("boundary: " + value);
+      }
+    `,
     // `dep` is already recorded as failed when /failed loads it; the route must still be recorded as an importer, or fixing `dep` cannot find it.
     "failed/dep.ts": `
       export const value = "unreachable";
@@ -1625,6 +1638,10 @@ devTest("modules that failed because of a dependency are evaluated again once th
     await dev.write("shared/dep.ts", `export const value = "fixed";`);
     await dev.fetch("/shared-index").equals("index: fixed");
     await dev.fetch("/shared-other").equals("other: fixed");
+
+    await dev.fetch("/boundary").expectErrorPage("dep is broken");
+    await dev.patch("boundary/dep.ts", { find: 'value = "broken"', replace: 'value = "fixed"' });
+    await dev.fetch("/boundary").equals("boundary: fixed");
 
     await dev.fetch("/failed-first").expectErrorPage("dep threw");
     await dev.fetch("/failed").expectErrorPage("dep threw");

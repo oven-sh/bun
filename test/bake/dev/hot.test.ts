@@ -552,7 +552,7 @@ devTest("server: the route module is evaluated again so its module-level state m
     await dev.fetch("/").equals("v3 banner(v3)");
   },
 });
-devTest("a self-accepting module in an import cycle with the changed module reloads the page", {
+devTest("a self-accepting module in an import cycle with the changed module is evaluated after it", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     "index.ts": `
@@ -575,14 +575,51 @@ devTest("a self-accepting module in an import cycle with the changed module relo
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("b b(x1)", "index b(x1)");
-    // No evaluation order gives `b` the new `x` and `x` the new `b`; like Vite, the page reloads.
+    // Like Vite 5.1, the update is applied although `x` sees the previous `b` while it runs: `b` starts the load, `x` is evaluated under it, then `b`.
+    await dev.patch("x.ts", { find: '"x1"', replace: '"x2"' });
+    await c.expectMessage("b b(x2)");
+    await dev.patch("x.ts", { find: '"x2"', replace: '"x3"' });
+    await c.expectMessage("b b(x3)");
+  },
+});
+devTest("an import cycle through a self-accepting module reloads the page only when evaluating it again fails", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b } from "./b";
+      console.log("index " + b);
+    `,
+    "b.ts": `
+      import { x } from "./x";
+      export const b = "b(" + x + ")";
+      export function check(expected) {
+        if (x !== expected) throw new Error("b still sees " + x);
+      }
+      console.log("b " + b);
+      import.meta.hot.accept();
+    `,
+    "x.ts": `
+      export const x = "x1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("b b(x1)", "index b(x1)");
+    // The new `x` imports `b` back and calls into it at the top level. In the hot update `x` runs under `b` against the previous copy of `b`, which throws; on the cold load after the reload `b` has not run yet and the namespace is still null.
     await c.expectReload(async () => {
-      await dev.patch("x.ts", { find: '"x1"', replace: '"x2"' });
+      await dev.write(
+        "x.ts",
+        `
+          import * as previous from "./b";
+          if (previous) previous.check("x2");
+          export const x = "x2";
+        `,
+      );
     });
     await c.expectMessage("b b(x2)", "index b(x2)");
   },
 });
-devTest("server: a self-accepting module in an import cycle with the changed module is evaluated first", {
+devTest("server: a self-accepting module in an import cycle with the changed module is evaluated after it", {
   framework: minimalFramework,
   files: {
     "b.ts": `
@@ -605,9 +642,8 @@ devTest("server: a self-accepting module in an import cycle with the changed mod
   },
   async test(dev) {
     await dev.fetch("/").equals("b(x1) b(x1)");
-    // The server has no page to reload: it warns and evaluates `b` first, so `b` sees the new `x` and `x` is patched to the new `b`.
+    // `b` starts the load and `x` is evaluated under it, so `b` sees the new `x` and `x` is patched to the new `b`.
     await dev.patch("x.ts", { find: '"x1"', replace: '"x2"' });
-    await dev.output.waitForLine(/import cycle/);
     await dev.fetch("/").equals("b(x2) b(x2)");
   },
 });
@@ -703,18 +739,21 @@ devTest("server: an import() that lands while a dispose promise is pending evalu
     expect(await command("load").json()).toStrictEqual({ value: "v2", evaluations: 2 });
   },
 });
+// Like most files with hooks, this one registers them at the bottom, after its top-level await.
 function slowVersion(version: string) {
   return `
     (globalThis.bodies ??= []).push("${version}");
-    await globalThis.gates?.["${version}"].promise;
+    await globalThis.gates?.["${version}"]?.promise;
     export const value = "${version}";
+    import.meta.hot.accept(newModule => (globalThis.accepted ??= []).push("${version} handed over to " + newModule.value));
+    import.meta.hot.dispose(() => (globalThis.disposed ??= []).push("${version}"));
   `;
 }
 devTest("server: a second update while the first is parked on top-level await ends with the second version", {
   framework: minimalFramework,
   files: {
     "slow.ts": slowVersion("v1"),
-    // "arm" makes the v2 and v3 bodies wait, "release <version>" lets one finish, "bodies" lists the versions evaluated so far, anything else imports `slow`.
+    // "arm" makes the v2 and v3 bodies wait, "release <version>" lets one finish, "bodies" lists the versions evaluated so far, "hooks" what their hooks logged, anything else imports `slow`.
     "routes/index.ts": `
       export default async function (req) {
         const [op, version] = req.headers.get("x-command").split(" ");
@@ -727,6 +766,7 @@ devTest("server: a second update while the first is parked on top-level await en
           return new Response("released");
         }
         if (op === "bodies") return Response.json(globalThis.bodies);
+        if (op === "hooks") return Response.json({ accepted: globalThis.accepted, disposed: globalThis.disposed });
         const { value } = await import("../slow");
         return Response.json({ value, bodies: globalThis.bodies });
       }
@@ -743,8 +783,110 @@ devTest("server: a second update while the first is parked on top-level await en
     await command("release v3").equals("released");
     await command("release v2").equals("released");
     expect(await command("load").json()).toStrictEqual({ value: "v3", bodies: ["v1", "v2", "v3"] });
+    // Nor do the hooks it registered after its await count: the next update disposes of v3 only and hands v4 over to v3's callback.
+    expect(await command("hooks").json()).toStrictEqual({ accepted: ["v1 handed over to v3"], disposed: ["v1"] });
+    await dev.write("slow.ts", slowVersion("v4"));
+    expect(await command("load").json()).toStrictEqual({ value: "v4", bodies: ["v1", "v2", "v3", "v4"] });
+    expect(await command("hooks").json()).toStrictEqual({
+      accepted: ["v1 handed over to v3", "v3 handed over to v4"],
+      disposed: ["v1", "v3"],
+    });
   },
 });
+devTest("server: an update overlapping one parked on an async dispose accepts once and ends with the newest copy", {
+  framework: minimalFramework,
+  files: {
+    // twice: update A parks on the dispose promise; update B evaluates v3 and runs both callbacks; A then finds v3 loaded and must not run them again with it.
+    "twice/m.ts": `
+      export const value = "v1";
+      import.meta.hot.accept(newModule => globalThis.twiceLog.push("m accepted " + newModule.value));
+      import.meta.hot.dispose(() => globalThis.twiceDisposing?.promise);
+    `,
+    "twice/acceptor.ts": `
+      import "./m";
+      globalThis.twiceLog ??= [];
+      import.meta.hot.accept("./m", newModule => globalThis.twiceLog.push("acceptor accepted " + newModule.value));
+      import.meta.hot.on("bun:afterUpdate", () => globalThis.twiceLog.push("update done"));
+    `,
+    // "arm" creates the promise the next dispose returns, "release" resolves it, anything else imports `m`.
+    "routes/twice.ts": `
+      import "../twice/acceptor";
+      export default async function (req) {
+        const op = req.headers.get("x-command");
+        if (op === "arm") {
+          globalThis.twiceDisposing = Promise.withResolvers();
+          return new Response("armed");
+        }
+        if (op === "release") {
+          globalThis.twiceDisposing.resolve();
+          globalThis.twiceDisposing = null;
+          return new Response("released");
+        }
+        const { value } = await import("../twice/m");
+        return Response.json({ value, log: globalThis.twiceLog });
+      }
+    `,
+    // inflight: v2 is waiting on its top-level await when update B parks on the dispose promise v2 registered; v2 finishing meanwhile must not pass for the v3 that B brings.
+    "inflight/m.ts": inflightVersion("v1"),
+    // "hold <version>" makes that body wait and "go <version>" lets it finish; "arm" and "release" as above.
+    "routes/inflight.ts": `
+      export default async function (req) {
+        const [op, version] = req.headers.get("x-command").split(" ");
+        if (op === "hold") {
+          (globalThis.inflightGates ??= {})[version] = Promise.withResolvers();
+          return new Response("held");
+        }
+        if (op === "go") {
+          globalThis.inflightGates[version].resolve();
+          return new Response("gone");
+        }
+        if (op === "arm") {
+          globalThis.inflightDisposing = Promise.withResolvers();
+          return new Response("armed");
+        }
+        if (op === "release") {
+          globalThis.inflightDisposing.resolve();
+          globalThis.inflightDisposing = null;
+          return new Response("released");
+        }
+        const { value } = await import("../inflight/m");
+        return Response.json({ value, bodies: globalThis.inflightBodies });
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      const command = (line: string) => dev.fetch("/twice", { headers: { "x-command": line } });
+      expect(await command("load").json()).toStrictEqual({ value: "v1", log: [] });
+      await command("arm").equals("armed");
+      await dev.patch("twice/m.ts", { find: '"v1"', replace: '"v2"' });
+      await dev.patch("twice/m.ts", { find: '"v2"', replace: '"v3"' });
+      const afterB = ["m accepted v3", "acceptor accepted v3", "update done"];
+      expect(await command("load").json()).toStrictEqual({ value: "v3", log: afterB });
+      await command("release").equals("released");
+      expect(await command("load").json()).toStrictEqual({ value: "v3", log: [...afterB, "update done"] });
+    }
+    {
+      const command = (line: string) => dev.fetch("/inflight", { headers: { "x-command": line } });
+      expect(await command("load").json()).toStrictEqual({ value: "v1", bodies: ["v1"] });
+      await command("hold v2").equals("held");
+      await dev.write("inflight/m.ts", inflightVersion("v2"));
+      await command("arm").equals("armed");
+      await dev.write("inflight/m.ts", inflightVersion("v3"));
+      await command("go v2").equals("gone");
+      await command("release").equals("released");
+      expect(await command("load").json()).toStrictEqual({ value: "v3", bodies: ["v1", "v2", "v3"] });
+    }
+  },
+});
+function inflightVersion(version: string) {
+  return `
+    import.meta.hot.dispose(() => globalThis.inflightDisposing?.promise);
+    (globalThis.inflightBodies ??= []).push("${version}");
+    await globalThis.inflightGates?.["${version}"]?.promise;
+    export const value = "${version}";
+  `;
+}
 devTest("server: a sync throw during an update with a reload in flight leaves no unhandled rejection", {
   framework: minimalFramework,
   files: {
@@ -957,6 +1099,43 @@ devTest("a module that no longer imports the updated module is not evaluated aga
     await c.expectMessage("index b2");
     await dev.write("b.ts", `export const b = "b3";`);
     await c.expectMessage("index b3");
+    // The same holds for an edge made by require().
+    await dev.write("a.ts", `console.log("a required " + require("./b").b);`);
+    await c.expectMessage("a required b3", "index b3");
+    await dev.write("a.ts", `console.log("a standalone again");`);
+    await c.expectMessage("a standalone again", "index b3");
+    await dev.write("b.ts", `export const b = "b4";`);
+    await c.expectMessage("index b4");
+  },
+});
+devTest("a module accepted by its importer is evaluated after the changed module it imports, even in a cycle with it", {
+  // a accepts b; b computes its export from c at the top level; c imports b back lazily. The load starts at b, like at a self-accepting module, so c runs first.
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["a.ts"] }),
+    "a.ts": `
+      import { b } from "./b";
+      console.log("a " + b);
+      import.meta.hot.accept("./b", newModule => console.log("a accepted " + newModule.b));
+    `,
+    "b.ts": `
+      import { c } from "./c";
+      export const b = "b(" + c + ")";
+      console.log("b " + b);
+    `,
+    "c.ts": `
+      import { b } from "./b";
+      export const c = "c1";
+      export const readB = () => b;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("b b(c1)", "a b(c1)");
+    // Starting at `c` instead would run `b` under it, against the previous `c`.
+    await dev.patch("c.ts", { find: '"c1"', replace: '"c2"' });
+    await c.expectMessage("b b(c2)", "a accepted b(c2)");
+    await dev.patch("c.ts", { find: '"c2"', replace: '"c3"' });
+    await c.expectMessage("b b(c3)", "a accepted b(c3)");
   },
 });
 devTest("a module that dropped an import is not evaluated again when that import changes", {
@@ -1217,6 +1396,31 @@ devTest("import.meta.hot.data persistence", {
     await c.expectMessage("Initial count: 2");
     await dev.writeNoChanges("index.ts");
     await c.expectMessage("Initial count: 3");
+  },
+});
+devTest("reading import.meta.hot.data outside the module body does not make the module a boundary", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { version, get } from "./lib";
+      get();
+      console.log("index " + version);
+      import.meta.hot.accept();
+    `,
+    // Only `index` calling `get` reads the data, after `lib` has been evaluated.
+    "lib.ts": `
+      export const version = "v1";
+      export const get = () => import.meta.hot.data;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index v1");
+    // `lib` does not take the update itself, so it reaches `index`; counting the late read made every other save stop at `lib`.
+    await dev.patch("lib.ts", { find: '"v1"', replace: '"v2"' });
+    await c.expectMessage("index v2");
+    await dev.patch("lib.ts", { find: '"v2"', replace: '"v3"' });
+    await c.expectMessage("index v3");
   },
 });
 devTest("a dispose callback writing to import.meta.hot.data does not make its module a boundary", {

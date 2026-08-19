@@ -53,6 +53,8 @@ interface HotAccept {
   modules: string[];
   cb: HotAcceptFunction;
   single: boolean;
+  /** Generation of each accepted module last given to `cb`, so an overlapping update does not deliver the same copy twice. */
+  delivered: Record<Id, number>;
 }
 
 interface CJSModule {
@@ -82,7 +84,7 @@ export class HMRModule {
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
-   * Unused for CJS
+   * `null` for CJS and until an ESM evaluation has parsed its imports.
    */
   imports: HMRModule[] | any[] | null = null;
   /** Assignned by an ESM module's load function immediately.
@@ -92,10 +94,14 @@ export class HMRModule {
   onDispose: HotDisposeFunction[] | null = null;
   /** When calling `import.meta.hot.accept` to self-accept */
   selfAccept: HotAcceptFunction | null = null;
+  /** The captured self-accept callback last called and the generation it was given, so an overlapping update does not call it again with the same copy. */
+  selfAcceptDelivered: { cb: HotAcceptFunction; generation: number } | null = null;
   /** When calling `import.meta.hot.accept` on another module */
   depAccepts: Record<Id, HotAccept> | null = null;
   /** All modules that have imported this module */
   importers = new Set<HMRModule>();
+  /** Every module this one loaded since its evaluation began (static, require, import()): the edges the next evaluation retracts. */
+  deps = new Set<HMRModule>();
   /** Persists across evaluations; `import.meta.hot.data` reads it through `data`. */
   hotData: any = {};
   /** The current evaluation touched `import.meta.hot.data`, so it takes the update itself. */
@@ -114,7 +120,8 @@ export class HMRModule {
   }
 
   get data() {
-    this.usesData = true;
+    // Only a read by the body being evaluated makes the module take its updates; exported functions and dispose callbacks read it later.
+    if (this.state === State.Pending) this.usesData = true;
     return this.hotData;
   }
 
@@ -203,6 +210,7 @@ export class HMRModule {
       modules: isArray ? specifiers : [specifiers],
       cb: cb as HotAcceptFunction,
       single: !isArray,
+      delivered: {},
     };
     if (isArray) {
       for (const specifier of specifiers) {
@@ -277,16 +285,14 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
   if (mod) {
     if (mod.state === State.Error) {
       // The importer fails too and must be reachable from here when this module is replaced.
-      if (importer) mod.importers.add(importer);
+      if (importer) addImporter(mod, importer);
       throw mod.failure;
     }
     if (mod.state === State.Stale) {
       isUserDynamic = false;
     } else {
       if (mod.loading) throw new AsyncImportError(mod.loading.asyncId);
-      if (importer) {
-        mod.importers.add(importer);
-      }
+      if (importer) addImporter(mod, importer);
       return mod;
     }
   }
@@ -310,9 +316,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       // A fresh exports object, as on the first evaluation, so keys the new version dropped do not linger.
       mod.cjs.exports = {};
     }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    if (importer) addImporter(mod, importer);
     beginEvaluation(mod);
     clearHooks(mod);
     try {
@@ -353,9 +357,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs = null;
       mod.exports = null;
     }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    if (importer) addImporter(mod, importer);
 
     const generation = beginEvaluation(mod);
     const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
@@ -392,15 +394,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   if (mod) {
     const { state } = mod;
     if (state === State.Error) {
-      if (importer) mod.importers.add(importer);
+      if (importer) addImporter(mod, importer);
       throw mod.failure;
     }
     if (state === State.Stale) {
       isUserDynamic = false as IsUserDynamic;
     } else {
-      if (importer) {
-        mod.importers.add(importer);
-      }
+      if (importer) addImporter(mod, importer);
       return mod.loading ? mod.loading.promise : mod;
     }
   }
@@ -427,9 +427,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       // A fresh exports object, as on the first evaluation, so keys the new version dropped do not linger.
       mod.cjs.exports = {};
     }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    if (importer) addImporter(mod, importer);
     beginEvaluation(mod);
     clearHooks(mod);
     try {
@@ -469,9 +467,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.exports = null;
       mod.cjs = null;
     }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    if (importer) addImporter(mod, importer);
 
     const generation = beginEvaluation(mod);
     const { list, asyncId: depAsyncId } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
@@ -487,7 +483,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     const result = hasAsyncDep
       ? Promise.all(list).then(
           list => finishLoadModuleAsync(mod, generation, load, isAsync, list),
-          e => throwLoadFailure(mod, generation, e),
+          e => settleLoadFailure(mod, generation, e),
         )
       : finishLoadModuleAsync(
           mod,
@@ -504,13 +500,21 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   }
 }
 
-/** Stale→Pending, new generation, no in-flight load: the one place an evaluation begins. */
+/** Stale→Pending, new generation, no in-flight load, no edges: the one place an evaluation begins. */
 function beginEvaluation(mod: HMRModule): number {
   // The load re-adds the edges the new body still has.
-  for (const dep of (mod.imports as HMRModule[] | null) ?? []) dep.importers.delete(mod);
+  for (const dep of mod.deps) dep.importers.delete(mod);
+  mod.deps.clear();
+  mod.imports = null;
+  mod.updateImport = null;
   mod.state = State.Pending;
   mod.loading = null;
   return ++mod.generation;
+}
+
+function addImporter(mod: HMRModule, importer: HMRModule) {
+  mod.importers.add(importer);
+  importer.deps.add(mod);
 }
 
 /** Right before the body runs, so a module whose dependencies fail keeps the hooks its last body registered. */
@@ -550,7 +554,7 @@ function finishLoadModuleAsync(
           patchImporters(mod);
           return mod;
         },
-        e => throwLoadFailure(mod, generation, e),
+        e => settleLoadFailure(mod, generation, e),
       );
     }
     if (mod.exports === exportsBefore) mod.exports = {};
@@ -571,10 +575,17 @@ function settleSuperseded(mod: HMRModule): HMRModule | Promise<HMRModule> {
   return mod;
 }
 
-/** What a body with top-level await sees as `hmr`: its `hmr.exports = ...` after the await does not land once a newer evaluation has begun. */
+const supersededHooks = new Set(["accept", "acceptSpecifiers", "dispose", "on", "reactRefreshAccept"]);
+function supersededHook() {}
+
+/** What a body with top-level await sees as `hmr`: once a newer evaluation has begun, its `hmr.exports = ...` and the hooks it registers after the await do not land. */
 function evaluationView(mod: HMRModule, generation: number): HMRModule {
   return new Proxy(mod, {
     get(target, prop) {
+      if (target.generation !== generation) {
+        if (prop === "data") return target.hotData;
+        if (supersededHooks.has(prop as string)) return supersededHook;
+      }
       const value = target[prop];
       return typeof value === "function" ? value.bind(target) : value;
     },
@@ -593,6 +604,12 @@ function throwLoadFailure(mod: HMRModule, generation: number, e: unknown): never
     mod.loading = null;
   }
   throw e;
+}
+
+/** The rejection arm of an evaluation: a superseded one settles the way the evaluation that replaced it did. */
+function settleLoadFailure(mod: HMRModule, generation: number, e: unknown): HMRModule | Promise<HMRModule> {
+  if (mod.generation !== generation) return settleSuperseded(mod);
+  throwLoadFailure(mod, generation, e);
 }
 
 type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule) => R;
@@ -722,7 +739,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
   /** Every module this update replaces with a new copy: disposed of, then evaluated again. */
   const toReload = new Set<HMRModule>();
-  /** Where the loads start: self-accepting modules and server roots; the DFS pulls the rest of `toReload` in below them, in cold-load order. */
+  /** Where the loads start: self-accepting modules, modules an importer accepts, and server roots; the DFS pulls the rest of `toReload` in below them, in cold-load order. */
   const boundaries = new Set<HMRModule>();
   /** Importers accepting a module the walk went through, with every such module of theirs this update replaces. */
   const toAccept = new Map<HotAccept, { importer: HMRModule; keys: Set<Id> }>();
@@ -760,12 +777,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         propagates = false;
       }
 
+      // Nothing to patch in a failed module: its next load evaluates it again.
+      if (mod.state === State.Error) {
+        mod.state = State.Stale;
+        mod.failure = null;
+      }
+
       if (propagates) {
-        // Nothing to patch in a failed module: its next load evaluates it again.
-        if (mod.state === State.Error) {
-          mod.state = State.Stale;
-          mod.failure = null;
-        }
         // A client root is the page: reload it. A server root (a route or the framework entry) is evaluated again like any importer.
         if (mod.importers.size === 0 && side === "client") {
           failures ??= new Set();
@@ -780,11 +798,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       // Like Vite, an importer accepts the module being propagated, not only the file that changed.
       for (const importer of mod.importers) {
         const cb = importer.depAccepts?.[mod.id];
-        if (cb) {
+        // An importer that failed with `mod` never completed a body: it runs again rather than accepting.
+        if (cb && importer.state !== State.Error) {
           let entry = toAccept.get(cb);
           if (!entry) toAccept.set(cb, (entry = { importer, keys: new Set() }));
           entry.keys.add(mod.id);
-        } else if (propagates) {
+          // The accepted module is where the loads start, like a self-accepting one.
+          if (propagates) boundaries.add(mod);
+        } else if (propagates || importer.state === State.Error) {
           if (visited.has(importer)) continue;
           visited.add(importer);
           queue.push(importer);
@@ -845,26 +866,20 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     return;
   }
 
-  // Like Vite, a boundary inside an import cycle with the modules it reloads cannot see the new copies in any order.
+  // Like Vite (5.1), a boundary in an import cycle with the modules it reloads is applied anyway: some module in the cycle sees a previous copy, and only if that makes a load fail does the client start over.
+  const inCycle = new Set<HMRModule>();
   for (const boundary of boundaries) {
-    if (!importsItselfThrough(boundary, toReload)) continue;
-    const message = `[Bun] Hot update was not accepted because "${boundary.id}" accepts it but is in an import cycle with the modules being replaced.`;
-    if (side === "client") {
-      sessionStorage?.setItem?.("bun:hmr:message", JSON.stringify?.({ message, kind: "warn" }));
-      fullReload();
-      return;
-    }
-    console.warn(message);
+    if (importsItselfThrough(boundary, toReload)) inCycle.add(boundary);
   }
 
   // Hooks stay until the body runs, so a module a failing update never reaches keeps them; a load arriving during a pending dispose evaluates the new version and the reload loop then finds it Loaded or in flight.
-  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
+  const reloads = new Map<HMRModule, { selfAccept: HotAcceptFunction | null; generation: number }>();
   const disposePromises: Promise<void>[] = [];
   // One throwing dispose callback must not skip the others; the first failure still fails the update.
   let disposeError: { error: unknown } | null = null;
   for (const mod of new Set([...boundaries, ...toReload])) {
     mod.state = State.Stale;
-    selfAccepts.set(mod, mod.selfAccept);
+    reloads.set(mod, { selfAccept: mod.selfAccept, generation: mod.generation });
     const { onDispose } = mod;
     if (!onDispose) continue;
     mod.onDispose = null;
@@ -883,6 +898,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     for (const r of await Promise.allSettled(disposePromises)) {
       if (r.status === "rejected") disposeError ??= { error: r.reason };
     }
+    // An evaluation of the previous copy that was in flight may have settled meanwhile; only what a newer evaluation published stays.
+    for (const [mod, { generation }] of reloads) {
+      if (mod.generation === generation) mod.state = State.Stale;
+    }
   }
   if (disposeError) throw disposeError.error;
 
@@ -897,39 +916,64 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       acceptError ??= { error };
     }
   };
+  const runSelfAccept = (mod: HMRModule, cb: HotAcceptFunction) => {
+    const { selfAcceptDelivered: delivered, generation } = mod;
+    // An update that overlapped this one already gave this copy to the callback.
+    if (delivered && delivered.cb === cb && delivered.generation === generation) return;
+    mod.selfAcceptDelivered = { cb, generation };
+    runAccept(cb, getEsmExports(mod));
+  };
   // A module that throws does not stop the others; the first failure fails the update once every load has settled.
   let syncError: { error: unknown } | null = null;
-  for (const [mod, selfAccept] of selfAccepts) {
+  /** A boundary of `inCycle` whose load failed: no evaluation order suits the cycle, so the client reloads the page instead. */
+  let brokenCycle: HMRModule | null = null;
+  for (const [mod, { selfAccept }] of reloads) {
     let modOrPromise;
     try {
       modOrPromise = loadModuleAsync(mod.id, false, null);
     } catch (error) {
       syncError ??= { error };
+      if (inCycle.has(mod)) brokenCycle ??= mod;
       continue;
     }
     if (modOrPromise !== mod) {
       DEBUG.ASSERT(modOrPromise instanceof Promise);
       promises.push(
-        (modOrPromise as Promise<HMRModule>).then(mod => {
-          if (selfAccept) runAccept(selfAccept, getEsmExports(mod));
-          return mod;
-        }),
+        (modOrPromise as Promise<HMRModule>).then(
+          mod => {
+            if (selfAccept) runSelfAccept(mod, selfAccept);
+            return mod;
+          },
+          e => {
+            if (inCycle.has(mod)) brokenCycle ??= mod;
+            throw e;
+          },
+        ),
       );
     } else if (selfAccept) {
       if (mod.state === State.Loaded) {
-        runAccept(selfAccept, getEsmExports(mod));
+        runSelfAccept(mod, selfAccept);
       } else {
         acceptsAfterLoad.push([mod, selfAccept]);
       }
     }
   }
   const settled = await Promise.allSettled(promises);
+  if (brokenCycle) {
+    const message = `[Bun] Hot update was not accepted because "${brokenCycle.id}" is in an import cycle with the modules being replaced, and evaluating them again in that order failed.`;
+    if (side === "client") {
+      sessionStorage?.setItem?.("bun:hmr:message", JSON.stringify?.({ message, kind: "warn" }));
+      fullReload();
+      return;
+    }
+    console.warn(message);
+  }
   if (syncError) throw syncError.error;
   for (const r of settled) {
     if (r.status === "rejected") throw r.reason;
   }
   for (const [mod, selfAccept] of acceptsAfterLoad) {
-    if (mod.state === State.Loaded) runAccept(selfAccept, getEsmExports(mod));
+    if (mod.state === State.Loaded) runSelfAccept(mod, selfAccept);
   }
   for (const mod of toReload) {
     const { selfAccept } = mod;
@@ -938,9 +982,18 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   // Call all accept callbacks
-  for (const [{ cb, modules, single }, { importer, keys }] of toAccept) {
+  for (const [accept, { importer, keys }] of toAccept) {
     // The importer was itself re-evaluated in this update, so its old callback is stale.
     if (toReload.has(importer)) continue;
+    // An update that overlapped this one may already have given these copies to the callback.
+    let undelivered = false;
+    for (const key of keys) {
+      const { generation } = registry.get(key)!;
+      if (accept.delivered[key] !== generation) undelivered = true;
+      accept.delivered[key] = generation;
+    }
+    if (!undelivered) continue;
+    const { cb, modules, single } = accept;
     runAccept(cb, single ? getEsmExports(registry.get(modules[0])!) : createAcceptArray(modules, keys));
   }
 
@@ -958,7 +1011,7 @@ function importsItselfThrough(mod: HMRModule, through: Set<HMRModule>): boolean 
   const seen = new Set<HMRModule>();
   const stack: HMRModule[] = [mod];
   while (stack.length > 0) {
-    for (const dep of (stack.pop()!.imports as HMRModule[] | null) ?? []) {
+    for (const dep of staticDependencies(stack.pop()!)) {
       if (dep === mod) return true;
       if (through.has(dep) && !seen.has(dep)) {
         seen.add(dep);
@@ -967,6 +1020,21 @@ function importsItselfThrough(mod: HMRModule, through: Set<HMRModule>): boolean 
     }
   }
   return false;
+}
+
+/** The registered modules the next load of `mod` imports statically: read from the copy in `unloadedModuleRegistry`, which an update replaces before anything loads. */
+function staticDependencies(mod: HMRModule): Iterable<HMRModule> {
+  const unloaded = unloadedModuleRegistry[mod.id];
+  // CommonJS: the modules its last evaluation required.
+  if (!Array.isArray(unloaded)) return mod.deps;
+  const deps = unloaded[ESMProps.imports];
+  const list: HMRModule[] = [];
+  // `specifier, exportCount, ...exportKeys` per import, as parseEsmDependencies reads it.
+  for (let i = 0; i < deps.length; i += 2 + (deps[i + 1] as number)) {
+    const dep = registry.get(deps[i] as string);
+    if (dep) list.push(dep);
+  }
+  return list;
 }
 
 function patchImporters(mod: HMRModule) {

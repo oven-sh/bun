@@ -758,10 +758,8 @@ fn find_redirect(unwind_info: u32) -> Option<Redirect> {
 
 type PcToFileHeader = unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> *mut c_void;
 
-/// Bound in place of a merged addon's `RtlPcToFileHeader` import. The real one answers from the
-/// loader's module list, so for a pc inside a merged addon it returns bun.exe's base; the addon's
-/// statically linked C++ throw uses the answer to resolve the thrown type's RVAs, which are
-/// relative to the addon. Everything outside the merged addons gets the real answer.
+/// Bound in place of a merged addon's `RtlPcToFileHeader` import (see the module docs): reports
+/// the addon's base for a pc inside a merged addon and forwards every other pc to the real one.
 unsafe extern "system" fn pc_to_file_header(
     pc: *mut c_void,
     base_of_image: *mut *mut c_void,

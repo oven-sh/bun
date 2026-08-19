@@ -293,7 +293,8 @@ function generateAddon(rng: Rng, hostMachine: number, poisonous: boolean): Gener
     const span = Math.max(virtualSize, rawSize);
     nextVa += Math.max(SECT_ALIGN, (span + SECT_ALIGN - 1) & ~(SECT_ALIGN - 1));
   }
-  const sizeOfImage = nextVa;
+  // pe.rs appends the chained-record copies at SizeOfImage, so it refuses one that is not 4-byte aligned.
+  const sizeOfImage = nextVa + (poison("misaligned SizeOfImage", 0.03) ? 2 : 0);
 
   // --- code, entry point, exports --------------------------------------------
   const codeOff = alloc(64, 16);

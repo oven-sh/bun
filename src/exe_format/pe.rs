@@ -976,7 +976,10 @@ impl PEFile {
         if entry_rva != 0 && entry_rva >= addon_image {
             return Ok(None);
         }
-        if addon_image == 0 || addon_image > MAX_ADDON_IMAGE_SIZE {
+        // The unwind appendix (`UnwindPatcher::appendix`) starts at SizeOfImage and holds
+        // UNWIND_INFO records, which must be 4-byte aligned.
+        if addon_image == 0 || addon_image > MAX_ADDON_IMAGE_SIZE || !addon_image.is_multiple_of(4)
+        {
             return Ok(None);
         }
         // Several Windows structures hold RVAs as i32, so bun.exe's SizeOfImage must stay below 2 GiB.
@@ -1474,7 +1477,7 @@ fn collect_imports(
                 return None;
             }
             let name = addon.cstr_at_rva((thunk as u32).saturating_add(2)).ok()?;
-            // C++ throw would look up its type info at bun.exe's base; see LinkedNodeModule.rs.
+            // The CRT DLL's throw would resolve types at bun.exe's base; see LinkedNodeModule.rs.
             if name == b"_CxxThrowException" {
                 return None;
             }
@@ -1743,8 +1746,9 @@ impl UnwindPatcher {
         end: u32,
         view: u32,
     ) -> Option<u32> {
-        // Every copy is a multiple of 4 bytes (the codes are padded to an even count), so they
-        // stay 4-byte aligned as UNWIND_INFO requires.
+        debug_assert!(
+            head_and_codes.len().is_multiple_of(4) && self.appendix_rva.is_multiple_of(4)
+        );
         let offset = u32::try_from(self.appendix.len()).ok()?;
         let rva = self.appendix_rva.checked_add(offset)?;
         self.appendix.extend_from_slice(head_and_codes);

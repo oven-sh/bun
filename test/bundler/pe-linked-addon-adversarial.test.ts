@@ -400,14 +400,13 @@ describe("pe.addLinkedAddon adversarial input", () => {
     expect(expectSafe(r)).toBe("skipped");
   });
 
-  test("addon importing _CxxThrowException is skipped (C++ EH type matching breaks)", () => {
-    // _CxxThrowException calls RtlPcToFileHeader(pThrowInfo, ...) to
-    // resolve the 32-bit _ThrowInfo/_CatchableType RVAs, and
-    // RtlPcToFileHeader only walks PEB->Ldr — it returns bun.exe's
-    // base for anything in the merged section, so the catch-side
-    // type match walks garbage and terminates. SEH and unwinding
-    // are fine; only C++ throw/catch breaks, so gate on the throw
-    // symbol. Fallback gives the addon its own LDR entry.
+  test("addon importing _CxxThrowException (CRT DLL) is skipped", () => {
+    // Importing the throw function means the addon throws through
+    // vcruntime140.dll, whose own RtlPcToFileHeader import the binder does
+    // not touch, so such a throw would resolve the thrown type's RVAs
+    // against bun.exe's base. An addon linked against the static CRT
+    // carries its own copy and imports RtlPcToFileHeader itself, which the
+    // binder points at its shim; that one merges (napi's cxx_eh_addon test).
     const r = peLinkAddon(
       makeHost(),
       makeAddon(b => {
@@ -425,6 +424,18 @@ describe("pe.addLinkedAddon adversarial input", () => {
     const r = peLinkAddon(
       makeHost(),
       makeAddon(b => b.writeUInt32LE(0, OPTOFF + 56)),
+      "x",
+    );
+    expect(expectSafe(r)).toBe("skipped");
+  });
+
+  test("addon whose SizeOfImage is not a multiple of 4 is skipped", () => {
+    // The copies of chained unwind records are appended at SizeOfImage and
+    // UNWIND_INFO has to be 4-byte aligned. Every section still fits, so
+    // only the alignment rule refuses this one.
+    const r = peLinkAddon(
+      makeHost(),
+      makeAddon(b => b.writeUInt32LE(b.readUInt32LE(OPTOFF + 56) + 2, OPTOFF + 56)),
       "x",
     );
     expect(expectSafe(r)).toBe("skipped");

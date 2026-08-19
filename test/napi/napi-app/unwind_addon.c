@@ -3,9 +3,8 @@
 // info for every addon frame they cross and to reach the __except/__finally
 // handlers it names, which is what `bun build --compile` has to preserve when
 // it statically merges this .node file into the exe (see
-// test/napi/napi-app/unwind-fixture.js). Plain C on purpose: an addon that
-// imports _CxxThrowException (any C++ throw) is left out of the merge, and the
-// --compile test needs this one merged.
+// test/napi/napi-app/unwind-fixture.js). Plain C so that every handler in this
+// addon is __C_specific_handler; C++ exceptions are cxx_eh_addon.cpp's job.
 
 #include <node_api.h>
 #include <setjmp.h>

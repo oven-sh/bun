@@ -67,10 +67,6 @@ struct IDLType {
     static ImplementationType extractValueFromNullable(NullableType&& value) { return std::move(value.value()); }
 };
 
-// IDLNull is a special type for use as a subtype in an IDLUnion that is nullable.
-struct IDLNull : IDLType<std::nullptr_t> {
-};
-
 // See also: Bun::IDLRawAny, Bun::Bindgen::IDLStrongAny
 struct IDLAny : IDLType<JSC::Strong<JSC::Unknown>> {
     // SequenceStorageType must be left as JSC::Strong<JSC::Unknown>; otherwise

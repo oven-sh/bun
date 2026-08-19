@@ -1107,8 +1107,7 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    /// Raw terminal size in character cells. The viewport reserve is applied
-    /// by `compute_viewport_height`, not here.
+    /// Raw terminal size. `compute_viewport_height` applies the viewport reserve.
     fn get_terminal_size() -> TerminalSize {
         // Try to get terminal size
         #[cfg(unix)]
@@ -1297,9 +1296,7 @@ impl UpdateInteractiveCommand {
                 {
                     state.cursor - (state.viewport_height - context_below)
                 } else {
-                    // Viewport too short for context (it can be a single row
-                    // on a short terminal): keep the cursor on the last
-                    // visible row.
+                    // Viewport shorter than the context: cursor on the last visible row.
                     state
                         .cursor
                         .saturating_sub(state.viewport_height.saturating_sub(1))
@@ -2166,8 +2163,7 @@ impl UpdateInteractiveCommand {
                                                     needs_redraw = true;
                                                 }
                                             }
-                                            // Click press/release and other
-                                            // buttons change nothing: no redraw.
+                                            // Click press/release changes nothing: no redraw.
                                         }
                                         break;
                                     }

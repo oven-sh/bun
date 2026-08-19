@@ -258,7 +258,9 @@ function validateLocalAddresses(first, second) {
     if (firstFamily === secondFamily) {
       throw localAddressError(`Cannot specify two IPv${firstFamily} addresses.`);
     }
+    return [stripZoneId(first), stripZoneId(second)];
   }
+  return [stripZoneId(first)];
 }
 
 function invalidHostname(hostname) {
@@ -394,7 +396,7 @@ function lookupService(address, port, callback) {
   }
 
   callback = guardCallback(callback);
-  dns.lookupService(address, +port).then(
+  dns.lookupService(stripZoneId(address), +port).then(
     results => {
       callback(null, ...results);
     },
@@ -702,7 +704,7 @@ var InternalResolver = class Resolver {
     callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
-      .reverse(ip)
+      .reverse(stripZoneId(ip))
       .then(
         results => {
           callback(null, results);
@@ -714,8 +716,7 @@ var InternalResolver = class Resolver {
   }
 
   setLocalAddress(first, second) {
-    validateLocalAddresses(first, second);
-    Resolver.#getResolver(this).setLocalAddress(first, second);
+    Resolver.#getResolver(this).setLocalAddress(...validateLocalAddresses(first, second));
   }
 
   setServers(servers) {
@@ -850,7 +851,7 @@ const promises = {
     validatePort(port, "port");
 
     try {
-      return translateErrorCode(dns.lookupService(address, +port)).then(([hostname, service]) => ({
+      return translateErrorCode(dns.lookupService(stripZoneId(address), +port)).then(([hostname, service]) => ({
         hostname,
         service,
       }));
@@ -925,7 +926,7 @@ const promises = {
     if (isIP(ip) === 0) {
       return Promise.$reject(reverseInvalidIPError(ip));
     }
-    return translateErrorCode(dns.reverse(ip));
+    return translateErrorCode(dns.reverse(stripZoneId(ip)));
   },
 
   Resolver: class Resolver {
@@ -1021,12 +1022,11 @@ const promises = {
       if (isIP(ip) === 0) {
         return Promise.$reject(reverseInvalidIPError(ip));
       }
-      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      return translateErrorCode(Resolver.#getResolver(this).reverse(stripZoneId(ip)));
     }
 
     setLocalAddress(first, second) {
-      validateLocalAddresses(first, second);
-      Resolver.#getResolver(this).setLocalAddress(first, second);
+      Resolver.#getResolver(this).setLocalAddress(...validateLocalAddresses(first, second));
     }
 
     setServers(servers) {

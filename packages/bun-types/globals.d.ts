@@ -1713,13 +1713,7 @@ declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototyp
 interface EventSource extends Bun.__internal.LibEmptyOrEventSource {}
 declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
   "EventSource",
-  {
-    prototype: EventSource;
-    new (url: string | URL, eventSourceInitDict?: EventSourceInit): EventSource;
-    readonly CONNECTING: 0;
-    readonly OPEN: 1;
-    readonly CLOSED: 2;
-  }
+  { prototype: EventSource; new (): EventSource }
 >;
 
 interface Performance extends Bun.__internal.LibPerformanceOrNodePerfHooksPerformance {}

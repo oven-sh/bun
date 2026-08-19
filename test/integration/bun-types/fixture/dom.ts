@@ -1,5 +1,4 @@
 import { INSPECT_MAX_BYTES } from "buffer";
-import { expectType } from "./utilities";
 
 INSPECT_MAX_BYTES;
 
@@ -14,17 +13,6 @@ INSPECT_MAX_BYTES;
 }
 {
   new BroadcastChannel("zxgdfg");
-}
-{
-  expectType(new EventSource("http://localhost:3000/events")).is<EventSource>();
-  new EventSource(new URL("http://localhost:3000/events"));
-  new EventSource("http://localhost:3000/events", { withCredentials: true });
-  // @ts-expect-error the url argument is required
-  new EventSource();
-
-  expectType(EventSource.CONNECTING).is<0>();
-  expectType(EventSource.OPEN).is<1>();
-  expectType(EventSource.CLOSED).is<2>();
 }
 
 {

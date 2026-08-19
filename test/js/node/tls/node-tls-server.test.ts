@@ -2519,13 +2519,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     // Paused again: the 'data' listener above switched the stream to flowing.
     socket.pause();
 
-    // One chunk that fits: it is queued ahead of the reset and the receive window
-    // stays open. macOS drops an RST that arrives at a zero window, so filling
-    // the buffers would strand the socket there.
-    const chunk = Buffer.alloc(64 * 1024, "r");
-    expect(peer.write(chunk)).toBe(chunk.length);
-
-    return {
+    const t = {
       socket,
       peer,
       events,
@@ -2536,6 +2530,16 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
         server.close();
       },
     };
+    // One chunk that fits: it is queued ahead of the reset and the receive window
+    // stays open. macOS drops an RST that arrives at a zero window, so filling
+    // the buffers would strand the socket there.
+    const chunk = Buffer.alloc(64 * 1024, "r");
+    const written = peer.write(chunk);
+    if (written !== chunk.length) {
+      t[Symbol.dispose]();
+      throw new Error(`short write: ${written} of ${chunk.length}`);
+    }
+    return t;
   }
 
   it("reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'", async () => {

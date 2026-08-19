@@ -1942,9 +1942,12 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     if (ssl_gone(s)) return s;
   }
 
-  /* code != 0 (forceful — `_destroy()` / `_handle.close()` / abort): send
-   * close_notify best-effort and raw-close now. The Zig destroy path detaches
-   * + poll_ref.unref() right after, so deferring would orphan the us_socket_t.
+  /* code == 2 (forceful — `_destroy()` / `_handle.close()`): send close_notify
+   * best-effort and raw-close now. The destroy path detaches + poll_ref.unref()
+   * right after, so deferring would orphan the us_socket_t.
+   *
+   * code == 1 (reset — terminate() / abort): no close_notify, only the RST,
+   * like node's resetAndDestroy().
    *
    * code == 0 (graceful — `end()` → markInactive → closeAndDetach(.normal)):
    * send close_notify and DEFER the fd close until the peer replies. The
@@ -1954,7 +1957,6 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
    * under low-prio fan-out (connectionListener race). The actual raw-close
    * happens via on_end/ZERO_RETURN re-entering this function with
    * SSL_SENT_SHUTDOWN already set (ssl_handle_shutdown then returns 1). */
-  /* A reset is abortive: like node's resetAndDestroy(), no close_notify, only the RST. */
   if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET || ssl_handle_shutdown(s, code != 0)) {
     return us_internal_socket_close_raw(s, code, reason);
   }

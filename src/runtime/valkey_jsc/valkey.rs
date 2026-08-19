@@ -603,8 +603,13 @@ impl ValkeyClient {
     /// `fail()` passes `Failure`, the one code whose close callback has run by
     /// the time this returns (see `CloseCode`); everything after a failure
     /// relies on that, and an RST instead of a FIN costs nothing once the
-    /// connection's commands have been rejected. `disconnect()` and the
-    /// finalizer pass `FastShutdown`, the graceful close.
+    /// connection's commands have been rejected (on plain TCP it trades
+    /// TIME_WAIT for an abortive close the peer can see). `disconnect()` and
+    /// the finalizer pass `FastShutdown`, the graceful close, which this
+    /// finishes as a `Failure` if usockets deferred it: a TLS fast shutdown
+    /// parks behind ciphertext the kernel would not take, and a peer that has
+    /// stopped reading never lets it through. Either way the close callback
+    /// has run when this returns.
     ///
     /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
     /// runs by hand here, whatever that left.
@@ -629,6 +634,13 @@ impl ValkeyClient {
             && !socket.is_established();
         // TODO: make socket.close() return a JsResult.
         socket.close(code);
+        // Still open means usockets parked the fast shutdown behind its
+        // ciphertext spill (`us_internal_ssl_close`, crypto/openssl.c), with
+        // no timer; that only happens for a close with no reason pointer,
+        // which is what `AnySocket::close` passes.
+        if code == uws::CloseCode::FastShutdown && !socket.is_closed() {
+            socket.close(uws::CloseCode::Failure);
+        }
         let thrown = if global.has_exception() {
             Err(bun_jsc::JsError::Thrown)
         } else {

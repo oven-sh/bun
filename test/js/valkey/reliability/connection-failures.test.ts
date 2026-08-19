@@ -2,7 +2,8 @@ import { RedisClient } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import net from "net";
 import path from "path";
 import tls from "tls";
@@ -502,6 +503,42 @@ describe("Valkey: Recovering After fail()", () => {
     return socket.destroyed ? Promise.resolve() : new Promise(resolve => socket.once("close", () => resolve()));
   }
 
+  // How the peer's socket ended: "end" for a FIN, the error code for an RST.
+  function endOrError(socket: net.Socket): Promise<string> {
+    return new Promise(resolve => {
+      socket.once("end", () => resolve("end"));
+      socket.once("error", (err: NodeJS.ErrnoException) => resolve(err.code ?? err.message));
+    });
+  }
+
+  const STUCK_VALUE_BYTES = 256 * 1024;
+  // One of writeUntilStuck's SETs as the client frames it: header, value, CRLF.
+  const STUCK_COMMAND_BYTES =
+    `*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$${STUCK_VALUE_BYTES}\r\n`.length + STUCK_VALUE_BYTES + 2;
+
+  // Writes SETs of STUCK_VALUE_BYTES until two flushes in a row hand nothing to
+  // the socket, i.e. the peer has stopped reading and the socket holds
+  // undelivered bytes.
+  async function writeUntilStuck(client: RedisClient): Promise<Promise<string>[]> {
+    const value = Buffer.alloc(STUCK_VALUE_BYTES, "x").toString();
+    const pending: Promise<string>[] = [];
+    let stuckFlushes = 0;
+    while (stuckFlushes < 2 && pending.length < 256) {
+      const before = client.bufferedAmount;
+      pending.push(
+        client.set("key", value).then(
+          () => "resolved",
+          err => err.code,
+        ),
+      );
+      await new Promise(resolve => setImmediate(resolve));
+      const added = client.bufferedAmount - before;
+      stuckFlushes = added >= value.length ? stuckFlushes + 1 : 0;
+    }
+    expect(stuckFlushes).toBe(2);
+    return pending;
+  }
+
   // RESP3 push frames as the server writes them for SUBSCRIBE and for messages.
   const push = (...items: (string | number)[]) =>
     `>${items.length}\r\n` +
@@ -748,20 +785,7 @@ describe("Valkey: Recovering After fail()", () => {
     try {
       client.onclose = () => closed.resolve();
       await client.connect();
-      const value = Buffer.alloc(256 * 1024, "x").toString();
-      const pending: Promise<unknown>[] = [];
-      // Each SET is flushed as soon as it is queued; once two flushes in a row
-      // hand nothing at all to the socket, the kernel buffers on both ends are
-      // full and the socket is stuck behind its undelivered ciphertext.
-      let stuckFlushes = 0;
-      while (stuckFlushes < 2 && pending.length < 256) {
-        const before = client.bufferedAmount;
-        pending.push(client.set("key", value).catch(() => {}));
-        await new Promise(resolve => setImmediate(resolve));
-        const added = client.bufferedAmount - before;
-        stuckFlushes = added >= value.length ? stuckFlushes + 1 : 0;
-      }
-      expect(stuckFlushes).toBe(2);
+      const pending = await writeUntilStuck(client);
       const lastSet = client.set("key", "last");
       fake.sockets[0].write("\x01\r\n");
       await expect(lastSet).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_RESPONSE_TYPE" });
@@ -1879,6 +1903,245 @@ describe("Valkey: Recovering After fail()", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // A TLS stub run under Node in its own process, so it can read while this
+  // loop is blocked, and so that what it reports about the peer's close does
+  // not come from the socket code under test. It pauses connection 1 after
+  // HELLO, resumes when the resume file appears, and writes the drained file
+  // once its byte count has reached the number written into the resume file
+  // (minus what one spilled batch can hold) and stopped growing. When the
+  // peer ends the connection it probes the socket with one write: after a
+  // FIN the kernel takes the byte, after an RST it refuses it. Told the peer
+  // already closed, it also probes once it has drained without an end.
+  const TLS_STUB = /* js */ `
+    const tls = require("tls");
+    const { existsSync, readFileSync, writeFileSync } = require("fs");
+    const [resumeFile, drainedFile] = process.argv.slice(2);
+    let connections = 0;
+    const server = tls.createServer(
+      { key: readFileSync("key.pem"), cert: readFileSync("cert.pem"), allowHalfOpen: true },
+      socket => {
+        const connection = ++connections;
+        const seen = [];
+        let reported = false;
+        function report(probe) {
+          if (reported) return;
+          reported = true;
+          console.log("saw", seen.join(", "), "|", probe, "|", socket.bytesRead);
+        }
+        socket.on("data", chunk => {
+          const text = chunk.toString("latin1");
+          if (text.includes("HELLO")) {
+            socket.write("+OK\\r\\n");
+            if (connection === 1) {
+              socket.pause();
+              const poll = setInterval(() => {
+                if (!existsSync(resumeFile)) return;
+                clearInterval(poll);
+                socket.resume();
+                const [handed, peerClosed] = readFileSync(resumeFile, "utf8").split(" ").map(Number);
+                const expected = handed - ${STUCK_VALUE_BYTES};
+                let last = -1;
+                const settle = setInterval(() => {
+                  const now = socket.bytesRead;
+                  if (now >= expected && now === last) {
+                    clearInterval(settle);
+                    writeFileSync(drainedFile, String(now));
+                    // The peer closed before we read again and no end came
+                    // with the data: a reset the kernel discarded (its window
+                    // was shut) leaves no trace, so probe, and if the kernel
+                    // takes the byte wait for the reply it draws.
+                    if (peerClosed && !seen.includes("end")) probeWrite(true);
+                  }
+                  last = now;
+                }, 100);
+              }, 10);
+            }
+          }
+          if (text.includes("PING")) socket.write("+PONG\\r\\n");
+        });
+        if (connection !== 1) return;
+        socket.on("error", err => {
+          seen.push("error " + err.code);
+          report("errored");
+        });
+        socket.on("close", () => report("closed"));
+        socket.on("end", () => {
+          seen.push("end");
+          probeWrite(false);
+        });
+        function probeWrite(waitForReply) {
+          socket.write("x", err => {
+            if (err) report("write " + err.code);
+            else if (!waitForReply) report("write ok");
+          });
+        }
+      },
+    );
+    server.listen(0, "127.0.0.1", () => console.log("port", server.address().port));
+  `;
+
+  async function spawnTlsStub() {
+    const dir = tempDir("valkey-tls-stub", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert, "stub.js": TLS_STUB });
+    const resumeFile = path.join(String(dir), "resume");
+    const drainedFile = path.join(String(dir), "drained");
+    const proc = Bun.spawn({
+      cmd: [nodeExe()!, "stub.js", resumeFile, drainedFile],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let output = "";
+    const gotPort = Promise.withResolvers<number>();
+    const gotResult = Promise.withResolvers<{ seen: string; probe: string; bytesRead: number }>();
+    (async () => {
+      for await (const chunk of proc.stdout) {
+        output += Buffer.from(chunk).toString();
+        const port = /^port (\d+)$/m.exec(output);
+        if (port) gotPort.resolve(Number(port[1]));
+        const result = /^saw (.*) \| (.*) \| (\d+)$/m.exec(output);
+        if (result) gotResult.resolve({ seen: result[1], probe: result[2], bytesRead: Number(result[3]) });
+      }
+      // Neither line is coming any more: fail a waiter now rather than at the test timeout.
+      const gone = new Error(`tls stub exited with ${await proc.exited}, output: ${JSON.stringify(output)}`);
+      gotPort.reject(gone);
+      gotResult.reject(gone);
+    })();
+    // The dispose below also ends the stub when the test failed before it
+    // awaited the result, and that rejection must not count as unhandled.
+    gotResult.promise.catch(() => {});
+    const stop = async () => {
+      proc.kill();
+      await proc.exited;
+      dir[Symbol.dispose]();
+    };
+    let port: number;
+    try {
+      port = await gotPort.promise;
+    } catch (err) {
+      await stop();
+      throw err;
+    }
+    return {
+      port,
+      result: gotResult.promise,
+      // Lets connection 1 read again; blocks until the stub has read `handed`
+      // bytes, less one spilled batch, and its count has stopped growing.
+      resumeAndDrain(handed: number, peerClosed: boolean): number {
+        writeFileSync(resumeFile, `${handed} ${peerClosed ? 1 : 0}`);
+        const deadline = Date.now() + 10_000;
+        while (!existsSync(drainedFile)) {
+          if (Date.now() > deadline) throw new Error("stub never drained");
+          Bun.sleepSync(10);
+        }
+        return Number(readFileSync(drainedFile, "utf8"));
+      },
+      [Symbol.asyncDispose]: stop,
+    };
+  }
+
+  test("close() over redis:// while the peer has stopped reading closes the socket at once", async () => {
+    // Same stuck flush as the fail() test above, ended by close() instead of
+    // a protocol error. Plain TCP never defers a close, so this pins that the
+    // close stays graceful: the queued bytes drain and the peer sees a FIN,
+    // not an RST.
+    const fake = helloServer({
+      HELLO: (connection, socket) => {
+        if (connection === 1) socket.pause();
+        return "+OK\r\n";
+      },
+      PING: () => "+PONG\r\n",
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await client.connect();
+      const pending = await writeUntilStuck(client);
+      client.close();
+      expect({ connected: client.connected, closes }).toEqual({ connected: false, closes: 1 });
+      expect(new Set(await Promise.all(pending))).toEqual(new Set(["ERR_REDIS_CONNECTION_CLOSED"]));
+      const stuck = fake.sockets[0];
+      const ending = endOrError(stuck);
+      stuck.resume();
+      expect(await ending).toBe("end");
+      await client.connect();
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
+    } finally {
+      client.close();
+      fake.sockets[0]?.destroy();
+      fake.server.close();
+    }
+  });
+
+  test.skipIf(!nodeExe())(
+    "close() over rediss:// while the peer has stopped reading closes the socket at once",
+    async () => {
+      // The fast shutdown close() asks for is deferred behind the undelivered
+      // ciphertext, and a peer that never reads would leave it there; close()
+      // finishes it with a reset. The stub, once it reads again, must find the
+      // connection reset.
+      await using stub = await spawnTlsStub();
+      const client = new RedisClient(`rediss://127.0.0.1:${stub.port}`, {
+        autoReconnect: false,
+        tls: { ca: tlsCert.cert },
+      });
+      try {
+        let closes = 0;
+        client.onclose = () => closes++;
+        await client.connect();
+        const pending = await writeUntilStuck(client);
+        client.close();
+        expect({ connected: client.connected, closes }).toEqual({ connected: false, closes: 1 });
+        expect(new Set(await Promise.all(pending))).toEqual(new Set(["ERR_REDIS_CONNECTION_CLOSED"]));
+        stub.resumeAndDrain(0, true);
+        const { seen, probe } = await stub.result;
+        // No close_notify got out past the full kernel buffer, and the reset
+        // reaches the stub as a read error or refuses its write.
+        expect(seen).not.toContain("end");
+        expect(`${seen} ${probe}`).toMatch(/E(PIPE|CONNRESET)/);
+        await client.connect();
+        expect(await client.ping()).toBe("PONG");
+      } finally {
+        client.close();
+      }
+    },
+  );
+
+  test.skipIf(!nodeExe())("close() over rediss:// after the peer drained the backlog still ends in a FIN", async () => {
+    // The socket holds spilled ciphertext from a stall the peer has since
+    // recovered from, but this loop has not turned since, so nothing has
+    // flushed it yet. The fast shutdown drains it and is not deferred; the
+    // peer must see the rest of the data and a clean end, and its write
+    // probe must be taken, not refused by a reset.
+    await using stub = await spawnTlsStub();
+    const client = new RedisClient(`rediss://127.0.0.1:${stub.port}`, {
+      autoReconnect: false,
+      tls: { ca: tlsCert.cert },
+    });
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await client.connect();
+      const pending = await writeUntilStuck(client);
+      // Bytes handed to the socket so far: everything written less what the
+      // client still holds as plaintext.
+      const handed = pending.length * STUCK_COMMAND_BYTES - client.bufferedAmount;
+      const drained = stub.resumeAndDrain(handed, false);
+      client.close();
+      expect({ connected: client.connected, closes }).toEqual({ connected: false, closes: 1 });
+      expect(new Set(await Promise.all(pending))).toEqual(new Set(["ERR_REDIS_CONNECTION_CLOSED"]));
+      const { seen, probe, bytesRead } = await stub.result;
+      expect({ seen, probe }).toEqual({ seen: "end", probe: "write ok" });
+      // The spilled ciphertext reached the peer before the FIN.
+      expect(bytesRead).toBeGreaterThan(drained);
+    } finally {
+      client.close();
+    }
   });
 });
 

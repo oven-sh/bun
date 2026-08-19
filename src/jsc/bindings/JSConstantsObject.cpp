@@ -23,6 +23,11 @@ JSConstantsObject* JSConstantsObject::create(VM& vm, JSGlobalObject* globalObjec
 // duplicates, and only properties added by user code end up after the table.
 // OverridesGetOwnSpecialPropertyNames in StructureFlags is what makes the
 // structure-walking fast paths (Object.entries, inspect, ...) come through here.
+//
+// Known difference from a plain object: a table property that user code deletes
+// and then assigns again still enumerates at its table position instead of last.
+// Once the table is reified, the structure cannot tell that case apart from a
+// property that was never deleted.
 void JSConstantsObject::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     VM& vm = globalObject->vm();

@@ -105,10 +105,7 @@ new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SI
 // thread schedules a drain; collapses the per-chunk thread-pool futex wake
 // into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
-// Set in the environment of the lifecycle scripts that a package manager process runs while it
-// holds the lock of the project at this path (`lock_project` in bun_install). A bun process that
-// such a script starts to edit the same project runs under its parent's lock instead of waiting
-// for it forever.
+// The project a parent bun process holds the install lock of; see `lock_project` in bun_install.
 new!(pub BUN_INTERNAL_INSTALL_LOCK_DIR: string, "BUN_INTERNAL_INSTALL_LOCK_DIR", {});
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});

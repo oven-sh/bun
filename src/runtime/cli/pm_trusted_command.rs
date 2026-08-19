@@ -536,8 +536,7 @@ impl TrustCommand {
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
         let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-        // Read by path, not through the descriptor `init` opened before this process took the
-        // project lock: a `bun add` that finished in between replaced the file.
+        // By path: the file may have been replaced between `init` and the project lock.
         let package_json_contents =
             bun_sys::File::read_from(bun_sys::Fd::cwd(), root_package_json_path)
                 .map_err(crate::Error::from)?;

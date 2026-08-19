@@ -1052,10 +1052,8 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
-/// Mode for [`flock`], a whole-file lock: advisory `flock(2)` on POSIX, `LockFileEx` on Windows,
-/// where it is mandatory (reads and writes through other handles fail while it is held, so lock
-/// files whose contents nobody needs are the intended use). Closing the fd releases it, so a
-/// process that dies releases it too.
+/// Mode for [`flock`]: a whole-file lock that closing the fd releases. Mandatory on Windows
+/// (`LockFileEx` fails other handles' reads and writes), so lock the files nobody reads.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FileLockMode {
     Shared,
@@ -2658,8 +2656,7 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
-    /// See [`FileLockMode`]. With `nonblocking`, returns `Ok(false)` instead of waiting while
-    /// another process holds a conflicting lock.
+    /// See [`FileLockMode`]. `nonblocking` returns `Ok(false)` instead of waiting.
     pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
         let mut operation = match mode {
             FileLockMode::Shared => libc::LOCK_SH,
@@ -3941,9 +3938,7 @@ mod windows_impl {
         }
         Ok(())
     }
-    /// See [`FileLockMode`]: `LockFileEx` over the whole possible range of the file, the
-    /// closest thing to the POSIX arm's whole-file lock. With `nonblocking`, returns `Ok(false)`
-    /// instead of waiting while another process holds a conflicting lock.
+    /// See [`FileLockMode`]: `LockFileEx` over the whole range. `nonblocking` returns `Ok(false)`.
     pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
         let mut flags: w::DWORD = 0;
         if mode == FileLockMode::Exclusive {

@@ -103,17 +103,14 @@ impl InlineSnapshotToWrite {
     }
 }
 
-/// The `.snap` file of the test file whose tests are running. Its entries live in
-/// `Snapshots::file_buf` and `Snapshots::values` until `write_snapshot_file` replaces the file.
+/// The `.snap` file of the test file that is running; `write_snapshot_file` replaces it.
 struct File {
     id: FileId,
-    /// `<test dir>/__snapshots__/<test file name>.snap`, NUL-terminated.
+    /// NUL-terminated.
     path: Vec<u8>,
-    /// `file_buf` has entries the file on disk does not have. Always set under
-    /// `--update-snapshots`, which rewrites the file from the snapshots this run reaches.
+    /// `file_buf` has entries the file does not have. Always set under `--update-snapshots`.
     dirty: bool,
-    /// The file on disk did not parse. Every snapshot of this test file fails and the file is
-    /// left as it is.
+    /// The file did not parse: its snapshots fail and it is left as it is.
     unparseable: bool,
 }
 
@@ -260,8 +257,7 @@ impl Snapshots {
             .map(|file| file.path_z().as_bytes())
     }
 
-    /// Loads the entries of `file_buf` (the `.snap` file as read from disk) into `values`.
-    /// Prints the parse errors, if any. The caller decides what happens to the file.
+    /// Loads the entries of `file_buf` into `values`, printing the parse errors if it fails.
     fn parse_file(&mut self, snapshot_file_path: &[u8]) -> Result<(), Error> {
         let mut temp_log = bun_ast::Log::init();
         let result = self.parse_file_into_values(snapshot_file_path, &mut temp_log);
@@ -459,8 +455,7 @@ impl Snapshots {
             // SAFETY: NUL appended above
             let test_filename_z = ZStr::from_slice_with_nul(&test_filename[..]);
 
-            // O_RDWR rather than O_RDONLY: a file that may not be written to is reported here
-            // instead of being replaced below.
+            // O_RDWR: a file that may not be written to is reported here, not replaced below.
             let file = match bun_sys::File::open(test_filename_z, bun_sys::O::RDWR, 0o644) {
                 bun_sys::Result::Ok(file) => file,
                 bun_sys::Result::Err(e) => {

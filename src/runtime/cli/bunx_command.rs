@@ -1310,9 +1310,7 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        // Reset on every install so `bun add` below edits this package.json, not one further up
-        // the tree. Concurrent runs of the same package share this directory (and this file),
-        // so the file is replaced whole rather than truncated and rewritten.
+        // Gives `bun add` below a package.json here. Concurrent runs share this directory.
         {
             let mut package_json_path: Vec<u8> =
                 Vec::with_capacity(bunx_cache_dir.len() + b"/package.json\0".len());

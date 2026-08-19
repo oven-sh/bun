@@ -74,16 +74,8 @@ impl PackageManager {
 
 // ───────────────────────────── project lock ───────────────────────────────────
 
-/// Makes the bun processes that edit one project run one at a time. Without it, `bun add` and
-/// `bun remove` started together each read package.json and bun.lock, and the one that writes
-/// last silently drops the other one's edit; two installs also undo each other's work while they
-/// place the same packages in node_modules. The lock is a file in the install cache directory,
-/// named after the project root, locked with `sys::flock` and held until
-/// this process exits. Lifecycle scripts get `BUN_INTERNAL_INSTALL_LOCK_DIR` so that a bun they
-/// run in the same project does not wait for this process.
-///
-/// Best effort: when the lock file cannot be created or locked, the command runs without it,
-/// as every command did before the lock existed. Calling this again is a no-op.
+/// Holds `<cache dir>/.locks/<hash of the project root>` until the process exits, so that the
+/// processes that edit one project run one at a time. Best effort: without a lock file, no lock.
 pub fn lock_project(this: &mut PackageManager) {
     if this.project_lock.is_some() {
         return;
@@ -137,8 +129,7 @@ pub fn lock_project(this: &mut PackageManager) {
 
 bun_core::declare_scope!(project_lock, hidden);
 
-/// `<cache dir>/.locks/<hash of the project root>`. Opened read-only: `flock` does not need write
-/// access, so a lock file created by another user of a shared cache directory works too.
+/// Read-only: `flock` does not need more, and another user may own the file in a shared cache.
 fn open_project_lock_file(this: &mut PackageManager, project_dir: &[u8]) -> Option<File> {
     let mut locks_dir_path = fetch_cache_directory_path(this.env_mut(), Some(&this.options)).path;
     if locks_dir_path.last() != Some(&SEP) {
@@ -1161,8 +1152,7 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
             package_json_file.pwrite_all(b"{\"dependencies\": {}}", 0)?;
             return Ok(package_json_file);
         }
-        // Another bun process created it after this one found none. That process writes the
-        // initial contents; until it does, the empty file parses as `{}`.
+        // Another process created it first and writes the contents; an empty file parses as `{}`.
         Err(err) if err.get_errno() == sys::E::EEXIST => {
             File::openat(Fd::cwd(), b"package.json", open_flags, 0)
         }

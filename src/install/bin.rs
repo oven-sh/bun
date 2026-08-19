@@ -1322,10 +1322,7 @@ impl<'a> Linker<'a> {
         Self::chmod_on_ok(self.err, abs_target);
     }
 
-    /// A destination that already links to `rel_target` counts as linked: a
-    /// repeat install must not unlink and recreate it, and concurrent installs
-    /// into one directory (`bunx` runs one `bun add` per invocation in a shared
-    /// install dir) race to create the same link.
+    /// A link that already points at `rel_target` (a repeat or a concurrent install) is kept.
     #[cfg(not(windows))]
     fn symlink_or_keep(rel_target: &ZStr, abs_dest: &ZStr) -> sys::Result<()> {
         match sys::symlink_running_executable(rel_target, abs_dest) {

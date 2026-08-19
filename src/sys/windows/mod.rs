@@ -78,9 +78,7 @@ pub mod kernel32 {
             dwFlags: DWORD,
         ) -> BOOL;
 
-        /// `LockFileEx` (`fileapi.h`). `lpOverlapped` carries the lock offset and must stay
-        /// valid for the duration of the call; on a synchronous handle the call blocks
-        /// (unless `LOCKFILE_FAIL_IMMEDIATELY` is set) and is complete when it returns.
+        /// `LockFileEx` (`fileapi.h`). `lpOverlapped` holds the range offset; required.
         pub fn LockFileEx(
             hFile: HANDLE,
             dwFlags: DWORD,

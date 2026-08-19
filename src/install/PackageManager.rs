@@ -339,8 +339,7 @@ pub struct PackageManager {
     /// Only set in `bun pm`
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
 
-    /// The lock file of the project this process edits, held (see `lock_project`) until the
-    /// process exits. `None` while no lock is held.
+    /// Held from `lock_project` until the process exits.
     pub(crate) project_lock: Option<bun_sys::File>,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
@@ -544,9 +543,7 @@ impl Subcommand {
         !matches!(self, Self::Link)
     }
 
-    /// Subcommands that rewrite package.json, the lockfile or node_modules on every run, and so
-    /// hold the project lock (`lock_project`) from `init` on. `Pm` and `Audit` only write for
-    /// some of their arguments; those commands take the lock themselves.
+    /// `init` takes the project lock for these. `Pm` and `Audit` take it themselves when they edit.
     pub(crate) fn always_edits_project(self) -> bool {
         matches!(
             self,
@@ -1884,9 +1881,7 @@ pub fn init(
             root_buf[..p.len()].copy_from_slice(p);
             p.len()
         } else {
-            // The cwd is the project root now. Resolved by name rather than through the fd:
-            // package.json is replaced by rename (`write_file_atomically`), and once another
-            // process has done that, the fd's path names a deleted file.
+            // By name, not through the fd: another process may have renamed a new file over it.
             match bun_sys::realpath(bun_core::zstr!("package.json"), root_buf) {
                 Ok(path) => path.len(),
                 Err(_) => bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len(),
@@ -2277,8 +2272,7 @@ pub fn init(
 
         if subcommand.always_edits_project() && !manager.options.dry_run {
             manager.lock_project();
-            // The workspace package.json files read while looking for the root above were read
-            // before the lock. Edits start from what is on disk now that this process holds it.
+            // The workspace walk above read package.json files before the lock was held.
             manager.workspace_package_json_cache.map.clear();
         }
     }

@@ -2063,6 +2063,11 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                         };
                 }
             }
+            if ctx.manager.options.publish_config.provenance.is_none() {
+                if let Some(prov) = config.get(b"provenance").and_then(|e| e.as_bool()) {
+                    ctx.manager.options.publish_config.provenance = Some(prov);
+                }
+            }
         }
 
         // maybe otp

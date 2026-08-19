@@ -1,6 +1,6 @@
 #include "ProcessBindingUV.h"
 #include "BunProcess.h"
-#include "JSConstantsObject.h"
+#include "ConstantsObject.h"
 #include "JavaScriptCore/ArrayAllocationProfile.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ThrowScope.h"
@@ -187,11 +187,10 @@ static constexpr HashTableValue bindingTableValues[] = {
     nativeFunction("getErrorMap"_s, jsGetErrorMap, 0),
 };
 // clang-format on
-static constexpr ClassInfo bindingClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<bindingTableValues>::table);
 
 JSObject* create(VM& vm, JSGlobalObject* globalObject)
 {
-    return JSConstantsObject::create(vm, globalObject, &bindingClassInfo, globalObject->objectPrototype());
+    return createConstantsObject<bindingTableValues>(vm, globalObject, globalObject->objectPrototype());
 }
 
 } // namespace ProcessBindingUV

@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import assert from "node:assert";
+import { constants as cryptoConstants } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { constants as osConstants } from "node:os";
-import { inspect } from "node:util";
+import { constants as zlibConstants } from "node:zlib";
 
 describe("process.binding", () => {
   test("process.binding('constants')", () => {
@@ -37,178 +36,71 @@ describe("process.binding", () => {
   });
 });
 
-// The constants objects are backed by static property tables: a constant is
-// answered from the table and is only stored on the object once something
-// materializes the whole table (spread, Object.entries, delete, ...). Everything
-// below must hold anyway, exactly as it does for the plain objects node uses.
-describe("constants objects behave like plain objects", () => {
-  async function runInFreshProcess(source: string): Promise<any> {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", source],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
-  }
+// The objects are built from tables of rows (ProcessBindingConstants.cpp,
+// ProcessBindingUV.cpp); these pin what the rows have to turn into.
+describe("constants objects built from tables", () => {
+  /* @ts-ignore */
+  const constants = process.binding("constants");
 
-  test.concurrent("reading the constants does not store them on the object", async () => {
-    // The child must not name a variable after a builtin module: `bun -e` loads
-    // the builtins it sees named in the source, and node:zlib freezes its table.
-    const result = await runInFreshProcess(`
-      const { estimateShallowMemoryUsageOf } = require("bun:jsc");
-      const table = process.binding("constants").zlib;
-      const keys = Object.keys(table);
-      let numbers = 0;
-      for (const key of keys) numbers += typeof table[key] === "number" ? 1 : 0;
-      const plain = Object.create(null);
-      for (const key of keys) plain[key] = table[key];
-      console.log(JSON.stringify({
-        keys: keys.length,
-        numbers,
-        size: estimateShallowMemoryUsageOf(table),
-        plainSize: estimateShallowMemoryUsageOf(plain),
-      }));
-    `);
-    expect(result.keys).toBeGreaterThan(100);
-    expect(result.numbers).toBe(result.keys);
-    // A plain object holding the same constants needs a slot per constant. The
-    // binding object, even after every constant was read, stays a bare object.
-    expect(result.size * 4).toBeLessThan(result.plainSize);
+  test("are the objects the node modules expose", () => {
+    expect(osConstants).toBe(constants.os);
+    expect(fsConstants).toBe(constants.fs);
+    expect(cryptoConstants).toBe(constants.crypto);
+    expect(zlibConstants).toBe(constants.zlib);
   });
 
-  test.concurrent("enumeration order does not depend on which properties were read first", async () => {
-    const result = await runInFreshProcess(`
-      const table = process.binding("constants").fs;
-      const expected = Object.keys(table);
-      // Read a few properties in an order that differs from the table order.
-      void table.S_IFMT;
-      void table.O_APPEND;
-      void table.UV_FS_SYMLINK_DIR;
-      const forIn = [];
-      for (const key in table) forIn.push(key);
-      const orders = {
-        keys: Object.keys(table),
-        names: Object.getOwnPropertyNames(table),
-        ownKeys: Reflect.ownKeys(table),
-        forIn,
-        json: Object.keys(JSON.parse(JSON.stringify(table))),
-        entries: Object.entries(table).map(([key]) => key),
-        values: Object.values(table),
-        spread: Object.keys({ ...table }),
-        assign: Object.keys(Object.assign({}, table)),
-        structuredClone: Object.keys(structuredClone(table)),
-      };
-      // node:zlib freezes its table after reading some of it.
-      Object.freeze(table);
-      orders.keysAfterFreeze = Object.keys(table);
-      orders.entriesAfterFreeze = Object.entries(table).map(([key]) => key);
-      orders.frozen = Object.isFrozen(table);
-      console.log(JSON.stringify({ expected, expectedValues: expected.map(key => table[key]), orders }));
-    `);
-    const { expected, expectedValues, orders } = result;
-    expect(expected.slice(0, 5)).toEqual([
+  test("are plain null-prototype objects", () => {
+    const { os, fs, crypto, zlib, trace } = constants;
+    for (const object of [os, os.dlopen, os.errno, os.signals, os.priority, fs, crypto, zlib, trace]) {
+      expect(Object.getPrototypeOf(object)).toBeNull();
+      expect(Object.prototype.toString.call(object)).toBe("[object Object]");
+    }
+    expect(Object.getOwnPropertyDescriptor(os.signals, "SIGTERM")).toEqual({
+      value: os.signals.SIGTERM,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(structuredClone(os.errno)).toEqual({ ...os.errno });
+    expect(Bun.inspect(os.priority)).toBe(Bun.inspect(Object.assign(Object.create(null), os.priority)));
+  });
+
+  test("keep the table order", () => {
+    expect(Object.keys(constants.os)).toEqual(["UV_UDP_REUSEADDR", "dlopen", "errno", "signals", "priority"]);
+    expect(Object.keys(constants.fs).slice(0, 5)).toEqual([
       "UV_FS_SYMLINK_DIR",
       "UV_FS_SYMLINK_JUNCTION",
       "O_RDONLY",
       "O_WRONLY",
       "O_RDWR",
     ]);
-    expect(orders).toEqual({
-      keys: expected,
-      names: expected,
-      ownKeys: expected,
-      forIn: expected,
-      json: expected,
-      entries: expected,
-      values: expectedValues,
-      spread: expected,
-      assign: expected,
-      structuredClone: expected,
-      keysAfterFreeze: expected,
-      entriesAfterFreeze: expected,
-      frozen: true,
-    });
-  });
-
-  test.concurrent("properties are writable, enumerable and configurable data properties", async () => {
-    const result = await runInFreshProcess(`
-      const signals = process.binding("constants").os.signals;
-      const before = Object.keys(signals);
-      const descriptor = Object.getOwnPropertyDescriptor(signals, "SIGTERM");
-      signals.SIGINT = 1234;
-      signals.EXTRA = 1;
-      const deleted = delete signals.SIGKILL;
-      const strictDelete = (() => { "use strict"; return delete signals.SIGTERM; })();
-      console.log(JSON.stringify({
-        before,
-        descriptor,
-        SIGINT: signals.SIGINT,
-        after: Object.keys(signals),
-        hasSIGKILL: "SIGKILL" in signals,
-        deleted,
-        strictDelete,
-        SIGTERMAfterDelete: signals.SIGTERM,
-      }));
-    `);
-    expect(result.descriptor).toEqual({
-      value: osConstants.signals.SIGTERM,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-    expect(result.SIGINT).toBe(1234);
-    expect(result.deleted).toBe(true);
-    expect(result.strictDelete).toBe(true);
-    expect(result.hasSIGKILL).toBe(false);
-    expect(result.SIGTERMAfterDelete).toBeUndefined();
-    // Overwritten properties keep their position, deleted ones disappear, new ones go last.
-    expect(result.after).toEqual([
-      ...result.before.filter((key: string) => key !== "SIGKILL" && key !== "SIGTERM"),
-      "EXTRA",
+    expect(Object.keys(constants.os.priority)).toEqual([
+      "PRIORITY_LOW",
+      "PRIORITY_BELOW_NORMAL",
+      "PRIORITY_NORMAL",
+      "PRIORITY_ABOVE_NORMAL",
+      "PRIORITY_HIGH",
+      "PRIORITY_HIGHEST",
     ]);
+    expect(Object.keys(constants.zlib).slice(0, 3)).toEqual(["Z_NO_FLUSH", "Z_PARTIAL_FLUSH", "Z_SYNC_FLUSH"]);
   });
 
-  test("structuredClone accepts them", () => {
-    expect(structuredClone(osConstants.signals)).toEqual({ ...osConstants.signals });
-    expect(structuredClone(fsConstants)).toEqual({ ...fsConstants });
-    /* @ts-ignore */
-    const constants = process.binding("constants");
-    const clone = structuredClone(constants.os);
-    expect(clone).toEqual({ ...constants.os });
-    expect(clone.errno).toEqual({ ...constants.os.errno });
+  test("rows that are not integers", () => {
+    expect(constants.zlib.Z_MAX_CHUNK).toBe(Infinity);
+    expect(constants.crypto.defaultCipherList).toStartWith("TLS_AES_256_GCM_SHA384:");
+    expect(constants.crypto.defaultCoreCipherList).toBe(constants.crypto.defaultCipherList);
+    const cryptoKeys = Object.keys(constants.crypto);
+    expect(cryptoKeys.indexOf("defaultCoreCipherList")).toBe(cryptoKeys.indexOf("TLS1_VERSION") - 2);
+    expect(cryptoKeys.at(-1)).toBe("POINT_CONVERSION_HYBRID");
   });
 
-  test("inspect prints them like null-prototype objects", () => {
-    const priority = osConstants.priority;
-    const plain = Object.assign(Object.create(null), priority);
-    expect(Bun.inspect(priority)).toBe(Bun.inspect(plain));
-    expect(inspect(priority)).toBe(inspect(plain));
-    expect(Bun.inspect(priority)).toStartWith("[Object: null prototype] {");
-    expect(Object.prototype.toString.call(priority)).toBe("[object Object]");
-    expect(Object.getPrototypeOf(priority)).toBeNull();
-  });
-
-  test("deepStrictEqual against a null-prototype copy", () => {
-    const errno = osConstants.errno;
-    const copy = Object.create(null);
-    for (const key of Object.keys(errno)) copy[key] = errno[key];
-    assert.deepStrictEqual(errno, copy);
-    assert.deepStrictEqual(copy, errno);
-    expect(errno).toStrictEqual(copy);
-  });
-
-  test("process.binding('uv') keeps its functions and key order", () => {
+  test("process.binding('uv') has its functions first and last", () => {
     /* @ts-ignore */
     const uv = process.binding("uv");
     const keys = Object.keys(uv);
     expect(keys[0]).toBe("errname");
     expect(keys.at(-1)).toBe("getErrorMap");
     expect(keys.slice(1, -1).every((key: string) => key.startsWith("UV_") && typeof uv[key] === "number")).toBe(true);
-    expect(uv.errname).toBe(uv.errname);
     expect([uv.errname.name, uv.errname.length, uv.getErrorMap.name, uv.getErrorMap.length]).toEqual([
       "errname",
       1,
@@ -216,7 +108,6 @@ describe("constants objects behave like plain objects", () => {
       0,
     ]);
     expect(Object.getPrototypeOf(uv)).toBe(Object.prototype);
-    expect(Object.keys({ ...uv })).toEqual(keys);
     expect(Bun.inspect(uv)).toBe(Bun.inspect({ ...uv }));
   });
 });

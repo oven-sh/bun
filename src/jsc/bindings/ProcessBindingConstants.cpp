@@ -1,7 +1,7 @@
 // Modelled off of https://github.com/nodejs/node/blob/main/src/node_constants.cc
 // Note that if you change any of this code, you probably also have to change NodeConstantsModule.h
 #include "ProcessBindingConstants.h"
-#include "JSConstantsObject.h"
+#include "ConstantsObject.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 
 // These headers may not all be needed, but they are the ones node references.
@@ -49,18 +49,13 @@
 namespace Bun {
 using namespace JSC;
 
-// Every object below is a JSConstantsObject over one of these tables: the
-// constants stay in the table and nothing is stored on the object. Rows are in
-// node's order; that is the order the properties enumerate in.
+// os, fs, crypto, zlib and trace are built from their tables the first time the
+// binding property is read (the .lut.h at the bottom); the four os.* children
+// are built along with os. Rows are in node's order, which is the order the
+// properties end up in.
 
 // Row for a constant whose property name is the macro's own name.
 #define CONSTANT(constant) constantInteger(#constant##_s, constant)
-
-template<const ClassInfo& classInfo>
-static JSValue createConstantsObject(VM& vm, JSObject* owner)
-{
-    return JSConstantsObject::create(vm, owner->globalObject(), &classInfo);
-}
 
 static constexpr HashTableValue errnoTableValues[] = {
 #ifdef E2BIG
@@ -475,7 +470,6 @@ static constexpr HashTableValue errnoTableValues[] = {
     CONSTANT(WSAEREFUSED),
 #endif
 };
-static constexpr ClassInfo errnoClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<errnoTableValues>::table);
 
 static constexpr HashTableValue signalsTableValues[] = {
 #ifdef SIGHUP
@@ -590,7 +584,6 @@ static constexpr HashTableValue signalsTableValues[] = {
     CONSTANT(SIGUNUSED),
 #endif
 };
-static constexpr ClassInfo signalsClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<signalsTableValues>::table);
 
 static constexpr HashTableValue priorityTableValues[] = {
     constantInteger("PRIORITY_LOW"_s, 19),
@@ -600,7 +593,6 @@ static constexpr HashTableValue priorityTableValues[] = {
     constantInteger("PRIORITY_HIGH"_s, -14),
     constantInteger("PRIORITY_HIGHEST"_s, -20),
 };
-static constexpr ClassInfo priorityClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<priorityTableValues>::table);
 
 #if OS(WINDOWS)
 // No dlfcn.h: node exposes an empty object.
@@ -626,18 +618,16 @@ static constexpr HashTableValue dlopenTableValues[] = {
     CONSTANT(RTLD_DEEPBIND),
 #endif
 };
-static constexpr ClassInfo dlopenClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<dlopenTableValues>::table);
-static constexpr LazyPropertyCallback createDlopenConstants = createConstantsObject<dlopenClassInfo>;
+static constexpr LazyPropertyCallback createDlopenConstants = constantsObjectCallback<dlopenTableValues>;
 #endif
 
 static constexpr HashTableValue osTableValues[] = {
     constantInteger("UV_UDP_REUSEADDR"_s, 4),
     propertyCallback("dlopen"_s, createDlopenConstants),
-    propertyCallback("errno"_s, createConstantsObject<errnoClassInfo>),
-    propertyCallback("signals"_s, createConstantsObject<signalsClassInfo>),
-    propertyCallback("priority"_s, createConstantsObject<priorityClassInfo>),
+    propertyCallback("errno"_s, constantsObjectCallback<errnoTableValues>),
+    propertyCallback("signals"_s, constantsObjectCallback<signalsTableValues>),
+    propertyCallback("priority"_s, constantsObjectCallback<priorityTableValues>),
 };
-static constexpr ClassInfo osClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<osTableValues>::table);
 
 static constexpr HashTableValue traceTableValues[] = {
     constantInteger("TRACE_EVENT_PHASE_BEGIN"_s, 66),
@@ -667,7 +657,6 @@ static constexpr HashTableValue traceTableValues[] = {
     constantInteger("TRACE_EVENT_PHASE_LEAVE_CONTEXT"_s, 41),
     constantInteger("TRACE_EVENT_PHASE_LINK_IDS"_s, 61),
 };
-static constexpr ClassInfo traceClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<traceTableValues>::table);
 
 static constexpr HashTableValue fsTableValues[] = {
     constantInteger("UV_FS_SYMLINK_DIR"_s, 1),
@@ -803,7 +792,6 @@ static constexpr HashTableValue fsTableValues[] = {
     constantInteger("EXTENSIONLESS_FORMAT_JAVASCRIPT"_s, 0),
     constantInteger("EXTENSIONLESS_FORMAT_WASM"_s, 1),
 };
-static constexpr ClassInfo fsClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<fsTableValues>::table);
 
 static constexpr ASCIILiteral defaultCipherList = "TLS_AES_256_GCM_SHA384:"
                                                   "TLS_CHACHA20_POLY1305_SHA256:"
@@ -1009,7 +997,6 @@ static constexpr HashTableValue cryptoTableValues[] = {
     CONSTANT(POINT_CONVERSION_UNCOMPRESSED),
     CONSTANT(POINT_CONVERSION_HYBRID),
 };
-static constexpr ClassInfo cryptoClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<cryptoTableValues>::table);
 
 // Z_MAX_CHUNK is Infinity, the one value in these tables that is not an integer.
 static JSValue zlibMaxChunk(VM&, JSObject*)
@@ -1196,15 +1183,14 @@ static constexpr HashTableValue zlibTableValues[] = {
     CONSTANT(ZSTD_error_noForwardProgress_destFull),
     CONSTANT(ZSTD_error_noForwardProgress_inputEmpty),
 };
-static constexpr ClassInfo zlibClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<zlibTableValues>::table);
 
 #undef CONSTANT
 
-static constexpr LazyPropertyCallback processBindingConstantsGetOs = createConstantsObject<osClassInfo>;
-static constexpr LazyPropertyCallback processBindingConstantsGetFs = createConstantsObject<fsClassInfo>;
-static constexpr LazyPropertyCallback processBindingConstantsGetCrypto = createConstantsObject<cryptoClassInfo>;
-static constexpr LazyPropertyCallback processBindingConstantsGetZlib = createConstantsObject<zlibClassInfo>;
-static constexpr LazyPropertyCallback processBindingConstantsGetTrace = createConstantsObject<traceClassInfo>;
+static constexpr LazyPropertyCallback processBindingConstantsGetOs = constantsObjectCallback<osTableValues>;
+static constexpr LazyPropertyCallback processBindingConstantsGetFs = constantsObjectCallback<fsTableValues>;
+static constexpr LazyPropertyCallback processBindingConstantsGetCrypto = constantsObjectCallback<cryptoTableValues>;
+static constexpr LazyPropertyCallback processBindingConstantsGetZlib = constantsObjectCallback<zlibTableValues>;
+static constexpr LazyPropertyCallback processBindingConstantsGetTrace = constantsObjectCallback<traceTableValues>;
 
 /* Source for ProcessBindingConstants.lut.h
 @begin processBindingConstantsTable

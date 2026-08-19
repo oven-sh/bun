@@ -781,6 +781,10 @@ pub trait SourceContext: Sized {
         false
     }
 
+    /// The JS wrapper was collected while native refs remain. Runs inside a GC
+    /// sweep: no JS. `ByteStream` tells a parked producer nobody can read it now.
+    fn wrapper_finalized(&mut self) {}
+
     /// `setRefUnrefFn` — default no-op.
     fn set_ref_unref(&mut self, _enable: bool) {}
 
@@ -851,6 +855,10 @@ pub struct NewSource<C: SourceContext> {
     /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
+    /// The producer holding a native ref has parked ([`Self::unroot_wrapper`]):
+    /// its ref keeps this allocation, not the wrapper, so an unread stream can
+    /// be collected. Cleared by [`Self::root_wrapper`].
+    pub wrapper_unrooted: bool,
     /// R-2: written by context methods (`ByteStream::to_any_blob`,
     /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
     /// interior-mutable.
@@ -869,6 +877,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
+            wrapper_unrooted: false,
             is_closed: Cell::new(false),
         }
     }
@@ -1140,10 +1149,32 @@ impl<C: SourceContext> NewSource<C> {
         // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
         // `on_js_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
+        if !self.wrapper_unrooted {
+            self.upgrade_wrapper();
+        }
+    }
+
+    fn upgrade_wrapper(&mut self) {
         if let Some(global) = self.global_this.as_deref() {
             if self.this_jsvalue.is_not_empty() {
                 self.this_jsvalue.upgrade(global);
             }
+        }
+    }
+
+    /// The producer keeps its native ref but stops rooting the wrapper: nothing
+    /// is reading, so the stream should be collectable. [`SourceContext::wrapper_finalized`]
+    /// tells the producer if that happens.
+    pub fn unroot_wrapper(&mut self) {
+        self.wrapper_unrooted = true;
+        self.this_jsvalue.downgrade();
+    }
+
+    /// Undo [`Self::unroot_wrapper`]: a consumer is reading again.
+    pub fn root_wrapper(&mut self) {
+        self.wrapper_unrooted = false;
+        if self.ref_count > 1 {
+            self.upgrade_wrapper();
         }
     }
 
@@ -1440,6 +1471,11 @@ impl<C: SourceContext> NewSource<C> {
         let this = Box::into_raw(self);
         // SAFETY: `this` is live — just unwrapped from `Box`.
         unsafe { (*this).this_jsvalue.finalize() };
+        // SAFETY: `this` is live; the JS-wrapper +1 (released last) keeps ref_count > 0
+        // across whatever ref the producer drops in response.
+        if unsafe { (*this).ref_count } > 1 {
+            unsafe { (*this).context.wrapper_finalized() };
+        }
         // SAFETY: `this` is live; the JS-wrapper ref below still pins the count.
         if unsafe { (*this).context.finalize_detach() } {
             // SAFETY: `this` is live; the JS-wrapper +1 (released below) keeps ref_count > 0.

@@ -102,6 +102,10 @@ function createWindow(windowUrl) {
     if (typeof url === "string") {
       url = new URL(url, windowUrl).href;
     }
+    // happy-dom stringifies an ArrayBuffer body created in the page's realm; hand it a Buffer instead.
+    if (options?.body && Object.prototype.toString.call(options.body) === "[object ArrayBuffer]") {
+      options = { ...options, body: Buffer.from(options.body) };
+    }
     const promise = original_window_fetch(url, options);
     // A runtime error reaches the overlay only after this round trip and its body are consumed; the exit handler waits for that and counts the report.
     if (String(url).includes("/_bun/report_error")) {

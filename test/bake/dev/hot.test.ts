@@ -826,6 +826,29 @@ devTest("server: an update overlapping one parked on an async dispose accepts on
         return Response.json({ value, log: globalThis.twiceLog });
       }
     `,
+    // stale: update A parks on m's dispose; update B replaces the importer's body (and its accept callback); A must not call the disposed body's callback.
+    "stale/m.ts": `
+      export const value = "v1";
+      import.meta.hot.dispose(() => globalThis.staleDisposing?.promise);
+    `,
+    "stale/acceptor.ts": staleAcceptor("acceptor1"),
+    "routes/stale.ts": `
+      import "../stale/acceptor";
+      export default async function (req) {
+        const op = req.headers.get("x-command");
+        if (op === "arm") {
+          globalThis.staleDisposing = Promise.withResolvers();
+          return new Response("armed");
+        }
+        if (op === "release") {
+          globalThis.staleDisposing.resolve();
+          globalThis.staleDisposing = null;
+          return new Response("released");
+        }
+        const { value } = await import("../stale/m");
+        return Response.json({ value, log: globalThis.staleLog });
+      }
+    `,
     // inflight: v2 is waiting on its top-level await when update B parks on the dispose promise v2 registered; v2 finishing meanwhile must not pass for the v3 that B brings.
     "inflight/m.ts": inflightVersion("v1"),
     // "hold <version>" makes that body wait and "go <version>" lets it finish; "arm" and "release" as above.
@@ -867,6 +890,17 @@ devTest("server: an update overlapping one parked on an async dispose accepts on
       expect(await command("load").json()).toStrictEqual({ value: "v3", log: [...afterB, "update done"] });
     }
     {
+      const command = (line: string) => dev.fetch("/stale", { headers: { "x-command": line } });
+      expect(await command("load").json()).toStrictEqual({ value: "v1", log: ["acceptor1 body sees v1"] });
+      await command("arm").equals("armed");
+      await dev.patch("stale/m.ts", { find: '"v1"', replace: '"v2"' });
+      await dev.write("stale/acceptor.ts", staleAcceptor("acceptor2"));
+      await command("release").equals("released");
+      const { value, log } = await command("load").json();
+      expect(value).toBe("v2");
+      expect(log).not.toContain("acceptor1 accepted v2");
+    }
+    {
       const command = (line: string) => dev.fetch("/inflight", { headers: { "x-command": line } });
       expect(await command("load").json()).toStrictEqual({ value: "v1", bodies: ["v1"] });
       await command("hold v2").equals("held");
@@ -879,6 +913,13 @@ devTest("server: an update overlapping one parked on an async dispose accepts on
     }
   },
 });
+function staleAcceptor(name: string) {
+  return `
+    import { value } from "./m";
+    (globalThis.staleLog ??= []).push("${name} body sees " + value);
+    import.meta.hot.accept("./m", newModule => globalThis.staleLog.push("${name} accepted " + newModule.value));
+  `;
+}
 function inflightVersion(version: string) {
   return `
     import.meta.hot.dispose(() => globalThis.inflightDisposing?.promise);

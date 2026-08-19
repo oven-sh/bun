@@ -95,7 +95,7 @@ export class HMRModule {
   /** When calling `import.meta.hot.accept` to self-accept */
   selfAccept: HotAcceptFunction | null = null;
   /** The captured self-accept callback last called and the generation it was given, so an overlapping update does not call it again with the same copy. */
-  selfAcceptDelivered: { cb: HotAcceptFunction; generation: number } | null = null;
+  selfAcceptDelivered: { cb: WeakRef<HotAcceptFunction>; generation: number } | null = null;
   /** When calling `import.meta.hot.accept` on another module */
   depAccepts: Record<Id, HotAccept> | null = null;
   /** All modules that have imported this module */
@@ -918,9 +918,9 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   };
   const runSelfAccept = (mod: HMRModule, cb: HotAcceptFunction) => {
     const { selfAcceptDelivered: delivered, generation } = mod;
-    // An update that overlapped this one already gave this copy to the callback.
-    if (delivered && delivered.cb === cb && delivered.generation === generation) return;
-    mod.selfAcceptDelivered = { cb, generation };
+    // An update that overlapped this one already gave this copy to the callback. Weak, so the previous body's closure is not kept alive.
+    if (delivered && delivered.generation === generation && delivered.cb.deref() === cb) return;
+    mod.selfAcceptDelivered = { cb: new WeakRef(cb), generation };
     runAccept(cb, getEsmExports(mod));
   };
   // A module that throws does not stop the others; the first failure fails the update once every load has settled.
@@ -985,9 +985,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   for (const [accept, { importer, keys }] of toAccept) {
     // The importer was itself re-evaluated in this update, so its old callback is stale.
     if (toReload.has(importer)) continue;
-    // An update that overlapped this one may already have given these copies to the callback.
+    // An update that overlapped this one may already have given these copies to the callback, or replaced the importer's body (and this callback with it).
     let undelivered = false;
     for (const key of keys) {
+      if (importer.depAccepts?.[key] !== accept) continue;
       const { generation } = registry.get(key)!;
       if (accept.delivered[key] !== generation) undelivered = true;
       accept.delivered[key] = generation;

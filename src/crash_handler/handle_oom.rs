@@ -25,8 +25,9 @@ use bun_alloc::AllocError;
 /// let thing = match allocate_thing() { Ok(v) => v, Err(err) => bun::handle_oom(err) };
 /// ```
 ///
-/// In Rust, `Vec`/`Box` allocation already aborts on OOM via the
-/// global allocator's `handle_alloc_error`. Per PORTING.md §Allocators,
+/// In Rust, a failed `Vec`/`Box` allocation already reaches the same
+/// out-of-memory crash report through `handle_alloc_error` and the alloc
+/// error hook registered in `install_hooks`. Per PORTING.md §Allocators,
 /// callsites of `bun.handleOom(expr)` translate to bare `expr`. This function
 /// remains for the residual cases where a `Result<T, AllocError>` is threaded
 /// explicitly.

@@ -30,7 +30,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
 
-const { pathToFileURL } = require("node:url");
 let BufferModule;
 
 const primordials = require("internal/primordials");
@@ -380,51 +379,16 @@ const kObjectType = 0;
 const kArrayType = 1;
 const kArrayExtrasType = 2;
 
-// Work-arounds for Safari not implementing negative look-behinds.
-// Remove all of this once Safari 16.4 is rolled out "enough".
-let strEscapeSequencesRegExp,
-  strEscapeSequencesReplacer,
-  strEscapeSequencesRegExpSingle,
-  strEscapeSequencesReplacerSingle,
-  extractedSplitNewLinesSlow;
-try {
-  // Change from regex literals to RegExp constructors to avoid unrecoverable
-  // syntax error at load time.
-  strEscapeSequencesRegExp = new RegExp(
-    "[\\x00-\\x1f\\x27\\x5c\\x7f-\\x9f]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]",
-  );
-  strEscapeSequencesReplacer = new RegExp(
-    "[\x00-\\x1f\\x27\\x5c\\x7f-\\x9f]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]",
-    "g",
-  );
-  strEscapeSequencesRegExpSingle = new RegExp(
-    "[\\x00-\\x1f\\x5c\\x7f-\\x9f]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]",
-  );
-  strEscapeSequencesReplacerSingle = new RegExp(
-    "[\\x00-\\x1f\\x5c\\x7f-\\x9f]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]",
-    "g",
-  );
-  const extractedNewLineRe = new RegExp("(?<=\\n)");
-  extractedSplitNewLinesSlow = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
-  // CI doesn't run in an elderly runtime
-} catch {
-  // These are from a previous version of node,
-  // see commit 76372607a6743cc75eae50ca58657c9e8a654428
-  // dated 2021-12-06
-  strEscapeSequencesRegExp = /[\x00-\x1f\x27\x5c\x7f-\x9f]/;
-  strEscapeSequencesReplacer = /[\x00-\x1f\x27\x5c\x7f-\x9f]/g;
-  strEscapeSequencesRegExpSingle = /[\x00-\x1f\x5c\x7f-\x9f]/;
-  strEscapeSequencesReplacerSingle = /[\x00-\x1f\x5c\x7f-\x9f]/g;
-  extractedSplitNewLinesSlow = value => {
-    const lines = RegExpPrototypeSymbolSplit(/\n/, value);
-    const last = ArrayPrototypePop(lines);
-    const nlLines = ArrayPrototypeMap(lines, line => line + "\n");
-    if (last !== "") {
-      nlLines.push(last);
-    }
-    return nlLines;
-  };
-}
+const strEscapeSequencesRegExp =
+  /[\x00-\x1f\x27\x5c\x7f-\x9f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+const strEscapeSequencesReplacer =
+  /[\x00-\x1f\x27\x5c\x7f-\x9f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+const strEscapeSequencesRegExpSingle =
+  /[\x00-\x1f\x5c\x7f-\x9f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+const strEscapeSequencesReplacerSingle =
+  /[\x00-\x1f\x5c\x7f-\x9f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+const extractedNewLineRe = /(?<=\n)/;
+const extractedSplitNewLinesSlow = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
 
 const extractedSplitNewLines = value => {
   if (typeof value === "string") {
@@ -2050,7 +2014,7 @@ function formatError(err, constructor, tag, ctx, keys) {
           if (workingDirectory !== undefined) {
             let newLine = markCwd(ctx, line, workingDirectory);
             if (newLine === line) {
-              esmWorkingDirectory ??= pathToFileURL(workingDirectory).href;
+              esmWorkingDirectory ??= require("node:url").pathToFileURL(workingDirectory).href;
               newLine = markCwd(ctx, line, esmWorkingDirectory);
             }
             line = newLine;
@@ -2913,15 +2877,18 @@ function getStringWidth(str, removeControlChars = true) {
 // node's ansi matcher (from chalk/ansi-regex): only complete sequences are stripped —
 // Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
 // https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
-const ansi = new RegExp(
-  "[\\u001B\\u009B][[\\]()#;?]*" +
-    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
-    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
-    "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
-    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
-    "[\\dA-PR-TZcf-nq-uy=><~]))",
-  "g",
-);
+let ansi;
+function getAnsiRegExp() {
+  return (ansi ??= new RegExp(
+    "[\\u001B\\u009B][[\\]()#;?]*" +
+      "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
+      "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
+      "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+      "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
+      "[\\dA-PR-TZcf-nq-uy=><~]))",
+    "g",
+  ));
+}
 
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw new codes.ERR_INVALID_ARG_TYPE("str", "string", str);
@@ -2929,7 +2896,7 @@ function stripVTControlCharacters(str) {
   if (StringPrototypeIndexOf(str, "\u001B") === -1 && StringPrototypeIndexOf(str, "\u009B") === -1) {
     return str;
   }
-  return RegExpPrototypeSymbolReplace(ansi, str, "");
+  return RegExpPrototypeSymbolReplace(getAnsiRegExp(), str, "");
 }
 
 // utils

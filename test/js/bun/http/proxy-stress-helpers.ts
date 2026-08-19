@@ -546,7 +546,7 @@ function buildResponse(opts: AdversarialOriginOptions, reqBody: Buffer): Buffer 
   const framing = opts.framing ?? "content-length";
   const encoded = encodeBody(rawBody, encoding);
 
-  let head = `HTTP/1.1 ${status} ${status === 200 ? "OK" : STATUS_TEXT[status] ?? "Status"}\r\n`;
+  let head = `HTTP/1.1 ${status} ${status === 200 ? "OK" : (STATUS_TEXT[status] ?? "Status")}\r\n`;
   for (const [k, v] of Object.entries(opts.headers ?? {})) head += `${k}: ${v}\r\n`;
   if (encoding !== "identity") head += `Content-Encoding: ${encoding}\r\n`;
 
@@ -717,6 +717,11 @@ export interface DeadPort {
  * `listen(0)`, and not listening, so `connect()` to it is refused. Do not
  * simplify to bind-then-close: that frees the port into exactly the pool
  * `listen(0)` draws from, and a sibling `test.concurrent` will take it.
+ *
+ * `localAddress` makes the holder bind() its port itself. A port that connect()
+ * bound automatically can be handed out again as the automatic local port of a
+ * later connect() to it, which then connects to itself instead of being refused
+ * (about once in 13k connects on Linux). A port that bind() handed out is not.
  */
 export async function deadPort(): Promise<DeadPort> {
   let accepted: net.Socket | undefined;
@@ -726,7 +731,11 @@ export async function deadPort(): Promise<DeadPort> {
   });
   sink.listen(0, "127.0.0.1");
   await once(sink, "listening");
-  const holder = net.connect({ host: "127.0.0.1", port: (sink.address() as net.AddressInfo).port });
+  const holder = net.connect({
+    host: "127.0.0.1",
+    port: (sink.address() as net.AddressInfo).port,
+    localAddress: "127.0.0.1",
+  });
   holder.on("error", () => {});
   await once(holder, "connect");
   const port = (holder.address() as net.AddressInfo).port;

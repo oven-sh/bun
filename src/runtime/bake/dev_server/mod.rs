@@ -1189,8 +1189,8 @@ bun_bundler::link_impl_DevServerHandle! {
                 .track_resolution_failure(import_source, specifier, renderer, loader)
                 .map_err(Into::into)
         },
-        is_file_cached(abs_path, side) => {
-            (*this).is_file_cached(abs_path, side).map(|e| {
+        is_file_cached(abs_path, side, loader) => {
+            (*this).is_file_cached(abs_path, side, loader).map(|e| {
                 use bun_bundler::bake_types::CacheKind;
                 bun_bundler::bake_types::CacheEntry {
                     kind: match e.kind {

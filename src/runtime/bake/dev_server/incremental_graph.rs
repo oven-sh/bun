@@ -615,6 +615,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let path = &ctx.sources[index.get() as usize].path;
         let key = path.key_for_incremental_graph();
         let loader = ctx.loaders[index.get() as usize];
+        // A plugin's `onLoad` picks its own loader on every parse, so only importer-chosen loaders are worth remembering.
+        let recorded_loader = if ctx.input_flags[index.get() as usize]
+            .contains(bun_bundler::Graph::InputFileFlags::IS_PLUGIN_FILE)
+        {
+            None
+        } else {
+            Some(loader)
+        };
         let graph = match SIDE {
             Side::Client => bake::Graph::Client,
             Side::Server if is_ssr_graph => bake::Graph::Ssr,
@@ -714,7 +722,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 self.bundled_files.values_mut()[file_index.get() as usize] = File {
                     kind: new_content.kind(),
                     failed: false,
-                    loader: Some(loader),
+                    loader: recorded_loader,
                     is_rsc: false,
                     is_ssr: false,
                     is_client_component_boundary: false,
@@ -741,7 +749,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     self.bundled_files.values_mut()[file_index.get() as usize] = File {
                         kind: new_kind,
                         failed: false,
-                        loader: Some(loader),
+                        loader: recorded_loader,
                         is_rsc: !is_ssr_graph,
                         is_ssr: is_ssr_graph,
                         is_client_component_boundary: scb,
@@ -758,7 +766,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     {
                         let f = &mut self.bundled_files.values_mut()[file_index.get() as usize];
                         f.kind = new_kind;
-                        f.loader = Some(loader);
+                        f.loader = recorded_loader;
                         if is_ssr_graph {
                             f.is_ssr = true;
                         } else {

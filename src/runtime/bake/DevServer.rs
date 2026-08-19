@@ -3697,6 +3697,8 @@ pub(crate) struct HotUpdateContext<'a> {
     pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.input_files.items(.loader)
     pub loaders: &'a [Loader],
+    /// bundle_v2.Graph.input_files.items(.flags)
+    pub input_flags: &'a [bun_bundler::Graph::InputFileFlags],
     /// Which files have a server-component boundary.
     pub server_to_client_bitset: DynamicBitSet,
     /// Used to reduce calls to the IncrementalGraph hash table.
@@ -3901,6 +3903,7 @@ pub(super) fn finalize_bundle(
     let html_chunks_mut = &mut html_rest[..n_html];
     let input_file_sources = bv2.graph.input_files.items_source();
     let input_file_loaders = bv2.graph.input_files.items_loader();
+    let input_file_flags = bv2.graph.input_files.items_flags();
     let import_records = bv2.graph.ast.items_import_records();
     let targets = bv2.graph.ast.items_target();
     let scbs = bv2.graph.server_component_boundaries.slice();
@@ -3934,6 +3937,7 @@ pub(super) fn finalize_bundle(
         import_records,
         sources: input_file_sources,
         loaders: input_file_loaders,
+        input_flags: input_file_flags,
         server_to_client_bitset: scb_bitset,
         resolved_index_cache: &mut resolved_index_cache,
         server_seen_bit_set: DynamicBitSet::default(), // assigned below
@@ -5117,7 +5121,13 @@ pub struct CacheEntry {
 }
 
 impl DevServer {
-    pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
+    /// `loader` is what the importer wants (its `with { type }` or the extension default); a file bundled with a different one is re-parsed.
+    pub(crate) fn is_file_cached(
+        &mut self,
+        path: &[u8],
+        side: bake::Graph,
+        loader: Loader,
+    ) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
         if self.barrel_files_with_deferrals.contains_key(path) {
             return None;
@@ -5130,12 +5140,16 @@ impl DevServer {
                 let g = $g;
                 let index = g.bundled_files.get_index(path)?;
                 if !g.stale_files.is_set(index) {
+                    let file = g.get_file_by_index(incremental_graph::FileIndex::init(
+                        u32::try_from(index).expect("int cast"),
+                    ));
+                    if file.html_route_bundle_index.is_none()
+                        && file.loader.is_some_and(|bundled| bundled != loader)
+                    {
+                        return None;
+                    }
                     return Some(CacheEntry {
-                        kind: g
-                            .get_file_by_index(incremental_graph::FileIndex::init(
-                                u32::try_from(index).expect("int cast"),
-                            ))
-                            .file_kind(),
+                        kind: file.file_kind(),
                     });
                 }
                 return None;

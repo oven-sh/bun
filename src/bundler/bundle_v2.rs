@@ -6552,18 +6552,13 @@ pub mod bv2_impl {
 
                         import_record.source_index = Index::INVALID;
 
-                        if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
-                            // The importer's `with { type }` (or the extension, once it drops one) wins over the loader the cached build used; unknown extensions keep a plugin's.
-                            let wanted_loader = import_record
-                                .loader
-                                .or_else(|| path.loader(&transpiler.options.loaders));
-                            if wanted_loader.is_some_and(|wanted| {
-                                dev_server
-                                    .bundled_loader(path.text, bake_graph)
-                                    .is_some_and(|bundled| bundled != wanted)
-                            }) {
-                                break 'brk;
-                            }
+                        let wanted_loader = import_record.loader.unwrap_or_else(|| {
+                            path.loader(&self.transpiler.options.loaders)
+                                .unwrap_or(Loader::File)
+                        });
+                        if let Some(entry) =
+                            dev_server.is_file_cached(path.text, bake_graph, wanted_loader)
+                        {
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL

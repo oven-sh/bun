@@ -186,10 +186,14 @@ pub mod pdeathsig {
 // (`bun_io::ParentDeathWatchdog::on_process_exit`) closes it before it lists
 // and kills our descendants. That walk lists our children once, so it is only
 // complete if no other thread of this process (a Worker's `Bun.spawn`, a
-// threadpool `git`) creates a child after the listing. Every POSIX spawn goes
-// through `posix_spawn::spawn_z`, which holds an `InFlight` token from before
-// the fork until the child exists. Once the gate is closed, `spawn_z` fails
-// with ECANCELED instead.
+// threadpool `git`) creates a child after the listing. Every spawn the runtime
+// can issue from such a thread goes through `posix_spawn::spawn_z`, which
+// holds an `InFlight` token from before the fork until the child exists. Once
+// the gate is closed, `spawn_z` fails with ECANCELED instead. The one spawn
+// path outside `spawn_z` is `bun_core::spawn_sync_inherit` (tier-0, so it
+// cannot see this gate). Its callers are CLI commands and the crash handler.
+// They block until the child exists, and none of them runs on a thread that
+// can race this exit callback.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(unix)]
 pub mod spawn_gate {

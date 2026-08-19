@@ -1880,21 +1880,35 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
         });
         crashes += `======== Stack trace from GDB for ${coreName} (all threads, crashing thread first, up to ${gdbFramesPerThread} frames each): ========\n`;
         let frameCount = 0;
+        let afterThreadHeader = false;
         for (const line of out.split("\n")) {
           // filter GDB output since it is pretty verbose
           if (
             line.startsWith("Program terminated") ||
             line.startsWith("Thread ") || // "Thread 2 (Thread 0x... (LWP 123)):" starts each thread's backtrace
             line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
-            line.startsWith("[Current thread is")
+            line.startsWith("Backtrace stopped") || // why a backtrace is short, e.g. a truncated core
+            line.startsWith("[Current thread is") ||
+            // With `-c`, the error for a thread whose backtrace failed is printed
+            // on stdout right under its header, e.g. "Cannot access memory at
+            // address 0x...". Keep it, or the thread shows up with no frames
+            // and no explanation.
+            (afterThreadHeader && line.trim() !== "")
           ) {
             crashes += line + "\n";
             if (line.startsWith("#")) frameCount++;
+            afterThreadHeader = line.startsWith("Thread ");
           }
         }
-        // Whatever gdb did print is kept above. gdb exits 0 when the file is
-        // not a core dump and only says so on stderr, so an empty backtrace is
-        // reported as well as a failing gdb.
+        // gdb's own stderr is mostly "warning:" lines about missing sources
+        // and debug info. Anything else there explains a bad result: a file
+        // that is not a core dump (gdb still exits 0 in that case), or a
+        // truncated core ("BFD: warning: ..."), so it is kept, bounded.
+        const notes = gdbStderr
+          .split("\n")
+          .filter(line => line.trim() !== "" && !line.startsWith("warning:"))
+          .slice(-3)
+          .join(" | ");
         if (!gdb.ok || frameCount === 0) {
           const how = gdb.spawnError
             ? `could not be started (${gdb.spawnError.code || gdb.spawnError.message})`
@@ -1903,8 +1917,9 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
               : gdb.exitCode === undefined
                 ? "timed out"
                 : `exited with code ${gdb.exitCode}`;
-          const why = gdbStderr.trim().split("\n").slice(-3).join(" | ");
-          crashes += `gdb ${how} and printed ${frameCount} frames${why ? `: ${why}` : ""}\n`;
+          crashes += `gdb ${how} and printed ${frameCount} frames${notes ? `: ${notes}` : ""}\n`;
+        } else if (notes) {
+          crashes += `gdb also reported: ${notes}\n`;
         }
       }
     }

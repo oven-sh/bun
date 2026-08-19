@@ -28,7 +28,6 @@
 #include "Worker.h"
 
 #include "InternalModuleRegistry.h"
-#include "JSBuffer.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
@@ -382,9 +381,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRouteConsoleToProcessStdio, (JSGlobalObject *
     return JSValue::encode(jsUndefined());
 }
 
-// The routed console's sink: `stream.write(Buffer)` on the stream registered above. As with
-// Node's Console (ignoreErrors), a failing or ended stream never makes console.log() throw.
-extern "C" void Bun__NodeWorker__writeConsoleStream(JSC::JSGlobalObject* lexicalGlobalObject, int fd, const uint8_t* bytes, size_t length)
+// The worker console's sink: `stream.write(chunk)` on the stream registered above (fd picks
+// which). As with Node's Console (ignoreErrors), a failing or ended stream never makes
+// console.log() throw: errors are dropped, and nothing is written once the stream has ended.
+extern "C" void Bun__NodeWorker__writeConsoleStream(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t fd, JSC::EncodedJSValue chunk)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
@@ -406,11 +406,8 @@ extern "C" void Bun__NodeWorker__writeConsoleStream(JSC::JSGlobalObject* lexical
     auto callData = JSC::getCallData(write);
     if (callData.type == CallData::Type::None) [[unlikely]]
         return;
-    auto* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(bytes, length));
-    if (scope.exception()) [[unlikely]]
-        return ignoreErrors();
     MarkedArgumentBuffer args;
-    args.append(buffer);
+    args.append(JSValue::decode(chunk));
     JSC::call(globalObject, write, callData, stream, args);
     if (scope.exception()) [[unlikely]]
         return ignoreErrors();

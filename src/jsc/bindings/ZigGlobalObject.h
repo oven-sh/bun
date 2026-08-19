@@ -791,7 +791,7 @@ public:
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }
     void setNodeWorkerStdioPorts(JSObject* ports);
-    JSObject* nodeWorkerConsoleStream(int fd) { return (fd == 2 ? m_nodeWorkerConsoleStderr : m_nodeWorkerConsoleStdout).get(); }
+    JSObject* nodeWorkerConsoleStream(uint8_t fd) { return (fd == 2 ? m_nodeWorkerConsoleStderr : m_nodeWorkerConsoleStdout).get(); }
     void setNodeWorkerConsoleStreams(JSObject* stdoutStream, JSObject* stderrStream);
     void setNodeWorkerEnvironmentData(JSMap* data);
     // node:worker_threads parentPort — the transferred MessagePort entangled with the parent

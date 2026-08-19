@@ -11,6 +11,7 @@ use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
 use bun_collections::HashMap;
+use bun_core::output::Destination;
 use bun_core::{Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};
 
@@ -289,47 +290,37 @@ thread_local! {
 /// mutex on first entry), releases on `Drop` (decrementing and unlocking on
 /// last exit).
 struct ConsoleStreamLock {
-    use_stderr: bool,
+    destination: Destination,
 }
 
 impl ConsoleStreamLock {
-    fn acquire(use_stderr: bool) -> Self {
-        if use_stderr {
-            STDERR_LOCK_COUNT.with(|c| {
-                if c.get() == 0 {
-                    STDERR_MUTEX.lock();
-                }
-                c.set(c.get() + 1);
-            });
-        } else {
-            STDOUT_LOCK_COUNT.with(|c| {
-                if c.get() == 0 {
-                    STDOUT_MUTEX.lock();
-                }
-                c.set(c.get() + 1);
-            });
-        }
-        Self { use_stderr }
+    fn acquire(destination: Destination) -> Self {
+        let (count, mutex) = match destination {
+            Destination::Stdout => (&STDOUT_LOCK_COUNT, &STDOUT_MUTEX),
+            Destination::Stderr => (&STDERR_LOCK_COUNT, &STDERR_MUTEX),
+        };
+        count.with(|c| {
+            if c.get() == 0 {
+                mutex.lock();
+            }
+            c.set(c.get() + 1);
+        });
+        Self { destination }
     }
 }
 
 impl Drop for ConsoleStreamLock {
     fn drop(&mut self) {
-        if self.use_stderr {
-            STDERR_LOCK_COUNT.with(|c| {
-                c.set(c.get() - 1);
-                if c.get() == 0 {
-                    STDERR_MUTEX.unlock();
-                }
-            });
-        } else {
-            STDOUT_LOCK_COUNT.with(|c| {
-                c.set(c.get() - 1);
-                if c.get() == 0 {
-                    STDOUT_MUTEX.unlock();
-                }
-            });
-        }
+        let (count, mutex) = match self.destination {
+            Destination::Stdout => (&STDOUT_LOCK_COUNT, &STDOUT_MUTEX),
+            Destination::Stderr => (&STDERR_LOCK_COUNT, &STDERR_MUTEX),
+        };
+        count.with(|c| {
+            c.set(c.get() - 1);
+            if c.get() == 0 {
+                mutex.unlock();
+            }
+        });
     }
 }
 
@@ -411,17 +402,22 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    let to_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
-        || message_type == MessageType::Assert;
+    let destination = if matches!(level, MessageLevel::Warning | MessageLevel::Error)
+        || message_type == MessageType::Assert
+    {
+        Destination::Stderr
+    } else {
+        Destination::Stdout
+    };
 
     // SAFETY: see [`vm_console`]; the sink's writer borrow is the only one taken
     // from `console` below (formatting can re-enter this function, so no
     // long-lived `&mut ConsoleObject` may be held).
-    let mut sink = unsafe { Sink::open(console, to_stderr) };
+    let mut sink = unsafe { Sink::open(console, destination) };
     // Two JS threads console.log'ing to the same fd at once take turns; a worker's
     // own stream needs no lock (and must not hold one across its JS write()).
     let _stream_lock =
-        matches!(sink, Sink::Fd { .. }).then(|| ConsoleStreamLock::acquire(to_stderr));
+        matches!(sink, Sink::Fd { .. }).then(|| ConsoleStreamLock::acquire(destination));
 
     if message_type == MessageType::Clear {
         // Nothing to clear when output goes to a stream rather than the terminal.
@@ -553,16 +549,17 @@ fn write_message(
 }
 
 /// Where one console call's output goes: the console's buffered stdout/stderr fd
-/// writer, or — in a node:worker_threads worker — a buffer that is handed to the
-/// worker's `process.stdout` / `process.stderr` (streams to the parent) at the end.
+/// writer, or — in a node:worker_threads worker — a buffer that becomes one
+/// `write()` on the worker's `process.stdout` / `process.stderr` at the end (one
+/// chunk per console call, as Node's Console does).
 enum Sink<'a> {
     Fd {
         writer: &'a mut bun_core::io::Writer,
-        to_stderr: bool,
+        destination: Destination,
     },
     Stream {
         buffer: Vec<u8>,
-        to_stderr: bool,
+        destination: Destination,
     },
 }
 
@@ -570,23 +567,21 @@ impl<'a> Sink<'a> {
     /// # Safety
     /// `console` is this VM's live [`vm_console`]; the fd writer borrows from it for `'a`,
     /// so no other `&mut ConsoleObject` may be live while the sink is.
-    unsafe fn open(console: *mut ConsoleObject, to_stderr: bool) -> Sink<'a> {
+    unsafe fn open(console: *mut ConsoleObject, destination: Destination) -> Sink<'a> {
         // SAFETY: caller contract.
         unsafe {
             if (*console).routes_to_process_stdio {
                 Sink::Stream {
                     buffer: Vec::new(),
-                    to_stderr,
-                }
-            } else if to_stderr {
-                Sink::Fd {
-                    writer: (*console).error_writer(),
-                    to_stderr,
+                    destination,
                 }
             } else {
                 Sink::Fd {
-                    writer: (*console).writer(),
-                    to_stderr,
+                    writer: match destination {
+                        Destination::Stdout => (*console).writer(),
+                        Destination::Stderr => (*console).error_writer(),
+                    },
+                    destination,
                 }
             }
         }
@@ -599,15 +594,17 @@ impl<'a> Sink<'a> {
         }
     }
 
-    /// The streams to the parent are not TTYs, so routed output is never colored.
+    /// The streams to the parent are not TTYs, so stream output is never colored.
     fn enable_colors(&self) -> bool {
         match self {
             Sink::Fd {
-                to_stderr: true, ..
-            } => Output::enable_ansi_colors_stderr(),
-            Sink::Fd {
-                to_stderr: false, ..
+                destination: Destination::Stdout,
+                ..
             } => Output::enable_ansi_colors_stdout(),
+            Sink::Fd {
+                destination: Destination::Stderr,
+                ..
+            } => Output::enable_ansi_colors_stderr(),
             Sink::Stream { .. } => false,
         }
     }
@@ -617,30 +614,36 @@ impl<'a> Sink<'a> {
             Sink::Fd { writer, .. } => {
                 let _ = writer.flush();
             }
-            Sink::Stream { buffer, to_stderr } => {
-                if !buffer.is_empty() {
-                    Bun__NodeWorker__writeConsoleStream(
-                        global,
-                        if to_stderr { 2 } else { 1 },
-                        buffer.as_ptr(),
-                        buffer.len(),
-                    );
+            Sink::Stream {
+                buffer,
+                destination,
+            } => {
+                if buffer.is_empty() {
+                    return;
                 }
+                // A GC-heap Buffer copy of the line is cheaper than adopting the Vec as
+                // an external ArrayBuffer (measured), and lines are small.
+                let Ok(chunk) = crate::ArrayBuffer::create_buffer(global, &buffer) else {
+                    // Out of memory making the Buffer: drop the output like any other
+                    // stream error rather than throw from console.log().
+                    let _ = global.clear_exception_except_termination();
+                    return;
+                };
+                let fd = match destination {
+                    Destination::Stdout => 1,
+                    Destination::Stderr => 2,
+                };
+                Bun__NodeWorker__writeConsoleStream(global, fd, chunk);
             }
         }
     }
 }
 
 unsafe extern "C" {
-    /// `stream.write(Buffer)` on the worker's bootstrap-time process.stdout/stderr.
+    /// `stream.write(chunk)` on the worker's bootstrap-time process.stdout/stderr.
     /// Stream errors are dropped, like Node's Console with `ignoreErrors`, so it never
     /// leaves a (non-termination) exception pending.
-    safe fn Bun__NodeWorker__writeConsoleStream(
-        global: &JSGlobalObject,
-        fd: i32,
-        bytes: *const u8,
-        len: usize,
-    );
+    safe fn Bun__NodeWorker__writeConsoleStream(global: &JSGlobalObject, fd: u8, chunk: JSValue);
 }
 
 /// Called by node:worker_threads' worker bootstrap once process stdio is port-backed.
@@ -5882,7 +5885,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     *counter.value_ptr = current;
 
     // SAFETY: `this` is not used past this point; see [`Sink::open`].
-    let mut sink = unsafe { Sink::open(this, false) };
+    let mut sink = unsafe { Sink::open(this, Destination::Stdout) };
     let colors = sink.enable_colors();
     let _ = writeln!(
         sink.writer(),
@@ -5994,7 +5997,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     let elapsed_ms =
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
     // SAFETY: top-level host call; see [`Sink::open`].
-    let mut sink = unsafe { Sink::open(vm_console(global), true) };
+    let mut sink = unsafe { Sink::open(vm_console(global), Destination::Stderr) };
     let colors = sink.enable_colors();
     write_elapsed(sink.writer(), colors, elapsed_ms, slice);
     let _ = sink.writer().write_all(b"\n");
@@ -6026,7 +6029,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
     // SAFETY: top-level host call; see [`Sink::open`]. No `&mut ConsoleObject` is
     // held across the `fmt.format(...)` calls below, which can re-enter JS.
-    let mut sink = unsafe { Sink::open(vm_console(global), true) };
+    let mut sink = unsafe { Sink::open(vm_console(global), Destination::Stderr) };
     let colors = sink.enable_colors();
     write_elapsed(sink.writer(), colors, elapsed_ms, slice);
 

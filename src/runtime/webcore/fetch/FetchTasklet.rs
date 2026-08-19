@@ -538,25 +538,19 @@ impl FetchTasklet {
     /// thread then fails the request promptly — started or still queued — and
     /// hands the tasklet back through its final callback, which teardown
     /// waits for before the handle closes. A request body still streaming in
-    /// from a native source is ended here too: the progress update that would
-    /// otherwise cancel it is released unrun, so nothing else drops its ref.
+    /// from a native source is ended here as well.
     ///
     /// # Safety
-    /// `this` is live (registered ⇒ not yet deinit'd); JS thread. May free
-    /// `*this`; not touched afterwards.
+    /// `this` is live (registered ⇒ not yet deinit'd); JS thread. May free it.
     pub(crate) unsafe fn stop_for_vm_teardown(this: *mut FetchTasklet) {
-        // SAFETY: fn contract. Neither call drops a ref, so the borrow is over
-        // before the release below.
+        // SAFETY: fn contract; neither call drops a ref.
         let owes_body_ref = unsafe {
             let tasklet = &mut *this;
             tasklet.abort_task();
             tasklet.detach_native_request_body_sink()
         };
         if owes_body_ref {
-            // The `+1` from `start_request_stream`. It can be the last ref (a
-            // final progress update that ran once script was forbidden has
-            // already dropped the JS-side one), so release through the
-            // allocation pointer, as the sink's `finalize` does.
+            // The upload's ref; it can be the last one.
             FetchTasklet::deref(this);
         }
     }
@@ -2488,18 +2482,11 @@ impl FetchTasklet {
         }
     }
 
-    /// The stop phase's form of [`Self::cancel_request_body_sink`] for a body
-    /// streaming in from a native source (`ByteStream` / `FileReader`). The
-    /// `+1` from `start_request_stream` is otherwise released only by the
-    /// source ending the sink or by a progress update cancelling it; at
-    /// teardown the source is destroyed with the heap without ending its sink
-    /// and the progress update is released unrun, so the tasklet would leak.
-    /// Runs no script: the source is unpiped, not cancelled. A JS pump's ref
-    /// is left to its controller cell, whose destructor runs the sink's
-    /// `finalize`.
-    ///
-    /// Returns whether the sink's hold on the tasklet was taken over, i.e.
-    /// whether the caller now has to release that `+1`.
+    /// Stop-phase [`Self::cancel_request_body_sink`] for a `ByteStream` /
+    /// `FileReader` body: unpipes the source without running script. At
+    /// teardown nothing else ends such a sink (a JS pump's controller cell
+    /// runs the sink's `finalize` instead). Returns whether the caller took
+    /// over the sink's ref on the tasklet and must release it.
     fn detach_native_request_body_sink(&mut self) -> bool {
         let global_this = self.global_this;
         let Some(sink) = self.sink_mut() else {

@@ -68,6 +68,18 @@ declare module "bun" {
       : import("node:stream/web").ReadableStreamBYOBRequest;
 
     /**
+     * What the `FormData` iteration methods return. With lib.dom loaded this is
+     * the `FormDataIterator` that lib.dom.d.ts declares for the same methods, so
+     * the two declarations of each method agree. Without it, `Request` and
+     * `Response` come from undici-types, whose `FormData` returns plain
+     * iterators, so `await request.formData()` must stay assignable to the
+     * global `FormData`.
+     */
+    type LibFormDataIteratorOrIterableIterator<T> = LibDomIsLoaded extends true
+      ? FormDataIterator<T>
+      : IterableIterator<T>;
+
+    /**
      * Like a `BodyMixin`, but implemented by more types, such as
      * `Blob`, `ReadableStream`, and `Response`.
      *
@@ -1831,17 +1843,18 @@ interface FormData {
   set(name: string, blobValue: Blob, filename?: string): void;
   forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
   /** Returns an iterator over the `[name, value]` pairs of every entry in the list. Same as {@link FormData.entries}. */
-  [Symbol.iterator](): FormDataIterator<[string, Bun.FormDataEntryValue]>;
+  [Symbol.iterator](): Bun.__internal.LibFormDataIteratorOrIterableIterator<[string, Bun.FormDataEntryValue]>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/entries) */
-  entries(): FormDataIterator<[string, Bun.FormDataEntryValue]>;
+  entries(): Bun.__internal.LibFormDataIteratorOrIterableIterator<[string, Bun.FormDataEntryValue]>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/keys) */
-  keys(): FormDataIterator<string>;
+  keys(): Bun.__internal.LibFormDataIteratorOrIterableIterator<string>;
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/values) */
-  values(): FormDataIterator<Bun.FormDataEntryValue>;
+  values(): Bun.__internal.LibFormDataIteratorOrIterableIterator<Bun.FormDataEntryValue>;
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
 // Declared exactly as in lib.dom.d.ts so that the two declarations merge when lib.dom is loaded.
+// Without lib.dom, FormData does not use it (see Bun.__internal.LibFormDataIteratorOrIterableIterator).
 interface FormDataIterator<T> extends IteratorObject<T, BuiltinIteratorReturn, unknown> {
   [Symbol.iterator](): FormDataIterator<T>;
 }

@@ -323,11 +323,8 @@ clearImmediate(1);
 {
   const form = new FormData();
 
-  expectType(form.entries()).is<FormDataIterator<[string, Bun.FormDataEntryValue]>>();
-  expectType(form.keys()).is<FormDataIterator<string>>();
-  expectType(form.values()).is<FormDataIterator<Bun.FormDataEntryValue>>();
-  expectType(form[Symbol.iterator]()).is<FormDataIterator<[string, Bun.FormDataEntryValue]>>();
-
+  // The iterator type differs with and without lib.dom (it is lib.dom's FormDataIterator
+  // when that lib is loaded), so only what the iterators yield is checked here.
   for (const [name, value] of form) {
     expectType(name).is<string>();
     expectType(value).is<File | string>();
@@ -337,8 +334,21 @@ clearImmediate(1);
     expectType(value).is<File | string>();
   }
 
+  expectType([...form.keys()]).is<string[]>();
+  expectType([...form.values()]).is<(File | string)[]>();
   expectType([...form.entries()]).is<[string, File | string][]>();
   expectType(Object.fromEntries(form)).is<{ [k: string]: File | string }>();
+}
+
+// Without lib.dom, Request and Response come from undici-types, whose FormData has its own
+// iterator types. What their formData() resolves to must still be a FormData, like the Blob
+// case in 24154.ts. (fetch.ts covers the other direction, a FormData as a request body.)
+async function formDataFromRequest(request: Request): Promise<FormData> {
+  return await request.formData();
+}
+
+async function formDataFromResponse(response: Response): Promise<FormData> {
+  return await response.formData();
 }
 
 const err = new Error("test");

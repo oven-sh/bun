@@ -1647,23 +1647,8 @@ impl FetchTasklet {
         this.poll_ref
             .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
 
-        // The bytes already in `scheduled_response_buffer` are handed to the
-        // new stream below. That is the drain `Paused` was waiting for, so
-        // flip back to `AutoPause` so the resume scheduled here actually
-        // un-pauses the socket; otherwise a reader that finds the drained
-        // buffer smaller than the pending view returns `Pending` without
-        // signalling and the transport stays paused past a server FIN.
-        this.signal_store
-            .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause);
-
         if let Some(http_) = this.http.as_mut() {
             http_.enable_response_body_streaming();
-
-            // If the server sent the headers and the response body in two separate socket writes
-            // and if the server doesn't close the connection by itself
-            // and doesn't send any follow-up data
-            // then we must make sure the HTTP thread flushes.
-            http::http_thread().schedule_receive_resume(http_.async_http_id);
         }
 
         this.mutex.lock();
@@ -1671,23 +1656,29 @@ impl FetchTasklet {
         // under the mutex so the HTTP thread cannot observe the stale `true`
         // in `callback()` between this unlock and `on_readable_stream_available`.
         this.is_buffering_body.store(false, Ordering::Release);
-        // explicit unlock at each return
-        // (no `?` paths between lock and unlock, so a guard is unnecessary).
-        let size_hint = this.get_size_hint();
-
-        // This means we have received part of the body but not the whole thing
-        if !this.scheduled_response_buffer.list.is_empty() {
-            let scheduled_response_buffer = core::mem::take(&mut this.scheduled_response_buffer);
-            this.mutex.unlock();
-
-            return DrainResult::Owned {
-                list: scheduled_response_buffer.list,
-                size_hint: size_hint as usize,
-            };
-        }
-
+        let size_hint = this.get_size_hint() as usize;
+        // This means we have received part of the body but not the whole thing.
+        let drained = core::mem::take(&mut this.scheduled_response_buffer.list);
         this.mutex.unlock();
-        DrainResult::EstimatedSize(size_hint as usize)
+
+        // The bytes taken above are the drain `Paused` was waiting for: flip back to
+        // `AutoPause` and resume. After the drain, not before: a chunk the HTTP thread
+        // appends (and pauses for) in between would otherwise be handed to the stream here
+        // with its task finding the buffer empty, and nothing left to undo that pause.
+        // Also covers headers and body arriving in separate writes with no follow-up
+        // data: the HTTP thread must flush what it has.
+        this.signal_store
+            .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause);
+        this.schedule_receive_resume();
+
+        if drained.is_empty() {
+            DrainResult::EstimatedSize(size_hint)
+        } else {
+            DrainResult::Owned {
+                list: drained,
+                size_hint,
+            }
+        }
     }
 
     fn get_size_hint(&self) -> BlobSizeType {

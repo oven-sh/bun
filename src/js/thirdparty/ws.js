@@ -1543,7 +1543,6 @@ class WebSocketServer extends EventEmitter {
     // Destroy the socket if the client has already sent a FIN packet.
     if (!socket.readable || !socket.writable) return socket.destroy();
 
-    const server = socket.server[kBunInternals];
     const req = socket[kBunInternals];
 
     if (req?.upgraded) {
@@ -1553,6 +1552,8 @@ class WebSocketServer extends EventEmitter {
     }
 
     if (this._state > RUNNING) return abortHandshake(socket, 503);
+
+    const server = socket.server[kBunInternals];
 
     let protocol = "";
     if (protocols.size) {

@@ -735,10 +735,14 @@ impl NodeHTTPResponse {
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
-        // A tunnel stays open, and ws may still upgrade it later. upgrade() resets this itself.
-        if !self.flags.get().contains(Flags::TUNNELED) {
-            self.upgrade_context.with_mut(|c| c.reset());
-        }
+        // A tunnel stays open, and ws may still upgrade it later, so keep a context whose
+        // headers were already copied out of the request. upgrade() resets it itself.
+        let tunneled = self.flags.get().contains(Flags::TUNNELED);
+        self.upgrade_context.with_mut(|c| {
+            if !tunneled || !c.request.is_null() {
+                c.reset();
+            }
+        });
 
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.clear_and_free());

@@ -1177,9 +1177,12 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     await using upgrade = await receiveUpgrade(upgradeRequest({ path: "/chat" }), server);
 
     // Both servers saw the 'upgrade' event: /chat upgraded the connection, and
-    // /other's 400 for the path mismatch must not reach it.
+    // /other's 400 for the path mismatch must not reach it. Writing that 400
+    // ends the socket, so `destroyed` is what detects it.
     expect(connections).toHaveLength(1);
-    expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+    const received = await upgrade.received("\r\n\r\n");
+    expect(received).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+    expect(received).not.toContain("HTTP/1.1 400");
     expect(upgrade.socket.destroyed).toBe(false);
     chat.close();
     other.close();

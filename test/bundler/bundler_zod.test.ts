@@ -1,15 +1,12 @@
-// Bundler integration for the zod transform (BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD).
+// Bundler integration for the zod transform: `bun build --zod-compiler`,
+// `Bun.build({ zodCompiler: true })`, or BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD.
 // The runtime-transpiler path and full differential coverage live in
 // test/bundler/transpiler/zod-transform.test.ts.
-import { itBundled, testForFile } from "./expectBundled";
+import { itBundled, testForFile, type BundlerTestInput } from "./expectBundled";
 var { expect } = testForFile(import.meta.path);
 
-const zodEnv = { BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD: "1" };
-
-itBundled("zod/TransformBasic", {
+const transformBasic: BundlerTestInput = {
   install: ["zod@4.4.3"],
-  backend: "cli",
-  env: zodEnv,
   target: "bun",
   files: {
     "/entry.ts": /* ts */ `
@@ -34,6 +31,24 @@ itBundled("zod/TransformBasic", {
     // The nested schema calls are absorbed into one wrapper.
     expect(code.split("__zod(() =>").length - 1).toBe(1);
   },
+};
+
+itBundled("zod/TransformBasic", {
+  ...transformBasic,
+  backend: "cli",
+  zodCompiler: true,
+});
+
+itBundled("zod/TransformBasicViaApi", {
+  ...transformBasic,
+  backend: "api",
+  zodCompiler: true,
+});
+
+itBundled("zod/TransformBasicViaEnvironmentVariable", {
+  ...transformBasic,
+  backend: "cli",
+  env: { BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD: "1" },
 });
 
 itBundled("zod/NoTransformWithoutFlag", {
@@ -58,7 +73,7 @@ itBundled("zod/NoTransformWithoutFlag", {
 itBundled("zod/ImpureArgumentBailsOut", {
   install: ["zod@4.4.3"],
   backend: "cli",
-  env: zodEnv,
+  zodCompiler: true,
   target: "bun",
   files: {
     "/entry.ts": /* ts */ `
@@ -108,7 +123,7 @@ itBundled("zod/ImpureArgumentBailsOut", {
 itBundled("zod/OpaqueChildAbsorbedIntoParent", {
   install: ["zod@4.4.3"],
   backend: "cli",
-  env: zodEnv,
+  zodCompiler: true,
   target: "bun",
   files: {
     "/entry.ts": /* ts */ `
@@ -134,7 +149,7 @@ itBundled("zod/OpaqueChildAbsorbedIntoParent", {
 itBundled("zod/DescribeBailsOut", {
   install: ["zod@4.4.3"],
   backend: "cli",
-  env: zodEnv,
+  zodCompiler: true,
   target: "bun",
   files: {
     "/entry.ts": /* ts */ `
@@ -155,7 +170,7 @@ itBundled("zod/DescribeBailsOut", {
 itBundled("zod/NamespaceImport", {
   install: ["zod@4.4.3"],
   backend: "cli",
-  env: zodEnv,
+  zodCompiler: true,
   target: "bun",
   files: {
     "/entry.ts": /* ts */ `
@@ -173,7 +188,7 @@ itBundled("zod/NamespaceImport", {
 itBundled("zod/DefaultImport", {
   install: ["zod@4.4.3"],
   backend: "cli",
-  env: zodEnv,
+  zodCompiler: true,
   target: "bun",
   files: {
     "/entry.ts": /* ts */ `
@@ -191,7 +206,7 @@ itBundled("zod/DefaultImport", {
 itBundled("zod/NamedCtorImportsOnly", {
   install: ["zod@4.4.3"],
   backend: "cli",
-  env: zodEnv,
+  zodCompiler: true,
   target: "bun",
   files: {
     "/entry.ts": /* ts */ `
@@ -209,7 +224,7 @@ itBundled("zod/NamedCtorImportsOnly", {
 itBundled("zod/ZodV4Specifier", {
   install: ["zod@4.4.3"],
   backend: "cli",
-  env: zodEnv,
+  zodCompiler: true,
   target: "bun",
   files: {
     "/entry.ts": /* ts */ `
@@ -227,7 +242,7 @@ itBundled("zod/ZodV4Specifier", {
 itBundled("zod/UnusedSchemaIsTreeShaken", {
   install: ["zod@4.4.3"],
   backend: "cli",
-  env: zodEnv,
+  zodCompiler: true,
   target: "bun",
   files: {
     "/entry.ts": /* ts */ `
@@ -249,7 +264,7 @@ itBundled("zod/UnusedSchemaIsTreeShaken", {
 itBundled("zod/BrowserTargetBundles", {
   install: ["zod@4.4.3"],
   backend: "cli",
-  env: zodEnv,
+  zodCompiler: true,
   target: "browser",
   files: {
     "/entry.ts": /* ts */ `
@@ -264,5 +279,28 @@ itBundled("zod/BrowserTargetBundles", {
   run: { stdout: "x" },
   onAfterBundle(api) {
     expect(api.readFile("/out.js")).toContain("__zod(() =>");
+  },
+});
+
+itBundled("zod/NoBundleTransformsToo", {
+  install: ["zod@4.4.3"],
+  zodCompiler: true,
+  bundling: false,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import { z } from "zod";
+      const S = z.object({ a: z.string() });
+      console.log(S.parse({ a: "x" }).a);
+    `,
+  },
+  run: { stdout: "x" },
+  onAfterBundle(api) {
+    const code = api.readFile("/out.js");
+    // Transpiled only: zod stays an import, and the helper comes from the
+    // runtime's helper module like every other --no-bundle transform.
+    expect(code).toContain('from "zod"');
+    expect(code).toContain('from "bun:wrap"');
+    expect(code).toMatch(/__zod\w*\(\(\) =>/);
   },
 });

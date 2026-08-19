@@ -1630,8 +1630,8 @@ impl<'a> Transpiler<'a> {
                 opts.features.lower_using = !target.is_bun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
-                opts.features.zod_transform =
-                    bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD
+                opts.features.zod_transform = self.options.zod_compiler
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD
                         .get()
                         .unwrap_or(false);
                 opts.features.minify_syntax = self.options.minify_syntax;

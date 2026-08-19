@@ -17,5 +17,5 @@ export const exitCodeMapStrings = {
   [exitCodeMap.unexpectedReload]: "Unexpected reload",
   [exitCodeMap.reloadFailed]: "Reload failed",
   [exitCodeMap.reloadNotCalled]: "Reload not called",
-  [exitCodeMap.unexpectedErrorOverlay]: "Error overlay showing errors the test never checked",
+  [exitCodeMap.unexpectedErrorOverlay]: "Error overlay showing a runtime error the test never checked",
 };

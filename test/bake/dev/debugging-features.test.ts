@@ -440,7 +440,8 @@ describe.skipIf(!hasBakeDebuggingFeatures)(".bake-debug dumps", () => {
       const chunk = stripDumpHeader(readDump(dev, "server/latest_hmr.js"), "latest_hmr.js", "server");
       expect(chunk).toContain("server dump");
       const sourceMap = JSON.parse(readDump(dev, "server/latest_hmr.js.map"));
-      expect(sourceMap.sources).toContain(dev.join("db.ts").replaceAll("\\", "/"));
+      const toPosix = (p: string) => p.replaceAll("\\", "/");
+      expect(sourceMap.sources.map(toPosix)).toContain(toPosix(dev.join("db.ts")));
     },
   });
 });

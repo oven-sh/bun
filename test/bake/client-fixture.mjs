@@ -283,7 +283,7 @@ function createWindow(windowUrl) {
     },
     assert: (value, ...args) => {
       if (value) return;
-      console.trace(...args);
+      console.trace("[E]", ...args);
       process.exit(exitCodeMap.assertionFailed);
     },
     trace: console.trace,
@@ -368,7 +368,7 @@ async function handleReload() {
   try {
     await (pageLoad = loadPage(window));
   } catch (error) {
-    console.error("Failed to reload page:", error);
+    console.error("[E] Failed to reload page:", error);
     process.exit(exitCodeMap.reloadFailed);
   }
   process.send({ type: "reload", args: [] });
@@ -388,22 +388,22 @@ async function loadPage() {
         await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
         continue;
       }
-      console.error("Failed to fetch page after retries:", err.message);
+      console.error("[E] Failed to fetch page after retries:", err.message);
       process.exit(exitCodeMap.reloadFailed);
     }
   }
   if (response.status >= 400 && response.status <= 499) {
-    console.error("Failed to load page:", response.statusText);
+    console.error("[E] Failed to load page:", response.statusText);
     process.exit(exitCodeMap.reloadFailed);
   }
   const contentType = response.headers.get("content-type");
   if (!contentType || !contentType.match(/^text\/html;?/)) {
-    console.error("Invalid content type:", contentType);
+    console.error("[E] Invalid content type:", contentType);
     process.exit(exitCodeMap.reloadFailed);
   }
   const html = await response.text();
   if (!html.includes("<script")) {
-    console.error("missing <script>");
+    console.error("[E] missing <script>");
     process.exit(exitCodeMap.reloadFailed);
   }
   window.document.write(html);
@@ -468,12 +468,11 @@ process.on("message", async message => {
   if (message.type === "exit") {
     // Exiting with a fetch in flight trips a libuv assertion on Windows (uv_async_send on a closing handle).
     await pageLoad?.catch(() => {});
-    if (!expectErrors && window.document.querySelector("bun-hmr")?.style.display === "block") {
-      const errors = collectOverlayErrors();
-      if (errors.length > 0 && JSON.stringify(errors) !== JSON.stringify(lastReportedErrors)) {
-        console.error("[E] Error overlay is showing errors the test never checked:", errors);
-        process.exit(exitCodeMap.unexpectedErrorOverlay);
-      }
+    // Build errors are broadcast to every client and asserted by the test that caused them; a runtime error only reaches the overlay, so one the harness never read is a failure happy-dom swallowed.
+    const runtimeError = !expectErrors && overlayRuntimeError();
+    if (runtimeError && !lastReportedErrors.includes(runtimeError)) {
+      console.error("[E] Error overlay is showing a runtime error the test never checked:", runtimeError);
+      process.exit(exitCodeMap.unexpectedErrorOverlay);
     }
     process.exit(0);
   }
@@ -573,7 +572,14 @@ function collectOverlayErrors() {
   return errors.sort();
 }
 
-/** The last overlay contents the harness read through `get-errors`; an overlay it never read is unexpected at exit. */
+/** The runtime error message the visible overlay shows, or null. */
+function overlayRuntimeError() {
+  const overlay = window.document.querySelector("bun-hmr");
+  if (!overlay || overlay.style.display !== "block") return null;
+  return overlay.shadowRoot.querySelector(".r-error .message-desc")?.textContent ?? null;
+}
+
+/** The last overlay contents the harness read through `get-errors`; a runtime error it never read is unexpected at exit. */
 let lastReportedErrors = [];
 
 process.on("disconnect", () => {
@@ -602,6 +608,6 @@ createWindow(url);
 try {
   await (pageLoad = loadPage(window));
 } catch (error) {
-  console.error("Failed initial page load:", error);
+  console.error("[E] Failed initial page load:", error);
   process.exit(exitCodeMap.reloadFailed);
 }

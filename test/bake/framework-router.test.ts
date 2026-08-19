@@ -423,28 +423,18 @@ describe.concurrent("fileSystemRouterTypes[n].root outside the project root", ()
     [`${prefix}/blog/[slug].ts`]: `export default (req, meta) => new Response("slug:" + meta.params.slug);`,
   });
 
-  async function run(dir: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "start.ts"],
-      cwd: path.join(dir, "apps", "api"),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
+  const start = (dir: string) => run(path.join(dir, "apps", "api"), ["start.ts"]);
 
   test("a sibling directory", async () => {
     using dir = tempDir("fsr-sibling-root", { ...serveFixture("../web/pages"), ...pages("apps/web/pages") });
-    const { stdout, stderr, exitCode } = await run(String(dir));
+    const { stdout, stderr, exitCode } = await start(String(dir));
     expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
     expect(exitCode).toBe(0);
   });
 
   test("an ancestor directory", async () => {
     using dir = tempDir("fsr-ancestor-root", { ...serveFixture(".."), ...pages("apps") });
-    const { stdout, stderr, exitCode } = await run(String(dir));
+    const { stdout, stderr, exitCode } = await start(String(dir));
     expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
     expect(exitCode).toBe(0);
   });
@@ -458,7 +448,7 @@ describe.concurrent("fileSystemRouterTypes[n].root outside the project root", ()
       "apps/web/pages/about.ts": `export default () => new Response("");`,
       "apps/web/pages/about/index.ts": `export default () => new Response("");`,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir));
+    const { stdout, stderr, exitCode } = await start(String(dir));
     expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
     expect(stderr).toContain('"../web/pages/[oops.ts" is not a valid route');
     expect(stderr).toContain('Missing "]" to match this route parameter');

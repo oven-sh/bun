@@ -1202,10 +1202,7 @@ pub struct BundleOptions<'a> {
     pub react_fast_refresh: bool,
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
-    /// `--zod-compiler` / `zodCompiler`: run the zod schema transform
-    /// (`RuntimeFeatures::zod_transform`) on this build. The
-    /// `BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD` environment variable turns the same
-    /// transform on for every transpiler, the runtime's included.
+    /// `--zod-compiler` / `zodCompiler`: sets `RuntimeFeatures::zod_transform` for this build.
     pub zod_compiler: bool,
     pub(crate) inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the

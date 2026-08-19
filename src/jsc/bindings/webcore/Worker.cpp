@@ -365,7 +365,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     return array;
 }
 
-extern "C" void Bun__ConsoleObject__routeToProcessStdio(JSC::JSGlobalObject*);
+extern "C" void Bun__ConsoleObject__useWorkerStdio(JSC::JSGlobalObject*);
 
 // worker_threads (worker side): from now on the global console writes through the given
 // process.stdout / process.stderr (port-backed streams to the parent) instead of the fds,
@@ -377,7 +377,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRouteConsoleToProcessStdio, (JSGlobalObject *
     auto* stderrStream = callFrame->argument(1).getObject();
     ASSERT(stdoutStream && stderrStream);
     globalObject->setNodeWorkerConsoleStreams(stdoutStream, stderrStream);
-    Bun__ConsoleObject__routeToProcessStdio(globalObject);
+    Bun__ConsoleObject__useWorkerStdio(globalObject);
     return JSValue::encode(jsUndefined());
 }
 

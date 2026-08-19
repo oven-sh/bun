@@ -99,14 +99,22 @@ pub struct ConsoleObject {
 
     counts: Counter,
 
-    /// node:worker_threads worker: output goes through `process.stdout` /
-    /// `process.stderr` (streams to the parent thread) instead of the fds, so the
-    /// parent's `worker.stdout` sees it. Uncolored, as those streams are not TTYs.
-    routes_to_process_stdio: bool,
+    output: ConsoleOutput,
 
     // The writer adapters above hold raw pointers into `{stderr,stdout}_buffer`;
     // moving the struct would dangle them, so opt out of `Unpin`.
     _pin: core::marker::PhantomPinned,
+}
+
+/// Where a console's output goes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ConsoleOutput {
+    /// The process's stdout / stderr, through the buffered fd writers.
+    Fds,
+    /// A node:worker_threads worker: its `process.stdout` / `process.stderr`
+    /// (streams to the parent thread), so the parent's `worker.stdout` sees it.
+    /// Uncolored, as those streams are not TTYs.
+    WorkerStdio,
 }
 
 impl core::fmt::Display for ConsoleObject {
@@ -132,7 +140,7 @@ impl ConsoleObject {
             error_writer_backing: Output::QuietWriterAdapter::uninit(),
             writer_backing: Output::QuietWriterAdapter::uninit(),
             default_indent: 0,
-            routes_to_process_stdio: false,
+            output: ConsoleOutput::Fds,
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
         });
@@ -570,19 +578,18 @@ impl<'a> Sink<'a> {
     unsafe fn open(console: *mut ConsoleObject, destination: Destination) -> Sink<'a> {
         // SAFETY: caller contract.
         unsafe {
-            if (*console).routes_to_process_stdio {
-                Sink::Stream {
-                    buffer: Vec::new(),
-                    destination,
-                }
-            } else {
-                Sink::Fd {
+            match (*console).output {
+                ConsoleOutput::Fds => Sink::Fd {
                     writer: match destination {
                         Destination::Stdout => (*console).writer(),
                         Destination::Stderr => (*console).error_writer(),
                     },
                     destination,
-                }
+                },
+                ConsoleOutput::WorkerStdio => Sink::Stream {
+                    buffer: Vec::new(),
+                    destination,
+                },
             }
         }
     }
@@ -648,9 +655,9 @@ unsafe extern "C" {
 
 /// Called by node:worker_threads' worker bootstrap once process stdio is port-backed.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__ConsoleObject__routeToProcessStdio(global: &JSGlobalObject) {
+pub extern "C" fn Bun__ConsoleObject__useWorkerStdio(global: &JSGlobalObject) {
     // SAFETY: see [`vm_console`]; JS thread, no other borrow live.
-    unsafe { vm_console_mut(global) }.routes_to_process_stdio = true;
+    unsafe { vm_console_mut(global) }.output = ConsoleOutput::WorkerStdio;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

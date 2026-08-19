@@ -1165,9 +1165,8 @@ impl<C: SourceContext> NewSource<C> {
     /// that ([`SourceContext::native_ref_roots_wrapper`]). Called when either
     /// input changes: [`Self::increment_count`], and
     /// [`ReadableStream::wire_native_sink`]. [`Self::decrement_count`] drops the
-    /// root once only the wrapper's own ref remains; a sink that goes away
-    /// mid-body closes the producer (`ByteStream::detach_finished_sink`,
-    /// `ByteStream::cancel_from_sink`), and the producer's release is that drop.
+    /// root once only the wrapper's own ref remains (a sink that goes away
+    /// mid-body closes the producer, `ByteStream::detach_finished_sink`).
     pub fn root_wrapper_if_needed(&mut self) {
         if self.ref_count <= 1 || !self.context.native_ref_roots_wrapper() {
             return;

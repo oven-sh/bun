@@ -186,11 +186,9 @@ impl ByteStream {
         self.sink_paused.set(false);
     }
 
-    /// The sink takes nothing more: it answered a write with `Done` or `Err`, or it is
-    /// being torn down. The stream stays locked to it, so the rest of the body has no
-    /// taker either. A producer still mid-body is closed the way [`Self::cancel_from_sink`]
-    /// closes it for a sink that closes itself; left alone it would sit paused on its
-    /// connection for good.
+    /// The sink takes nothing more (its write answered `Done`/`Err`, or it is being torn
+    /// down). The stream stays locked to it, so a producer still mid-body is closed, as
+    /// [`Self::cancel_from_sink`] does for a sink that closes itself.
     pub(crate) fn detach_finished_sink(&self) {
         if self.has_received_last_chunk.get() {
             self.unpipe_without_deref();
@@ -200,9 +198,8 @@ impl ByteStream {
     }
 
     /// [`Self::detach_finished_sink`] for a sink this stream ends itself. `end` only
-    /// detaches the sink from the stream (`FileSink::end_from_stream`,
-    /// `FetchRequestBodySink::end_from_stream`): the producer is still attached after
-    /// it and still holds the source, so it is closed last.
+    /// detaches the sink (see `FileSink::end_from_stream`), so the producer, which still
+    /// holds the source, is closed after it.
     fn end_finished_sink(&self, sink: SinkHandle, err: Option<streams::StreamError>) {
         self.unpipe_without_deref();
         sink.end(err);

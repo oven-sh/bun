@@ -400,16 +400,12 @@ mod shim {
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
-    /// The response is going away (ended, or the client left). A body still
-    /// mid-stream is cancelled with it: it stayed locked to this response, so
-    /// a proxied fetch would otherwise sit paused on its connection for good.
+    /// The response is done with its natively piped body. A body still
+    /// mid-stream is cancelled: it stayed locked to this response.
     #[inline]
     pub(super) fn byte_stream_unpipe(s: NonNull<ByteStream>) {
-        // The caller has just `take()`n the pointer out of `self.byte_stream`
-        // and still holds `response_body_readable_stream_ref`, which keeps the
-        // allocation alive (BackRef invariant: pointee outlives this
-        // temporary). R-2: `detach_finished_sink` takes `&self`, so shared
-        // deref is sufficient.
+        // The caller has just `take()`n `self.byte_stream` and still holds
+        // `response_body_readable_stream_ref`, which keeps the pointee alive.
         bun_ptr::BackRef::from(s).detach_finished_sink()
     }
 }
@@ -1399,11 +1395,9 @@ where
             return;
         }
 
-        // A body piped natively into this response (`Source::Bytes` in
-        // `do_render_with_body`) has nobody left to take it: cancel it, and
-        // release the ref the pipe took. `end_chunk`, which releases that ref
-        // otherwise, is never reached once the sink is gone, and a body the
-        // client left idle or backpressured would not have reached it anyway.
+        // A natively piped body has nobody left to take it. The deref balances
+        // the ref `do_render_with_body` took for the pipe: `end_chunk`, which
+        // releases it otherwise, cannot run once the sink is gone.
         if let Some(stream) = this.byte_stream.take() {
             shim::byte_stream_unpipe(stream);
             this.deref();

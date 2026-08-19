@@ -74,37 +74,34 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker)
         .msgh_id = 0,
     };
 
-    mach_msg_return_t kr = mach_msg(&msg, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
-        msg.msgh_size, 0, MACH_PORT_NULL,
-        0, // Fail instantly if the port is full
-        MACH_PORT_NULL);
+    while (true) {
+        mach_msg_return_t kr = mach_msg(&msg, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+            msg.msgh_size, 0, MACH_PORT_NULL,
+            0, // Fail instantly if the port is full
+            MACH_PORT_NULL);
 
-    switch (kr) {
-    case MACH_MSG_SUCCESS: {
-        return true;
-    }
+        switch (kr) {
+        case MACH_MSG_SUCCESS: {
+            return true;
+        }
 
-    // This means that the send would've blocked because the
-    // queue is full. We assume success because the port is full.
-    case MACH_SEND_TIMED_OUT: {
-        return true;
-    }
+        // Queue full (qlimit is 1): a wakeup is already pending.
+        case MACH_SEND_TIMED_OUT: {
+            return true;
+        }
 
-    // No space means it will wake up.
-    case MACH_SEND_NO_BUFFER: {
-        return true;
-    }
+        // Nothing was queued (no kernel buffer): retry or the wakeup is lost.
+        case MACH_SEND_NO_BUFFER: {
+            continue;
+        }
 
-    default: {
-        ASSERT_NOT_REACHED_WITH_MESSAGE("mach_msg failed with %x", kr);
-        return false;
+        default: {
+            // This port is never destroyed, so dead-port errors can't happen.
+            ASSERT_NOT_REACHED_WITH_MESSAGE("mach_msg failed with %x", kr);
+            return false;
+        }
+        }
     }
-    }
-}
-
-extern "C" void io_darwin_close_machport(mach_port_t port)
-{
-    mach_port_deallocate(mach_task_self(), port);
 }
 
 #else
@@ -119,7 +116,5 @@ extern "C" int io_darwin_create_machport(int fd,
 
 // stub out these symbols
 extern "C" bool io_darwin_schedule_wakeup(void* waker) { return false; }
-
-extern "C" void io_darwin_close_machport(unsigned port) {}
 
 #endif

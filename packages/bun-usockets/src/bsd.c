@@ -1980,9 +1980,7 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 }
 #endif
 
-/* The OS error of the call that just failed; never 0, so a caller that gets
- * LIBUS_SOCKET_ERROR always has a code to report. */
-static int bsd_last_error_or_refused(void) {
+int bsd_last_error_or_refused(void) {
     int err = LIBUS_ERR;
     return err ? err : ECONNREFUSED;
 }

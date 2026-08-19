@@ -549,12 +549,6 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->connect_next = NULL;
 }
 
-/* The OS error of the call that just failed; never 0. */
-static int last_error_or_refused(void) {
-    int err = LIBUS_ERR;
-    return err ? err : ECONNREFUSED;
-}
-
 struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options, int socket_ext_size, int *error) {
@@ -568,7 +562,7 @@ struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
-        *error = last_error_or_refused();
+        *error = bsd_last_error_or_refused();
         bsd_close_socket(connect_socket_fd);
         us_poll_free(p, group->loop);
         return NULL;
@@ -684,7 +678,7 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
-        *error = last_error_or_refused();
+        *error = bsd_last_error_or_refused();
         bsd_close_socket(connect_socket_fd);
         us_poll_free(p, group->loop);
         return 0;

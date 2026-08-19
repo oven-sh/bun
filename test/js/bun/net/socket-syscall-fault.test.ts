@@ -406,8 +406,8 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
 // builds it from one table (bun_errno::connect_errno_code): the codes a unix
 // path or a local bind can produce keep their name, every other errno is
 // reported as ECONNREFUSED. The errno itself comes from connect(2) and has to
-// survive the close of the failed socket (bsd.c restores it after
-// bsd_close_socket), which is what the rows with a close rule check.
+// survive the close of the failed socket (bsd.c stores it in *error before
+// bsd_close_socket runs), which is what the rows with a close rule check.
 describe.skipIf(skip)("connect() reports the errno the failed dial left", () => {
   type ErrnoName = keyof typeof osConstants.errno;
   // [dial, errno connect(2) fails with (null: the real connect(2) runs, and the

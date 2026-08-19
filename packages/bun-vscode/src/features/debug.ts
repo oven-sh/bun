@@ -75,11 +75,12 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
 function runFileCommand(resource?: vscode.Uri): void {
   const path = getActivePath(resource);
   if (path) {
-    vscode.debug.startDebugging(getWorkspaceFolder(resource), {
+    const folder = getWorkspaceFolder(resource);
+    vscode.debug.startDebugging(folder, {
       ...RUN_CONFIGURATION,
       noDebug: true,
       program: path,
-      runtime: getRuntime(resource),
+      runtime: getRuntime(folder ?? resource),
     });
   }
 }

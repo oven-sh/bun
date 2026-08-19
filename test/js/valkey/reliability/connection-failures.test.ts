@@ -1906,9 +1906,8 @@ describe("Valkey: Recovering After fail()", () => {
   });
 
   // A TLS stub run under Node in its own process, so it can read while this
-  // loop is blocked, and so how it sees the peer's close is not shared with
-  // the client under test: Bun's own sockets report data followed by an RST
-  // as an orderly end, Node reports the reset. It pauses connection 1 after
+  // loop is blocked, and so that what it reports about the peer's close does
+  // not come from the socket code under test. It pauses connection 1 after
   // HELLO, resumes when the resume file appears, and writes the drained file
   // once its byte count has reached the number written into the resume file
   // (minus what one spilled batch can hold) and stopped growing. When the

@@ -2368,10 +2368,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         argv1: JSValue,
     ) -> JSValue;
-    safe fn JSC__JSInternalPromise__resolvedPromise(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> *mut JSInternalPromise;
 }
 
 fn get_origin_timestamp() -> u64 {
@@ -2766,7 +2762,9 @@ impl VirtualMachine {
                     if let Some(stored) = self.pending_internal_promise {
                         return Ok(stored);
                     }
-                    let resolved = JSC__JSInternalPromise__resolvedPromise(global_ref, ret);
+                    let resolved =
+                        crate::cpp::JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
+                            .map_err(|_| crate::CrateError::JSError)?;
                     self.pending_internal_promise = Some(resolved);
                     self.pending_internal_promise_is_protected = false;
                     return Ok(resolved);

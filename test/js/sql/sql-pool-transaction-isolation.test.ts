@@ -9,19 +9,25 @@ import { bunEnv, bunExe } from "harness";
 import type net from "node:net";
 import {
   listeningServer,
+  mysqlErrPacket,
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
   pgCommandComplete,
+  pgErrorResponse,
   pgReadyForQuery,
 } from "./wire-frames";
 
 type Received = { conn: number; sql: string };
-type MockServer = (received: Received[]) => Promise<{ port: number; server: net.Server }>;
+// `onReceived` runs after each statement is recorded.
+type MockServer = (received: Received[], onReceived?: () => void) => Promise<{ port: number; server: net.Server }>;
 
-// Query text containing "KILL" destroys the socket without answering.
-const pgMockServer: MockServer = received => {
+// Both mocks answer every statement at once, except for these markers in the query text:
+//   KILL destroys the socket without answering,
+//   FAIL answers with an error,
+//   HOLD never answers.
+const pgMockServer: MockServer = (received, onReceived) => {
   let nextConn = 0;
   return listeningServer(socket => {
     const connId = nextConn++;
@@ -46,9 +52,17 @@ const pgMockServer: MockServer = received => {
         if (type !== "Q") continue;
         const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
         received.push({ conn: connId, sql });
+        onReceived?.();
         if (sql.includes("KILL")) {
           socket.destroy();
           return;
+        }
+        if (sql.includes("HOLD")) continue;
+        if (sql.includes("FAIL")) {
+          socket.write(
+            Buffer.concat([pgErrorResponse({ S: "ERROR", C: "XX000", M: "mock failure" }), pgReadyForQuery()]),
+          );
+          continue;
         }
         socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
       }
@@ -57,7 +71,7 @@ const pgMockServer: MockServer = received => {
   });
 };
 
-const mysqlMockServer: MockServer = received => {
+const mysqlMockServer: MockServer = (received, onReceived) => {
   const COM_QUIT = 0x01;
   const COM_QUERY = 0x03;
   let nextConn = 0;
@@ -76,8 +90,14 @@ const mysqlMockServer: MockServer = received => {
         if (payload[0] === COM_QUERY) {
           const sql = payload.subarray(1).toString("utf8");
           received.push({ conn: connId, sql });
+          onReceived?.();
           if (sql.includes("KILL")) {
             socket.destroy();
+            return;
+          }
+          if (sql.includes("HOLD")) return;
+          if (sql.includes("FAIL")) {
+            socket.write(mysqlErrPacket(1, 1105, "HY000", "mock failure"));
             return;
           }
           socket.write(mysqlOkPacket(1));
@@ -383,6 +403,119 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
         { conn: 0, sql: beginCommand },
         { conn: 0, sql: "SELECT 'T1a'" },
         { conn: 0, sql: "ROLLBACK" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The three tests below end the same way: the connection the reservation held gets
+  // closed, so the pool's only slot reconnects (conn 1) for the next transaction, and a
+  // graceful sql.close() resolves because the pool no longer counts the reservation.
+  // Nothing calls reserved.release(); close() alone has to return the slot.
+  async function expectSlotReturned(sql: SQL, connectionClosed: Promise<void>) {
+    await connectionClosed;
+    const t = await sql.begin(async tx => {
+      await tx.unsafe("SELECT 'after'");
+      return "after";
+    });
+    expect(t).toBe("after");
+    await sql.close();
+  }
+
+  test("reserved.close({ timeout }) closes the connection once the pending query finishes", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const connectionClosed = Promise.withResolvers<void>();
+    const sql = new SQL({ ...options(port), onclose: () => connectionClosed.resolve() });
+    try {
+      const reserved = await sql.reserve();
+      const inFlight = reserved.unsafe("SELECT 'in flight'").execute();
+      const closed = reserved.close({ timeout: 60 });
+      await inFlight;
+      await closed;
+      await expectSlotReturned(sql, connectionClosed.promise);
+      expect(received).toEqual([
+        { conn: 0, sql: "SELECT 'in flight'" },
+        { conn: 1, sql: beginCommand },
+        { conn: 1, sql: "SELECT 'after'" },
+        { conn: 1, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // A query that fails while close() waits does not end the wait: the transaction that is
+  // still open on the same reservation must get to COMMIT before the connection closes.
+  // bun:test also fails this test if close()'s wait reports the handled failure as unhandled.
+  test("reserved.close({ timeout }) keeps waiting for the other pending work when one query fails", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const connectionClosed = Promise.withResolvers<void>();
+    const sql = new SQL({ ...options(port), onclose: () => connectionClosed.resolve() });
+    try {
+      const reserved = await sql.reserve();
+      const inTransaction = Promise.withResolvers<void>();
+      const finishTransaction = Promise.withResolvers<void>();
+      const t1 = reserved.begin(async tx => {
+        await tx.unsafe("SELECT 'T1a'");
+        inTransaction.resolve();
+        await finishTransaction.promise;
+        return "t1";
+      });
+      await inTransaction.promise;
+      const failed = reserved.unsafe("SELECT 'FAIL'").then(
+        () => null,
+        e => e.message,
+      );
+      const closed = reserved.close({ timeout: 60 });
+      expect(await failed).toBe("mock failure");
+      finishTransaction.resolve();
+      expect(await t1).toBe("t1");
+      await closed;
+      await expectSlotReturned(sql, connectionClosed.promise);
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "SELECT 'FAIL'" },
+        { conn: 0, sql: "COMMIT" },
+        { conn: 1, sql: beginCommand },
+        { conn: 1, sql: "SELECT 'after'" },
+        { conn: 1, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The query that close() cancels here rejects, and that rejection belongs to its caller.
+  // bun:test fails this test if close()'s own wait reports it as unhandled as well.
+  test("reserved.close({ timeout }) closes the connection under a query that outlives the timeout", async () => {
+    const received: Received[] = [];
+    const held = Promise.withResolvers<void>();
+    const { port, server } = await mockServer(received, () => held.resolve());
+    const connectionClosed = Promise.withResolvers<void>();
+    const sql = new SQL({ ...options(port), onclose: () => connectionClosed.resolve() });
+    try {
+      const reserved = await sql.reserve();
+      const neverAnswered = reserved.unsafe("SELECT 'HOLD'").then(
+        () => null,
+        e => e,
+      );
+      // The server has the query and will not answer it, so only the timer can end close().
+      await held.promise;
+      await reserved.close({ timeout: 0.05 });
+      expect(await neverAnswered).toBeInstanceOf(Error);
+      await expectSlotReturned(sql, connectionClosed.promise);
+      expect(received).toEqual([
+        { conn: 0, sql: "SELECT 'HOLD'" },
+        { conn: 1, sql: beginCommand },
+        { conn: 1, sql: "SELECT 'after'" },
+        { conn: 1, sql: "COMMIT" },
       ]);
     } finally {
       await sql.close({ timeout: 0 }).catch(() => {});

@@ -1,3 +1,9 @@
+# An entry matches when it is a substring of ANY frame in the allocation stack
+# (the innermost malloc_context_size frames, 30 in CI), so an entry naming a
+# frame that encloses ordinary code hides every leak that code makes. Never add
+# the frames that evaluate a module's top level (the CJS wrapper call, ESM
+# evaluation, worker eval scripts): everything a test fixture does at its top
+# level runs under them. test/internal/leaksan-suppressions.test.ts checks this.
 leak:runtime.server.server.ServerAllConnectionsClosedTask.schedule
 leak:cli.bunfig.Bunfig.parse__anon
 leak:resolver.resolver.Resolver.parsePackageJSON
@@ -28,7 +34,6 @@ leak:Zig::ImportMetaObject::createFromSpecifier
 leak:Zig::GlobalObject::moduleLoaderResolve
 leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
-leak:JSC__JSModuleLoader__loadAndEvaluateModule
 leak:uws_create_app
 leak:uws_h3_create_app
 leak:lsquic_global_init
@@ -61,7 +66,6 @@ leak:sys_jsc.error_jsc.errorToSystemError
 leak:runtime.webcore.Blob.getNameString
 leak:JSC::callIntlDateTimeFormat
 leak:functionRunProfiler
-leak:JSC::JSModuleLoader::evaluateNonVirtual
 leak:patch.patch.PatchFile.apply
 leak:jsc.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.runFromJSThread
 leak:runtime.webcore.blob.Store.initS3WithReferencedCredentials
@@ -92,7 +96,6 @@ leak:runtime.node.zlib.NativeZlib.Context.init
 leak:JSC::intlCollatorAvailableLocales
 leak:Bun__canonicalizeIP
 leak:dlopen
-leak:Bun::evaluateCommonJSModuleOnce
 leak:fse_run_loop
 leak:Zig::NapiClass_ConstructorFunction
 leak:runtime.webcore.fetch.FetchTasklet.toResponse

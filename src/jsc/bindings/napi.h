@@ -258,6 +258,13 @@ public:
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
         clearExceptionsBetweenFinalizers();
+
+        // Same reason as m_cleanupHooks above: a napi_ref the addon never
+        // deleted keeps the last Ref to this env, so ~NapiEnv may never run.
+        // Nothing uses the env after cleanup (node_api_get_module_file_name
+        // answers "" for a null filename).
+        delete[] std::exchange(filename, nullptr);
+        m_napiModule.nm_filename = nullptr;
     }
 
     // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned

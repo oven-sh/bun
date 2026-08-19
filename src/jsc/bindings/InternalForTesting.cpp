@@ -59,6 +59,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
 #endif
 }
 
+// Leaks one malloc'd block on purpose so a test can check that LSan, with
+// test/leaksan.supp applied, still reports a leak made from the calling JS
+// context (test/internal/leaksan-suppressions.test.ts). The report attributes
+// the block to this frame. The pointer must not end up anywhere LSan treats
+// as a root, so it only ever lives in this local, which is cleared before
+// returning; `volatile` keeps the unused allocation from being optimized out.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_lsanIntentionalLeak, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if ASAN_ENABLED
+    char* volatile block = static_cast<char*>(malloc(64));
+    if (block)
+        block[0] = 1;
+    block = nullptr;
+#endif
+    return encodedJSUndefined();
+}
+
 // Returns the net refcount change on the *original* StringImpl after a
 // BunString owning one ref to it is passed through BunString__toThreadSafe
 // and then released. A correct implementation must return 0; a positive

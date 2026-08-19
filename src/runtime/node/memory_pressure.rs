@@ -23,12 +23,13 @@
 //!
 //! Armed lazily on the first listener and disarmed on the last removal via
 //! `onDidChangeListeners` in `BunProcess.cpp`, matching how signal handlers
-//! are wired. The watcher does not keep the event loop alive.
+//! are wired. The watcher does not keep the event loop alive. A listener that
+//! is still registered when its VM goes away is disarmed by
+//! [`stop_for_vm_teardown`] instead.
 
 use bun_event_loop::ConcurrentTask::{Task, task_tag};
 use bun_jsc::JSGlobalObject;
-#[cfg(not(windows))]
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{SweepResult, VirtualMachine};
 #[cfg(not(windows))]
 use core::ptr::NonNull;
 
@@ -215,8 +216,8 @@ mod posix {
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
     }
 
-    pub(super) fn uninstall(global: &JSGlobalObject) {
-        let Some(watcher) = take_watcher(global.bun_vm().as_mut()) else {
+    pub(super) fn uninstall(vm: &mut VirtualMachine) {
+        let Some(watcher) = take_watcher(vm) else {
             return;
         };
         if let Some(mut poll) = watcher.poll {
@@ -377,8 +378,8 @@ mod windows {
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
     }
 
-    pub(super) fn uninstall(global: &JSGlobalObject) {
-        let Some(raw) = slot(global.bun_vm().as_mut()).take() else {
+    pub(super) fn uninstall(vm: &mut VirtualMachine) {
+        let Some(raw) = slot(vm).take() else {
             return;
         };
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
@@ -406,10 +407,33 @@ pub(crate) extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
+    uninstall(global.bun_vm().as_mut());
+}
+
+fn uninstall(vm: &mut VirtualMachine) {
     #[cfg(not(windows))]
-    posix::uninstall(global);
+    posix::uninstall(vm);
     #[cfg(windows)]
-    windows::uninstall(global);
+    windows::uninstall(vm);
+}
+
+/// Stop-phase teardown (`stop_active_handles_for_vm_teardown`): a listener
+/// still registered when the VM exits never reaches `uninstall` through
+/// `onDidChangeListeners`, and the slot in `RareData` is an erased pointer
+/// that `RareData`'s drop does not free. Runs while `RareData.file_polls` and
+/// the loop are alive, which `uninstall` needs to unregister the poll.
+pub(crate) fn stop_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
+    // Read the raw option: a VM that never armed the watcher has nothing to
+    // stop and must not lazily allocate a `RareData` here.
+    let installed = vm
+        .rare_data
+        .as_deref_mut()
+        .is_some_and(|rare| rare.memory_pressure_watcher_slot().is_some());
+    if !installed {
+        return SweepResult::Idle;
+    }
+    uninstall(vm);
+    SweepResult::Stopped
 }
 
 #[unsafe(no_mangle)]

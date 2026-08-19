@@ -7,6 +7,19 @@ test/cli/install/bun-security-scanner-matrix-without-node-modules.test.ts
 # LSAN and no sanitizer report, just slow VM teardown.
 test/js/node/watch/fs.watch.test.ts
 
+# Its visitChildren stress runs with Malloc=1 (so fastMalloc'd objects are
+# visible to LSan) and reports two known leaks: the per-worker EventNames table
+# (#38164) and the ConsoleObject of every ShadowRealm global (reported
+# separately). Remove once both are fixed.
+test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts
+
+# In its `bun test --parallel` case each worker process exits without cleaning
+# up the last addon env it loaded, leaking the env's module file name (the
+# env's deferred finalizers are the napi_internal_enqueue_finalizer entry in
+# leaksan.supp). Reported separately; remove once the worker exit path cleans
+# up its envs.
+test/regression/issue/30205.test.ts
+
 
 # error exit root cause unclear
 test/js/node/test/parallel/test-util-callbackify.js

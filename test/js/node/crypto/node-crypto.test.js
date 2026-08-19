@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux } from "harness";
 
 import crypto from "node:crypto";
+import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import util from "node:util";
 
@@ -1222,4 +1223,37 @@ describe("Certificate spkac argument validation", () => {
     expect(crypto.Certificate.verifySpkac(Buffer.from("not a spkac"))).toBe(false);
     expect(new crypto.Certificate().verifySpkac("not a spkac", "utf8")).toBe(false);
   });
+
+  // exportChallenge copies the decoded challenge into the returned Buffer; the
+  // OPENSSL_malloc'd buffer it was decoded into used to be dropped. Checked with
+  // LeakSanitizer the way CI runs the ASAN build.
+  it.skipIf(!isASAN || !isLinux)(
+    "Certificate.exportChallenge does not leak the decoded challenge",
+    async () => {
+      const spkacPath = join(import.meta.dir, "../test/fixtures/keys/rsa_spkac.spkac");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Certificate } = require("node:crypto");
+            const spkac = require("node:fs").readFileSync(${JSON.stringify(spkacPath)});
+            process.stdout.write(Certificate.exportChallenge(spkac).toString());
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "this-is-a-challenge", stderr: "", exitCode: 0 });
+    },
+    // On a failure LSan symbolizes the report, which takes a while with the debug binary.
+    90_000,
+  );
 });

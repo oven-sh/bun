@@ -166,17 +166,17 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    auto cert = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-    if (!cert.data || cert.len == 0) {
+    auto challenge = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    if (!challenge || challenge.size() == 0) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto result = JSC::ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(cert.data), cert.len });
+    auto result = JSC::ArrayBuffer::tryCreate(challenge.span());
     if (!result) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(result), 0, cert.len);
+    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(result), 0, challenge.size());
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(bufferResult);

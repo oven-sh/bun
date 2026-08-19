@@ -1389,8 +1389,7 @@ bool SafeX509InfoAccessPrint(const BIOPointer& out, X509_EXTENSION* ext);
 bool VerifySpkac(const char* input, size_t length);
 BIOPointer ExportPublicKey(const char* input, size_t length);
 
-// The caller takes ownership of the returned Buffer<char>
-Buffer<char> ExportChallenge(const char* input, size_t length);
+DataPointer ExportChallenge(const char* input, size_t length);
 
 // ============================================================================
 // KDF

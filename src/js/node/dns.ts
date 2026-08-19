@@ -57,6 +57,17 @@ function withTranslatedError(error: any) {
   if (code?.startsWith?.("DNS_")) {
     error.code = code.slice(4);
   }
+  // c-ares errors are surfaced with the raw ARES_* number in `errno`, but
+  // Node's DNSException leaves `errno` unset for c-ares query errors; only
+  // getaddrinfo / getnameinfo (libuv) errors carry a numeric errno.
+  const syscall = error?.syscall;
+  if (
+    syscall !== "getaddrinfo" &&
+    syscall !== "getnameinfo" &&
+    typeof error?.errno === "number"
+  ) {
+    delete error.errno;
+  }
   return error;
 }
 

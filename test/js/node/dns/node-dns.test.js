@@ -609,6 +609,31 @@ describe("test invalid arguments", () => {
     await promise.catch(() => {}); // result depends on the environment's resolver
   });
 
+  // https://github.com/oven-sh/bun/issues/37320
+  describe("DNS error errno matches Node.js", () => {
+    it("dns.promises.resolve errors have no errno", async () => {
+      const error = await dns_promises.resolveAny("invalid.invalid").catch(e => e);
+      expect(error.code).toBe("ENOTFOUND");
+      expect(error.errno).toBeUndefined();
+    });
+
+    it("dns.resolve callback errors have no errno", async () => {
+      const error = await new Promise(resolve => {
+        dns.resolveAny("invalid.invalid", (err, records) => resolve(err));
+      });
+      expect(error.code).toBe("ENOTFOUND");
+      expect(error.errno).toBeUndefined();
+    });
+
+    it("dns.lookup errors keep a numeric errno", async () => {
+      const error = await new Promise(resolve => {
+        dns.lookup("invalid.invalid", err => resolve(err));
+      });
+      expect(error.code).toBe("ENOTFOUND");
+      expect(typeof error.errno).toBe("number");
+    });
+  });
+
   it("dns.lookupService", async () => {
     expect(() => {
       dns.lookupService("", 443, (err, hostname, service) => {});

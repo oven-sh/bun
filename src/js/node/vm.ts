@@ -125,28 +125,27 @@ function runInNewContext(code, context, options) {
 
 // lib/vm.js getContextOptions: a run's context* options are the new context's options.
 function getContextOptions(options) {
-  const contextOptions = {
-    name: options.contextName,
-    origin: options.contextOrigin,
-    codeGeneration: undefined,
-    microtaskMode: options.microtaskMode,
-    importModuleDynamically: options.importModuleDynamically,
-  };
-  if (contextOptions.name !== undefined) validateString(contextOptions.name, "options.contextName");
-  if (contextOptions.origin !== undefined) validateString(contextOptions.origin, "options.contextOrigin");
-  const contextCodeGeneration = options.contextCodeGeneration;
+  const {
+    contextName: name,
+    contextOrigin: origin,
+    contextCodeGeneration,
+    microtaskMode,
+    importModuleDynamically,
+  } = options;
+  if (name !== undefined) validateString(name, "options.contextName");
+  if (origin !== undefined) validateString(origin, "options.contextOrigin");
+  let codeGeneration: { strings?: boolean; wasm?: boolean } | undefined;
   if (contextCodeGeneration !== undefined) {
     validateObject(contextCodeGeneration, "options.contextCodeGeneration");
     const { strings, wasm } = contextCodeGeneration;
     if (strings !== undefined) validateBoolean(strings, "options.contextCodeGeneration.strings");
     if (wasm !== undefined) validateBoolean(wasm, "options.contextCodeGeneration.wasm");
-    const codeGeneration: { strings?: boolean; wasm?: boolean } = {};
+    codeGeneration = {};
     if (strings !== undefined) codeGeneration.strings = strings;
     if (wasm !== undefined) codeGeneration.wasm = wasm;
-    contextOptions.codeGeneration = codeGeneration;
   }
-  if (options.microtaskMode !== undefined) validateString(options.microtaskMode, "options.microtaskMode");
-  return contextOptions;
+  if (microtaskMode !== undefined) validateString(microtaskMode, "options.microtaskMode");
+  return { name, origin, codeGeneration, microtaskMode, importModuleDynamically };
 }
 
 function createScript(code, options) {

@@ -1394,6 +1394,18 @@ describe("global object and its sandbox", () => {
     expect(Object.getOwnPropertySymbols(sandbox)).toEqual([]);
   });
 
+  test("running a script against the context's own `this` (the global's proxy) uses the same context", () => {
+    const sandbox = { a: 1 };
+    const context = createContext(sandbox);
+    const thisValue = runInContext("this", context);
+    expect(thisValue).not.toBe(sandbox);
+    // Previously the run re-pointed the context's sandbox at whatever object was passed here — for the proxy that
+    // meant every lookup recursed into itself.
+    expect(new Script("var b = a + 1; b").runInContext(thisValue)).toBe(2);
+    expect(new Script("typeof b").runInNewContext(thisValue)).toBe("number");
+    expect(sandbox).toEqual({ a: 1, b: 2 });
+  });
+
   test("the global of a contextified context cannot be made non-extensible", () => {
     const context = createContext({ a: 1 });
     expect(() => runInContext("Object.preventExtensions(globalThis)", context)).toThrow(

@@ -10,10 +10,10 @@
 //! - The addon allocates the `uv_async_t` / `uv_work_t` and reads `data`,
 //!   `loop` and `type` from it, so those fields sit where `uv.h` puts them
 //!   ([`UvHandle`], [`UvReq`]). The private fields behind them are Bun's.
-//! - As in libuv, only `uv_async_send` and `uv_cancel` may be called from any
-//!   thread. Everything else runs on the loop's JS thread, the handle memory
-//!   stays valid until `close_cb` has run, and the request until
-//!   `after_work_cb` has run.
+//! - As in libuv, only `uv_async_send` may be called from any thread.
+//!   Everything else runs on the loop's JS thread, the handle memory stays
+//!   valid until `close_cb` has run, and the request until `after_work_cb`
+//!   has run.
 //! - A `uv_loop_t*` is a [`UvLoop`]: one per VM, embedded in its
 //!   `RuntimeState`. Only its first word, `data`, is part of the ABI.
 //! - `uv_async_send` sets the handle's `pending` flag and posts at most one
@@ -345,11 +345,13 @@ pub(crate) struct UvAsync {
     /// Whether the handle keeps the process alive (`uv_ref` / `uv_unref`).
     /// JS thread.
     keep_alive: KeepAlive,
-    /// Threads inside `uv_async_send`. libuv's busy counter: `uv_close` waits
-    /// for it to reach zero, so once it returns no thread is still reading the
-    /// handle and `close_cb` may free it.
+    /// Threads past the first check of `uv_async_send`. libuv's busy counter:
+    /// `uv_close` waits for it to reach zero, so once it returns no thread is
+    /// still touching the handle and `close_cb` may free it.
     busy: AtomicI32,
-    /// Set by `uv_async_send`, taken by the dispatch pass.
+    /// Set by `uv_async_send`, cleared by the dispatch pass, and set for good
+    /// by `uv_close`, so that a send after the close returns at its first
+    /// check (libuv's `uv__async_spin` does the same).
     pending: AtomicI32,
 }
 
@@ -363,17 +365,29 @@ const _: () = assert!(core::mem::size_of::<UvAsync>() <= UV_ASYNC_T_SIZE);
 // `&mut UvAsync` covering them. Fields are read and written through the raw
 // pointer, and a reference is formed to one field at a time.
 impl UvAsync {
-    /// Any thread. Clears `pending`; true if it was set. Then, as libuv's
-    /// `uv__async_spin`, waits until no thread is inside `uv_async_send` on
-    /// this handle. That window is a flag exchange and a queue push, so the
-    /// wait is short; the yield is for a sender preempted inside it.
+    /// The dispatch pass: clears `pending`; true if it was set (libuv's
+    /// `uv__async_io`). A send from now on schedules a new pass.
     ///
     /// # Safety
     /// `this` is an initialised, not yet closed handle.
     unsafe fn take_pending(this: NonNull<UvAsync>) -> bool {
         // SAFETY: fn contract.
+        unsafe { &(*this.as_ptr()).pending }.swap(0, Ordering::SeqCst) != 0
+    }
+
+    /// `uv_close`: libuv's `uv__async_spin`. Sets `pending` so that every
+    /// later `uv_async_send` returns at its first check, then waits until no
+    /// thread is past that check any more. That window is a flag exchange and
+    /// a queue push, so the wait is short; the yield is for a sender preempted
+    /// inside it. Once this returns, nothing but the loop thread touches the
+    /// handle, so `close_cb` may free it.
+    ///
+    /// # Safety
+    /// As [`Self::take_pending`].
+    unsafe fn stop_sends(this: NonNull<UvAsync>) {
+        // SAFETY: fn contract.
         let (pending, busy) = unsafe { (&(*this.as_ptr()).pending, &(*this.as_ptr()).busy) };
-        let was_pending = pending.swap(0, Ordering::SeqCst) != 0;
+        pending.store(1, Ordering::SeqCst);
         let mut spins = 0u32;
         while busy.load(Ordering::SeqCst) != 0 {
             spins += 1;
@@ -383,7 +397,6 @@ impl UvAsync {
                 core::hint::spin_loop();
             }
         }
-        was_pending
     }
 
     /// JS thread, the task `uv_close` posted: `close_cb`, one loop turn later.
@@ -443,7 +456,8 @@ pub(crate) unsafe extern "C" fn uv_async_init(
 
 /// `int uv_async_send(uv_async_t*)`. Any thread; the first send after a
 /// dispatch schedules one, later ones until then are coalesced into it.
-/// Legal until `close_cb` runs: after `uv_close` it sets flags nobody reads.
+/// Legal until `close_cb` runs: after `uv_close` (`stop_sends`) it returns at
+/// the first check, like libuv's, and touches nothing else.
 ///
 /// # Safety
 /// `handle` was initialised by `uv_async_init` and its `close_cb` has not run.
@@ -456,6 +470,7 @@ pub(crate) unsafe extern "C" fn uv_async_send(handle: *mut UvAsync) -> c_int {
     let (pending, busy, loop_) =
         unsafe { (&(*handle).pending, &(*handle).busy, (*handle).handle.loop_) };
     if pending.load(Ordering::SeqCst) != 0 {
+        // Already scheduled, or closed.
         return 0;
     }
     let _ = busy.fetch_add(1, Ordering::SeqCst);
@@ -485,9 +500,10 @@ unsafe fn as_async(handle: *mut UvHandle, function: &'static CStr) -> NonNull<Uv
 }
 
 /// `void uv_close(uv_handle_t*, uv_close_cb)`. Loop thread. Stops the handle
-/// at once (no callback runs after this returns, and no `uv_async_send` is
-/// still inside it) and runs `close_cb` from the loop later, as libuv does,
-/// since addons free the handle there. Closing twice does nothing.
+/// at once (no callback runs after this returns, no `uv_async_send` is still
+/// inside the handle, and later ones return at their first check) and runs
+/// `close_cb` from the loop later, as libuv does, since addons free the
+/// handle there. Closing twice does nothing.
 ///
 /// # Safety
 /// `handle` was initialised by a `uv_*_init` of this module.
@@ -509,9 +525,9 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
         &*(*async_).handle.loop_
     };
     bun_output::scoped_log!(uv, "uv_async_t {:?}: uv_close", handle);
-    loop_.unregister(this);
     // SAFETY: initialised and, until this line, not closed.
-    let _ = unsafe { UvAsync::take_pending(this) };
+    unsafe { UvAsync::stop_sends(this) };
+    loop_.unregister(this);
     // The queued task keeps the loop alive until `close_cb` has run, as
     // libuv's closing list does. Refused means the VM is already gone, and
     // with it the turn `close_cb` would have run on.
@@ -735,10 +751,12 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     0
 }
 
-/// `int uv_cancel(uv_req_t*)`. Any thread. Only work requests exist here;
-/// libuv also answers `UV_EINVAL` for a request type it cannot cancel.
-/// `0` means `work_cb` will not run and `after_work_cb` gets `UV_ECANCELED`;
-/// `UV_EBUSY` means the work already started (or finished, or was cancelled).
+/// `int uv_cancel(uv_req_t*)`. Loop thread, as in libuv: there it cannot
+/// race the `after_work_cb` that hands the request back to the addon. Only
+/// work requests exist here; libuv also answers `UV_EINVAL` for a request
+/// type it cannot cancel. `0` means `work_cb` will not run and
+/// `after_work_cb` gets `UV_ECANCELED`; `UV_EBUSY` means the work already
+/// started (or finished, or was cancelled).
 ///
 /// # Safety
 /// `req` is null or a request queued by `uv_queue_work` whose `after_work_cb`

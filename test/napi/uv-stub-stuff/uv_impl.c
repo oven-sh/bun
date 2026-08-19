@@ -469,8 +469,10 @@ static napi_value test_async(napi_env env, napi_callback_info info) {
 }
 
 // testAsyncCloseWithSendPending(callback): a handle that is sent and then
-// closed before the loop turns gets its close callback and nothing else.
-// Returns [is_active, is_closing] as observed right after uv_close.
+// closed before the loop turns gets its close callback and nothing else, and
+// so does one that is sent again after uv_close (allowed until close_cb).
+// Returns [is_active, is_closing, send after close] as observed right after
+// uv_close.
 static napi_value test_async_close_with_send_pending(napi_env env,
                                                      napi_callback_info info) {
   napi_value args[1];
@@ -482,11 +484,12 @@ static napi_value test_async_close_with_send_pending(napi_env env,
   uv_async_send(&test->handle);
   uv_close((uv_handle_t *)&test->handle, async_test_close_cb);
   uv_close((uv_handle_t *)&test->handle, async_test_close_cb); // ignored
-  int32_t observed[2] = {
+  int32_t observed[3] = {
       uv_is_active((uv_handle_t *)&test->handle),
       uv_is_closing((uv_handle_t *)&test->handle),
+      uv_async_send(&test->handle),
   };
-  return make_int32_array(env, observed, 2);
+  return make_int32_array(env, observed, 3);
 }
 
 // --- a thread and the loop thread taking turns, then racing ------------------
@@ -580,7 +583,6 @@ struct work_test {
   uv_work_t req;
   struct reporter reporter;
   pthread_t loop_thread;
-  int marker;
   int work_ran;
   int work_ran_off_the_loop_thread;
 };

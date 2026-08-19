@@ -1136,7 +1136,7 @@ impl<const SSL: bool> Handler<SSL> {
     pub fn on_open(ptr: *mut c_void, socket: HTTPSocket<SSL>) {
         let active = HTTPContext::<SSL>::get_tagged(ptr);
         if let Some(client) = active.client_mut() {
-            match client.on_open::<SSL>(socket) {
+            match client.on_connect::<SSL>(socket) {
                 Ok(_) => return,
                 Err(_) => {
                     bun_core::scoped_log!(HTTPContext, "Unable to open socket");

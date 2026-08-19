@@ -772,9 +772,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     return JSValue::encode(resultValue);
 }
 
-// The no-arg "read" is a umask(0)+umask(old) pair, so serialize every
-// process.umask call to keep a worker's read from interleaving with a
-// main-thread write (node: per_process::umask_mutex).
+// The no-arg read below is umask(0)+umask(old), so it must not interleave with a writer.
 static WTF::Lock umaskLock;
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, CallFrame* callFrame))

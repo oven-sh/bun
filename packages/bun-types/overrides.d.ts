@@ -103,7 +103,8 @@ declare global {
        * the kernel's memorystatus thresholds. On Linux, reclaim at one of the
        * process's cgroup memory limits (the `low`, `high` and `max` counters
        * of cgroup v2 `memory.events`) is emitted as `"warning"`, an OOM event
-       * in that cgroup and a system-wide PSI memory stall as `"critical"`.
+       * in that cgroup and a PSI memory stall (system-wide, or of the cgroup
+       * when only its `memory.pressure` file is writable) as `"critical"`.
        * The PSI trigger requires `CAP_SYS_RESOURCE` on kernels before 6.4, and
        * the cgroup counters only exist on cgroup v2. On Windows the event is
        * always emitted with `"critical"`. When no source is available the

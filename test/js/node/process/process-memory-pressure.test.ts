@@ -201,38 +201,50 @@ describe.concurrent("process.on('memoryPressure')", () => {
     `);
     expect(stderr.trim()).toBe("");
     const { before, armed, after } = JSON.parse(stdout);
-    expect({ before, after, armed: expectedSources.filter(source => armed.includes(source)) }).toEqual({
-      before: [],
-      after: [],
-      armed: expectedSources,
-    });
+    // The child may be allowed a source this process could not probe, so
+    // only the probed sources are required. Anything else must be the other
+    // Linux source, at most once.
+    expect({
+      before,
+      after,
+      armed: expectedSources.filter(source => armed.includes(source)),
+      unexpected: armed.filter(
+        (source: string, i: number) => !["psi", "cgroup"].includes(source) || armed.indexOf(source) !== i,
+      ),
+    }).toEqual({ before: [], after: [], armed: expectedSources, unexpected: [] });
     expect(exitCode).toBe(0);
   });
 
-  // memory.events is a set of counters that only grow. The kernel signals the
-  // file on every change, so Bun classifies the change and rate limits each
-  // level. The clock argument drives the holdoff so nothing here waits.
+  // The counters in memory.events only grow, and the kernel signals the file
+  // on every change. The first injection replaces the counters Bun read from
+  // the real file when it armed, so the real values do not matter here, and
+  // the clock argument drives the 2 s holdoff, so nothing here waits.
   test.skipIf(!canReadCgroupEvents)("cgroup memory.events changes map to levels with a holdoff", async () => {
-    // [file content, holdoff clock in ms, levels the listener must see]
-    const steps: [Parameters<typeof memoryEvents>[0], number, string[]][] = [
-      [{}, 0, []], // what Bun read when it armed: no change
-      [{ high: 1 }, 0, ["warning"]], // reclaim at memory.high
-      [{ high: 2 }, 0, []], // same level inside the holdoff
-      [{ high: 2, oom: 1 }, 0, ["critical"]], // a warning does not hold off an OOM
-      [{ high: 2, oom_kill: 1 }, 0, []], // a second OOM inside the holdoff
-      [{ high: 2, oom_kill: 1, max: 1 }, 1000, []], // reclaim 1 s after a critical
-      [{ high: 2, oom_kill: 1, max: 1, low: 1 }, 2000, ["warning"]], // 2 s after it
-      [{ high: 2, oom_kill: 1, max: 1, low: 1, oom_group_kill: 1 }, 2000, ["critical"]], // 2 s after the last OOM
-      [{ high: 2, oom_kill: 1, max: 1, low: 1, oom_group_kill: 1 }, 9000, []], // nothing changed
-      [{ high: 1 }, 9000, []], // below what Bun has seen (a short read)
-    ];
-    const input = steps.map(([counters, atMs]) => [memoryEvents(counters), atMs]);
+    // Each step: [file content, holdoff clock in ms, levels the listener must see].
+    // The counters accumulate from step to step, as they do in the real file.
+    const steps: [string, number, string[]][] = [];
+    let counters: Parameters<typeof memoryEvents>[0] = {};
+    const moved = (changed: typeof counters, atMs: number, emitted: string[], extraLines = "") => {
+      counters = { ...counters, ...changed };
+      steps.push([extraLines + memoryEvents(counters), atMs, emitted]);
+    };
+    moved({ high: 5, oom_kill: 1 }, 0, []); // the counts from before the listener existed
+    moved({ high: 6 }, 0, ["warning"]); // reclaim at memory.high
+    moved({ high: 7 }, 0, []); // another one inside the warning holdoff
+    moved({ oom: 1 }, 0, ["critical"]); // a warning does not hold off an OOM
+    moved({ oom_kill: 2 }, 0, []); // another OOM inside the critical holdoff
+    moved({ max: 1 }, 1000, []); // reclaim 1 s after a critical
+    moved({ low: 1 }, 2000, ["warning"]); // reclaim once exactly the holdoff has passed
+    moved({ oom_group_kill: 1 }, 2000, ["critical"]); // an OOM 2 s after the previous one
+    moved({}, 9000, [], "some_future_counter 7\n"); // a counter Bun does not classify moved
+    moved({ high: 8 }, 9000, ["warning"], "no_value\nsome_future_counter x\n"); // bad lines are skipped, the rest still counts
+    steps.push([memoryEvents({ high: 1 }), 9000, []]); // a short read: below the counts already seen
     const { stdout, stderr, exitCode } = await run(/* js */ `
       const { memoryPressureInjectCgroupEvents } = require("bun:internal-for-testing");
       const emitted = [];
       process.on("memoryPressure", level => emitted.push(level));
       const results = [];
-      for (const [body, atMs] of ${JSON.stringify(input)}) {
+      for (const [body, atMs] of ${JSON.stringify(steps.map(([body, atMs]) => [body, atMs]))}) {
         const injected = memoryPressureInjectCgroupEvents(body, atMs);
         // The source queues the event on the event loop. Let it run.
         await new Promise(resolve => setImmediate(resolve));

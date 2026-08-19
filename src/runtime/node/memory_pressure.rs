@@ -7,16 +7,13 @@
 //!     kernel delivers `NOTE_MEMORYSTATUS_PRESSURE_WARN` / `_CRITICAL` in
 //!     `fflags` when `kern.memorystatus_level` crosses the warn/critical
 //!     thresholds.
-//!   - Linux, two independent sources. A PSI trigger on `/proc/pressure/memory`
-//!     (or the cgroup v2 `memory.pressure` file for the process's own cgroup)
-//!     signals via `POLLPRI` and is emitted as `critical`: tasks are stalling
-//!     on reclaim. It needs `CAP_SYS_RESOURCE` before kernel 6.4 and
-//!     `CONFIG_PSI=y`. The cgroup v2 `memory.events` file of the process's own
-//!     cgroup is a kernfs file: it is readable on the read-only cgroup mount a
-//!     container normally has, and kernfs signals `POLLPRI` each time one of
-//!     its counters moves. `low`/`high`/`max` (reclaim at a limit) are emitted
-//!     as `warning`, the `oom*` counters as `critical`, at most one of each
-//!     per 2 s holdoff. A source that cannot be set up is skipped silently.
+//!   - Linux: a PSI trigger on `/proc/pressure/memory` (or the cgroup's own
+//!     `memory.pressure`), emitted as `critical`. Needs `CONFIG_PSI=y`, and
+//!     `CAP_SYS_RESOURCE` before kernel 6.4. Plus the cgroup v2 `memory.events`
+//!     file of the process's own cgroup, which is readable on the read-only
+//!     cgroup mount a container gets and signals `POLLPRI` on every counter
+//!     change: `low`/`high`/`max` emit `warning`, `oom*` emit `critical`.
+//!     A source that cannot be set up is skipped.
 //!   - Windows: a dedicated thread blocks on
 //!     `CreateMemoryResourceNotification(LowMemoryResourceNotification)` and
 //!     posts back to the JS event loop when it signals, with a 30 s holdoff
@@ -102,9 +99,8 @@ mod posix {
 
     use super::slot;
 
-    /// Stored type-erased in `RareData.memory_pressure_watcher`. Every source
-    /// is `None` when it could not be set up, so the slot still records that
-    /// listeners exist and `isInstalled` stays true.
+    /// Stored type-erased in `RareData.memory_pressure_watcher`. It exists
+    /// while listeners exist, even when no source could be set up.
     pub(super) struct MemoryPressureWatcher {
         /// macOS: the `EVFILT_MEMORYSTATUS` poll. Linux: the PSI trigger poll.
         poll: Option<NonNull<FilePoll>>,
@@ -117,10 +113,9 @@ mod posix {
     ) -> Option<&'a mut MemoryPressureWatcher> {
         let raw = (*slot(vm))?;
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`
-        // that lives until `uninstall` takes it. Everything here runs on the
-        // JS thread, and no caller holds a second reference across a call
-        // that can reach `uninstall` (the sources enqueue a task instead of
-        // running JS), so this is the only live reference.
+        // that lives until `uninstall` takes it. Callers run on the JS thread
+        // and never hold the reference across a call that can reach
+        // `uninstall` (the sources enqueue a task instead of running JS).
         Some(unsafe { &mut *raw.as_ptr().cast::<MemoryPressureWatcher>() })
     }
 
@@ -140,8 +135,8 @@ mod posix {
         }
     }
 
-    /// Put `fd` on the event loop's poller for `POLLPRI`. Both Linux sources
-    /// and the macOS filter signal that way. On failure the fd is closed.
+    /// Poll `fd` for `POLLPRI`, which is how every source here signals. On
+    /// failure the fd is closed.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     fn register_pri_poll(global: &JSGlobalObject, fd: Fd) -> Option<NonNull<FilePoll>> {
         let ctx = global.bun_vm().loop_ctx();
@@ -175,24 +170,30 @@ mod posix {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) const PSI_TRIGGER: &[u8] = b"some 150000 2000000\0";
 
-    /// Open a PSI memory file and write a trigger. Tries the system-wide
-    /// `/proc/pressure/memory` first, then the current cgroup's file.
+    /// Arm a PSI trigger on the system-wide `/proc/pressure/memory`, or
+    /// failing that on the current cgroup's `memory.pressure`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn open_psi_fd(own_cgroup: Option<&cgroup::OwnCgroup>) -> Option<Fd> {
         use bun_sys::O;
 
         const FLAGS: i32 = O::RDWR | O::NONBLOCK | O::CLOEXEC;
-        let system_wide = bun_sys::open(bun_core::zstr!("/proc/pressure/memory"), FLAGS, 0).ok();
-        let candidates = [
-            system_wide,
-            own_cgroup.and_then(|cg| cg.open(b"memory.pressure", FLAGS)),
-        ];
-        for fd in candidates.into_iter().flatten() {
-            if bun_sys::write(fd, PSI_TRIGGER).is_ok() {
-                return Some(fd);
-            }
-            let _ = bun_sys::close(fd);
+        bun_sys::open(bun_core::zstr!("/proc/pressure/memory"), FLAGS, 0)
+            .ok()
+            .and_then(write_psi_trigger)
+            .or_else(|| {
+                own_cgroup?
+                    .open(b"memory.pressure", FLAGS)
+                    .and_then(write_psi_trigger)
+            })
+    }
+
+    /// Returns `fd` armed, or closes it when the kernel rejects the trigger.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn write_psi_trigger(fd: Fd) -> Option<Fd> {
+        if bun_sys::write(fd, PSI_TRIGGER).is_ok() {
+            return Some(fd);
         }
+        let _ = bun_sys::close(fd);
         None
     }
 
@@ -226,8 +227,7 @@ mod posix {
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
     }
 
-    /// Names of the sources the installed watcher holds, for
-    /// `bun:internal-for-testing`. Empty when nothing could be set up.
+    /// For `bun:internal-for-testing`: which sources are set up.
     pub(super) fn armed_sources(global: &JSGlobalObject) -> Vec<&'static str> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         const POLL_SOURCE: &str = "psi";
@@ -297,9 +297,8 @@ mod posix {
                             vm.enqueue_task(super::pressure_task(lvl));
                         }
                     }
-                    // The file is gone (the process was moved and its old
-                    // cgroup removed). kernfs keeps reporting it ready, so
-                    // drop the source instead of spinning.
+                    // kernfs reports a removed file as ready forever: drop
+                    // the source rather than spin.
                     Some(Err(())) | None => {
                         watcher.cgroup = None;
                         deinit_poll(poll);
@@ -307,9 +306,8 @@ mod posix {
                 }
                 return;
             }
-            // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead.
-            // kernfs reports that permanently, so drop the source instead
-            // of emitting, to avoid a level-triggered spin.
+            // A dead PSI trigger reports `EPOLLERR` forever: drop the source
+            // rather than spin.
             if poll.flags.contains(Flags::Eof) || poll.flags.contains(Flags::Hup) {
                 watcher.poll = None;
                 deinit_poll(poll);
@@ -342,23 +340,19 @@ mod posix {
 
         use super::super::level;
 
-        /// Shortest gap between two events of the same level from this
-        /// source. The kernel coalesces `memory.events` notifications to one
-        /// per 10 ms, and a cgroup sitting at `memory.max` produces one per
-        /// reclaim pass, so without this a listener would run 100 times a
-        /// second. 2 s matches the PSI trigger window.
+        /// Per level. The kernel only coalesces `memory.events` notifications
+        /// to one per 10 ms, and a cgroup at `memory.max` produces one per
+        /// reclaim pass. 2 s is also the PSI trigger window.
         const CGROUP_HOLDOFF: Duration = Duration::from_secs(2);
 
-        /// The cgroup v2 directory this process belongs to, relative to
-        /// `/sys/fs/cgroup`, without a leading slash (empty for the root).
+        /// The `0::` entry of `/proc/self/cgroup`, without its leading slash.
         pub(super) struct OwnCgroup {
             path: [u8; 512],
             len: usize,
         }
 
         impl OwnCgroup {
-            /// Reads the `0::<path>` line of `/proc/self/cgroup`. `None` when
-            /// the process is not on a cgroup v2 hierarchy.
+            /// `None` when the process is not on a cgroup v2 hierarchy.
             pub(super) fn detect() -> Option<Self> {
                 let fd = bun_sys::open(bun_core::zstr!("/proc/self/cgroup"), O::RDONLY, 0).ok()?;
                 let mut read = [0u8; 1024];
@@ -376,10 +370,9 @@ mod posix {
                 })
             }
 
-            /// Open `<dir>/<file>`. When that does not exist, retry at the
-            /// mount root: a container that shares the host's cgroup
-            /// namespace sees host paths in `/proc/self/cgroup`, but its
-            /// `/sys/fs/cgroup` is mounted at the container's own cgroup.
+            /// A container in the host's cgroup namespace sees host paths in
+            /// `/proc/self/cgroup`, but has its own cgroup mounted at
+            /// `/sys/fs/cgroup`, so a missing path falls back to the root.
             pub(super) fn open(&self, file: &[u8], flags: i32) -> Option<Fd> {
                 let mut buf = [0u8; 512 + 64];
                 let own = &self.path[..self.len];
@@ -404,14 +397,13 @@ mod posix {
             }
         }
 
-        /// The `memory.events` counters, folded into the two levels they map
-        /// to. Each counter only ever grows, so a sum grows exactly when one
-        /// of its members does.
+        /// `memory.events`, summed per level. The counters never decrease, so
+        /// a sum grows exactly when one of its members does.
         #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
         pub(in crate::node::memory_pressure) struct Counters {
-            /// `low` + `high` + `max`: reclaim ran because a limit was reached.
+            /// `low` + `high` + `max`.
             reclaim: u64,
-            /// `oom` + `oom_kill` + `oom_group_kill`: reclaim failed.
+            /// `oom` + `oom_kill` + `oom_group_kill`.
             oom: u64,
         }
 
@@ -437,8 +429,6 @@ mod posix {
                 counters
             }
 
-            /// The level a change from `self` to `next` means, if any. A
-            /// counter this source does not classify can also move the file.
             fn level_of_change(self, next: Counters) -> Option<i32> {
                 if next.oom > self.oom {
                     Some(level::CRITICAL)
@@ -450,8 +440,6 @@ mod posix {
             }
         }
 
-        /// The `memory.events` source: an open fd on the event loop, the
-        /// counters as of the last read, and the holdoff state.
         pub(in crate::node::memory_pressure) struct CgroupEvents {
             pub(super) poll: NonNull<FilePoll>,
             seen: Counters,
@@ -475,19 +463,16 @@ mod posix {
                 })
             }
 
-            /// Handle a `POLLPRI` wakeup on `fd` (this source's fd, taken from
-            /// the poll the event loop handed us). Reading the file is what
-            /// clears the kernfs notification, so this reads even while in
-            /// holdoff. `Err` means the file is no longer readable.
+            /// The read is what clears the kernfs notification, so it happens
+            /// on every wakeup, holdoff or not. `Err`: the file is unreadable.
             pub(super) fn read(&mut self, fd: Fd) -> Result<Option<i32>, ()> {
                 let counters = read_counters(fd)?;
                 Ok(self.observe(counters, Instant::now()))
             }
 
-            /// Fold a new snapshot in. Returns the level to emit, or `None`
-            /// when nothing relevant changed or the level is in holdoff. A
-            /// warning also stays quiet right after a critical, so a cgroup
-            /// that is both reclaiming and OOM-killing reports the worse one.
+            /// The level to emit for the new snapshot, if any. A critical
+            /// also silences warnings, so a cgroup that reclaims and OOM-kills
+            /// at the same time reports the worse of the two.
             pub(in crate::node::memory_pressure) fn observe(
                 &mut self,
                 counters: Counters,
@@ -511,12 +496,19 @@ mod posix {
                 }
                 Some(lvl)
             }
+
+            /// For `bun:internal-for-testing`: replace what `open` read with
+            /// `counters` and forget any holdoff.
+            pub(in crate::node::memory_pressure) fn reset(&mut self, counters: Counters) {
+                self.seen = counters;
+                self.last_warning = None;
+                self.last_critical = None;
+            }
         }
 
         fn read_counters(fd: Fd) -> Result<Counters, ()> {
-            // Six short lines today (about 70 bytes). A longer file still
-            // arms the notification again: kernfs records the read before
-            // it renders the content.
+            // Six short lines. kernfs re-arms the notification on any read,
+            // whatever its length.
             let mut buf = [0u8; 512];
             let n = bun_sys::pread(fd, &mut buf, 0).map_err(drop)?;
             Ok(Counters::parse(&buf[..n]))
@@ -715,10 +707,8 @@ pub(crate) fn js_psi_trigger(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
     }
 }
 
-/// `memoryPressureArmedSources()`: the names of the OS sources the watcher
-/// installed by the current listeners holds. Linux: `"psi"` and `"cgroup"`.
-/// macOS: `"memorystatus"`. Windows: `"notification"`. Empty when no source
-/// could be set up, which `isInstalled` does not show.
+/// `memoryPressureArmedSources()`: `"psi"` / `"cgroup"` / `"memorystatus"` /
+/// `"notification"`, whichever are set up.
 #[bun_jsc::host_fn]
 pub(crate) fn js_armed_sources(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(not(windows))]
@@ -734,12 +724,10 @@ pub(crate) fn js_armed_sources(global: &JSGlobalObject, _frame: &CallFrame) -> J
     })
 }
 
-/// `memoryPressureInjectCgroupEvents(text, atMs)`: feed a `memory.events`
-/// body to the installed cgroup source as if the kernel had signalled it.
-/// `atMs` is the holdoff clock reading for this notification, on a clock
-/// that starts at the first call, so a test drives the holdoff without
-/// waiting. Emits exactly what a real notification with that content would.
-/// Returns `false` when no cgroup source is installed.
+/// `memoryPressureInjectCgroupEvents(text, atMs)`: the first call makes
+/// `text` the baseline the cgroup source compares against. Each later call
+/// is a notification with `text` as the file content at `atMs` on the
+/// holdoff clock. `false` when no cgroup source is installed.
 #[bun_jsc::host_fn]
 pub(crate) fn js_inject_cgroup_events(
     global: &JSGlobalObject,
@@ -752,14 +740,18 @@ pub(crate) fn js_inject_cgroup_events(
 
         let [text, at_ms] = frame.arguments_as_array::<2>();
         let text = bun_core::OwnedString::new(text.to_bun_string(global)?);
-        let at = *CLOCK_START.get_or_init(Instant::now)
-            + Duration::from_millis(at_ms.to_int32().max(0) as u64);
+        let counters = posix::Counters::parse(text.to_utf8().slice());
 
         let vm = global.bun_vm().as_mut();
         let Some(events) = posix::watcher_mut(vm).and_then(|w| w.cgroup.as_mut()) else {
             return Ok(JSValue::js_boolean(false));
         };
-        let counters = posix::Counters::parse(text.to_utf8().slice());
+        let Some(start) = CLOCK_START.get() else {
+            CLOCK_START.get_or_init(Instant::now);
+            events.reset(counters);
+            return Ok(JSValue::js_boolean(true));
+        };
+        let at = *start + Duration::from_millis(at_ms.to_int32().max(0) as u64);
         if let Some(lvl) = events.observe(counters, at) {
             vm.enqueue_task(pressure_task(lvl));
         }

@@ -543,6 +543,35 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     expect(code).toBe(0);
   });
 
+  // The parent's stdio being a colour TTY (here: FORCE_COLOR) must not leak ANSI escapes into
+  // a worker's captured output — its streams are not TTYs — including console.trace/table.
+  test("captured stdio is uncoloured even when the process's own console is coloured", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker('console.log("log", { a: 1 }); console.table([{ x: 1 }]); console.count(); console.trace("tr"); console.error(new Error("e")); console.timeEnd("nope")', { eval: true, stdout: true, stderr: true });
+         let out = "", err = "";
+         w.stdout.setEncoding("utf8").on("data", d => (out += d));
+         w.stderr.setEncoding("utf8").on("data", d => (err += d));
+         w.on("exit", () => console.log(JSON.stringify({ out, err, mainThreadColoured: Bun.inspect({ a: 1 }, { colors: Bun.enableANSIColors }) !== Bun.inspect({ a: 1 }) })));`,
+      ],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: undefined },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { out, err, mainThreadColoured } = JSON.parse(stdout);
+    expect(mainThreadColoured).toBe(true);
+    expect(out).toStartWith("log {\n  a: 1,\n}\n");
+    expect(out).toContain("tr\n");
+    expect(out).toMatch(/^tr\n\s+at .*blob:/m);
+    expect(out + err).not.toContain("\x1b[");
+    expect(err).toContain("error: e\n");
+    expect(exitCode).toBe(0);
+  });
+
   // As with Node's Console (ignoreErrors): an ended, destroyed or throwing stream drops
   // console output instead of throwing, and the console stays bound to the streams it
   // was given at startup even if process.stdout is reassigned.

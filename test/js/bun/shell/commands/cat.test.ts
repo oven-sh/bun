@@ -49,17 +49,21 @@ async function runScript(script: string, stdin: Stdin, { quiet = true } = {}) {
 
 // Every `cat` reading the script's stdin (or a pipeline stage's stdin)
 // registers on the single IOReader owned by that fd. Once the first `cat` has
-// consumed a read (EOF or error), a later `cat` on the same fd has to start a
-// new one and must be the only listener notified by it.
+// consumed a read (EOF or error), a later `cat` on the same fd must be the only
+// listener notified by the read that serves it: on POSIX a new read of the fd,
+// on Windows (where the reader closes the fd at EOF) the EOF already reached.
 describe("cat (builtin) sharing one stdin reader", () => {
-  // On Windows the reader closes its libuv source at EOF, so starting a new
-  // read there needs the separate fix in #29986.
-  describe.skipIf(isWindows)("after the first cat reached EOF", () => {
+  describe("after the first cat reached EOF", () => {
     const scripts: [script: string, stdout: string][] = [
       ["cat; echo ---; cat", "hi\n---\n"],
       ["cat && echo --- && cat", "hi\n---\n"],
       // The second restart starts from a reader that was already restarted once.
       ["cat; cat; cat", "hi\n"],
+      // On Windows every cat after the first finishes on the spot, from inside
+      // the previous cat's completion. The debug build asserts (Yield.rs) if
+      // those completions nest instead of following each other on the same
+      // trampoline, which takes four or more cats in a row to show.
+      ["cat; cat; cat; cat; cat; cat; echo ---", "hi\n---\n"],
       // The subshell / if node is allocated before the second cat, so the second
       // cat does not reuse the first cat's node id: a listener entry left over
       // from the first cat would be dispatched to a node that is not a cat.
@@ -100,9 +104,9 @@ describe("cat (builtin) sharing one stdin reader", () => {
       expect(result).toEqual({ stdout: "hi\n---\nexit=0\n", stderr: "", exitCode: 0 });
     });
 
-    // Bun.spawn's stdin pipe is a socketpair; this is the same thing over an
-    // actual pipe.
-    test.concurrent("stdin is a pipe", async () => {
+    // Bun.spawn's stdin pipe is a socketpair on POSIX; this is the same thing
+    // over an actual pipe. (On Windows it is a pipe to begin with.)
+    test.concurrent.skipIf(isWindows)("stdin is a pipe", async () => {
       await using proc = Bun.spawn({
         cmd: ["sh", "-c", 'printf "hi\\n" | "$0" -e "$1"', bunExe(), childCode("cat; echo ---; cat", true)],
         env: builtinEnv,
@@ -116,8 +120,10 @@ describe("cat (builtin) sharing one stdin reader", () => {
     // On a pipe the new read only reports EOF again, which looks the same as
     // completing the second cat on the spot. A tty's EOF (^D) is used up by the
     // read that sees it, so here the second cat only finishes if it really reads
-    // the fd again and gets the input typed after the first cat is done.
-    test.concurrent("stdin is a tty: the second cat reads the input typed for it", async () => {
+    // the fd again and gets the input typed after the first cat is done. POSIX
+    // only: on Windows the fd is closed at the first EOF, so the second cat
+    // finishes on the spot there (the cases above).
+    test.concurrent.skipIf(isWindows)("stdin is a tty: the second cat reads the input typed for it", async () => {
       let output = "";
       const separator = Promise.withResolvers<void>();
       const trailer = Promise.withResolvers<void>();
@@ -178,9 +184,9 @@ describe("cat (builtin) sharing one stdin reader", () => {
     });
   });
 
-  // Starting a new read after a failed one already worked everywhere; what
-  // these pin down is that its failure is reported to the second cat only. This
-  // block runs on Windows too.
+  // Starting a new read after a failed one already worked everywhere (on
+  // Windows too: a failed read leaves the fd open); what these pin down is that
+  // its failure is reported to the second cat only.
   describe("after the first cat failed to read", () => {
     test.concurrent.each([
       "cat || echo first-failed; echo ---; cat || echo second-failed",

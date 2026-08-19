@@ -47,6 +47,11 @@ struct State {
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
+    /// Set once the reader reported EOF. The Windows reader closes its libuv
+    /// source (and with it the fd) when it reaches EOF, so unlike POSIX there
+    /// is nothing left to read for a listener that arrives later; see `start`.
+    #[cfg(windows)]
+    reached_eof: bool,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
     /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
     /// `init()` (the sole constructor).
@@ -136,6 +141,8 @@ impl IOReader {
                 evtloop,
                 #[cfg(windows)]
                 is_reading: false,
+                #[cfg(windows)]
+                reached_eof: false,
                 self_weak: std::sync::Weak::clone(w),
                 read_guards: Vec::new(),
                 interp: None,
@@ -218,6 +225,9 @@ impl IOReader {
         #[cfg(windows)]
         {
             let s = self.state();
+            if s.reached_eof {
+                return self.finish_listeners_at_eof();
+            }
             if s.is_reading {
                 return Yield::suspended();
             }
@@ -303,9 +313,33 @@ impl IOReader {
         // Hold a strong ref across the body.
         let _keepalive = self.keepalive();
         self.set_reading(false);
+        // Before the notifications: the next `cat` can start from inside one.
+        #[cfg(windows)]
+        {
+            self.state().reached_eof = true;
+        }
         let interp = self.state().interp;
         for r in self.take_readers() {
             self.run_yield(dispatch_reader_done(r, None, interp));
+        }
+    }
+
+    /// `start()` after the source reached EOF: the listeners that registered
+    /// since get that EOF. The last one's continuation is returned instead of
+    /// run here, so that a script of consecutive `cat`s completes them on the
+    /// caller's trampoline instead of nesting one `Yield::run` per `cat`.
+    #[cfg(windows)]
+    fn finish_listeners_at_eof(&self) -> Yield {
+        let _keepalive = self.keepalive();
+        let interp = self.state().interp;
+        let mut readers = self.take_readers();
+        let last = readers.pop();
+        for r in readers {
+            self.run_yield(dispatch_reader_done(r, None, interp));
+        }
+        match last {
+            Some(r) => dispatch_reader_done(r, None, interp),
+            None => Yield::suspended(),
         }
     }
 

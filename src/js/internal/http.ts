@@ -64,7 +64,6 @@ const optionsSymbol = Symbol("options");
 const reqSymbol = Symbol("req");
 const timeoutTimerSymbol = Symbol("timeoutTimer");
 const tlsSymbol = Symbol("tls");
-const typeSymbol = Symbol("type");
 const webRequestOrResponse = Symbol("FetchAPI");
 const statusCodeSymbol = Symbol("statusCode");
 const kAbortController = Symbol.for("kAbortController");
@@ -86,11 +85,6 @@ export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
   timeout = 2,
-}
-export const enum NodeHTTPIncomingRequestType {
-  FetchRequest,
-  FetchResponse,
-  NodeHTTPResponse,
 }
 export const enum NodeHTTPBodyReadState {
   none,
@@ -617,7 +611,6 @@ export {
   statusMessageSymbol,
   timeoutTimerSymbol,
   tlsSymbol,
-  typeSymbol,
   utcDate,
   validateMsecs,
   webRequestOrResponse,

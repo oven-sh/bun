@@ -12,17 +12,12 @@ const {
   eofInProgress,
   kHandle,
   noBodySymbol,
-  typeSymbol,
-  NodeHTTPIncomingRequestType,
-  fakeSocketSymbol,
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
   onDataIncomingMessage,
   kAbortController,
 } = require("internal/http");
-
-const { FakeSocket } = require("internal/http/FakeSocket");
 
 const ObjectDefineProperty = Object.defineProperty;
 const ArrayPrototypeSlice = Array.prototype.slice;
@@ -93,7 +88,6 @@ function IncomingMessage(socket) {
 
   if (socket === kHandle) {
     // Native server fast-path: (kHandle, url, method, headers, rawHeaders, handle, hasBody, socket)
-    this[typeSymbol] = NodeHTTPIncomingRequestType.NodeHTTPResponse;
     this.url = arguments[1];
     this.method = arguments[2];
     // arguments[3] carries no headers object and arguments[4] no rawHeaders
@@ -103,7 +97,7 @@ function IncomingMessage(socket) {
     this[kHeaderSource] = arguments[5];
     this[kHandle] = arguments[5];
     this[noBodySymbol] = !arguments[6];
-    this[fakeSocketSymbol] = arguments[7];
+    this.socket = arguments[7];
     // Node.js exposes the connection as req.client as well (it predates
     // req.socket and some code still reaches for it).
     this.client = arguments[7];
@@ -130,7 +124,7 @@ function IncomingMessage(socket) {
 
     Readable.$call(this, streamOptions);
 
-    this[fakeSocketSymbol] = socket;
+    this.socket = socket;
 
     this.httpVersionMajor = null;
     this.httpVersionMinor = null;
@@ -166,23 +160,6 @@ IncomingMessage.prototype.statusCode = null;
 IncomingMessage.prototype.statusMessage = null;
 IncomingMessage.prototype.upgrade = null;
 IncomingMessage.prototype.joinDuplicateHeaders = false;
-
-ObjectDefineProperty(IncomingMessage.prototype, "socket", {
-  __proto__: null,
-  get: function () {
-    let socket = this[fakeSocketSymbol];
-    if (socket === undefined && this[typeSymbol] === NodeHTTPIncomingRequestType.NodeHTTPResponse) {
-      // The native server path historically always exposed a socket object.
-      socket = this[fakeSocketSymbol] = new FakeSocket(this);
-    }
-    // Like Node.js, a bare `new IncomingMessage()` reports an undefined
-    // socket (not null) until one is assigned.
-    return socket;
-  },
-  set: function (val) {
-    this[fakeSocketSymbol] = val;
-  },
-});
 
 ObjectDefineProperty(IncomingMessage.prototype, "connection", {
   __proto__: null,
@@ -221,7 +198,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
       // Node.js's parser keeps at most server.maxHeadersCount header pairs
       // (parser.maxHeaderPairs); the native parser does not enforce it, so
       // truncate here.
-      const maxHeadersCount = this[fakeSocketSymbol]?.server?.maxHeadersCount;
+      const maxHeadersCount = this.socket?.server?.maxHeadersCount;
       if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && built.length > maxHeadersCount * 2) {
         built = ArrayPrototypeSlice.$call(built, 0, maxHeadersCount * 2);
       }

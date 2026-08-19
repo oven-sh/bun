@@ -2459,16 +2459,10 @@ describe("deferred spill-close", () => {
 });
 
 describe.each(["tls", "net"])("%s server socket whose peer resets the connection behind unread data", transport => {
-  // The peer sends data while the accepted socket is paused, then the
-  // connection is reset (RST) instead of ended. Node reports that as a read
+  // The peer sends data while the accepted socket is paused, then resets the
+  // connection (RST) instead of ending it. Node reports that as a read
   // error and never emits 'end'. allowHalfOpen keeps the accepted socket open
   // after an 'end', so a reset misreported as an orderly end strands it.
-  //
-  // The peer is a child process: SIGKILL makes the kernel close its socket
-  // with unread data in the receive queue, which sends a bare RST. An in-process
-  // terminate() would send a TLS close_notify first, and filling the window so
-  // that alert cannot leave would strand the socket on macOS, which drops an
-  // RST that arrives at a zero receive window.
   async function acceptPausedSocketAndFill() {
     const accepted = Promise.withResolvers<net.Socket>();
     const onConnection = (socket: net.Socket) => {
@@ -2481,43 +2475,31 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
         : net.createServer({ allowHalfOpen: true }, onConnection);
     await once(server.listen(0, "127.0.0.1"), "listening");
 
-    const peer = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const ready = Promise.withResolvers();
-        const peer = await Bun.connect({
-          hostname: "127.0.0.1",
-          port: ${(server.address() as AddressInfo).port},
-          tls: ${transport === "tls" ? JSON.stringify({ ca: COMMON_CERT.cert }) : "undefined"},
-          socket: {
-            open() { if (${JSON.stringify(transport)} !== "tls") ready.resolve(); },
-            handshake(_peer, success, verifyError) {
-              if (success) ready.resolve(); else ready.reject(verifyError ?? new Error("handshake failed"));
-            },
-            data() {},
-            close() {},
-            error(_peer, error) { ready.reject(error); },
-            connectError(_peer, error) { ready.reject(error); },
-          },
-        });
-        await ready.promise;
-        const chunk = Buffer.alloc(64 * 1024, "r");
-        if (peer.write(chunk) !== chunk.length) throw new Error("short write");
-        console.log("ready");
-        // Never reads again: what the server sends next stays unread, so SIGKILL resets.
-        Bun.sleepSync(60_000);
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
+    const peerReady = Promise.withResolvers<void>();
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      tls: transport === "tls" ? { ca: COMMON_CERT.cert } : undefined,
+      socket: {
+        open() {
+          if (transport !== "tls") peerReady.resolve();
+        },
+        handshake(_peer, success, verifyError) {
+          if (success) peerReady.resolve();
+          else peerReady.reject(verifyError ?? new Error("handshake failed"));
+        },
+        data() {},
+        close() {},
+        error(_peer, error) {
+          peerReady.reject(error);
+        },
+        connectError(_peer, error) {
+          peerReady.reject(error);
+        },
+      },
     });
     const socket = await accepted.promise;
-    const reader = peer.stdout.getReader();
-    const { value } = await reader.read();
-    expect(new TextDecoder().decode(value)).toBe("ready\n");
+    await peerReady.promise;
 
     const events: string[] = [];
     let bytes = 0;
@@ -2536,19 +2518,20 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     });
     // Paused again: the 'data' listener above switched the stream to flowing.
     socket.pause();
-    // Lands unread in the peer's receive queue, so its death sends an RST.
-    await new Promise<void>(resolve => socket.write("x", () => resolve()));
+
+    // One chunk that fits: it is queued ahead of the reset and the receive window
+    // stays open. macOS drops an RST that arrives at a zero window, so filling
+    // the buffers would strand the socket there.
+    const chunk = Buffer.alloc(64 * 1024, "r");
+    expect(peer.write(chunk)).toBe(chunk.length);
 
     return {
       socket,
+      peer,
       events,
       bytesRead: () => bytes,
       settled: settled.promise,
-      reset() {
-        peer.kill("SIGKILL");
-      },
       [Symbol.dispose]() {
-        peer.kill("SIGKILL");
         socket.destroy();
         server.close();
       },
@@ -2557,7 +2540,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
 
   it("reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'", async () => {
     using t = await acceptPausedSocketAndFill();
-    t.reset();
+    t.peer.terminate();
     await t.settled;
     expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
   });
@@ -2568,7 +2551,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     // event carries the queued data and the reset together: the read loop drains
     // the data and then gets the error from recv().
     t.socket.resume();
-    t.reset();
+    t.peer.terminate();
     await t.settled;
     expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
     // Windows discards the receive queue on a reset. Linux and macOS keep it, and

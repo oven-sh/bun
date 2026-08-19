@@ -389,7 +389,7 @@ impl File {
     pub fn write_file_atomically(path: &ZStr, data: &[u8], mode: Mode) -> Maybe<()> {
         use std::io::Write as _;
 
-        // Fails for a file that does not exist yet; then `path` itself is the target.
+        // Best effort (on Windows it opens the file to read); the open for writing below decides.
         let mut realpath_buf = bun_paths::path_buffer_pool::get();
         let mut target: Vec<u8> = match realpath(path, &mut realpath_buf) {
             Ok(resolved) => resolved.to_vec(),

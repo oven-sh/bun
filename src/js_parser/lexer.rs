@@ -2264,25 +2264,17 @@ lexer_impl_header! {
         let mut rest = &text[0..end_comment_text];
 
         while let Some(i) = strings::index_of_any(rest, b"@#") {
-            let c = rest[i];
-            rest = &rest[(i + 1).min(rest.len())..];
-            match c {
-                b'@' | b'#' => {
-                    let chunk = rest;
-                    let offset = self.scan_pragma(
-                        self.start + i + (text.len() - rest.len()),
-                        chunk,
-                        false,
-                    );
+            rest = &rest[i + 1..];
+            // `rest` is a suffix of `text[..end_comment_text]`, and `text`
+            // starts at `self.start`.
+            let chunk_start = self.start + (end_comment_text - rest.len());
+            let offset = self.scan_pragma(chunk_start, rest, false);
 
-                    rest = &rest[
-                        // The min is necessary because the file could end
-                        // with a pragma and hasPrefixWithWordBoundary
-                        // returns true when that "word boundary" is EOF
-                        offset.min(rest.len())..];
-                }
-                _ => {}
-            }
+            rest = &rest[
+                // The min is necessary because the file could end
+                // with a pragma and hasPrefixWithWordBoundary
+                // returns true when that "word boundary" is EOF
+                offset.min(rest.len())..];
         }
     }
 
@@ -2399,14 +2391,14 @@ lexer_impl_header! {
 
                     0x23 | 0x40 => {
                         if !IS_JSON {
-                            let pragma_trigger_pos = self.end; // Position OF #/@
-                            // Use remaining() which starts *after* the consumed #/@
+                            // `remaining()` starts at `self.current`, right after
+                            // the consumed #/@.
                             // Note: reshaped for borrowck — `remaining()` borrows
                             // `self.contents`; `scan_pragma` needs `&mut self`.
                             // Detach via `StoreStr` (arena-owned, lives for parse).
+                            let chunk_start = self.current;
                             let chunk = js_ast::StoreStr::new(self.remaining());
-                            let offset =
-                                self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
+                            let offset = self.scan_pragma(chunk_start, chunk.slice(), true);
 
                             if offset > 0 {
                                 // Pragma found (e.g., __PURE__).
@@ -2443,15 +2435,12 @@ lexer_impl_header! {
         // unreachable
     }
 
-    /// Scans the string for a pragma.
-    /// offset is used when there's an issue with the JSX pragma later on.
+    /// Scans `chunk`, the comment text after a `@` or `#`, for a pragma.
+    /// `chunk_start` is the source offset of `chunk[0]`. It becomes the
+    /// location of the pragma argument, which the parser reports when the
+    /// argument is invalid.
     /// Returns the byte length to advance by if found, otherwise 0.
-    fn scan_pragma(
-        &mut self,
-        offset_for_errors: usize,
-        chunk: &[u8],
-        allow_newline: bool,
-    ) -> usize {
+    fn scan_pragma(&mut self, chunk_start: usize, chunk: &[u8], allow_newline: bool) -> usize {
         if !self.has_pure_comment_before {
             if strings::has_prefix_with_word_boundary(chunk, b"__PURE__") {
                 self.has_pure_comment_before = true;
@@ -2460,12 +2449,7 @@ lexer_impl_header! {
         }
 
         if strings::has_prefix_with_word_boundary(chunk, b"jsx") {
-            if let Some(span) = PragmaArg::scan(
-                self.start + offset_for_errors,
-                b"jsx",
-                chunk,
-                allow_newline,
-            ) {
+            if let Some(span) = PragmaArg::scan(chunk_start, b"jsx", chunk, allow_newline) {
                 self.jsx_pragma._jsx = span;
                 return "jsx".len()
                     + if span.range.len > 0 {
@@ -2475,12 +2459,7 @@ lexer_impl_header! {
                     };
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxFrag") {
-            if let Some(span) = PragmaArg::scan(
-                self.start + offset_for_errors,
-                b"jsxFrag",
-                chunk,
-                allow_newline,
-            ) {
+            if let Some(span) = PragmaArg::scan(chunk_start, b"jsxFrag", chunk, allow_newline) {
                 self.jsx_pragma._jsx_frag = span;
                 return "jsxFrag".len()
                     + if span.range.len > 0 {
@@ -2490,12 +2469,7 @@ lexer_impl_header! {
                     };
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxRuntime") {
-            if let Some(span) = PragmaArg::scan(
-                self.start + offset_for_errors,
-                b"jsxRuntime",
-                chunk,
-                allow_newline,
-            ) {
+            if let Some(span) = PragmaArg::scan(chunk_start, b"jsxRuntime", chunk, allow_newline) {
                 self.jsx_pragma._jsx_runtime = span;
                 return "jsxRuntime".len()
                     + if span.range.len > 0 {
@@ -2505,12 +2479,9 @@ lexer_impl_header! {
                     };
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxImportSource") {
-            if let Some(span) = PragmaArg::scan(
-                self.start + offset_for_errors,
-                b"jsxImportSource",
-                chunk,
-                allow_newline,
-            ) {
+            if let Some(span) =
+                PragmaArg::scan(chunk_start, b"jsxImportSource", chunk, allow_newline)
+            {
                 self.jsx_pragma._jsx_import_source = span;
                 return "jsxImportSource".len()
                     + if span.range.len > 0 {
@@ -2524,8 +2495,7 @@ lexer_impl_header! {
         {
             // Check includes space for prefix
             return PragmaArg::scan_source_mapping_url_value(
-                self.start,
-                offset_for_errors,
+                chunk_start,
                 chunk,
                 &mut self.source_mapping_url,
             );
@@ -3855,9 +3825,9 @@ impl PragmaArg {
     // These can be extremely long, so we use SIMD.
     /// "//# sourceMappingURL=data:/adspaoksdpkz"
     ///                       ^^^^^^^^^^^^^^^^^^
+    /// `chunk_start` is the source offset of `chunk[0]`.
     pub(crate) fn scan_source_mapping_url_value(
-        start: usize,
-        offset_for_errors: usize,
+        chunk_start: usize,
         chunk: &[u8],
         result: &mut Option<js_ast::Span>,
     ) -> usize {
@@ -3882,7 +3852,7 @@ impl PragmaArg {
         let url = &url_and_rest_of_code[0..url_len];
 
         // Calculate absolute start location of the argument
-        let absolute_arg_start = start + offset_for_errors + PREFIX as usize;
+        let absolute_arg_start = chunk_start + PREFIX as usize;
 
         *result = Some(js_ast::Span {
             range: Range {
@@ -3898,8 +3868,10 @@ impl PragmaArg {
         PREFIX as usize + url_len // Correct total length
     }
 
+    /// `text_` starts with `pragma`. `chunk_start` is the source offset of
+    /// `text_[0]`, so the returned span points at the argument in the source.
     pub(crate) fn scan(
-        offset_: usize,
+        chunk_start: usize,
         pragma: &[u8],
         text_: &[u8],
         allow_newline: bool,
@@ -3922,8 +3894,8 @@ impl PragmaArg {
                 break;
             }
         }
-        let start: u32 = cursor.i;
-        text = &text[cursor.i as usize..];
+        let start = cursor.i as usize;
+        text = &text[start..];
         cursor = strings::Cursor::default();
         iter = CodepointIterator::init(text);
         let _ = iter.next(&mut cursor);
@@ -3944,12 +3916,7 @@ impl PragmaArg {
             range: Range {
                 len: i32::try_from(i).expect("int cast"),
                 loc: Loc {
-                    start: i32::try_from(
-                        start
-                            + u32::try_from(offset_).expect("int cast")
-                            + u32::try_from(pragma.len()).expect("int cast"),
-                    )
-                    .unwrap(),
+                    start: i32::try_from(chunk_start + pragma.len() + start).expect("int cast"),
                 },
             },
             text: js_ast::StoreStr::new(&text[0..i]),

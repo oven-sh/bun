@@ -4227,6 +4227,9 @@ describe.concurrent("close() error after the peer resets the connection", () => 
         env: bunEnv,
         stdin: "pipe",
       });
+      // A peer that dies before it connects would otherwise leave `ready` pending.
+      // Once `ready` is settled, the exit caused by the kill below is ignored.
+      peer.exited.then(code => ready.reject(new Error(`the peer exited before it was ready (exit code ${code})`)));
 
       const accepted = await ready.promise;
       accepted.write("left unread in the peer's receive buffer");

@@ -7,8 +7,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
-    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, VirtualMachine,
-    VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, Strong,
+    VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc,
 };
 use bun_boringssl as BoringSSL;
 use bun_collections::{OffsetByteList, StringHashMap, StringMap};
@@ -27,7 +27,7 @@ use crate::postgres::data_cell as DataCell;
 use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
-use crate::postgres::postgres_sql_query::{self, Status as QueryStatus};
+use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
@@ -174,6 +174,14 @@ pub struct PostgresSQLConnection {
     // Private — see `timer`; recovered via [`Self::from_max_lifetime_timer_ptr`].
     max_lifetime_timer: JsCell<EventLoopTimer>,
     pub(crate) auto_flusher: JsCell<AutoFlusher>,
+
+    /// Interned notification channel names; see `channel_name_js`.
+    channel_names: JsCell<Vec<InternedChannel>>,
+}
+
+struct InternedChannel {
+    bytes: Box<[u8]>,
+    js: Strong,
 }
 
 bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
@@ -390,7 +398,7 @@ impl PostgresSQLConnection {
                 return;
             }
             t.next = bun_core::Timespec::ms_from_now(
-                bun_core::TimespecMockMode::AllowMockedTime,
+                bun_core::TimespecMockMode::ForceRealTime,
                 i64::from(interval),
             );
         });
@@ -408,6 +416,7 @@ impl PostgresSQLConnection {
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
         (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
+        (get_on_notification, set_on_notification => onnotification_get_cached, onnotification_set_cached),
     }
 
     pub(crate) fn setup_tls(&self) {
@@ -500,7 +509,7 @@ impl PostgresSQLConnection {
         }
         self.max_lifetime_timer.with_mut(|t| {
             t.next = bun_core::Timespec::ms_from_now(
-                bun_core::TimespecMockMode::AllowMockedTime,
+                bun_core::TimespecMockMode::ForceRealTime,
                 i64::from(self.max_lifetime_interval_ms),
             );
         });
@@ -703,8 +712,6 @@ impl PostgresSQLConnection {
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
-            let event_loop = self.event_loop();
-            event_loop.enter();
             let mut js_error = value.to_error().unwrap_or(value);
             if js_error.is_empty() {
                 js_error = postgres_error_to_js(
@@ -715,10 +722,14 @@ impl PostgresSQLConnection {
             }
             js_error.ensure_still_alive();
             let queries = self.get_queries_array();
-            if let Err(e) = on_close.call(self.global(), JSValue::UNDEFINED, &[js_error, queries]) {
-                self.global().report_active_exception_as_unhandled(e);
-            }
-            event_loop.exit();
+            // Reported here rather than returned: the pending queries are still
+            // rejected and the socket closed below whatever `onclose` did.
+            self.event_loop().run_callback(
+                on_close,
+                self.global(),
+                JSValue::UNDEFINED,
+                &[js_error, queries],
+            );
         }
         self.ref_and_close(Some(value));
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
@@ -856,9 +867,7 @@ impl PostgresSQLConnection {
                     // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
                     SSLMode::VerifyCa | SSLMode::VerifyFull => {
                         if ssl_error.error_no != 0 {
-                            let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
-                                return;
-                            };
+                            let v = verify_error_to_js(&ssl_error, self.global());
                             self.fail_with_js_value(v);
                             return;
                         }
@@ -885,9 +894,7 @@ impl PostgresSQLConnection {
                                     )
                             };
                             if !ok {
-                                let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
-                                    return;
-                                };
+                                let v = verify_error_to_js(&ssl_error, self.global());
                                 self.fail_with_js_value(v);
                             }
                         }
@@ -899,9 +906,7 @@ impl PostgresSQLConnection {
         } else {
             // if we are here is because server rejected us, and the error_no is the cause of this
             // no matter if reject_unauthorized is false because we are disconnected by the server
-            let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
-                return;
-            };
+            let v = verify_error_to_js(&ssl_error, self.global());
             self.fail_with_js_value(v);
         }
     }
@@ -1026,6 +1031,10 @@ impl PostgresSQLConnection {
         event_loop.exit();
         // === defer block ===
         if self.status.get() == Status::Connected
+            && !self
+                .flags
+                .get()
+                .contains(ConnectionFlags::KEEP_ALIVE_REQUESTED)
             && !self.has_query_running()
             && self.write_buffer.get().remaining().is_empty()
         {
@@ -1210,6 +1219,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
+            channel_names: JsCell::new(Vec::new()),
         }));
 
     // `heap::into_raw` is `Box::into_raw` — never null. Sole owner until
@@ -1343,11 +1353,19 @@ impl<const SSL: bool> SocketHandler<SSL> {
 }
 
 impl PostgresSQLConnection {
-    bun_jsc::poll_ref_hostfns!(
-        field = poll_ref,
-        ctx = vm_ctx,
-        after = |this: &Self| this.update_has_pending_activity(),
-    );
+    pub fn do_ref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        this.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
+        this.poll_ref.with_mut(|p| p.ref_(this.vm_ctx()));
+        this.update_has_pending_activity();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn do_unref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        this.update_flags(|f| f.remove(ConnectionFlags::KEEP_ALIVE_REQUESTED));
+        this.poll_ref.with_mut(|p| p.unref(this.vm_ctx()));
+        this.update_has_pending_activity();
+        Ok(JSValue::UNDEFINED)
+    }
 
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
@@ -1763,19 +1781,20 @@ impl PostgresSQLConnection {
     fn finish_request(&self, item: &PostgresSQLQuery) {
         match item.status.get() {
             QueryStatus::Running | QueryStatus::Binding | QueryStatus::PartialResponse => {
-                let flags = item.flags.get();
-                if !flags.counted {
-                    return;
-                }
-                item.update_flags(|f| f.counted = false);
-                if flags.simple {
-                    let n = self.nonpipelinable_requests.get();
-                    debug_assert!(n > 0, "nonpipelinable_requests underflow");
-                    self.nonpipelinable_requests.set(n.saturating_sub(1));
-                } else if flags.pipelined {
-                    let n = self.pipelined_requests.get();
-                    debug_assert!(n > 0, "pipelined_requests underflow");
-                    self.pipelined_requests.set(n.saturating_sub(1));
+                let counter = item.flags.get().counter;
+                item.update_flags(|f| f.counter = RequestCounter::None);
+                match counter {
+                    RequestCounter::None => {}
+                    RequestCounter::Nonpipelinable => {
+                        let n = self.nonpipelinable_requests.get();
+                        debug_assert!(n > 0, "nonpipelinable_requests underflow");
+                        self.nonpipelinable_requests.set(n.saturating_sub(1));
+                    }
+                    RequestCounter::Pipelined => {
+                        let n = self.pipelined_requests.get();
+                        debug_assert!(n > 0, "pipelined_requests underflow");
+                        self.pipelined_requests.set(n.saturating_sub(1));
+                    }
                 }
             }
             QueryStatus::Pending => {
@@ -1895,7 +1914,7 @@ impl PostgresSQLConnection {
                         }
                         self.nonpipelinable_requests
                             .set(self.nonpipelinable_requests.get() + 1);
-                        req.update_flags(|f| f.counted = true);
+                        req.update_flags(|f| f.counter = RequestCounter::Nonpipelinable);
                         self.update_flags(|f| f.remove(ConnectionFlags::IS_READY_FOR_QUERY));
                         req.status.set(QueryStatus::Running);
                         defer_cleanup!(self);
@@ -2028,10 +2047,7 @@ impl PostgresSQLConnection {
                                         f.remove(ConnectionFlags::IS_READY_FOR_QUERY)
                                     });
                                     req.status.set(QueryStatus::Binding);
-                                    req.update_flags(|f| {
-                                        f.pipelined = true;
-                                        f.counted = true;
-                                    });
+                                    req.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                     self.pipelined_requests
                                         .set(self.pipelined_requests.get() + 1);
 
@@ -2194,10 +2210,7 @@ impl PostgresSQLConnection {
                                         });
                                         req.status.set(QueryStatus::Binding);
                                         statement.status = StatementStatus::Parsing;
-                                        req.update_flags(|f| {
-                                            f.pipelined = true;
-                                            f.counted = true;
-                                        });
+                                        req.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                         self.pipelined_requests
                                             .set(self.pipelined_requests.get() + 1);
                                         self.flush_data_and_reset_timeout();
@@ -2975,13 +2988,19 @@ impl PostgresSQLConnection {
                         stmt.error_response = Some(
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
-                        if self
-                            .statements
-                            .with_mut(|m| m.remove(&stmt.signature.name[..]))
-                            .is_some()
-                        {
-                            // SAFETY: `stmt` is a live `Box`-allocated statement; the
-                            // request still holds its own ref so this cannot drop to 0.
+                        let owned_by_map = self.statements.with_mut(|m| {
+                            let name = &stmt.signature.name[..];
+                            if m.get(name)
+                                .is_some_and(|&p| core::ptr::eq(p, core::ptr::from_ref(&*stmt)))
+                            {
+                                m.remove(name).is_some()
+                            } else {
+                                false
+                            }
+                        });
+                        if owned_by_map {
+                            // SAFETY: the map entry just removed was `stmt` itself, so the map
+                            // held one ref and the request still holds another; cannot drop to 0.
                             unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
                         }
                     }
@@ -3020,8 +3039,8 @@ impl PostgresSQLConnection {
                 // _resp dropped at scope end
             }
             MessageType::NotificationResponse => {
-                debug!("UNSUPPORTED NotificationResponse");
-                let _resp = protocol::NotificationResponse::decode_internal(reader.reborrow())?;
+                let resp = protocol::NotificationResponse::decode_internal(reader.reborrow())?;
+                self.on_notification(resp.channel.slice(), resp.payload.slice())?;
             }
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
@@ -3068,6 +3087,56 @@ impl PostgresSQLConnection {
 
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.status.get() == Status::Connected)
+    }
+
+    const MAX_INTERNED_CHANNELS: usize = 256;
+
+    fn channel_name_js(
+        &self,
+        global: &JSGlobalObject,
+        channel: &[u8],
+    ) -> Result<JSValue, AnyPostgresError> {
+        if let Some(entry) = self
+            .channel_names
+            .get()
+            .iter()
+            .find(|entry| entry.bytes.as_ref() == channel)
+        {
+            return Ok(entry.js.get());
+        }
+        let js = bun_string_jsc::create_utf8_for_js(global, channel)
+            .map_err(crate::jsc::js_error_to_postgres)?;
+        if self.channel_names.get().len() < Self::MAX_INTERNED_CHANNELS {
+            self.channel_names.with_mut(|names| {
+                names.push(InternedChannel {
+                    bytes: channel.into(),
+                    js: Strong::create(js, global),
+                })
+            });
+        }
+        Ok(js)
+    }
+
+    /// A conversion the VM cut short (OOM, a worker's termination) is this connection's
+    /// failure like any other in [`Self::on`]: `JSError` takes the pending exception.
+    fn on_notification(&self, channel: &[u8], payload: &[u8]) -> Result<(), AnyPostgresError> {
+        let Some(this_value) = self.js_value.get().try_get() else {
+            return Ok(());
+        };
+        let Some(callback) = js::onnotification_get_cached(this_value) else {
+            return Ok(());
+        };
+        let global = self.global();
+        let channel_js = self.channel_name_js(global, channel)?;
+        let payload_js = bun_string_jsc::create_utf8_for_js(global, payload)
+            .map_err(crate::jsc::js_error_to_postgres)?;
+        self.event_loop().run_callback(
+            callback,
+            global,
+            JSValue::UNDEFINED,
+            &[channel_js, payload_js],
+        );
+        Ok(())
     }
 
     pub(crate) fn consume_on_connect_callback(

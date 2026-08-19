@@ -188,8 +188,6 @@ pub enum Error {
     InvalidSessionToken,
     #[error("SignError")]
     SignError,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("failed to parse multipart data")]
     FailedToParseMultipartData,
     #[error("boundary is too long")]
@@ -526,13 +524,6 @@ impl From<bun_shell_parser::braces::ParserError> for Error {
     }
 }
 
-impl From<bun_jsc::JsTerminated> for Error {
-    #[inline]
-    fn from(_: bun_jsc::JsTerminated) -> Self {
-        Self::JSTerminated
-    }
-}
-
 impl From<Error> for bun_jsc::JsError {
     #[inline]
     fn from(e: Error) -> Self {
@@ -673,7 +664,6 @@ impl Error {
             Self::InvalidEndpoint => "InvalidEndpoint",
             Self::InvalidSessionToken => "InvalidSessionToken",
             Self::SignError => "SignError",
-            Self::JSTerminated => "JSTerminated",
             Self::FailedToParseMultipartData => "failed to parse multipart data",
             Self::BoundaryIsTooLong => "boundary is too long",
             Self::MissingFinalBoundary => "missing final boundary",

@@ -684,26 +684,34 @@ function bindServerHandle(self, options, errCb) {
     const closeWrap = handle.close;
     handle.close = function () {
       handle.close = closeWrap;
-      if (state.handle) {
+      if (state.sharedHandle === handle) {
         // Detach first so Socket#close() doesn't re-enter this handle and
         // invoke the original close twice.
         state.sharedHandle = undefined;
-        self.close();
+        if (state.handle) self.close();
       }
       return closeWrap.$apply(this, arguments);
     };
     state.sharedHandle = handle;
-    startBunSocket(self, state, { fd: handle.fd });
+    // Set before the async adoption so a close() racing it cannot free the fd; releaseSharedHandle() undoes it on failure.
+    handle.adopted = true;
+    startBunSocket(self, state, { fd: handle.sharedFd ?? handle.fd }, handle);
   });
+}
+
+function releaseSharedHandle(state, handle) {
+  if (state.sharedHandle === handle) state.sharedHandle = undefined;
+  handle.adopted = false;
+  handle.close();
 }
 
 // Creates the underlying Bun.udpSocket for `self` and completes the bind:
 // either from a resolved hostname/port or by adopting an existing descriptor
 // (`{ fd }`). Mirrors what Node's startListening() makes observable before
 // 'listening' fires.
-function startBunSocket(self, state, createOptions) {
+function startBunSocket(self, state, createOptions, sharedHandle?) {
   try {
-    Bun.udpSocket({
+    const udpOptions: any = {
       ...createOptions,
       socket: {
         data: (_socket, data, port, address, flags) => {
@@ -741,7 +749,10 @@ function startBunSocket(self, state, createOptions) {
           self.emit("error", error);
         },
       },
-    }).$then(
+    };
+    // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
+    if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
+    Bun.udpSocket(udpOptions).$then(
       socket => {
         if (!state.handle) {
           // Closed while the bind was in flight.
@@ -770,11 +781,13 @@ function startBunSocket(self, state, createOptions) {
       },
       err => {
         state.bindState = BIND_STATE_UNBOUND;
+        if (sharedHandle) releaseSharedHandle(state, sharedHandle);
         self.emit("error", err);
       },
     );
   } catch (err) {
     state.bindState = BIND_STATE_UNBOUND;
+    if (sharedHandle) releaseSharedHandle(state, sharedHandle);
     self.emit("error", err);
   }
 }
@@ -1131,11 +1144,12 @@ Socket.prototype.close = function (callback) {
     handle.sendQueueHead = 0;
     for (let i = head; i < queue.length; i++) completeQueuedSend(handle, queue[i], UV_ECANCELED);
   }
-  if (state.sharedHandle) {
+  const sharedHandle = state.sharedHandle;
+  if (sharedHandle) {
     // Tells the cluster primary this worker no longer uses the shared
     // descriptor (the descriptor itself was owned and closed by the socket).
-    state.sharedHandle.close();
     state.sharedHandle = undefined;
+    sharedHandle.close();
   }
   defaultTriggerAsyncIdScope(this[async_id_symbol], process.nextTick, socketCloseNT, this);
 

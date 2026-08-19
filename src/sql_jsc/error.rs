@@ -26,8 +26,6 @@ pub enum Error {
     AuthenticationFailed,
     #[error("InvalidBinaryValue")]
     InvalidBinaryValue,
-    #[error("Terminated")]
-    Terminated,
     #[error("Thrown")]
     Thrown,
     #[error(transparent)]
@@ -57,7 +55,6 @@ impl Error {
             Self::JSError => "JSError",
             Self::AuthenticationFailed => "AuthenticationFailed",
             Self::InvalidBinaryValue => "InvalidBinaryValue",
-            Self::Terminated => "Terminated",
             Self::Thrown => "Thrown",
             Self::Alloc(_) => "OutOfMemory",
             Self::Postgres(e) => <&'static str>::from(e),

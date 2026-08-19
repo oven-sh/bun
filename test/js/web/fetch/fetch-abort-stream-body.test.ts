@@ -79,6 +79,51 @@ test
     expect(exitCode).toBe(0);
   });
 
+// A direct stream's pull() runs synchronously inside start_request_stream, and
+// that only happens once the HTTP thread has sent the headers and asked for the
+// body. Writing and then throwing from it tears the request down (clear_sink)
+// while the HTTP thread is still flushing the bytes just written and reporting
+// the buffer drained, so the JS side clears the buffer's drain callback at the
+// same moment the HTTP thread reads it; both have to go through the buffer's
+// mutex. Every iteration has to reject with pull's own error, and clearing the
+// callback must not deadlock against the HTTP thread holding the buffer.
+test.concurrent(
+  "request body pull() that writes and then throws rejects the fetch while the upload is in flight",
+  async () => {
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        // Only answer once the client has torn the upload down, so the rejection
+        // below can only come from pull()'s error, never from a response.
+        await req.arrayBuffer().catch(() => {});
+        return new Response("unreachable");
+      },
+    });
+
+    const iterations = 50;
+    // Several chunks over the sink's 16 KiB high water mark, so the HTTP thread
+    // is woken and has something to flush (and report drained) while pull()
+    // throws on the JS thread.
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    let pulls = 0;
+
+    for (let i = 0; i < iterations; i++) {
+      const error = new Error(`pull ${i}`);
+      const body = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          pulls++;
+          for (let j = 0; j < 4; j++) controller.write(chunk);
+          throw error;
+        },
+      });
+      await expect(fetch(server.url, { method: "POST", body })).rejects.toBe(error);
+    }
+
+    expect(pulls).toBe(iterations);
+  },
+);
+
 test("aborting fetch with a ReadableStream request body does not double-cancel the sink", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "fetch-abort-stream-body-fixture.ts")],

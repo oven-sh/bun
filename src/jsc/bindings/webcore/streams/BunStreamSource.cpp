@@ -225,6 +225,7 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSBunStandaloneTextSink;
 
+static constexpr size_t nativeSourceMinChunkSize = 64 * 1024;
 static constexpr size_t nativeSourceDefaultChunkSize = 256 * 1024;
 static constexpr size_t nativeSourceMaxChunkSize = 2 * 1024 * 1024;
 
@@ -404,32 +405,37 @@ static void scheduleNativeSourceCallClose(JSGlobalObject* globalObject, JSNative
     queueStreamsMicrotask(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onNativeSourceCallCloseMicrotask(), jsUndefined(), adapter);
 }
 
-static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t resultBytes)
+// Sizes the next slab to what the source actually delivers: one doubling when a pull fills the slab (files),
+// and a shrink to the read size when it does not (pipes and sockets top out at 64-128 KiB per read), so that
+// steady-state fills are whole and the slab is handed over rather than copied out of.
+static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t resultBytes, size_t slabBytes)
 {
     const size_t chunkSize = adapter->m_chunkSize;
-    if (resultBytes >= chunkSize && !adapter->m_hasResized) {
+    if (resultBytes >= slabBytes) {
+        if (!adapter->m_hasResized) {
+            adapter->m_hasResized = true;
+            adapter->m_chunkSize = std::min<size_t>(chunkSize * 2, nativeSourceMaxChunkSize);
+        }
+        return;
+    }
+    if (resultBytes > 0 && resultBytes < chunkSize) {
         adapter->m_hasResized = true;
-        adapter->m_chunkSize = std::min<size_t>(chunkSize * 2, nativeSourceMaxChunkSize);
+        adapter->m_chunkSize = std::max<size_t>(WTF::roundUpToPowerOfTwo(resultBytes), nativeSourceMinChunkSize);
     }
 }
 
-static JSC::JSUint8Array* uint8Subarray(JSGlobalObject* globalObject, JSC::JSUint8Array* view, size_t offset, size_t length)
-{
-    RefPtr<JSC::ArrayBuffer> buffer = view->possiblySharedBuffer();
-    return JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), WTF::move(buffer), view->byteOffset() + offset, length);
-}
-
-// Reuse the pending view only when its BACKING BUFFER is large enough.
+// The pending slab is only ever handed to JS whole, so it is reused as long as it is still big enough; the
+// bytes are written by the source before anything reads them, so it need not be zeroed.
 static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     const size_t chunkSize = adapter->m_chunkSize;
     if (JSObject* pending = adapter->pendingView()) {
         auto* view = uncheckedDowncast<JSC::JSUint8Array>(pending);
-        if (!view->isDetached() && view->possiblySharedBuffer() && view->possiblySharedBuffer()->byteLength() >= chunkSize)
+        if (!view->isDetached() && view->length() == chunkSize)
             return view;
     }
-    auto* fresh = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), chunkSize);
+    auto* fresh = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), chunkSize);
     RETURN_IF_EXCEPTION(scope, nullptr);
     adapter->setPendingView(vm, fresh);
     return fresh;
@@ -442,7 +448,7 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
     if (result.isNumber()) {
         double written = result.asNumber();
         if (!isClosed)
-            nativeAdjustChunkSize(adapter, written > 0 ? static_cast<size_t>(written) : 0);
+            nativeAdjustChunkSize(adapter, written > 0 ? static_cast<size_t>(written) : 0, view ? view->length() : adapter->m_chunkSize);
         if (adapter->m_textMode) {
             if (written > 0 && view) {
                 size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
@@ -460,12 +466,14 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         if (written > 0 && view) {
             size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
             JSC::JSArrayBufferView* toEnqueue = view;
-            if (view->length() - count > 0) {
-                toEnqueue = uint8Subarray(globalObject, view, 0, count);
+            if (count < view->length()) {
+                // A partial fill (pipes, sockets, the tail of a file) is copied out right-sized and the
+                // whole slab is reused for the next pull: no subarray views, and the slab is never adopted
+                // into an ArrayBuffer (which only full collections reclaim). A full fill hands over the slab.
+                auto* chunk = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), count);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto* tail = uint8Subarray(globalObject, view, count, view->length() - count);
-                RETURN_IF_EXCEPTION(scope, {});
-                newView = tail;
+                memcpy(chunk->typedVector(), view->typedVector(), count);
+                toEnqueue = chunk;
             } else
                 newView = jsUndefined();
             if (controller) {
@@ -484,8 +492,8 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         return jsUndefined();
     }
     if (auto* chunk = dynamicDowncast<JSC::JSArrayBufferView>(result)) {
-        if (!isClosed)
-            nativeAdjustChunkSize(adapter, chunk->byteLength());
+        if (!isClosed && chunk->byteLength() >= adapter->m_chunkSize)
+            nativeAdjustChunkSize(adapter, chunk->byteLength(), chunk->byteLength());
         if (chunk->byteLength() > 0) {
             if (adapter->m_textMode) {
                 nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, chunk->span(), /* flush */ false);
@@ -1017,6 +1025,7 @@ static void rsisDetachNativeTransform(JSGlobalObject* globalObject, JSReadStream
         ts->m_nativeSinkReadyPromise.clear();
         resolvePromise(globalObject, ready, jsUndefined());
     }
+    nativeCodecAbandon(globalObject, ts);
     op->m_nativeTransform.clear();
 }
 
@@ -1542,6 +1551,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundReadStreamIntoSinkOnReady, (JS
             ts->m_nativeSinkReadyPromise.clear();
             Bun::WebStreams::resolvePromise(globalObject, ready, jsUndefined());
             scope.assertNoException();
+        } else if (ts->m_codecPromise) {
+            Bun::WebStreams::nativeCodecContinue(globalObject, ts);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
     if (!op->m_waitingOnSink)

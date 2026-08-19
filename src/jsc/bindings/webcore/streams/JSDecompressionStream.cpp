@@ -158,8 +158,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
     auto format = parseCompressionFormat(lexicalGlobalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(format.has_value());
+    size_t highWaterMark = parseCodecHighWaterMark(lexicalGlobalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
 
-    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), true);
+    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), true, highWaterMark);
     if (!coder) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "failed to initialize decompressor"_s);
         return {};

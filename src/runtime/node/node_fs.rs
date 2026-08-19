@@ -154,11 +154,13 @@ use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
     ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
+    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects, StringOrBuffer,
+    VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
-// canonical path used by `cli/build_command.rs` et al.
-pub use super::types::PathOrFileDescriptor;
+// canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
+// by every caller that runs an operation directly (`read_file(.., Flavor::Sync)`).
+pub use super::types::{Flavor, PathOrFileDescriptor};
 
 /// Local alias for the many `node::foo` call sites below, routing to `super::*`.
 mod node {
@@ -181,7 +183,6 @@ mod node {
 // `validators::*` — `super::util::validators` is a `pub use` of a
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
-use super::MaybeTodo as _;
 use super::util::validators;
 
 // Trait imports for inherent-looking method calls on upstream types:
@@ -473,15 +474,6 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
 // per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
 
-/// All async FS functions are run in a thread pool, but some implementations may
-/// decide to do something slightly different. For example, reading a file has
-/// an extra stack buffer in the async case.
-#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum Flavor {
-    Sync,
-    Async,
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
@@ -569,9 +561,12 @@ mod _async_tasks {
         /// Used internally. Not from JavaScript.
         pub struct AsyncMkdirp {
             pub(crate) completion_ctx: *mut (),
-            pub(crate) completion: fn(*mut (), Maybe<()>),
+            /// Pool thread; `ticket` is this task's, for the callee to post its
+            /// hop back through.
+            pub(crate) completion: fn(*mut (), Maybe<()>, &bun_jsc::Ticket),
             /// Memory is not owned by this struct
             pub path: *const [u8], // BORROW: not owned
+            pub(crate) ticket: bun_jsc::Ticket,
             pub task: WorkPoolTask,
         }
 
@@ -606,23 +601,12 @@ mod _async_tasks {
                             // `with_path` already clones into a fresh `Box<[u8]>`; pass the
                             // existing path slice.
                             Err(err.with_path(&err.path)),
+                            &self.ticket,
                         );
                     }
                     Ok(_) => {
-                        (self.completion)(self.completion_ctx, Ok(()));
+                        (self.completion)(self.completion_ctx, Ok(()), &self.ticket);
                     }
-                }
-            }
-        }
-
-        #[cfg(windows)]
-        impl Default for AsyncMkdirp {
-            fn default() -> Self {
-                Self {
-                    completion_ctx: core::ptr::null_mut(),
-                    completion: |_, _| {},
-                    path: core::ptr::slice_from_raw_parts(core::ptr::null(), 0),
-                    task: WorkPoolTask::default(),
                 }
             }
         }
@@ -942,7 +926,7 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
             // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
             let _deinit =
                 scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
@@ -1228,7 +1212,7 @@ mod _async_tasks {
     }
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
-    /// buffers are protected (`ThreadSafe`) and read under the pool's VM borrow.
+    /// buffers are protected (`ThreadSafe`) and read under the job's ticket.
     pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
         pub args: ThreadSafe<A>,
         pub(crate) result: Maybe<R>,
@@ -1254,7 +1238,6 @@ mod _async_tasks {
 
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::vm_handle::Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
@@ -1279,13 +1262,13 @@ mod _async_tasks {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 },
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 },
             };
@@ -1294,7 +1277,7 @@ mod _async_tasks {
             if Self::HAVE_ABORT_SIGNAL {
                 if let Some(signal) = this.args.signal() {
                     if let Some(abort_error) = signal.node_abort_error_if_aborted(global_object) {
-                        return Ok(promise.reject(global_object, Ok(abort_error))?);
+                        return promise.reject(global_object, Ok(abort_error));
                     }
                 }
             }
@@ -1362,8 +1345,11 @@ mod _async_tasks {
         pub args: ThreadSafe<args::Cp>,
         /// Owning-thread uses (global object, keep-alive context).
         pub(crate) evtloop: EventLoopHandle,
-        /// How the last subtask's thread delivers the completion.
-        pub(crate) poster: bun_jsc::ConcurrentPoster,
+        /// How the last subtask's thread delivers the completion (moved out
+        /// by it: the loop may free `self` once the completion is queued). For
+        /// a JS loop this is the ticket its VM waits for — the arguments may
+        /// point into JS buffers and the promise lives on the JS heap.
+        pub(crate) poster: core::cell::Cell<Option<bun_jsc::ConcurrentPoster>>,
         pub task: WorkPoolTask,
         /// Written from any workpool thread (first `finish_concurrently` caller wins via
         /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
@@ -1546,7 +1532,7 @@ mod _async_tasks {
                 JSPromiseStrong::init(global_object),
                 cp_args,
                 EventLoopHandle::init(vm.event_loop.cast()),
-                bun_jsc::ConcurrentPoster::Js(vm.js_poster()),
+                bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 core::ptr::null_mut(),
             );
@@ -1589,7 +1575,7 @@ mod _async_tasks {
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
                 evtloop,
-                poster,
+                poster: core::cell::Cell::new(Some(poster)),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker,
@@ -1601,9 +1587,6 @@ mod _async_tasks {
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
-            // Its arguments may point into JS buffers and its promise lives on
-            // the JS heap: counted, so the VM waits for it (embedded work).
-            task.poster.embedded_work_scheduled();
 
             let raw = bun_core::heap::release(task);
             WorkPool::schedule(&raw mut raw.task);
@@ -1669,13 +1652,14 @@ mod _async_tasks {
             // Count reached zero ⇒ exclusive access. `this` carries mutable
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
-            let poster = this_ref.poster.clone();
+            let poster = this_ref
+                .poster
+                .take()
+                .expect("fs.cp in flight holds its poster");
             if poster.is_js() {
-                let ct = ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(this));
-                // Counted work: the VM has not closed its handle.
-                let bun_jsc::vm_handle::Posted::Queued = poster.post_js(ct) else {
-                    unreachable!("VM handle closed with an fs.cp outstanding");
-                };
+                poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
+                    this,
+                )));
             } else {
                 let at = AnyTaskWithExtraContext::from_callback_auto_deinit(
                     this,
@@ -1688,14 +1672,14 @@ mod _async_tasks {
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
             // The pool side is done (`this` may already be freed by its loop).
-            poster.embedded_work_finished();
+            drop(poster);
         }
 
         pub(crate) fn run_from_js_thread_mini(&mut self, _: *mut c_void) {
             let _ = self.run_from_js_thread(); // TODO: properly propagate exception upwards
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
             if IS_SHELL {
                 // SAFETY: shelltask is set by create_for_shell and outlives this task
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
@@ -2131,7 +2115,7 @@ mod _async_tasks {
     /// `readdir(.., { recursive: true })`: a scan fanned out over pool subtasks
     /// that share this state (it is the job's off-thread part, so its address
     /// is stable while any subtask runs). Subtasks touch only owned data here —
-    /// never the JS-backed `args` — since they run outside the VM borrow.
+    /// never the JS-backed `args` — since they run outside `run`.
     pub struct AsyncReaddirRecursiveTask {
         /// Protected arguments; their JS-backed path is not read off-thread
         /// (`root_path` is the owned copy).
@@ -2185,7 +2169,6 @@ mod _async_tasks {
 
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::vm_handle::Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             this.done = Some(done);
@@ -2216,7 +2199,7 @@ mod _async_tasks {
                 match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 }
             } else {
@@ -2233,7 +2216,7 @@ mod _async_tasks {
                 match res.to_js(global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 }
             };
@@ -2372,8 +2355,8 @@ mod _async_tasks {
                 ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
                 ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
             };
-            // Subtasks read the root path outside the VM borrow, so it must be an
-            // owned copy rather than the (possibly JS-backed) argument. NUL-terminated.
+            // Subtasks read the root path after `run` has returned its borrow of the
+            // arguments, so it must be an owned copy. NUL-terminated.
             let root_path = {
                 let src = args.path.slice();
                 let mut owned = Vec::with_capacity(src.len() + 1);
@@ -2730,7 +2713,7 @@ pub mod args {
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let mut buffers = VectorArrayBuffer::from_js(
+            let buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| {
                     ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]"))
@@ -2739,21 +2722,10 @@ pub mod args {
                 // each element and pin its backing store until completion.
                 arguments.will_be_async,
             )?;
-            let mut position: Option<u64> = None;
-            if let Some(pos_value) = arguments.next_eat() {
-                if !pos_value.is_undefined_or_null() {
-                    if pos_value.is_number() {
-                        position = Some(pos_value.to_int64() as u64);
-                    } else {
-                        // `buffers` never reaches the Unprotect hook on this
-                        // path; drop its element roots and pins here.
-                        buffers.release();
-                        return Err(
-                            ctx.throw_invalid_arguments(format_args!("position must be a number"))
-                        );
-                    }
-                }
-            }
+            let position: Option<u64> = arguments
+                .next_eat()
+                .and_then(i52::offset_from_js)
+                .and_then(|p| u64::try_from(p).ok());
             Ok(Self {
                 fd,
                 buffers,
@@ -3723,14 +3695,8 @@ pub mod args {
                         )?)
                         .expect("infallible: validated range");
                         arguments.eat();
-                        let Some(next) = arguments.next() else {
-                            break 'parse;
-                        };
-                        current = next;
-                        if !(current.is_number() || current.is_big_int()) {
-                            break 'parse;
-                        }
-                        let length = current.to_int64();
+                        // Node bounds `offset` by the buffer whether or not a
+                        // `length` follows (`length` defaults to the rest).
                         let buf_len = args.buffer.buffer().map(|b| b.slice().len()).unwrap_or(0);
                         let max_offset = buf_len as i64;
                         if args.offset as i64 > max_offset {
@@ -3743,6 +3709,14 @@ pub mod args {
                                 },
                             ));
                         }
+                        let Some(next) = arguments.next() else {
+                            break 'parse;
+                        };
+                        current = next;
+                        if !(current.is_number() || current.is_big_int()) {
+                            break 'parse;
+                        }
+                        let length = current.to_int64();
                         let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
                         if length > max_len || length < 0 {
                             return Err(ctx.throw_range_error(
@@ -3764,19 +3738,15 @@ pub mod args {
                         if !(current.is_number() || current.is_big_int()) {
                             break 'parse;
                         }
-                        let position = i52::from_js(current);
-                        if position >= 0 {
+                        if let Some(position @ 0..) = i52::offset_from_js(current) {
                             args.position = Some(position);
                         }
                         arguments.eat();
                     }
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
-                        if current.is_number() {
-                            let position = i52::from_js(current);
-                            if position >= 0 {
-                                args.position = Some(position);
-                            }
+                        if let Some(position @ 0..) = i52::offset_from_js(current) {
+                            args.position = Some(position);
                         }
                         // Node consumes the position slot whatever its type
                         // (null, undefined, a non-number); the encoding is
@@ -4235,11 +4205,14 @@ pub mod args {
                     }
                 }
             }
+            let flavor = if arguments.will_be_async {
+                Flavor::Async
+            } else {
+                Flavor::Sync
+            };
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
-            let allow_string_object = false;
-            let is_async = arguments.will_be_async;
-            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
+            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, flavor, StringObjects::Reject)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(WriteFile {
@@ -4407,7 +4380,6 @@ pub mod args {
         }
     }
 
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch<'a> = super::Watcher::Arguments<'a>;
     // `StatWatcher::Arguments` owns its `PathLike` (no borrowed slice), so it
     // has no lifetime parameter — unlike `Watcher::Arguments<'a>` above.
@@ -4460,11 +4432,6 @@ impl StringOrUndefined {
 
 /// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
 pub struct Null;
-impl Null {
-    pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::NULL
-    }
-}
 
 pub mod ret {
     use super::*;
@@ -4579,7 +4546,6 @@ pub mod ret {
     pub(crate) type Symlink = ();
     pub(crate) type Truncate = ();
     pub(crate) type Unlink = ();
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch = JSValue;
     pub(crate) type WatchFile = JSValue;
     pub(crate) type Utimes = ();
@@ -4740,13 +4706,14 @@ impl NodeFS {
                 unsafe { libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
         }
 
-        let mut stack_buf = [0u8; 64 * 1024];
-        let stack_buf_len = stack_buf.len();
+        const STACK_BUF_LEN: usize = 64 * 1024;
+        let mut stack_buf = bun_core::vec::UninitBuf::<STACK_BUF_LEN>::uninit();
         let mut buf_to_free: Vec<u8> = Vec::new();
-        let mut buf: &mut [u8] = &mut stack_buf;
+        // SAFETY: `Syscall::read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+        let mut buf: &mut [u8] = unsafe { stack_buf.as_bytes_mut() };
 
         'maybe_allocate_large_temp_buf: {
-            if stat_size > stack_buf_len * 16 {
+            if stat_size > STACK_BUF_LEN * 16 {
                 // Don't allocate more than 8 MB at a time
                 let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
                 // The slab must stay uninitialised: `Vec::resize` here was a
@@ -5504,7 +5471,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let _ = args;
-            return Maybe::<ret::Lchmod>::todo();
+            return Err(sys::Error::todo());
         }
         #[cfg(target_os = "android")]
         {
@@ -5902,10 +5869,18 @@ impl NodeFS {
     pub(crate) fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();
-        let len = prefix_slice.len().min(prefix_buf.len().saturating_sub(7));
-        if len > 0 {
-            prefix_buf[..len].copy_from_slice(&prefix_slice[..len]);
+        // Node rejects an empty prefix with EINVAL (its snprintf builds a
+        // five-X template here); otherwise we'd create a random dir in cwd.
+        if prefix_slice.is_empty() {
+            return Err(sys::Error {
+                errno: SystemErrno::EINVAL as _,
+                syscall: sys::Tag::mkdtemp,
+                path: [b'X'; 5].into(),
+                ..Default::default()
+            });
         }
+        let len = prefix_slice.len().min(prefix_buf.len().saturating_sub(7));
+        prefix_buf[..len].copy_from_slice(&prefix_slice[..len]);
         prefix_buf[len..len + 6].copy_from_slice(b"XXXXXX");
         prefix_buf[len + 6] = 0;
 
@@ -7130,32 +7105,33 @@ impl NodeFS {
         // If we manage to read the entire file, we don't need to call stat() at all.
         // This will make it slightly slower to read e.g. 512 KB files, but usually the OS won't return a full 512 KB in one read anyway.
         //
-        // The sync case borrows `vm.rareData().pipeReadBuffer()` (a per-VM
-        // 256 KB heap slab) when a VM is present, otherwise leaves the buffer
-        // zero-length so the loop is skipped and we fall through to fstat.
-        // The async path heap-allocates a 256 KB buffer instead (Zig used a
-        // comptime-sized stack array; Rust cannot size a stack array on
-        // `flavor`, so heap is forced, but the slab stays uninitialised: it
-        // is write-only, `Syscall::read` hands it straight to the kernel).
+        // The sync case claims the per-VM pipe-read scratch when it is free;
+        // otherwise (async, no VM, or a read further up the stack holds it)
+        // a heap buffer stands in. It stays uninitialised: it is write-only,
+        // `Syscall::read` hands it straight to the kernel.
         use bun_collections::vec_ext::VecExt as _;
-        let mut async_stack_buffer: Vec<u8> = Vec::new();
-        if flavor != Flavor::Sync && async_stack_buffer.try_reserve_exact(256 * 1024).is_ok() {
+        let mut scratch = match self.vm {
+            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine` (single-threaded VM), which outlives this call.
+            Some(vm) if flavor == Flavor::Sync => unsafe {
+                (*(*vm.as_ptr()).rare_data_ptr()).pipe_read_scratch.claim()
+            },
+            _ => None,
+        };
+        let mut heap_buffer: Vec<u8> = Vec::new();
+        if scratch.is_none() && heap_buffer.try_reserve_exact(256 * 1024).is_ok() {
             // SAFETY: `u8` has no validity invariant; the buffer is handed
             // straight to the kernel which only stores into it. Only the
             // `[..total]` prefix actually filled by `read` is ever observed.
-            unsafe { async_stack_buffer.expand_to_capacity() };
+            unsafe { heap_buffer.expand_to_capacity() };
         }
-        let pre_stat_buf: &mut [u8] = if flavor == Flavor::Sync {
-            match self.vm {
-                // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
-                // `rare_data()` lazily inits the heap slab and the returned
-                // `&mut [u8; 256*1024]` outlives this call (single-threaded VM).
-                Some(vm) => unsafe { &mut (*vm.as_ptr()).rare_data().pipe_read_buffer()[..] },
-                None => &mut [][..],
-            }
-        } else {
-            &mut async_stack_buffer[..]
+        let pre_stat_buf: &mut [u8] = match scratch.as_mut() {
+            Some(scratch) => &mut scratch[..],
+            None => &mut heap_buffer[..],
         };
+        let pre_stat_len = pre_stat_buf
+            .len()
+            .min(args.max_size.map_or(usize::MAX, |v| v as usize));
+        let pre_stat_buf = &mut pre_stat_buf[..pre_stat_len];
         let temporary_read_buffer_before_stat_call: &[u8] = {
             let mut available: &mut [u8] = &mut pre_stat_buf[..];
             while !available.is_empty() {
@@ -7177,9 +7153,7 @@ impl NodeFS {
                         if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            // `self.vm` is the live owning `VirtualMachine`
-                            // (per-thread singleton; see `pipe_read_buffer`
-                            // above) — `BackRef` invariant holds.
+                            // `self.vm` is the live owning `VirtualMachine` (per-thread singleton) — `BackRef` invariant holds.
                             let global = vm.global();
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
@@ -8115,14 +8089,6 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn unwatch_file(
-        &mut self,
-        _: args::UnwatchFile,
-        _: Flavor,
-    ) -> Maybe<ret::UnwatchFile> {
-        Maybe::<ret::UnwatchFile>::todo()
-    }
-
     pub(crate) fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
@@ -8704,7 +8670,7 @@ impl NodeFS {
             let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if mode.is_force_clone() {
-                return Maybe::<ret::CopyFile>::todo();
+                return Err(sys::Error::todo());
             }
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
@@ -9000,7 +8966,7 @@ impl NodeFS {
                 // fall back to a non-CoW `CopyFileW`, per
                 // Node.js' documented FICLONE_FORCE contract and matching the
                 // Linux/FreeBSD arms above. Return a concrete ENOSYS rather
-                // than `Maybe::todo()` so debug builds do not panic.
+                // than `sys::Error::todo()` so debug builds do not panic.
                 return Err(sys::Error {
                     errno: SystemErrno::ENOSYS as _,
                     syscall: sys::Tag::copyfile,
@@ -9147,7 +9113,7 @@ impl NodeFS {
         )))]
         {
             let _ = (src, dest, mode, reuse_stat);
-            Maybe::<ret::CopyFile>::todo()
+            Err(sys::Error::todo())
         }
     }
 
@@ -10227,10 +10193,11 @@ impl NodeFSFunctionEnum {
 struct i52;
 impl i52 {
     const MIN: i64 = -(1i64 << 51);
-    /// Truncate to the low
-    /// 52 bits and sign-extend bit 51.
+    /// Node's `GetOffset`: only a safe JS integer selects positional I/O.
     #[inline]
-    fn from_js(v: JSValue) -> i64 {
-        (v.to_int64() << 12) >> 12
+    fn offset_from_js(v: JSValue) -> Option<i64> {
+        let n = v.get_number()?;
+        (n.is_finite() && n.trunc() == n && n.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64)
+            .then_some(n as i64)
     }
 }

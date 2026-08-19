@@ -25,7 +25,6 @@ using namespace JSC;
     macro($$typeof) \
     macro(AbortSignal) \
     macro(Buffer) \
-    macro(Loader) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
@@ -56,8 +55,6 @@ using namespace JSC;
     macro(blob) \
     macro(body) \
     macro(bunNativePtr) \
-    macro(bunNativeType) \
-    macro(byobRequest) \
     macro(bytes) \
     macro(cancel) \
     macro(checkBufferRead) \
@@ -65,7 +62,6 @@ using namespace JSC;
     macro(close) \
     macro(cmd) \
     macro(code) \
-    macro(controller) \
     macro(createCommonJSModule) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
@@ -76,7 +72,6 @@ using namespace JSC;
     macro(decode) \
     macro(dest) \
     macro(dirname) \
-    macro(disturbed) \
     macro(domain) \
     macro(drain) \
     macro(encoding) \
@@ -108,6 +103,8 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(internal) \
+    macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
@@ -149,7 +146,6 @@ using namespace JSC;
     macro(peekPromiseStatus) \
     macro(pokePromiseAsHandled) \
     macro(port) \
-    macro(post) \
     macro(preventAbort) \
     macro(preventCancel) \
     macro(preventClose) \
@@ -168,16 +164,14 @@ using namespace JSC;
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
-    macro(resume) \
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(sharedFd) \
     macro(signal) \
     macro(size) \
     macro(specifier) \
     macro(start) \
-    macro(started) \
-    macro(state) \
     macro(status) \
     macro(statusCode) \
     macro(statusMessage) \
@@ -185,7 +179,6 @@ using namespace JSC;
     macro(stream) \
     macro(syscall) \
     macro(text) \
-    macro(textDecoder) \
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
@@ -195,7 +188,6 @@ using namespace JSC;
     macro(updateRef) \
     macro(url) \
     macro(validated) \
-    macro(view) \
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(webStreamClosedPromise) \

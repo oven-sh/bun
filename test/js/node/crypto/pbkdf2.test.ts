@@ -69,6 +69,34 @@ testPBKDF2("password", "salt", 32, 32, "64c486c55d30d4c5a079b8823b7d7cb37ff0556f
 
 testPBKDF2("", "", 1, 32, "f7ce0b653d2d72a4108cf5abe912ffdd777616dbbb27a70e8204f3ae2d0f6fad", "hex");
 
+describe("keylen is the length of the derived key", () => {
+  // RFC 7914 section 11: PBKDF2-HMAC-SHA-256, P="passwd", S="salt", c=1, dkLen=64.
+  // 64 bytes is two sha256 blocks, and PBKDF2 output is prefix consistent, so a
+  // shorter keylen must return exactly the first keylen bytes of this key.
+  const rfc7914 = Buffer.from(
+    "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc" +
+      "49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783",
+    "hex",
+  );
+
+  test.each([1, 31, 32, 33, 63, 64])("keylen=%d", async keylen => {
+    const expected = rfc7914.subarray(0, keylen);
+
+    const sync = crypto.pbkdf2Sync("passwd", "salt", 1, keylen, "sha256");
+    expect(Buffer.isBuffer(sync)).toBe(true);
+    expect(sync.length).toBe(keylen);
+    expect(sync).toStrictEqual(expected);
+
+    const { promise, resolve } = Promise.withResolvers();
+    crypto.pbkdf2("passwd", "salt", 1, keylen, "sha256", (err, key) => resolve({ err, key }));
+    const { err, key } = await promise;
+    expect(err).toBeNull();
+    expect(Buffer.isBuffer(key)).toBe(true);
+    expect(key.length).toBe(keylen);
+    expect(key).toStrictEqual(expected);
+  });
+});
+
 describe("invalid inputs", () => {
   for (let input of ["test", [], true, undefined, null]) {
     test(`${input} is invalid`, () => {

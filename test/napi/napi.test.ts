@@ -140,23 +140,30 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            await using tmpdir = tempDir("should-be-empty-except", {});
-            const result = spawnSync({
-              cmd: [exe, "self"],
-              env: { ...bunEnv, BUN_TMPDIR: tmpdir },
-              stdin: "inherit",
-              stderr: "inherit",
-              stdout: "pipe",
-            });
+            // Since #29587 each extracted `.node` persists at a content-hashed
+            // path shared across runs (pre-#29587 it was unlinked per load,
+            // see #19550), so a second run must not extract new copies.
+            await using tmpdir = tempDir("napi-compile-extract-" + format, {});
+            const runEnv = { ...bunEnv, BUN_TMPDIR: String(tmpdir), TMPDIR: String(tmpdir) };
+            const runSelf = () =>
+              spawnSync({
+                cmd: [exe, "self"],
+                env: runEnv,
+                stdin: "inherit",
+                stderr: "inherit",
+                stdout: "pipe",
+              });
+            const result = runSelf();
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            if (process.platform !== "win32") {
-              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
-            } else {
-              // On Windows, we have to mark it for deletion on reboot.
-              // Not clear how to test for that.
-            }
+            const extractedCount = () => readdirSync(String(tmpdir)).filter(f => f.endsWith(".node")).length;
+            const count = extractedCount();
+            expect(count).toBeGreaterThan(0);
+            const again = runSelf();
+            expect(again.stdout.toString().trim()).toBe("hello world!");
+            expect(again.success).toBeTrue();
+            expect(extractedCount()).toBe(count);
           },
           // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
           // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
@@ -451,6 +458,58 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("side_effect arr[7]=undefined");
       expect(result).toContain("side_effect script_ran=false");
     });
+
+    // Same ungated functions, but with the exception pending on the engine
+    // (napi_call_function raises the napi_throw_error one before refusing),
+    // which is the state node-addon-api builds its Error object in. They must
+    // still succeed and must leave that exception pending.
+    it("ungated functions succeed while an engine exception is pending and preserve it", async () => {
+      const result = await checkSameOutput("test_ungated_calls_with_engine_exception", []);
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(result.split(/\r?\n/)).toEqual([
+        "napi_call_function: status=10",
+        "napi_get_value_bigint_int64: status=0 value=-7",
+        "napi_get_value_bigint_uint64: status=0 lossless=0",
+        "napi_get_value_string_utf8: status=0 value=ungated",
+        "napi_create_bigint_int64: status=0",
+        "napi_create_bigint_uint64: status=0",
+        "napi_create_symbol: status=0",
+        "napi_create_array_with_length: status=0",
+        "napi_is_array: status=0 is_array=1",
+        "napi_create_string_utf8: status=0",
+        "napi_create_int32: status=0",
+        "exception pending after: true",
+        "pending exception code: EPENDING",
+      ]);
+    });
+
+    // A node:vm timeout requested while the addon is inside those calls, again
+    // with an engine exception pending: none of the calls reports it, the
+    // exception they found is still the one pending when they are done, and the
+    // timeout still stops the script once the addon returns.
+    it("a termination requested during ungated calls is delivered after them, not by them", async () => {
+      const result = await checkSameOutput("test_ungated_calls_through_vm_timeout", []);
+      expect(result.split(/\r?\n/)).toEqual([
+        "napi_call_function: status=10",
+        "ungated call failures: 0",
+        "exception pending: before clear=true after clear=false",
+        "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      ]);
+    });
+
+    // A script / worker looping through ungated calls, stopped while inside one
+    // of them nearly every time. Hangs when the request is lost.
+    it("a node:vm timeout interrupts a script looping through ungated functions", async () => {
+      const result = await checkSameOutput("test_ungated_calls_vm_timeout", []);
+      expect(result.split(/\r?\n/)).toEqual(Array(5).fill("ERR_SCRIPT_EXECUTION_TIMEOUT"));
+    });
+
+    // Worker startup dominates this one: about two seconds per worker under a
+    // debug build, before any CI load.
+    it("worker.terminate() stops a worker looping through ungated functions", async () => {
+      const result = await checkSameOutput("test_ungated_calls_worker_terminate", []);
+      expect(result.split(/\r?\n/)).toEqual([...Array(2).fill("terminate() resolved with 1"), "resolved to undefined"]);
+    }, 30_000);
   });
 
   describe("status code alignment with Node.js", () => {
@@ -594,6 +653,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("drains microtasks between callbacks of one dispatch, not before the first", async () => {
       const result = await checkSameOutput("test_threadsafe_function_microtask_order", []);
       expect(result).toContain("callback 1\nmicrotask 1\ncallback 2\nmicrotask 2\ncallback 3");
+    });
+    it("reports what call_js throws as each item's uncaught exception and keeps draining", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_call_js_throws", []);
+      expect(result).toContain("uncaughtException 3 call_js error 3");
+      expect(result).toContain("done 3");
     });
 
     // An addon's own threads outlive the worker that created the threadsafe
@@ -809,6 +873,22 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
     it("handles accessor properties when filtering by napi_key_writable", async () => {
       await checkSameOutput("test_get_all_property_names_accessor", []);
+    });
+    it("returns napi_pending_exception when a Proxy trap throws during the descriptor walk", async () => {
+      const output = await checkSameOutput("test_get_all_property_names_throwing_proxy_traps", []);
+      expect(output).toContain("own_only gopd throws: status=10 keys=undefined exception=gopd trap");
+      expect(output).toContain(
+        "include_prototypes gopd throws on prototype: status=10 keys=undefined exception=gopd trap",
+      );
+    });
+    it("returns napi_pending_exception when getPrototypeOf throws during the descriptor walk", async () => {
+      // Not checkSameOutput: V8 filters proxy keys while collecting them and
+      // only calls getPrototypeOf once, so a trap that throws on the second
+      // call never throws under Node.
+      const output = (await runOn(bunExe(), "test_get_all_property_names_get_prototype_throws_in_descriptor_walk", []))
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .trim();
+      expect(output).toBe("status=10 keys=undefined exception=getPrototypeOf trap calls=2");
     });
     it("matches Node for Proxy and String wrapper with napi_key_writable/napi_key_configurable", async () => {
       const output = await checkSameOutput("test_get_all_property_names_proxy_and_string_wrapper", []);
@@ -1057,6 +1137,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
     it("does not crash with Reflect.construct when newTarget has no prototype", async () => {
       await checkSameOutput("test_reflect_construct_no_prototype_crash", []);
+    });
+  });
+
+  describe("napi_get_cb_info this_arg", () => {
+    it("is globalThis for a bare call resolved through a closure scope", async () => {
+      const output = await checkSameOutput("test_this_value_of_bare_call_through_closure", []);
+      expect(output).toContain("bare call through closure returned globalThis: true");
     });
   });
 
@@ -1719,6 +1806,30 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("check_object_type_tag(null): status=10 pending=1");
       expect(output).toContain("node_api_set_prototype(number): status=0 pending=0");
       expect(output).toContain("node_api_set_prototype(null): status=2 pending=1");
+    });
+  });
+
+  describe("napi_get_prototype", () => {
+    it("returns null for a Proxy without running its getPrototypeOf trap, like Node", async () => {
+      // Before this was special-cased, Bun ran the trap: a proxy without traps
+      // reported its target's prototype, and a throwing trap reported napi_ok
+      // with a NULL handle written to *result and the exception left pending.
+      const output = await checkSameOutput("test_napi_get_prototype_proxy", []);
+      // checkSameOutput already asserted parity with Node; pin the values so a
+      // shared failure cannot pass.
+      expect(output.split(/\r?\n/)).toEqual([
+        "plain object: status=0 pending=false result=Object.prototype exception=none",
+        "null prototype: status=0 pending=false result=null exception=none",
+        "proxy without traps: status=0 pending=false result=null exception=none",
+        "callable proxy: status=0 pending=false result=null exception=none",
+        "trap returns Array.prototype: status=0 pending=false result=null exception=none",
+        "getPrototypeOf trap calls: 0",
+        "trap throws: status=0 pending=false result=null exception=none",
+        "trap returns a number: status=0 pending=false result=null exception=none",
+        "revoked proxy: status=0 pending=false result=null exception=none",
+        "object whose prototype is a proxy: status=0 pending=false result=the proxy exception=none",
+        "plain object again: status=0 pending=false result=Object.prototype exception=none",
+      ]);
     });
   });
 

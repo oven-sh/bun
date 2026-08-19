@@ -81,11 +81,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, AbortController*)
     return &owner.get();
 }
 
-inline void* wrapperKey(AbortController* wrappableObject)
-{
-    return wrappableObject;
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, AbortController&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, AbortController* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<AbortController>&&);

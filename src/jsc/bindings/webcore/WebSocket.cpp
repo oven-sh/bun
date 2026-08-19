@@ -1584,10 +1584,6 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         didReceiveClose(CleanStatus::NotClean, 1006, "Failed to connect"_s, true);
         break;
     }
-    case Bun::WebSocketErrorCode::headers_too_large: {
-        didReceiveClose(CleanStatus::NotClean, 1007, "Headers too large"_s, true);
-        break;
-    }
     case Bun::WebSocketErrorCode::ended: {
         didReceiveClose(CleanStatus::NotClean, 1006, "Connection ended"_s, true);
         break;
@@ -1611,10 +1607,6 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
     }
     case Bun::WebSocketErrorCode::unexpected_mask_from_server: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected mask from server"_s);
-        break;
-    }
-    case Bun::WebSocketErrorCode::expected_control_frame: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - expected control frame"_s);
         break;
     }
     case Bun::WebSocketErrorCode::unsupported_control_frame: {
@@ -1643,14 +1635,6 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         didReceiveClose(CleanStatus::NotClean, 1009, "Message too big"_s);
         break;
     }
-    case Bun::WebSocketErrorCode::protocol_error: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error"_s);
-        break;
-    }
-    case Bun::WebSocketErrorCode::compression_failed: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Compression failed"_s);
-        break;
-    }
     case Bun::WebSocketErrorCode::invalid_compressed_data: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Invalid compressed data"_s);
         break;
@@ -1661,10 +1645,6 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
     }
     case Bun::WebSocketErrorCode::proxy_authentication_required: {
         didReceiveClose(CleanStatus::NotClean, 1006, "Proxy authentication required"_s, true);
-        break;
-    }
-    case Bun::WebSocketErrorCode::proxy_connection_refused: {
-        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy connection refused"_s, true);
         break;
     }
     case Bun::WebSocketErrorCode::proxy_tunnel_failed: {

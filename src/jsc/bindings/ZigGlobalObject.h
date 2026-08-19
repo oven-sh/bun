@@ -58,12 +58,12 @@ struct node_module;
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
 #include "DOMConstructors.h"
+#include "DOMStructureSlot.h"
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
-#include "BunHttp2CommonStrings.h"
 #include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
@@ -100,7 +100,6 @@ namespace Zig {
 
 class JSCStackTrace;
 
-using JSDOMStructureMap = UncheckedKeyHashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
 using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
 
 #define ZIG_GLOBAL_OBJECT_DEFINED
@@ -160,10 +159,16 @@ public:
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable);
 
-    const JSDOMStructureMap& structures() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    JSC::Structure* domStructure(WebCore::DOMStructureSlot slot) const
     {
         ASSERT(!Thread::mayBeGCThread());
-        return m_structures;
+        return m_domStructures[static_cast<size_t>(slot)].get();
+    }
+    JSC::Structure* setDOMStructure(WebCore::DOMStructureSlot slot, JSC::Structure* structure)
+    {
+        ASSERT(!m_domStructures[static_cast<size_t>(slot)]);
+        m_domStructures[static_cast<size_t>(slot)].set(vm(), this, structure);
+        return structure;
     }
     const WebCore::DOMConstructors& constructors() const
     {
@@ -181,13 +186,6 @@ public:
     static ptrdiff_t offsetOfWorldIsNormal() { return OBJECT_OFFSETOF(GlobalObject, m_worldIsNormal); }
 
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
-
-    JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
-    JSDOMStructureMap& structures(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
-    {
-        ASSERT(!vm().heap.mutatorShouldBeFenced());
-        return m_structures;
-    }
 
     WebCore::DOMConstructors& constructors() { return *m_constructors; }
 
@@ -547,6 +545,9 @@ public:
     /* setupMainThreadPort's drain callback; run once by WebWorker__entrySettled */                          \
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
+    /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
+    /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -577,7 +578,6 @@ public:
     V(private, std::unique_ptr<WebCore::JSBuiltinInternalFunctions>, m_builtinInternalFunctions)             \
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
     V(private, Bun::CommonStrings, m_commonStrings)                                                          \
-    V(private, Bun::Http2CommonStrings, m_http2CommonStrings)                                                \
     V(private, Bun::MarkdownTagStrings, m_markdownTagStrings)                                                \
                                                                                                              \
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
@@ -785,6 +785,8 @@ public:
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
+    JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }
+    void setNodeWorkerStdioPorts(JSObject* ports);
     void setNodeWorkerEnvironmentData(JSMap* data);
     // node:worker_threads parentPort — the transferred MessagePort entangled with the parent
     // Worker's public port. Messages it dispatches are mirrored onto globalEventScope so the
@@ -799,7 +801,6 @@ public:
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
-    Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
     Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -810,7 +811,7 @@ private:
 
     friend class WebCore::JSBuiltinInternalFunctions;
     uint8_t m_worldIsNormal;
-    JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
+    JSC::WriteBarrier<JSC::Structure> m_domStructures[static_cast<size_t>(WebCore::DOMStructureSlot::Count)];
     Lock m_gcLock;
     Ref<WebCore::DOMWrapperWorld> m_world;
     RefPtr<WebCore::Performance> m_performance { nullptr };

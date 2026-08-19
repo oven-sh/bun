@@ -1713,6 +1713,38 @@ describe("pipeline real error overrides AbortError (nodejs/node#62113)", () => {
   });
 });
 
+// Symbol.asyncDispose destroys an unfinished stream with `new AbortError()`:
+// node's default message has no trailing period and, with no signal involved,
+// no cause (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L980).
+describe("Symbol.asyncDispose destroys with node's default AbortError", () => {
+  const cases = [
+    ["Readable", () => new Readable({ read() {} })],
+    [
+      "Writable",
+      () =>
+        new Writable({
+          write(chunk, encoding, cb) {
+            cb();
+          },
+        }),
+    ],
+  ];
+
+  it.each(cases)("%s", async (_, create) => {
+    const stream = create();
+    const errored = new Promise(resolve => stream.once("error", resolve));
+    await stream[Symbol.asyncDispose]();
+    const err = await errored;
+    expect(err).toBeInstanceOf(Error);
+    expect({ name: err.name, code: err.code, message: err.message, hasCause: "cause" in err }).toEqual({
+      name: "AbortError",
+      code: "ABORT_ERR",
+      message: "The operation was aborted",
+      hasCause: false,
+    });
+  });
+});
+
 describe("stream operators argument validation (nodejs/node#59529)", () => {
   it("map/filter throw synchronously with the validateFunction message", () => {
     for (const method of ["map", "filter"]) {

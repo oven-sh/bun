@@ -401,20 +401,23 @@ void nativeTransformReleaseState(JSTransformStream* stream)
         TextDecoder__destroyForStream(std::exchange(s->m_decoder, nullptr));
 }
 
-// ClearAlgorithms is the one shared terminal (post-flush, error, cancel), but a
-// re-entrant reader.cancel() from user JS inside a native arm's chunk coercion reaches
-// it while the coder is still in use on the stack. Defer when m_nativeStateInUse; the
-// runNativeArm epilogue frees it once control unwinds.
+void nativeTransformReleaseStateIfIdle(JSTransformStream* stream)
+{
+    if (!stream->m_nativeStateReleasePending || stream->m_nativeStateInUse || stream->m_asyncCodecInFlight || stream->m_codecPromise)
+        return;
+    nativeTransformReleaseState(stream);
+}
+
+// ClearAlgorithms (post-flush, error, cancel) can reach a coder that is still busy: an arm on
+// the stack, an off-thread step, or a chunk parked across turns (the close algorithm clears
+// algorithms as soon as the flush arm returns). Whoever finishes that work releases it.
 static void nativeTransformReleaseStateOrDefer(JSTransformStreamDefaultController* controller)
 {
     auto* stream = dynamicDowncast<JSTransformStream>(controller->m_algorithmContext.get());
     if (!stream)
         return;
-    if (stream->m_nativeStateInUse || stream->m_asyncCodecInFlight) {
-        stream->m_nativeStateReleasePending = true;
-        return;
-    }
-    nativeTransformReleaseState(stream);
+    stream->m_nativeStateReleasePending = true;
+    nativeTransformReleaseStateIfIdle(stream);
 }
 
 void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultController* controller)

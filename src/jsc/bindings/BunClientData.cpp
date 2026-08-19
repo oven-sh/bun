@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "WorkerMessagingProxy.h"
 #include "WebCoreJSBuiltins.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -57,6 +58,7 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvide
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
+    , m_heapSizeAfterLastCollection(vm.heap)
 {
 }
 
@@ -103,12 +105,13 @@ JSVMClientData::~JSVMClientData()
     if (vmHandle)
         Bun__VmHandle__release(std::exchange(vmHandle, nullptr));
 }
-void JSVMClientData::create(VM* vm, void* bunVM, bool isWorkerVM)
+void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 {
     auto provider = WebCore::createBuiltinsSourceProvider();
     JSVMClientData* clientData = new JSVMClientData(*vm, provider);
     clientData->bunVM = bunVM;
-    clientData->m_isWorkerVM = isWorkerVM;
+    clientData->m_isWorkerVM = !!worker;
+    clientData->m_isNodeWorkerVM = worker && worker->options().kind == WorkerOptions::Kind::Node;
     clientData->vmHandle = Bun__VmHandle__retain(bunVM);
     clientData->vmHandleState = Bun__VmHandle__stateAddress(clientData->vmHandle);
     vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {

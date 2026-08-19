@@ -317,6 +317,15 @@ development:
         });
       });
 
+      test("stringifies any other input instead of throwing, undefined and null included", () => {
+        // Unlike TOML/JSONC/JSON5/XML, YAML.parse(undefined) parses the text "undefined".
+        expect(YAML.parse(undefined as any)).toBe("undefined");
+        expect((YAML.parse as any)()).toBe("undefined");
+        expect(YAML.parse(null as any)).toBe(null);
+        expect(YAML.parse(42 as any)).toBe(42);
+        expect(YAML.parse({ toString: () => "a: 1" } as any)).toEqual({ a: 1 });
+      });
+
       test("complex nested structure from various input types", () => {
         const complexYaml = `
 version: "1.0"

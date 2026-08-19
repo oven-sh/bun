@@ -14,7 +14,7 @@ Bun.serve({
 });
 ```
 
-The `key` and `cert` fields expect the _contents_ of your TLS key and certificate, _not a path to it_. Each can be a string, `BunFile`, `TypedArray`, or `Buffer`.
+The `key` and `cert` fields expect the _contents_ of your TLS key and certificate, _not a path to it_. Each can be a string, `BunFile`, `TypedArray`, `Buffer`, or an array of those. Bun uses only the last key/cert pair in an array; to serve several certificates, pass an array of `tls` objects, each with a `serverName` (see [SNI](#server-name-indication-sni) below).
 
 ```ts
 Bun.serve({

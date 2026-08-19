@@ -88,9 +88,6 @@ pub enum MessageId {
     Version = b'V',
     HotUpdate = b'u',
     Errors = b'e',
-    BrowserMessage = b'b',
-    BrowserMessageClear = b'B',
-    RequestHandlerError = b'h',
     Visualizer = b'v',
     MemoryVisualizer = b'M',
     SetUrlResponse = b'n',
@@ -250,10 +247,7 @@ impl GraphTraceState {
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
-        let b = match side {
-            Side::Client => &mut self.client_bits,
-            Side::Server => &mut self.server_bits,
-        };
+        let b = self.bits(side);
         if b.unmanaged.bit_length < new_size {
             b.resize(new_size, false)?;
         }
@@ -878,7 +872,7 @@ impl WatcherAtomics {
             {
                 debug_assert!(
                     (*this).dbg_watcher_event.is_none(),
-                    "must call `watcherReleaseEvent` before calling `watcherAcquireEvent` again",
+                    "must call `watcher_release_and_submit_event` before calling `watcher_acquire_event` again",
                 );
                 (*this).dbg_watcher_event = Some(ev);
             }
@@ -927,12 +921,14 @@ impl WatcherAtomics {
             #[cfg(debug_assertions)]
             {
                 let Some(dbg_event) = (*this).dbg_watcher_event else {
-                    panic!("must call `watcherAcquireEvent` before `watcherReleaseAndSubmitEvent`");
+                    panic!(
+                        "must call `watcher_acquire_event` before `watcher_release_and_submit_event`"
+                    );
                 };
                 debug_assert!(
                     dbg_event == ev,
-                    "watcherReleaseAndSubmitEvent: event is not from last \
-                     `watcherAcquireEvent` call (expected {:p}, got {:p})",
+                    "watcher_release_and_submit_event: event is not from last \
+                     `watcher_acquire_event` call (expected {:p}, got {:p})",
                     dbg_event,
                     ev,
                 );
@@ -999,7 +995,7 @@ impl WatcherAtomics {
                     let old_index: u8 = old_next.0;
                     debug_assert!(
                         (*this).pending_event == Some(old_index),
-                        "watcherReleaseAndSubmitEvent: expected `pending_event` to be {}; got {:?}",
+                        "watcher_release_and_submit_event: expected `pending_event` to be {}; got {:?}",
                         old_index,
                         (*this).pending_event,
                     );
@@ -1030,24 +1026,13 @@ pub struct DirectoryWatchStore {
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
     pub(crate) dependencies_free_list: Vec<u32>,
 }
-impl DirectoryWatchStore {
-    /// Intrusive backref: recover `*mut DevServer`.
-    /// Returns a raw ptr (not `&mut DevServer`) because `&mut self` is live;
-    /// callers must scope their borrow of fields disjoint from
-    /// `directory_watchers` to avoid aliasing UB.
-    #[inline]
-    fn owner(&mut self) -> *mut DevServer {
-        // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
-        // field of a heap-allocated `DevServer` (never moved post-init).
-        unsafe {
-            bun_core::from_field_ptr!(
-                DevServer,
-                directory_watchers,
-                std::ptr::from_mut::<Self>(self)
-            )
-        }
-    }
+// SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers` field of
+// a heap-allocated `DevServer` (never moved post-init). Raw ptr (not `&mut
+// DevServer`) because `&mut self` is live; callers scope their borrows to
+// fields disjoint from `directory_watchers`.
+bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }
 
+impl DirectoryWatchStore {
     /// Safe sibling-projection: borrow the owning [`DevServer`]'s
     /// `bun_watcher` while holding `&mut self`. The two fields are disjoint,
     /// so the returned `&mut Watcher` does not alias `self`.

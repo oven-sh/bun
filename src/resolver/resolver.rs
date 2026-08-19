@@ -1571,33 +1571,8 @@ impl<'a> Resolver<'a> {
                     PJSideEffects::Unspecified | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_)
                 );
 
-                result.primary_side_effects_data = match &existing.side_effects {
-                    PJSideEffects::Unspecified => SideEffects::HasSideEffects,
-                    PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
-                    PJSideEffects::Map(map) => {
-                        if map.contains_key(&crate::package_json::StringHashMapUnownedKey::init(
-                            path.text(),
-                        )) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                    PJSideEffects::Glob(_) => {
-                        if existing.side_effects.has_side_effects(path.text()) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                    PJSideEffects::Mixed(_) => {
-                        if existing.side_effects.has_side_effects(path.text()) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                };
+                result.primary_side_effects_data =
+                    primary_side_effects(&existing.side_effects, path.text());
 
                 if existing.name.is_empty() || self.care_about_bin_folder {
                     result.package_json = None;
@@ -1610,34 +1585,8 @@ impl<'a> Resolver<'a> {
 
             if needs_side_effects {
                 if let Some(package_json) = Result::deref_package_json(result.package_json) {
-                    use crate::package_json::SideEffects as PJSideEffects;
-                    result.primary_side_effects_data = match &package_json.side_effects {
-                        PJSideEffects::Unspecified => SideEffects::HasSideEffects,
-                        PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
-                        PJSideEffects::Map(map) => {
-                            if map.contains_key(
-                                &crate::package_json::StringHashMapUnownedKey::init(path.text()),
-                            ) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                        PJSideEffects::Glob(_) => {
-                            if package_json.side_effects.has_side_effects(path.text()) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                        PJSideEffects::Mixed(_) => {
-                            if package_json.side_effects.has_side_effects(path.text()) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                    };
+                    result.primary_side_effects_data =
+                        primary_side_effects(&package_json.side_effects, path.text());
                 }
             }
 
@@ -3527,7 +3476,7 @@ impl<'a> Resolver<'a> {
         .expect("unreachable");
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
-        // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
+        // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
         // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
         // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
         // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and
@@ -6367,13 +6316,12 @@ impl<'a> Resolver<'a> {
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
-                                write!(
+                                let _ = write!(
                                     &mut buf,
                                     "Resolved symlink \"{}\" to \"{}\"",
                                     bstr::BStr::new(path),
                                     bstr::BStr::new(symlink)
-                                )
-                                .ok();
+                                );
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
@@ -6393,13 +6341,12 @@ impl<'a> Resolver<'a> {
 
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
-                                write!(
+                                let _ = write!(
                                     &mut buf,
                                     "Resolved symlink \"{}\" to \"{}\"",
                                     bstr::BStr::new(path),
                                     bstr::BStr::new(symlink)
-                                )
-                                .ok();
+                                );
                                 logs.add_note(buf);
                             }
                             {
@@ -6675,8 +6622,8 @@ impl<'a> Resolver<'a> {
                         // (strings live in dirname_store or default_allocator and outlive the
                         // struct). The heap-allocated TSConfigJSON itself is no longer needed;
                         // without this, every intermediate config in an extends chain leaks on
-                        // each dirInfoUncached() call, which is especially bad under HMR where
-                        // bustDirCache triggers a re-parse of the whole chain on every reload.
+                        // each dir_info_uncached() call, which is especially bad under HMR where
+                        // bust_dir_cache triggers a re-parse of the whole chain on every reload.
                         // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
                         TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
                     }
@@ -6801,6 +6748,17 @@ impl<'b> BrowserMapPath<'b> {
         }
 
         false
+    }
+}
+
+fn primary_side_effects(
+    side_effects: &crate::package_json::SideEffects,
+    path: &[u8],
+) -> SideEffects {
+    if side_effects.has_side_effects(path) {
+        SideEffects::HasSideEffects
+    } else {
+        SideEffects::NoSideEffectsPackageJson
     }
 }
 

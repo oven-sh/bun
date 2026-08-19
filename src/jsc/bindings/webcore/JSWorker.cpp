@@ -307,9 +307,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         }
     }
 
-    // The worker starts from a copy of this thread's process.env as it is now,
-    // whether or not an options object was passed. Without a copy the worker
-    // falls back to the environment the process was launched with.
+    // Runs without an options object too; otherwise the worker starts from the launch-time environment.
     if (!shareEnv) {
         JSObject* envObject = nullptr;
 

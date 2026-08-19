@@ -33,16 +33,39 @@ runs:
         bun-version: ${{ inputs.bun-version }}
 
     - name: Setup system deps
-      # cmake/ninja for `--configure-only`; clang for toolchain detection
-      # (configure resolves cfg.cc/cxx even though nothing here compiles C++).
+      # Nothing here compiles C or C++, but configure requires the pinned clang,
+      # lld and llvm-ar (from apt.llvm.org) and nasm (from Ubuntu) to emit its
+      # build edges, and the clang++ it finds becomes the linker in the
+      # .cargo/config.toml it writes, which cargo uses for build scripts, proc
+      # macros and test binaries. cmake and ninja are on the runner image.
+      #
+      # apt.llvm.org stalls from time to time, and with wget's and apt's default
+      # timeouts a stall kept this step silent for hours. Every fetch here is
+      # bounded, and the apt round is retried as a whole because `apt-get update`
+      # exits 0 when a source fails to download: the install is what notices.
       shell: bash
       env:
         LLVM_VERSION_MAJOR: ${{ inputs.llvm-version }}
       run: |
-        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-        echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION_MAJOR} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq --no-install-recommends cmake ninja-build nasm clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR}
+        curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 https://apt.llvm.org/llvm-snapshot.gpg.key \
+          | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+        codename=$(lsb_release -cs)
+        echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM_VERSION_MAJOR main" \
+          | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+
+        packages=("clang-$LLVM_VERSION_MAJOR" "lld-$LLVM_VERSION_MAJOR" "llvm-$LLVM_VERSION_MAJOR" nasm)
+        apt_get() {
+          sudo apt-get -qq -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 "$@"
+        }
+        for attempt in 1 2 3; do
+          [ "$attempt" = 1 ] || sleep 10
+          if apt_get update && apt_get install -y --no-install-recommends "${packages[@]}"; then
+            exit 0
+          fi
+          echo "apt-get attempt $attempt of 3 failed"
+        done
+        echo "::error::could not install ${packages[*]}"
+        exit 1
 
     - name: Setup Rust
       if: inputs.toolchain != ''

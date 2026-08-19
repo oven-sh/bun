@@ -43,6 +43,10 @@ jobs:
   clippy:
     name: cargo clippy
     runs-on: ubuntu-latest
+    # The slowest of these jobs (miri) takes about 10 minutes. Without a limit
+    # a job whose setup hangs on apt.llvm.org holds a runner for GitHub's
+    # default of 6 hours, or until the next push to the PR cancels it.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,6 +70,7 @@ jobs:
   miri:
     name: cargo miri test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -115,6 +120,7 @@ jobs:
   mordant:
     name: mordant
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name != 'merge_group'
     # Advisory while the pack is new: shows up on the PR, does not block it.
     continue-on-error: true

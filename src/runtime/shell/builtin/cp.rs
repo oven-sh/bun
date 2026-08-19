@@ -579,6 +579,16 @@ impl ShellCpTask {
             .is_some_and(|&c| resolve_path::Platform::AUTO.is_separator(c))
     }
 
+    /// `ENAMETOOLONG` naming `parts` (the target path that did not fit a path buffer).
+    #[cold]
+    fn target_too_long(parts: &[&[u8]]) -> ShellErr {
+        let path = parts.join(&resolve_path::Platform::AUTO.separator());
+        ShellErr::new_sys(
+            &bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::copyfile)
+                .with_path(&path),
+        )
+    }
+
     fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
         #[cfg(windows)]
         {
@@ -618,13 +628,15 @@ impl ShellCpTask {
         } else {
             resolve_path::join_z::<platform::Auto>(&[&self.cwd_path, &self.src])
         };
-        let mut tgt: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.tgt) {
-            resolve_path::join_z_buf::<platform::Auto>(buf2.as_mut_slice(), &[&self.tgt])
+        let tgt_parts: &[&[u8]] = if Platform::AUTO.is_absolute(&self.tgt) {
+            &[&self.tgt]
         } else {
-            resolve_path::join_z_buf::<platform::Auto>(
-                buf2.as_mut_slice(),
-                &[&self.cwd_path, &self.tgt],
-            )
+            &[&self.cwd_path, &self.tgt]
+        };
+        let Some(mut tgt) =
+            resolve_path::join_z_buf_checked::<platform::Auto>(buf2.as_mut_slice(), tgt_parts)
+        else {
+            return Some(Self::target_too_long(tgt_parts));
         };
 
         // Cases:
@@ -678,10 +690,13 @@ impl ShellCpTask {
             // 2nd synopsis: -R source_files... -> target.
             if tgt_exists {
                 let basename = resolve_path::basename(src.as_bytes());
-                tgt = resolve_path::join_z_buf::<platform::Auto>(
+                tgt = match resolve_path::join_z_buf_checked::<platform::Auto>(
                     buf3.as_mut_slice(),
                     &[tgt.as_bytes(), basename],
-                );
+                ) {
+                    Some(tgt) => tgt,
+                    None => return Some(Self::target_too_long(&[tgt.as_bytes(), basename])),
+                };
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
@@ -709,10 +724,13 @@ impl ShellCpTask {
                 ));
             }
             let basename = resolve_path::basename(src.as_bytes());
-            tgt = resolve_path::join_z_buf::<platform::Auto>(
+            tgt = match resolve_path::join_z_buf_checked::<platform::Auto>(
                 buf3.as_mut_slice(),
                 &[tgt.as_bytes(), basename],
-            );
+            ) {
+                Some(tgt) => tgt,
+                None => return Some(Self::target_too_long(&[tgt.as_bytes(), basename])),
+            };
             _copying_many = true;
         }
 

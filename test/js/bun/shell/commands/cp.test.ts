@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir, tempDirWithFiles } from "harness";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -171,6 +171,56 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
+});
+
+// cp resolves its operands against the cwd into path buffers. An operand that
+// did not fit took the process down (`panic: range end index 5012 out of range
+// for slice of length 4094`), so the fixture runs in a child. The flag turns the
+// builtin on where it is off by default (POSIX).
+test("operands longer than the path buffer fail with ENAMETOOLONG", async () => {
+  using dir = tempDir("cp-long-operand", {
+    "in.txt": "content\n",
+    "fixture.ts": `
+      import { $ } from "bun";
+      $.nothrow();
+      const long = Buffer.alloc(100_000, "a").toString();
+      const run = async (promise) => {
+        const { exitCode, stdout, stderr } = await promise.quiet();
+        return { exitCode, stdout: stdout.toString(), stderr: stderr.toString().replaceAll(long, "<long>") };
+      };
+      console.log(
+        JSON.stringify({
+          target: await run($\`cp in.txt \${long}\`),
+          source: await run($\`cp \${long} out.txt\`),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    target: {
+      exitCode: 1,
+      stdout: "",
+      stderr: expect.stringMatching(/^cp: File name too long: .+[\\/]<long>\n$/),
+    },
+    // The source goes to the OS first; Windows reports every failed stat as a missing file.
+    source: {
+      exitCode: 1,
+      stdout: "",
+      stderr: expect.stringMatching(/^cp: (File name too long|No such file or directory): .+[\\/]<long>\n$/),
+    },
+  });
+  expect(exitCode).toBe(0);
 });
 
 function expectSortedOutput(expected: string) {

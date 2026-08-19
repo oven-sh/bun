@@ -924,8 +924,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (pool.detachConnectionCloseHandler) {
         pool.detachConnectionCloseHandler(pooledConnection, onClose);
       }
-      // transaction_sql's closures keep this whole scope alive while the caller keeps `tx`;
-      // for a reservation the settle callbacks pin the reserved client.
+      // a kept `tx` keeps this scope alive; resolve/reject pin a reserved client (see settleReservedTransaction)
       state.reject = callback = resolve = reject = null;
       if (!dontRelease) {
         pool.release(pooledConnection);

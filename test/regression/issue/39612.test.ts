@@ -5,23 +5,20 @@
 // scope and fails with "Variable workspaceFolder can not be resolved in a
 // multi folder workspace". The extension must pass the workspace folder that
 // owns the target file.
+// This test lives under test/ (not packages/bun-vscode) because CI's test
+// runner only discovers files in the test/ directory. It reuses the
+// extension's shared mock types, but registers its own vscode module mock:
+// the shared one in vscode.mock.ts targets the test controller and lacks
+// command registration and startDebugging capture.
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
+import {
+  MockUri,
+  MockWorkspaceFolder,
+} from "../../../packages/bun-vscode/src/features/tests/__tests__/vscode-types.mock";
 
-class MockUri {
-  constructor(public fsPath: string) {}
-  static file(p: string): MockUri {
-    return new MockUri(p);
-  }
-  toString(): string {
-    return `file://${this.fsPath}`;
-  }
-}
-
-type MockWorkspaceFolder = { uri: MockUri; name: string; index: number };
-
-const folderApp: MockWorkspaceFolder = { uri: MockUri.file("/repo/app"), name: "app", index: 0 };
-const folderLib: MockWorkspaceFolder = { uri: MockUri.file("/repo/lib"), name: "lib", index: 1 };
+const folderApp = new MockWorkspaceFolder(MockUri.file("/repo/app"), "app", 0);
+const folderLib = new MockWorkspaceFolder(MockUri.file("/repo/lib"), "lib", 1);
 const workspaceFolders = [folderApp, folderLib];
 
 const startDebugging = mock(async (..._args: unknown[]) => true);

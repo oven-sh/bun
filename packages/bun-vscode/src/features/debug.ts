@@ -510,8 +510,11 @@ export async function runUnsavedCode() {
   const startTime = performance.now();
 
   try {
-    // Start debugging
-    await vscode.debug.startDebugging(undefined, {
+    // An untitled document has no owning folder, so fall back to the first
+    // workspace folder (the same fallback FileDebugSession uses for its
+    // [eval] path) to keep ${workspaceFolder} resolvable in a multi-root
+    // workspace.
+    await vscode.debug.startDebugging(vscode.workspace.workspaceFolders?.[0], {
       ...DEBUG_CONFIGURATION,
       program: "-",
       __code: code,

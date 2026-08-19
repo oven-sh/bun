@@ -102,6 +102,14 @@ describe.concurrent("Valkey reply decoding", () => {
     });
   });
 
+  test("RESP2 null array nested in an array resolves a null element", async () => {
+    const server = createReplyServer(`*2${CRLF}*-1${CRLF}$3${CRLF}abc${CRLF}`);
+    await withClient(server, async client => {
+      expect(await client.get("k")).toEqual([null, "abc"]);
+      expect(await client.send("PING", [])).toBe("OK");
+    });
+  });
+
   test("RESP3 null (_) with trailing bytes is a protocol error", async () => {
     const server = createReplyServer(`_junk${CRLF}`);
     await withClient(server, async client => {

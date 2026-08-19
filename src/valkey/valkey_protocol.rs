@@ -879,6 +879,21 @@ mod tests {
     }
 
     #[test]
+    fn resp2_null_array_nested_in_array() {
+        // GEOPOS with a missing member: `[null, "abc"]`.
+        let frame = b"*2\r\n*-1\r\n$3\r\nabc\r\n";
+        match parse(frame) {
+            Ok(RESPValue::Array(items)) => {
+                assert_eq!(items.len(), 2);
+                assert!(matches!(items[0], RESPValue::Null));
+                assert!(matches!(&items[1], RESPValue::BulkString(Some(s)) if &**s == b"abc"));
+            }
+            _ => panic!("expected a two element array"),
+        }
+        assert_prefixes_are_partial(frame);
+    }
+
+    #[test]
     fn resp2_null_bulk_string_is_null() {
         let frame = b"$-1\r\n";
         assert!(matches!(parse(frame), Ok(RESPValue::BulkString(None))));
@@ -894,6 +909,14 @@ mod tests {
         let junk = b"_junk\r\n";
         assert!(matches!(parse(junk), Err(RedisError::InvalidNull)));
         assert!(matches!(scan(junk), Err(RedisError::InvalidNull)));
+        // Until the CRLF arrives the junk is still a short read, not an error.
+        for i in 1..junk.len() - 1 {
+            assert!(matches!(
+                parse(&junk[..i]),
+                Err(RedisError::InvalidResponse)
+            ));
+            assert!(matches!(scan(&junk[..i]), Ok(ScanResult::NeedMoreData)));
+        }
         // Inside an aggregate the scanner must reject it too.
         assert!(matches!(
             scan(b"*2\r\n_junk\r\n_\r\n"),

@@ -336,7 +336,6 @@ new Error("asdf", {
   cause: new Error("asdf"),
 });
 
-// @ts-expect-error this interface is defined top level in globals.d.ts so we
-// are making sure that .d.ts is a module and that anything top level doesn't
-// leak to userland
+// @ts-expect-error this interface lives in Bun.__internal (globals.d.ts), so we
+// are making sure that it does not leak to userland as a global
 expectType<BunConsumerConvenienceMethods>();

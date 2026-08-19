@@ -3970,7 +3970,12 @@ unsafe fn fetch_builtin_module(
 /* Generated code */
 import {Database} from 'bun:sqlite';
 import {readFileSync} from 'node:fs';
-export const db = new Database(readFileSync(import.meta.path));
+export const db = (() => {
+  // Scoped so the copy of the file can be collected once sqlite has it.
+  const bytes = readFileSync(import.meta.path);
+  // An empty file is an empty database, but Database rejects empty buffers.
+  return bytes.byteLength === 0 ? new Database(':memory:') : new Database(bytes);
+})();
 
 export const __esModule = true;
 export default db;

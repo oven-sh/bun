@@ -254,7 +254,7 @@ export interface BundlerTestInput {
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
-  loader?: Record<`.${string}`, Loader>;
+  loader?: Record<`.${string}`, Loader | "sqlite">;
   mangleProps?: RegExp;
   mangleQuoted?: boolean;
   mainFields?: string[];
@@ -617,7 +617,7 @@ function expectBundled(
   }
   if (!ESBUILD && loader) {
     const loaderValues = [...new Set(Object.values(loader))];
-    const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file", "wtf", "toml"];
+    const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file", "wtf", "toml", "sqlite"];
     const unsupportedLoaderTypes = loaderValues.filter(x => !supportedLoaderTypes.includes(x));
     if (unsupportedLoaderTypes.length > 0) {
       throw new Error(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);

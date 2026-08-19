@@ -123,61 +123,68 @@ impl Flags {
     }
 }
 
-pub struct UpgradeCTX {
-    pub(crate) context: *mut uws_sys::WebSocketUpgradeContext,
-    // request will be detached when go async
-    pub(crate) request: *mut uws_sys::Request,
-
-    // we need to store this, if we wanna to enable async upgrade
-    pub(crate) sec_websocket_key: Box<[u8]>,
-    pub(crate) sec_websocket_protocol: Box<[u8]>,
-    pub(crate) sec_websocket_extensions: Box<[u8]>,
+pub(crate) enum UpgradeCTX {
+    /// Not a WebSocket upgrade request, or the upgrade context was already used or discarded.
+    None,
+    /// `request` is only readable while the request handler is still running.
+    Live {
+        context: ptr::NonNull<uws_sys::WebSocketUpgradeContext>,
+        request: ptr::NonNull<uws_sys::Request>,
+    },
+    /// The `sec-websocket-*` headers `upgrade` needs, copied out before the request goes away.
+    Saved {
+        context: ptr::NonNull<uws_sys::WebSocketUpgradeContext>,
+        key: Box<[u8]>,
+        protocol: Box<[u8]>,
+        extensions: Box<[u8]>,
+    },
 }
 
-impl Default for UpgradeCTX {
-    fn default() -> Self {
-        Self {
-            context: ptr::null_mut(),
-            request: ptr::null_mut(),
-            sec_websocket_key: Box::default(),
-            sec_websocket_protocol: Box::default(),
-            sec_websocket_extensions: Box::default(),
-        }
-    }
-}
+const _: () = assert!(core::mem::size_of::<UpgradeCTX>() <= 64);
 
 impl UpgradeCTX {
-    // this can be called multiple times
-    // Mid-lifetime reset, not a destructor.
-    fn reset(&mut self) {
-        // Dropping the taken value frees the old `Box<[u8]>` headers; raw
-        // pointers are nulled. Nothing from the old value is reused.
-        drop(core::mem::take(self));
+    fn preserve_web_socket_headers_if_needed(&mut self) {
+        let Self::Live { context, request } = self else {
+            return;
+        };
+        *self = Self::Saved {
+            context: *context,
+            key: Box::from(Self::live_header(request, b"sec-websocket-key")),
+            protocol: Box::from(Self::live_header(request, b"sec-websocket-protocol")),
+            extensions: Box::from(Self::live_header(request, b"sec-websocket-extensions")),
+        };
     }
 
-    fn preserve_web_socket_headers_if_needed(&mut self) {
-        if !self.request.is_null() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref. We
-            // null `self.request` immediately after reading headers so it
-            // cannot be used past its native lifetime.
-            let request = bun_opaque::opaque_deref(self.request.cast_const());
-            self.request = ptr::null_mut();
-
-            let sec_websocket_key = request.header(b"sec-websocket-key").unwrap_or(b"");
-            let sec_websocket_protocol = request.header(b"sec-websocket-protocol").unwrap_or(b"");
-            let sec_websocket_extensions =
-                request.header(b"sec-websocket-extensions").unwrap_or(b"");
-
-            if !sec_websocket_key.is_empty() {
-                self.sec_websocket_key = Box::<[u8]>::from(sec_websocket_key);
-            }
-            if !sec_websocket_protocol.is_empty() {
-                self.sec_websocket_protocol = Box::<[u8]>::from(sec_websocket_protocol);
-            }
-            if !sec_websocket_extensions.is_empty() {
-                self.sec_websocket_extensions = Box::<[u8]>::from(sec_websocket_extensions);
-            }
+    fn sec_websocket_key(&self) -> &[u8] {
+        match self {
+            Self::None => b"",
+            Self::Live { request, .. } => Self::live_header(request, b"sec-websocket-key"),
+            Self::Saved { key, .. } => key,
         }
+    }
+
+    fn sec_websocket_protocol(&self) -> &[u8] {
+        match self {
+            Self::None => b"",
+            Self::Live { request, .. } => Self::live_header(request, b"sec-websocket-protocol"),
+            Self::Saved { protocol, .. } => protocol,
+        }
+    }
+
+    fn sec_websocket_extensions(&self) -> &[u8] {
+        match self {
+            Self::None => b"",
+            Self::Live { request, .. } => Self::live_header(request, b"sec-websocket-extensions"),
+            Self::Saved { extensions, .. } => extensions,
+        }
+    }
+
+    /// Takes `&NonNull` so the returned view is bounded by the borrow of the `Live` state.
+    fn live_header<'a>(request: &'a ptr::NonNull<uws_sys::Request>, name: &[u8]) -> &'a [u8] {
+        // S008: `uws::Request` is an `opaque_ffi!` ZST, safe deref.
+        bun_opaque::opaque_deref(request.as_ptr())
+            .header(name)
+            .unwrap_or(b"")
     }
 }
 
@@ -534,10 +541,10 @@ impl NodeHTTPResponse {
         sec_websocket_protocol: ZigString,
         sec_websocket_extensions: ZigString,
     ) -> bool {
-        let upgrade_ctx = self.upgrade_context.get().context;
-        if upgrade_ctx.is_null() {
-            return false;
-        }
+        let upgrade_ctx = match *self.upgrade_context.get() {
+            UpgradeCTX::None => return false,
+            UpgradeCTX::Live { context, .. } | UpgradeCTX::Saved { context, .. } => context,
+        };
         // `AnyServer` is a `Copy` type-erased pointer; copy it so the
         // `&mut self`-taking accessor can be called from this `&self` body.
         // The pointee is the long-lived server, not `*self`.
@@ -568,13 +575,7 @@ impl NodeHTTPResponse {
 
         let sec_websocket_protocol_value: &[u8] = 'brk: {
             if sec_websocket_protocol.len == 0 {
-                if !upgrade_context.request.is_null() {
-                    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                    let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-                    break 'brk request.header(b"sec-websocket-protocol").unwrap_or(b"");
-                } else {
-                    break 'brk &upgrade_context.sec_websocket_protocol;
-                }
+                break 'brk upgrade_context.sec_websocket_protocol();
             }
             sec_websocket_protocol_str = Some(sec_websocket_protocol.to_slice());
             break 'brk sec_websocket_protocol_str.as_ref().unwrap().slice();
@@ -582,25 +583,13 @@ impl NodeHTTPResponse {
 
         let sec_websocket_extensions_value: &[u8] = 'brk: {
             if sec_websocket_extensions.len == 0 {
-                if !upgrade_context.request.is_null() {
-                    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                    let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-                    break 'brk request.header(b"sec-websocket-extensions").unwrap_or(b"");
-                } else {
-                    break 'brk &upgrade_context.sec_websocket_extensions;
-                }
+                break 'brk upgrade_context.sec_websocket_extensions();
             }
             sec_websocket_extensions_str = Some(sec_websocket_extensions.to_slice());
             break 'brk sec_websocket_extensions_str.as_ref().unwrap().slice();
         };
 
-        let websocket_key: &[u8] = if !upgrade_context.request.is_null() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-            let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-            request.header(b"sec-websocket-key").unwrap_or(b"")
-        } else {
-            &upgrade_context.sec_websocket_key
-        };
+        let websocket_key = upgrade_context.sec_websocket_key();
 
         if let Some(raw_response) = self.raw_response.take() {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
@@ -608,9 +597,8 @@ impl NodeHTTPResponse {
             // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
             self.poll_ref.with_mut(|r| r.unref(vm));
-            // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
-            // (`upgrade_ctx` checked non-null above).
-            let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
+            // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST, safe deref.
+            let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx.as_ptr());
             let _ = raw_response.upgrade::<ServerWebSocket>(
                 ws,
                 websocket_key,
@@ -629,13 +617,13 @@ impl NodeHTTPResponse {
         // freed when uWS adopts the socket above, so set_on_aborted_handler
         // (which would call preserve_web_socket_headers_if_needed) must not run
         // post-upgrade — it would read freed header views.
-        self.upgrade_context.with_mut(|c| c.reset());
+        self.upgrade_context.set(UpgradeCTX::None);
 
         true
     }
 
     pub(crate) fn maybe_stop_reading_body(&self, vm: &mut VirtualMachine, this_value: JSValue) {
-        self.upgrade_context.with_mut(|c| c.reset()); // we can discard the upgrade context now
+        self.upgrade_context.set(UpgradeCTX::None); // we can discard the upgrade context now
 
         let flags = self.flags.get();
         if (flags.contains(Flags::UPGRADED)
@@ -735,7 +723,7 @@ impl NodeHTTPResponse {
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
-        self.upgrade_context.with_mut(|c| c.reset());
+        self.upgrade_context.set(UpgradeCTX::None);
 
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.clear_and_free());
@@ -2740,12 +2728,12 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         // 1 - the JS object
         // 1 - the Server handler.
         ref_count: Cell::new(3),
-        upgrade_context: JsCell::new(UpgradeCTX {
-            context: upgrade_ctx,
-            request,
-            sec_websocket_key: Box::default(),
-            sec_websocket_protocol: Box::default(),
-            sec_websocket_extensions: Box::default(),
+        upgrade_context: JsCell::new(match ptr::NonNull::new(upgrade_ctx) {
+            Some(context) => UpgradeCTX::Live {
+                context,
+                request: ptr::NonNull::from(request_ref),
+            },
+            None => UpgradeCTX::None,
         }),
         server: any_server_from_packed(any_server_tag),
         raw_response: Cell::new(Some(raw_response)),

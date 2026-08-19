@@ -1562,6 +1562,108 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(exitCode).toBe(0);
 }, 180_000);
 
+// The resolver's FilenameStore/DirnameStore are append-only and live for the
+// whole process. `Path::dupe_alloc`, which runs for every file a bundle
+// discovers, used to append the file's path to the FilenameStore on every call
+// (and a plugin's namespace along with it), so every process that bundles the
+// same files repeatedly (the dev server on each rebuild, a `Bun.build()` loop)
+// retained one more copy of every path per bundle. The counts must therefore
+// stop changing once the files have been bundled once.
+//
+// The files live under the build's working directory so their display paths
+// are substrings of their absolute paths, which is the shape the dev server
+// produces and the one that used to append.
+describe.concurrent("Bun.build of the same files again does not grow the path stores", () => {
+  const MODULES = 20;
+  const BUILDS = 10;
+
+  async function pathStoreGrowth(files: Record<string, string>, buildScript: string) {
+    files["run.ts"] = `
+      import { bundlerInternals } from "bun:internal-for-testing";
+      ${buildScript}
+      // The first build interns every path it is going to intern; nothing
+      // after it may add more.
+      await build();
+      const before = bundlerInternals.pathStoreCounts();
+      for (let i = 0; i < ${BUILDS}; i++) await build();
+      const after = bundlerInternals.pathStoreCounts();
+      console.log(JSON.stringify({
+        filenames: after.filenames - before.filenames,
+        dirnames: after.dirnames - before.dirnames,
+      }));
+    `;
+    const dir = tempDirWithFiles("bun-build-path-store-growth", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.ts"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout.trim());
+  }
+
+  test("files found by the resolver", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < MODULES; i++) files[`lib/m${i}.ts`] = `export const v${i} = ${i};\n`;
+    files["entry.ts"] = Array.from({ length: MODULES }, (_, i) => `export { v${i} } from "./lib/m${i}.ts";`).join("\n");
+    const growth = await pathStoreGrowth(
+      files,
+      `
+      async function build() {
+        const result = await Bun.build({ entrypoints: ["./entry.ts"] });
+        if (!result.success) throw new AggregateError(result.logs, "build failed");
+      }
+    `,
+    );
+    // Unfixed: 21 more filenames per build (every module plus the entry).
+    expect(growth).toEqual({ filenames: 0, dirnames: 0 });
+  });
+
+  test("files and namespaces supplied by plugins", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < MODULES; i++) files[`lib/m${i}.ts`] = `export const v${i} = ${i};\n`;
+    files["entry.ts"] = Array.from(
+      { length: MODULES },
+      (_, i) => `export { v${i} } from "real:m${i}"; export { w${i} } from "virtual:m${i}";`,
+    ).join("\n");
+    const growth = await pathStoreGrowth(
+      files,
+      `
+      import { join } from "node:path";
+      const plugin: import("bun").BunPlugin = {
+        name: "path-store-growth",
+        setup(builder) {
+          // Resolves to a file on disk, so the bundler reads it like any
+          // other file, but the path string comes from the plugin.
+          builder.onResolve({ filter: /^real:/ }, args => ({
+            path: join(import.meta.dir, "lib", args.path.slice("real:".length) + ".ts"),
+          }));
+          builder.onResolve({ filter: /^virtual:/ }, args => ({
+            path: args.path.slice("virtual:".length),
+            namespace: "virtual",
+          }));
+          builder.onLoad({ filter: /.*/, namespace: "virtual" }, args => ({
+            contents: "export const w" + args.path.slice(1) + " = " + args.path.slice(1) + ";",
+            loader: "ts",
+          }));
+        },
+      };
+      async function build() {
+        const result = await Bun.build({ entrypoints: ["./entry.ts"], plugins: [plugin] });
+        if (!result.success) throw new AggregateError(result.logs, "build failed");
+      }
+    `,
+    );
+    // Unfixed: 41 more filenames per build (the path of every plugin-resolved
+    // file, one copy of "virtual" per virtual module, and the entry).
+    expect(growth).toEqual({ filenames: 0, dirnames: 0 });
+  });
+});
+
 test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
   // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
   // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used

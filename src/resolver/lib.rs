@@ -122,6 +122,11 @@ pub mod fs {
                     // SAFETY: see `append_slice`.
                     unsafe { &*$backing() }.exists(value)
                 }
+                /// Number of strings interned so far (the store never shrinks).
+                pub fn count(&self) -> usize {
+                    // SAFETY: see `append_slice`.
+                    unsafe { bun_alloc::BSSStringList::count($backing()) }
+                }
             }
         };
     }
@@ -470,14 +475,10 @@ pub mod fs {
     // `bun_wyhash`, `bun_options_types`) remain here as an extension trait.
     pub use bun_paths::fs::{Path, PathName};
 
-    fn is_store_backed(slice: &[u8]) -> bool {
-        FilenameStore::instance().exists(slice) || DirnameStore::instance().exists(slice)
-    }
-
     /// `slice` itself when it points into one of the never-freed stores, otherwise
     /// a NUL-terminated copy in the bundle's arena. Never appends to the stores.
     fn store_backed_or_arena<'b>(slice: &[u8], alloc: &'b bun_alloc::MimallocArena) -> &'b [u8] {
-        if is_store_backed(slice) {
+        if FilenameStore::instance().exists(slice) || DirnameStore::instance().exists(slice) {
             // SAFETY: the stores are never freed, so the bytes outlive `'b`.
             return unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
         }
@@ -486,28 +487,13 @@ pub mod fs {
         &copy[..slice.len()]
     }
 
-    /// `Path.namespace` for `dupe_alloc`: the static `file` literal, an already
-    /// store-backed slice, or (a plugin namespace) one `FilenameStore` copy.
-    /// `Location.namespace` borrows it as `&'static`, so it cannot live in the arena.
-    #[inline]
-    fn dupe_namespace(namespace: &[u8]) -> crate::CrateResult<&'static [u8]> {
-        match namespace {
-            b"" | b"file" => Ok(b"file"),
-            ns if is_store_backed(ns) => {
-                // SAFETY: the stores are never freed.
-                Ok(unsafe { core::slice::from_raw_parts(ns.as_ptr(), ns.len()) })
-            }
-            ns => FilenameStore::instance().append_slice(ns),
-        }
-    }
-
     /// Resolver-tier `Path` methods that pull deps `bun_paths` can't
     /// reach (`FilenameStore`/`DirnameStore`, `bun_options_types`,
     /// `bun_string`). Import this trait to call `.loader()` / `.dupe_alloc()`
     /// on a `Path`.
     pub trait PathResolverExt<'a> {
-        /// The `Path` the bundle graph stores for `self`. `text`/`pretty` are
-        /// store-backed or live in `alloc`, the bundle's arena; `namespace` is `'static`.
+        /// The `Path` the bundle graph stores for `self`. Every slice in it is
+        /// store-backed or lives in `alloc`, the bundle's arena.
         fn dupe_alloc(&self, alloc: &bun_alloc::MimallocArena)
         -> crate::CrateResult<Path<'static>>;
         fn dupe_alloc_fix_pretty(
@@ -519,8 +505,8 @@ pub mod fs {
 
     impl<'a> PathResolverExt<'a> for Path<'a> {
         /// Valid for the bundle pass; whatever outlives it copies (`Location::clone`,
-        /// `Watcher::add_file::<true>`, the dev server's graph keys). Appending `text`
-        /// to the `FilenameStore` here instead grew it by every bundled file per build.
+        /// `Watcher::add_file::<true>`, the dev server's graph keys). Appending to the
+        /// `FilenameStore` here instead grew it by every bundled file per build.
         fn dupe_alloc(
             &self,
             alloc: &bun_alloc::MimallocArena,
@@ -538,8 +524,11 @@ pub mod fs {
             } else {
                 store_backed_or_arena(self.pretty, alloc)
             };
-            let namespace = dupe_namespace(self.namespace)?;
-            // SAFETY: `text`/`pretty` are store- or arena-backed (see the trait doc).
+            let namespace: &[u8] = match self.namespace {
+                b"" | b"file" => b"file",
+                namespace => store_backed_or_arena(namespace, alloc),
+            };
+            // SAFETY: every slice is store- or arena-backed (see the trait doc).
             Ok(unsafe {
                 Path {
                     text,

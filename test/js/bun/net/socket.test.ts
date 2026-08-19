@@ -4087,66 +4087,64 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
   });
 });
 
-describe.concurrent("paused socket whose peer resets the connection", () => {
-  // A paused socket polls for nothing. epoll reports the reset anyway (EPOLLERR cannot be
-  // masked); kqueue only reports it through the read knote that epoll_kqueue.c keeps
-  // registered while reads are off. Before that, the pause left a one-shot writable event
-  // behind and nothing else: a reset that landed after it was consumed was never reported,
-  // and the socket stayed paused for good. The greeting round trip below guarantees the
-  // one-shot has been consumed before the reset is sent. The node:net and node:tls shapes
-  // of this scenario are in test/js/node/tls/node-tls-server.test.ts.
-  for (const transport of ["tcp", "tls"] as const) {
-    it(`${transport}: closes with read ECONNRESET while still paused and delivers none of the unread data`, async () => {
-      const closedWith = Promise.withResolvers<Error | undefined>();
-      let dataCalls = 0;
-      const pauseAndGreet = (socket: Socket) => {
-        socket.pause();
-        socket.write("greeting");
-      };
-      using server = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        tls: transport === "tls" ? tls : undefined,
-        socket: {
-          open(socket) {
-            // A TLS socket cannot be paused before its handshake has been read.
-            if (transport === "tcp") pauseAndGreet(socket);
-          },
-          handshake(socket, success, authorizationError) {
-            if (success) pauseAndGreet(socket);
-            else closedWith.reject(authorizationError ?? new Error("server handshake failed"));
-          },
-          data() {
-            dataCalls++;
-          },
-          close(_socket, error) {
-            closedWith.resolve(error);
-          },
+// A paused socket polls for nothing. epoll reports the reset anyway (EPOLLERR cannot be
+// masked); kqueue only reports it through the read knote that epoll_kqueue.c keeps
+// registered while reads are off. Before that, the pause left a one-shot writable event
+// behind and nothing else: a reset that landed after it was consumed was never reported,
+// and the socket stayed paused for good. The greeting round trip below guarantees the
+// one-shot has been consumed before the reset is sent. The node:net and node:tls shapes
+// of this scenario are in test/js/node/tls/node-tls-server.test.ts.
+describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its peer resets the connection", transport => {
+  it("closes with read ECONNRESET while still paused and delivers none of the unread data", async () => {
+    const closedWith = Promise.withResolvers<Error | undefined>();
+    let dataCalls = 0;
+    const pauseAndGreet = (socket: Socket) => {
+      socket.pause();
+      socket.write("greeting");
+    };
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: transport === "tls" ? tls : undefined,
+      socket: {
+        open(socket) {
+          // A TLS socket cannot be paused before its handshake has been read.
+          if (transport === "tcp") pauseAndGreet(socket);
         },
-      });
-
-      const greeted = Promise.withResolvers<Socket>();
-      await Bun.connect({
-        hostname: "127.0.0.1",
-        port: server.port,
-        tls: transport === "tls" ? { ca: tls.cert } : undefined,
-        socket: {
-          data: socket => greeted.resolve(socket),
-          error: (_socket, error) => greeted.reject(error),
-          connectError: (_socket, error) => greeted.reject(error),
-          close: () => greeted.reject(new Error("peer closed before the greeting arrived")),
+        handshake(socket, success, authorizationError) {
+          if (success) pauseAndGreet(socket);
+          else closedWith.reject(authorizationError ?? new Error("server handshake failed"));
         },
-      });
-      const peer = await greeted.promise;
-      peer.write("queued behind the pause");
-      peer.terminate();
-
-      const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
-      expect({ code: error?.code, syscall: error?.syscall, dataCalls }).toEqual({
-        code: "ECONNRESET",
-        syscall: "read",
-        dataCalls: 0,
-      });
+        data() {
+          dataCalls++;
+        },
+        close(_socket, error) {
+          closedWith.resolve(error);
+        },
+      },
     });
-  }
+
+    const greeted = Promise.withResolvers<Socket>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: {
+        data: socket => greeted.resolve(socket),
+        error: (_socket, error) => greeted.reject(error),
+        connectError: (_socket, error) => greeted.reject(error),
+        close: () => greeted.reject(new Error("peer closed before the greeting arrived")),
+      },
+    });
+    const peer = await greeted.promise;
+    peer.write("queued behind the pause");
+    peer.terminate();
+
+    const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
+    expect({ code: error?.code, syscall: error?.syscall, dataCalls }).toEqual({
+      code: "ECONNRESET",
+      syscall: "read",
+      dataCalls: 0,
+    });
+  });
 });

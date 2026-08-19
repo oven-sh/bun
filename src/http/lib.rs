@@ -1768,10 +1768,8 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// Attaches this client to an established socket and starts the request
-    /// on it. Called for a fresh connection from [`Self::on_connect`] and for
-    /// a socket taken from the keep-alive pool from `HTTPContext::connect`.
-    /// Per-connection setup does not belong here; see `on_connect`.
+    /// Runs once per request: for a new connection via [`Self::on_connect`],
+    /// and for a socket reused from the pool via `HTTPContext::connect`.
     pub(crate) fn on_open<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -1873,12 +1871,9 @@ impl<'a> HTTPClient<'a> {
         Ok(())
     }
 
-    /// The uSockets open callback (`http_context::Handler::on_open`) for a
-    /// socket this client just connected. A socket taken from the keep-alive
-    /// pool does not come through here: `HTTPContext::connect` hands it to
-    /// [`Self::on_open`] directly. Socket options set here stay on the fd for
-    /// the life of the connection, so they are applied once per connection
-    /// rather than once per request.
+    /// Runs once per connection, from the uSockets open callback. A socket
+    /// reused from the pool skips this and goes straight to [`Self::on_open`],
+    /// so socket options belong here, not there.
     pub(crate) fn on_connect<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -1901,15 +1896,8 @@ impl<'a> HTTPClient<'a> {
         // `agent.keepAlive` (see _http_client.ts) — so requests through
         // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
         // through a non-keepalive Agent or `agent: false` skip it, matching Node.
-        // Like undici, the request that opens the connection decides this for
-        // the connection's whole life. A `keepalive: false` request does not
-        // take a socket from the pool (`is_keep_alive_possible`), so reuse has
-        // nothing to undo. It can still donate one: `build_request` clears
-        // `disable_keepalive` again for an explicit `Connection: keep-alive`
-        // header, and that socket is pooled without TCP keepalive.
         //
-        // A unix socket has no TCP keepalive (Node's `setKeepAlive` is a no-op
-        // on a pipe handle too).
+        // TCP options do not apply to a unix socket.
         if !self.flags.disable_keepalive && self.unix_socket_path.slice().is_empty() {
             let _ = socket.set_keep_alive(true, 60);
         }

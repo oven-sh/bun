@@ -387,9 +387,10 @@ public:
         delete handle;
     }
 
+    // isShuttingDown(): ~VM (Heap::lastChanceToFinalize) runs finalizers without the Sweeping mutator state.
     bool inGC() const
     {
-        return this->vm().isCollectorBusyOnCurrentThread();
+        return this->vm().isCollectorBusyOnCurrentThread() || this->vm().heap.isShuttingDown();
     }
 
     void checkGC() const

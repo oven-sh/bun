@@ -82,7 +82,7 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
   expect(line, stderr).toBeDefined();
   // With the DevServer notified, the deferred request is released promptly. If it
   // isn't, the fetch sits until the 10s abort fires and we see "TimeoutError" here.
-  expect(JSON.parse(line!)).toEqual({ result: "500 ", again: "200 Plugin Error", other: "200 Plugin Error" });
+  expect(JSON.parse(line!)).toEqual({ result: "500 ", again: "500 Plugin Error", other: "500 Plugin Error" });
   expect(exitCode).toBe(0);
 });
 

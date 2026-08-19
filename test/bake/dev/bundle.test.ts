@@ -1192,7 +1192,8 @@ devTest('removing "use client" from a file imported by another "use client" file
       }
     `,
     "framework/client.ts": `
-      console.log("marker: " + document.body.textContent);
+      import { comp } from '../components/Comp';
+      console.log("marker: " + comp);
     `,
     "routes/index.ts": `
       import { comp } from '../components/Comp';
@@ -1210,11 +1211,15 @@ devTest('removing "use client" from a file imported by another "use client" file
   },
   async test(dev) {
     await dev.fetch("/").expect.toInclude("<body>page object<");
-    // Only the server copy is re-bundled here; the client copy stays because Comp's client build imports it.
-    await dev.write("components/Sibling.ts", `export const sibling = 2;`);
-    await dev.fetch("/").expect.toInclude("<body>page object<");
     await using c = await dev.client("/");
-    await c.expectMessage("marker: page object");
+    await c.expectMessage("marker: 1");
+    // The write re-bundles only the server copy, which drops the boundary. The client copy stays because Comp's client build imports it,
+    // and is rebuilt as a plain module in a follow-up bundle. Comp does not accept that update, so the page reloads.
+    await c.expectReload(async () => {
+      await dev.write("components/Sibling.ts", `export const sibling = 2;`);
+    });
+    await c.expectMessage("marker: 2");
+    await dev.fetch("/").expect.toInclude("<body>page object<");
   },
 });
 // A route first requested while another route's bundle is in flight, whose files that bundle already covers, has nothing left to bundle when its turn comes.
@@ -1236,6 +1241,37 @@ devTest("route deferred to the next bundle with no stale files left is answered"
   },
   async test(dev) {
     // /b arrives while /a's bundle (which includes routes/b.ts) is still building.
+    await Promise.all([dev.fetch("/a").equals("a: B"), dev.fetch("/b").equals("b: B")]);
+  },
+});
+// Same, while an unrelated route's build error is still on record: the deferred route is traced for failures it can reach instead of
+// being handed every recorded failure.
+devTest("route deferred to the next bundle with no stale files left ignores unrelated failures", {
+  framework: minimalFramework,
+  files: {
+    "routes/a.ts": `
+      import { b } from './b';
+      export default function (req, meta) {
+        return new Response('a: ' + b);
+      }
+    `,
+    "routes/b.ts": `
+      export const b = "B";
+      export default function (req, meta) {
+        return new Response('b: ' + b);
+      }
+    `,
+    "routes/c.ts": `
+      import { broken } from '../broken';
+      export default function (req, meta) {
+        return new Response('c: ' + broken);
+      }
+    `,
+    "broken.ts": `export const broken = ;`,
+  },
+  async test(dev) {
+    await expectBuildFailedPage(dev, "/c", "broken.ts");
+    // /b arrives while /a's bundle (which includes routes/b.ts) is still building; neither route reaches broken.ts.
     await Promise.all([dev.fetch("/a").equals("a: B"), dev.fetch("/b").equals("b: B")]);
   },
 });
@@ -1818,5 +1854,62 @@ devTest("process.chdir() after the server was created", {
       `,
     );
     await c.expectMessage("updated");
+  },
+});
+
+// Every rebuild re-resolves the import records of the files it re-bundles, and
+// `Path::dupe_alloc` used to append each resolved path to the process-lifetime
+// FilenameStore every time, so a dev server grew by one copy of every import's
+// path per rebuild for as long as it ran (here: the entry plus its
+// PATH_STORE_MODULES imports per edit). The edited file is kept in a directory
+// of its own so that the files whose paths are being counted are only ever
+// re-resolved, never re-read from disk.
+const PATH_STORE_MODULES = 20;
+const PATH_STORE_EDITS = 5;
+function pathStoreEntry(edit: number) {
+  return (
+    Array.from({ length: PATH_STORE_MODULES }, (_, i) => `import { v${i} } from "../lib/m${i}.ts";`).join("\n") +
+    `\nimport.meta.hot.accept();\nconsole.log("edit ${edit}: " + (${Array.from({ length: PATH_STORE_MODULES }, (_, i) => `v${i}`).join(" + ")}));\n`
+  );
+}
+devTest("rebuilding after an edit does not intern the imported files' paths again", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["src/entry.ts"] }),
+    "src/entry.ts": pathStoreEntry(0),
+    ...Object.fromEntries(
+      Array.from({ length: PATH_STORE_MODULES }, (_, i) => [`lib/m${i}.ts`, `export const v${i} = ${i};\n`]),
+    ),
+    // The harness-generated config only serves the HTML; the counts have to be
+    // read inside the dev server's process, so serve them from a route.
+    "bun.app.ts": `
+      import { bundlerInternals } from "bun:internal-for-testing";
+      import html from "./index.html";
+      export default {
+        static: { "/": html },
+        fetch(req) {
+          if (new URL(req.url).pathname === "/path-store-counts") {
+            return Response.json(bundlerInternals.pathStoreCounts());
+          }
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    const counts = () => dev.fetch("/path-store-counts").json();
+    const sum = (PATH_STORE_MODULES * (PATH_STORE_MODULES - 1)) / 2;
+    await using c = await dev.client("/");
+    await c.expectMessage(`edit 0: ${sum}`);
+    const before = await counts();
+    for (let edit = 1; edit <= PATH_STORE_EDITS; edit++) {
+      await dev.write("src/entry.ts", pathStoreEntry(edit));
+      await c.expectMessage(`edit ${edit}: ${sum}`);
+    }
+    const after = await counts();
+    expect({
+      filenames: after.filenames - before.filenames,
+      dirnames: after.dirnames - before.dirnames,
+    }).toEqual({ filenames: 0, dirnames: 0 });
   },
 });

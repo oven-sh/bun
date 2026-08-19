@@ -1890,6 +1890,7 @@ impl RequestEnsureRouteBundledCtx {
     }
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
+        self.resp.write_status(b"500 Internal Server Error");
         self.resp.end(b"Plugin Error", false);
         Ok(())
     }
@@ -2109,10 +2110,13 @@ fn ensure_route_is_bundled_inner<Ctx: EnsureRouteCtx>(
                 if !dev.bundling_failures.is_empty() {
                     // Trace the graph to see if there are any failures that are
                     // reachable by this route.
-                    match check_route_failures(dev, route_bundle_index, ctx.to_dev_response())? {
-                        CheckResult::Stop => return Ok(()),
-                        CheckResult::Ok => {} // Errors were cleared or not in the way.
-                        CheckResult::Rebuild => {
+                    match check_route_failures(dev, route_bundle_index)? {
+                        RouteCheck::Failures(failures) => {
+                            dev.send_serialized_failures(ctx.to_dev_response(), &failures, None)?;
+                            return Ok(());
+                        }
+                        RouteCheck::Ok => {} // Errors were cleared or not in the way.
+                        RouteCheck::Rebuild => {
                             state = route_bundle::State::Unqueued;
                             continue 'sw;
                         }
@@ -2221,7 +2225,6 @@ impl DevServer {
                         }
                         _ => unreachable!(),
                     };
-                    server_handler.ctx.ref_();
                     server_handler.ctx.set_additional_on_abort_callback(Some(
                         crate::server::any_request_context::AdditionalOnAbortCallback {
                             cb: {
@@ -2266,17 +2269,18 @@ impl DevServer {
     }
 }
 
-enum CheckResult {
-    Stop,
+enum RouteCheck {
     Ok,
+    /// Every file the route reaches was marked stale to give the failures one rebuild.
     Rebuild,
+    /// The recorded failures this route reaches; the caller sends them.
+    Failures(Vec<SerializedFailure>),
 }
 
 fn check_route_failures(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
-    resp: DevResponse,
-) -> crate::Result<CheckResult> {
+) -> crate::Result<RouteCheck> {
     let mut gts = dev.init_graph_trace_state(0)?;
     let _lock_guard = dev.graph_safety_lock.guard();
     let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
@@ -2308,14 +2312,13 @@ fn check_route_failures(
                     dev.server_graph.stale_files.set(file_index);
                 }
             }
-            return Ok(CheckResult::Rebuild);
+            return Ok(RouteCheck::Rebuild);
         }
 
-        dev.send_serialized_failures(resp, &gts.failures, None)?;
-        Ok(CheckResult::Stop)
+        Ok(RouteCheck::Failures(::core::mem::take(&mut gts.failures)))
     } else {
         // Failures are unreachable by this route, so it is OK to load.
-        Ok(CheckResult::Ok)
+        Ok(RouteCheck::Ok)
     }
 }
 
@@ -2663,7 +2666,7 @@ impl DevServer {
         // SAFETY: `self` is live; `framework_bundle` points into
         // `self.route_bundles[route_bundle_index].data`. Raw-ptr receiver — see
         // Note on `compute_arguments_for_framework_request`.
-        let args = unsafe {
+        let args = match unsafe {
             Self::compute_arguments_for_framework_request(
                 self,
                 route_bundle_index,
@@ -2671,7 +2674,16 @@ impl DevServer {
                 params_js_value,
                 true,
             )
-        }?;
+        } {
+            Ok(args) => args,
+            Err(err) => {
+                // A parked request has no caller left to answer it.
+                if let SavedRequestUnion::Saved(saved) = req {
+                    saved.abandon(b"500 Internal Server Error");
+                }
+                return Err(err);
+            }
+        };
 
         self.server
             .as_ref()
@@ -3093,18 +3105,8 @@ impl DeferredRequest {
             "DeferredRequest(0x{:x}) deinitImpl",
             std::ptr::from_ref(self) as usize
         );
-        // Note: the pool stores `MaybeUninit<DeferredRequest>` (no `Drop`),
-        // so the `Handler` payload must be torn down explicitly here. Swap to
-        // `Aborted` (zero-payload) and let the moved-out value drop — for
-        // `ServerHandler` this releases `saved.js_request: Strong`.
-        let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
-        match handler {
-            Handler::ServerHandler(mut saved) => {
-                saved.deinit();
-                // `saved` (incl. `js_request: jsc::Strong`) drops at scope exit.
-            }
-            Handler::BundledHtmlPage(_) | Handler::Aborted => {}
-        }
+        // The pool slot is `MaybeUninit` (no drop glue), so drop the payload here; a `ServerHandler` releases its `SavedRequest`.
+        self.handler = Handler::Aborted;
     }
 
     /// Client-disconnect path (uws `on_aborted` / `RequestContext::on_abort`): the response is already gone.
@@ -3113,9 +3115,8 @@ impl DeferredRequest {
             "DeferredRequest(0x{:x}) abort",
             std::ptr::from_ref(self) as usize
         );
-        let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
-        match handler {
-            Handler::ServerHandler(mut saved) => {
+        match ::core::mem::replace(&mut self.handler, Handler::Aborted) {
+            Handler::ServerHandler(saved) => {
                 deferred_request::debug_log_dr!(
                     "  request url: {}",
                     // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
@@ -3124,8 +3125,7 @@ impl DeferredRequest {
                 saved
                     .ctx
                     .set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
-                // Releases `defer_request`'s `ctx.ref_()`; `on_abort` drops the context's own ref after this returns.
-                saved.deinit();
+                // `saved` drops here; `RequestContext::on_abort` drops the context's own ref after this returns.
             }
             Handler::BundledHtmlPage(_) | Handler::Aborted => {}
         }
@@ -3138,13 +3138,7 @@ impl DeferredRequest {
             std::ptr::from_ref(self) as usize
         );
         match ::core::mem::replace(&mut self.handler, Handler::Aborted) {
-            Handler::ServerHandler(mut saved) => {
-                saved.response.write_status(b"500 Internal Server Error");
-                saved.response.write_header_int(b"Content-Length", 0);
-                // Drops the context's own ref; `deinit` then drops `defer_request`'s.
-                saved.ctx.end_without_body(true);
-                saved.deinit();
-            }
+            Handler::ServerHandler(saved) => saved.abandon(b"500 Internal Server Error"),
             Handler::BundledHtmlPage(r) => {
                 // Runs from a JS task, not a uws handler, so give the client explicit framing.
                 r.response.write_status(b"500 Internal Server Error");
@@ -4719,13 +4713,9 @@ pub(super) fn finalize_bundle(
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let resp: DevResponse = match &mut req.handler {
+            let resp: DevResponse = match ::core::mem::replace(&mut req.handler, Handler::Aborted) {
                 Handler::Aborted => continue,
-                Handler::ServerHandler(saved) => 'brk: {
-                    let resp = saved.response;
-                    saved.deinit();
-                    break 'brk DevResponse::Http(resp);
-                }
+                Handler::ServerHandler(saved) => DevResponse::Http(saved.into_response()),
                 Handler::BundledHtmlPage(ram) => DevResponse::Http(ram.response),
             };
 
@@ -4925,23 +4915,11 @@ fn answer_deferred_requests(
         // SAFETY: the node stays alive until `deref_()` releases it below.
         scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
 
-        // Note: `SavedRequest` is move-only (`Strong` field). Take the
-        // handler by value so the `Saved` payload moves into the union; the
-        // node is being torn down via `_deref` regardless.
+        // Take the handler by value so the `SavedRequest` moves on to `on_saved_request`; `deref_` then sees `Aborted`.
         match ::core::mem::replace(&mut req.handler, Handler::Aborted) {
             Handler::Aborted => continue,
             Handler::ServerHandler(saved) => {
                 let response = saved.response;
-                let ctx = saved.ctx;
-                // Note: `saved` is moved out (so `__deinit` sees `Aborted`);
-                // `js_request: StrongOptional` releases on Drop, but
-                // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
-                // `ctx.ref_()` from `defer_request` here so the request
-                // context's `on_request_complete` (and thus the server's
-                // `pending_requests--`) eventually fires. Without this the
-                // bake-harness graceful-exit deinit check ("Failed to trigger
-                // deinit") never sees DevServer Drop.
-                scopeguard::defer! { ctx.deref() };
                 dev.on_framework_request_with_bundle(
                     req.route_bundle_index,
                     SavedRequestUnion::Saved(saved),
@@ -5039,15 +5017,13 @@ impl DevServer {
                     .expect("oom");
             } else {
                 // Every queued file was bundled as part of an earlier bundle, so nothing is left to wait for.
-                self.next_bundle.route_queue.clear_retaining_capacity();
                 let requests = ::core::mem::take(&mut self.next_bundle.requests);
                 let promise = ::core::mem::take(&mut self.next_bundle.promise);
                 if self.bundling_failures.is_empty() {
+                    self.next_bundle.route_queue.clear_retaining_capacity();
                     crate::dispatch::fold(answer_deferred_requests(self, requests, promise));
                 } else {
-                    crate::dispatch::fold(
-                        self.answer_deferred_requests_with_failures(requests, promise),
-                    );
+                    crate::dispatch::fold(self.recheck_deferred_routes(requests, promise));
                 }
                 return;
             }
@@ -5056,67 +5032,141 @@ impl DevServer {
         }
     }
 
-    /// Counterpart of `finalize_bundle`'s failure branch for waiters that never got a bundle of their own.
-    fn answer_deferred_requests_with_failures(
+    /// Nothing is left to bundle for the queued routes, but earlier failures are on record: check each route the way the synchronous
+    /// `PossibleBundlingFailures` arm does, then serve, fail, or rebuild its waiters.
+    fn recheck_deferred_routes(
         &mut self,
-        mut requests: deferred_request::List,
+        requests: deferred_request::List,
         mut promise: DeferredPromise,
     ) -> JsResult<()> {
-        let self_ptr: *mut DevServer = self;
-        let requests_ptr: *mut deferred_request::List = &raw mut requests;
-        // Note: separate copy for the `defer!` capture so the body keeps reborrowing through `requests_ptr`.
-        let requests_ptr_defer = requests_ptr;
-        scopeguard::defer! {
-            // SAFETY: `requests` is a local that outlives this guard; no borrow of it is live when the guard runs.
-            while let Some(node) = unsafe { &mut *requests_ptr_defer }.pop_first() {
+        let fail_all = |mut list: deferred_request::List| {
+            while let Some(node) = list.pop_first() {
                 // SAFETY: `pop_first` returns a live node whose `data` was initialized by `defer_request`.
                 let req = unsafe { (*node).data.assume_init_mut() };
                 req.fail();
                 req.deref_();
             }
         };
+        // Whatever an early return leaves behind still gets an answer and its slot back.
+        let mut requests = scopeguard::guard(requests, fail_all);
+        let mut ready = scopeguard::guard(deferred_request::List::default(), fail_all);
 
-        if promise.strong.has_value() {
-            promise.set_route_bundle_state(self, route_bundle::State::PossibleBundlingFailures);
+        // Decide every queued route before any handler runs, so one bundle picks up every rebuild.
+        let mut route_failures: Vec<(route_bundle::Index, Vec<SerializedFailure>)> = Vec::new();
+        let mut entry_points = EntryPointList::empty();
+        for i in 0..self.next_bundle.route_queue.len() {
+            let route_bundle_index = self.next_bundle.route_queue.keys()[i];
+            let state = match check_route_failures(self, route_bundle_index)? {
+                RouteCheck::Ok => route_bundle::State::Loaded,
+                RouteCheck::Rebuild => {
+                    self.append_route_entry_points_if_not_stale(
+                        &mut entry_points,
+                        route_bundle_index,
+                    )?;
+                    route_bundle::State::Bundling
+                }
+                RouteCheck::Failures(failures) => {
+                    route_failures.push((route_bundle_index, failures));
+                    route_bundle::State::PossibleBundlingFailures
+                }
+            };
+            self.route_bundle_ptr(route_bundle_index).server_state = state;
+        }
+        self.next_bundle.route_queue.clear_retaining_capacity();
+        fn failures_for(
+            route_failures: &[(route_bundle::Index, Vec<SerializedFailure>)],
+            rbi: route_bundle::Index,
+        ) -> &[SerializedFailure] {
+            route_failures
+                .iter()
+                .find(|(i, _)| *i == rbi)
+                .map_or(&[], |(_, f)| f)
+        }
+
+        let mut promise_failures: Vec<SerializedFailure> = Vec::new();
+        let mut promise_rebuild = false;
+        for &route_bundle_index in promise.route_bundle_indices.keys() {
+            match self.route_bundle_ptr(route_bundle_index).server_state {
+                route_bundle::State::Bundling => promise_rebuild = true,
+                route_bundle::State::PossibleBundlingFailures => {
+                    for failure in failures_for(&route_failures, route_bundle_index) {
+                        // Two routes can reach the same failed file.
+                        if !promise_failures
+                            .iter()
+                            .any(|f| f.data[..4] == failure.data[..4])
+                        {
+                            promise_failures.push(failure.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        while let Some(node) = requests.pop_first() {
+            // SAFETY: `pop_first` hands back ownership of the node; `data` was initialized by `defer_request`.
+            let req = unsafe { (*node).data.assume_init_mut() };
+            // `Aborted` waiters ride along: the bundle that lands resets the state of every route in its list.
+            match self.route_bundle_ptr(req.route_bundle_index).server_state {
+                // SAFETY: `node` is live and unlinked; `ready` owns it from here.
+                route_bundle::State::Loaded => unsafe { ready.prepend(&mut *node) },
+                // SAFETY: as above; `start_async_bundle` below moves this list into the bundle.
+                route_bundle::State::Bundling => unsafe {
+                    self.next_bundle.requests.prepend(&mut *node)
+                },
+                route_bundle::State::PossibleBundlingFailures => {
+                    let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
+                    // SAFETY: the node stays alive until `deref_()` releases it below.
+                    scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
+                    let resp = match ::core::mem::replace(&mut req.handler, Handler::Aborted) {
+                        Handler::Aborted => continue,
+                        Handler::ServerHandler(saved) => saved.into_response(),
+                        Handler::BundledHtmlPage(ram) => ram.response,
+                    };
+                    let failures = failures_for(&route_failures, req.route_bundle_index);
+                    self.send_serialized_failures(DevResponse::Http(resp), failures, None)?;
+                }
+                _ => {
+                    debug_assert!(false, "a parked request's route is always in `route_queue`");
+                    req.fail();
+                    req.deref_();
+                }
+            }
+        }
+
+        if !entry_points.set.is_empty() {
+            if promise_rebuild {
+                // The bundle resets these routes' state when it lands, and settles the promise unless the failures below do it first.
+                self.next_bundle.promise = DeferredPromise {
+                    strong: if promise_failures.is_empty() {
+                        promise.strong.take()
+                    } else {
+                        jsc::JSPromiseStrong::empty()
+                    },
+                    route_bundle_indices: ::core::mem::take(&mut promise.route_bundle_indices),
+                };
+            }
+            self.start_async_bundle(entry_points, false, Instant::now())
+                .expect("oom");
+        }
+        debug_assert!(self.next_bundle.requests.first.is_null());
+
+        if !promise_failures.is_empty() {
             let strong = promise.strong.take();
             promise.deinit_idempotently();
             let global = self.global();
-            // SAFETY: `self_ptr` is `self`; `send_serialized_failures` never touches `bundling_failures`.
-            let failures = unsafe { (*self_ptr).bundling_failures.values() };
             self.send_serialized_failures(
                 DevResponse::Promise(PromiseResponse {
                     promise: strong,
                     global,
                 }),
-                failures,
+                &promise_failures,
                 None,
             )?;
         }
 
-        // SAFETY: `requests_ptr` is the local above; the guard's borrow is not live here.
-        while let Some(node) = unsafe { &mut *requests_ptr }.pop_first() {
-            // SAFETY: `pop_first` hands back ownership of the node; `data` was initialized by `defer_request`.
-            let req = unsafe { (*node).data.assume_init_mut() };
-            let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
-            // SAFETY: the node stays alive until `deref_()` releases it below.
-            scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
-
-            self.route_bundle_ptr(req.route_bundle_index).server_state =
-                route_bundle::State::PossibleBundlingFailures;
-            let resp = match &mut req.handler {
-                Handler::Aborted => continue,
-                Handler::ServerHandler(saved) => {
-                    let resp = saved.response;
-                    saved.deinit();
-                    resp
-                }
-                Handler::BundledHtmlPage(ram) => ram.response,
-            };
-            // SAFETY: same as the promise arm above.
-            let failures = unsafe { (*self_ptr).bundling_failures.values() };
-            self.send_serialized_failures(DevResponse::Http(resp), failures, None)?;
-        }
-        Ok(())
+        // The promise still holds a value only when every one of its routes checked out.
+        answer_deferred_requests(self, scopeguard::ScopeGuard::into_inner(ready), promise)
     }
 
     fn append_demoted_client_files(

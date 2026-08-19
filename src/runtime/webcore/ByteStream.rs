@@ -219,6 +219,15 @@ impl ByteStream {
 
         self.signal_drained();
 
+        // A synchronous producer (RewriterPipe) may have pushed its remaining
+        // output through `on_data` just now. If one of those writes hit
+        // backpressure, the chunks after it (and the end) were buffered; the
+        // sink's next drain ack comes back here and delivers them. Ending now
+        // would drop them.
+        if self.sink_paused.get() {
+            return;
+        }
+
         if self.has_received_last_chunk.get() && self.sink.get().is_some() {
             self.sink.set(SinkHandle::None);
             sink.end(None);

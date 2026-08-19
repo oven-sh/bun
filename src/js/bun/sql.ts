@@ -39,6 +39,17 @@ interface ReserveAbortState {
   onAbort: (() => void) | null;
 }
 
+function settleReservedTransaction(
+  reservedTransaction: Set<Promise<void>>,
+  finished: { promise: Promise<void>; resolve: () => void },
+  settle: (value: any) => void,
+  value: any,
+) {
+  reservedTransaction.delete(finished.promise);
+  finished.resolve();
+  settle(value);
+}
+
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
   switch (options.adapter) {
     case "postgres":
@@ -286,6 +297,31 @@ const SQL: typeof Bun.SQL = function SQL(
     };
   }
 
+  // Never attach a handler to the caller's promise: it changes which rejections are reported as unhandled.
+  function runReservedTransaction(
+    reservedTransaction: Set<Promise<void>>,
+    pooledConnection,
+    callback: TransactionCallback,
+    options: string | undefined,
+    distributed: boolean,
+  ) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const finished = Promise.withResolvers<void>();
+    reservedTransaction.add(finished.promise);
+    // lets just reuse the same code path as the transaction begin
+    onTransactionConnected(
+      callback,
+      options,
+      settleReservedTransaction.bind(null, reservedTransaction, finished, resolve),
+      settleReservedTransaction.bind(null, reservedTransaction, finished, reject),
+      true,
+      distributed,
+      null,
+      pooledConnection,
+    );
+    return promise;
+  }
+
   function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
@@ -293,7 +329,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return reject(err);
     }
 
-    let reservedTransaction = new Set();
+    let reservedTransaction = new Set<Promise<void>>();
 
     const state: TransactionState = {
       connectionState: ReservedConnectionState.acceptQueries,
@@ -378,9 +414,6 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.array = sql.array;
     reserved_sql.listen = listen;
     reserved_sql.notify = makeNotify(reserved_sql);
-    function onTransactionFinished(transaction_promise: Promise<any>) {
-      reservedTransaction.delete(transaction_promise);
-    }
     reserved_sql.beginDistributed = (name: string, fn: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -395,12 +428,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      const { promise, resolve, reject } = Promise.withResolvers();
-      // lets just reuse the same code path as the transaction begin
-      onTransactionConnected(callback, name, resolve, reject, true, true, null, pooledConnection);
-      reservedTransaction.add(promise);
-      promise.finally(onTransactionFinished.bind(null, promise));
-      return promise;
+      return runReservedTransaction(reservedTransaction, pooledConnection, callback, name, true);
     };
     reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
@@ -421,12 +449,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      const { promise, resolve, reject } = Promise.withResolvers();
-      // lets just reuse the same code path as the transaction begin
-      onTransactionConnected(callback, options, resolve, reject, true, false, null, pooledConnection);
-      reservedTransaction.add(promise);
-      promise.finally(onTransactionFinished.bind(null, promise));
-      return promise;
+      return runReservedTransaction(reservedTransaction, pooledConnection, callback, options, false);
     };
 
     reserved_sql.flush = () => {
@@ -580,7 +603,9 @@ const SQL: typeof Bun.SQL = function SQL(
       // Get distributed transaction commands from adapter
       const commands = pool.getDistributedTransactionCommands?.(options);
       if (!commands) {
-        pool.release(pooledConnection);
+        if (!dontRelease) {
+          pool.release(pooledConnection);
+        }
         return reject(new Error(`This adapter doesn't support distributed transactions.`));
       }
 
@@ -596,7 +621,9 @@ const SQL: typeof Bun.SQL = function SQL(
       if (options && pool.validateTransactionOptions) {
         const validation = pool.validateTransactionOptions(options);
         if (!validation.valid) {
-          pool.release(pooledConnection);
+          if (!dontRelease) {
+            pool.release(pooledConnection);
+          }
           return reject(new Error(validation.error));
         }
       }
@@ -611,7 +638,9 @@ const SQL: typeof Bun.SQL = function SQL(
         ROLLBACK_TO_SAVEPOINT_COMMAND = commands.ROLLBACK_TO_SAVEPOINT;
         BEFORE_COMMIT_OR_ROLLBACK_COMMAND = commands.BEFORE_COMMIT_OR_ROLLBACK || null;
       } catch (err) {
-        pool.release(pooledConnection);
+        if (!dontRelease) {
+          pool.release(pooledConnection);
+        }
         return reject(err);
       }
     }

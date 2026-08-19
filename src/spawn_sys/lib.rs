@@ -181,14 +181,10 @@ pub mod pdeathsig {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Exit-time spawn gate, closed by the no-orphans exit callback before it
-// lists and kills our descendants, so a thread that is still running (a
-// Worker) cannot add a child after the listing. `posix_spawn::spawn_z` holds
-// an `InFlight` token across the fork and fails with ECANCELED once closed.
-// (`bun_core::spawn_sync_inherit` bypasses it: tier-0, synchronous CLI and
-// crash-handler use only.)
-// ──────────────────────────────────────────────────────────────────────────
+/// Closed by the no-orphans exit callback before it kills our descendants, so
+/// a Worker cannot spawn one after the callback has listed them. Covers every
+/// `posix_spawn::spawn_z` caller (`bun_core::spawn_sync_inherit`, tier-0 and
+/// synchronous, is the one spawn path outside it).
 #[cfg(unix)]
 pub mod spawn_gate {
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -205,8 +201,7 @@ pub mod spawn_gate {
         }
     }
 
-    /// `None` once closed. Count first, then read the flag (SeqCst, mirrored
-    /// by `close`), so a spawn is either refused or seen by `close`'s wait.
+    /// Count, then read the flag. `close` does the reverse: no spawn is missed.
     pub(crate) fn enter() -> Option<InFlight> {
         IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
         if CLOSED.load(Ordering::SeqCst) {
@@ -216,8 +211,7 @@ pub mod spawn_gate {
         Some(InFlight(()))
     }
 
-    /// Refuse further spawns, then wait for the in-flight ones to return.
-    /// Never reopens. Bounded so a child stuck before exec cannot hold up exit.
+    /// Refuse new spawns, wait for in-flight ones. Bounded so exit cannot hang.
     pub fn close() {
         CLOSED.store(true, Ordering::SeqCst);
         let deadline = Instant::now() + Duration::from_secs(1);

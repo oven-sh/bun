@@ -18,10 +18,9 @@
 //!        JS runtime actually starts; commands that never spin up an event
 //!        loop are short-lived enough not to need it.
 //!
-//!   2. On any clean exit (`Global.exit` → `Bun__onExit`), closes
-//!      `bun_spawn_sys::spawn_gate`, then walks the process tree rooted at
-//!      `getpid()` and SIGKILLs every descendant so children Bun spawned don't
-//!      outlive it.
+//!   2. On any clean exit (`Global.exit` → `Bun__onExit`), closes the spawn
+//!      gate, then walks the process tree rooted at `getpid()` and SIGKILLs
+//!      every descendant so children Bun spawned don't outlive it.
 //!      - macOS: libproc `proc_listchildpids()`.
 //!      - Linux: `/proc/<pid>/task/*/children`.
 //!
@@ -363,8 +362,7 @@ pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
 /// (atexit on macOS, at_quick_exit on Linux, and the explicit `Global.exit`
 /// path). C calling convention because that's the exit-callback ABI.
 extern "C" fn on_process_exit() {
-    // Workers keep running until `_exit`; without this they can spawn a child
-    // after the walk has listed our children.
+    // Workers are still running: stop their spawns before the walk below.
     #[cfg(unix)]
     bun_spawn_sys::spawn_gate::close();
     kill_sync_pgroups_and_descendants();
@@ -386,8 +384,8 @@ extern "C" fn on_process_exit() {
 ///      and unlike SIGTERM can't be trapped or ignored.
 /// A frozen process can neither exit (so its pid can't be reused) nor fork
 /// (so its child set is stable while we recurse), which is what makes the
-/// verify step sufficient. `self` is the only unfrozen process. It does not
-/// fork here: callers run single-threaded or after `spawn_gate::close()`.
+/// verify step sufficient. `self`, the only unfrozen process, is past
+/// `spawn_gate::close()` (or still single-threaded, from `enable`).
 fn kill_descendants() {
     #[cfg(unix)]
     {

@@ -32,6 +32,8 @@ pub enum RedisError {
     IdleTimeout,
     NestingDepthExceeded,
     LineTooLong,
+    /// The server answered with a `-` or `!` error reply.
+    ServerError,
 }
 
 bun_core::impl_tag_error!(RedisError);

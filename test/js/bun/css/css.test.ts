@@ -2976,6 +2976,27 @@ describe("css tests", () => {
     minify_test(".foo { background: transparent }", ".foo{background:0 0}");
 
     minify_test(
+      ".foo { background-image: image-set(url('a.png?v=1#x') 1x, 'b.png' 2x) }",
+      '.foo{background-image:image-set("a.png?v=1#x" 1x,"b.png" 2x)}',
+    );
+    prefix_test(
+      `
+      .foo {
+        background-image: image-set(url('a.png?v=1#x') 1x, 'b.png' 2x);
+      }
+    `,
+      `
+      .foo {
+        background-image: -webkit-image-set(url("a.png?v=1#x") 1x, url("b.png") 2x);
+        background-image: image-set("a.png?v=1#x" 1x, "b.png" 2x);
+      }
+    `,
+      {
+        chrome: 85 << 16,
+      },
+    );
+
+    minify_test(
       ".foo { background: url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\") }",
       ".foo{background:url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\")}",
     );
@@ -5721,6 +5742,10 @@ describe("css tests", () => {
     minify_test("a:is(:is(.foo)) { color: yellow }", "a.foo{color:#ff0}");
     minify_test(":host(:hover) {color: red}", ":host(:hover){color:red}");
     minify_test("::slotted(:hover) {color: red}", "::slotted(:hover){color:red}");
+    minify_test(
+      "a:hover, a:active, a:focus, a:focus-visible, a:focus-within { color: red }",
+      "a:hover,a:active,a:focus,a:focus-visible,a:focus-within{color:red}",
+    );
 
     minify_test(":root::view-transition {position: fixed}", ":root::view-transition{position:fixed}");
 

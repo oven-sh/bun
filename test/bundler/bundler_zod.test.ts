@@ -304,3 +304,64 @@ itBundled("zod/NoBundleTransformsToo", {
     expect(code).toMatch(/__zod\w*\(\(\) =>/);
   },
 });
+
+itBundled("zod/FoldedStringsKeepEverySegment", {
+  install: ["zod@4.4.3"],
+  backend: "cli",
+  zodCompiler: true,
+  minifySyntax: true,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import { z } from "zod";
+      // --minify-syntax folds these additions into rope strings before the
+      // transform reads them. Every schema below must see the whole string.
+      const Lit = z.literal("a" + "b");
+      const En = z.enum(["x" + "y"]);
+      const Prefix = z.string().startsWith("pre" + "fix");
+      const Def = z.string().default("d" + "ef");
+      const Tagged = z.discriminatedUnion("ki" + "nd", [
+        z.object({ kind: z.literal("o" + "k"), value: z.string() }),
+      ]);
+      console.log(Lit.safeParse("a").success, Lit.safeParse("ab").success);
+      console.log(En.safeParse("x").success, En.safeParse("xy").success);
+      console.log(Prefix.safeParse("preXXX").success, Prefix.safeParse("prefixXXX").success);
+      console.log(Def.parse(undefined));
+      console.log(Tagged.safeParse({ kind: "o", value: "v" }).success, Tagged.safeParse({ kind: "ok", value: "v" }).success);
+    `,
+  },
+  run: { stdout: "false true\nfalse true\nfalse true\ndef\nfalse true" },
+  onAfterBundle(api) {
+    const code = api.readFile("/out.js");
+    expect(code).toContain('"vs":["ab"]');
+    expect(code).toContain('"vs":["xy"]');
+    expect(code).toContain('["sw","prefix"]');
+    expect(code).toContain('"v":"def"');
+    expect(code).toContain('"d":"kind"');
+    expect(code).toContain('"vs":["ok"]');
+  },
+});
+
+itBundled("zod/CheckOnBooleanStillThrows", {
+  install: ["zod@4.4.3"],
+  backend: "cli",
+  zodCompiler: true,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import { z } from "zod";
+      // z.boolean() has no .min(). zod throws while constructing the schema;
+      // the wrapper defers that to the first parse instead of accepting input.
+      const Broken = (z.boolean() as any).min(5);
+      try {
+        console.log("parsed", Broken.parse(true));
+      } catch (error) {
+        console.log(error instanceof TypeError, error.message.includes("min is not a function"));
+      }
+    `,
+  },
+  run: { stdout: "true true" },
+  onAfterBundle(api) {
+    expect(api.readFile("/out.js")).toContain('"k":"bool","c":[["minl",5]]');
+  },
+});

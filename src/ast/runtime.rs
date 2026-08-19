@@ -175,10 +175,11 @@ pub struct Imports {
     pub(crate) __promiseAll: Ref,
     pub(crate) __MEMO_CACHE_SENTINEL: Ref,
     pub(crate) __EARLY_RETURN_SENTINEL: Ref,
+    pub(crate) __zod: Ref,
 }
 
 impl Imports {
-    pub const ALL: [&'static [u8]; 27] = [
+    pub const ALL: [&'static [u8]; 28] = [
         b"__name",
         b"__require",
         b"__export",
@@ -206,12 +207,13 @@ impl Imports {
         b"__promiseAll",
         b"__MEMO_CACHE_SENTINEL",
         b"__EARLY_RETURN_SENTINEL",
+        b"__zod",
     ];
 
     /// Rust stable cannot sort in `const`; precomputed here and verified by
     /// the test in `tests` below.
     #[cfg_attr(not(test), allow(dead_code))]
-    const ALL_SORTED: [&'static [u8]; 27] = [
+    const ALL_SORTED: [&'static [u8]; 28] = [
         b"$$typeof",
         b"__EARLY_RETURN_SENTINEL",
         b"__MEMO_CACHE_SENTINEL",
@@ -239,11 +241,12 @@ impl Imports {
         b"__require",
         b"__runInitializers",
         b"__using",
+        b"__zod",
     ];
 
     /// When generating the list of runtime imports, we sort it for determinism.
     /// This is a lookup table so we don't need to resort the strings each time
-    pub const ALL_SORTED_INDEX: [usize; 27] = [
+    pub const ALL_SORTED_INDEX: [usize; 28] = [
         15, // __name
         24, // __require
         7,  // __export
@@ -271,6 +274,7 @@ impl Imports {
         21, // __promiseAll
         2,  // __MEMO_CACHE_SENTINEL
         1,  // __EARLY_RETURN_SENTINEL
+        27, // __zod
     ];
 
     pub const NAME: &'static [u8] = b"bun:wrap";
@@ -306,6 +310,7 @@ impl Imports {
             24 => self.__promiseAll,
             25 => self.__MEMO_CACHE_SENTINEL,
             26 => self.__EARLY_RETURN_SENTINEL,
+            27 => self.__zod,
             _ => return None,
         };
         r.to_nullable()
@@ -341,6 +346,7 @@ impl Imports {
             24 => Some(&mut self.__promiseAll),
             25 => Some(&mut self.__MEMO_CACHE_SENTINEL),
             26 => Some(&mut self.__EARLY_RETURN_SENTINEL),
+            27 => Some(&mut self.__zod),
             _ => None,
         }
     }

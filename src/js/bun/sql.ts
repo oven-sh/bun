@@ -40,8 +40,7 @@ interface ReserveAbortState {
   onAbort: (() => void) | null;
 }
 
-/// `_client` is bound so the reserved client stays reachable, and so is not collected and
-/// released by reservationRegistry, until its transaction settles.
+/// `_client` is bound only to keep the client out of reservationRegistry's reach until the transaction settles.
 function settleReservedTransaction(
   reservedTransaction: Set<Promise<void>>,
   finished: { promise: Promise<void>; resolve: () => void },

@@ -285,6 +285,8 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
         return "t1";
       });
       expect(t1).toBe("t1");
+      // A graceful close waits for pending work. It hangs if the pool still counts the reservation.
+      await sql.close();
     } finally {
       await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));

@@ -1310,17 +1310,20 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        'create_package_json: {
-            // create package.json, but only if it doesn't exist
-            let package_json = match bun_sys::File::create(
-                bunx_install_dir.fd,
-                b"package.json",
-                /* truncate */ true,
-            ) {
-                Ok(f) => f,
-                Err(_) => break 'create_package_json,
-            };
-            let _ = package_json.write_all(b"{}\n");
+        // Reset on every install so `bun add` below edits this package.json, not one further up
+        // the tree. Concurrent runs of the same package share this directory (and this file),
+        // so the file is replaced whole rather than truncated and rewritten.
+        {
+            let mut package_json_path: Vec<u8> =
+                Vec::with_capacity(bunx_cache_dir.len() + b"/package.json\0".len());
+            package_json_path.extend_from_slice(bunx_cache_dir);
+            package_json_path.push(bun_paths::SEP);
+            package_json_path.extend_from_slice(b"package.json\0");
+            let _ = bun_sys::File::write_file_atomically(
+                ZStr::from_slice_with_nul(&package_json_path),
+                b"{}\n",
+                0o644,
+            );
         }
 
         let install_args: [&[u8]; 4] = [

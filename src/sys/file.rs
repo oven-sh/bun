@@ -385,6 +385,71 @@ impl File {
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
         f.write_all(data)
     }
+    /// Like [`File::write_file`], but the file at `path` (absolute, or relative to the cwd)
+    /// changes in one step: a process that reads or replaces it at the same time sees either
+    /// the previous contents or `data`, never a truncated file or a mix of two writers. `data`
+    /// goes to `.<name>.<random>.tmp` next to the file, which is then renamed over it.
+    ///
+    /// Like the in-place write this replaces, it follows a symlink at `path`, fails with the
+    /// open error (EACCES, EISDIR, ...) when the existing file cannot be written to, and keeps
+    /// the permission bits of an existing file. A new file is created with `mode`, minus the
+    /// umask. Other hard links to the old file keep the old contents.
+    pub fn write_file_atomically(path: &ZStr, data: &[u8], mode: Mode) -> Maybe<()> {
+        use std::io::Write as _;
+
+        // Resolves symlinks so that the replacement lands next to (and over) the real file.
+        // Fails when the file does not exist yet, in which case `path` itself is the target.
+        let mut realpath_buf = bun_paths::path_buffer_pool::get();
+        let mut target: Vec<u8> = match realpath(path, &mut realpath_buf) {
+            Ok(resolved) => resolved.to_vec(),
+            Err(_) => path.as_bytes().to_vec(),
+        };
+        target.push(0);
+        let target = ZStr::from_slice_with_nul(&target);
+
+        let existing_mode: Option<Mode> = match Self::open(target, O::WRONLY | O::CLOEXEC, 0) {
+            // Closed on drop. Opening for writing is what reports a file that cannot be
+            // replaced by its writer, since the rename below only needs the directory.
+            Ok(existing) => Some(existing.stat()?.st_mode as Mode & 0o7777),
+            Err(err) if err.get_errno() == E::ENOENT => None,
+            Err(err) => return Err(err),
+        };
+
+        let target_bytes = target.as_bytes();
+        let dir_len = target_bytes.len() - bun_paths::basename(target_bytes).len();
+        let mut tmp_path: Vec<u8> =
+            Vec::with_capacity(target_bytes.len() + b"..0123456789abcdef.tmp\0".len());
+        tmp_path.extend_from_slice(&target_bytes[..dir_len]);
+        tmp_path.push(b'.');
+        tmp_path.extend_from_slice(&target_bytes[dir_len..]);
+        write!(tmp_path, ".{:016x}.tmp\0", bun_core::fast_random()).expect("Vec write is infallible");
+        let tmp_path = ZStr::from_slice_with_nul(&tmp_path);
+
+        let cwd = Fd::cwd();
+        let mut tmpfile = Tmpfile::create_with_mode(cwd, tmp_path, existing_mode.unwrap_or(mode))?;
+        // Closes the descriptor on every path below. `Tmpfile` does not own it.
+        let file = File::from_fd(tmpfile.fd);
+        let result = file.write_all(data).and_then(|()| {
+            // The create applied the umask; the replaced file's exact bits are restored on a
+            // best-effort basis. A new file keeps the umask like every other new file.
+            #[cfg(unix)]
+            if let Some(existing_mode) = existing_mode {
+                let _ = fchmod(file.handle, existing_mode);
+            }
+            tmpfile.finish(target)
+        });
+        drop(file);
+        if result.is_err() {
+            let _ = unlinkat(cwd, tmp_path);
+        }
+        result
+    }
+    /// Takes the exclusive advisory lock of this file (`flock(LOCK_EX)`, `LockFileEx` on
+    /// Windows). Closing the file releases it, so a process that dies releases it too. With
+    /// `wait == false`, returns `Ok(false)` when another process holds the lock.
+    pub fn lock_exclusive(&self, wait: bool) -> Maybe<bool> {
+        flock_exclusive(self.handle, wait)
+    }
     /// Like [`File::write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
     pub fn write_file_os_path(

@@ -225,12 +225,10 @@ impl UpdateInteractiveCommand {
             Box::from(package_json_writer.ctx.written_without_trailing_zero());
 
         // Write the updated package.json
-        // Routes through `bun_sys::File::write_file` (cwd-relative
-        // open + write + close) per src/CLAUDE.md.
         let mut path_zbuf = PathBuffer::uninit();
         let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
         if let Err(err) =
-            bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z, &new_package_json_source)
+            bun_sys::File::write_file_atomically(path_z, &new_package_json_source, 0o644)
         {
             Output::err_generic(
                 "Failed to write package.json at {s}: {s}",

@@ -100,7 +100,7 @@ pub fn detect_and_load_other_lockfile<'a>(
         let Ok(data) = File::read_from(dir, b"pnpm-lock.yaml") else {
             break 'pnpm;
         };
-        let migrate_result = match pnpm::migrate_pnpm_lockfile(this, manager, log, &data, dir) {
+        let migrate_result = match pnpm::migrate_pnpm_lockfile(this, manager, log, &data) {
             Ok(r) => r,
             Err(MigratePnpmLockfileError::PnpmLockfileTooOld) => {
                 report_unsupported_lockfile_version(

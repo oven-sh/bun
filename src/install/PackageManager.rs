@@ -339,7 +339,9 @@ pub struct PackageManager {
     /// Only set in `bun pm`
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
 
-    pub root_package_json_file: bun_sys::File,
+    /// The lock file of the project this process edits, held (see `lock_project`) until the
+    /// process exits. `None` while no lock is held.
+    pub(crate) project_lock: Option<bun_sys::File>,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
     /// could be any of the workspaces.
@@ -540,6 +542,24 @@ impl Subcommand {
     // TODO: make all subcommands find root and chdir
     pub(crate) fn should_chdir_to_root(self) -> bool {
         !matches!(self, Self::Link)
+    }
+
+    /// Subcommands that rewrite package.json, the lockfile or node_modules on every run, and so
+    /// hold the project lock (`lock_project`) from `init` on. `Pm` and `Audit` only write for
+    /// some of their arguments; those commands take the lock themselves.
+    pub(crate) fn always_edits_project(self) -> bool {
+        matches!(
+            self,
+            Self::Install
+                | Self::Update
+                | Self::Add
+                | Self::Remove
+                | Self::Link
+                | Self::Patch
+                | Self::PatchCommit
+                | Self::Dedupe
+                | Self::Prune
+        )
     }
 }
 
@@ -1864,7 +1884,13 @@ pub fn init(
             root_buf[..p.len()].copy_from_slice(p);
             p.len()
         } else {
-            bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
+            // The cwd is the project root now. Resolved by name rather than through the fd:
+            // package.json is replaced by rename (`write_file_atomically`), and once another
+            // process has done that, the fd's path names a deleted file.
+            match bun_sys::realpath(bun_core::zstr!("package.json"), root_buf) {
+                Ok(path) => path.len(),
+                Err(_) => bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len(),
+            }
         };
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
@@ -2061,7 +2087,7 @@ pub fn init(
         // zero-bit pattern is UB; allocate the real (empty) lockfile here directly.
         // `Lockfile::default()` ≡ `Lockfile::init_empty()`.
         wr!(lockfile, Box::new(Lockfile::default()));
-        wr!(root_package_json_file, root_package_json_file);
+        wr!(project_lock, None);
         // .progress
         wr!(event_loop, AnyEventLoop::init());
         wr!(
@@ -2247,6 +2273,13 @@ pub fn init(
             if let Some(p) = config.hoist_pattern.take() {
                 manager.options.hoist_pattern = Some(p);
             }
+        }
+
+        if subcommand.always_edits_project() && !manager.options.dry_run {
+            manager.lock_project();
+            // The workspace package.json files read while looking for the root above were read
+            // before the lock. Edits start from what is on disk now that this process holds it.
+            manager.workspace_package_json_cache.map.clear();
         }
     }
 
@@ -2501,13 +2534,7 @@ fn init_with_runtime_once(
         // `Lockfile` holds `HashMap`/`Vec`/`NonNull` (zero-bit pattern is
         // UB), so allocate the real empty lockfile here directly instead of a zeroed placeholder.
         wr!(lockfile, Box::new(Lockfile::default()));
-        // `.root_package_json_file` is never read in the runtime
-        // path. Use the explicit invalid-fd sentinel rather than `mem::zeroed()` —
-        // on posix `Fd(0)` is stdin, not the invalid marker.
-        wr!(
-            root_package_json_file,
-            bun_sys::File::from_fd(Fd::invalid())
-        );
+        wr!(project_lock, None);
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());

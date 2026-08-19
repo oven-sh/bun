@@ -12,7 +12,7 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_paths::{self, PathBuffer};
-use bun_sys::{self, Fd, File};
+use bun_sys::{self, File};
 
 use super::add_catalog;
 use super::add_remove_with_filter::WorkspaceTarget;
@@ -698,14 +698,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         // Now that we've run the install step
         // We can save our in-memory package.json to disk
-        let workspace_package_json_file =
-            File::openat(Fd::cwd(), path, bun_sys::O::RDWR, 0).map_err(Error::from)?;
-
-        workspace_package_json_file
-            .pwrite_all(source, 0)
-            .map_err(Error::from)?;
-        let _ = bun_sys::ftruncate(workspace_package_json_file.handle, source.len() as i64);
-        let _ = workspace_package_json_file.close(); // close error is non-actionable
+        File::write_file_atomically(path, source, 0o644).map_err(Error::from)?;
 
         if subcommand == Subcommand::Remove {
             if !any_changes {

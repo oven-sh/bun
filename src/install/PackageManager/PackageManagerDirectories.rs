@@ -65,6 +65,96 @@ impl PackageManager {
     pub(crate) fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
         get_temporary_directory(self)
     }
+
+    #[inline]
+    pub fn lock_project(&mut self) {
+        lock_project(self)
+    }
+}
+
+// ───────────────────────────── project lock ───────────────────────────────────
+
+/// Makes the bun processes that edit one project run one at a time. Without it, `bun add` and
+/// `bun remove` started together each read package.json and bun.lock, and the one that writes
+/// last silently drops the other one's edit; two installs also undo each other's work while they
+/// place the same packages in node_modules. The lock is a file in the install cache directory,
+/// named after the project root, locked with `flock` (see `File::lock_exclusive`) and held until
+/// this process exits. Lifecycle scripts get `BUN_INTERNAL_INSTALL_LOCK_DIR` so that a bun they
+/// run in the same project does not wait for this process.
+///
+/// Best effort: when the lock file cannot be created or locked, the command runs without it,
+/// as every command did before the lock existed. Calling this again is a no-op.
+pub fn lock_project(this: &mut PackageManager) {
+    if this.project_lock.is_some() {
+        return;
+    }
+    let project_dir = bun_core::strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    if env_var::BUN_INTERNAL_INSTALL_LOCK_DIR
+        .get()
+        .is_some_and(|held| bun_core::strings::without_trailing_slash(held) == project_dir)
+    {
+        return;
+    }
+
+    let Some(lock_file) = open_project_lock_file(this, project_dir) else {
+        bun_core::scoped_log!(project_lock, "no lock for {}", bstr::BStr::new(project_dir));
+        return;
+    };
+    let locked = match lock_file.lock_exclusive(false) {
+        Ok(true) => true,
+        Ok(false) => {
+            if !this.options.log_level.is_silent() {
+                bun_core::pretty_errorln!(
+                    "<d>Waiting for another bun process to finish in {}<r>",
+                    bstr::BStr::new(project_dir)
+                );
+                Output::flush();
+            }
+            matches!(lock_file.lock_exclusive(true), Ok(true))
+        }
+        Err(_) => false,
+    };
+    if !locked {
+        bun_core::scoped_log!(project_lock, "could not lock {}", bstr::BStr::new(project_dir));
+        return;
+    }
+
+    bun_core::handle_oom(
+        this.env_mut()
+            .map
+            .put(env_var::BUN_INTERNAL_INSTALL_LOCK_DIR.key(), project_dir),
+    );
+    this.project_lock = Some(lock_file);
+}
+
+bun_core::declare_scope!(project_lock, hidden);
+
+/// `<cache dir>/.locks/<hash of the project root>`. Opened read-only: `flock` does not need write
+/// access, so a lock file created by another user of a shared cache directory works too.
+fn open_project_lock_file(this: &mut PackageManager, project_dir: &[u8]) -> Option<File> {
+    let mut locks_dir_path = fetch_cache_directory_path(this.env_mut(), Some(&this.options)).path;
+    if locks_dir_path.last() != Some(&SEP) {
+        locks_dir_path.push(SEP);
+    }
+    locks_dir_path.extend_from_slice(b".locks");
+    let locks_dir = Dir::cwd()
+        .make_open_path(&locks_dir_path, Default::default())
+        .ok()?;
+
+    let mut lock_file_name = [0u8; b"0123456789abcdef.lock".len()];
+    write!(
+        &mut lock_file_name[..],
+        "{:016x}.lock",
+        bun_wyhash::hash(project_dir)
+    )
+    .expect("the buffer is sized for this format");
+    File::openat(
+        locks_dir.fd(),
+        &lock_file_name,
+        sys::O::RDONLY | sys::O::CREAT | sys::O::CLOEXEC,
+        0o644,
+    )
+    .ok()
 }
 
 // ───────────────────────────── cache directory ────────────────────────────────
@@ -1052,14 +1142,27 @@ pub fn compute_cache_dir_and_subpath<'a>(
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
 pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
-    let package_json_file = match Dir::cwd().create_file_z(
-        z_static(b"package.json\0"),
-        sys::CreateFlags {
-            read: true,
-            ..Default::default()
-        },
+    let open_flags = sys::O::RDWR | sys::O::CLOEXEC;
+    let opened = match File::openat(
+        Fd::cwd(),
+        b"package.json",
+        open_flags | sys::O::CREAT | sys::O::EXCL,
+        0o666,
     ) {
-        Ok(f) => f,
+        Ok(package_json_file) => {
+            package_json_file.pwrite_all(b"{\"dependencies\": {}}", 0)?;
+            return Ok(package_json_file);
+        }
+        // Another bun process created it after this one found none. That process writes the
+        // initial contents; until it does, the empty file parses as `{}`.
+        Err(err) if err.get_errno() == sys::E::EEXIST => {
+            File::openat(Fd::cwd(), b"package.json", open_flags, 0)
+        }
+        Err(err) => Err(err),
+    };
+
+    match opened {
+        Ok(package_json_file) => Ok(package_json_file),
         Err(err) => {
             bun_core::pretty_errorln!(
                 "<r><red>error:<r> {} create package.json",
@@ -1067,11 +1170,7 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
             );
             Global::crash();
         }
-    };
-
-    package_json_file.pwrite_all(b"{\"dependencies\": {}}", 0)?;
-
-    Ok(package_json_file)
+    }
 }
 
 pub fn attempt_to_create_package_json() -> Result<(), Error> {

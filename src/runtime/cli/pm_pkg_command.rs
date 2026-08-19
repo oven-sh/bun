@@ -854,7 +854,7 @@ impl PmPkgCommand {
 
         let content = writer.ctx.written_without_trailing_zero();
         let path_z = bun_core::ZBox::from_bytes(path);
-        if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
+        if let Err(e) = bun_sys::File::write_file_atomically(path_z.as_zstr(), content, 0o644) {
             Output::err_generic(
                 "Failed to write package.json: {s}",
                 (bstr::BStr::new(e.name()),),

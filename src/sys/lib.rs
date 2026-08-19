@@ -1393,6 +1393,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    pub const flock: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1400,7 +1401,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1510,6 +1511,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "flock",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -2645,6 +2647,30 @@ mod posix_impl {
     pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
+    }
+    /// `flock(LOCK_EX)`. The lock belongs to the open file description: closing `fd` (or the
+    /// process exiting) releases it. With `wait == false` the call returns `Ok(false)` instead of
+    /// blocking while another process holds the lock.
+    pub fn flock_exclusive(fd: Fd, wait: bool) -> Maybe<bool> {
+        let operation = if wait {
+            libc::LOCK_EX
+        } else {
+            libc::LOCK_EX | libc::LOCK_NB
+        };
+        loop {
+            // SAFETY: `flock` takes only by-value scalars; a bad fd is EBADF, never UB.
+            if unsafe { libc::flock(fd.native(), operation) } == 0 {
+                return Ok(true);
+            }
+            let errno = last_errno();
+            if errno == libc::EINTR {
+                continue;
+            }
+            if !wait && errno == libc::EWOULDBLOCK {
+                return Ok(false);
+            }
+            return Err(Error::from_code_int(errno, Tag::flock).with_fd(fd));
+        }
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
@@ -3903,6 +3929,30 @@ mod windows_impl {
             return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
         }
         Ok(())
+    }
+    /// The POSIX arm's `flock(LOCK_EX)`: `LockFileEx` over the first byte of the file. The
+    /// lock is released when the handle is closed, which includes the process exiting. With
+    /// `wait == false` the call returns `Ok(false)` instead of blocking while another process
+    /// holds the lock.
+    pub fn flock_exclusive(fd: Fd, wait: bool) -> Maybe<bool> {
+        let mut flags = w::LOCKFILE_EXCLUSIVE_LOCK;
+        if !wait {
+            flags |= w::LOCKFILE_FAIL_IMMEDIATELY;
+        }
+        // The zeroed offset selects byte 0. Every locker uses the same range, so the locks
+        // conflict with each other; the file's contents are irrelevant.
+        let mut overlapped: w::OVERLAPPED = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `fd` is a live handle and `overlapped` outlives the call, which is
+        // synchronous for the handles bun opens (no FILE_FLAG_OVERLAPPED).
+        let rc = unsafe { w::kernel32::LockFileEx(fd.native(), flags, 0, 1, 0, &mut overlapped) };
+        if rc != 0 {
+            return Ok(true);
+        }
+        let er = w::Win32Error::get();
+        if !wait && er == w::Win32Error::LOCK_VIOLATION {
+            return Ok(false);
+        }
+        Err(Error::new(er.to_e(), Tag::flock).with_fd(fd))
     }
 
     // ── kernel32 / ntdll arms ────────────────────────────────────────────

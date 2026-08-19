@@ -363,6 +363,7 @@ describe.concurrent("argon2 hashes with memoryCost below 8 from earlier Bun vers
       expect(await password.verify("hello", hash)).toBeTrue();
       expect(await password.verify("hellp", hash)).toBeFalse();
       expect(password.verifySync("hello", hash)).toBeTrue();
+      expect(password.verifySync("hellp", hash)).toBeFalse();
     });
   }
 

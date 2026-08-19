@@ -5264,53 +5264,31 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> bool {
-        macro_rules! write_msg {
-            ($msg:expr, $w:expr, $color:expr) => {
-                if $color {
-                    let _ = $msg.write_format::<true>(&mut bun_io::AsFmt::new($w));
-                } else {
-                    let _ = $msg.write_format::<false>(&mut bun_io::AsFmt::new($w));
-                }
-            };
-        }
-
         if value.js_type() == jsc::JSType::DOMWrapper {
-            // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
-            // R-2: shared borrow — `logged` is `Cell<bool>`.
-            if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
-                if !build_error.logged.get() {
-                    if self.had_errors {
-                        let _ = writer.write_all(b"\n");
-                    }
-                    write_msg!(build_error.msg, writer, allow_ansi_color);
-                    build_error.logged.set(true);
+            let msg: Option<&bun_ast::Msg> =
+                if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
+                    Some(&build_error.msg)
+                } else if let Some(resolve_error) = value.as_class_ref::<crate::ResolveMessage>() {
+                    Some(&resolve_error.msg)
+                } else {
+                    None
+                };
+            if let Some(msg) = msg {
+                if self.had_errors {
                     let _ = writer.write_all(b"\n");
                 }
-                self.had_errors = self.had_errors || build_error.msg.kind == bun_ast::Kind::Err;
+                if allow_ansi_color {
+                    let _ = msg.write_format::<true>(&mut bun_io::AsFmt::new(writer));
+                } else {
+                    let _ = msg.write_format::<false>(&mut bun_io::AsFmt::new(writer));
+                }
+                let _ = writer.write_all(b"\n");
+                self.had_errors = self.had_errors || msg.kind == bun_ast::Kind::Err;
                 if exception_list.is_some() {
                     // `log_mut()` is the centralized set-once `Option<NonNull>`
                     // accessor — single audited deref lives there.
                     if let Some(log) = self.log_mut() {
-                        let _ = log.add_msg(build_error.msg.clone());
-                    }
-                }
-                bun_core::Output::flush();
-                return true;
-            } else if let Some(resolve_error) = value.as_class_ref::<crate::ResolveMessage>() {
-                if !resolve_error.logged.get() {
-                    if self.had_errors {
-                        let _ = writer.write_all(b"\n");
-                    }
-                    write_msg!(resolve_error.msg, writer, allow_ansi_color);
-                    resolve_error.logged.set(true);
-                    let _ = writer.write_all(b"\n");
-                }
-                self.had_errors = self.had_errors || resolve_error.msg.kind == bun_ast::Kind::Err;
-                if exception_list.is_some() {
-                    // `log_mut()` is the centralized set-once `Option<NonNull>`
-                    // accessor — single audited deref lives there.
-                    if let Some(log) = self.log_mut() {
-                        let _ = log.add_msg(resolve_error.msg.clone());
+                        let _ = log.add_msg(msg.clone());
                     }
                 }
                 bun_core::Output::flush();

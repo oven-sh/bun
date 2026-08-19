@@ -182,6 +182,95 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+// A macro's rejected promise is reported by the macro runner itself (Macro.rs).
+// The promise also used to reach the unhandled rejection tracker, which
+// reported it a second time: while the runner waited for it, or, when it was
+// already rejected, from a later tick of the event loop.
+describe.concurrent("a macro that fails is reported once per failure", () => {
+  function countLines(output: string, line: string) {
+    return output.split(/\r?\n/).filter(l => l === line).length;
+  }
+
+  async function run(files: Record<string, string>, ...args: string[]) {
+    using dir = tempDir("macro-failure-report", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds trace every macro call to stdout; nothing else is expected there.
+    const output = stdout
+      .split(/\r?\n/)
+      .filter(line => line !== "" && !line.startsWith("[macro] call "))
+      .join("\n");
+    return { stdout: output, stderr, exitCode };
+  }
+
+  test("a promise that rejects with an Error", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "macro.ts": `export async function m() {\n  await Promise.resolve();\n  throw new Error("macro rejected");\n}\n`,
+        "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m());\n`,
+      },
+      "build",
+      "./entry.ts",
+    );
+    expect({
+      rejections: countLines(stderr, "error: macro rejected"),
+      failedCalls: countLines(stderr, "error: macro threw exception"),
+      stdout,
+      exitCode,
+    }).toEqual({ rejections: 1, failedCalls: 1, stdout: "", exitCode: 1 });
+  });
+
+  // Every call of the macro is rejected with the one BuildMessage the module
+  // registry keeps for bad.js, so three calls print it three times.
+  test("a promise that rejects with the build error of an imported module, once per call", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "bad.js": "function bad( {",
+        "macro.ts": `export async function m() {\n  await import("./bad.js");\n}\n`,
+        "entry.ts": [
+          `import { m } from "./macro.ts" with { type: "macro" };`,
+          `console.log(m());`,
+          `console.log(m());`,
+          `console.log(m());`,
+          ``,
+        ].join("\n"),
+      },
+      "build",
+      "./entry.ts",
+    );
+    expect({
+      buildErrors: countLines(stderr, "error: Expected identifier but found end of file"),
+      failedCalls: countLines(stderr, "error: macro threw exception"),
+      stdout,
+      exitCode,
+    }).toEqual({ buildErrors: 3, failedCalls: 3, stdout: "", exitCode: 1 });
+  });
+
+  test("a macro module that fails to load", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "bad.js": "function bad( {",
+        "macro.ts": `import "./bad.js";\nexport function m() {\n  return 1;\n}\n`,
+        "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m());\n`,
+      },
+      "run",
+      "./entry.ts",
+    );
+    expect({
+      buildErrors: countLines(stderr, "error: Expected identifier but found end of file"),
+      loadErrors: countLines(stderr, 'error: "MacroLoadError" error in macro'),
+      stdout,
+      exitCode,
+    }).toEqual({ buildErrors: 1, loadErrors: 1, stdout: "", exitCode: 1 });
+  });
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

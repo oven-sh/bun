@@ -241,3 +241,55 @@ test.concurrent("stop(true) itself aborts the request parked on plugin setup", a
   expect(out, stderr).toEqual({ request: "ECONNRESET", pendingAfterStop: 1, stop: "closed" });
   expect(exitCode).toBe(0);
 });
+
+// server.ts already imported ./plugin.ts, so the first request's plugin load runs setup() synchronously inside the DevServer's request frame.
+test.concurrent("stop(true) from a plugin setup() that runs synchronously during the first request", async () => {
+  using dir = tempDir("serve-plugins-devserver-sync-stop", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+      export default {
+        name: "stop-plugin",
+        setup() {
+          globalThis.__stopped = globalThis.__server.stop(true);
+        },
+      };
+    `,
+    "index.html": indexHtml,
+    "entry.ts": `console.log("entry");`,
+    "server.ts": `
+      import "./plugin.ts";
+      import html from "./index.html";
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: { "/": html },
+        fetch() { return new Response("fallback"); },
+      });
+      globalThis.__server = server;
+      const request = await fetch(server.url).then(
+        res => String(res.status),
+        err => (typeof err.code === "string" ? err.code : err.name),
+      );
+      let timer;
+      const stop = await Promise.race([
+        globalThis.__stopped.then(() => "closed"),
+        new Promise(resolve => { timer = setTimeout(() => resolve("timeout"), 10_000); }),
+      ]);
+      clearTimeout(timer);
+      console.log(JSON.stringify({ request, stop }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const line = stdout.split("\n").find(l => l.startsWith("{"));
+  expect(line, stderr).toBeDefined();
+  expect(JSON.parse(line!)).toEqual({ request: "ECONNRESET", stop: "closed" });
+  expect(exitCode).toBe(0);
+});

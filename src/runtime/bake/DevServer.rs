@@ -1924,10 +1924,44 @@ trait EnsureRouteCtx {
     fn to_dev_response(&mut self) -> DevResponse<'_>;
 }
 
+/// Holds one pending request on the server so `stop()` cannot free the DevServer while it is held.
+struct PendingRequestPin(AnyServer);
+
+impl PendingRequestPin {
+    fn new(mut server: AnyServer) -> Self {
+        server.on_pending_request();
+        Self(server)
+    }
+
+    /// Hand the pending request to whoever will call `on_static_request_complete` later.
+    fn keep(self) {
+        ::core::mem::forget(self);
+    }
+}
+
+impl Drop for PendingRequestPin {
+    fn drop(&mut self) {
+        self.0.on_static_request_complete();
+    }
+}
+
 fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
     ctx: &mut Ctx,
+) -> JsResult<()> {
+    let mut sync_plugin_pin: Option<PendingRequestPin> = None;
+    let result = ensure_route_is_bundled_inner(dev, route_bundle_index, ctx, &mut sync_plugin_pin);
+    // Released only once `dev` is no longer borrowed: a `server.stop(true)` from a synchronous plugin `setup()` may free the DevServer here.
+    drop(sync_plugin_pin);
+    result
+}
+
+fn ensure_route_is_bundled_inner<Ctx: EnsureRouteCtx>(
+    dev: &mut DevServer,
+    route_bundle_index: route_bundle::Index,
+    ctx: &mut Ctx,
+    sync_plugin_pin: &mut Option<PendingRequestPin>,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
     debug_assert!(dev.server.is_some());
@@ -1970,25 +2004,27 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                 };
                                 dev.has_tailwind_plugin_hack = has_tailwind;
 
-                                let mut server = dev.server.expect("infallible: server bound");
+                                let server = dev.server.expect("infallible: server bound");
+                                // Loading may run plugin `setup()` synchronously (module already in the registry), and `server.stop(true)` from there would free this DevServer mid-frame.
+                                let pin = PendingRequestPin::new(server);
                                 let load_result: crate::server::GetOrStartLoadResult = server
                                     .get_or_load_plugins(
                                         crate::server::ServePluginsCallback::DevServer(dev),
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
-                                        // `ServePlugins` will call back into this DevServer; like a bundle in flight, hold a pending request so `stop()` cannot free it first.
-                                        server.on_pending_request();
+                                        // Released by `ServePlugins::handle_on_resolve/reject` once the callback into this DevServer has returned.
+                                        pin.keep();
                                         dev.plugin_state = PluginState::Pending;
                                         plugin = PluginState::Pending;
                                         continue 'plugin;
                                     }
                                     crate::server::GetOrStartLoadResult::Err => {
+                                        *sync_plugin_pin = Some(pin);
                                         dev.plugin_state = PluginState::Err;
-                                        plugin = PluginState::Err;
-                                        continue 'plugin;
                                     }
                                     crate::server::GetOrStartLoadResult::Ready(ready) => {
+                                        *sync_plugin_pin = Some(pin);
                                         dev.plugin_state = PluginState::Loaded;
                                         dev.bundler_options.plugin = ready.map(|plugin| {
                                             bake::DevServerPlugin::Borrowed(
@@ -1997,6 +2033,12 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                         });
                                     }
                                 }
+                                // A synchronous `setup()` may have called `server.stop(true)`: this request's connection is closed, so it must not be deferred or answered.
+                                if server.terminated() {
+                                    return Ok(());
+                                }
+                                plugin = dev.plugin_state;
+                                continue 'plugin;
                             }
                             break 'plugin;
                         }

@@ -9,7 +9,21 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
     // "bun:wrap" is no longer listed: it is internal transpiler plumbing,
     // not a requireable public module.
-    expect(builtinModules).toHaveLength(76);
+    expect(builtinModules).toHaveLength(77);
+  });
+
+  test("builtinModules lists prefix-only node modules with their prefix, as Node does", () => {
+    const prefixed = builtinModules.filter(name => name.startsWith("node:"));
+    // Node lists these with the prefix because the bare names are not builtins. "node:quic" is left out on
+    // purpose: Node 26 does not list it unless QUIC is compiled in and enabled with --experimental-quic.
+    expect(prefixed).toEqual(["node:sqlite", "node:test"]);
+    expect(builtinModules).not.toContain("test");
+    // Every entry resolves as a builtin, and a prefixed entry is requireable only with its prefix.
+    expect(builtinModules.filter(name => !isBuiltin(name))).toEqual([]);
+    for (const name of prefixed) {
+      expect(isBuiltin(name.slice("node:".length))).toBe(false);
+      expect(process.getBuiltinModule(name)).toBe(require(name));
+    }
   });
 
   test("isBuiltin() works", () => {

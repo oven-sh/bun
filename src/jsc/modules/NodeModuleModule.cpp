@@ -47,6 +47,9 @@ JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 // The reason for overstuffing this list is so that uses that use these as the
 // 'external' option to a bundler will properly exclude things like 'ws' which
 // only work with Bun's native 'ws' implementation and not the JS one on NPM.
+//
+// Modules that only resolve with the "node:" prefix ("node:sqlite",
+// "node:test") are listed with the prefix, as in Node's module.builtinModules.
 static constexpr ASCIILiteral builtinModuleNames[] = {
     "_http_agent"_s,
     "_http_client"_s,
@@ -92,6 +95,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "module"_s,
     "net"_s,
     "node:sqlite"_s,
+    "node:test"_s,
     "os"_s,
     "path"_s,
     "path/posix"_s,

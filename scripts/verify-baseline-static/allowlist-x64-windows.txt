@@ -700,7 +700,7 @@ bun::N_AVX3::BSwap16Impl                                                       [
 bun::N_AVX3::BSwap32Impl                                                       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3::BSwap64Impl                                                       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3::MemMemSearch<0,unsigned short>                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-bun::N_AVX3::MemMemSearch<1,unsigned short>                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
+bun::N_AVX3::MemMemSearch<1,unsigned short>                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_DL::BSwap16Impl                                                    [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::BSwap32Impl                                                    [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_DL::BSwap64Impl                                                    [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]

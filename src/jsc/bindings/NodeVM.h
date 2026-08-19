@@ -44,7 +44,8 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue,
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
 bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue& contextArg);
 // Makes `sandbox` (which must not already be one) a context: creates its global, registers it for isContext(), and
-// returns the object that stands for the context (the sandbox, or the DONT_CONTEXTIFY stand-in). Null on exception.
+// returns the object that stands for the context (the sandbox, or for DONT_CONTEXTIFY the new global's proxy). Null on
+// exception.
 JSObject* contextify(JSC::JSGlobalObject* globalObject, JSObject* sandbox, const NodeVMContextOptions& options, JSValue importer);
 bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
 
@@ -92,42 +93,6 @@ public:
 
 class NodeVMGlobalObject;
 
-// What `globalThis` evaluates to inside a DONT_CONTEXTIFY context, and the object createContext() returns for one:
-// a same-realm stand-in for the context's global object that forwards every property operation to it.
-class NodeVMSpecialSandbox final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::OverridesIsExtensible | JSC::ProhibitsPropertyCaching;
-
-    static NodeVMSpecialSandbox* create(VM& vm, NodeVMGlobalObject* globalObject);
-
-    DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
-
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
-    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, JSC::PropertySlot&);
-    static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
-    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
-    static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
-    static bool deleteProperty(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
-    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
-    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
-    static bool preventExtensions(JSObject*, JSGlobalObject*);
-    static bool isExtensible(JSObject*, JSGlobalObject*);
-
-    NodeVMGlobalObject* parentGlobal() const { return m_parentGlobal.get(); }
-
-private:
-    WriteBarrier<NodeVMGlobalObject> m_parentGlobal;
-
-    NodeVMSpecialSandbox(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject);
-
-    void finishCreation(VM&);
-};
-
 // This class represents a sandboxed global object for vm contexts
 class NodeVMGlobalObject final : public Bun::GlobalScope {
 public:
@@ -158,8 +123,6 @@ public:
     // Performs a microtask checkpoint on this context's own queue
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
     void drainOwnMicrotasks();
-    NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
-    void setSpecialSandbox(NodeVMSpecialSandbox* sandbox);
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object
@@ -178,10 +141,8 @@ public:
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
 
 private:
-    // The contextified object that acts as the global proxy
+    // The object that stands for this context: the user's sandbox, or for DONT_CONTEXTIFY the global's own proxy.
     WriteBarrier<JSObject> m_sandbox;
-    // A special object used when the context is not contextified.
-    WriteBarrier<NodeVMSpecialSandbox> m_specialSandbox;
     WriteBarrier<Unknown> m_dynamicImportCallback;
     NodeVMContextOptions m_contextOptions {};
 

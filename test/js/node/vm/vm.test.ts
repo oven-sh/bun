@@ -1308,12 +1308,30 @@ describe("global object and its sandbox", () => {
     expect(runInContext("NC", context3)).toBe(1);
   });
 
-  test("a var the sandbox refuses (frozen sandbox) still exists on the global", () => {
-    const sandbox = Object.freeze({ a: 1 });
+  test("what the sandbox refuses (frozen sandbox) still lands on the global", () => {
+    const sandbox: any = Object.freeze({ a: 1 });
     const context = createContext(sandbox);
-    runInContext("var b = 2; a = 5;", context);
-    expect(runInContext("[typeof b, b, a, 'b' in globalThis]", context)).toEqual(["number", 2, 1, true]);
+    runInContext(
+      "var b = 2; a = 5; c = 6; Object.defineProperty(globalThis, 'd', { value: 7, configurable: true })",
+      context,
+    );
+    expect(runInContext("[typeof b, b, a, 'b' in globalThis, c, d]", context)).toEqual(["number", 2, 1, true, 6, 7]);
+    expect(() => runInContext("'use strict'; a = 8", context)).toThrow(expect.objectContaining({ name: "TypeError" }));
     expect(Object.keys(sandbox)).toEqual(["a"]);
+    expect([sandbox.c, sandbox.d]).toEqual([undefined, undefined]);
+  });
+
+  test("a sloppy write to a read-only property of the global itself is dropped and does not reach the sandbox", () => {
+    const sandbox: any = {};
+    const context = createContext(sandbox);
+    expect(runInContext("NaN = 123; undefined = 4; [Number.isNaN(NaN), typeof undefined]", context)).toEqual([
+      true,
+      "undefined",
+    ]);
+    expect(Object.keys(sandbox)).toEqual([]);
+    expect(() => runInContext("'use strict'; NaN = 1", context)).toThrow(
+      expect.objectContaining({ name: "TypeError" }),
+    );
   });
 
   test("sandbox accessors: setters receive stores, a getter-only property swallows them (even in strict code)", () => {
@@ -1383,6 +1401,35 @@ describe("global object and its sandbox", () => {
     expect(runInContext("[typeof v, 'v' in globalThis]", context)).toEqual(["number", true]);
   });
 
+  test("properties a script creates without declaring them live on the sandbox only (deleting them there resets the context)", () => {
+    const sandbox: any = { pre: 0 };
+    const context = createContext(sandbox);
+    runInContext("a = 1; globalThis.b = 2; this.c = 3; pre = 4; var v = 5", context);
+    expect(sandbox).toEqual({ pre: 4, a: 1, b: 2, c: 3, v: 5 });
+    for (const key of Object.keys(sandbox)) delete sandbox[key];
+    expect(runInContext("[typeof a, typeof b, typeof c, typeof pre, typeof v]", context)).toEqual([
+      "undefined",
+      "undefined",
+      "undefined",
+      "undefined",
+      "number", // a declared variable also lives on the global object
+    ]);
+    // a builtin the script overwrites is overwritten on the global too
+    runInContext("Reflect = 1", context);
+    expect(sandbox.Reflect).toBe(1);
+    delete sandbox.Reflect;
+    expect(runInContext("Reflect", context)).toBe(1);
+  });
+
+  test("a var declared over a getter-only sandbox accessor keeps reading the getter", () => {
+    const sandbox: any = {};
+    Object.defineProperty(sandbox, "g", { get: () => "got", enumerable: true, configurable: true });
+    const context = createContext(sandbox);
+    expect(runInContext("var g; [g, typeof g]", context)).toEqual(["got", "string"]);
+    expect(runInContext("g", context)).toBe("got");
+    expect(runInContext("var g = 'set'; g", context)).toBe("got");
+  });
+
   test("an undeclared symbol-keyed property goes on the global, not the sandbox", () => {
     const sandbox = {};
     const context = createContext(sandbox);
@@ -1443,7 +1490,8 @@ describe("global object and its sandbox", () => {
       writeX("via setter");
       expect(stored).toBe("via setter");
       delete sandbox.x;
-      expect(readX()).toBe(N - 1); // the global's own copy: every plain write reached it, the accessor's didn't
+      // `x` was only ever a sandbox property (never declared in the context), so it is gone now
+      expect(() => readX()).toThrow(expect.objectContaining({ name: "ReferenceError" }));
       sandbox.x = "back";
       for (let i = 0; i < N; i++) if (readX() !== "back") throw new Error("readX " + i);
     });
@@ -1600,6 +1648,12 @@ describe("DONT_CONTEXTIFY", () => {
   test("basic usage still works", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);
     expect(runInContext("globalThis", ctx)).toBe(ctx);
+    // the returned object is the context's global (proxy) itself, as in Node
+    expect(runInContext("this", ctx)).toBe(ctx);
+    expect(runInContext("[this === globalThis, (function () { return this; })() === globalThis]", ctx)).toEqual([
+      true,
+      true,
+    ]);
     expect(typeof ctx.Array).toBe("function");
 
     runInContext("globalThis.fromInside = 123", ctx);
@@ -1609,8 +1663,8 @@ describe("DONT_CONTEXTIFY", () => {
     expect(runInContext("fromOutside", ctx)).toBe(456);
   });
 
-  // The returned object is a stand-in for the context's global object: everything (declared vars included) lives on
-  // that one global and is visible through the stand-in, which is also what `globalThis` evaluates to inside.
+  // The returned object is the context's global object (its proxy): everything (declared vars included) lives on that
+  // one global and is visible through it from outside.
   test("declarations, deletes and freezing go through to the global object", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);
     runInContext(

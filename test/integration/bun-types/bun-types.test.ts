@@ -372,7 +372,7 @@ describe("@types/bun integration test", () => {
   // the full assertions for these declarations; this is the check of them that
   // a debug build still runs.
   describe("tsc over a single file", () => {
-    test("Bun.mmap offset/size and the EventSource constructor are accepted", async () => {
+    test("Bun.mmap offset/size and the constructor arguments of the web globals are accepted", async () => {
       const checkDir = join(TEMP_DIR, "single-file-check");
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.include = ["check.ts"];
@@ -385,7 +385,12 @@ describe("@types/bun integration test", () => {
            Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;
            new EventSource("http://localhost:3000/events", { withCredentials: true }) satisfies EventSource;
-           EventSource.CLOSED satisfies 2;`,
+           EventSource.CLOSED satisfies 2;
+           new PerformanceMark("mark", { detail: 1 }) satisfies PerformanceMark;
+           new PerformanceObserver(entries => entries.getEntries()) satisfies PerformanceObserver;
+           PerformanceObserver.supportedEntryTypes satisfies readonly string[];
+           new ReadableStreamBYOBReader(Bun.file("./data.bin").stream()) satisfies ReadableStreamBYOBReader;
+           new TextDecoderStream("utf-16le", { fatal: true }) satisfies TextDecoderStream;`,
       });
 
       await using proc = Bun.spawn({

@@ -3101,4 +3101,58 @@ describe("GC pressure mid-rewrite", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // The transform's input is a fetch() body wired straight into the pipe. Once the caller
+  // keeps only the promise for the output, the pipe is reachable from nothing in JS; what
+  // keeps it alive is the input stream's source, which the fetch holds while it delivers.
+  // The body arrives across many turns, with collections in between: every chunk must
+  // still reach the handlers.
+  it("a transform over a fetch body survives GC once only its output promise is held", async () => {
+    const fixture = /* js */ `
+      const CHUNKS = 20;
+      let release;
+      const gate = new Promise(resolve => (release = resolve));
+      const server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("<html><body>");
+                await gate;
+                for (let i = 0; i < CHUNKS; i++) {
+                  controller.enqueue("<p>" + Buffer.alloc(1000, "x").toString() + "</p>");
+                  await Bun.sleep(1);
+                }
+                controller.close();
+              },
+            }),
+            { headers: { "content-type": "text/html" } },
+          ),
+      });
+      async function start() {
+        const res = await fetch(server.url);
+        return new HTMLRewriter().on("p", { element(el) { el.setAttribute("seen", ""); } }).transform(res).text();
+      }
+      const text = start();
+      for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(1); }
+      release();
+      for (let i = 0; i < 30; i++) { Bun.gc(true); await Bun.sleep(2); }
+      const html = await text;
+      console.log(JSON.stringify({ seen: html.split('<p seen="">').length - 1, ended: html.endsWith("</p>") }));
+      server.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ seen: 20, ended: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

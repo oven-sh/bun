@@ -22,7 +22,7 @@ inputs:
     default: ""
   ninja-targets:
     description: "Space-separated ninja targets to build after configure."
-    default: "clone-lolhtml"
+    default: "clone-lolhtml clone-rust-argon2"
 
 runs:
   using: composite
@@ -62,9 +62,9 @@ runs:
       run: echo "::add-matcher::.github/rust-matcher.json"
 
     - name: Configure
-      # Cargo can't resolve the workspace until `clone-lolhtml` has extracted
-      # the pinned lol-html fork into vendor/lolhtml (the root Cargo.toml
-      # path-deps it) through the same ninja edge the real build uses, and
+      # Cargo can't resolve the workspace until `clone-lolhtml` and
+      # `clone-rust-argon2` have extracted the vendored path deps into vendor/
+      # through the same ninja edges the real build uses, and
       # bun_core/build.rs needs the build_options.rs that configure writes.
       # `codegen` writes the include!() sources under build/debug/codegen that
       # bun_runtime/bun_jsc/bun_core can't be checked without.

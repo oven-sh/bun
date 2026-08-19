@@ -288,6 +288,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     // NOLINTBEGIN
     std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, envp, envc, onCrash]() {
         JSC::Config::enableRestrictedOptions();
+        // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
+        JSC::Config::disableEnvironmentOptions();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();

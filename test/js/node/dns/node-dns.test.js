@@ -175,25 +175,68 @@ test.skipIf(isWindows)("resolver query errors leave errno undefined", async () =
     await once(socket, "listening");
     const { port } = socket.address();
 
+    const servers = ["127.0.0.1:" + port];
     const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers(["127.0.0.1:" + port]);
+    resolver.setServers(servers);
+    const promisesResolver = new dns.promises.Resolver({ timeout: 1000, tries: 1 });
+    promisesResolver.setServers(servers);
 
-    const queryErr = await new Promise((resolve, reject) =>
-      resolver.resolve4("invalid.invalid", err =>
-        err ? resolve(err) : reject(new Error("expected resolve4 to fail")),
-      ),
-    );
-    expect(queryErr.code).toBe("ENOTFOUND");
-    expect(queryErr.syscall).toBe("queryA");
-    expect(queryErr.hostname).toBe("invalid.invalid");
-    expect(queryErr.errno).toBeUndefined();
+    const unexpectedSuccess = new Error("expected the query to fail");
+    const callbackError = query =>
+      new Promise((resolve, reject) => query(err => (err ? resolve(err) : reject(unexpectedSuccess))));
+    const promiseError = promise =>
+      promise.then(
+        () => {
+          throw unexpectedSuccess;
+        },
+        err => err,
+      );
 
-    const reverseErr = await new Promise((resolve, reject) =>
-      resolver.reverse("192.0.2.1", err => (err ? resolve(err) : reject(new Error("expected reverse to fail")))),
+    const errors = {
+      resolve4: await callbackError(cb => resolver.resolve4("invalid.invalid", cb)),
+      resolveAny: await callbackError(cb => resolver.resolveAny("invalid.invalid", cb)),
+      reverse: await callbackError(cb => resolver.reverse("192.0.2.1", cb)),
+      promisesResolve4: await promiseError(promisesResolver.resolve4("invalid.invalid")),
+      promisesResolveAny: await promiseError(promisesResolver.resolveAny("invalid.invalid")),
+      promisesReverse: await promiseError(promisesResolver.reverse("192.0.2.1")),
+    };
+
+    // Node keeps `errno` as an own property of the error and only leaves its
+    // value undefined, so check the property is still there.
+    const shapes = Object.fromEntries(
+      Object.entries(errors).map(([name, err]) => [
+        name,
+        {
+          code: err.code,
+          syscall: err.syscall,
+          hostname: err.hostname,
+          errno: err.errno,
+          hasOwnErrno: Object.hasOwn(err, "errno"),
+        },
+      ]),
     );
-    expect(reverseErr.code).toBe("ENOTFOUND");
-    expect(reverseErr.syscall).toBe("getHostByAddr");
-    expect(reverseErr.errno).toBeUndefined();
+    const query = syscall => ({
+      code: "ENOTFOUND",
+      syscall,
+      hostname: "invalid.invalid",
+      errno: undefined,
+      hasOwnErrno: true,
+    });
+    const reverse = {
+      code: "ENOTFOUND",
+      syscall: "getHostByAddr",
+      hostname: "192.0.2.1",
+      errno: undefined,
+      hasOwnErrno: true,
+    };
+    expect(shapes).toEqual({
+      resolve4: query("queryA"),
+      resolveAny: query("queryAny"),
+      reverse,
+      promisesResolve4: query("queryA"),
+      promisesResolveAny: query("queryAny"),
+      promisesReverse: reverse,
+    });
   } finally {
     socket.close();
   }
@@ -446,6 +489,8 @@ test("dns.lookup bad (qedjp3f4q4jgjh4d6vaf3fd2hbfhg6upt2bscrfe.com)", () => {
       expect(err).not.toBeNull();
       expect(err.syscall).toEqual("getaddrinfo");
       expect(err.code).toEqual("ENOTFOUND");
+      // Unlike resolver query errors, lookup errors keep a numeric errno in Node.
+      expect(err.errno).toBeNumber();
       expect(address).toBeUndefined();
       expect(family).toBeUndefined();
       resolve();

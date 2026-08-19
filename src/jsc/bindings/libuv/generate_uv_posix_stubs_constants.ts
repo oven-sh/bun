@@ -14,8 +14,9 @@ export const test_skipped = [
 
 export const symbols = [
   "uv_accept",
-  "uv_async_init",
-  "uv_async_send",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_async_init",
+  // "uv_async_send",
   "uv_available_parallelism",
   "uv_backend_fd",
   "uv_backend_timeout",
@@ -23,13 +24,15 @@ export const symbols = [
   "uv_barrier_init",
   "uv_barrier_wait",
   "uv_buf_init",
-  "uv_cancel",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_cancel",
   "uv_chdir",
   "uv_check_init",
   "uv_check_start",
   "uv_check_stop",
   "uv_clock_gettime",
-  "uv_close",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_close",
   "uv_cond_broadcast",
   "uv_cond_destroy",
   "uv_cond_init",
@@ -39,7 +42,8 @@ export const symbols = [
   "uv_cpu_info",
   "uv_cpumask_size",
   "uv_cwd",
-  "uv_default_loop",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_default_loop",
   "uv_disable_stdio_inheritance",
   "uv_dlclose",
   "uv_dlerror",
@@ -107,7 +111,8 @@ export const symbols = [
   "uv_get_available_memory",
   "uv_get_constrained_memory",
   "uv_get_free_memory",
-  "uv_get_osfhandle",
+  // Defined in uv-posix-polyfills.c
+  // "uv_get_osfhandle",
   "uv_get_process_title",
   "uv_get_total_memory",
   "uv_getaddrinfo",
@@ -116,14 +121,16 @@ export const symbols = [
   "uv_getrusage_thread",
   "uv_gettimeofday",
   "uv_guess_handle",
-  "uv_handle_get_data",
-  "uv_handle_get_loop",
-  "uv_handle_get_type",
-  "uv_handle_set_data",
-  "uv_handle_size",
-  "uv_handle_type_name",
-  "uv_has_ref",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
+  // "uv_handle_get_data",
+  // "uv_handle_get_loop",
+  // "uv_handle_get_type",
+  // "uv_handle_set_data",
+  // "uv_handle_size",
+  // "uv_handle_type_name",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_has_ref",
+  // Defined in uv-posix-polyfills.c
   // "uv_hrtime",
   "uv_idle_init",
   "uv_idle_start",
@@ -138,8 +145,9 @@ export const symbols = [
   "uv_ip6_addr",
   "uv_ip6_name",
   "uv_ip_name",
-  "uv_is_active",
-  "uv_is_closing",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_is_active",
+  // "uv_is_closing",
   "uv_is_readable",
   "uv_is_writable",
   "uv_key_create",
@@ -155,14 +163,16 @@ export const symbols = [
   "uv_loop_configure",
   "uv_loop_delete",
   "uv_loop_fork",
-  "uv_loop_get_data",
+  // Defined in uv-posix-polyfills.c
+  // "uv_loop_get_data",
   "uv_loop_init",
   "uv_loop_new",
-  "uv_loop_set_data",
+  // Defined in uv-posix-polyfills.c
+  // "uv_loop_set_data",
   "uv_loop_size",
   "uv_metrics_idle_time",
   "uv_metrics_info",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
   // "uv_mutex_destroy",
   // "uv_mutex_init",
   // "uv_mutex_init_recursive",
@@ -170,9 +180,9 @@ export const symbols = [
   // "uv_mutex_trylock",
   // "uv_mutex_unlock",
   "uv_now",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
   // "uv_once",
-  "uv_open_osfhandle",
+  // "uv_open_osfhandle",
   "uv_os_environ",
   "uv_os_free_environ",
   "uv_os_free_group",
@@ -182,9 +192,8 @@ export const symbols = [
   "uv_os_get_passwd2",
   "uv_os_getenv",
   "uv_os_gethostname",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
   // "uv_os_getpid",
-  // Defined in uv-posix-polyfills.cpp
   // "uv_os_getppid",
   "uv_os_getpriority",
   "uv_os_homedir",
@@ -217,18 +226,21 @@ export const symbols = [
   "uv_print_all_handles",
   "uv_process_get_pid",
   "uv_process_kill",
-  "uv_queue_work",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_queue_work",
   "uv_random",
   "uv_read_start",
   "uv_read_stop",
   "uv_recv_buffer_size",
-  "uv_ref",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_ref",
   "uv_replace_allocator",
-  "uv_req_get_data",
-  "uv_req_get_type",
-  "uv_req_set_data",
-  "uv_req_size",
-  "uv_req_type_name",
+  // Defined in uv-posix-polyfills.c
+  // "uv_req_get_data",
+  // "uv_req_get_type",
+  // "uv_req_set_data",
+  // "uv_req_size",
+  // "uv_req_type_name",
   "uv_resident_set_memory",
   "uv_run",
   "uv_rwlock_destroy",
@@ -323,13 +335,15 @@ export const symbols = [
   "uv_udp_try_send",
   "uv_udp_try_send2",
   "uv_udp_using_recvmmsg",
-  "uv_unref",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_unref",
   "uv_update_time",
   "uv_uptime",
   "uv_utf16_length_as_wtf8",
   "uv_utf16_to_wtf8",
-  "uv_version",
-  "uv_version_string",
+  // Defined in uv-posix-polyfills.c
+  // "uv_version",
+  // "uv_version_string",
   "uv_walk",
   "uv_write",
   "uv_write2",

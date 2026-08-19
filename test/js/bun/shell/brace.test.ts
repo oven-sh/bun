@@ -332,4 +332,123 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
       exitCode: 1,
     });
   });
+
+  // The glob matcher reads any `{...}` as a brace group, comma or not. A
+  // template `{x}` that the brace layer left as text used to reach it as-is,
+  // so `{x}.*` matched `x.a` and could never match a file named `{x}.a` (bash
+  // matches `{x}.a`). Interpolated braces were already neutralized; only the
+  // template's own brace bytes leaked through.
+  describe.concurrent("a literal brace group globs as literal text", () => {
+    // Glob results are not sorted, and the walker joins path components with
+    // the native separator on Windows.
+    const words = (out: string) => out.trim().replaceAll("\\", "/").split(" ").sort();
+
+    test("{x}.*: no comma, so the word never enters brace expansion", async () => {
+      using dir = tempDir("shell-literal-brace-glob", {
+        "{x}.a.txt": "",
+        "{x}.b.txt": "",
+        "x.a.txt": "",
+      });
+      const out = await $`echo {x}.*.txt`.cwd(String(dir)).text();
+      expect(words(out)).toEqual(["{x}.a.txt", "{x}.b.txt"]);
+    });
+
+    test("{x}* at the start of the word", async () => {
+      using dir = tempDir("shell-literal-brace-glob-prefix", {
+        "{x}1.txt": "",
+        "x1.txt": "",
+      });
+      const out = await $`echo {x}*`.cwd(String(dir)).text();
+      expect(words(out)).toEqual(["{x}1.txt"]);
+    });
+
+    test("*.{x} at the end of the word", async () => {
+      using dir = tempDir("shell-literal-brace-glob-suffix", {
+        "a.{x}": "",
+        "a.x": "",
+      });
+      const out = await $`echo *.{x}`.cwd(String(dir)).text();
+      expect(words(out)).toEqual(["a.{x}"]);
+    });
+
+    test("{x}/* names a directory", async () => {
+      using dir = tempDir("shell-literal-brace-glob-dir", {
+        "{x}/a.txt": "",
+        "x/a.txt": "",
+      });
+      const out = await $`echo {x}/*.txt`.cwd(String(dir)).text();
+      expect(words(out)).toEqual(["{x}/a.txt"]);
+    });
+
+    test("{a,b*: an unclosed group with no `}` in the word", async () => {
+      // No `}` means no brace hint, so the `{` and the `,` are text. The
+      // matcher used to choke on the unclosed group and report no matches.
+      using dir = tempDir("shell-literal-brace-glob-unclosed", {
+        "{a,b1.txt": "",
+        "a1.txt": "",
+        "b1.txt": "",
+      });
+      const out = await $`echo {a,b*`.cwd(String(dir)).text();
+      expect(words(out)).toEqual(["{a,b1.txt"]);
+    });
+
+    test("{a,b}x{c*: an unclosed group after an expanding one", async () => {
+      // The lexer rolls the unclosed `{c` back to text while `{a,b}` still
+      // expands, so only `{a,b}` may expand in the walker as well. The
+      // literal variants `ax{c*` and `bx{c*` are emitted too, so only the
+      // matches are asserted.
+      using dir = tempDir("shell-literal-brace-glob-rollback", {
+        "ax{c1": "",
+        "bx{c2": "",
+        "cx{c3": "",
+      });
+      const out = words(await $`echo {a,b}x{c*`.cwd(String(dir)).text());
+      expect(out).toContain("ax{c1");
+      expect(out).toContain("bx{c2");
+      expect(out).not.toContain("cx{c3");
+    });
+
+    test("{x},*: the brace step runs and demotes every brace byte", async () => {
+      // The brace and glob hints are both set, but no group expands. The
+      // literal word `{x},*.txt` is still emitted alongside the matches, so
+      // only the matches are asserted.
+      using dir = tempDir("shell-literal-brace-glob-comma", {
+        "{x},a.txt": "",
+        "x,a.txt": "",
+      });
+      const out = words(await $`echo {x},*.txt`.cwd(String(dir)).text());
+      expect(out).toContain("{x},a.txt");
+      expect(out).not.toContain("x,a.txt");
+    });
+
+    test("{a,{x}}.*: a literal group nested in an expanding one", async () => {
+      // `{a,...}` expands in both the brace lexer and the glob walker; the
+      // inner `{x}` is text in the lexer and must stay text in the walker.
+      // The literal variants `a.*.txt` and `{x}.*.txt` are emitted too, so
+      // only the matches are asserted.
+      using dir = tempDir("shell-literal-brace-glob-nested", {
+        "a.1.txt": "",
+        "{x}.1.txt": "",
+        "x.1.txt": "",
+      });
+      const out = words(await $`echo {a,{x}}.*.txt`.cwd(String(dir)).text());
+      expect(out).toContain("a.1.txt");
+      expect(out).toContain("{x}.1.txt");
+      expect(out).not.toContain("x.1.txt");
+    });
+
+    test("{a,b},*: a comma outside the group is text, the group still expands", async () => {
+      // Guards the one-to-one pairing of the lexer's verdicts with the word's
+      // brace bytes: the stray comma is dropped, `{a,b}` is kept.
+      using dir = tempDir("shell-literal-brace-glob-stray-comma", {
+        "a,1.txt": "",
+        "b,1.txt": "",
+        "c,1.txt": "",
+      });
+      const out = words(await $`echo {a,b},*.txt`.cwd(String(dir)).text());
+      expect(out).toContain("a,1.txt");
+      expect(out).toContain("b,1.txt");
+      expect(out).not.toContain("c,1.txt");
+    });
+  });
 });

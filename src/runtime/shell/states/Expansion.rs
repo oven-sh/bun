@@ -35,6 +35,9 @@ pub struct Expansion {
     /// `transition_to_glob_state`; metacharacter bytes from any other source
     /// (JS interpolation, quoted text, `$var`, command substitution) are data
     /// and must not change the expansion structure or broaden the glob.
+    /// Before the word reaches the glob walker, `retain_brace_syntax` removes
+    /// the `{`/`,`/`}` entries the brace step treated as text, so the walker
+    /// (whose matcher reads every `{...}` as a group) sees them as data too.
     pub(crate) meta_offsets: Vec<u32>,
     pub(crate) child_script: Option<NodeId>,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
@@ -254,6 +257,9 @@ impl Expansion {
                 continue;
             }
             if atom.has_glob_expansion() {
+                // The parser set no brace hint (e.g. `{x}.*` has no comma), so
+                // every recorded `{`/`}`/`,` is text.
+                Self::retain_brace_syntax(me, &[]);
                 return Self::transition_to_glob_state(interp, this);
             }
             Self::push_current_out(me);
@@ -351,6 +357,9 @@ impl Expansion {
             // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
             // the glob walker brace-expands and globs it; its matches are
             // appended after the literal brace variants already pushed above.
+            // Only the groups the lexer expanded may expand again there: a
+            // `{x}` it left as text must reach the walker as text too.
+            Self::retain_brace_syntax(me, &lexer_output.kept_as_syntax);
             me.state = ExpansionState::Glob;
         } else {
             me.current_out.clear();
@@ -358,12 +367,31 @@ impl Expansion {
         }
     }
 
+    /// Drop from `meta_offsets` every `{`/`,`/`}` the brace step did not keep
+    /// as brace syntax, so `neutralize_glob_metachars` wraps it like any other
+    /// data byte. `kept` is the brace lexer's `LexerOutput::kept_as_syntax`:
+    /// one verdict per unescaped brace byte it saw, and `do_brace_expand`
+    /// leaves exactly the recorded brace bytes unescaped, so the two line up
+    /// one to one. A word without brace expansion passes an empty `kept`:
+    /// every brace byte in it is data.
+    fn retain_brace_syntax(me: &mut Expansion, kept: &[bool]) {
+        let mut kept = kept.iter();
+        let current_out = &me.current_out;
+        me.meta_offsets
+            .retain(|&off| match current_out[off as usize] {
+                b'{' | b',' | b'}' => kept.next().copied().unwrap_or(false),
+                _ => true,
+            });
+        debug_assert!(kept.next().is_none());
+    }
+
     /// Build the pattern handed to the glob walker from `current_out`,
-    /// neutralizing every glob metacharacter byte that was *not* written by a
-    /// literal metacharacter atom (those positions are recorded in
-    /// `meta_offsets`). Metacharacters arriving via JS `${...}` interpolation,
+    /// neutralizing every glob metacharacter byte whose offset is not in
+    /// `meta_offsets`. Metacharacters arriving via JS `${...}` interpolation,
     /// `$var`, command substitution, or quoted text are data and must not be
-    /// able to broaden the match. Mirrors `do_brace_expand`'s escaping loop,
+    /// able to broaden the match, and neither may a template `{x}` the brace
+    /// step demoted to text (`retain_brace_syntax` has already dropped its
+    /// offsets). Mirrors `do_brace_expand`'s escaping loop,
     /// but the glob matcher has no general backslash-escape that survives
     /// `build_pattern_components` on every platform, so each byte is wrapped
     /// in a single-character class (`[c]`) — or a one-branch brace group for

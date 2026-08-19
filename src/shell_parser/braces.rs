@@ -1031,6 +1031,13 @@ type Chars<const E: Encoding> = ShellCharIter<E>;
 pub struct LexerOutput {
     pub tokens: Vec<Token>,
     pub contains_nested: bool,
+    /// One entry per unescaped `{`, `,` and `}` in the input, in input order:
+    /// `true` when it is brace syntax in `tokens`, `false` when the lexer
+    /// demoted it to literal text (a group with no top-level comma, an
+    /// unclosed group, or a `,`/`}` outside every group). Lets a caller that
+    /// hands the un-expanded word to another pattern matcher escape exactly
+    /// the bytes this lexer treated as text.
+    pub kept_as_syntax: Vec<bool>,
 }
 
 pub(crate) type BraceLexerError = AllocError;
@@ -1039,6 +1046,7 @@ pub struct NewLexer<const ENCODING: Encoding> {
     chars: Chars<ENCODING>,
     tokens: Vec<Token>,
     contains_nested: bool,
+    kept_as_syntax: Vec<bool>,
 }
 
 impl<const ENCODING: Encoding> NewLexer<ENCODING> {
@@ -1047,6 +1055,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             chars: Chars::<ENCODING>::init(src),
             tokens: Vec::new(),
             contains_nested: false,
+            kept_as_syntax: Vec::new(),
         };
 
         let contains_nested = this.tokenize_impl()?;
@@ -1054,6 +1063,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         Ok(LexerOutput {
             tokens: this.tokens,
             contains_nested,
+            kept_as_syntax: this.kept_as_syntax,
         })
     }
 
@@ -1086,6 +1096,12 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             has_comma: bool,
         }
         let mut brace_stack: SmallVec<[OpenBrace; MAX_NESTED_BRACES]> = SmallVec::new();
+        // Token index each unescaped `{`/`,`/`}` was emitted at as brace
+        // syntax, in input order, or `None` when it was emitted as text right
+        // away. The demotion below and `rollback_braces` turn syntax tokens
+        // back into text later, so `kept_as_syntax` is read off the tokens once
+        // the input is exhausted.
+        let mut brace_chars: Vec<Option<u32>> = Vec::new();
 
         loop {
             let Some(input) = self.eat() else { break };
@@ -1096,33 +1112,40 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 // `char` is u32 (CodepointType unified across encodings).
                 match char {
                     c if c == u32::from(b'{') => {
+                        let tok_idx = self.next_tok_idx();
                         brace_stack.push(OpenBrace {
-                            tok_idx: u32::try_from(self.tokens.len()).expect("int cast"),
+                            tok_idx,
                             has_comma: false,
                         });
+                        brace_chars.push(Some(tok_idx));
                         self.tokens.push(Token::Open(ExpansionVariants::default()));
                         continue;
                     }
-                    c if c == u32::from(b'}') => {
-                        if let Some(top) = brace_stack.pop() {
-                            if top.has_comma {
-                                self.tokens.push(Token::Close);
-                            } else {
-                                // A `{...}` group with no top-level comma is not a
-                                // brace expansion (bash semantics): demote the Open
-                                // back to a literal `{` and emit this `}` as text.
-                                self.replace_token_with_string(top.tok_idx);
-                                self.tokens.push(Token::Text(SmolStr::from_char(b'}')));
-                            }
+                    c if c == u32::from(b'}') => match brace_stack.pop() {
+                        Some(top) if top.has_comma => {
+                            brace_chars.push(Some(self.next_tok_idx()));
+                            self.tokens.push(Token::Close);
                             continue;
                         }
-                    }
+                        Some(top) => {
+                            // A `{...}` group with no top-level comma is not a
+                            // brace expansion (bash semantics): demote the Open
+                            // back to a literal `{` and emit this `}` as text.
+                            self.replace_token_with_string(top.tok_idx);
+                            brace_chars.push(None);
+                            self.tokens.push(Token::Text(SmolStr::from_char(b'}')));
+                            continue;
+                        }
+                        None => brace_chars.push(None),
+                    },
                     c if c == u32::from(b',') => {
                         if let Some(top) = brace_stack.last_mut() {
                             top.has_comma = true;
+                            brace_chars.push(Some(self.next_tok_idx()));
                             self.tokens.push(Token::Comma);
                             continue;
                         }
+                        brace_chars.push(None);
                     }
                     _ => {}
                 }
@@ -1138,6 +1161,12 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         while let Some(top) = brace_stack.pop() {
             self.rollback_braces(top.tok_idx);
         }
+
+        let tokens = &self.tokens;
+        self.kept_as_syntax = brace_chars
+            .iter()
+            .map(|tok_idx| tok_idx.is_some_and(|i| !matches!(tokens[i as usize], Token::Text(_))))
+            .collect();
 
         self.flatten_tokens()?;
         self.tokens.push(Token::Eof);
@@ -1215,6 +1244,11 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             }
             i += 1;
         }
+    }
+
+    /// Index the next pushed token will get.
+    fn next_tok_idx(&self) -> u32 {
+        u32::try_from(self.tokens.len()).expect("int cast")
     }
 
     fn replace_token_with_string(&mut self, token_idx: u32) {
@@ -1298,6 +1332,42 @@ mod tests {
             // NOTE: don't use arena here so that we can test for memory leaks
             let result = Lexer::tokenize(src).unwrap();
             assert_eq!(result.tokens, expected);
+        }
+    }
+
+    #[test]
+    fn kept_as_syntax() {
+        let cases: &[(&[u8], &[bool])] = &[
+            (b"plain", &[]),
+            (b"{a,b}", &[true, true, true]),
+            // No top-level comma: the group is text.
+            (b"{foo}", &[false, false]),
+            // The comma sits outside every group.
+            (b"{a},b", &[false, false, false]),
+            // A literal inner group inside an expanding outer one.
+            (b"{a,{b}}", &[true, true, false, false, true]),
+            // Unclosed outer group: it and its comma roll back, the closed
+            // inner group keeps expanding.
+            (b"{a,{b,c},d", &[false, false, true, true, true, false]),
+            (b"{a,b", &[false, false]),
+            (b"}{,", &[false, false, false]),
+            // Escaped characters get no entry at all.
+            (b"\\{a\\,b\\}", &[]),
+            (b"\\{a,b\\}", &[false]),
+            (b"{a\\,b}", &[false, false]),
+            // Multi-byte text next to the brace characters.
+            ("é{a,b}😀{c}".as_bytes(), &[true, true, true, false, false]),
+        ];
+        for &(src, expected) in cases {
+            let result = Lexer::tokenize(src).unwrap();
+            assert_eq!(result.kept_as_syntax, expected, "{}", bstr::BStr::new(src));
+            let result = NewLexer::<{ Encoding::Wtf8 }>::tokenize(src).unwrap();
+            assert_eq!(
+                result.kept_as_syntax,
+                expected,
+                "wtf8 {}",
+                bstr::BStr::new(src)
+            );
         }
     }
 }

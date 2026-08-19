@@ -1315,6 +1315,7 @@ describe("DONT_CONTEXTIFY", () => {
     expect(runInContext("this", ctx)).toBe(ctx);
 
     runInContext("var vv = 3; function ff() { return 99; }", ctx);
+    runInContext("(0, eval)('var ie = 7')", ctx);
     expect({
       varPersists: runInContext("typeof vv", ctx),
       fnPersists: runInContext("typeof ff", ctx),
@@ -1323,7 +1324,8 @@ describe("DONT_CONTEXTIFY", () => {
       handleVar: ctx.vv,
       handleFnType: typeof ctx.ff,
       sameScript: runInContext("var zz = 9; typeof zz", ctx),
-      indirectEvalVar: runInContext("(0, eval)('var ie = 7'); typeof ie", ctx),
+      indirectEvalVarPersists: runInContext("ie", ctx),
+      handleIndirectEvalVar: ctx.ie,
     }).toEqual({
       varPersists: "number",
       fnPersists: "function",
@@ -1332,7 +1334,8 @@ describe("DONT_CONTEXTIFY", () => {
       handleVar: 3,
       handleFnType: "function",
       sameScript: "number",
-      indirectEvalVar: "number",
+      indirectEvalVarPersists: 7,
+      handleIndirectEvalVar: 7,
     });
 
     // Script#runInContext goes through the same path.
@@ -1365,6 +1368,18 @@ describe("DONT_CONTEXTIFY", () => {
         constants.DONT_CONTEXTIFY,
       ),
     ).toEqual([true, "number", "function"]);
+
+    // Passing an existing DONT_CONTEXTIFY handle runs in that context, so the
+    // declarations stay visible through the handle and to later scripts.
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    runInNewContext("var q = 1; function qf() { return 2; }", ctx);
+    new Script("var r = 3").runInNewContext(ctx);
+    expect({ q: ctx.q, qf: typeof ctx.qf, r: ctx.r, later: runInContext("[q, qf(), r]", ctx) }).toEqual({
+      q: 1,
+      qf: "function",
+      r: 3,
+      later: [1, 2, 3],
+    });
   });
 
   test("compileFunction accepts a DONT_CONTEXTIFY context as parsingContext", () => {

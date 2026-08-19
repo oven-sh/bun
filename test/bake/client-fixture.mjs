@@ -110,7 +110,11 @@ function createWindow(windowUrl) {
     // A runtime error reaches the overlay only after this round trip and its body are consumed; the exit handler waits for that and counts the report.
     if (String(url).includes("/_bun/report_error")) {
       unreadErrorReports++;
-      const settled = promise.then(response => response.clone().arrayBuffer()).catch(() => {});
+      // Not the body: happy-dom's Response.clone() does not tee, and the runtime reads the body itself.
+      const settled = promise.then(
+        () => {},
+        () => {},
+      );
       inflightErrorReports.add(settled);
       settled.finally(() => inflightErrorReports.delete(settled));
     }
@@ -489,7 +493,12 @@ process.on("message", async message => {
     }
     // Build errors are broadcast to every client and asserted by the test that caused them; a runtime error only reaches the overlay, so one the harness never read is a failure happy-dom swallowed.
     if (!expectErrors) {
-      const runtimeError = overlayRuntimeError();
+      // The overlay renders a reported error a few ticks after the response; wait briefly so the message can name it.
+      let runtimeError = overlayRuntimeError();
+      for (let i = 0; unreadErrorReports > 0 && !runtimeError && i < 50; i++) {
+        await new Promise(resolve => setImmediate(resolve));
+        runtimeError = overlayRuntimeError();
+      }
       if (unreadErrorReports > 0 || (runtimeError && !lastReportedErrors.includes(runtimeError))) {
         console.error(
           "[E] A runtime error was reported that the test never checked:",

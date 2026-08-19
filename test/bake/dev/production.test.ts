@@ -1137,6 +1137,128 @@ export default function IndexPage() {
     expect(payload).not.toContain("</script");
   });
 
+  // Runs the inline `__bun_f` scripts of a prerendered page like a browser would and returns the pushed chunks.
+  function inlineFlightChunks(html: string): (string | Uint8Array)[] {
+    const self: { __bun_f?: (string | Uint8Array)[] } = {};
+    for (const [, body] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+      // `with` stands in for the browser's global scope so a bare `__bun_f` resolves too.
+      new Function("self", `with (self) {\n${body}\n}`)(self);
+    }
+    return self.__bun_f ?? [];
+  }
+
+  test.concurrent("a carriage return in a long server string is escaped in the inline flight script", async () => {
+    // Flight emits strings of 1024+ chars as raw text rows, so the CR is not JSON-escaped for us.
+    const dir = await tempDirWithBakeDeps("bake-production-flight-cr", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "components/Box.tsx": `"use client";
+export default function Box({ children }) { return <b>{children}</b>; }`,
+      "pages/index.tsx": `import Box from "../components/Box";
+const text = Buffer.alloc(1500, "line one\\r\\n").toString();
+export default function IndexPage() { return <div><Box>hydrated</Box><pre>{text}</pre></div>; }`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+
+    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(inlineFlightChunks(html).join("")).toContain("line one\r\nline one\r\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a binary flight row is inlined as base64 that matches index.rsc", async () => {
+    // A TypedArray prop makes Flight emit raw bytes that are not valid UTF-8.
+    const dir = await tempDirWithBakeDeps("bake-production-flight-binary", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `export default function IndexPage() {
+  return <div data-b={new Uint8Array([0xff, 0xfe, 0x00, 0x41])}>x</div>;
+}`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+
+    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(html).toContain('atob("');
+    const inlined = Buffer.concat(inlineFlightChunks(html).map(chunk => Buffer.from(chunk as any)));
+    const rsc = Buffer.from(await Bun.file(path.join(dir, "dist", "index.rsc")).arrayBuffer());
+    // No stylesheets, so index.rsc is a zero header followed by the flight payload.
+    expect(rsc.readUInt32LE(0)).toBe(0);
+    expect(inlined.equals(rsc.subarray(4))).toBe(true);
+    expect(inlined.includes(Buffer.from([0xff, 0xfe, 0x00, 0x41]))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a Promise prop that settles after the HTML is ready is still written to index.rsc", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-late-flight", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      // Only `use()`d after mount, so server rendering never waits on it.
+      "components/Late.tsx": `"use client";
+import { use, useEffect, useState } from "react";
+function Inner({ p }: { p: Promise<string> }) { return <span>{use(p)}</span>; }
+export function Late({ p }: { p: Promise<string> }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return <div>{mounted ? <Inner p={p} /> : "not-mounted"}</div>;
+}`,
+      "pages/index.tsx": `import { Late } from "../components/Late";
+export default function IndexPage() {
+  const p = new Promise<string>(resolve => setTimeout(() => resolve("LATE_VALUE"), 50));
+  return <main><h1>hello</h1><Late p={p} /></main>;
+}`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+
+    expect(await Bun.file(path.join(dir, "dist", "index.rsc")).text()).toContain('"LATE_VALUE"');
+    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(inlineFlightChunks(html).join("")).toContain('"LATE_VALUE"');
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("several large Suspense boundaries pre-render", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-suspense-boundaries", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import { Suspense } from "react";
+async function Part({ id }: { id: string }) {
+  await Promise.resolve();
+  await Promise.resolve();
+  return <p id={id}>{id + ":" + Buffer.alloc(7000, id).toString()}</p>;
+}
+export default function IndexPage() {
+  return (
+    <main>
+      <Suspense fallback={<p>loading a</p>}><Part id="PART_A" /></Suspense>
+      <Suspense fallback={<p>loading b</p>}><Part id="PART_B" /></Suspense>
+      <Suspense fallback={<p>loading c</p>}><Part id="PART_C" /></Suspense>
+    </main>
+  );
+}`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    if (exitCode !== 0) expect(stderr.toString()).toBe("");
+
+    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    for (const id of ["PART_A", "PART_B", "PART_C"]) {
+      expect(html).toContain(`${id}:${id}${id}`);
+    }
+    expect(exitCode).toBe(0);
+  });
+
   test("don't include client code if fully static route", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-client-js", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
@@ -1178,14 +1300,22 @@ export default function IndexPage() {
     expect(htmlContent).not.toContain('<script type="module"');
   });
 
-  test("prerendered index.rsc encodes the joined stylesheet byte length in its header", async () => {
+  test("prerendered index.rsc lists exactly the route's own stylesheets in its header", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-rsc-css-header", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `import "./styles.css";
+      "pages/index.tsx": `import "./a.css";
 export default function IndexPage() {
-  return <div>Hello World</div>;
+  return <div>index</div>;
 }`,
-      "pages/styles.css": `div { color: red; }`,
+      "pages/other.tsx": `import "./b.css";
+export default function OtherPage() {
+  return <div>other</div>;
+}`,
+      "pages/plain.tsx": `export default function PlainPage() {
+  return <div>plain</div>;
+}`,
+      "pages/a.css": `.a { color: red; }`,
+      "pages/b.css": `.b { color: blue; }`,
     });
 
     const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
@@ -1197,21 +1327,30 @@ export default function IndexPage() {
     }
     expect(exitCode).toBe(0);
 
-    // The <link rel="stylesheet"> hrefs in the HTML are `meta.styles`, an independent source for the expected CSS list.
-    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
-    const hrefs = [...html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g)]
-      .map(tag => tag[0].match(/\bhref="([^"]*)"/)?.[1])
-      .filter((href): href is string => !!href);
-    expect(hrefs.length).toBeGreaterThan(0);
-    const expectedCss = hrefs.join("\n");
+    const cssByRule: Record<string, string> = {};
+    for (const file of readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"))) {
+      const text = await Bun.file(path.join(dir, "dist", "_bun", file)).text();
+      cssByRule[text.includes(".a") ? "a" : "b"] = `/_bun/${file}`;
+    }
 
-    // index.rsc layout: little-endian uint32 byte length of the CSS list, the list, then the flight payload.
-    const buf = Buffer.from(await Bun.file(path.join(dir, "dist", "index.rsc")).arrayBuffer());
-    const header = buf.readUInt32LE(0);
-    expect(header).toBe(Buffer.byteLength(expectedCss));
-    expect(buf.toString("utf8", 4, 4 + header)).toBe(expectedCss);
-    // React flight rows start with a numeric id like "0:".
-    expect(buf.toString("utf8", 4 + header)).toMatch(/^\d+:/);
+    const route = async (route: string) => {
+      const html = await Bun.file(path.join(dir, "dist", route, "index.html")).text();
+      const links = [...html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g)].map(
+        tag => tag[0].match(/\bhref="([^"]*)"/)?.[1],
+      );
+      // Decode index.rsc the way client.tsx does: little-endian uint32 byte length, then the "\n"-joined list.
+      const buf = Buffer.from(await Bun.file(path.join(dir, "dist", route, "index.rsc")).arrayBuffer());
+      const header = buf.readUInt32LE(0);
+      const rsc = header > 0 ? buf.toString("utf8", 4, 4 + header).split("\n") : [];
+      // React flight rows start with a numeric id like "0:".
+      expect(buf.toString("utf8", 4 + header)).toMatch(/^\d+:/);
+      return { links, rsc };
+    };
+    expect({ index: await route(""), other: await route("other"), plain: await route("plain") }).toEqual({
+      index: { links: [cssByRule.a], rsc: [cssByRule.a] },
+      other: { links: [cssByRule.b], rsc: [cssByRule.b] },
+      plain: { links: [], rsc: [] },
+    });
   });
 
   test("a custom framework without server components builds and keeps its client entry", async () => {
@@ -1940,6 +2079,33 @@ export default async function IndexPage() {
     expect(html).toContain("<li>read from disk while rendering</li>");
     expect(html).toContain("<li>resolved relative to the file on disk</li>");
     expect(html).toContain("<li>one module instance</li>");
+  });
+
+  test("import() of the bundle root while rendering rejects", async () => {
+    // "/" from a "bake:/_bun/*.js" chunk normalises to the one-character key "/" once the "bake:" prefix is stripped.
+    const dir = await tempDirWithBakeDeps("bake-production-import-root", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `let outcome = "not attempted";
+try {
+  await import(process.env.ROOT_SPECIFIER!);
+  outcome = "loaded";
+} catch {
+  outcome = "rejected";
+}
+export default function IndexPage() { return <h1>{outcome}</h1>; }`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./src/index.tsx"],
+      cwd: dir,
+      env: { ...bunEnv, ROOT_SPECIFIER: "/" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("<h1>rejected</h1>");
+    expect(exitCode).toBe(0);
   });
 
   describe("route scan errors", () => {

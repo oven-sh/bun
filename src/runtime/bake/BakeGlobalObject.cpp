@@ -154,7 +154,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
             auto temp = BakeToWindowsPath(Bun::toString(bakePrefixRemoved));
             bakePrefixRemoved = temp.transferToWTFString();
 #endif
-            JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
+            JSString* bakePrefixRemovedString = jsString(vm, bakePrefixRemoved);
             JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
             RELEASE_AND_RETURN(scope, Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, WTF::move(parameters), WTF::move(script)));
         }

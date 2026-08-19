@@ -165,6 +165,7 @@ class RscInjectionStream extends EventEmitter {
 
   /** Resolved when all data is written */
   finished: Promise<void>;
+  finalized = false;
   finalize: () => void;
   reject: (err: any) => void;
 
@@ -174,7 +175,12 @@ class RscInjectionStream extends EventEmitter {
 
     const { resolve, promise, reject } = Promise.withResolvers<void>();
     this.finished = promise;
-    this.finalize = x => (controller.close(), resolve(x));
+    this.finalize = () => {
+      if (this.finalized) return;
+      this.finalized = true;
+      controller.close();
+      resolve();
+    };
     this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));
@@ -183,6 +189,7 @@ class RscInjectionStream extends EventEmitter {
     });
     rscPayload.on("error", err => {
       this.rscHasEnded = true;
+      this.finalized = true;
       // Close the controller
       controller.close();
       // Reject the promise instead of resolving it
@@ -221,6 +228,8 @@ class RscInjectionStream extends EventEmitter {
       this.controller.write(data);
       this.html = HtmlState.Flowing;
     }
+    // Fizz treats a falsy return as backpressure and stalls until a 'drain' event that is never emitted.
+    return true;
   }
 
   drainRscChunks() {
@@ -276,33 +285,64 @@ class RscInjectionStream extends EventEmitter {
 
   destroy(e) {}
 
-  end(e) {}
+  end() {
+    // `write` normally finalizes on `</body></html>`; this only matters if Fizz's last write changes shape.
+    if (this.finalized) return;
+    this.drainRscChunks();
+    this.finalize();
+  }
 }
+
+/** How long a static render waits for the RSC payload to finish after its HTML is complete. */
+const staticFlightTimeoutMs = 60_000;
 
 class StaticRscInjectionStream extends EventEmitter {
   rscPayloadChunks: Uint8Array[] = [];
   chunks: (Uint8Array | string)[] = [];
   result: Promise<Blob>;
-  finalize: (blob: Blob) => void;
+  resolve: (blob: Blob) => void;
   reject: (error: Error) => void;
+  rscHasEnded = false;
+  htmlHasEnded = false;
 
   constructor(rscPayload: Readable, signal?: MiniAbortSignal) {
     super();
     const { resolve, promise, reject } = Promise.withResolvers<Blob>();
     this.result = promise;
-    this.finalize = resolve;
+    this.resolve = resolve;
     this.reject = reject;
 
     rscPayload.on("data", chunk => this.rscPayloadChunks.push(chunk));
+    // Fizz can finish before Flight has serialized a Promise prop that SSR never read, so wait for both.
+    rscPayload.on("end", () => {
+      this.rscHasEnded = true;
+      if (this.htmlHasEnded) this.finalize();
+    });
     // A flight payload error means no HTML; reject with the original error rather than leave the result pending.
     rscPayload.on("error", err => this.reject(signal?.aborted ?? err));
   }
 
   write(chunk) {
     this.chunks.push(chunk);
+    // Fizz treats a falsy return as backpressure and stalls until a 'drain' event that is never emitted.
+    return true;
   }
 
   end() {
+    this.htmlHasEnded = true;
+    if (this.rscHasEnded) return this.finalize();
+    const timer = setTimeout(() => {
+      this.reject(
+        new Error(
+          `The RSC payload was still pending ${staticFlightTimeoutMs / 1000}s after the page's HTML was rendered. ` +
+            "A Promise passed to a client component likely never settles.",
+        ),
+      );
+    }, staticFlightTimeoutMs);
+    this.result.finally(() => clearTimeout(timer)).catch(() => {});
+  }
+
+  finalize() {
     // Inject the finalized RSC payload into the last chunk
     const lastChunk = this.chunks[this.chunks.length - 1];
 
@@ -318,9 +358,11 @@ class StaticRscInjectionStream extends EventEmitter {
     this.chunks[this.chunks.length - 1] = lastChunk.slice(0, lastChunk.length - closingBodyTag.length);
 
     let string = startScriptTag;
-    writeManyFlightScriptData(this.rscPayloadChunks, new TextDecoder("utf-8"), { write: str => (string += str) });
+    writeManyFlightScriptData(this.rscPayloadChunks, new TextDecoder("utf-8", { fatal: true }), {
+      write: str => (string += str),
+    });
     this.chunks.push(string + closingBodyTag);
-    this.finalize(new Blob(this.chunks, { type: "text/html" }));
+    this.resolve(new Blob(this.chunks, { type: "text/html" }));
   }
 
   flush() {
@@ -344,8 +386,8 @@ function writeSingleFlightScriptData(
   } catch {
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // No data should have been written yet, so a base64 fallback can be used.
-    const base64 = btoa(String.fromCodePoint(...chunk));
-    controller.write(`Uint8Array.from(atob(\"${base64}\"),m=>m.codePointAt(0))</script>`);
+    const base64 = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength).toString("base64");
+    controller.write(`Uint8Array.from(atob("${base64}"),m=>m.codePointAt(0)))</script>`);
   }
 }
 
@@ -373,13 +415,8 @@ function writeManyFlightScriptData(
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // Since this is rare, just make the rest of the chunks base64.
     if (i > 0) controller.write("'" + toSingleQuote(decoded) + "');__bun_f.push(");
-    controller.write('Uint8Array.from(atob("');
-    for (; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const base64 = btoa(String.fromCodePoint(...chunk));
-      controller.write(base64.slice(1, -1));
-    }
-    controller.write('"),m=>m.codePointAt(0))</script>');
+    const base64 = Buffer.concat(chunks.slice(i)).toString("base64");
+    controller.write(`Uint8Array.from(atob("${base64}"),m=>m.codePointAt(0)))</script>`);
   }
 }
 
@@ -392,6 +429,8 @@ function toSingleQuote(str: string): string {
       .replace(/\\/g, "\\\\")
       .replace(/'/g, "\\'")
       .replace(/\n/g, "\\n")
+      // LS and PS are legal in string literals since ES2019; CR and LF are not.
+      .replace(/\r/g, "\\r")
       // Escape closing script tags and HTML comments in JS content.
       .replace(/<!--/g, "<\\!--")
       .replace(/<\/(script)/gi, "</\\$1")

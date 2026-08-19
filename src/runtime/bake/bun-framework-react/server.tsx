@@ -188,6 +188,7 @@ export async function prerender(meta: Bake.RouteMetadata) {
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
   // A render error rejects here so the build fails with the component's error, not "cannot be pre-rendered".
+  // This settles only after the flight stream has ended, so `rscChunks` is complete afterwards.
   const html = await renderToStaticHtml(rscPayload, meta.modules, signal);
   const rsc = new Blob(rscChunks, { type: "text/x-component" });
 

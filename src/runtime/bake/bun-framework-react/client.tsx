@@ -370,13 +370,24 @@ async function readCssMetadata(stream: ReadableStream<Uint8Array>) {
       location.reload();
     }
   }
-  if (header[0] > 0) {
-    const cssRaw = (await reader.read(new Uint8Array(header[0]))).value;
-    if (!cssRaw) {
-      if (import.meta.env.DEV) {
-        throw new Error("Did not read all bytes! This is a bug in bun-framework-react");
-      } else {
-        location.reload();
+  const len = header[0];
+  if (len > 0) {
+    let cssRaw = new Uint8Array(len);
+    let filled = 0;
+    // A BYOB read resolves as soon as one byte is available, so keep reading until the view is full.
+    while (filled < len) {
+      const { value, done } = await reader.read(new Uint8Array(cssRaw.buffer, filled, len - filled));
+      if (value) {
+        cssRaw = new Uint8Array(value.buffer, 0, len);
+        filled += value.byteLength;
+      }
+      if (filled < len && (done || !value)) {
+        if (import.meta.env.DEV) {
+          throw new Error("Did not read all bytes! This is a bug in bun-framework-react");
+        } else {
+          location.reload();
+          return stream;
+        }
       }
     }
     currentCssList = td.decode(cssRaw).split("\n");

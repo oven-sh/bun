@@ -401,3 +401,46 @@ devTest("concurrent requests maintain isolated Response options via AsyncLocalSt
     }
   },
 });
+
+// Fizz stops writing when `write()` returns falsy and waits for a 'drain' the SSR stream never emits.
+devTest("streaming = true flushes every outlined Suspense boundary", {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      import { Suspense } from "react";
+      export const streaming = true;
+
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+
+      // Larger than Fizz's 2 KB write buffer, so flushing it calls write() mid-boundary.
+      async function First() {
+        await tick();
+        return <p id="first">{"FIRST:" + Buffer.alloc(3000, "a").toString()}</p>;
+      }
+      // Resolves after First has been flushed.
+      async function Second() {
+        await tick();
+        await tick();
+        await tick();
+        return <p id="second">SECOND_DONE</p>;
+      }
+
+      export default function IndexPage() {
+        return (
+          <main>
+            <Suspense fallback={<p>loading first</p>}><First /></Suspense>
+            <Suspense fallback={<p>loading second</p>}><Second /></Suspense>
+          </main>
+        );
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const text = await response.text();
+    expect(text).toContain("FIRST:aaa");
+    expect(text).toContain("SECOND_DONE");
+    expect(text.trimEnd().endsWith("</body></html>")).toBe(true);
+    expect(response.status).toBe(200);
+  },
+});

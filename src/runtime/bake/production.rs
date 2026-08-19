@@ -1003,6 +1003,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
         let mut file_count: u32 = 1;
+        let mut css_count: usize = pt
+            .output_file(main_file_route_index)
+            .referenced_css_chunks
+            .len();
         let mut next: Option<framework_router::RouteIndex> = Some(route_index);
         while let Some(current_index) = next {
             let current = router.route_ptr(current_index);
@@ -1018,14 +1022,15 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 }
                 framework_router::Part::Text(_) | framework_router::Part::Group(_) => {}
             }
-            if current.file_layout.is_some() {
+            if let Some(layout) = current.file_layout {
                 file_count += 1;
+                css_count += pt.output_file(layout).referenced_css_chunks.len();
             }
             next = current.parent;
         }
 
         // Fill styles and file_list
-        let styles = JSValue::create_empty_array(global, css_chunks_count).map_err(js_err)?;
+        let styles = JSValue::create_empty_array(global, css_count).map_err(js_err)?;
         let file_list = JSValue::create_empty_array(global, file_count as usize).map_err(js_err)?;
 
         next = route.parent;

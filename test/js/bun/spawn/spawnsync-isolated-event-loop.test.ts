@@ -412,7 +412,12 @@ describe.concurrent("spawnSync on the real loop holds everything that predates i
         server.stop(true);
         console.log(JSON.stringify(log));
       `);
-      expect(JSON.parse(out)).toEqual(["serve:/block:after", "serve:/second:after", "first:/block", "second:/second"]);
+      // Whether the client sees the first response before or after the server
+      // accepts the second connection is a race between the HTTP thread and the
+      // next poll; what matters is that /second was served after spawnSync.
+      const log = JSON.parse(out);
+      expect(log[0]).toBe("serve:/block:after");
+      expect(log.slice(1).sort()).toEqual(["first:/block", "second:/second", "serve:/second:after"]);
       expect(exitCode).toBe(0);
     },
   );

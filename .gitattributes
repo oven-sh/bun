@@ -31,6 +31,12 @@ test/js/bun/resolve/xml/xml-utf16be-bom.xml -text
 test/js/bun/resolve/xml/xml-utf8-bom.xml -text
 test/js/bun/resolve/xml/xml-latin1.xml -text
 
+# Node's test fixtures are read as exact bytes: certificates, console
+# snapshots, and files whose byte length a test asserts. Git converts them to
+# CRLF on checkout under `core.autocrlf=true`, which the Git for Windows
+# installer sets by default, and those assertions then fail.
+test/js/node/test/fixtures/** -text
+
 .vscode/launch.json linguist-generated
 fixture.*.c linguist-generated
 *-fixture* linguist-generated

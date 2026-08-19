@@ -6050,24 +6050,29 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     let writer = sink.writer();
+    let mut threw = false;
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
-        let Ok(tag) = formatter::Tag::get(arg, global) else {
-            return;
-        };
-        let _ = writer.write_all(b" ");
-        let formatted = if colors {
-            fmt.format::<true>(tag, writer, arg, global)
-        } else {
-            fmt.format::<false>(tag, writer, arg, global)
-        };
-        // Formatting ran JS that threw; the exception is pending for the caller.
+        let formatted = formatter::Tag::get(arg, global).and_then(|tag| {
+            let _ = writer.write_all(b" ");
+            if colors {
+                fmt.format::<true>(tag, writer, arg, global)
+            } else {
+                fmt.format::<false>(tag, writer, arg, global)
+            }
+        });
+        // Formatting ran JS that threw; the exception stays pending for the caller.
         if formatted.is_err() {
-            return;
+            threw = true;
+            break;
         }
     }
     let _ = writer.write_all(b"\n");
-    sink.finish(global);
+    // What was formatted so far still goes out, except that a pending exception must
+    // not be carried into the worker stream's JS write().
+    if !(threw && matches!(sink, Sink::Stream { .. })) {
+        sink.finish(global);
+    }
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's

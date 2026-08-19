@@ -42,12 +42,34 @@ test.concurrent.skipIf(!slow)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // On a failure stdout stays empty and stderr carries the validator's report.
     const summary = stdout.startsWith("ok ") ? JSON.parse(stdout.slice(3)) : stdout;
+    const counts = {
+      early: expect.any(Number),
+      inCall: expect.any(Number),
+      late: expect.any(Number),
+      cutAfterHead: expect.any(Number),
+    };
     expect({ summary, stderr, exitCode }).toEqual({
-      summary: expect.objectContaining({ attempts: expect.any(Number) }),
+      summary: {
+        attempts: expect.any(Number),
+        timeout: expect.any(Number),
+        paths: [
+          { name: "end", ...counts },
+          { name: "flushHeaders", ...counts },
+        ],
+      },
       stderr: "",
       exitCode: 0,
     });
     expect(summary.attempts).toBeGreaterThan(100);
+    // The deadlines did land inside both calls (about 45% of them do here), and
+    // on the end() path some were taken right after the native writeHead had
+    // put the head out (20 to 30% of that path's attempts here).
+    const [end, flushHeaders] = summary.paths;
+    expect({ end: end.inCall > 0, flushHeaders: flushHeaders.inCall > 0, cutAfterHead: end.cutAfterHead > 0 }).toEqual({
+      end: true,
+      flushHeaders: true,
+      cutAfterHead: true,
+    });
   },
   60_000,
 );

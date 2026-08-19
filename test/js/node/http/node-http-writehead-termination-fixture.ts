@@ -38,7 +38,7 @@ const run = (call: string) =>
 const paths = [
   { name: "end", script: run("end") },
   { name: "flushHeaders", script: run("flushHeaders") },
-].map(path => ({ ...path, target: 0, step: 0.1, lastDirection: 0, early: 0, inCall: 0, late: 0 }));
+].map(path => ({ ...path, target: 0, step: 0.1, lastDirection: 0, early: 0, inCall: 0, late: 0, cutAfterHead: 0 }));
 
 let timeout = 2;
 let firedBeforeScript = 0;
@@ -56,8 +56,10 @@ const server = http.createServer((req, res) => {
   ctx.armedAt = performance.now();
   try {
     path.script.runInContext(ctx, { timeout });
-  } catch {
-    // ERR_SCRIPT_EXECUTION_TIMEOUT: the deadline cut the run short.
+  } catch (e) {
+    // The deadline cut the run short. Anything else is a real failure of the
+    // call under test: let it take the process down.
+    if ((e as NodeJS.ErrnoException)?.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") throw e;
   }
   ctx.res = null;
 
@@ -85,13 +87,17 @@ const server = http.createServer((req, res) => {
   }
 
   // Whatever state the run left the response in, complete it outside the
-  // deadline. When that is impossible (the head went out natively but the run
-  // was cut before JS learned about it), drop the connection instead; the
-  // client reconnects.
+  // deadline. The one state in which that fails is a cut that landed after the
+  // native writeHead had put the head on the wire but before JS recorded it:
+  // end() then reports the head as already sent. Drop that connection, the
+  // client reconnects. Any other error is a real failure.
   if (!res.finished) {
     try {
       res.end();
-    } catch {
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException)?.code;
+      if (code !== "ERR_HTTP_HEADERS_SENT" && code !== "ERR_STREAM_ALREADY_FINISHED") throw e;
+      path.cutAfterHead++;
       req.socket.destroy();
     }
   }
@@ -105,7 +111,7 @@ server.listen(0, "127.0.0.1", () => {
     const summary = {
       attempts,
       timeout,
-      paths: paths.map(({ name, early, inCall, late }) => ({ name, early, inCall, late })),
+      paths: paths.map(({ name, early, inCall, late, cutAfterHead }) => ({ name, early, inCall, late, cutAfterHead })),
     };
     console.log("ok " + JSON.stringify(summary));
     process.exit(0);

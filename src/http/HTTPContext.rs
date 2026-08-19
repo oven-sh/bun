@@ -1133,10 +1133,13 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
 pub struct Handler<const SSL: bool>;
 
 impl<const SSL: bool> Handler<SSL> {
+    /// Fires once per connection, when a socket opened by `connect` /
+    /// `connect_socket` is established. Pooled sockets are re-attached in
+    /// `connect` without passing through here.
     pub fn on_open(ptr: *mut c_void, socket: HTTPSocket<SSL>) {
         let active = HTTPContext::<SSL>::get_tagged(ptr);
         if let Some(client) = active.client_mut() {
-            match client.on_open::<SSL>(socket) {
+            match client.on_connect::<SSL>(socket) {
                 Ok(_) => return,
                 Err(_) => {
                     bun_core::scoped_log!(HTTPContext, "Unable to open socket");

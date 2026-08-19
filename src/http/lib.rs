@@ -1768,6 +1768,10 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Attaches this client to an established socket and starts the request
+    /// on it. Called for a fresh connection from [`Self::on_connect`] and for
+    /// a socket taken from the keep-alive pool from `HTTPContext::connect`.
+    /// Per-connection setup does not belong here; see `on_connect`.
     pub(crate) fn on_open<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -1790,28 +1794,6 @@ impl<'a> HTTPClient<'a> {
         // was inside `on_writable`, which only runs *after* the handshake
         // completes. See https://github.com/oven-sh/bun/issues/30325.
         self.set_timeout(&socket);
-
-        // Enable TCP keepalive so a half-open connection (peer closed but the
-        // FIN/RST never reached us — NAT timeout, wifi/cellular handoff,
-        // middlebox state eviction, VPN disconnect) is detected in ~70s instead
-        // of hanging until an application-level timeout. Without this, a
-        // streaming `reader.read()` on a half-open socket blocks indefinitely.
-        // Matches Node/undici, which calls `socket.setKeepAlive(true, 60e3)` in
-        // buildConnector:
-        // https://github.com/nodejs/undici/blob/f33a6cb615e1/lib/core/connect.js#L121-L124
-        // TCP_KEEPIDLE=60, KEEPINTVL=1, KEEPCNT=10 — the latter two are hardcoded
-        // in bsd_socket_keepalive. The kernel default TCP_KEEPIDLE is 7200s, so
-        // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
-        // TCP_KEEPIDLE=60s.
-        //
-        // `disable_keepalive` is set when fetch is called with `keepalive: false`,
-        // which is what `node:http`/`node:https` pass through from
-        // `agent.keepAlive` (see _http_client.ts) — so requests through
-        // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
-        // through a non-keepalive Agent or `agent: false` skip it, matching Node.
-        if !self.flags.disable_keepalive {
-            let _ = socket.set_keep_alive(true, 60);
-        }
 
         if self.signals.get(signals::Field::Aborted) {
             self.close_and_abort::<IS_SSL>(socket);
@@ -1889,6 +1871,47 @@ impl<'a> HTTPClient<'a> {
             self.first_call::<IS_SSL>(socket);
         }
         Ok(())
+    }
+
+    /// The uSockets open callback (`http_context::Handler::on_open`) for a
+    /// socket this client just connected. A socket taken from the keep-alive
+    /// pool does not come through here: `HTTPContext::connect` hands it to
+    /// [`Self::on_open`] directly. Socket options set here stay on the fd for
+    /// the life of the connection, so they are applied once per connection
+    /// rather than once per request.
+    pub(crate) fn on_connect<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+    ) -> crate::Result<()> {
+        // Enable TCP keepalive so a half-open connection (peer closed but the
+        // FIN/RST never reached us — NAT timeout, wifi/cellular handoff,
+        // middlebox state eviction, VPN disconnect) is detected in ~70s instead
+        // of hanging until an application-level timeout. Without this, a
+        // streaming `reader.read()` on a half-open socket blocks indefinitely.
+        // Matches Node/undici, which calls `socket.setKeepAlive(true, 60e3)` in
+        // buildConnector:
+        // https://github.com/nodejs/undici/blob/f33a6cb615e1/lib/core/connect.js#L121-L124
+        // TCP_KEEPIDLE=60, KEEPINTVL=1, KEEPCNT=10 — the latter two are hardcoded
+        // in bsd_socket_keepalive. The kernel default TCP_KEEPIDLE is 7200s, so
+        // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
+        // TCP_KEEPIDLE=60s.
+        //
+        // `disable_keepalive` is set when fetch is called with `keepalive: false`,
+        // which is what `node:http`/`node:https` pass through from
+        // `agent.keepAlive` (see _http_client.ts) — so requests through
+        // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
+        // through a non-keepalive Agent or `agent: false` skip it, matching Node.
+        // Like undici, this is decided once by the request that opens the
+        // connection; a `keepalive: false` request never takes a socket from
+        // the pool (`is_keep_alive_possible`), so reuse has nothing to undo.
+        //
+        // A unix socket has no TCP keepalive (Node's `setKeepAlive` is a no-op
+        // on a pipe handle too).
+        if !self.flags.disable_keepalive && self.unix_socket_path.slice().is_empty() {
+            let _ = socket.set_keep_alive(true, 60);
+        }
+
+        self.on_open::<IS_SSL>(socket)
     }
 
     /// Whether to advertise "h2" in the TLS ALPN list. Restricted to request

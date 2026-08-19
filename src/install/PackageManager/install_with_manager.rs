@@ -1867,6 +1867,9 @@ fn root_package_json_source(
                     "failed to parse '{}': file is empty",
                     (bstr::BStr::new(root_package_json_path.as_bytes()),),
                 );
+                bun_core::note!(
+                    "Restore package.json, or write {{}} to it to start without dependencies"
+                );
                 Global::exit(1);
             }
             return Ok(entry.source.clone());

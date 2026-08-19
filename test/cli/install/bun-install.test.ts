@@ -5265,7 +5265,10 @@ describe.concurrent("bun-install", () => {
       it(`rejects an empty file and keeps the lockfile ${lockfile}`, async () => {
         const result = await installWithBrokenRootPackageJson(withLockfile, empty);
         expect(result).toEqual({
-          stderr: "error: failed to parse '<dir>/package.json': file is empty",
+          stderr: [
+            "error: failed to parse '<dir>/package.json': file is empty",
+            "note: Restore package.json, or write {} to it to start without dependencies",
+          ].join("\n"),
           exitCode: 1,
           lockfileKept: withLockfile,
         });

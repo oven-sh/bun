@@ -1050,13 +1050,13 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
 
   it("MapIterator/SetIterator respect max_depth", () => {
     const mi = () => new Map([["a", 1]]).entries();
-    const si = () => new Set([1]).values();
+    const si = () => new Set(["leaf"]).values();
     expect(Bun.inspect({ x: mi() }, { depth: 0 })).toBe("{\n  x: [MapIterator ...],\n}");
     expect(Bun.inspect({ x: si() }, { depth: 0 })).toBe("{\n  x: [SetIterator ...],\n}");
     expect(Bun.inspect([[[mi()]]], { depth: 2 })).toBe("[\n  [\n    [\n      [MapIterator ...]\n    ]\n  ]\n]");
     expect(Bun.inspect([[[si()]]], { depth: 2 })).toBe("[\n  [\n    [\n      [SetIterator ...]\n    ]\n  ]\n]");
     expect(Bun.inspect([[[mi()]]], { depth: Infinity })).toContain('[ "a", 1 ]');
-    expect(Bun.inspect([[[si()]]], { depth: Infinity })).toContain("SetIterator {");
+    expect(Bun.inspect([[[si()]]], { depth: Infinity })).toContain('"leaf"');
   });
 
   it("console.log of deeply nested Map/Set/Array/Error does not blow up or throw", async () => {

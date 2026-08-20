@@ -5947,7 +5947,7 @@ if (fs.existsSync("root")) {
 
   const soPath = path.join(String(dir), "shim.so");
   const compile = Bun.spawnSync({
-    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c")],
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
     env: bunEnv,
   });
   if (compile.exitCode !== 0) {

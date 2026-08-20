@@ -7805,7 +7805,18 @@ impl NodeFS {
                 }
                 return Ok(());
             }
-            if e1 == E::ENOENT {
+            // libuv folds STATUS_DELETE_PENDING / STATUS_FILE_DELETED into EPERM;
+            // unlinkat (DeleteFileBun, what the recursive branch uses) treats
+            // them as success.
+            #[cfg(windows)]
+            if e1 == E::EPERM && sys::unlinkat(FD::cwd(), dest).is_ok() {
+                return Ok(());
+            }
+            // unlink's errno does not say whether the path exists (EROFS for a
+            // missing name on a read-only mount); node decides that with lstat.
+            let gone = e1 == E::ENOENT
+                || matches!(sys::lstat(dest), Err(err) if err.get_errno() == E::ENOENT);
+            if gone {
                 if args.force {
                     return Ok(());
                 }

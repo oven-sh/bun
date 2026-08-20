@@ -178,7 +178,7 @@ function lockEntryOf(json: Record<string, unknown>) {
 const lockKey = (workspace: Workspace) => (workspace === "root" ? "" : `packages/${workspace}`);
 
 /** `json` with `dep: range` added to (or replaced in) its dependencies. */
-function plus(json: { dependencies?: Record<string, string> }, dep = "no-deps", range = "^2.0.0") {
+function plus(json: { name: string; dependencies?: Record<string, string> }, dep = "no-deps", range = "^2.0.0") {
   return { ...json, dependencies: { ...json.dependencies, [dep]: range } };
 }
 

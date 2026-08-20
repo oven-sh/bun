@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isCI, isLinux, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -54,7 +54,10 @@ const MACOS_BROWSER_BUNDLES = [
   "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 ];
 
-// Absolute paths find_chrome() checks on Linux (ChromeProcess.rs's `absolute` array).
+// ChromeProcess.rs gates several branches on cfg(any(target_os = "linux", target_os = "android")).
+const isLinuxOrAndroid = isLinux || isAndroid;
+
+// Absolute paths find_chrome() checks on Linux and Android (ChromeProcess.rs's `absolute` array).
 const LINUX_HARDCODED_BROWSERS = [
   "/usr/bin/google-chrome-stable",
   "/usr/bin/google-chrome",
@@ -106,7 +109,7 @@ function findChrome(): string | undefined {
       const user = join(homedir(), "Applications", b);
       if (isExecutablePath(user)) return user;
     }
-  } else if (process.platform === "linux") {
+  } else if (isLinuxOrAndroid) {
     for (const c of LINUX_HARDCODED_BROWSERS) if (isExecutablePath(c)) return c;
   } else if (process.platform === "win32") {
     // Installer layout: <root>\<Vendor>\<Channel>\Application\<exe>. Same
@@ -156,7 +159,7 @@ function findChrome(): string | undefined {
       ? join(cacheDir, bestName, PLAYWRIGHT_SHELL_DIR, "chrome-headless-shell.exe")
       : join(cacheDir, bestName, PLAYWRIGHT_SHELL_DIR, "chrome-headless-shell");
   if (isExecutablePath(bin)) return bin;
-  if (process.platform === "linux" && process.arch === "arm64") {
+  if (isLinuxOrAndroid && process.arch === "arm64") {
     const bin2 = join(cacheDir, bestName, "chrome-linux/headless_shell");
     if (isExecutablePath(bin2)) return bin2;
   }
@@ -1258,22 +1261,21 @@ it("BUN_CHROME_PATH is used as the executable", async () => {
 // absolute paths (checked before the cache) — that would mask this test's target. Windows is
 // skipped outright: its discovered binary must be a real .exe, and CreateProcess won't run a
 // shebang script through one the way POSIX exec does.
-const hasHardcodedBrowser =
-  process.platform === "linux"
-    ? LINUX_HARDCODED_BROWSERS.some(isExecutablePath)
-    : process.platform === "darwin"
-      ? MACOS_BROWSER_BUNDLES.some(
-          b => isExecutablePath(join("/Applications", b)) || isExecutablePath(join(homedir(), "Applications", b)),
-        )
-      : false;
+const hasHardcodedBrowser = isLinuxOrAndroid
+  ? LINUX_HARDCODED_BROWSERS.some(isExecutablePath)
+  : process.platform === "darwin"
+    ? MACOS_BROWSER_BUNDLES.some(
+        b => isExecutablePath(join("/Applications", b)) || isExecutablePath(join(homedir(), "Applications", b)),
+      )
+    : false;
 const discoveryTest = process.platform === "win32" || hasHardcodedBrowser ? test.skip : test;
 
-// Playwright has no Chrome-for-Testing headless-shell build for linux-arm64 — find_playwright_shell()
-// falls back to the non-cft chrome-linux/headless_shell layout there (ChromeProcess.rs's fallback
-// branch). Build whichever layout Playwright actually produces so linux-arm64 exercises that
-// fallback instead of a tree that can't occur in production.
-const isLinuxArm64 = process.platform === "linux" && process.arch === "arm64";
-const [playwrightShellRelDir, playwrightShellBinName] = isLinuxArm64
+// Playwright has no Chrome-for-Testing headless-shell build for linux/android arm64 —
+// find_playwright_shell() falls back to the non-cft chrome-linux/headless_shell layout there
+// (ChromeProcess.rs's fallback branch). Build whichever layout Playwright actually produces so
+// arm64 exercises that fallback instead of a tree that can't occur in production.
+const isLinuxOrAndroidArm64 = isLinuxOrAndroid && process.arch === "arm64";
+const [playwrightShellRelDir, playwrightShellBinName] = isLinuxOrAndroidArm64
   ? ["chrome-linux", "headless_shell"]
   : [PLAYWRIGHT_SHELL_DIR, "chrome-headless-shell"];
 

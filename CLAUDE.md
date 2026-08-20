@@ -204,6 +204,8 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
 13. **If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong — fix the code.**.
 14. After every code comment you write, ask yourself, "Is this information the next Claude would spend multiple tool calls trying to understand?". If the answer isn't clearly yes, the code comment is noise - delete it.
+15. **Review narration never goes in code.** No "per review", "fixes lint", "addresses comment" in comments, test names, or identifiers. Answer review threads on the PR; the code describes only what it is now.
+16. **Name tests for the behavior they check**, not for the bug, the PR, or the line that changed (`"rejects ports above 65535"`, not `"fix for #1234"` or `"regression test"`). Assert on observable behavior, never on source text.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
 

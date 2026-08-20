@@ -568,6 +568,33 @@ devTest("bundling errors in stylesheets and recovering from them", {
       await using c = await dev.client("/importer");
       await c.style("body").color.expect.toBe("#00f");
       await c.style("h1").color.expect.toBe("green");
+
+      // Same, but the root fails to resolve rather than to parse: its @import edges are re-attached in the same bundle, and the route trace must still stop at the failed root.
+      await dev.write(
+        "importer.css",
+        `
+          @import "./imported-child.css";
+          body {
+            color: blue;
+            background-image: url(./missing.png);
+          }
+        `,
+        {
+          errors: ['importer.css:4:21: error: Could not resolve: "./missing.png"'],
+        },
+      );
+      await c.style("body").color.expect.toBe("#00f");
+      await dev.write(
+        "importer.css",
+        `
+          @import "./imported-child.css";
+          body {
+            color: red;
+          }
+        `,
+      );
+      await c.style("body").color.expect.toBe("red");
+      await c.style("h1").color.expect.toBe("green");
     }
 
     // css file with syntax error does not kill old styles

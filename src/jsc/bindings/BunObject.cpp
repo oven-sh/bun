@@ -1160,7 +1160,7 @@ JSC::JSObject* generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobal
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    return exportObjectProperties(vm, object, propertyNames, exportNames, exportValues);
+    RELEASE_AND_RETURN(scope, exportObjectProperties(globalObject, object, propertyNames, exportNames, exportValues));
 }
 
 } // namespace Zig

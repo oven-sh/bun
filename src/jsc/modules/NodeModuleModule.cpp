@@ -1227,7 +1227,7 @@ JSC::JSObject* generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGloba
         properties.add(Identifier::fromString(vm, entry.m_key));
     }
 
-    return exportObjectProperties(vm, constructor, properties, exportNames, exportValues);
+    return exportObjectProperties(globalObject, constructor, properties, exportNames, exportValues);
 }
 
 } // namespace Zig

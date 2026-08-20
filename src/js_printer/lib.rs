@@ -1145,8 +1145,7 @@ pub struct Options<'a> {
     pub to_esm_ref: Ref,
     pub require_ref: Option<Ref>,
     pub import_meta_ref: Ref,
-    /// The bundler prints this file inside the `@bun-cjs` function wrapper, whose
-    /// `E::ImportMeta::CJS_WRAPPER_ARG` parameter stands in for `import.meta`.
+    /// Print `import.meta` as `E::ImportMeta::CJS_WRAPPER_ARG`, a parameter of the `@bun-cjs` wrapper.
     pub inside_bun_cjs_wrapper: bool,
     pub hmr_ref: Ref,
     pub indent: Indentation,

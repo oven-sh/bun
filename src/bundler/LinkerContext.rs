@@ -2157,8 +2157,7 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
-    /// Whether `post_process_js_chunk` wraps `chunk` in the `@bun-cjs` function wrapper.
-    /// The chunk renamer and the printer of every file in the chunk key off the same answer.
+    /// The one place that decides whether a chunk gets the `@bun-cjs` function wrapper.
     pub(crate) fn chunk_has_bun_cjs_wrapper(&self, chunk: &Chunk) -> bool {
         self.options.output_format == Format::Cjs
             && self.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun()

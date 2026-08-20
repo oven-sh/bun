@@ -5203,6 +5203,24 @@ impl Resolver {
             return Ok(promise_value);
         }
 
+        // A host option containing URL delimiter characters ("/", "?", "#")
+        // is not a resolvable hostname — Node rejects it with ENOTFOUND
+        // without ever issuing a lookup. Rejecting up front also avoids
+        // depending on resolver timeout behavior under load, where a
+        // malformed host could otherwise surface as ETIMEOUT.
+        if strings::contains_any(name, b"/?#") {
+            let mut promise = JSPromiseStrong::init(global_this);
+            let promise_value = promise.value();
+            error_to_deferred(
+                c_ares::Error::ENOTFOUND,
+                b"getaddrinfo",
+                Some(name),
+                &mut promise,
+            )
+            .reject_later(global_this);
+            return Ok(promise_value);
+        }
+
         let mut opts = options;
         let mut backend = opts.backend;
         let normalized = normalize_dns_name(name, &mut backend);

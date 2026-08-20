@@ -1802,8 +1802,6 @@ pub mod formatter {
 
     impl core::fmt::Display for ZigFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            // Move the unique `&mut Formatter` out of the cell for the body and
-            // re-seat it on the way out so the adapter stays reusable.
             let formatter: &mut Formatter<'_> = self
                 .formatter
                 .take()
@@ -5664,11 +5662,8 @@ pub mod formatter {
             }
         }
 
-        /// Format one value whose tag the caller already computed. This is the
-        /// step `print_as` recurses through for nested values, so it must not
-        /// touch `remaining_values` (the pending `%s`-style arguments of the
-        /// enclosing top-level format). Top-level single-value callers use
-        /// [`Self::format_value`].
+        /// Recursive step (nested values re-enter here), so it leaves
+        /// `remaining_values` alone. Top-level callers use [`Self::format_value`].
         #[inline(always)]
         pub fn format<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
@@ -5687,12 +5682,8 @@ pub mod formatter {
             self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
         }
 
-        /// Top-level entry point: format a single value into `writer`,
-        /// propagating a JS exception thrown while inspecting it (e.g. a
-        /// throwing `[inspect.custom]`). The `Display` adapter
-        /// ([`ZigFormatter`]) wraps this and can only report `fmt::Error`,
-        /// which panics inside `io::Write::write_fmt` when the sink itself did
-        /// not fail, so a `JsResult` caller should call this directly.
+        /// Format one top-level value, returning the `JsError` if inspecting it
+        /// throws. [`ZigFormatter`] wraps this but can only report `fmt::Error`.
         pub fn format_value<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             value: JSValue,

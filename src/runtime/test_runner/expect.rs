@@ -2795,10 +2795,6 @@ impl ExpectMatcherUtils {
             }
         }
 
-        // `format_value` (not the `Display` adapter) so a JS exception thrown
-        // while inspecting `value` (e.g. a throwing `[util.inspect.custom]`)
-        // propagates as a catchable error instead of tripping
-        // `io::Write::write_fmt`'s mismatched-error panic.
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
         formatter.format_value::<false>(value, &mut mutable_string)?;
 

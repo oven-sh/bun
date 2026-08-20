@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import domain from "node:domain";
 import { EventEmitter } from "node:events";
+import http from "node:http";
 
 describe("node:domain", () => {
   it("exports the Domain class", () => {
@@ -63,6 +64,28 @@ describe("node:domain", () => {
     d.remove(ee);
     expect(d.members).toEqual([]);
     expect(ee.domain).toBe(null);
+  });
+
+  it("http client responses do not accumulate in domain.members", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("ok"),
+    });
+    const d = domain.create();
+    d.on("error", () => {});
+    for (let i = 0; i < 5; i++) {
+      await new Promise<void>((resolve, reject) => {
+        d.run(() => {
+          http
+            .get(`http://localhost:${server.port}/`, res => {
+              res.resume();
+              res.on("close", resolve);
+            })
+            .on("error", reject);
+        });
+      });
+    }
+    expect(d.members).toEqual([]);
   });
 
   it("process.domain is null after requiring node:domain", async () => {

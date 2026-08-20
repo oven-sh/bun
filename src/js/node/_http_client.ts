@@ -848,6 +848,11 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   if (reqDomain != null && typeof reqDomain.add === "function" && res.domain == null) {
     res.domain = reqDomain;
     reqDomain.add(res);
+    if (typeof reqDomain.remove === "function") {
+      // add() tracks the response in domain.members. Untrack it when the
+      // response is done so a long-lived domain does not accumulate them.
+      res.once("close", () => reqDomain.remove(res));
+    }
   }
 
   // Add our listener first, so that we guarantee socket cleanup

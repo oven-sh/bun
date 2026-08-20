@@ -21,6 +21,7 @@
 
 #include "BunClientData.h"
 #include "CallSite.h"
+#include "ErrorStackFrame.h"
 #include "ErrorStackTrace.h"
 #include "headers-handwritten.h"
 
@@ -243,11 +244,11 @@ WTF::String formatStackTrace(
     // file's map once instead of per frame.
     WTF::Vector<ZigStackFrame, 8> remappedFrames;
     WTF::Vector<WTF::String, 8> sourceURLs;
-    WTF::Vector<LineColumn, 8> originalLineColumns;
+    WTF::Vector<ZigStackFramePosition, 8> originalPositions;
     remappedFrames.grow(framesCount);
     memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * framesCount);
     sourceURLs.grow(framesCount);
-    originalLineColumns.grow(framesCount);
+    originalPositions.grow(framesCount);
     bool anyRemap = false;
 
     for (size_t i = 0; i < framesCount; i++) {
@@ -260,11 +261,12 @@ WTF::String formatStackTrace(
         remappedFrame.position.line_zero_based = -1;
         remappedFrame.position.column_zero_based = -1;
         remappedFrame.position.byte_position = -1;
-        originalLineColumns[i] = {};
+        originalPositions[i] = remappedFrame.position;
 
         if (!frame.hasLineAndColumnInfo()) continue;
 
-        originalLineColumns[i] = frame.computeLineAndColumn();
+        // Same position as Bun.inspect and CallSite; source maps have a mapping at `new`, not at JSC's divot.
+        originalPositions[i] = Bun::getAdjustedLineColumnForStackFrame(frame);
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (auto* callee = frame.callee()) {
@@ -280,8 +282,7 @@ WTF::String formatStackTrace(
         if (isDefinitelyNotRunninginNodeVMGlobalObject || isDefaultGlobalObjectInAFinalizer) {
             // https://github.com/oven-sh/bun/issues/3595
             if (!sourceURLs[i].isEmpty()) {
-                remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line).zeroBasedInt();
-                remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column).zeroBasedInt();
+                remappedFrame.position = originalPositions[i];
                 remappedFrame.source_url = Bun::toStringRef(sourceURLs[i]);
                 anyRemap = true;
             }
@@ -314,10 +315,12 @@ WTF::String formatStackTrace(
         OrdinalNumber displayLine = {};
         OrdinalNumber displayColumn = {};
         WTF::String sourceURLForFrame = sourceURLs[i];
+        // Still -1 for the frames pass 1 skipped (no code block) or could not position.
+        bool hasPosition = originalPositions[i].line_zero_based >= 0;
 
-        if (frame.hasLineAndColumnInfo()) {
-            originalLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
-            originalColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column);
+        if (hasPosition) {
+            originalLine = originalPositions[i].line();
+            originalColumn = originalPositions[i].column();
             displayLine = originalLine;
             displayColumn = originalColumn;
 
@@ -370,14 +373,11 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+            if (hasPosition) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
-
-                if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(':');
-                    sb.append(displayColumn.oneBasedInt());
-                }
+                sb.append(':');
+                sb.append(displayColumn.oneBasedInt());
             }
         }
 

@@ -112,11 +112,9 @@ assert.strictEqual(script.runInContext(ctx), false);
     });
   }, (err) => {
     stack = err.stack;
-    // JSC attributes the throw to a different column than V8, which also
-    // moves the caret marker.
-    return typeof Bun === 'undefined'
-      ? /^ \^/m.test(stack) && /expected-filename\.js:33:131/.test(stack)
-      : /^ *\^/m.test(stack) && /expected-filename\.js:33:140/.test(stack);
+    // Bun places the caret marker at a different column than V8.
+    return (typeof Bun === 'undefined' ? /^ \^/m : /^ *\^/m).test(stack) &&
+      /expected-filename\.js:33:131/.test(stack);
   }, `stack not formatted as expected: ${stack}`);
 }
 

@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -148,4 +148,191 @@ test("Async functions frame should be included in stack trace", async () => {
         at async foo (file:NN:NN)
         at async <anonymous> (file:NN:NN)"
   `);
+});
+
+// V8 reports a frame that is sitting at `new X(...)` at the `new` keyword. JSC's own position
+// is the end of `X`. Bun.inspect and Error.prepareStackTrace CallSites already move it back to
+// `new`; error.stack has to agree with them (and with Node).
+describe("error.stack column of a frame at `new X(...)` is the `new` keyword", () => {
+  // Keep this flush left: the expected line:column values below are positions in this source
+  // (the leading newline is dropped, so `class Thrower` is line 1).
+  const fixture = `
+class Thrower {
+  constructor() {
+    throw new Error("thrown by Thrower");
+  }
+}
+class MyError extends Error {}
+class Captures {
+  constructor(target) {
+    Error.captureStackTrace(target);
+  }
+}
+function customError() {
+  throw new MyError("custom");
+}
+function globalConstructor() {
+  return new Map(1);
+}
+function userConstructor() {
+  return new Thrower(1);
+}
+function spreadArguments(args) {
+  return new Map(...args);
+}
+function localBinding() {
+  const Ctor = Thrower;
+  return new Ctor(1);
+}
+function splitAcrossLines() {
+  return new
+    Map(1);
+}
+function viaCaptureStackTrace() {
+  const target = {};
+  new Captures(target);
+  return target.stack;
+}
+// Column 1 used to be left out of the frame (\`fixture.js:39\` instead of \`fixture.js:39:1\`).
+function callAtColumnOne() {
+customError();
+}
+function constructAtColumnOne() {
+new Thrower(1);
+}
+// The transpiler keeps this callee on several lines, so JSC's divot ends up two lines below the \`new\`.
+function classExpressionCallee() {
+  return new class extends Thrower {
+    marker() {}
+  }(1);
+}
+
+// "fixture.js:LINE:COLUMN" of the frame for the function called \`name\`.
+function frame(stack, name) {
+  const line = stack.split("\\n").find(line => line.includes("at " + name + " ("));
+  return line?.match(/fixture\\.js:\\d+:\\d+/)?.[0] ?? stack;
+}
+function caught(fn, ...args) {
+  try {
+    fn(...args);
+  } catch (e) {
+    return e;
+  }
+  throw new Error(fn.name + " did not throw");
+}
+
+const custom = caught(customError);
+console.log(
+  JSON.stringify({
+    customError: frame(custom.stack, "customError"),
+    customErrorLineColumn: [custom.line, custom.column],
+    globalConstructor: frame(caught(globalConstructor).stack, "globalConstructor"),
+    userConstructor: frame(caught(userConstructor).stack, "userConstructor"),
+    spreadArguments: frame(caught(spreadArguments, [1]).stack, "spreadArguments"),
+    localBinding: frame(caught(localBinding).stack, "localBinding"),
+    splitAcrossLines: frame(caught(splitAcrossLines).stack, "splitAcrossLines"),
+    viaCaptureStackTrace: frame(viaCaptureStackTrace(), "viaCaptureStackTrace"),
+    callAtColumnOne: frame(caught(callAtColumnOne).stack, "callAtColumnOne"),
+    constructAtColumnOne: frame(caught(constructAtColumnOne).stack, "constructAtColumnOne"),
+    classExpressionCallee: frame(caught(classExpressionCallee).stack, "classExpressionCallee"),
+  }),
+);
+`;
+
+  test.concurrent("in a transpiled file", async () => {
+    using dir = tempDir("stack-new-column", { "fixture.js": fixture.slice(1) });
+    const result = await bunRun(join(String(dir), "fixture.js"));
+    expect(result).toSpawn();
+    expect(JSON.parse(result.stdout)).toEqual({
+      customError: "fixture.js:13:9",
+      customErrorLineColumn: [13, 9],
+      globalConstructor: "fixture.js:16:10",
+      userConstructor: "fixture.js:19:10",
+      spreadArguments: "fixture.js:22:10",
+      localBinding: "fixture.js:26:10",
+      splitAcrossLines: "fixture.js:29:10",
+      viaCaptureStackTrace: "fixture.js:34:3",
+      callAtColumnOne: "fixture.js:39:1",
+      constructAtColumnOne: "fixture.js:42:1",
+      classExpressionCallee: "fixture.js:46:10",
+    });
+  });
+
+  // eval'd and node:vm code is not transpiled, so the text the line and column get recounted from
+  // is whatever the user wrote, including 16-bit strings and every kind of line terminator. The
+  // same position feeds error.stack, Bun.inspect and CallSites.
+  test.concurrent("in eval'd or node:vm code with `new` on an earlier line than the callee", async () => {
+    const script = `
+const vm = require("node:vm");
+const cases = {
+  latin1: { source: "// latin1\\nfunction construct() {\\n  return new\\n    Map(1);\\n}\\nconstruct();\\n" },
+  utf16: { source: "// \\u4e2d\\u6587\\nfunction construct() {\\n  return new\\n    Map(1);\\n}\\nconstruct();\\n" },
+  // \`new\` on the first line of the source, and a line break right after the callee.
+  firstLine: { source: "function construct() { return new\\n  Map\\n  (1); }\\nconstruct();\\n" },
+  // The other line terminators JavaScript has, between the \`new\` and the callee (counted to find
+  // the line) and, in the second-line variants, before the \`new\` too (where the column count stops).
+  carriageReturn: { source: "function construct() { return new\\r  Map(1); }\\rconstruct();\\r" },
+  carriageReturnSecondLine: { source: "// x\\rfunction construct() { return new\\r  Map(1); }\\rconstruct();\\r" },
+  crlf: { source: "function construct() { return new\\r\\n  Map(1); }\\r\\nconstruct();\\r\\n" },
+  lineSeparator: { source: "function construct() { return new\\u2028  Map(1); }\\u2028construct();\\u2028" },
+  lineSeparatorSecondLine: { source: "// x\\u2028function construct() { return new\\u2028  Map(1); }\\u2028construct();\\u2028" },
+  paragraphSeparatorSecondLine: { source: "// x\\u2029function construct() { return new\\u2029  Map(1); }\\u2029construct();\\u2029" },
+  // node:vm's columnOffset applies to the first line of the source.
+  columnOffset: { source: "function construct() { return new\\n  Map(1); }\\nconstruct();\\n", options: { columnOffset: 100 } },
+};
+const results = {};
+for (const [name, { source, options }] of Object.entries(cases)) {
+  const caught = () => {
+    try {
+      options ? vm.runInThisContext(source, options) : (0, eval)(source);
+    } catch (e) {
+      return e;
+    }
+  };
+  const lineColumn = text => text.match(/at construct \\(.*:(\\d+):(\\d+)\\)/).slice(1).join(":");
+
+  const result = { stack: lineColumn(caught().stack), inspect: lineColumn(Bun.inspect(caught())) };
+
+  // node:vm materializes .stack as a string while the error leaves the script, so
+  // Error.prepareStackTrace can only be observed for the eval'd cases.
+  if (!options) {
+    const error = caught();
+    Error.prepareStackTrace = (_, callSites) => callSites;
+    result.callSiteLine = error.stack.find(callSite => callSite.getFunctionName() === "construct").getLineNumber();
+    Error.prepareStackTrace = undefined;
+  }
+
+  results[name] = result;
+}
+
+// A script that starts with the \`new\` puts the frame at 1:1, which used to be taken for "no position".
+try {
+  vm.runInThisContext("new Map(1)", { filename: "byte-zero.js" });
+} catch (e) {
+  results.byteZero = e.stack.match(/at byte-zero\\.js(:\\d+:\\d+)?/)[0];
+}
+console.log(JSON.stringify(results));
+`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      latin1: { stack: "3:10", inspect: "3:10", callSiteLine: 3 },
+      utf16: { stack: "3:10", inspect: "3:10", callSiteLine: 3 },
+      firstLine: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      carriageReturn: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      carriageReturnSecondLine: { stack: "2:31", inspect: "2:31", callSiteLine: 2 },
+      crlf: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      lineSeparator: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      lineSeparatorSecondLine: { stack: "2:31", inspect: "2:31", callSiteLine: 2 },
+      paragraphSeparatorSecondLine: { stack: "2:31", inspect: "2:31", callSiteLine: 2 },
+      columnOffset: { stack: "1:131", inspect: "1:131" },
+      byteZero: "at byte-zero.js:1:1",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

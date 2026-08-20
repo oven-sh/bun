@@ -702,10 +702,8 @@ impl TransformTask {
         let mut log = bun_ast::Log::init();
         log.level = config.log.level;
 
-        // SAFETY: bitwise copy of the wrapper's Transpiler; `ManuallyDrop` so the
-        // copy never frees what the original owns. Its self-pointers (log,
-        // arena) are re-aimed in `run` once the task has its final address
-        // inside the job.
+        // SAFETY: `ManuallyDrop` keeps this bitwise copy from freeing what the
+        // wrapper owns; `run` re-aims its log and arena pointers.
         let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
             core::ptr::read(transpiler.transpiler.as_ptr())
         });

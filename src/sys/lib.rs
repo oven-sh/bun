@@ -5053,8 +5053,7 @@ pub mod c {
         vm_statistics64,
         vm_statistics64_data_t,
     };
-    // `UTIME_NOW` — already re-exported via `pub use super::UTIME_NOW` above
-    // (top-level `#[cfg(unix)]` const casts `libc::UTIME_NOW` to i64).
+
     /// Safe rc-returning `clonefile(2)` — callers that want their own
     /// `sys::Tag` / path boxing (`errno_sys_p`) take the raw `c_int` instead
     /// of the `Maybe<()>`-shaped [`super::clonefile`].

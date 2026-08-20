@@ -706,11 +706,7 @@ impl<'a> Transpiler<'a> {
     /// Initialize `self.linker` with back-pointers into this `Transpiler`,
     /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
-        // `crate::linker::Linker` stores raw back-pointers into the owning
-        // `Transpiler`; `linker.link()` reads back through them, so they are
-        // `*mut` (a `&'a mut` would alias `&mut self` on every call). The
-        // `.cast()` on `options` erases `<'a>` to the `'static` the field is
-        // typed at; the linker never outlives its owning `Transpiler<'a>`.
+        // Raw back-pointers into `self`; the linker never outlives this `Transpiler`.
         self.linker = crate::linker::Linker::init(
             self.log,
             core::ptr::addr_of_mut!(self.resolve_queue),

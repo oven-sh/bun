@@ -28,6 +28,7 @@ const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
 
 const ObjectDefineProperties = Object.defineProperties;
+const ObjectDefineProperty = Object.defineProperty;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
@@ -1723,5 +1724,48 @@ Readable.wrap = function (src, options) {
     },
   }).wrap(src);
 };
+
+// Node does this in lib/stream.js; here not every user of Readable loads node:stream.
+const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
+const opStreamKeys = ObjectKeys(streamReturningOperators);
+for (let i = 0; i < opStreamKeys.length; i++) {
+  const key = opStreamKeys[i];
+  const op = streamReturningOperators[key];
+  function fn(...args) {
+    if (new.target) {
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    return Readable.from(op.$apply(this, args));
+  }
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
+  ObjectDefineProperty(Readable.prototype, key, {
+    __proto__: null,
+    value: fn,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
+const opPromiseKeys = ObjectKeys(promiseReturningOperators);
+for (let i = 0; i < opPromiseKeys.length; i++) {
+  const key = opPromiseKeys[i];
+  const op = promiseReturningOperators[key];
+  function fn(...args) {
+    if (new.target) {
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    return Promise.$resolve().then(() => op.$apply(this, args));
+  }
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
+  ObjectDefineProperty(Readable.prototype, key, {
+    __proto__: null,
+    value: fn,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
 
 export default Readable as unknown as typeof import("node:stream").Readable;

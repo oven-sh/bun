@@ -5662,8 +5662,6 @@ pub mod formatter {
             }
         }
 
-        /// Recursive step (nested values re-enter here), so it leaves
-        /// `remaining_values` alone. Top-level callers use [`Self::format_value`].
         #[inline(always)]
         pub fn format<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
@@ -5682,8 +5680,12 @@ pub mod formatter {
             self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
         }
 
-        /// Format one top-level value, returning the `JsError` if inspecting it
-        /// throws. [`ZigFormatter`] wraps this but can only report `fmt::Error`.
+        /// Format a single value into `writer`, propagating a JS exception
+        /// thrown while inspecting it (e.g. a throwing `[inspect.custom]`).
+        /// Use this instead of the `Display` adapter ([`ZigFormatter`]) when a
+        /// `JsResult` caller needs the error: `Display` can only report
+        /// `fmt::Error`, which panics inside `io::Write::write_fmt` when the
+        /// sink itself did not fail.
         pub fn format_value<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             value: JSValue,

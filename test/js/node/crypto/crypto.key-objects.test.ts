@@ -763,8 +763,9 @@ describe("crypto.KeyObjects", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("hash: noDeprecation getter\nmgf1Hash: noDeprecation getter\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 

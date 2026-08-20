@@ -174,7 +174,7 @@ test("a factory export getter that throws fails the import", async () => {
     },
     b: 2,
   }));
-  expect(async () => await import("mock-module-getter-throws")).toThrow("export getter");
+  await expect(import("mock-module-getter-throws")).rejects.toThrow("export getter");
 });
 
 test("a factory export getter that throws while patching an already-imported module throws from mock.module", async () => {
@@ -186,5 +186,6 @@ test("a factory export getter that throws while patching an already-imported mod
       },
     })),
   ).toThrow("export getter");
+  expect(spyFixture.iSpy).toBe(before);
   mock.module("./spymodule-fixture", () => ({ iSpy: before }));
 });

@@ -78,6 +78,6 @@ describe("CJS exports the ESM wrapper cannot enumerate", () => {
         ownKeys() { throw new Error("ownKeys trap"); },
       });`,
     });
-    expect(async () => await import(join(String(dir), "mod.cjs"))).toThrow("ownKeys trap");
+    await expect(import(join(String(dir), "mod.cjs"))).rejects.toThrow("ownKeys trap");
   });
 });

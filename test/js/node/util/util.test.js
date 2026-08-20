@@ -687,6 +687,10 @@ describe("util.diff", () => {
 
   it("accepts a mix of string and array", () => {
     expect(util.diff(["a"], "a")).toEqual([[0, "a"]]);
+    expect(util.diff("a", ["b"])).toEqual([
+      [1, "a"],
+      [-1, "b"],
+    ]);
   });
 
   it("returns [] for identical references without validating", () => {

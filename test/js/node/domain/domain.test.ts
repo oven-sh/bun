@@ -88,6 +88,91 @@ describe("node:domain", () => {
     expect(ee.domain).toBe(null);
   });
 
+  it("bind enters the domain, keeps this and args, and returns the result", () => {
+    const d = domain.create();
+    let activeInBind: unknown;
+    const receiver = {};
+    const bound = d.bind(function (this: unknown, a: number, b: number) {
+      activeInBind = domain.active;
+      expect(this).toBe(receiver);
+      return a + b;
+    });
+    expect(bound.call(receiver, 1, 2)).toBe(3);
+    expect(activeInBind).toBe(d);
+    expect(process.domain).toBeUndefined();
+
+    let seen: any;
+    d.on("error", (e: any) => {
+      seen = e;
+    });
+    const err = new Error("bound");
+    d.bind(() => {
+      throw err;
+    })();
+    expect(seen).toBe(err);
+  });
+
+  it("intercept routes a leading error argument and forwards the rest", () => {
+    const d = domain.create();
+    let seen: any;
+    d.on("error", (e: any) => {
+      seen = e;
+    });
+    let activeInIntercept: unknown;
+    const fn = d.intercept(function (data: number) {
+      activeInIntercept = domain.active;
+      return data * 2;
+    });
+    expect(fn(null, 21)).toBe(42);
+    expect(activeInIntercept).toBe(d);
+    expect(process.domain).toBeUndefined();
+
+    const err = new Error("intercepted");
+    fn(err);
+    expect(seen).toBe(err);
+  });
+
+  it("enter and exit maintain the domain stack", () => {
+    const a = domain.create();
+    const b = domain.create();
+    expect(a.enter()).toBe(a);
+    expect(process.domain).toBe(a);
+    expect(domain._stack).toEqual([a]);
+    b.enter();
+    expect(process.domain).toBe(b);
+    expect(domain.active).toBe(b);
+    expect(domain._stack).toEqual([a, b]);
+    // Exiting an outer domain unwinds everything above it too.
+    a.exit();
+    expect(domain._stack).toEqual([]);
+    expect(process.domain).toBeUndefined();
+    // exit() on a domain that is not in the stack is a no-op.
+    expect(b.exit()).toBe(b);
+    expect(domain._stack).toEqual([]);
+  });
+
+  it("dispose detaches members", () => {
+    const d = domain.create();
+    const ee = new EventEmitter();
+    d.add(ee);
+    expect(d.dispose()).toBe(d);
+    expect(d.members).toEqual([]);
+    expect(ee.domain).toBe(null);
+    expect(ee.listenerCount("error")).toBe(0);
+  });
+
+  it("run preserves falsy thrown values", () => {
+    const d = domain.create();
+    let seen: unknown = "unset";
+    d.on("error", (e: unknown) => {
+      seen = e;
+    });
+    d.run(() => {
+      throw 0;
+    });
+    expect(seen).toBe(0);
+  });
+
   it("add defines emitter.domain as non-enumerable like node", () => {
     const d = domain.create();
     const ee = new EventEmitter();

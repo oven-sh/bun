@@ -30,6 +30,7 @@ function setActive(d) {
 
 class Domain extends EventEmitter {
   members: any[];
+  [kEmitError]: (e?: any) => void;
 
   constructor() {
     super();
@@ -37,7 +38,7 @@ class Domain extends EventEmitter {
     const self = this;
     // A regular function so `this` is the emitter that emitted "error".
     this[kEmitError] = function emitError(e) {
-      e ||= $ERR_UNHANDLED_ERROR();
+      e ??= $ERR_UNHANDLED_ERROR();
       if (typeof e === "object") {
         e.domainEmitter = this;
         ObjectDefineProperty(e, "domain", {
@@ -80,29 +81,38 @@ class Domain extends EventEmitter {
   }
 
   bind(fn) {
+    const self = this;
     const emitError = this[kEmitError];
+    // Like node, the bound function runs inside the domain, keeps its `this`
+    // and arguments, and returns the result.
     return function () {
-      var args = Array.prototype.slice.$call(arguments);
+      self.enter();
       try {
-        fn.$apply(null, args);
+        return fn.$apply(this, arguments);
       } catch (err) {
         emitError(err);
+      } finally {
+        self.exit();
       }
     };
   }
 
   intercept(fn) {
+    const self = this;
     const emitError = this[kEmitError];
     return function (err) {
       if (err) {
         emitError(err);
-      } else {
-        var args = Array.prototype.slice.$call(arguments, 1);
-        try {
-          fn.$apply(null, args);
-        } catch (err) {
-          emitError(err);
-        }
+        return;
+      }
+      var args = Array.prototype.slice.$call(arguments, 1);
+      self.enter();
+      try {
+        return fn.$apply(this, args);
+      } catch (err) {
+        emitError(err);
+      } finally {
+        self.exit();
       }
     };
   }
@@ -121,6 +131,11 @@ class Domain extends EventEmitter {
   }
 
   dispose() {
+    // Detach members first so a disposed domain no longer receives their errors.
+    const members = this.members;
+    while (members.length !== 0) {
+      this.remove(members[members.length - 1]);
+    }
     this.removeAllListeners();
     return this;
   }

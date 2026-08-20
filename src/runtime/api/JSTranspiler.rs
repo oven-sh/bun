@@ -1115,68 +1115,80 @@ impl Drop for JSTranspiler {
 /// `Transpiler` at a stack-local `Arena`/`Log`; on EVERY exit (including `?`
 /// and early `return Err`) those must be restored before the locals drop, or
 /// the next method call dereferences a dangling allocator/log.
-struct TranspilerStateGuard {
-    transpiler: *mut Transpiler::Transpiler<'static>,
+///
+/// Borrowing the arena for `'a` makes dropck enforce that order for it. The
+/// log is not borrowed (`scan_imports` still uses the local while the guard is
+/// live), so the `Log` local relies on being declared before the guard.
+struct TranspilerStateGuard<'a> {
+    owner: &'a JSTranspiler,
+    _arena: core::marker::PhantomData<&'a Arena>,
     prev_arena: &'static Arena,
-    restore_log: *mut bun_ast::Log,
-    /// `Some(prev)` ⇒ also restore `macro_context` to `prev` (transformSync's
-    /// by-value snapshot). `None` ⇒ leave untouched (scan / scanImports only
-    /// restore log+allocator per spec).
-    prev_macro_context: Option<Option<JSAst::Macro::MacroContext>>,
+    macro_context: MacroRestore,
 }
 
-impl TranspilerStateGuard {
-    /// Mutable access to the guarded `Transpiler`.
-    ///
-    /// SAFETY: `self.transpiler` is always non-null — every construction site
-    /// initializes it from `js_transpiler.transpiler.as_ptr()` (the
-    /// `JsCell<Transpiler>` in the heap-stable `Box<JSTranspiler>`), which
-    /// outlives this stack-local guard. The guard is held as
-    /// `let _restore = ...;` and never touched between construction and `Drop`,
-    /// so no other `&mut Transpiler` projection from that `JsCell` is live when
-    /// this runs.
-    #[inline]
-    fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
-        // SAFETY: `self.transpiler` is non-null (set from `JsCell::as_ptr()` on the
-        // heap-stable `Box<JSTranspiler>`); the guard holds the only live `&mut`
-        // projection of that `JsCell` between construction and `Drop`.
-        unsafe { &mut *self.transpiler }
-    }
+/// What [`TranspilerStateGuard`] does with `transpiler.macro_context` on drop.
+enum MacroRestore {
+    /// `scan` / `scanImports` keep a context created during the call for reuse.
+    Leave,
+    /// `transformSync` parses with a fresh context (the caller `take()`s the
+    /// current one); on drop the fresh one is freed and this snapshot put back.
+    Restore(Option<JSAst::Macro::MacroContext>),
+}
 
-    /// Raw `*mut Log` to restore on drop. Returned as a pointer (not `&mut`)
-    /// because the sole consumer, `Transpiler::set_log`, takes `*mut Log`, and
-    /// the pointee (`js_transpiler.config.log`) is never dereferenced by the
-    /// guard itself.
-    #[inline]
-    fn restore_log_ptr(&self) -> *mut bun_ast::Log {
-        self.restore_log
+impl<'a> TranspilerStateGuard<'a> {
+    /// Points `owner.transpiler` at `arena` and `log` until the guard drops.
+    /// Also returns the `&'static Arena` handed to the transpiler, for the
+    /// `Transpiler<'static>` parse entry points; it is valid only while the
+    /// guard is live.
+    fn enter(
+        owner: &'a JSTranspiler,
+        arena: &'a Arena,
+        log: *mut bun_ast::Log,
+        macro_context: MacroRestore,
+    ) -> (Self, &'static Arena) {
+        // SAFETY: `owner.transpiler` holds this reference only until `Drop`
+        // swaps `prev_arena` back in, and the guard's `'a` borrow of `arena`
+        // guarantees that happens before `arena` is freed; callers use the
+        // returned copy only while the guard is live.
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(arena) };
+        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
+        let prev_arena = owner.transpiler.with_mut(|t| {
+            let prev = t.arena;
+            t.set_arena(arena_ref);
+            t.set_log(log);
+            prev
+        });
+        let guard = Self {
+            owner,
+            _arena: core::marker::PhantomData,
+            prev_arena,
+            macro_context,
+        };
+        (guard, arena_ref)
     }
 }
 
-impl Drop for TranspilerStateGuard {
+impl Drop for TranspilerStateGuard<'_> {
     fn drop(&mut self) {
-        // `transpiler` and `restore_log` point into the heap-stable
-        // `Box<JSTranspiler>` (`self.transpiler` / `self.config.log`) which
-        // outlives this stack frame. The guard is declared after the temporary
-        // arena/log and so drops before them (reverse-decl order), ensuring the
-        // Transpiler never observes a dangling `&'static Arena`.
-        let restore_log = self.restore_log_ptr();
+        let restore_log = self.owner.config_log_ptr();
         let prev_arena = self.prev_arena;
-        let prev_macro_context = self.prev_macro_context.take();
-        let transpiler = self.transpiler_mut();
-        transpiler.set_log(restore_log);
-        transpiler.arena = prev_arena;
-        if let Some(prev) = prev_macro_context {
-            // `transformSync` created a fresh MacroContext for this parse and
-            // stored it in `transpiler.macro_context`; the box behind its
-            // `data` pointer is heap-owned and `MacroContext` has no `Drop`,
-            // so overwriting it with `prev` would strand the box. Free it
-            // explicitly before restoring the outer state.
-            if let Some(new_ctx) = transpiler.macro_context.take() {
-                new_ctx.deinit();
+        let macro_context = core::mem::replace(&mut self.macro_context, MacroRestore::Leave);
+        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
+        self.owner.transpiler.with_mut(|transpiler| {
+            transpiler.set_log(restore_log);
+            transpiler.arena = prev_arena;
+            if let MacroRestore::Restore(prev) = macro_context {
+                // `transformSync` created a fresh MacroContext for this parse and
+                // stored it in `transpiler.macro_context`; the box behind its
+                // `data` pointer is heap-owned and `MacroContext` has no `Drop`,
+                // so overwriting it with `prev` would strand the box. Free it
+                // explicitly before restoring the outer state.
+                if let Some(new_ctx) = transpiler.macro_context.take() {
+                    new_ctx.deinit();
+                }
+                transpiler.macro_context = prev;
             }
-            transpiler.macro_context = prev;
-        }
+        });
     }
 }
 
@@ -1321,23 +1333,8 @@ impl JSTranspiler {
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
         // defer log.deinit() → Drop
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // `_restore` (declared after `arena`/`log`, so dropped first) restores
-        // `prev_arena` and `&self.config.log` before either local drops.
-        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-        let prev_arena = self.transpiler.with_mut(|t| {
-            let prev = t.arena;
-            t.set_arena(arena_ref);
-            t.set_log(&raw mut log);
-            prev
-        });
-        let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
-            prev_arena,
-            restore_log: self.config_log_ptr(),
-            prev_macro_context: None,
-        };
+        let (_restore, arena_ref) =
+            TranspilerStateGuard::enter(self, &arena, &raw mut log, MacroRestore::Leave);
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -1519,25 +1516,15 @@ impl JSTranspiler {
         // (`allocator`, `log`, `macro_context`) and restore them via RAII guard.
         let mut log = bun_ast::Log::init();
         log.level = self.config.get().log.level;
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // `_restore` (declared after `arena`/`log`, so dropped first) restores
-        // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-        let (prev_arena, prev_macro_context) = self.transpiler.with_mut(|t| {
-            let prev_arena = t.arena;
-            // `take()` both reads the prior value AND nulls it.
-            let prev_mc = t.macro_context.take();
-            t.set_arena(arena_ref);
-            t.set_log(&raw mut log);
-            (prev_arena, prev_mc)
-        });
-        let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
-            prev_arena,
-            restore_log: self.config_log_ptr(),
-            prev_macro_context: Some(prev_macro_context),
-        };
+        // `take()` both reads the prior value AND nulls it.
+        let prev_macro_context = self.transpiler.with_mut(|t| t.macro_context.take());
+        let (_restore, arena_ref) = TranspilerStateGuard::enter(
+            self,
+            &arena,
+            &raw mut log,
+            MacroRestore::Restore(prev_macro_context),
+        );
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
@@ -1705,24 +1692,8 @@ impl JSTranspiler {
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
         // defer log.deinit() → Drop
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // `_restore` (declared after `arena`/`log`, so dropped first) restores
-        // `prev_arena` and `&self.config.log` before either local drops.
-        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        let prev_arena = self.transpiler.with_mut(|t| {
-            let prev = t.arena;
-            // SAFETY: `arena` outlives every use through `t` — `_restore` below
-            // restores `prev_arena` before `arena` drops (reverse-decl order).
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
-            t.set_log(&raw mut log);
-            prev
-        });
-        let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
-            prev_arena,
-            restore_log: self.config_log_ptr(),
-            prev_macro_context: None,
-        };
+        let (_restore, _) =
+            TranspilerStateGuard::enter(self, &arena, &raw mut log, MacroRestore::Leave);
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();

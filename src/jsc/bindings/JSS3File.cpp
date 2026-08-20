@@ -49,9 +49,9 @@ static const HashTableValue JSS3FilePrototypeTableValues[] = {
     { "stat"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3File_stat, 1 } },
     { "bucket"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor | PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, getterS3File_bucket, 0 } },
 };
-class JSS3FilePrototype final : public WebCore::JSBlobPrototype {
+class JSS3FilePrototype final : public JSC::JSNonFinalObject {
 public:
-    using Base = WebCore::JSBlobPrototype;
+    using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSS3FilePrototype* create(
@@ -59,8 +59,8 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure)
     {
-        JSS3FilePrototype* prototype = new (NotNull, JSC::allocateCell<JSS3FilePrototype>(vm)) JSS3FilePrototype(vm, globalObject, structure);
-        prototype->finishCreation(vm, globalObject);
+        JSS3FilePrototype* prototype = new (NotNull, JSC::allocateCell<JSS3FilePrototype>(vm)) JSS3FilePrototype(vm, structure);
+        prototype->finishCreation(vm);
         return prototype;
     }
 
@@ -84,14 +84,14 @@ public:
     }
 
 protected:
-    JSS3FilePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, globalObject, structure)
+    JSS3FilePrototype(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
     {
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    void finishCreation(JSC::VM& vm)
     {
-        Base::finishCreation(vm, globalObject);
+        Base::finishCreation(vm);
         ASSERT(inherits(info()));
         reifyStaticProperties(vm, JSS3File::info(), JSS3FilePrototypeTableValues, *this);
 

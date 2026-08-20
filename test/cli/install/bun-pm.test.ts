@@ -1095,7 +1095,13 @@ test("bun pm cache rm does not create the directory named by a project-local .en
 for (const [title, envOverride, root] of [
   ["relative $BUN_INSTALL resolves against the cwd", { BUN_INSTALL: "rel-bun" }, ["rel-bun"]],
   ["empty $BUN_INSTALL falls through to $HOME", { BUN_INSTALL: "" }, ["fake-home", ".bun"]],
+  [
+    "empty $BUN_INSTALL falls through to a relative $XDG_CACHE_HOME",
+    { BUN_INSTALL: "", XDG_CACHE_HOME: "rel-xdg" },
+    ["rel-xdg", ".bun"],
+  ],
   ["relative $XDG_CACHE_HOME resolves against the cwd", { XDG_CACHE_HOME: "rel-xdg" }, ["rel-xdg", ".bun"]],
+  ["empty $XDG_CACHE_HOME falls through to $HOME", { XDG_CACHE_HOME: "" }, ["fake-home", ".bun"]],
   ["relative $HOME resolves against the cwd", { HOME: "rel-home", USERPROFILE: "rel-home" }, ["rel-home", ".bun"]],
   ["unset $BUN_INSTALL falls through to $HOME", {}, ["fake-home", ".bun"]],
 ] as const) {

@@ -17,8 +17,7 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
-/// `$XDG_CONFIG_HOME/.bunfig.toml`, else `$HOME/.bunfig.toml`. An empty
-/// variable is ignored. A relative one is resolved against `cwd`.
+/// `$XDG_CONFIG_HOME/.bunfig.toml`, else `$HOME/.bunfig.toml`; a relative directory is resolved against `cwd`.
 fn get_home_config_path<'b>(cwd: &[u8], buf: &'b mut PathBuffer) -> Option<&'b ZStr> {
     let config_dir = env_var::XDG_CONFIG_HOME
         .get_not_empty()
@@ -28,8 +27,7 @@ fn get_home_config_path<'b>(cwd: &[u8], buf: &'b mut PathBuffer) -> Option<&'b Z
     Some(ZStr::from_buf(&buf[..], len))
 }
 
-/// `Arguments::parse` records the cwd (after `--cwd`) before any config is
-/// loaded. Callers that do not go through it get the live cwd.
+/// Recorded by `Arguments::parse` (after `--cwd`); callers that skip it get the live cwd.
 fn absolute_working_dir(ctx: &mut ContextData) -> Option<&[u8]> {
     if ctx.args.absolute_working_dir.is_none() {
         let mut buf = PathBuffer::uninit();

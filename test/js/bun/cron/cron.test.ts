@@ -728,6 +728,7 @@ describe.skipIf(!isLinux)("crontab temp file (Linux)", () => {
       PATH: `${cwd}/fake-bin:${bunEnv.PATH}`,
       TMPDIR: "cron-tmp",
     };
+    delete env.BUN_TMPDIR;
     delete env.TMP;
     delete env.TEMP;
 

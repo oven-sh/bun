@@ -400,28 +400,35 @@ fn find_playwright_shell() -> Option<ZBox> {
     }
 
     // Build the binary path. Possible subdir layouts:
-    //   cft:     chrome-headless-shell-<plat>-<arch>/chrome-headless-shell
+    //   cft mac:   chrome-headless-shell-mac-<arch>/chrome-headless-shell
+    //   cft linux: chrome-headless-shell-linux64/chrome-headless-shell
     //   windows: chrome-headless-shell-win64/chrome-headless-shell.exe
     //   non-cft: chrome-linux/headless_shell   (linux arm64 only)
     #[cfg(windows)]
     let subdir_cft: &[u8] = b"chrome-headless-shell-win64/chrome-headless-shell.exe";
     #[cfg(not(windows))]
     let subdir_cft_owned: Vec<u8> = {
-        let arch: &str = if cfg!(target_arch = "aarch64") {
-            "arm64"
+        // Playwright's registry names each directory per platform, and linux x64 carries NO arch
+        // suffix (packages/playwright-core/src/server/registry/index.ts):
+        //   'linux-x64' -> chrome-headless-shell-linux64
+        //   'mac-x64'   -> chrome-headless-shell-mac-x64
+        //   'mac-arm64' -> chrome-headless-shell-mac-arm64
+        // linux arm64 has no CfT shell build; it uses the non-cft chrome-linux/headless_shell
+        // layout handled by the fallback below.
+        let plat_dir: &str = if cfg!(target_os = "macos") {
+            if cfg!(target_arch = "aarch64") {
+                "mac-arm64"
+            } else {
+                "mac-x64"
+            }
         } else {
-            "x64"
-        };
-        let plat: &str = if cfg!(target_os = "macos") {
-            "mac"
-        } else {
-            "linux"
+            "linux64"
         };
         let mut v: Vec<u8> = Vec::new();
         write!(
             &mut v,
-            "chrome-headless-shell-{}-{}/chrome-headless-shell",
-            plat, arch
+            "chrome-headless-shell-{}/chrome-headless-shell",
+            plat_dir
         )
         .ok()?;
         v

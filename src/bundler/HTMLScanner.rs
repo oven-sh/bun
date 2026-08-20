@@ -9,6 +9,12 @@ use bun_ast::{Loc, Log, Range, Source};
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
+
+/// The single `lol_html::OutputSink` type every Bun `HtmlRewriter` is built
+/// with (here and in `HTMLRewriter`), so lol_html's rewriter/tokenizer
+/// machinery is instantiated once rather than once per sink closure type. The
+/// per-chunk indirect call matches what the lol-html C API sink always did.
+pub type OutputSink<'a> = Box<dyn FnMut(&[u8]) + 'a>;
 use lol_html::html_content::Element;
 
 bun_core::declare_scope!(HTMLScanner, hidden);
@@ -343,12 +349,12 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         // lol-html signals end-of-document with one zero-length chunk; the
         // C-API sink routed that to a no-op `done()`, never to `on_write_html`.
-        let output_sink = move |chunk: &[u8]| {
+        let output_sink: OutputSink<'_> = Box::new(move |chunk: &[u8]| {
             if !chunk.is_empty() {
                 // SAFETY: see `on_tag` above.
                 unsafe { (*this_ptr).on_write_html(chunk) }
             }
-        };
+        });
 
         // The rewriter — the sole holder of `this_ptr`-derived aliases — is
         // consumed (or dropped on a failed `write`) inside this closure, so

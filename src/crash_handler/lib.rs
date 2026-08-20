@@ -399,53 +399,54 @@ pub use bun_io::{FmtAdapter, Write};
 /// `bun_sys::stderr_writer()` (not yet exposed by T1).
 /// Only impls `bun_io::Write` — `write!` resolves to `bun_io::Write::write_fmt`
 /// (alloc-free stack `Bridge`, async-signal-safe).
+///
+/// Waits for a full stderr but never returns `Err` for an unwritable one:
+/// callers `abort()` on `Err`, skipping the report upload and signal re-raise.
+/// Signal-safe: `bun_sys::write`/`posix::poll` are bare syscalls (on Windows a
+/// bare `WriteFile`, not the CRT, whose per-fd lock a VEH handler can deadlock
+/// on) and `bun_sys::Error` does not allocate.
 pub(crate) struct StderrWriter;
 pub(crate) fn stderr_writer() -> StderrWriter {
     StderrWriter
 }
 impl Write for StderrWriter {
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        #[cfg(windows)]
-        {
-            // On Windows this is `GetStdHandle(STD_ERROR_HANDLE)` + kernel32
-            // `WriteFile`, NOT the CRT. Routing through MSVCRT `_write(2,…)`
-            // would (1) text-mode-translate `\n`→`\r\n` and (2) take the CRT
-            // per-fd lock, which can self-deadlock when the VEH crash handler
-            // fires on a thread that faulted *inside* CRT stdio. WriteFile is
-            // lock-free at the kernel32 layer.
-            // `WriteFile` is declared locally because `bun_windows_sys::
-            // kernel32` does not (yet) export it (cf. src/sys/lib.rs).
-            #[link(name = "kernel32")]
-            unsafe extern "system" {
-                fn WriteFile(
-                    hFile: bun_sys::windows::HANDLE,
-                    lpBuffer: *const u8,
-                    nNumberOfBytesToWrite: u32,
-                    lpNumberOfBytesWritten: *mut u32,
-                    lpOverlapped: *mut core::ffi::c_void,
-                ) -> i32;
-            }
-            let h = bun_sys::windows::kernel32::GetStdHandle(bun_sys::windows::STD_ERROR_HANDLE);
-            let mut written: u32 = 0;
-            // SAFETY: `h` is the cached stderr HANDLE (or INVALID_HANDLE_VALUE,
-            // in which case WriteFile fails harmlessly); `bytes` is valid for
-            // reads of `len`; `written` is a valid out-pointer; lpOverlapped
-            // is null for synchronous I/O.
-            unsafe {
-                WriteFile(
-                    h,
-                    bytes.as_ptr(),
-                    bytes.len() as u32,
-                    &mut written,
-                    core::ptr::null_mut(),
-                );
-            }
-        }
+    fn write_all(&mut self, mut bytes: &[u8]) -> bun_io::Result<()> {
         #[cfg(not(windows))]
-        {
-            // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
-            unsafe {
-                libc::write(2, bytes.as_ptr().cast(), bytes.len() as _);
+        let stderr = bun_sys::Fd::stderr();
+        // Not `Fd::stderr()`: its cache is filled by `Output`'s stdio init,
+        // which runs after the crash handler is installed.
+        #[cfg(windows)]
+        let Some(stderr) = bun_sys::windows::GetStdHandle(bun_sys::windows::STD_ERROR_HANDLE)
+            .map(bun_sys::Fd::from_system)
+        else {
+            return Ok(());
+        };
+        while !bytes.is_empty() {
+            match bun_sys::write(stderr, bytes) {
+                Ok(0) => break,
+                Ok(n) => bytes = &bytes[n..],
+                Err(err) => match err.get_errno() {
+                    // `bun_sys::write` only retries EINTR on Linux; macOS issues
+                    // `write$NOCANCEL` once.
+                    #[cfg(unix)]
+                    bun_sys::E::EINTR => {}
+                    // A piped fd 2 is O_NONBLOCK once `process.stderr` has used
+                    // it (the flag is on the shared open file description).
+                    // Full only means the reader is behind: wait like a blocking
+                    // stderr would instead of dropping the report.
+                    #[cfg(unix)]
+                    bun_sys::E::EAGAIN => {
+                        let mut pfd = [bun_sys::posix::PollFd {
+                            fd: stderr.native(),
+                            events: bun_sys::posix::POLL_OUT,
+                            revents: 0,
+                        }];
+                        if bun_sys::posix::poll(&mut pfd, -1).is_err() {
+                            break;
+                        }
+                    }
+                    _ => break,
+                },
             }
         }
         Ok(())

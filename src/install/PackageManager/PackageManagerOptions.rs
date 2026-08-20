@@ -357,6 +357,9 @@ fn make_open_global_path(root: &[u8], parts: &[&[u8]]) -> crate::Result<bun_sys:
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
     use bun_sys::{Dir, OpenDirOptions};
 
+    // Resolved here even when an explicit directory wins below: `open_global_bin_dir` runs after the `-g` chdir.
+    let root = global_install_root();
+
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get_not_empty() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
@@ -371,7 +374,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
             .map_err(Into::into);
     }
 
-    match global_install_root() {
+    match root {
         Some(root) => make_open_global_path(root, &[b"install", b"global"]),
         None => Err(crate::Error::NoGlobalDirectoryFound),
     }

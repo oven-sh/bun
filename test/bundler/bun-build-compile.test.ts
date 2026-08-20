@@ -951,10 +951,11 @@ describe("compile target download cache", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    // The build then fails to turn the fake download into a program. Only where the
-    // download was stored matters here.
-    await proc.exited;
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // The build fails later, when the fake download is turned into a program. The
+    // download itself has to succeed and land in the cache.
+    expect(stderr).not.toMatch(/download|corrupted/i);
     expect(requests).toEqual(["/bun.tgz"]);
     expect(readdirSync(join(cwd, "bun-install", "install", "cache"))).toEqual([expect.stringMatching(/^bun-linux-/)]);
     expect(existsSync(join(cwd, "home"))).toBe(false);

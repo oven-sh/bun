@@ -89,7 +89,10 @@ pub(crate) fn exec(
         .iter()
         .map(|&arg| {
             use bun_paths::resolve_path::{join_abs_string, platform};
-            match (arg.strip_prefix(b"~/"), bun_core::env_var::HOME.get_not_empty()) {
+            match (
+                arg.strip_prefix(b"~/"),
+                bun_core::env_var::HOME.get_not_empty(),
+            ) {
                 (Some(rest), Some(home)) => {
                     join_abs_string::<platform::Auto>(original_cwd, &[home, rest]).to_vec()
                 }

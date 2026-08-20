@@ -977,7 +977,8 @@ pub(crate) fn to_bytes(
         };
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
-            if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get_not_empty()
+            if let Some(dump_code_dir) =
+                bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get_not_empty()
             {
                 // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
                 // every `..` segment here so the on-disk dump can't escape

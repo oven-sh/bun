@@ -124,13 +124,12 @@ impl SloppyGlobalGitConfig {
 
         let mut config_file_path_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [home_dir, b".gitconfig"];
-        let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
-            bun_paths::platform::Auto,
-        >(
-            bun_resolver::fs::FileSystem::get().top_level_dir(),
-            &mut config_file_path_buf,
-            &parts,
-        );
+        let config_file_path =
+            bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+                bun_resolver::fs::FileSystem::get().top_level_dir(),
+                &mut config_file_path_buf,
+                &parts,
+            );
         // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
         let Ok(source) = bun_ast::to_source(
             config_file_path,

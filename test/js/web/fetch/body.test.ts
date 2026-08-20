@@ -1335,21 +1335,22 @@ test("a fetch() Response still reports the Content-Length after .body created th
 // hand out an empty stream instead, so reading it used the body up and clone()
 // threw afterwards.
 describe.concurrent("a fetch() Response that cannot have a body", () => {
-  // Every response closes its connection, so each fetch() below gets its own
-  // socket and the server answers exactly one request per socket. The HEAD
-  // answer carries the Content-Length of the GET body, as RFC 9110 section 9.3.2
-  // wants. RFC 9110 section 15.3.6 forbids content on a 205, but HTTP/1.1 framing
-  // can still carry it, and the bytes must then be received and dropped.
-  const wire: Record<string, string> = {
-    "/204": "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
-    "/205": "HTTP/1.1 205 Reset Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-    "/205-with-content": "HTTP/1.1 205 Reset Content\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
-    "/304": 'HTTP/1.1 304 Not Modified\r\nETag: "x"\r\nConnection: close\r\n\r\n',
-    "/head": "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n",
-    "/empty": "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+  // The HEAD answer carries the Content-Length of the GET body, as RFC 9110
+  // section 9.3.2 wants. RFC 9110 section 15.3.6 forbids content on a 205, but
+  // HTTP/1.1 framing can still carry it, and the bytes must then be received and
+  // dropped. Every answer closes its connection, so each fetch() below gets its
+  // own socket.
+  const wire = {
+    noContent: "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
+    resetContent: "HTTP/1.1 205 Reset Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    resetContentWithContent: "HTTP/1.1 205 Reset Content\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+    notModified: 'HTTP/1.1 304 Not Modified\r\nETag: "x"\r\nConnection: close\r\n\r\n',
+    toHead: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n",
+    emptyContent: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
   };
 
-  function listen() {
+  // Answers the one request it gets with `answer`, once the request head is in.
+  function listen(answer: string) {
     return Bun.listen<{ request: string }>({
       hostname: "127.0.0.1",
       port: 0,
@@ -1359,23 +1360,21 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
         },
         data(socket, data) {
           socket.data.request += data.toString("latin1");
-          if (!socket.data.request.includes("\r\n\r\n")) return;
-          const target = socket.data.request.split(" ")[1];
-          socket.end(wire[target]);
+          if (socket.data.request.includes("\r\n\r\n")) socket.end(answer);
         },
       },
     });
   }
 
   test.each([
-    ["204", "/204", undefined, 204, null],
-    ["205", "/205", undefined, 205, "0"],
-    ["205 whose server sent content anyway", "/205-with-content", undefined, 205, "5"],
-    ["304", "/304", undefined, 304, null],
-    ["200 to a HEAD request", "/head", { method: "HEAD" }, 200, "5"],
-  ])("%s: the body is null and reading it does not use it up", async (_, path, init, status, contentLength) => {
-    using listener = listen();
-    const response = await fetch(`http://127.0.0.1:${listener.port}${path}`, init);
+    ["204", wire.noContent, undefined, 204, null],
+    ["205", wire.resetContent, undefined, 205, "0"],
+    ["205 whose server sent content anyway", wire.resetContentWithContent, undefined, 205, "5"],
+    ["304", wire.notModified, undefined, 304, null],
+    ["200 to a HEAD request", wire.toHead, { method: "HEAD" }, 200, "5"],
+  ])("%s: the body is null and reading it does not use it up", async (_, answer, init, status, contentLength) => {
+    using listener = listen(answer);
+    const response = await fetch(`http://127.0.0.1:${listener.port}/`, init);
     await expect(response.json()).rejects.toThrow(SyntaxError);
     expect({
       status: response.status,
@@ -1397,20 +1396,20 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
   });
 
   test("a 200 with empty content still has a body", async () => {
-    using listener = listen();
-    const response = await fetch(`http://127.0.0.1:${listener.port}/empty`);
+    using listener = listen(wire.emptyContent);
+    const response = await fetch(`http://127.0.0.1:${listener.port}/`);
     expect(response.body).toBeInstanceOf(ReadableStream);
     expect(await response.text()).toBe("");
     expect(response.bodyUsed).toBe(true);
   });
 
   test.each([
-    ["204", "/204", undefined],
-    ["200 to a HEAD request", "/head", { method: "HEAD" }],
-  ])("%s: an abort after the response arrived has no body to error", async (_, path, init) => {
-    using listener = listen();
+    ["204", wire.noContent, undefined],
+    ["200 to a HEAD request", wire.toHead, { method: "HEAD" }],
+  ])("%s: an abort after the response arrived has no body to error", async (_, answer, init) => {
+    using listener = listen(answer);
     const controller = new AbortController();
-    const response = await fetch(`http://127.0.0.1:${listener.port}${path}`, { ...init, signal: controller.signal });
+    const response = await fetch(`http://127.0.0.1:${listener.port}/`, { ...init, signal: controller.signal });
     controller.abort();
     expect(response.body).toBeNull();
     expect(await response.text()).toBe("");

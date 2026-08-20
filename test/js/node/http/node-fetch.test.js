@@ -111,11 +111,12 @@ test("node-fetch gives a fetched response without a body an empty stream", async
     const result = await fetch2(new URL(path, server.url), init);
     expect(result.status).toBe(status);
     expect(webBody.call(result)).toBeNull();
-    expect(result.body).toBeInstanceOf(stream.Readable);
-    expect(result.body === result.body).toBe(true); // cached lazy getter
+    const body = result.body;
+    expect(body).toBeInstanceOf(stream.Readable);
+    expect(result.body).toBe(body); // cached lazy getter
     expect(result.clone().body).toBeInstanceOf(stream.Readable);
     const chunks = [];
-    for await (const chunk of result.body) {
+    for await (const chunk of body) {
       chunks.push(chunk);
     }
     expect(chunks).toEqual([]);

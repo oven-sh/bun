@@ -245,11 +245,41 @@ test.concurrent(".env export assign", async () => {
 
 test.concurrent(".env value expansion", async () => {
   using dir = tempDir("dotenv-expand", {
-    ".env": "FOO=foo\nBAR=$FOO bar\nMOO=${FOO} ${BAR:-fail} ${MOZ:-moo}",
+    ".env": "FOO=foo\nBAR=`$FOO bar`\nMOO=`${FOO} ${BAR:-fail} ${MOZ:-moo}`",
     "index.ts": "console.log([process.env.FOO, process.env.BAR, process.env.MOO].join('|'));",
   });
   const { stdout } = await bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
+});
+
+test.concurrent(".env value expansion respects quote style", async () => {
+  using dir = tempDir("dotenv-expand-quotes", {
+    ".env": [
+      "VAR=world",
+      "UNQUOTED=hello$VAR",
+      'DOUBLE="hello$VAR"',
+      "SINGLE='hello$VAR'",
+      "PASSWORD=uiA$VAR@YGBU",
+      "BACKTICK=`hello$VAR`",
+      "SPACED=   `hello$VAR`",
+      "REASSIGNED=`hello$VAR`",
+      'REASSIGNED="hello$VAR"',
+    ].join("\n"),
+    "index.ts":
+      "console.log(JSON.stringify([process.env.UNQUOTED, process.env.DOUBLE, process.env.SINGLE, process.env.PASSWORD, process.env.BACKTICK, process.env.SPACED, process.env.REASSIGNED]));",
+  });
+  const { stdout, stderr, exitCode } = await bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual([
+    "helloworld",
+    "hello$VAR",
+    "hello$VAR",
+    "uiAworld@YGBU",
+    "helloworld",
+    "helloworld",
+    "hello$VAR",
+  ]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test(".env ${VAR:-default} with nested references (issue #32411)", async () => {
@@ -260,23 +290,23 @@ test(".env ${VAR:-default} with nested references (issue #32411)", async () => {
     ".env": [
       "NSTD_FALLBACK=localhost",
       "NSTD_SET=hi",
-      "NSTD_HOST=${NSTD_UNSET:-${NSTD_FALLBACK}}",
-      "NSTD_EMPTY=${NSTD_UNSET:-${NSTD_ALSO_UNSET}}",
-      "NSTD_DEEP=${NSTD_UNSET:-${NSTD_ALSO_UNSET:-c}}",
-      "NSTD_PREFIX=${NSTD_UNSET:-x${NSTD_ALSO_UNSET}}",
-      'NSTD_QUOTED="${NSTD_UNSET:-${NSTD_ALSO_UNSET:-${NSTD_FALLBACK}}}suffix"',
-      "NSTD_SET_WINS=${NSTD_SET:-${NSTD_ALSO_UNSET}}",
-      "NSTD_BARE=${NSTD_UNSET:-$NSTD_FALLBACK}",
-      "NSTD_DOLLAR=${NSTD_UNSET:-$}",
-      "NSTD_DUBL=$${NSTD_UNSET:-${NSTD_FALLBACK}}",
-      "NSTD_NOKEY=${:-${NSTD_FALLBACK}}",
-      "NSTD_AROUND=pre${NSTD_UNSET:-$NSTD_FALLBACK}post",
-      "NSTD_TWO=${NSTD_FALLBACK}${NSTD_UNSET:-$NSTD_FALLBACK}",
-      "NSTD_PATH=$NSTD_FALLBACK/${NSTD_UNSET:-$NSTD_FALLBACK}/x",
-      "NSTD_UNTERM=${NSTD_UNSET:-${",
-      "NSTD_UNTERM2=${NSTD_UNSET",
-      "NSTD_BSLASH=${NSTD_UNSET:-a\\b}",
-      "NSTD_DASH=${NSTD_UNSET-${NSTD_FALLBACK}}",
+      "NSTD_HOST=`${NSTD_UNSET:-${NSTD_FALLBACK}}`",
+      "NSTD_EMPTY=`${NSTD_UNSET:-${NSTD_ALSO_UNSET}}`",
+      "NSTD_DEEP=`${NSTD_UNSET:-${NSTD_ALSO_UNSET:-c}}`",
+      "NSTD_PREFIX=`${NSTD_UNSET:-x${NSTD_ALSO_UNSET}}`",
+      "NSTD_QUOTED=`${NSTD_UNSET:-${NSTD_ALSO_UNSET:-${NSTD_FALLBACK}}}suffix`",
+      "NSTD_SET_WINS=`${NSTD_SET:-${NSTD_ALSO_UNSET}}`",
+      "NSTD_BARE=`${NSTD_UNSET:-$NSTD_FALLBACK}`",
+      "NSTD_DOLLAR=`${NSTD_UNSET:-$}`",
+      "NSTD_DUBL=`$${NSTD_UNSET:-${NSTD_FALLBACK}}`",
+      "NSTD_NOKEY=`${:-${NSTD_FALLBACK}}`",
+      "NSTD_AROUND=`pre${NSTD_UNSET:-$NSTD_FALLBACK}post`",
+      "NSTD_TWO=`${NSTD_FALLBACK}${NSTD_UNSET:-$NSTD_FALLBACK}`",
+      "NSTD_PATH=`$NSTD_FALLBACK/${NSTD_UNSET:-$NSTD_FALLBACK}/x`",
+      "NSTD_UNTERM=`${NSTD_UNSET:-${`",
+      "NSTD_UNTERM2=`${NSTD_UNSET`",
+      "NSTD_BSLASH=`${NSTD_UNSET:-a\\b}`",
+      "NSTD_DASH=`${NSTD_UNSET-${NSTD_FALLBACK}}`",
     ].join("\n"),
     "index.ts":
       "const keys = process.argv.slice(2);" +

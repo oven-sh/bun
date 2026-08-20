@@ -34,10 +34,6 @@ export default [
         fn: "markBusy",
         length: 1,
       },
-      ref: {
-        fn: "doRef",
-        length: 1,
-      },
       setSNIContexts: {
         fn: "setSniContexts",
         length: 2,
@@ -86,10 +82,6 @@ export default [
       gracefulClose: {
         fn: "gracefulClose",
         length: 1,
-      },
-      silentClose: {
-        fn: "silentClose",
-        length: 0,
       },
       updateKey: {
         fn: "updateKey",

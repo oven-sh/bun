@@ -1,7 +1,7 @@
 use crate::webcore::streams::{self, SourceHandle};
 use bun_collections::{ByteVecExt, VecExt};
 use bun_jsc::HostReturn as _;
-use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
+use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue};
 use bun_sys as syscall;
 
 // The "ArrayBufferSink" symbol-name concatenation lives in the `JsSinkAbi`
@@ -124,38 +124,6 @@ impl ArrayBufferSink {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn to_js(
-        &mut self,
-        global_this: &JSGlobalObject,
-        as_uint8array: bool,
-    ) -> JsResult<JSValue> {
-        if self.streaming {
-            // Propagate the JS exception explicitly.
-            let value: JSValue = if as_uint8array {
-                ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, self.bytes.slice())?
-            } else {
-                ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, self.bytes.slice())?
-            };
-            self.bytes.clear();
-            return Ok(value);
-        }
-
-        // Take ownership of the bytes, leaving an empty Vec in place.
-        let mut bytes = core::mem::take(&mut self.bytes);
-        // `to_js_unchecked`, not `to_js`: `to_js`'s `mi_is_in_heap_region`
-        // probe skips the deallocator when the global allocator isn't mimalloc.
-        let owned = bytes.to_owned_slice();
-        ArrayBuffer::from_owned_bytes(
-            owned,
-            if as_uint8array {
-                JSType::Uint8Array
-            } else {
-                JSType::ArrayBuffer
-            },
-        )
-        .to_js_unchecked(global_this)
-    }
-
     pub(crate) fn end_from_js(
         &mut self,
         _global_this: &JSGlobalObject,
@@ -168,9 +136,9 @@ impl ArrayBufferSink {
         self.source.close(None);
         // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
         let mut bytes = core::mem::take(&mut self.bytes);
-        // Ownership transfers to JSC; the caller wraps the returned
-        // `ArrayBuffer` in `.to_js()` which installs `MarkedArrayBuffer_deallocator`
-        // (frees via `mi_free` on GC). See `to_js` above.
+        // Ownership transfers to JSC: the trait impl below converts the returned
+        // `ArrayBuffer` with `to_js_unchecked`, which installs
+        // `MarkedArrayBuffer_deallocator` (frees via `mi_free` on GC).
         let owned = bytes.to_owned_slice();
         Ok(ArrayBuffer::from_owned_bytes(
             owned,
@@ -210,6 +178,8 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, global) {
+            // Not `to_js`: its `mi_is_in_heap_region` probe would skip the
+            // deallocator when the global allocator isn't mimalloc.
             bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(global) {
                 Ok(v) => v,
                 Err(_) => JSValue::ZERO,
@@ -219,8 +189,5 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
-    }
-    fn done(&self) -> bool {
-        self.done
     }
 }

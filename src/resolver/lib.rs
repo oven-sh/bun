@@ -282,8 +282,7 @@ pub mod fs {
                 Some(d) => DirnameStore::instance().append_slice(d)?,
                 None => {
                     let mut buf = bun_paths::PathBuffer::default();
-                    let n = bun_sys::getcwd(&mut buf[..])?;
-                    DirnameStore::instance().append_slice(&buf[..n])?
+                    DirnameStore::instance().append_slice(bun_core::getcwd(&mut buf)?.as_bytes())?
                 }
             };
             // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the
@@ -349,13 +348,6 @@ pub mod fs {
         pub fn abs_buf_checked<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
-        }
-
-        /// Like `abs_buf` but writes a
-        /// NUL sentinel and returns a `ZStr` borrowing `buf`.
-        pub fn abs_buf_z<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b ZStr {
-            use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
-            join_abs_string_buf_z::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
@@ -886,6 +878,13 @@ pub mod fs {
         // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
 
+        pub(crate) fn as_entries(&self) -> Option<&DirEntry> {
+            match self {
+                EntriesOption::Entries(entries) => Some(&**entries),
+                EntriesOption::Err(_) => None,
+            }
+        }
+
         /// Probe the cached listing for `query` and return the lookup plus the
         /// listing fd, in one `entries_mutex` critical section. A
         /// stale-generation re-read rewrites the slot's `DirEntry` (and frees
@@ -1367,7 +1366,7 @@ pub mod fs {
             existing_fd: Fd,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            use bun_paths::resolve_path::{join_abs_string_buf, platform};
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
 
@@ -1379,8 +1378,15 @@ pub mod fs {
 
             let combo: [&[u8]; 2] = [dir_, base];
             let mut outpath = bun_paths::PathBuffer::uninit();
-            let entry_path_len =
-                join_abs_string_buf::<platform::Auto>(self.cwd, &mut outpath[..], &combo).len();
+            let join_capacity = outpath.len() - 2;
+            let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
+                self.cwd,
+                &mut outpath[..join_capacity],
+                &combo,
+            ) else {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            };
+            let entry_path_len = entry_path.len();
 
             outpath[entry_path_len + 1] = 0;
             outpath[entry_path_len] = 0;

@@ -146,13 +146,6 @@ impl SocketGroup {
         self.ext.cast::<T>()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.head_sockets.is_null()
-            && self.head_connecting_sockets.is_null()
-            && self.head_listen_sockets.is_null()
-            && self.low_prio_count == 0
-    }
-
     pub fn listen(
         &mut self,
         kind: SocketKind,

@@ -208,7 +208,7 @@ impl<'a> Writable<'a> {
                             bun_sys::Result::Err(_err) => {
                                 Self::pipe_release(pipe_nn);
                                 if let Stdio::ReadableStream(rs) = stdio {
-                                    rs.cancel(global);
+                                    rs.cancel(global)?;
                                 }
                                 return Err(crate::Error::UnexpectedCreatingStdin);
                             }
@@ -307,7 +307,7 @@ impl<'a> Writable<'a> {
                     bun_sys::Result::Err(_err) => {
                         Self::pipe_release(pipe_nn);
                         if let Stdio::ReadableStream(rs) = stdio {
-                            rs.cancel(global);
+                            rs.cancel(global)?;
                         }
 
                         return Err(crate::Error::UnexpectedCreatingStdin);
@@ -422,7 +422,7 @@ impl<'a> Writable<'a> {
                         .contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
                 {
                     // `Writable::init()` already called `subprocess.ref()` and
-                    // set `deref_on_stdin_destroyed`. `on_attached_process_exit()`
+                    // set `DEREF_ON_STDIN_DESTROYED`. `on_attached_process_exit()`
                     // → `writer.close()` → `pipe.source` → `Writable::on_close`
                     // → `on_stdin_destroyed()` balances that ref, so a ref-count
                     // drop across this call is expected (previously these

@@ -6,6 +6,7 @@ const {
   SQLQueryFlags,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
+const AsyncContextFrame = require("internal/async_context_frame");
 
 declare global {
   interface NumberConstructor {
@@ -660,7 +661,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     try {
       // user code; a throw must not abort the pool bookkeeping below
       if (connectionInfo?.onconnect) {
-        connectionInfo.onconnect(err);
+        AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onconnect, connectionInfo, err);
       }
     } finally {
       this.storedError = err;
@@ -761,7 +762,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     try {
       // user code; a throw must not abort the pool bookkeeping below
       if (connectionInfo?.onclose) {
-        connectionInfo.onclose(err);
+        AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onclose, connectionInfo, err);
       }
     } finally {
       this.state = PooledConnectionState.closed;
@@ -771,7 +772,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.adapter.readyConnections.delete(this);
       const queries = new Set(this.queries);
       this.queries?.clear?.();
-      this.queryCount = 0;
       this.flags &= ~PooledConnectionFlags.reserved;
 
       // notify all queries that the connection is closed
@@ -927,9 +927,15 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   public closed: boolean = false;
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
+  /// AsyncLocalStorage context the SQL instance was created in. onconnect/onclose run
+  /// inside it rather than in whatever context the native callback happens to fire in
+  /// (none for a socket event, the close() caller's when the socket closes synchronously).
+  public readonly callbackAsyncContext: unknown;
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
+    this.callbackAsyncContext =
+      connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
     // Slots are filled one at a time in connect()'s pool-start loop, and
     // createPooledConnection can synchronously run user code (for example a
     // function-valued `password`) that re-enters methods scanning this array,
@@ -987,6 +993,53 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   supportsReservedConnections() {
     return true;
+  }
+
+  /// Removes a pending reserve callback that is still waiting for a
+  /// connection. Returns false when the callback already ran (the caller owns
+  /// a connection and must release() it) or was never queued.
+  cancelReserve(onConnected: (err: Error | null, result: any) => void): boolean {
+    const index = this.reservedQueue.indexOf(onConnected);
+    if (index === -1) {
+      return false;
+    }
+    this.reservedQueue.splice(index, 1);
+    this.#dropExcessPreReservations();
+    // the cancelled reservation may have been the last pending work; a
+    // graceful close() is waiting on this callback
+    if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+      this.onAllQueriesFinished();
+    }
+    return true;
+  }
+
+  /// preReserved marks are not tied to a specific reservation. When a
+  /// reservation leaves reservedQueue without taking a marked connection
+  /// (cancelled, or an unmarked connection went idle first), the mark would
+  /// keep queries off that connection until it happens to go idle, which is
+  /// the only point where release() clears it. Keep at most one mark per
+  /// reservation still queued.
+  #dropExcessPreReservations() {
+    const preReserved: PooledConnection[] = [];
+    const pollSize = this.connections.length;
+    for (let i = 0; i < pollSize; i++) {
+      const connection = this.connections[i];
+      // unassigned holes while the pool is starting, null once it is closed
+      if (connection && connection.flags & PooledConnectionFlags.preReserved) {
+        preReserved.push(connection);
+      }
+    }
+    const excess = preReserved.length - this.reservedQueue.length;
+    if (excess <= 0) {
+      return;
+    }
+    // the connections closest to idle serve the remaining reservations
+    // soonest, so give up the busiest marks first
+    preReserved.sort((a, b) => b.queryCount - a.queryCount);
+    for (let i = 0; i < excess; i++) {
+      preReserved[i].flags &= ~PooledConnectionFlags.preReserved;
+    }
+    this.flushConcurrentQueries();
   }
 
   getConnectionForQuery(pooledConnection: PooledConnection) {
@@ -1126,6 +1179,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         this.readyConnections.delete(connection);
         // we have a connection waiting for a reserved connection lets prioritize it
         pendingReserved(connection.storedError, connection);
+        // the reservation may have been draining a different connection
+        this.#dropExcessPreReservations();
         return;
       }
     }
@@ -1234,19 +1289,27 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return Promise.all(promises);
   }
 
+  /** Runs from close() after `closed` is set; overridden by Postgres for its LISTEN connection. */
+  protected closeDedicatedConnections(): void {}
+
   async close(options?: { timeout?: number }): Promise<void> {
     if (this.closed) {
       return;
     }
 
     let timeout = options?.timeout;
-    if (timeout) {
+    const hasTimeout = !!timeout;
+    if (hasTimeout) {
       timeout = Number(timeout);
       if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
       }
+    }
 
-      this.closed = true;
+    this.closed = true;
+    this.closeDedicatedConnections();
+
+    if (hasTimeout) {
       if (timeout === 0 || !this.hasPendingQueries()) {
         // close immediately
         await this.#close();
@@ -1268,7 +1331,6 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
       return promise;
     } else {
-      this.closed = true;
       if (!this.hasPendingQueries()) {
         // close immediately
         await this.#close();
@@ -1374,8 +1436,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
           continue;
         const queryCount = connection.queryCount;
-        if (queryCount > 0) {
-          if (queryCount < leastQueries) {
+        if (queryCount !== 0) {
+          if (queryCount > 0 && queryCount < leastQueries) {
             leastQueries = queryCount;
             connectionWithLeastQueries = connection;
           }
@@ -2144,6 +2206,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   get closed(): boolean;
 
   supportsReservedConnections?(): boolean;
+  cancelReserve?(onConnected: OnConnected<Connection>): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
   attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;

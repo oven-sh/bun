@@ -320,9 +320,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Output::flush();
         }
 
-        let _ctrl_c = crate::api::bun_process::sync::LeaveCtrlCToChildren::install();
-
         if !use_system_shell {
+            let _ctrl_c = crate::api::bun_process::sync::LeaveCtrlCToChildren::install();
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
             let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -2070,7 +2069,6 @@ impl RunCommand {
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
-        let _ctrl_c = sync::LeaveCtrlCToChildren::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(executable_z.as_ptr().cast::<c_char>()),

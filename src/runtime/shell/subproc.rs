@@ -781,7 +781,10 @@ impl ShellSubprocess {
         };
 
         let mut spawn_result = spawn_result;
-        let ctrl_c_child = bun_process::sync::CtrlCChild::enter();
+        #[cfg(unix)]
+        let ctrl_c_child = bun_process::sync::CtrlCChild::enter(spawn_result.pid);
+        #[cfg(windows)]
+        let ctrl_c_child = bun_process::sync::CtrlCChild::enter(0);
 
         // Note: Stdio impls Drop, so move out via mem::replace instead of clone.
         let stdio0 = core::mem::replace(&mut stdio_guard[0], Stdio::Ignore);
@@ -964,7 +967,9 @@ impl ShellSubprocess {
 
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
-        self.ctrl_c_child = None;
+        if self.ctrl_c_child.take().is_some() {
+            bun_process::sync::LeaveCtrlCToChildren::exit_with_child_if_ctrl_c(status);
+        }
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
                 #[cfg(windows)]

@@ -2624,38 +2624,64 @@ mod spawn_process_body {
             result
         }
 
-        /// Live children that receive the terminal's Ctrl+C themselves (same
-        /// foreground pgroup / same console). While non-zero, `LeaveCtrlCToChildren`
-        /// keeps the parent alive so it can report how they exited.
-        pub static CTRL_C_CHILDREN: core::sync::atomic::AtomicU32 =
-            core::sync::atomic::AtomicU32::new(0);
+        /// What `bun run` (and anything else acting as a mini shell for a foreground
+        /// child) does about Ctrl+C: while a `CtrlCChild` is alive, leave it to the
+        /// child — it received the same Ctrl+C from the terminal (same pgroup /
+        /// same console); on POSIX also forward it in case only we were signalled.
+        /// With no child alive, Ctrl+C takes its previous action. If the child then
+        /// dies *of* the Ctrl+C, `exit_with_child_if_ctrl_c` ends us the same way
+        /// (bash's wait-and-cooperative-exit), so `a; b` stops and callers see an
+        /// interrupt rather than an exit code. Not inherited: on POSIX a caught
+        /// signal resets to default on exec; on Windows a handler routine (unlike
+        /// `SetConsoleCtrlHandler(NULL, TRUE)`) is per-process.
+        pub struct LeaveCtrlCToChildren;
 
-        /// RAII `CTRL_C_CHILDREN += 1`.
-        pub struct CtrlCChild;
+        static CTRL_C_INSTALLED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
+        const MAX_CTRL_C_CHILDREN: usize = 64;
+        static CTRL_C_CHILDREN: [core::sync::atomic::AtomicI32; MAX_CTRL_C_CHILDREN] =
+            [const { core::sync::atomic::AtomicI32::new(0) }; MAX_CTRL_C_CHILDREN];
+        static CTRL_C_CHILD_COUNT: core::sync::atomic::AtomicU32 =
+            core::sync::atomic::AtomicU32::new(0);
+        #[cfg(unix)]
+        static PREVIOUS_SIGINT: bun_core::RacyCell<core::mem::MaybeUninit<libc::sigaction>> =
+            bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+
+        /// A live child that receives the terminal's Ctrl+C itself.
+        pub struct CtrlCChild {
+            slot: Option<usize>,
+        }
         impl CtrlCChild {
-            pub fn enter() -> Self {
-                CTRL_C_CHILDREN.fetch_add(1, Ordering::Relaxed);
-                Self
+            pub fn enter(pid: PidT) -> Self {
+                CTRL_C_CHILD_COUNT.fetch_add(1, Ordering::Relaxed);
+                let pid = i32::try_from(pid).unwrap_or(0);
+                let slot = if pid > 0 {
+                    CTRL_C_CHILDREN.iter().position(|s| {
+                        s.compare_exchange(0, pid, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok()
+                    })
+                } else {
+                    None
+                };
+                Self { slot }
             }
         }
         impl Drop for CtrlCChild {
             fn drop(&mut self) {
-                CTRL_C_CHILDREN.fetch_sub(1, Ordering::Relaxed);
+                if let Some(slot) = self.slot {
+                    CTRL_C_CHILDREN[slot].store(0, Ordering::Relaxed);
+                }
+                CTRL_C_CHILD_COUNT.fetch_sub(1, Ordering::Relaxed);
             }
         }
 
-        /// While installed, Ctrl+C is left to `CTRL_C_CHILDREN` when there are any
-        /// and takes its previous action otherwise. Not inherited across spawn: on
-        /// POSIX a caught (not ignored) signal resets to default on exec; on Windows a
-        /// handler routine, unlike `SetConsoleCtrlHandler(NULL, TRUE)`, is per-process.
-        pub struct LeaveCtrlCToChildren;
         impl LeaveCtrlCToChildren {
             #[cfg(windows)]
             extern "system" fn handler(
                 ctrl_type: bun_sys::windows::DWORD,
             ) -> bun_sys::windows::BOOL {
                 if ctrl_type == bun_sys::windows::CTRL_C_EVENT
-                    && CTRL_C_CHILDREN.load(Ordering::Relaxed) > 0
+                    && CTRL_C_CHILD_COUNT.load(Ordering::Relaxed) > 0
                 {
                     return bun_sys::windows::TRUE;
                 }
@@ -2664,7 +2690,13 @@ mod spawn_process_body {
 
             #[cfg(unix)]
             extern "C" fn handler(sig: c_int) {
-                if CTRL_C_CHILDREN.load(Ordering::Relaxed) > 0 {
+                if CTRL_C_CHILD_COUNT.load(Ordering::Relaxed) > 0 {
+                    for slot in &CTRL_C_CHILDREN {
+                        let pid = slot.load(Ordering::Relaxed);
+                        if pid > 0 {
+                            let _ = kill(pid, sig);
+                        }
+                    }
                     return;
                 }
                 // SAFETY: PREVIOUS_SIGINT was written before this handler was
@@ -2680,7 +2712,10 @@ mod spawn_process_body {
                 }
             }
 
-            pub fn install() -> Self {
+            pub fn install() -> Option<Self> {
+                if CTRL_C_INSTALLED.swap(true, Ordering::Relaxed) {
+                    return None;
+                }
                 #[cfg(windows)]
                 {
                     let _ = bun_sys::windows::SetConsoleCtrlHandler(
@@ -2690,10 +2725,11 @@ mod spawn_process_body {
                 }
                 #[cfg(unix)]
                 // SAFETY: zeroed sigaction + our handler is a valid disposition;
-                // PREVIOUS_SIGINT is only touched here, in `drop`, and in the handler.
+                // PREVIOUS_SIGINT is written only here, before the handler can run.
                 unsafe {
                     let mut sa: libc::sigaction = bun_core::ffi::zeroed();
                     sa.sa_sigaction = Self::handler as *const () as usize;
+                    sa.sa_flags = libc::SA_RESTART;
                     libc::sigemptyset(&raw mut sa.sa_mask);
                     libc::sigaction(
                         libc::SIGINT,
@@ -2701,7 +2737,24 @@ mod spawn_process_body {
                         (*PREVIOUS_SIGINT.get()).as_mut_ptr(),
                     );
                 }
-                Self
+                Some(Self)
+            }
+
+            /// Called with the status of a `CtrlCChild` that just exited.
+            pub fn exit_with_child_if_ctrl_c(status: &Status) {
+                if !CTRL_C_INSTALLED.load(Ordering::Relaxed) {
+                    return;
+                }
+                #[cfg(unix)]
+                if status.signal_code() == Some(bun_core::SignalCode::SIGINT) {
+                    bun_core::Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGINT);
+                }
+                #[cfg(windows)]
+                if let Status::Exited(exited) = status {
+                    if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                        bun_core::Global::exit(exited.raw);
+                    }
+                }
             }
         }
         impl Drop for LeaveCtrlCToChildren {
@@ -2722,11 +2775,9 @@ mod spawn_process_body {
                         core::ptr::null_mut(),
                     );
                 }
+                CTRL_C_INSTALLED.store(false, Ordering::Relaxed);
             }
         }
-        #[cfg(unix)]
-        static PREVIOUS_SIGINT: bun_core::RacyCell<core::mem::MaybeUninit<libc::sigaction>> =
-            bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
         #[cfg(windows)]
         fn spawn_windows_without_pipes(
@@ -2735,6 +2786,9 @@ mod spawn_process_body {
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_ = options.windows.loop_.platform_event_loop();
+            // All stdio inherited: the child is the foreground program on our console.
+            let _ctrl_c = LeaveCtrlCToChildren::install();
+            let _child = CtrlCChild::enter(0);
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
                     Err(err) => return Ok(Err(err)),
@@ -2888,7 +2942,6 @@ mod spawn_process_body {
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             #[cfg(windows)]
             {
-                let _child = CtrlCChild::enter();
                 if options.stdin != SyncStdio::Buffer
                     && options.stderr != SyncStdio::Buffer
                     && options.stdout != SyncStdio::Buffer

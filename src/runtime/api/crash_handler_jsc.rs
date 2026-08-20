@@ -136,7 +136,13 @@ pub(crate) mod js_bindings {
     /// the walk needs a fault `CONTEXT`, so the trace is frame 0 alone.
     #[bun_jsc::host_fn]
     fn js_segfault_at_pc(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let pc = frame.argument(0).to_number(global)? as usize;
+        let pc = frame.argument(0).to_number(global)?;
+        if !(pc >= 0.0 && pc <= usize::MAX as f64 && pc.fract() == 0.0) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "segfaultAtPc: expected a code address, got {pc}"
+            )));
+        }
+        let pc = pc as usize;
         crash_handler::suppress_core_dumps_if_necessary();
         let fp = if cfg!(windows) {
             0

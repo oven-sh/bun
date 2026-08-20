@@ -4194,14 +4194,9 @@ pub mod bv2_impl {
                             if template.needs(options::PlaceholderField::Target) {
                                 template.placeholder.target = target.naming_placeholder().into();
                             }
-                            let mut v = Vec::new();
                             template
-                                .print(
-                                    &mut v,
-                                    !self.transpiler.options.compile_mode.is_executable(),
-                                )
-                                .expect("oom");
-                            v.into_boxed_slice()
+                                .render(!self.transpiler.options.compile_mode.is_executable())
+                                .into_boxed_slice()
                         };
 
                         let loader = loaders[index];

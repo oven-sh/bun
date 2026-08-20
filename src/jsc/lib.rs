@@ -76,8 +76,6 @@ pub mod marked_argument_buffer;
 pub mod regular_expression;
 #[path = "ScriptExecutionStatus.rs"]
 pub mod script_execution_status;
-#[path = "sizes.rs"]
-pub mod sizes;
 #[path = "SourceProvider.rs"]
 pub mod source_provider;
 #[path = "URLSearchParams.rs"]

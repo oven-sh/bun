@@ -128,13 +128,13 @@ EncodedJSValue ValueTrue = { TagValueTrue };
 
 typedef void* JSContext;
 
-// Bun_FFI_PointerOffsetToArgumentsList is injected into the build 
-// The value is generated in `make sizegen`
-// The value is 6.
-// On ARM64_32, the value is something else but it really doesn't matter for our case
-// However, I don't want this to subtly break amidst future upgrades to JavaScriptCore
+// The Bun_FFI_PointerOffsetTo* slot indices into the JSC::CallFrame are defined from JSC::CallFrameSlot by src/jsc/bindings/ffi.cpp.
 #define LOAD_ARGUMENTS_FROM_CALL_FRAME \
-  int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList)
+  int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList); \
+  int32_t argsCount = ((EncodedJSValue*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentCountIncludingThis))->asBits.payload - 1
+
+// JSC::CallFrame::argument(i) as encoded bits: an argument the caller did not pass reads as undefined, not as the stale slot.
+#define ARGUMENT(i) ((i) < argsCount ? argsPtr[i] : TagValueUndefined)
 
 
 
@@ -208,7 +208,8 @@ static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) {
 // This behavior change enables the JIT to handle it better
 // It also is better readability when console.log(myPtr)
 static void* JSVALUE_TO_PTR(EncodedJSValue val) {
-  if (val.asInt64 == TagValueNull)
+  // undefined (e.g. an argument that was not passed) is NULL, as in the engine's writePointerSlot.
+  if (val.asInt64 == TagValueNull || val.asInt64 == TagValueUndefined)
     return 0;
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {

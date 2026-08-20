@@ -1119,6 +1119,16 @@ impl<'a> ReadFileUV<'a> {
             })
         };
 
+        // Settling the promise enters JS from a libuv callback, so bracket it
+        // with enter/exit: the guard's drop (after the unref below) is the
+        // microtask checkpoint that runs the await continuation. Without it, a
+        // read that leaves nothing else pending lets the loop exit with the
+        // continuation still queued.
+        // SAFETY: VM-owned event loop is valid for the process lifetime;
+        // `enter_scope` calls enter() now and exit() on drop.
+        let _guard =
+            unsafe { EventLoop::enter_scope(core::ptr::from_ref(event_loop).cast_mut()) };
+
         // The completion must run BEFORE the cleanup below (store deref / req.deinit /
         // box drop / event_loop.unref) — it may inspect store. A libuv callback returns void: an
         // exception the JS side left pending is reported here (a termination just stands down).

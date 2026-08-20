@@ -849,8 +849,7 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
     res.domain = reqDomain;
     reqDomain.add(res);
     if (typeof reqDomain.remove === "function") {
-      // add() tracks the response in domain.members. Untrack it when the
-      // response is done so a long-lived domain does not accumulate them.
+      // add() tracks the response in domain.members; untrack when done.
       res.once("close", () => reqDomain.remove(res));
     }
   }

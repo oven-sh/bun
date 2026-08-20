@@ -1048,7 +1048,11 @@ export class Client extends EventEmitter {
       this.suppressInteractivePrompt = true;
       let retries = 0;
       let hasVisibleModal = false;
-      while (retries < 5) {
+      // When errors are expected, wait for the modal with the same headroom
+      // as the other harness waits. When none are expected the modal never
+      // appears on the happy path, so keep the short window.
+      const maxRetries = errors && errors.length > 0 ? 5 * WAIT_MULTIPLIER : 5;
+      while (retries < maxRetries) {
         hasVisibleModal = await this.js`document.querySelector("bun-hmr")?.style.display === "block"`;
         if (hasVisibleModal) break;
         await Bun.sleep(200);

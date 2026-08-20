@@ -20,11 +20,11 @@ mode: center
 
     	```json vercel.json icon="file-json"
     	{
-    		"bunVersion": "1.x" // [!code ++]
+    		"bunVersion": "1.4.x" // [!code ++]
     	}
     	```
 
-    	The value must be `"1.x"`; Vercel manages the minor and patch versions.
+    	Vercel manages the patch version.
 
     	For best results, match your local Bun version with the version Vercel uses.
     </Step>
@@ -130,7 +130,7 @@ mode: center
     	console.log("runtime", process.versions.bun);
     	```
     	```txt
-    	runtime 1.3.14
+    	runtime 1.4.0
     	```
 
     	[See the Vercel Bun Runtime documentation for feature support →](https://vercel.com/docs/functions/runtimes/bun#feature-support)

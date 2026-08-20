@@ -231,6 +231,6 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
     expect(() => fetch.preconnect("")).toThrow();
     expect(() => fetch.preconnect(" ")).toThrow();
     expect(() => fetch.preconnect("unix:///tmp/foo")).toThrow();
-    expect(() => fetch.preconnect("http://:0")).toThrow();
+    expect(() => fetch.preconnect("http://:0")).toThrow("fetch() URL must have a hostname.");
   });
 });

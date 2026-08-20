@@ -91,6 +91,18 @@ declare module "bun:test" {
     function restoreAllMocks(): void;
     function clearAllMocks(): void;
     function resetAllMocks(): void;
+    /**
+     * Clears the module registry (both the ESM registry and `require.cache`),
+     * so the next `require()` or dynamic `import()` of a module evaluates it
+     * again. Useful when a module keeps top-level state that must not leak
+     * between tests.
+     *
+     * Module mocks registered with `jest.mock()` / `mock.module()` stay in
+     * effect, and their factories are not run again.
+     *
+     * Returns the `jest` object for chaining.
+     */
+    function resetModules(): typeof jest;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
@@ -187,6 +199,13 @@ declare module "bun:test" {
      */
     clearAllMocks: typeof jest.clearAllMocks;
     resetAllMocks: typeof jest.resetAllMocks;
+    /**
+     * Clears the module registry so the next `require()` or dynamic `import()`
+     * of a module evaluates it again. See {@link jest.resetModules}.
+     *
+     * Returns the `vi` object for chaining.
+     */
+    resetModules: () => typeof vi;
     useFakeTimers: typeof jest.useFakeTimers;
     useRealTimers: typeof jest.useRealTimers;
     advanceTimersByTime: typeof jest.advanceTimersByTime;

@@ -16,6 +16,7 @@ import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import path from "node:path";
+import { Duplex } from "node:stream";
 import { afterEach, describe, test } from "node:test";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
@@ -457,6 +458,180 @@ describe("HTTP/2 upgrade — server TLS options", () => {
       assert.deepStrictEqual(outcome, { secureConnect: false, protocol: null });
     } finally {
       netServer.close();
+    }
+  });
+});
+
+// The net.Server keeps counting a connection it accepted until the socket it handed to
+// h2Server.emit("connection") is destroyed, and netServer.close(cb) only calls back once that count
+// is zero. Node destroys that socket together with the TLSSocket it wrapped it in, so the connection
+// is released no matter how the server side went down. Every case below tears the connection down
+// from the server side while the peer deliberately keeps its end of the TCP connection open, so the
+// accepted socket only gets released if the upgrade path releases it.
+describe("HTTP/2 upgrade — the accepted socket is released when the server side goes down", () => {
+  type Accepted = { raw: net.Socket; closed: Promise<boolean> };
+
+  async function acceptInto(h2Server: http2.Http2SecureServer) {
+    const accepted = Promise.withResolvers<Accepted>();
+    const netServer = net.createServer(raw => {
+      const closed = new Promise<boolean>(resolve => raw.once("close", hadError => resolve(hadError)));
+      accepted.resolve({ raw, closed });
+      h2Server.emit("connection", raw);
+    });
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+    return { netServer, port, accepted: accepted.promise };
+  }
+
+  // A TCP connection the peer never ends or destroys itself: the server's FIN only produces 'end'
+  // here (allowHalfOpen), so the server's accepted socket stays open until the server destroys it.
+  function connectHeldOpen(port: number) {
+    const tcp = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    // Writes into a connection the server has already closed are expected to fail.
+    tcp.on("error", () => {});
+    return tcp;
+  }
+
+  // A TLS client riding on a held-open TCP connection through an in-memory carrier: whatever the
+  // client's TLS layer does when the server closes the TLS session (end, destroy) stays on the
+  // carrier and never closes the TCP connection underneath.
+  function connectTlsHeldOpen(port: number, options: tls.ConnectionOptions) {
+    const tcp = connectHeldOpen(port);
+    const carrier = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        // The client's reply to the server's close_notify may be written after the server (or the
+        // test's cleanup) has closed the connection; there is nobody left to deliver it to.
+        if (tcp.destroyed) return callback();
+        tcp.write(chunk, () => callback());
+      },
+      final(callback) {
+        callback();
+      },
+    });
+    tcp.on("data", chunk => carrier.push(chunk));
+    tcp.on("end", () => carrier.push(null));
+    const client = tls.connect({ socket: carrier, rejectUnauthorized: false, ...options });
+    client.on("error", () => {});
+    client.resume();
+    return { tcp, client };
+  }
+
+  // With the peer holding its side open, the accepted socket's 'close' can only come from the
+  // server destroying it; a server that merely end()s it leaves this waiting until the test times out.
+  async function assertReleased(netServer: net.Server, accepted: Promise<Accepted>) {
+    const { raw, closed } = await accepted;
+    // Torn down without an error, like the socket underneath a node TLSSocket.
+    assert.strictEqual(await closed, false);
+    assert.strictEqual(raw.destroyed, true);
+    const connections = await new Promise<number>((resolve, reject) => {
+      netServer.getConnections((err, count) => (err ? reject(err) : resolve(count)));
+    });
+    assert.strictEqual(connections, 0);
+    await new Promise<void>(resolve => netServer.close(() => resolve()));
+  }
+
+  function cleanup(netServer: net.Server, tcp: net.Socket) {
+    tcp.destroy();
+    if (netServer.listening) netServer.close();
+  }
+
+  for (const handleClientError of [false, true]) {
+    const variant = handleClientError ? "with a clientError listener" : "without a clientError listener";
+    test(`after a failed handshake (${variant})`, async () => {
+      const h2Server = http2.createSecureServer(TLS);
+      const reported: string[] = [];
+      if (handleClientError) h2Server.on("clientError", () => reported.push("clientError"));
+      const tlsClientError = once(h2Server, "tlsClientError").then(() => reported.push("tlsClientError"));
+      const { netServer, port, accepted } = await acceptInto(h2Server);
+
+      const tcp = connectHeldOpen(port);
+      tcp.on("connect", () => tcp.write("GET / HTTP/1.1\r\nHost: example\r\n\r\n"));
+      tcp.resume();
+      try {
+        await tlsClientError;
+        assert.deepStrictEqual(reported, handleClientError ? ["clientError", "tlsClientError"] : ["tlsClientError"]);
+        await assertReleased(netServer, accepted);
+      } finally {
+        cleanup(netServer, tcp);
+      }
+    });
+  }
+
+  for (const withError of [true, false]) {
+    test(`after the session is destroyed ${withError ? "with" : "without"} an error`, async () => {
+      const h2Server = http2.createSecureServer(TLS);
+      const sessionClosed = new Promise<void>(resolve => {
+        h2Server.once("session", (session: http2.ServerHttp2Session) => {
+          session.on("error", () => {});
+          session.once("close", resolve);
+          if (withError) session.destroy(new Error("torn down by the test"));
+          else session.destroy();
+        });
+      });
+      const { netServer, port, accepted } = await acceptInto(h2Server);
+
+      const { tcp } = connectTlsHeldOpen(port, { ALPNProtocols: ["h2"] });
+      try {
+        await sessionClosed;
+        await assertReleased(netServer, accepted);
+      } finally {
+        cleanup(netServer, tcp);
+      }
+    });
+  }
+
+  test("after the client certificate is rejected", async () => {
+    const h2Server = http2.createSecureServer({ ...TLS, requestCert: true, rejectUnauthorized: true });
+    h2Server.on("session", () => assert.fail("a rejected client must not get a session"));
+    const tlsClientError = once(h2Server, "tlsClientError");
+    const { netServer, port, accepted } = await acceptInto(h2Server);
+
+    // The client presents a certificate the server has no CA for.
+    const { tcp } = connectTlsHeldOpen(port, { ALPNProtocols: ["h2"], key: TLS.key, cert: TLS.cert });
+    try {
+      const [err] = await tlsClientError;
+      assert.ok(err instanceof Error);
+      await assertReleased(netServer, accepted);
+    } finally {
+      cleanup(netServer, tcp);
+    }
+  });
+
+  test("after a client that negotiated no protocol is turned away", async () => {
+    // Nothing handles 'unknownProtocol', so the server answers with a 403 and destroys the
+    // connection once unknownProtocolTimeout has passed.
+    const h2Server = http2.createSecureServer({ ...TLS, unknownProtocolTimeout: 0 });
+    h2Server.on("session", () => assert.fail("a client without ALPN must not get a session"));
+    const { netServer, port, accepted } = await acceptInto(h2Server);
+
+    const { tcp } = connectTlsHeldOpen(port, {});
+    try {
+      await assertReleased(netServer, accepted);
+    } finally {
+      cleanup(netServer, tcp);
+    }
+  });
+
+  test("but not while the session is alive", async () => {
+    const h2Server = http2.createSecureServer(TLS);
+    let session: http2.ServerHttp2Session | undefined;
+    const sessionStarted = once(h2Server, "session").then(([s]) => {
+      session = s;
+    });
+    const { netServer, port, accepted } = await acceptInto(h2Server);
+
+    const { tcp, client } = connectTlsHeldOpen(port, { ALPNProtocols: ["h2"] });
+    try {
+      await Promise.all([sessionStarted, once(client, "secureConnect")]);
+      const { raw } = await accepted;
+      assert.strictEqual(raw.destroyed, false);
+      const connections = await new Promise<number>(resolve => netServer.getConnections((_, count) => resolve(count)));
+      assert.strictEqual(connections, 1);
+    } finally {
+      session?.destroy();
+      cleanup(netServer, tcp);
     }
   });
 });

@@ -328,11 +328,12 @@ describe("source map remapping of the printed stack", () => {
   });
 });
 
-// The printer replaces an AggregateError with the members of its own `errors`
+// The printer replaces an AggregateError with the members of its `errors`
 // property. When there is nothing to walk it has to print the AggregateError
 // itself. A deleted `errors` used to crash the process (the empty value was
-// passed to the iteration, which read it as a cell at address 0), the other
-// shapes printed nothing, and a non-iterable `errors` made console.error throw.
+// passed to the iteration, which read it as a cell at address 0), an accessor
+// was passed to it as well, the other shapes printed nothing, and a
+// non-iterable `errors` made console.error throw.
 describe.concurrent("AggregateError whose errors cannot be walked", () => {
   async function run(cmd, files) {
     using dir = tempDir("inspect-aggregate-error", files ?? {});
@@ -353,8 +354,9 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     "errors was deleted": "delete e.errors;",
     "errors is an empty array": "e.errors = [];",
     "errors is not iterable": "e.errors = {};",
+    "errors is null": "e.errors = null;",
     "errors is a primitive": "e.errors = 1;",
-    "errors is an accessor": 'Object.defineProperty(e, "errors", { get() { return [new Error("inner")]; } });',
+    "the errors getter throws": 'Object.defineProperty(e, "errors", { get() { throw new Error("getter"); } });',
   };
 
   for (const [name, shape] of Object.entries(shapes)) {
@@ -385,17 +387,17 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("errors is an accessor: the getter is not called", async () => {
+  test("errors is an accessor: the members it returns are printed", async () => {
     const { stdout, stderr, exitCode } = await run([
       "-e",
       `${make}
-       let calls = 0;
-       Object.defineProperty(e, "errors", { get() { calls++; return []; } });
+       Object.defineProperty(e, "errors", { get() { return [new Error("from the getter")]; } });
        console.error(e);
-       console.log(calls);`,
+       console.log("after");`,
     ]);
-    expect(stderr).toContain(header);
-    expect(stdout).toBe("0\n");
+    expect(stderr).toContain("error: from the getter");
+    expect(stderr).not.toContain(header);
+    expect(stdout).toBe("after\n");
     expect(exitCode).toBe(0);
   });
 

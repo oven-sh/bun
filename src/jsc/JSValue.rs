@@ -375,22 +375,6 @@ impl JSValue {
         }
         JSC__JSValue__isAggregateError(self, global)
     }
-    /// `JSValue.getErrorsProperty(globalObject)`. Returns the
-    /// own `errors` data property via `JSObject::getDirect` — no prototype
-    /// walk, no getters invoked, nothrow. Used for `AggregateError.errors`.
-    /// `None` unless that property holds an object. `self` must be an object.
-    #[inline]
-    pub(crate) fn get_errors_property(self, global: &JSGlobalObject) -> Option<JSValue> {
-        unsafe extern "C" {
-            safe fn JSC__JSValue__getErrorsProperty(
-                this: JSValue,
-                global: &JSGlobalObject,
-            ) -> JSValue;
-        }
-        debug_assert!(self.is_object());
-        let errors = JSC__JSValue__getErrorsProperty(self, global);
-        errors.is_object().then_some(errors)
-    }
     /// `JSValue.isTerminationException()` — true if this
     /// value is the VM's termination-exception sentinel.
     #[inline]

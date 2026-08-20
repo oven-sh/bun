@@ -5160,10 +5160,18 @@ impl VirtualMachine {
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
-        // `errors` is missing on the copies `JSModuleLoader::duplicateError` makes of a load error.
-        if value.is_aggregate_error(global_ref)
-            && let Some(errors) = value.get_errors_property(global_ref)
-        {
+        let errors = if value.is_aggregate_error(global_ref) {
+            match value.fast_get(global_ref, jsc::BuiltinName::errors) {
+                Ok(errors) => errors,
+                Err(_) => {
+                    global_ref.clear_exception();
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(errors) = errors {
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip

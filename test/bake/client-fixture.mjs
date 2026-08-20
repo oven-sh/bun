@@ -6,6 +6,16 @@ import assert from "node:assert/strict";
 import util from "node:util";
 import { exitCodeMap } from "./exit-code-map.mjs";
 
+// happy-dom < 20.11.2 holds a MutationObserver's callback through a bare WeakRef, so a GC silently stops every
+// observer (css-reloader's included) and tests pass or fail by heap timing. Keep those callbacks alive.
+const observerCallbacks = new Set();
+globalThis.WeakRef = class extends WeakRef {
+  constructor(target) {
+    super(target);
+    if (typeof target === "function") observerCallbacks.add(target);
+  }
+};
+
 // Prevent silent crashes from unhandled promise rejections
 process.on("unhandledRejection", reason => {
   console.error("[E] Unhandled rejection:", reason);

@@ -469,10 +469,7 @@ fn codegen_reactive_function(
     func: &ReactiveFunction,
 ) -> Result<CodegenFunction, CompilerError> {
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(sp) => &sp.place,
-        };
+        let place = param.place();
         let ident = &cx.env.identifiers[place.identifier.0 as usize];
         cx.temp.insert(ident.declaration_id, None);
         cx.declare(place.identifier);

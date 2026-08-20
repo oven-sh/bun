@@ -1182,3 +1182,44 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     expect(pt.toString()).toBe("hello");
   });
 });
+
+// Certificate.{verifySpkac,exportPublicKey,exportChallenge} share getArrayBufferOrView,
+// which previously threw "ReferenceError: key is not defined" for public/private
+// KeyObjects and silently accepted secret ones. Node rejects every KeyObject here.
+describe("Certificate spkac argument validation", () => {
+  const argTypeMessage =
+    'The "spkac" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView.';
+  const keys = () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    return [publicKey, privateKey, crypto.createSecretKey(Buffer.from("secret"))];
+  };
+
+  for (const fn of ["verifySpkac", "exportPublicKey", "exportChallenge"]) {
+    it(`Certificate.${fn} rejects KeyObject input with ERR_INVALID_ARG_TYPE`, () => {
+      for (const key of keys()) {
+        expect(() => crypto.Certificate[fn](key)).toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            code: "ERR_INVALID_ARG_TYPE",
+            message: expect.stringContaining(argTypeMessage),
+          }),
+        );
+      }
+    });
+  }
+
+  it("Certificate.verifySpkac rejects non-buffer input with node's message", () => {
+    expect(() => crypto.Certificate.verifySpkac(42)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `${argTypeMessage} Received type number (42)`,
+      }),
+    );
+  });
+
+  it("Certificate.verifySpkac still returns false for a well-typed but invalid spkac", () => {
+    expect(crypto.Certificate.verifySpkac(Buffer.from("not a spkac"))).toBe(false);
+    expect(new crypto.Certificate().verifySpkac("not a spkac", "utf8")).toBe(false);
+  });
+});

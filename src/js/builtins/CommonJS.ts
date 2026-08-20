@@ -149,13 +149,10 @@ export function requireResolve(
   id: string,
   options: { paths?: string[] } = {},
 ) {
-  return $resolveSync(
-    id,
-    typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
-    false,
-    true,
-    options ? options.paths : undefined,
-  );
+  // Only `options.paths` extraction happens here; builtin bypass and paths
+  // validation are native (functionImportMeta__resolveSyncPrivate).
+  const paths = typeof options === "object" && options !== null ? options.paths : undefined;
+  return $resolveSync(id, typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""), false, true, paths);
 }
 
 $visibility = "Private";
@@ -429,8 +426,8 @@ export function createRequireCache() {
 }
 
 type WrapperMutate = (start: string, end: string) => void;
-export function getWrapperArrayProxy(onMutate: WrapperMutate) {
-  const wrapper = ["(function(exports,require,module,__filename,__dirname){", "})"];
+export function getWrapperArrayProxy(onMutate: WrapperMutate, start: string, end: string) {
+  const wrapper = [start, end];
   return new Proxy(wrapper, {
     set(_target, prop, value, receiver) {
       Reflect.set(wrapper, prop, value, receiver);

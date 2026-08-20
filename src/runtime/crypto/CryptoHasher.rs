@@ -40,11 +40,11 @@ fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
         .cast::<boring_ssl::ENGINE>()
 }
 
-/// Local helper replacing `input == .blob && input.blob.isBunFile()`.
+/// The synchronous hashers only accept in-memory input, not a `Bun.file()`.
 #[inline]
 fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
     match input {
-        BlobOrStringOrBuffer::Blob(b) => b.is_bun_file(),
+        BlobOrStringOrBuffer::Blob(b) => b.needs_to_read_file(),
         _ => false,
     }
 }
@@ -257,7 +257,7 @@ impl CryptoHasher {
             let Some(string_value) = next_eat() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
             };
-            if string_value.is_undefined_or_null() {
+            if !string_value.is_string_literal() {
                 return Err(global.throw_invalid_arguments(format_args!("Expected string")));
             }
             string_value.get_zig_string(global)?
@@ -322,7 +322,7 @@ impl CryptoHasher {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let tag: &'static [u8] = match this {
-            CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
+            CryptoHasher::Evp(inner) => inner.get().algorithm().tag_cstr().to_bytes(),
             CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
             CryptoHasher::Hmac(inner) => match inner.get() {
                 Some(hmac) => hmac.algorithm.tag_cstr().to_bytes(),
@@ -813,7 +813,7 @@ pub struct CryptoHasherZig {
 
 /// Trait for the non-BoringSSL hash algorithms used by `CryptoHasherZig`.
 /// Implemented for each algo in `zig_crypto_algos` below.
-pub trait ZigHashAlgo: Default + Clone + 'static {
+trait ZigHashAlgo: Default + Clone + 'static {
     const ALGORITHM: evp::Algorithm;
     /// Shake128→16, Shake256→32, else the algorithm's digest length.
     const DIGEST_LENGTH: u8;
@@ -1109,12 +1109,11 @@ impl CryptoHasherZig {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Trait abstracting over the `bun_sha_hmac::sha::evp::*` hasher types.
-/// When `HAS_ENGINE` is true, `hash()` takes a BoringSSL ENGINE*.
+/// `hash()` takes the VM-owned BoringSSL ENGINE*.
 pub trait StaticHasher: 'static {
     const NAME: &'static str;
     const DIGEST: usize;
     type Digest: AsRef<[u8]> + AsMut<[u8]>; // = [u8; Self::DIGEST]
-    const HAS_ENGINE: bool;
 
     fn init() -> Self;
     fn new_digest() -> Self::Digest;
@@ -1138,7 +1137,6 @@ macro_rules! impl_static_hasher {
             const NAME: &'static str = $name;
             const DIGEST: usize = $len;
             type Digest = [u8; $len];
-            const HAS_ENGINE: bool = true;
 
             #[inline]
             fn init() -> Self {
@@ -1307,14 +1305,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
 
         // SAFETY: `boring_engine` returns the VM-owned engine (live for the
-        // process) or null; the else arm passes null.
-        unsafe {
-            if H::HAS_ENGINE {
-                H::hash(input.slice(), &mut output_digest_buf, boring_engine(global));
-            } else {
-                H::hash(input.slice(), &mut output_digest_buf, core::ptr::null_mut());
-            }
-        }
+        // process) or null.
+        unsafe { H::hash(input.slice(), &mut output_digest_buf, boring_engine(global)) };
 
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_buf.as_ref())
     }
@@ -1344,14 +1336,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
 
         // SAFETY: `boring_engine` returns the VM-owned engine (live for the
-        // process) or null; the else arm passes null.
-        unsafe {
-            if H::HAS_ENGINE {
-                H::hash(input.slice(), output_digest_slice, boring_engine(global));
-            } else {
-                H::hash(input.slice(), output_digest_slice, core::ptr::null_mut());
-            }
-        }
+        // process) or null.
+        unsafe { H::hash(input.slice(), output_digest_slice, boring_engine(global)) };
 
         if let Some(output_buf) = output {
             Ok(output_buf.value)
@@ -1416,17 +1402,6 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.digested.get() {
-            return Err(global
-                .err(
-                    ErrorCode::INVALID_STATE,
-                    format_args!(
-                        "{} hasher already digested, create a new instance to update",
-                        H::NAME
-                    ),
-                )
-                .throw());
-        }
         let this_value = callframe.this();
         let input = callframe.argument(0);
         let buffer = match BlobOrStringOrBuffer::from_js(global, input)? {
@@ -1442,6 +1417,17 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
+        }
+        if this.digested.get() {
+            return Err(global
+                .err(
+                    ErrorCode::INVALID_STATE,
+                    format_args!(
+                        "{} hasher already digested, create a new instance to update",
+                        H::NAME
+                    ),
+                )
+                .throw());
         }
         this.hashing.with_mut(|h| h.update(buffer.slice()));
         Ok(this_value)

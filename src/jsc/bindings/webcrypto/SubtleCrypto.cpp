@@ -73,7 +73,6 @@
 #include <functional>
 #include "JSRsaHashedImportParams.h"
 #include "JSRsaHashedKeyGenParams.h"
-#include "JSRsaKeyGenParams.h"
 #include "JSRsaOaepParams.h"
 #include "JSRsaPssParams.h"
 #include <JavaScriptCore/JSONObject.h>
@@ -113,22 +112,6 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
     if (digestParams.hasException())
         return digestParams.releaseException();
     return digestParams.returnValue()->identifier;
-}
-
-static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
-{
-    return true;
-    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
-    // auto* context = globalObject.scriptExecutionContext();
-    // return context && context->settingsValues().deprecateRSAESPKCSWebCryptoEnabled;
-}
-
-static bool isSafeCurvesEnabled(JSGlobalObject& state)
-{
-    return true;
-    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
-    // auto* context = globalObject.scriptExecutionContext();
-    // return context && context->settingsValues().webCryptoSafeCurvesEnabled;
 }
 
 // The lazy *Vector() accessors on the parameter classes copy these dictionary members into
@@ -175,19 +158,13 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     if (!identifier) [[unlikely]]
         return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
 
-    if (*identifier == CryptoAlgorithmIdentifier::Ed25519 && !isSafeCurvesEnabled(state))
-        return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
-
     std::unique_ptr<CryptoAlgorithmParameters> result;
     switch (operation) {
     case Operations::Encrypt:
     case Operations::Decrypt:
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-            if (isRSAESPKCSWebCryptoDeprecated(state))
-                return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
-            result = makeUnique<CryptoAlgorithmParameters>(params);
-            break;
+            return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
             auto params = convertDictionary<CryptoAlgorithmRsaOaepParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -289,16 +266,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         break;
     case Operations::GenerateKey:
         switch (*identifier) {
-        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5: {
-            if (isRSAESPKCSWebCryptoDeprecated(state))
-                return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
-            auto params = convertDictionary<CryptoAlgorithmRsaKeyGenParams>(state, value.get());
-            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (!isAcceptableVectorSource(params.publicExponent))
-                return Exception { OperationError, "Input data is too large"_s };
-            result = makeUnique<CryptoAlgorithmRsaKeyGenParams>(params);
-            break;
-        }
+        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
+            return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
@@ -421,10 +390,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     case Operations::ImportKey:
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-            if (isRSAESPKCSWebCryptoDeprecated(state))
-                return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
-            result = makeUnique<CryptoAlgorithmParameters>(params);
-            break;
+            return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
@@ -712,16 +678,12 @@ static std::optional<CryptoAlgorithmIdentifier> resolveAlgorithmName(JSGlobalObj
     auto identifier = CryptoAlgorithmRegistry::singleton().identifier(name);
     if (!identifier)
         return std::nullopt;
-    if (*identifier == CryptoAlgorithmIdentifier::Ed25519 && !isSafeCurvesEnabled(state))
-        return std::nullopt;
     return *identifier;
 }
 
-static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifier identifier)
+static bool isSupportedExportKey(CryptoAlgorithmIdentifier identifier)
 {
     switch (identifier) {
-    case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-        return !isRSAESPKCSWebCryptoDeprecated(state);
     case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
     case CryptoAlgorithmIdentifier::RSA_PSS:
     case CryptoAlgorithmIdentifier::RSA_OAEP:
@@ -856,24 +818,12 @@ static std::unique_ptr<CryptoAlgorithmParameters> crossThreadCopyImportParams(co
     }
 }
 
-void SubtleCrypto::addAuthenticatedEncryptionWarningIfNecessary(CryptoAlgorithmIdentifier algorithmIdentifier)
-{
-    // if (algorithmIdentifier == CryptoAlgorithmIdentifier::AES_CBC || algorithmIdentifier == CryptoAlgorithmIdentifier::AES_CTR) {
-    //     if (!scriptExecutionContext()->hasLoggedAuthenticatedEncryptionWarning()) {
-    //         scriptExecutionContext()->addConsoleMessage(MessageSource::Security, MessageLevel::Warning, "AES-CBC and AES-CTR do not provide authentication by default, and implementing it manually can result in minor, but serious mistakes. We recommended using authenticated encryption like AES-GCM to protect against chosen-ciphertext attacks."_s);
-    //         scriptExecutionContext()->setHasLoggedAuthenticatedEncryptionWarning(true);
-    //     }
-    // }
-}
-
 // MARK: - Exposed functions.
 
 void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& key, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    addAuthenticatedEncryptionWarningIfNecessary(key.algorithmIdentifier());
 
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Encrypt);
     RETURN_IF_EXCEPTION(scope, void());
@@ -918,8 +868,6 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    addAuthenticatedEncryptionWarningIfNecessary(key.algorithmIdentifier());
 
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Decrypt);
     RETURN_IF_EXCEPTION(scope, void());
@@ -1411,7 +1359,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
 
 void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromise>&& promise)
 {
-    if (!isSupportedExportKey(*promise->globalObject(), key.algorithmIdentifier())) {
+    if (!isSupportedExportKey(key.algorithmIdentifier())) {
         promise->reject(Exception { NotSupportedError });
         return;
     }
@@ -1493,7 +1441,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
         return;
     }
 
-    if (!isSupportedExportKey(state, key.algorithmIdentifier())) {
+    if (!isSupportedExportKey(key.algorithmIdentifier())) {
         promise->reject(Exception { NotSupportedError });
         return;
     }
@@ -2210,7 +2158,7 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
             operationKind = Operations::Decapsulate;
         else if (op == "exportKey"_s) {
             auto identifier = resolveAlgorithmName(state, algorithm);
-            return identifier && isSupportedExportKey(state, *identifier);
+            return identifier && isSupportedExportKey(*identifier);
         } else
             return false;
 

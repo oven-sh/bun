@@ -13,9 +13,7 @@
 //! original in place; a final `finish()` call emits the runtime import and
 //! any outlined function decls as a separate `Part`.
 
-use crate::diagnostics::{
-    CompilerError, CompilerErrorOrDiagnostic, ErrorCategory, cold_diagnostic,
-};
+use crate::diagnostics::{CompilerError, ErrorCategory, cold_diagnostic};
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::OutputMode;
 use crate::hir::environment_config::EnvironmentConfig;
@@ -108,9 +106,6 @@ pub trait Host {
     fn record_usage(&mut self, ref_: Ref);
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
-
-// Back-compat alias for the parser hook written against the previous API.
-pub use Host as SymbolHost;
 
 // -----------------------------------------------------------------------
 // Constants
@@ -303,28 +298,30 @@ fn is_valid_gating_identifier(s: &[u8]) -> bool {
 /// `(` for the `@key(value)` form).
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 fn split_pragma(pragma: &[u8]) -> impl Iterator<Item = (&[u8], Option<&[u8]>)> {
-    pragma.split(|&b| b == b'@').skip(1).filter_map(|entry| {
-        let entry = trim_ascii(entry);
-        if entry.is_empty() {
-            return None;
-        }
-        if let Some(i) = entry.iter().position(|&b| b == b':' || b == b'(') {
-            let key = &entry[..i];
-            let mut val = &entry[i + 1..];
-            if entry[i] == b'(' {
-                if let Some(close) = val.iter().position(|&b| b == b')') {
-                    val = &val[..close];
-                }
+    bun_core::strings::split(pragma, b"@")
+        .skip(1)
+        .filter_map(|entry| {
+            let entry = trim_ascii(entry);
+            if entry.is_empty() {
+                return None;
             }
-            Some((key, Some(trim_ascii(val))))
-        } else {
-            let key = entry
-                .iter()
-                .position(|b| b.is_ascii_whitespace())
-                .map_or(entry, |i| &entry[..i]);
-            Some((key, None))
-        }
-    })
+            if let Some(i) = bun_core::strings::index_of_any(entry, b":(") {
+                let key = &entry[..i];
+                let mut val = &entry[i + 1..];
+                if entry[i] == b'(' {
+                    if let Some(close) = bun_core::strings::index_of_char_usize(val, b')') {
+                        val = &val[..close];
+                    }
+                }
+                Some((key, Some(trim_ascii(val))))
+            } else {
+                let key = entry
+                    .iter()
+                    .position(|b| b.is_ascii_whitespace())
+                    .map_or(entry, |i| &entry[..i]);
+                Some((key, None))
+            }
+        })
 }
 
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
@@ -372,7 +369,7 @@ fn pragma_bool(val: Option<&[u8]>) -> Option<bool> {
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 fn leading_comment_pragma(source: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    for line in source.split(|&b| b == b'\n') {
+    for line in bun_core::strings::split(source, b"\n") {
         let t = trim_ascii(line);
         if t.is_empty() {
             continue;
@@ -450,9 +447,9 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
                 let parsed = val.and_then(|v| {
                     let i = bun_core::strings::index_of(v, b"\"source\"")?;
                     let rest = &v[i + b"\"source\"".len()..];
-                    let open = rest.iter().position(|&b| b == b'"')?;
+                    let open = bun_core::strings::index_of_char_usize(rest, b'"')?;
                     let rest = &rest[open + 1..];
-                    let close = rest.iter().position(|&b| b == b'"')?;
+                    let close = bun_core::strings::index_of_char_usize(rest, b'"')?;
                     core::str::from_utf8(&rest[..close]).ok().map(str::to_owned)
                 });
                 if let Some(source) = parsed {
@@ -498,10 +495,6 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
             b"validateNoSetStateInEffects" => env_bool!(validate_no_set_state_in_effects, val),
             b"validateNoDerivedComputationsInEffects" => {
                 env_bool!(validate_no_derived_computations_in_effects, val)
-            }
-            b"validateNoDerivedComputationsInEffectsExp"
-            | b"validateNoDerivedComputationsInEffects_exp" => {
-                env_bool!(validate_no_derived_computations_in_effects_exp, val)
             }
             b"validateNoJsxInTryStatements" | b"validateNoJSXInTryStatements" => {
                 env_bool!(validate_no_jsx_in_try_statements, val)
@@ -568,7 +561,10 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
             b"validateBlocklistedImports" => {}
             b"customMacros" => {
                 if let Some(v) = val.and_then(pragma_string_value) {
-                    let head = v.split('.').next().unwrap_or(&v).to_owned();
+                    let head = match bun_core::strings::index_of_char_usize(v.as_bytes(), b'.') {
+                        Some(dot) => v[..dot].to_owned(),
+                        None => v,
+                    };
                     env.custom_macros = Some(vec![head]);
                 }
             }
@@ -1004,22 +1000,19 @@ fn handle_error(
         // surface as Invariant/Todo for inputs upstream compiles cleanly. Those
         // are port bugs, not user-facing diagnostics; bail per-function so the
         // suite measures the user-visible error surface.
-        "all_errors" if opts.parse_test_pragmas => err.details.iter().any(|d| {
-            let cat = match d {
-                CompilerErrorOrDiagnostic::Diagnostic(d) => d.category,
-                CompilerErrorOrDiagnostic::ErrorDetail(d) => d.category,
-            };
-            !matches!(cat, ErrorCategory::Invariant | ErrorCategory::Todo)
-        }),
+        "all_errors" if opts.parse_test_pragmas => err
+            .details
+            .iter()
+            .any(|d| !matches!(d.category(), ErrorCategory::Invariant | ErrorCategory::Todo)),
         "all_errors" => true,
         "critical_errors" => err.has_errors(),
         _ => false,
     };
 
-    let is_config_error = err.details.iter().any(|d| match d {
-        CompilerErrorOrDiagnostic::Diagnostic(d) => d.category == ErrorCategory::Config,
-        CompilerErrorOrDiagnostic::ErrorDetail(d) => d.category == ErrorCategory::Config,
-    });
+    let is_config_error = err
+        .details
+        .iter()
+        .any(|d| d.category() == ErrorCategory::Config);
 
     if should_panic || is_config_error {
         Some(CompileOutput::Error {

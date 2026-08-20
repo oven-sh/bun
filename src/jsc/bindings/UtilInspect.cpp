@@ -65,4 +65,23 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 
+extern "C" JSC::EncodedJSValue Bun__callFormatPercentS(
+    Zig::GlobalObject* globalObject,
+    JSC::EncodedJSValue encodedArg)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSFunction* fn = globalObject->utilInspectFormatPercentSFunction();
+    RETURN_IF_EXCEPTION(scope, {});
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsUndefined());
+    arguments.append(JSValue::decode(encodedArg));
+
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, fn, JSC::getCallData(fn), jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+}
+
 }

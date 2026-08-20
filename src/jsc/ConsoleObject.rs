@@ -2464,12 +2464,7 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                self.print_as::<ENABLE_ANSI_COLORS>(
-                                    Tag::String,
-                                    writer_,
-                                    next_value,
-                                    next_value.js_type(),
-                                )?;
+                                self.print_percent_s(writer_, next_value)?;
                                 writer = WrappedWriter {
                                     ctx: writer_,
                                     failed: false,
@@ -3253,6 +3248,9 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+
+        /// `formatPercentS` from `internal/util/inspect.js` (see `UtilInspect.cpp`).
+        safe fn Bun__callFormatPercentS(global: &JSGlobalObject, arg: JSValue) -> JSValue;
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -3581,7 +3579,6 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
             let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
             let mut writer = WrappedWriter {
@@ -3821,6 +3818,28 @@ pub mod formatter {
                 ));
             }
             if writer.failed {
+                self.failed = true;
+            }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_percent_s(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            use crate::StringJsc as _;
+            let result = if value.is_string_literal() {
+                value
+            } else {
+                crate::from_js_host_call(self.global_this, || {
+                    Bun__callFormatPercentS(self.global_this, value)
+                })?
+            };
+            let str = OwnedString::new(BunString::from_js(result, self.global_this)?);
+            self.add_for_new_line(str.length());
+            if writer_.write_fmt(format_args!("{}", *str)).is_err() {
                 self.failed = true;
             }
             Ok(())

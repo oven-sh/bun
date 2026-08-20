@@ -2327,6 +2327,18 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(uncheckedDowncast<JSFunction>(prop));
         });
 
+    m_utilInspectFormatPercentSFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            auto scope = DECLARE_THROW_SCOPE(init.vm);
+            JSValue mod = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::InternalUtilInspect);
+            RETURN_IF_EXCEPTION(scope, );
+            RELEASE_ASSERT(mod.isObject());
+            auto prop = mod.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "formatPercentS"_s));
+            RETURN_IF_EXCEPTION(scope, );
+            ASSERT(prop);
+            init.set(uncheckedDowncast<JSFunction>(prop));
+        });
+
     m_utilInspectOptionsStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));

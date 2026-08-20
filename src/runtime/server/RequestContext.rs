@@ -675,8 +675,8 @@ where
 
         let arguments = callframe.arguments_as_array::<2>();
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
-            // The cell's destructor already released the ref (the Promise
-            // was collected before a prior microtask turn reached us).
+            // A termination path (abort, end, upgrade) reclaimed the cell's
+            // claim; the context may already be gone.
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
@@ -962,8 +962,8 @@ where
 
         let arguments = callframe.arguments_as_array::<2>();
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
-            // The cell's destructor already released the ref (the Promise
-            // was collected before a prior microtask turn reached us).
+            // A termination path (abort, end, upgrade) reclaimed the cell's
+            // claim; the context may already be gone.
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());

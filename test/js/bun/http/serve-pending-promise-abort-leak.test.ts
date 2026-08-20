@@ -263,187 +263,107 @@ test("client abort frees the context even while the resolve function stays reach
   expect(server.pendingRequests).toBe(0);
 });
 
-test("client abort while a direct stream pull() is parked frees the context and rejects the pending body read", async () => {
-  // Holding the pull() promise keeps its NativePromiseContext cell alive, so
-  // only the abort can release the context. Before the fix, on_abort returned
-  // at the sink branch without ending request streaming, so req.text() on the
-  // cut-off upload stayed pending and pendingRequests stayed at 1 until GC.
-  let pumpHold: Promise<never> | undefined;
-  const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<unknown>();
-  const { promise: firstWrite, resolve: signalFirstWrite } = Promise.withResolvers<void>();
-
-  using server = Bun.serve({
-    port: 0,
-    idleTimeout: 0,
-    fetch(req) {
-      req.text().then(
-        () => signalBodyRead("resolved"),
-        err => signalBodyRead(err),
-      );
-      return new Response(
-        new ReadableStream({
-          type: "direct",
-          pull(ctrl) {
-            ctrl.write("hello");
-            ctrl.flush();
-            signalFirstWrite();
-            pumpHold = new Promise<never>(() => {});
-            return pumpHold;
-          },
-        }),
-      );
+// Holding the pull() promise keeps its NativePromiseContext cell alive, so
+// only the abort can release the context. Before the fix, on_abort's sink
+// branch returned without ending request streaming, so a pending body read on
+// the cut-off upload stayed parked (and pendingRequests at 1) until GC.
+// req.text() and for-await(req.body) keep the body Locked. req.textStream()
+// moves it to Used, whose rejection goes through a stream ref that
+// finalize_without_deinit drops without erroring, so the sink branch must end
+// request streaming itself.
+const bodyConsumers: Array<[string, (req: Request, done: (v: unknown) => void) => void]> = [
+  [
+    "req.text()",
+    (req, done) => {
+      req.text().then(() => done("resolved"), done);
     },
-  });
-
-  // Raw socket: send a chunked POST, deliver one partial chunk so req.text()
-  // stays pending, then destroy the socket mid-stream.
-  const socket = connect(Number(server.port), "127.0.0.1");
-  await new Promise<void>((resolve, reject) => {
-    socket.on("connect", resolve);
-    socket.on("error", reject);
-  });
-  socket.removeAllListeners("error");
-  socket.on("error", () => {});
-  socket.write(
-    "POST / HTTP/1.1\r\n" + //
-      `Host: 127.0.0.1:${server.port}\r\n` +
-      "Transfer-Encoding: chunked\r\n" +
-      "\r\n" +
-      "7\r\npartial\r\n",
-  );
-  await firstWrite;
-  socket.destroy();
-
-  // The cut-off upload rejects the pending req.text() at abort time.
-  const err = await bodyRead;
-  expect(err).toBeInstanceOf(Error);
-  expect((err as Error).name).toBe("AbortError");
-  await waitForPendingRequestsWithoutGC(server, 0);
-  pumpHold = undefined;
-});
-
-test("client abort while a direct stream pull() is parked rejects a parked for-await body read", async () => {
-  // Same scenario as above, but the upload is consumed with
-  // for-await(req.body), which keeps the body Locked. The Locked arm of
-  // end_request_streaming rejects the parked read.
-  let pumpHold: Promise<never> | undefined;
-  const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<unknown>();
-  const { promise: firstWrite, resolve: signalFirstWrite } = Promise.withResolvers<void>();
-
-  using server = Bun.serve({
-    port: 0,
-    idleTimeout: 0,
-    fetch(req) {
+  ],
+  [
+    "for await (req.body)",
+    (req, done) => {
       (async () => {
         try {
           for await (const _chunk of req.body!) {
             // keep reading until the upload ends or errors
           }
-          signalBodyRead("completed");
+          done("completed");
         } catch (e) {
-          signalBodyRead(e);
+          done(e);
         }
       })();
-      return new Response(
-        new ReadableStream({
-          type: "direct",
-          pull(ctrl) {
-            ctrl.write("hello");
-            ctrl.flush();
-            signalFirstWrite();
-            pumpHold = new Promise<never>(() => {});
-            return pumpHold;
-          },
-        }),
-      );
     },
-  });
-
-  const socket = connect(Number(server.port), "127.0.0.1");
-  await new Promise<void>((resolve, reject) => {
-    socket.on("connect", resolve);
-    socket.on("error", reject);
-  });
-  socket.removeAllListeners("error");
-  socket.on("error", () => {});
-  socket.write(
-    "POST / HTTP/1.1\r\n" + //
-      `Host: 127.0.0.1:${server.port}\r\n` +
-      "Transfer-Encoding: chunked\r\n" +
-      "\r\n" +
-      "7\r\npartial\r\n",
-  );
-  await firstWrite;
-  socket.destroy();
-
-  const err = await bodyRead;
-  expect(err).toBeInstanceOf(Error);
-  expect((err as Error).name).toBe("AbortError");
-  await waitForPendingRequestsWithoutGC(server, 0);
-  pumpHold = undefined;
-});
-
-test("client abort while a direct stream pull() is parked rejects a parked textStream read", async () => {
-  // textStream() transitions the body to `Used`, so the rejection can only go
-  // through request_body_readable_stream_ref, and finalize_without_deinit
-  // drops that ref without erroring it. on_abort's sink branch must end
-  // request streaming itself while the ref is still set.
-  let pumpHold: Promise<never> | undefined;
-  const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<unknown>();
-  const { promise: firstWrite, resolve: signalFirstWrite } = Promise.withResolvers<void>();
-
-  using server = Bun.serve({
-    port: 0,
-    idleTimeout: 0,
-    fetch(req) {
+  ],
+  [
+    "req.textStream()",
+    (req, done) => {
       (async () => {
         try {
           for await (const _chunk of req.textStream()) {
             // keep reading until the upload ends or errors
           }
-          signalBodyRead("completed");
+          done("completed");
         } catch (e) {
-          signalBodyRead(e);
+          done(e);
         }
       })();
-      return new Response(
-        new ReadableStream({
-          type: "direct",
-          pull(ctrl) {
-            ctrl.write("hello");
-            ctrl.flush();
-            signalFirstWrite();
-            pumpHold = new Promise<never>(() => {});
-            return pumpHold;
-          },
-        }),
-      );
     },
-  });
+  ],
+];
 
-  const socket = connect(Number(server.port), "127.0.0.1");
-  await new Promise<void>((resolve, reject) => {
-    socket.on("connect", resolve);
-    socket.on("error", reject);
-  });
-  socket.removeAllListeners("error");
-  socket.on("error", () => {});
-  socket.write(
-    "POST / HTTP/1.1\r\n" + //
-      `Host: 127.0.0.1:${server.port}\r\n` +
-      "Transfer-Encoding: chunked\r\n" +
-      "\r\n" +
-      "7\r\npartial\r\n",
-  );
-  await firstWrite;
-  socket.destroy();
+test.each(bodyConsumers)(
+  "client abort while a direct stream pull() is parked frees the context and rejects a pending %s read",
+  async (_name, consume) => {
+    let pumpHold: Promise<never> | undefined;
+    const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<unknown>();
+    const { promise: firstWrite, resolve: signalFirstWrite } = Promise.withResolvers<void>();
 
-  const err = await bodyRead;
-  expect(err).toBeInstanceOf(Error);
-  expect((err as Error).name).toBe("AbortError");
-  await waitForPendingRequestsWithoutGC(server, 0);
-  pumpHold = undefined;
-});
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        consume(req, signalBodyRead);
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(ctrl) {
+              ctrl.write("hello");
+              ctrl.flush();
+              signalFirstWrite();
+              pumpHold = new Promise<never>(() => {});
+              return pumpHold;
+            },
+          }),
+        );
+      },
+    });
+
+    // Raw socket: send a chunked POST, deliver one partial chunk so the read
+    // stays pending, then destroy the socket mid-stream.
+    const socket = connect(Number(server.port), "127.0.0.1");
+    await new Promise<void>((resolve, reject) => {
+      socket.on("connect", resolve);
+      socket.on("error", reject);
+    });
+    socket.removeAllListeners("error");
+    socket.on("error", () => {});
+    socket.write(
+      "POST / HTTP/1.1\r\n" + //
+        `Host: 127.0.0.1:${server.port}\r\n` +
+        "Transfer-Encoding: chunked\r\n" +
+        "\r\n" +
+        "7\r\npartial\r\n",
+    );
+    await firstWrite;
+    socket.destroy();
+
+    // The cut-off upload rejects the pending read at abort time.
+    const err = await bodyRead;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).name).toBe("AbortError");
+    await waitForPendingRequestsWithoutGC(server, 0);
+    pumpHold = undefined;
+  },
+);
 
 test("async server.upgrade() frees the context while the handler promise stays parked", async () => {
   // The upgrade detaches the response and disarms onAborted, so neither

@@ -1037,6 +1037,7 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     for (let i = 0; i < 10; i++) s = new Set([s]);
     expect(Bun.inspect(s, { depth: 2 })).toBe("Set(1) {\n  Set(1) {\n    Set(1) {\n      [Set ...],\n    },\n  },\n}");
     expect(Bun.inspect(s, { depth: 0 })).toBe("Set(1) {\n  [Set ...],\n}");
+    expect(Bun.inspect(s, { depth: Infinity })).toContain("1,");
   });
 
   it("Array respects max_depth", () => {
@@ -1044,6 +1045,18 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     for (let i = 0; i < 10; i++) a = [a];
     expect(Bun.inspect(a, { depth: 2 })).toBe("[\n  [\n    [\n      [Array ...]\n    ]\n  ]\n]");
     expect(Bun.inspect(a, { depth: 0 })).toBe("[\n  [Array ...]\n]");
+    expect(Bun.inspect(a, { depth: Infinity })).toContain("[ 1 ]");
+  });
+
+  it("MapIterator/SetIterator respect max_depth", () => {
+    const mi = () => new Map([["a", 1]]).entries();
+    const si = () => new Set([1]).values();
+    expect(Bun.inspect({ x: mi() }, { depth: 0 })).toBe("{\n  x: [MapIterator ...],\n}");
+    expect(Bun.inspect({ x: si() }, { depth: 0 })).toBe("{\n  x: [SetIterator ...],\n}");
+    expect(Bun.inspect([[[mi()]]], { depth: 2 })).toBe("[\n  [\n    [\n      [MapIterator ...]\n    ]\n  ]\n]");
+    expect(Bun.inspect([[[si()]]], { depth: 2 })).toBe("[\n  [\n    [\n      [SetIterator ...]\n    ]\n  ]\n]");
+    expect(Bun.inspect([[[mi()]]], { depth: Infinity })).toContain('[ "a", 1 ]');
+    expect(Bun.inspect([[[si()]]], { depth: Infinity })).toContain("SetIterator {");
   });
 
   it("console.log of deeply nested Map/Set/Array/Error does not blow up or throw", async () => {
@@ -1146,6 +1159,7 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     let ee = new ErrorEvent("error", { error: 1 });
     for (let i = 0; i < 10; i++) ee = new ErrorEvent("error", { error: ee });
     expect(Bun.inspect(ee, { depth: 2 })).toContain("[ErrorEvent ...]");
+    expect(Bun.inspect(ee, { depth: Infinity })).toContain("error: 1,");
   });
 
   it("deep AggregateError with depth: Infinity bails on stack limit instead of crashing", async () => {

@@ -267,6 +267,27 @@ describe("Bun.Transpiler", () => {
       expect(lastLine(ts.parsedMin(pre + 'export let y = Foo?.["A"];', false))).toBe("export let y = Foo?.A;");
       expect(lastLine(ts.parsedMin(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
     });
+    it("parenthesizes inlined enum on LHS of **", () => {
+      const lastLine = out => out.trimEnd().split("\n").at(-1);
+      const neg = "const enum E { X = -5 }\n";
+      const pos = "const enum E { X = 5 }\n";
+      const str = "const enum E { X = 'a' }\n";
+      // A negative inlined value on the left of ** must be parenthesized:
+      // "-5 ** 2" is a SyntaxError.
+      expect(lastLine(ts.parsed(neg + "export let y = E.X ** 2;", false))).toBe("export let y = (-5) /* X */ ** 2;");
+      expect(lastLine(ts.parsed(neg + "export let y = E['X'] ** 2;", false))).toBe("export let y = (-5) /* X */ ** 2;");
+      // No extra parentheses for non-negative numbers, strings, or the right operand.
+      expect(lastLine(ts.parsed(pos + "export let y = E.X ** 2;", false))).toBe("export let y = 5 /* X */ ** 2;");
+      expect(lastLine(ts.parsed(str + "export let y = E.X ** 2;", false))).toBe('export let y = "a" /* X */ ** 2;');
+      expect(lastLine(ts.parsed(neg + "export let y = 2 ** E.X;", false))).toBe("export let y = 2 ** -5 /* X */;");
+      // Every emitted form must be syntactically valid.
+      for (const pre of [neg, pos, str]) {
+        for (const expr of ["E.X ** 2", "E['X'] ** 2", "2 ** E.X"]) {
+          const out = ts.parsed(pre + `export let y = ${expr};`, false).replace(/^export /gm, "");
+          expect(() => new Function(out)).not.toThrow();
+        }
+      }
+    });
   });
 
   describe("TypeScript", () => {

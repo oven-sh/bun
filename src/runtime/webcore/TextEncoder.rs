@@ -173,15 +173,12 @@ impl<'a> RopeStringEncoder<'a> {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
-        let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
-            &mut this.buf[this.tail..],
-            src,
-        );
-        if result.read == u32::MAX && result.written == u32::MAX {
-            it.stop = 1;
-            this.any_non_ascii = true;
-        } else {
-            this.tail += result.written as usize;
+        match strings::copy_latin1_into_utf8_stop_on_non_ascii(&mut this.buf[this.tail..], src) {
+            Some(written) => this.tail += written,
+            None => {
+                it.stop = 1;
+                this.any_non_ascii = true;
+            }
         }
     }
 
@@ -195,11 +192,9 @@ impl<'a> RopeStringEncoder<'a> {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
-        let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
-            &mut this.buf[offset as usize..],
-            src,
-        );
-        if result.read == u32::MAX && result.written == u32::MAX {
+        if strings::copy_latin1_into_utf8_stop_on_non_ascii(&mut this.buf[offset as usize..], src)
+            .is_none()
+        {
             it.stop = 1;
             this.any_non_ascii = true;
         }

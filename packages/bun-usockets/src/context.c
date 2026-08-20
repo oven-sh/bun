@@ -303,6 +303,7 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
     struct us_socket_t *new_s = s;
     if (ext_size != -1) {
         struct us_poll_t *poll_ref = &s->p;
+        /* Copies the whole header, TLS state (ssl, ssl_id) included. */
         new_s = (struct us_socket_t *) us_poll_resize(poll_ref, loop,
             sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + old_ext_size,
             sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + ext_size);
@@ -316,9 +317,6 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             s->flags.adopted = 1;
             /* Tell the event loop what is the new socket so we can route subsequent events */
             s->prev = new_s;
-            if (s->ssl) {
-                us_internal_ssl_socket_relocated(loop, s, new_s);
-            }
         }
         if (c) {
             c->connecting_head = new_s;

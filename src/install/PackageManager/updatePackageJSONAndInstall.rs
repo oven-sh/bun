@@ -697,7 +697,14 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         // Now that we've run the install step
         // We can save our in-memory package.json to disk
-        File::write_file_atomically(path, source, 0o644).map_err(Error::from)?;
+        if let Err(err) = File::write_file_atomically(path, source, 0o644) {
+            Output::err(
+                err,
+                "failed to write package.json at '{s}'",
+                (BStr::new(path.as_bytes()),),
+            );
+            Global::exit(1);
+        }
 
         if subcommand == Subcommand::Remove {
             if !any_changes {

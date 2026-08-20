@@ -867,15 +867,22 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
+                            // Only for failures reported as errors: an
+                            // optional dependency skips silently and an unmet
+                            // peer only warns, and neither warranted a network
+                            // request before.
                             if matches!(
                                 err,
                                 crate::Error::DistTagNotFound | crate::Error::NoMatchingVersion
                             ) && matches!(
                                 version.tag,
                                 dependency::version::Tag::Npm | dependency::version::Tag::DistTag
-                            ) && refetch_manifest_for_missing_version(
-                                this, name, dependency, id, is_root,
-                            )? {
+                            ) && dependency.behavior.is_required()
+                                && !dependency.behavior.is_peer()
+                                && refetch_manifest_for_missing_version(
+                                    this, name, dependency, id, is_root,
+                                )?
+                            {
                                 return Ok(());
                             }
                             if err == crate::Error::DistTagNotFound {

@@ -770,7 +770,7 @@ describe.concurrent("Bun.inspect when a property lookup throws", () => {
     // Bun.$ is the first property of the Bun object and is built by a builtin that calls
     // Symbol(), as are Bun.sql and Bun.SQL further down, so breaking Symbol makes those
     // initializers throw while Bun is formatted. Custom inspect functions (Bun.env has one on
-    // Windows) load node:util the first time one runs, which also needs Symbol, so load it first.
+    // Windows) load util.inspect the first time one runs, which also needs Symbol, so load it first.
     const result = await inspectInChild(`
       Bun.inspect({ [Bun.inspect.custom]() { return ""; } });
       globalThis.Symbol = 0;

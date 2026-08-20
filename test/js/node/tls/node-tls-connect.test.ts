@@ -1614,3 +1614,41 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("a client paused while connecting still completes the handshake and holds the process until then", async () => {
+  // Node's TLSWrap keeps reading the transport while the stream is paused, so
+  // pause() before 'secureConnect' pauses the decrypted output only. Everything
+  // on the server side is unref'd: the paused client is what keeps the process
+  // alive until the handshake is done. Verified against node v26.3.0.
+  const script = `
+    const tlsMod = require("node:tls");
+    const server = tlsMod.createServer(${JSON.stringify(COMMON_CERT_)}, function onConn(socket) {
+      socket.unref();
+    });
+    server.listen(0, "127.0.0.1", function onListen() {
+      server.unref();
+      const client = tlsMod.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+      client.pause();
+      client.on("secureConnect", function onSecureConnect() {
+        console.log("secureConnect paused=" + client.isPaused());
+        client.destroy();
+        server.close();
+      });
+      client.on("error", function onError(err) {
+        console.log("error " + (err.code || err.message));
+      });
+    });
+    process.on("exit", function onExit(code) {
+      console.log("exit " + code);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim().split("\n")).toEqual(["secureConnect paused=true", "exit 0"]);
+  expect(exitCode).toBe(0);
+});

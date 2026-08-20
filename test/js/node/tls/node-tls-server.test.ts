@@ -2567,3 +2567,60 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     if (!isWindows) expect(t.bytesRead()).toBeGreaterThan(0);
   });
 });
+
+describe.each(["tls", "net"])("%s server socket that unpipe() paused after it end()ed", transport => {
+  // A front server pipes each accepted socket to an upstream connection and back.
+  // The upstream replies and closes: inner.pipe(sock) end()s sock, and the cleanup
+  // of sock.pipe(inner) unpipes sock, which pauses it with nothing left to resume
+  // it. The peer then closes. Node delivers 'end' and 'close' to the paused
+  // socket, so the connection count drops and server.close() calls back.
+  it("still emits 'end' and 'close' when the peer closes, and server.close() completes", async () => {
+    const upstream = net.createServer(s => s.on("data", () => s.end("reply")));
+    await once(upstream.listen(0, "127.0.0.1"), "listening");
+    const serverEvents: string[] = [];
+    const serverSocketClosed = Promise.withResolvers<void>();
+    const onConnection = (sock: net.Socket) => {
+      const inner = net.connect((upstream.address() as AddressInfo).port, "127.0.0.1", () => {
+        sock.pipe(inner);
+        inner.pipe(sock);
+      });
+      inner.on("close", () => serverEvents.push(`upstream closed, paused=${sock.isPaused()}`));
+      sock.on("end", () => serverEvents.push("end"));
+      sock.on("close", hadError => {
+        serverEvents.push(`close hadError=${hadError}`);
+        serverSocketClosed.resolve();
+      });
+      sock.on("error", serverSocketClosed.reject);
+    };
+    const front = transport === "tls" ? createServer(COMMON_CERT, onConnection) : net.createServer(onConnection);
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const frontClosed = Promise.withResolvers<void>();
+    try {
+      const port = (front.address() as AddressInfo).port;
+      const clientEvents: string[] = [];
+      const clientClosed = Promise.withResolvers<void>();
+      const onConnect = () => client.write("hi");
+      const client: net.Socket =
+        transport === "tls"
+          ? connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, onConnect)
+          : net.connect({ port, host: "127.0.0.1" }, onConnect);
+      client.setEncoding("utf8");
+      client.on("data", chunk => clientEvents.push(`data ${chunk}`));
+      client.on("end", () => clientEvents.push("end"));
+      client.on("close", () => {
+        clientEvents.push("close");
+        clientClosed.resolve();
+      });
+      client.on("error", clientClosed.reject);
+      await Promise.all([clientClosed.promise, serverSocketClosed.promise]);
+      expect({ clientEvents, serverEvents }).toEqual({
+        clientEvents: ["data reply", "end", "close"],
+        serverEvents: ["upstream closed, paused=true", "end", "close hadError=false"],
+      });
+    } finally {
+      upstream.close();
+      front.close(err => (err ? frontClosed.reject(err) : frontClosed.resolve()));
+    }
+    await frontClosed.promise;
+  });
+});

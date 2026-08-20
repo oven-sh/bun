@@ -1649,6 +1649,51 @@ describe("paused socket whose peer sends RST", () => {
   });
 });
 
+// Node stops kernel reads when push() returns false, not on pause(): a paused
+// socket keeps reading into its buffer, so it still sees the peer's FIN.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
+// Stopping the handle on pause() left the FIN unread forever, so a socket that
+// nothing resumes (unpipe() pauses it) never emitted 'end' or 'close' and its
+// server's close() never called back.
+describe.concurrent("paused socket whose peer ends", () => {
+  // Pauses the accepted socket after the accept-time read(0), with nothing
+  // pushed afterwards that could start the handle again, then the peer ends.
+  async function pauseThenPeerEnds(endBeforePeer: boolean) {
+    const server = createServer();
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("connection", accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const serverClosed = Promise.withResolvers<void>();
+    try {
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      const clientClosed = once(client, "close");
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      socket.on("end", () => events.push("end"));
+      socket.on("close", hadError => {
+        events.push(`close hadError=${hadError}`);
+        closed.resolve();
+      });
+      socket.on("error", closed.reject);
+      socket.pause();
+      if (endBeforePeer) socket.end();
+      expect(socket.isPaused()).toBe(true);
+      client.end();
+      await Promise.all([closed.promise, clientClosed]);
+      expect(events).toEqual(["end", "close hadError=false"]);
+    } finally {
+      server.close(err => (err ? serverClosed.reject(err) : serverClosed.resolve()));
+    }
+    // The connection is gone, so close() calls back.
+    await serverClosed.promise;
+  }
+
+  it("still emits 'end' and 'close'", () => pauseThenPeerEnds(false));
+
+  it("still emits 'end' and 'close' after it end()ed first", () => pauseThenPeerEnds(true));
+});
+
 describe("net.Server accepted-socket buffering", () => {
   it("delivers bytes buffered before a 'readable' listener attaches, past peer FIN", async () => {
     // read(0) instead of resume(): bytes that arrive before the connection

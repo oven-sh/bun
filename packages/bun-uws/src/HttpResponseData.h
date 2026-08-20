@@ -105,6 +105,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * no Content-Length and no chunked framing, then close. Used by node:http
          * when the user removed the framing headers. */
         HTTP_CLOSE_DELIMITED = 1 << 10,
+        /* HTTP parsing has stopped on this connection: onData ignores whatever
+         * else the peer sends. Set by a parse error whose error response is still
+         * draining behind the previous response (HttpContext::writeHttpErrorAndClose)
+         * and, for node:http, once a parse error has been handed to 'clientError' or
+         * the JS layer freed the parser (Node does so when 'close' is emitted on
+         * the socket). */
+        HTTP_PARSING_STOPPED = 1 << 12,
 
         /* The node:http bits below are only ever set on a node:http compat
          * connection, but they live in the shared word (rather than in
@@ -118,10 +125,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * JSNodeHTTPServerSocket::startPipelinedResponse(). Only meaningful while
          * the request handler dispatch is on the stack. */
         HTTP_NODE_PIPELINED_DISPATCH = 1 << 11,
-        /* The JS layer stopped HTTP processing on this connection (Node frees the
-         * parser when 'close' is emitted on the socket); any further request data
-         * in the buffer is not parsed. */
-        HTTP_NODE_PARSING_STOPPED = 1 << 12,
         /* Socket reads were paused because pipelined responses are (or were)
          * queued. Reads resume once the queue has drained AND the socket has no
          * outgoing backpressure left (Node's flood prevention pauses the socket
@@ -156,7 +159,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
-        HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
+        HTTP_CONNECTION_SCOPED = HTTP_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
     };
 

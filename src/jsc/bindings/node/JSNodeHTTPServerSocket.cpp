@@ -588,9 +588,9 @@ void JSNodeHTTPServerSocket::stopHTTPParsing()
         return;
     }
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<true>::HTTP_NODE_PARSING_STOPPED;
+        reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<true>::HTTP_PARSING_STOPPED;
     } else {
-        reinterpret_cast<uWS::HttpResponseData<false>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<false>::HTTP_NODE_PARSING_STOPPED;
+        reinterpret_cast<uWS::HttpResponseData<false>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<false>::HTTP_PARSING_STOPPED;
     }
 }
 

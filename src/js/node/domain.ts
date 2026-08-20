@@ -97,11 +97,14 @@ class Domain extends EventEmitter {
   }
 
   run(fn, ...args) {
+    // A bare call, like bind() and intercept(), so emitError does not see the
+    // domain as the emitter and leaves e.domainEmitter undefined.
+    const emitError = this[kEmitError];
     this.enter();
     try {
       return fn.$apply(this, args);
     } catch (err) {
-      this[kEmitError](err);
+      emitError(err);
     } finally {
       this.exit();
     }

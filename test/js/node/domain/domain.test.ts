@@ -40,6 +40,8 @@ describe("node:domain", () => {
     expect(seen).toBe(err);
     expect(seen.domain).toBe(d);
     expect(seen.domainThrown).toBe(false);
+    // Node sets no domainEmitter for run()-thrown errors.
+    expect(seen.domainEmitter).toBeUndefined();
   });
 
   it("add and remove track members and route emitter errors", () => {

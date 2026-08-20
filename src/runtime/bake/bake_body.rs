@@ -12,7 +12,7 @@ use bun_core::Output;
 use bun_core::{ZStr, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 use bun_options_types::schema as bun_schema;
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths as paths;
 
 use crate::api::js_bundler::OwnedPlugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
@@ -153,41 +153,7 @@ impl UserOptions {
             );
         }
 
-        if let Some(js_options) = config.get_optional::<JSValue>(global, b"bundlerOptions")? {
-            // Only the per-graph objects are read; a top-level key would silently do nothing.
-            for key in [
-                "sourcemap",
-                "minify",
-                "conditions",
-                "define",
-                "loader",
-                "ignoreDCEAnnotations",
-                "drop",
-                "plugins",
-            ] {
-                if js_options
-                    .get_optional::<JSValue>(global, key.as_bytes())?
-                    .is_some()
-                {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "'bundlerOptions.{key}' must be set under 'bundlerOptions.client', '.server' or '.ssr'",
-                    )));
-                }
-            }
-            if let Some(server_options) = js_options.get_optional::<JSValue>(global, b"server")? {
-                bundler_options.server =
-                    BuildConfigSubset::from_js(global, server_options, "bundlerOptions.server")?;
-            }
-            if let Some(client_options) = js_options.get_optional::<JSValue>(global, b"client")? {
-                bundler_options.client =
-                    BuildConfigSubset::from_js(global, client_options, "bundlerOptions.client")?;
-            }
-            if let Some(ssr_options) = js_options.get_optional::<JSValue>(global, b"ssr")? {
-                bundler_options.ssr =
-                    BuildConfigSubset::from_js(global, ssr_options, "bundlerOptions.ssr")?;
-            }
-        }
-
+        // Parsed before `bundlerOptions` so the app's values merge over `framework.bundlerOptions`.
         let framework = Framework::from_js(
             match config.get(global, "framework")? {
                 Some(v) => v,
@@ -203,6 +169,10 @@ impl UserOptions {
             &mut bundler_options,
             &arena,
         )?;
+
+        if let Some(js_options) = config.get_optional::<JSValue>(global, b"bundlerOptions")? {
+            bundler_options.parse_js(js_options, global, &arena, "bundlerOptions")?;
+        }
 
         let root = resolve_root(config.get_optional_slice(global, b"root")?, global, &arena)?;
 
@@ -284,6 +254,51 @@ impl SplitBundlerOptions {
     // Note: was `pub const EMPTY` — `ArrayHashMap::new()` (inside
     // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
     // default. Callers updated to `SplitBundlerOptions::default()`.
+
+    /// Parses a `Bake.BundlerOptions` object over the current values, so a later call overrides an earlier one key by key.
+    fn parse_js(
+        &mut self,
+        js_options: JSValue,
+        global: &JSGlobalObject,
+        arena: &Arena,
+        name: &str,
+    ) -> JsResult<()> {
+        if !js_options.is_object() {
+            return Err(global.throw_invalid_arguments(format_args!("'{name}' must be an object")));
+        }
+        // Only the per-graph objects are read; a top-level key would silently do nothing.
+        for key in [
+            "sourcemap",
+            "minify",
+            "conditions",
+            "define",
+            "loader",
+            "ignoreDCEAnnotations",
+            "drop",
+            "plugins",
+        ] {
+            if js_options
+                .get_optional::<JSValue>(global, key.as_bytes())?
+                .is_some()
+            {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{name}.{key}' must be set under '{name}.client', '.server' or '.ssr'",
+                )));
+            }
+        }
+        for (key, graph) in [
+            ("server", &mut self.server),
+            ("client", &mut self.client),
+            ("ssr", &mut self.ssr),
+        ] {
+            if let Some(graph_options) =
+                js_options.get_optional::<JSValue>(global, key.as_bytes())?
+            {
+                graph.parse_js(global, graph_options, arena, name, key)?;
+            }
+        }
+        Ok(())
+    }
 
     fn parse_plugin_array(
         &mut self,
@@ -369,32 +384,110 @@ pub struct BuildConfigSubset {
     pub minify_syntax: Option<bool>,
     pub minify_identifiers: Option<bool>,
     pub minify_whitespace: Option<bool>,
+    pub minify_keep_names: Option<bool>,
 }
 
 impl BuildConfigSubset {
-    pub fn from_js(
+    /// Keys present in `js_options` (a `Bake.BuildConfigSubset`) override the current values; `owner`.`graph` names it in errors.
+    pub fn parse_js(
+        &mut self,
         global: &JSGlobalObject,
         js_options: JSValue,
-        name: &str,
-    ) -> JsResult<BuildConfigSubset> {
-        let mut options = BuildConfigSubset::default();
+        arena: &Arena,
+        owner: &str,
+        graph: &str,
+    ) -> JsResult<()> {
+        if !js_options.is_object() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("'{owner}.{graph}' must be an object"))
+            );
+        }
 
-        // Declared on `Bun.build`'s config but not wired into the dev server or `bun build --app` yet; say so instead of ignoring them.
-        for key in [
-            "conditions",
-            "define",
-            "loader",
-            "ignoreDCEAnnotations",
-            "drop",
-            "plugins",
-        ] {
+        // No per-graph loader map or plugin list exists downstream; say so instead of ignoring them.
+        for key in ["loader", "plugins"] {
             if js_options
                 .get_optional::<JSValue>(global, key.as_bytes())?
                 .is_some()
             {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "'{name}.{key}' is not supported yet",
+                    "'{owner}.{graph}.{key}' is not supported yet",
                 )));
+            }
+        }
+
+        // Value handling below follows `Bun.build` (JSBundler.rs `Config::from_js`).
+        if let Some(conditions) = js_options.get_optional::<JSValue>(global, b"conditions")? {
+            if conditions.is_string() {
+                let slice = conditions.to_slice(global)?;
+                let condition = arena_dupe_z(arena, slice.slice()).as_bytes();
+                bun_core::handle_oom(self.conditions.put(condition, ()));
+            } else if conditions.is_array() {
+                let mut it = conditions.array_iterator(global)?;
+                while let Some(item) = it.next()? {
+                    let slice = item.to_slice(global)?;
+                    let condition = arena_dupe_z(arena, slice.slice()).as_bytes();
+                    bun_core::handle_oom(self.conditions.put(condition, ()));
+                }
+            } else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{owner}.{graph}.conditions' must be a string or an array of strings"
+                )));
+            }
+        }
+
+        if let Some(drop) = js_options.get_optional::<JSValue>(global, b"drop")? {
+            if !drop.is_array() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{owner}.{graph}.drop' must be an array of strings"
+                )));
+            }
+            let mut it = drop.array_iterator(global)?;
+            while let Some(item) = it.next()? {
+                let slice = item.to_slice(global)?;
+                let name = arena_dupe_z(arena, slice.slice()).as_bytes();
+                bun_core::handle_oom(self.drop.put(name, ()));
+            }
+        }
+
+        if let Some(value) = get_boolean_loose(js_options, global, b"ignoreDCEAnnotations")? {
+            self.ignore_dce_annotations = Some(value);
+        }
+
+        if let Some(define) = js_options.get_optional::<JSValue>(global, b"define")? {
+            let Some(object) = define.get_object() else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{owner}.{graph}.define' must be an object"
+                )));
+            };
+            let mut it = bun_jsc::JSPropertyIterator::init(
+                global,
+                object,
+                bun_jsc::JSPropertyIteratorOptions {
+                    skip_empty_name: true,
+                    include_value: true,
+                    ..Default::default()
+                },
+            )?;
+            while let Some(key) = it.next()? {
+                if !it.value.js_type().is_string_like() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'{owner}.{graph}.define[\"{key}\"]' must be a string"
+                    )));
+                }
+                let value = it.value.to_slice(global)?;
+                let value: &[u8] = if value.slice().is_empty() {
+                    b"\"\""
+                } else {
+                    value.slice()
+                };
+                let key = key.to_owned_slice().into_boxed_slice();
+                // A later `define` of the same key replaces the earlier value.
+                if let Some(i) = self.define.keys.iter().position(|k| *k == key) {
+                    self.define.values[i] = value.into();
+                } else {
+                    self.define.keys.push(key);
+                    self.define.values.push(value.into());
+                }
             }
         }
 
@@ -403,14 +496,14 @@ impl BuildConfigSubset {
                 break 'brk;
             };
             if let Some(sourcemap) = source_map_mode_from_js(global, val)? {
-                options.source_map = sourcemap;
+                self.source_map = sourcemap;
                 break 'brk;
             }
 
             return Err(crate::node::validators::throw_err_invalid_arg_type(
                 global,
                 format_args!("sourcemap"),
-                "\"inline\" | \"external\" | \"linked\"",
+                "\"none\" | \"inline\" | \"external\" | \"linked\"",
                 val,
             ));
         }
@@ -420,25 +513,33 @@ impl BuildConfigSubset {
             else {
                 break 'brk;
             };
-            if minify_options.is_boolean() && minify_options.as_boolean() {
-                options.minify_syntax = Some(minify_options.as_boolean());
-                options.minify_identifiers = Some(minify_options.as_boolean());
-                options.minify_whitespace = Some(minify_options.as_boolean());
+            if minify_options.is_boolean() {
+                self.minify_syntax = Some(minify_options.as_boolean());
+                self.minify_identifiers = Some(minify_options.as_boolean());
+                self.minify_whitespace = Some(minify_options.as_boolean());
                 break 'brk;
+            }
+            if !minify_options.is_object() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{owner}.{graph}.minify' must be a boolean or an object"
+                )));
             }
 
             if let Some(value) = get_boolean_loose(minify_options, global, b"whitespace")? {
-                options.minify_whitespace = Some(value);
+                self.minify_whitespace = Some(value);
             }
             if let Some(value) = get_boolean_loose(minify_options, global, b"syntax")? {
-                options.minify_syntax = Some(value);
+                self.minify_syntax = Some(value);
             }
             if let Some(value) = get_boolean_loose(minify_options, global, b"identifiers")? {
-                options.minify_identifiers = Some(value);
+                self.minify_identifiers = Some(value);
+            }
+            if let Some(value) = get_boolean_loose(minify_options, global, b"keepNames")? {
+                self.minify_keep_names = Some(value);
             }
         }
 
-        Ok(options)
+        Ok(())
     }
 }
 
@@ -458,6 +559,7 @@ impl Default for BuildConfigSubset {
             minify_syntax: None,
             minify_identifiers: None,
             minify_whitespace: None,
+            minify_keep_names: None,
         }
     }
 }
@@ -794,16 +896,18 @@ impl Framework {
             return Err(global.throw_invalid_arguments(format_args!("Framework must be an object")));
         }
 
-        // Documented but never read; a silent no-op is worse than an error.
-        for key in ["bundlerOptions", "staticRouters"] {
-            if opts
-                .get_optional::<JSValue>(global, key.as_bytes())?
-                .is_some()
-            {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'framework.{key}' is not supported yet",
-                )));
-            }
+        // No static file router exists yet; a silent no-op is worse than an error.
+        if opts
+            .get_optional::<JSValue>(global, b"staticRouters")?
+            .is_some()
+        {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'framework.staticRouters' is not supported yet",
+            )));
+        }
+
+        if let Some(js_options) = opts.get_optional::<JSValue>(global, b"bundlerOptions")? {
+            bundler_options.parse_js(js_options, global, arena, "framework.bundlerOptions")?;
         }
 
         if opts.get(global, "serverEntryPoint")?.is_some() {
@@ -1248,6 +1352,9 @@ impl Framework {
         out.options.minify_syntax = minify_syntax.unwrap_or(mode != Mode::Development);
         out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
         out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
+        if let Some(keep_names) = bundler_options.minify_keep_names {
+            out.options.keep_names = keep_names;
+        }
         out.options.css_chunking = true;
         out.options.framework = Some(framework_view);
         out.options.inline_entrypoint_import_meta_main = true;
@@ -1511,54 +1618,6 @@ pub(crate) fn add_import_meta_defines(
     )?;
 
     Ok(())
-}
-
-/// Stack-allocated structure that is written to from end to start.
-/// Used as a staging area for building pattern strings.
-pub struct PatternBuffer {
-    pub(crate) bytes: PathBuffer,
-    // On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
-    // (> u16::MAX), so u32 is required; u16 would truncate the initial index
-    // to 32766 and `slice()` would return ~64 KiB of trailing zero bytes.
-    pub(crate) i: u32,
-}
-
-impl PatternBuffer {
-    pub(crate) const EMPTY: PatternBuffer = PatternBuffer {
-        bytes: PathBuffer::ZEROED,
-        i: core::mem::size_of::<PathBuffer>() as u32,
-    };
-
-    pub(crate) fn prepend(&mut self, chunk: &[u8]) {
-        debug_assert!(self.i as usize >= chunk.len());
-        self.i -= u32::try_from(chunk.len()).expect("int cast");
-        self.slice_mut()[..chunk.len()].copy_from_slice(chunk);
-    }
-
-    pub(crate) fn prepend_part(&mut self, part: framework_router::Part) {
-        match part {
-            framework_router::Part::Text(text) => {
-                debug_assert!(text.is_empty() || text[0] != b'/');
-                self.prepend(text);
-                self.prepend(b"/");
-            }
-            framework_router::Part::Param(name)
-            | framework_router::Part::CatchAll(name)
-            | framework_router::Part::CatchAllOptional(name) => {
-                self.prepend(name);
-                self.prepend(b"/:");
-            }
-            framework_router::Part::Group(_) => {}
-        }
-    }
-
-    pub(crate) fn slice(&self) -> &[u8] {
-        &self.bytes[self.i as usize..]
-    }
-
-    fn slice_mut(&mut self) -> &mut [u8] {
-        &mut self.bytes[self.i as usize..]
-    }
 }
 
 pub fn print_warning() {

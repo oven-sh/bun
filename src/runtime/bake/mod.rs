@@ -38,7 +38,7 @@ pub mod source_provider_exports;
 
 // Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
-pub use bake_body::{PatternBuffer, UserOptions, print_warning};
+pub use bake_body::{UserOptions, print_warning};
 
 /// All bake JSC references go through this re-export of `bun_jsc`.
 pub mod jsc {
@@ -638,7 +638,7 @@ impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
     }
 }
 
-/// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `from_js`)
+/// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `parse_js`)
 /// lives in `bake_body.rs`; this keystone mirror carries every field that
 /// `Framework::init_transpiler` reads so DevServer's
 /// per-graph transpilers see bunfig `[serve.static]` define/env/conditions.

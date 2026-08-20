@@ -1,6 +1,7 @@
 // Parsing of the `app` option shared by `Bun.serve({ app })` and `bun build --app` (src/runtime/bake/bake_body.rs).
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, MAX_PATH_BYTES, tempDir } from "harness";
+import path from "node:path";
 
 test("optional app keys treat null as absent", async () => {
   using dir = tempDir("bake-app-options", {
@@ -19,11 +20,12 @@ test("optional app keys treat null as absent", async () => {
         "bundlerOptions.client.sourcemap: null": { framework, bundlerOptions: { client: { sourcemap: null } } },
         "bundlerOptions.client.sourcemap: 0": { framework, bundlerOptions: { client: { sourcemap: 0 } } },
         "bundlerOptions.client.minify: null": { framework, bundlerOptions: { client: { minify: null } } },
-        // Documented keys that are not wired up yet fail loudly instead of doing nothing.
-        "bundlerOptions.client.conditions: []": { framework, bundlerOptions: { client: { conditions: [] } } },
-        "bundlerOptions.define: {}": { framework, bundlerOptions: { define: {} } },
-        "framework.bundlerOptions: {}": { framework: { ...framework, bundlerOptions: {} } },
-        "framework.staticRouters: []": { framework: { ...framework, staticRouters: [] } },
+        "bundlerOptions.client.{conditions,define,drop,ignoreDCEAnnotations}: null": {
+          framework,
+          bundlerOptions: { client: { conditions: null, define: null, drop: null, ignoreDCEAnnotations: null } },
+        },
+        "framework.bundlerOptions: null": { framework: { ...framework, bundlerOptions: null } },
+        "framework.staticRouters: null": { framework: { ...framework, staticRouters: null } },
         "framework.plugins: null": { framework: { ...framework, plugins: null } },
         "serverComponents.separateSSRGraph: null": serverComponents(null),
         "serverComponents.separateSSRGraph: 0": serverComponents(0),
@@ -60,17 +62,114 @@ test("optional app keys treat null as absent", async () => {
     "bundlerOptions.{server,client,ssr}: null": "accepted",
     "bundlerOptions.client.sourcemap: null": "accepted",
     "bundlerOptions.client.sourcemap: 0":
-      'The "sourcemap" property must be of type "inline" | "external" | "linked", got number',
+      'The "sourcemap" property must be of type "none" | "inline" | "external" | "linked", got number',
     "bundlerOptions.client.minify: null": "accepted",
-    "bundlerOptions.client.conditions: []": "'bundlerOptions.client.conditions' is not supported yet",
-    "bundlerOptions.define: {}":
-      "'bundlerOptions.define' must be set under 'bundlerOptions.client', '.server' or '.ssr'",
-    "framework.bundlerOptions: {}": "'framework.bundlerOptions' is not supported yet",
-    "framework.staticRouters: []": "'framework.staticRouters' is not supported yet",
+    "bundlerOptions.client.{conditions,define,drop,ignoreDCEAnnotations}: null": "accepted",
+    "framework.bundlerOptions: null": "accepted",
+    "framework.staticRouters: null": "accepted",
     "framework.plugins: null": "accepted",
     "serverComponents.separateSSRGraph: null": "Missing 'framework.serverComponents.separateSSRGraph'",
     "serverComponents.separateSSRGraph: 0": "'framework.serverComponents.separateSSRGraph' must be a boolean",
     "serverComponents.separateSSRGraph: false": "Missing 'framework.serverComponents.serverRuntimeImportSource'",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("bundlerOptions values are validated while parsing the options", async () => {
+  using dir = tempDir("bake-app-bundler-options", {
+    "server.ts": `export function render() { return new Response("unused"); }`,
+    // Stand-ins for the two framework imports `Bun.serve` resolves up front, so the in-tree React framework object loads without a React install.
+    "node_modules/react-refresh/runtime.js": `export {};`,
+    "node_modules/react-server-dom-bun/server.js": `export {};`,
+    "check.ts": `
+      import path from "node:path";
+      import { react } from ${JSON.stringify(path.join(import.meta.dir, "../../src/runtime/bake/bun-framework-react/index.ts"))};
+      const framework = {
+        fileSystemRouterTypes: [
+          { root: path.join(import.meta.dir, "routes"), style: "nextjs-pages", serverEntryPoint: "./server.ts" },
+        ],
+      };
+      const client = value => ({ framework, bundlerOptions: { client: value } });
+      const apps = {
+        "bundlerOptions: 42": { framework, bundlerOptions: 42 },
+        "bundlerOptions.server: 'str'": { framework, bundlerOptions: { server: "str" } },
+        // Only the per-graph objects are read, so a top-level key is rejected instead of ignored.
+        "bundlerOptions.define: {}": { framework, bundlerOptions: { define: {} } },
+        "client.conditions: ['a', 'b']": client({ conditions: ["a", "b"] }),
+        "client.conditions: 'a'": client({ conditions: "a" }),
+        "client.conditions: 3": client({ conditions: 3 }),
+        "client.define: { 'globalThis.X': '1' }": client({ define: { "globalThis.X": "1" } }),
+        "client.define: 'str'": client({ define: "str" }),
+        "client.define: { X: 3 }": client({ define: { X: 3 } }),
+        "client.drop: ['console']": client({ drop: ["console"] }),
+        "client.drop: 'console'": client({ drop: "console" }),
+        "client.ignoreDCEAnnotations: true": client({ ignoreDCEAnnotations: true }),
+        "client.minify: false": client({ minify: false }),
+        "client.minify: { syntax: false, keepNames: true }": client({ minify: { syntax: false, keepNames: true } }),
+        "client.minify: 7": client({ minify: 7 }),
+        "client.sourcemap: 'none'": client({ sourcemap: "none" }),
+        "client.sourcemap: true": client({ sourcemap: true }),
+        // No per-graph loader map or plugin list exists yet.
+        "client.loader: {}": client({ loader: {} }),
+        "client.plugins: []": client({ plugins: [] }),
+        "framework.bundlerOptions.ssr.drop: ['console']": {
+          framework: { ...framework, bundlerOptions: { ssr: { drop: ["console"] } } },
+        },
+        "framework.bundlerOptions.ssr: 7": { framework: { ...framework, bundlerOptions: { ssr: 7 } } },
+        "framework.staticRouters: []": { framework: { ...framework, staticRouters: [] } },
+        "bun-framework-react/index.ts react()": { framework: react() },
+      };
+
+      const results = {};
+      for (const [name, app] of Object.entries(apps)) {
+        try {
+          const server = Bun.serve({ port: 0, development: true, app, fetch: () => new Response("") });
+          server.stop(true);
+          results[name] = "accepted";
+        } catch (e) {
+          results[name] = e.message;
+        }
+      }
+      console.log(JSON.stringify(results));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toStrictEqual({
+    "bundlerOptions: 42": "'bundlerOptions' must be an object",
+    "bundlerOptions.server: 'str'": "'bundlerOptions.server' must be an object",
+    "bundlerOptions.define: {}":
+      "'bundlerOptions.define' must be set under 'bundlerOptions.client', '.server' or '.ssr'",
+    "client.conditions: ['a', 'b']": "accepted",
+    "client.conditions: 'a'": "accepted",
+    "client.conditions: 3": "'bundlerOptions.client.conditions' must be a string or an array of strings",
+    "client.define: { 'globalThis.X': '1' }": "accepted",
+    "client.define: 'str'": "'bundlerOptions.client.define' must be an object",
+    "client.define: { X: 3 }": `'bundlerOptions.client.define["X"]' must be a string`,
+    "client.drop: ['console']": "accepted",
+    "client.drop: 'console'": "'bundlerOptions.client.drop' must be an array of strings",
+    "client.ignoreDCEAnnotations: true": "accepted",
+    "client.minify: false": "accepted",
+    "client.minify: { syntax: false, keepNames: true }": "accepted",
+    "client.minify: 7": "'bundlerOptions.client.minify' must be a boolean or an object",
+    "client.sourcemap: 'none'": "accepted",
+    "client.sourcemap: true":
+      'The "sourcemap" property must be of type "none" | "inline" | "external" | "linked", got boolean',
+    "client.loader: {}": "'bundlerOptions.client.loader' is not supported yet",
+    "client.plugins: []": "'bundlerOptions.client.plugins' is not supported yet",
+    "framework.bundlerOptions.ssr.drop: ['console']": "accepted",
+    "framework.bundlerOptions.ssr: 7": "'framework.bundlerOptions.ssr' must be an object",
+    "framework.staticRouters: []": "'framework.staticRouters' is not supported yet",
+    "bun-framework-react/index.ts react()": "accepted",
   });
   expect(exitCode).toBe(0);
 });

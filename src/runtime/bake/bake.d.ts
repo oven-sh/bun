@@ -2,7 +2,7 @@
 // Definitions that are commented out are planned but not implemented.
 //
 // To use, add a TypeScript reference comment mentioning this file:
-// /// <reference path="/path/to/bun/src/bake/bake.d.ts" />
+// /// <reference path="/path/to/bun/src/runtime/bake/bake.d.ts" />
 
 declare module "bun" {
   declare namespace Bake {
@@ -13,15 +13,17 @@ declare module "bun" {
        *
        * External dependencies:
        * ```
-       * bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
+       * bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental
        * ```
        */
       framework: Framework | "react";
       // Note: To contribute to 'bun-framework-react', it can be run from this file:
-      // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
+      // https://github.com/oven-sh/bun/blob/main/src/runtime/bake/bun-framework-react/index.ts
       /**
-       * A subset of the options from Bun.build can be configured. While the framework
-       * can also set these options, this property overrides and merges with them.
+       * A subset of the options from Bun.build can be configured. `framework.bundlerOptions`
+       * is applied first and this property merges over it: `conditions` and `drop` add up,
+       * while a `define` key or a `minify`/`sourcemap`/`ignoreDCEAnnotations` value set here
+       * replaces the framework's.
        *
        * @default {}
        */
@@ -33,21 +35,33 @@ declare module "bun" {
     }
 
     /**
-     * Bake only allows a subset of options from `Bun.build`. `sourcemap` and
-     * `minify` are wired up; `conditions`, `define`, `loader`,
-     * `ignoreDCEAnnotations` and `drop` are planned and currently throw a
-     * "not supported yet" error. Never allowed:
-     * - format: set to an internal "hmr" format
+     * Bake only allows a subset of options from `Bun.build`, with the same value
+     * semantics. `conditions`, `define`, `drop` and `ignoreDCEAnnotations` apply
+     * per graph in both `Bun.serve({ app })` and `bun build --app`.
+     *
+     * `sourcemap` and `minify` only apply to `bun build --app`: the development
+     * server always emits external source maps and never minifies. A production
+     * build links every graph in one pass, so only `minify.syntax` and
+     * `minify.keepNames` are per graph; `sourcemap`, `minify.whitespace` and
+     * `minify.identifiers` are read from `server` and used for every output file,
+     * and setting them under `client` or `ssr` has no effect. `.map` files are not
+     * written to `--outdir` yet: the default `"external"` keeps the server's maps
+     * in memory for error stack traces, and `"inline"` is the only value that ships
+     * client source maps.
+     *
+     * Not configurable:
+     * - loader and plugins throw "not supported yet"; plugins go on the framework or app object
+     * - format: development uses an internal "hmr" format
      * - entrypoints/outfile/outdir: do not make sense to set
-     * - disabling sourcemap: makes code impossible to debug
-     * - minifyIdentifiers in dev: some generated code does not support it
      * - publicPath: set by the user (TODO: add options.publicPath)
      * - emitDCEAnnotations: not useful
      * - banner and footer: do not make sense in these multi-file builds
-     * - disabling external: would exclude imported files
-     * - plugins: specified in the framework object, merged between client and server
+     * - external: disabling it would exclude imported files
      */
-    type BuildConfigSubset = Pick<BuildConfig, "sourcemap" | "minify">;
+    type BuildConfigSubset = Pick<BuildConfig, "conditions" | "define" | "drop" | "ignoreDCEAnnotations" | "minify"> & {
+      /** As in {@link BuildConfig.sourcemap}, minus the boolean shorthands. @default "external" */
+      sourcemap?: "none" | "inline" | "external" | "linked" | undefined;
+    };
 
     type BundlerOptions = {
       /** Customize the build options of the client-side build */
@@ -66,8 +80,8 @@ declare module "bun" {
      */
     interface Framework {
       /**
-       * Customize the bundler options. Not supported yet: setting it throws;
-       * use the app's `bundlerOptions` for now.
+       * Customize the bundler options. The app's `bundlerOptions` merge over these.
+       * @default {}
        */
       bundlerOptions?: BundlerOptions | undefined;
       /**
@@ -367,11 +381,11 @@ declare module "bun" {
        *          exhaustive: true,
        *      }
        *
-       * "exhaustive" tells Bun that the list is complete. If it is not, a
-       * static site cannot be generated as it would otherwise be missing
-       * routes. A non-exhaustive list can speed up build times by only
-       * specifying a few important pages (such as 10 most recent), leaving
-       * the rest to be generated on-demand at runtime.
+       * "exhaustive" is meant to tell Bun that the list is complete, so that a
+       * non-exhaustive list can prerender a few important pages (such as the 10
+       * most recent) and leave the rest to be generated on-demand at runtime. It
+       * is not read yet: `bun build --app` only produces static builds and
+       * renders exactly the pages that are listed.
        *
        * To stream results, `getParams` may return an async iterator, which
        * Bun will start rendering as more parameters are provided:
@@ -383,11 +397,12 @@ declare module "bun" {
        *     }
        */
       getParams?: (paramsMetadata: ParamsMetadata) => MaybePromise<GetParamIterator>;
-      /**
-       * When a dynamic build uses static assets, Bun can map content types in the
-       * user's `Accept` header to the different static files.
-       */
-      contentTypeToStaticFile?: Record<string, string>;
+      // /**
+      //  * When a dynamic build uses static assets, Bun can map content types in the
+      //  * user's `Accept` header to the different static files. Needs dynamic
+      //  * production builds, which do not exist yet; nothing reads this export.
+      //  */
+      // contentTypeToStaticFile?: Record<string, string>;
     }
 
     type GetParamIterator =
@@ -397,6 +412,7 @@ declare module "bun" {
 
     type GetParamsFinalOpts = void | null | {
       /**
+       * Not read yet; see {@link ServerEntryPoint.getParams}.
        * @default true
        */
       exhaustive?: boolean | undefined;

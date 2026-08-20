@@ -346,10 +346,7 @@ impl File {
     }
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
-    /// Open `path` for reading if it is a regular file; returns it with its size. A directory
-    /// fails with `EISDIR`, any other non-regular file with `ENODEV` (the errno `Bun.Image` used).
-    /// The files bun reads whole are files it found itself (lockfiles, package.json, config, cache
-    /// entries, sidecars): a FIFO there would block the open, and `/dev/zero` has no end.
+    /// Open `path` for reading and return it with its size; `EISDIR` for a directory, `ENODEV` for any other non-regular file.
     pub fn open_regular_at(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, u64)> {
         let dir = dir.as_fd();
         // On Windows `O_NONBLOCK` would make the handle overlapped; the fstat still rejects there.

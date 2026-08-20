@@ -17,6 +17,9 @@ const isDate = types.isDate;
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
 
+// rm's option validation and ERR_FS_EISDIR check live next to promises.rm.
+const { validateRmOptions, validateRmOptionsSync, rmValidated } = promises.$data;
+
 const constants = $processBindingConstants.fs;
 var _lazyGlob;
 function lazyGlob() {
@@ -92,8 +95,9 @@ var access = function access(path, mode, callback) {
     }
 
     callback = ensureCallback(callback);
-    // route through promises.rm for the JS-side ERR_FS_EISDIR validation
-    promises.rm(path, options).then(nullcallback(callback), callback);
+    // node's callback form throws synchronously on invalid options
+    options = validateRmOptions(options);
+    rmValidated(path, options).then(nullcallback(callback), callback);
   },
   rmdir = function rmdir(path, options, callback) {
     if ($isCallable(options)) {
@@ -555,31 +559,7 @@ var access = function access(path, mode, callback) {
   utimesSync = fs.utimesSync.bind(fs),
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = function rmSync(path, options) {
-    if (typeof options === "object" && options !== null) {
-      // Node merges the caller's options over the defaults with a spread, which
-      // copies own enumerable keys only -- including ones holding `undefined`.
-      // Normalize here so the native parser sees exactly that set.
-      options = { ...options };
-    }
-    if (!options?.recursive) {
-      // node validates in JS and reports ERR_FS_EISDIR for directories
-      let stats;
-      try {
-        stats = fs.lstatSync(path);
-      } catch {
-        // let the native call produce the error (respects force/ENOENT)
-      }
-      if (stats?.isDirectory()) {
-        throw require("internal/fs/cp-sync").fsEisdirError({
-          code: "EISDIR",
-          message: "is a directory",
-          path,
-          syscall: "rm",
-          errno: $processBindingConstants.os.errno.EISDIR,
-        });
-      }
-    }
-    return fs.rmSync(path, options);
+    return fs.rmSync(path, validateRmOptionsSync(path, options));
   },
   rmdirSync = function rmdirSync(path, options) {
     // node throws for any defined `recursive`, not just truthy ones

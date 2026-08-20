@@ -280,10 +280,8 @@ impl<'a> AsyncHTTP<'a> {
         &MAX_SIMULTANEOUS_REQUESTS
     }
 
-    /// The method the request was made with. A redirect can only rewrite the
-    /// method to GET, and only on the HTTP thread's copy (restored from this
-    /// field in `on_async_http_callback`), so a HEAD request reads as HEAD here
-    /// for its whole lifetime.
+    /// The method the request was made with. A redirect only ever rewrites the
+    /// HTTP thread's copy (`client.method`), and only to GET.
     #[inline]
     pub fn method(&self) -> Method {
         self.method

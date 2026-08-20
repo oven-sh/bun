@@ -1869,13 +1869,9 @@ impl FetchTasklet {
         response
     }
 
-    /// WHATWG fetch gives a response to a HEAD request, or one with a null body
-    /// status, a null body whatever the server frames after the head
-    /// (<https://fetch.spec.whatwg.org/#main-fetch>, "set internalResponse's body
-    /// to null"). 101 is the exception: the HTTP client only accepts one for a
-    /// request that asked to upgrade, and the upgraded connection is then the
-    /// body (`fetch.upgrade.test.ts`). The other 1xx statuses are interim
-    /// responses that the HTTP client never reports as the response.
+    /// <https://fetch.spec.whatwg.org/#main-fetch>: HEAD responses and null body
+    /// statuses have no body. Not 101: the HTTP client only accepts it for a
+    /// requested upgrade, and the upgraded connection is then the body.
     fn response_body_is_null(&self, status_code: u16) -> bool {
         (crate::server::http_status_text::is_null_body(status_code) && status_code != 101)
             || self
@@ -1884,14 +1880,10 @@ impl FetchTasklet {
                 .is_some_and(|http_| http_.method() == Method::HEAD)
     }
 
-    /// The body for `response_body_is_null`. Bytes the server frames anyway (a
-    /// 205 with content, say) are dropped: the ones already here now, the rest
-    /// by the HTTP thread, which drains them as it does the body of a Response
-    /// that was collected unread, so the connection can still be pooled. No
-    /// Response is attached to the tasklet yet, so `ignore_remaining_response_body`
-    /// only switches the transport over and releases the event loop.
-    /// `is_waiting_body` stays false: neither those bytes nor a transport
-    /// failure during the drain may reach the body.
+    /// Content the server frames anyway (a 205 with content) is dropped, and the
+    /// rest of it drained as for a Response collected unread, which keeps the
+    /// connection poolable. No Response is attached yet, so that is all the
+    /// ignore does. `is_waiting_body` stays false: nothing may reach this body.
     fn null_body_value(&mut self) -> BodyValue {
         self.scheduled_response_buffer = MutableString::default();
         if self.result.has_more {

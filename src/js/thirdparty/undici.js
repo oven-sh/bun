@@ -63,8 +63,7 @@ class BodyReadable extends ReadableFromWeb {
   #bodyUsed;
 
   constructor(response, options = {}) {
-    // undici's request() returns a body for every response, so one that has none
-    // (204, 304, a HEAD request) reads as an empty body here:
+    // A response with no body (204, HEAD) still gets a body, as in undici:
     // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L118-L126
     super(options, response.body ?? new ReadableStream({ start: closeEmptyBody }));
 

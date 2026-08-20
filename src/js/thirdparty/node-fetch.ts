@@ -33,9 +33,7 @@ class Headers extends WebHeaders {
 
 const kHeaders = Symbol("kHeaders");
 const kBody = Symbol("kBody");
-// Set on the responses fetch() returns. node-fetch pipes every network
-// response into a stream, so `body` is a stream even when the response has no
-// body (204, 304, a HEAD request), while `new Response(null).body` is null:
+// A fetched response has a body stream even when it has no body (204, HEAD):
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L253-L286
 const kFetched = Symbol("kFetched");
 const HeadersPrototype = Headers.prototype;

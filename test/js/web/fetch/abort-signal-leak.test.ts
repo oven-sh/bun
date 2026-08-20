@@ -19,6 +19,6 @@ test("'abort' event on req.signal should not cause AbortSignal to never be GCed"
   await testReqSignalAbortEvent();
 });
 
-test("'abort' event hadnler on req.signal that never is called should not prevent AbortSignal from being GCed", async () => {
+test("'abort' event handler on req.signal that never is called should not prevent AbortSignal from being GCed", async () => {
   await testReqSignalAbortEventNeverResolves();
 });

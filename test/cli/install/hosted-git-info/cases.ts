@@ -8,7 +8,7 @@
  *   - https://github.com/npm/hosted-git-info/blob/main/test/file.js
  *   - https://github.com/npm/hosted-git-info/blob/main/test/parse-url.js
  */
-// This is a valid git branch name that contains other occurences of the characters we check
+// This is a valid git branch name that contains other occurrences of the characters we check
 // for to determine the committish in order to test that we parse those correctly
 const committishDefaults = { committish: "lk/br@nch.t#st:^1.0.0-pre.4" };
 

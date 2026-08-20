@@ -1828,10 +1828,6 @@ pub fn init(
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                                 let _ = child_json.close();
-                                #[cfg(windows)]
-                                {
-                                    json_file.seek_to(0)?;
-                                }
                                 workspace_name_hash =
                                     Some(Semver::string::Builder::string_hash(&entry.name));
                                 break 'root_package_json_file json_file;

@@ -1652,7 +1652,7 @@ impl BlobExt for Blob {
                     jsc::js_promise::Status::Rejected => {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
-                        readable_stream.cancel(global_this);
+                        readable_stream.cancel(global_this)?;
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             promise.result(global_this.vm()),
@@ -1662,7 +1662,7 @@ impl BlobExt for Blob {
             } else {
                 // SAFETY: release our +1 ref on the sink.
                 unsafe { webcore::FileSink::deref(file_sink) };
-                readable_stream.cancel(global_this);
+                readable_stream.cancel(global_this)?;
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global_this,
@@ -4022,13 +4022,14 @@ fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
 ) -> crate::Result<Vec<u8>> {
-    if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
-        return Err(crate::Error::TooSmall);
-    }
-    let mut slice = vec![0u8; len];
-    reader
-        .read_exact(&mut slice)
-        .map_err(|_| crate::Error::TooSmall)?;
+    let buffer = reader.buffer.as_ref();
+    let end = reader
+        .pos
+        .checked_add(len)
+        .filter(|&end| end <= buffer.len())
+        .ok_or(crate::Error::TooSmall)?;
+    let slice = buffer[reader.pos..end].to_vec();
+    reader.pos = end;
     Ok(slice)
 }
 
@@ -5046,142 +5047,141 @@ pub(crate) fn write_file_internal(
         // `Response` and `Request` both expose `get_body_value()` /
         // `get_body_readable_stream()`; one helper takes the
         // body-value pointer and a `get_stream` closure.
-        let mut body_dispatch =
-            |body_value: *mut webcore::body::Value,
-             get_stream: &mut dyn FnMut(&JSGlobalObject) -> Option<ReadableStream>|
-             -> JsResult<core::ops::ControlFlow<JSValue, Blob>> {
-                use core::ops::ControlFlow;
-                use webcore::body::Value as BodyValue;
-                enum BodyTag {
-                    Use,
-                    Error,
-                    Locked,
+        let mut body_dispatch = |body_value: *mut webcore::body::Value,
+                                 get_stream: &mut dyn FnMut() -> Option<ReadableStream>|
+         -> JsResult<core::ops::ControlFlow<JSValue, Blob>> {
+            use core::ops::ControlFlow;
+            use webcore::body::Value as BodyValue;
+            enum BodyTag {
+                Use,
+                Error,
+                Locked,
+            }
+            // `body_value` is `&mut Body::Value` from a live JS heap
+            // Response/Request `m_ctx`, held raw so every borrow below is
+            // scoped and none spans the JS-running calls in the arms.
+            // SAFETY: scoped shared read of the variant tag.
+            let tag = match unsafe { &*body_value } {
+                BodyValue::Error(_) => BodyTag::Error,
+                BodyValue::Locked(_) => BodyTag::Locked,
+                _ => BodyTag::Use,
+            };
+            match tag {
+                BodyTag::Use => {
+                    // SAFETY: exclusive borrow scoped to the call; `use_()` runs no JS.
+                    Ok(ControlFlow::Continue(unsafe { (*body_value).use_() }))
                 }
-                // `body_value` is `&mut Body::Value` from a live JS heap
-                // Response/Request `m_ctx`, held raw so every borrow below is
-                // scoped and none spans the JS-running calls in the arms.
-                // SAFETY: scoped shared read of the variant tag.
-                let tag = match unsafe { &*body_value } {
-                    BodyValue::Error(_) => BodyTag::Error,
-                    BodyValue::Locked(_) => BodyTag::Locked,
-                    _ => BodyTag::Use,
-                };
-                match tag {
-                    BodyTag::Use => {
-                        // SAFETY: exclusive borrow scoped to the call; `use_()` runs no JS.
-                        Ok(ControlFlow::Continue(unsafe { (*body_value).use_() }))
-                    }
-                    BodyTag::Error => {
-                        let err_js = {
-                            // SAFETY: exclusive borrow; ends before `use_()` below.
-                            let BodyValue::Error(err_ref) = (unsafe { &mut *body_value }) else {
-                                unreachable!()
-                            };
-                            err_ref.to_js(global_this)
-                        };
-                        destination_blob.detach();
-                        // SAFETY: exclusive borrow scoped to the call; no other
-                        // borrow of the body value is live.
-                        let _ = unsafe { (*body_value).use_() };
-                        Ok(ControlFlow::Break(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this, err_js,
-                        ),
-                    ))
-                    }
-                    BodyTag::Locked => {
-                        if destination_blob.is_s3() {
-                            let dest_store = destination_blob
-                                .store()
-                                .expect("infallible: store present")
-                                .clone();
-                            let s3 = dest_store.data.as_s3();
-                            let aws_options = s3
-                                .get_credentials_with_options(options.extra_options, global_this)?;
-                            // SAFETY: exclusive borrow scoped to the call (may run JS).
-                            let _ = unsafe { (*body_value).to_readable_stream(global_this) }?;
-                            let readable_opt = get_stream(global_this).or_else(|| {
-                                // SAFETY: re-borrow after `to_readable_stream`.
-                                let BodyValue::Locked(locked) = (unsafe { &mut *body_value })
-                                else {
-                                    return None;
-                                };
-                                locked.readable.get(global_this)
-                            });
-                            if let Some(readable) = readable_opt {
-                                if readable.is_disturbed(global_this) {
-                                    destination_blob.detach();
-                                    return Err(global_this.throw_invalid_arguments(format_args!(
-                                        "ReadableStream has already been used"
-                                    )));
-                                }
-                                let proxy_owned = http_proxy_href(global_this);
-                                let proxy_url = proxy_owned.as_deref();
-                                return Ok(ControlFlow::Break(s3_client::upload_stream(
-                                    if options.extra_options.is_some() {
-                                        aws_options.credentials.dupe()
-                                    } else {
-                                        s3.get_credentials().dupe()
-                                    },
-                                    s3.path(),
-                                    readable,
-                                    global_this,
-                                    aws_options.options,
-                                    aws_options.acl,
-                                    aws_options.storage_class,
-                                    destination_blob.content_type_or_mime_type(),
-                                    // SAFETY: `*const [u8]` borrows from sibling
-                                    // `_*_slice` fields on `aws_options`, which
-                                    // outlives this call.
-                                    aws_options.content_disposition.as_deref(),
-                                    aws_options.content_encoding.as_deref(),
-                                    proxy_url,
-                                    aws_options.request_payer,
-                                    None,
-                                    core::ptr::null_mut(),
-                                )?));
-                            }
-                            destination_blob.detach();
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "ReadableStream has already been used"
-                            )));
-                        }
-                        let task =
-                            bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
-                                global_this: bun_ptr::BackRef::new(global_this),
-                                // Move `destination_blob` by value into the task.
-                                file_blob: core::mem::replace(
-                                    &mut destination_blob,
-                                    Blob::init_empty(global_this),
-                                ),
-                                promise: jsc::JSPromiseStrong::init(global_this),
-                                mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
-                            }));
-                        // SAFETY: re-borrow after the early-return paths.
-                        let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                BodyTag::Error => {
+                    let err_js = {
+                        // SAFETY: exclusive borrow; ends before `use_()` below.
+                        let BodyValue::Error(err_ref) = (unsafe { &mut *body_value }) else {
                             unreachable!()
                         };
-                        let producer_hook = locked.on_start_buffering.take().zip(locked.task);
-                        locked.task = Some(NonNull::new(task).unwrap().cast::<c_void>());
-                        locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
-                        // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
-                        let promise = unsafe { (*task).promise.value() };
-                        // Signalled last (see `PendingValue::on_start_buffering`):
-                        // `then_wrap` may run and `*body_value` be replaced inside.
-                        if let Some((on_start_buffering, producer_task)) = producer_hook {
-                            on_start_buffering(producer_task);
-                        }
-                        Ok(ControlFlow::Break(promise))
-                    }
+                        err_ref.to_js(global_this)
+                    };
+                    destination_blob.detach();
+                    // SAFETY: exclusive borrow scoped to the call; no other
+                    // borrow of the body value is live.
+                    let _ = unsafe { (*body_value).use_() };
+                    Ok(ControlFlow::Break(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            err_js,
+                        ),
+                    ))
                 }
-            };
+                BodyTag::Locked => {
+                    if destination_blob.is_s3() {
+                        let dest_store = destination_blob
+                            .store()
+                            .expect("infallible: store present")
+                            .clone();
+                        let s3 = dest_store.data.as_s3();
+                        let aws_options =
+                            s3.get_credentials_with_options(options.extra_options, global_this)?;
+                        // SAFETY: exclusive borrow scoped to the call (may run JS).
+                        let _ = unsafe { (*body_value).to_readable_stream(global_this) }?;
+                        let readable_opt = get_stream().or_else(|| {
+                            // SAFETY: re-borrow after `to_readable_stream`.
+                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                                return None;
+                            };
+                            locked.readable.get()
+                        });
+                        if let Some(readable) = readable_opt {
+                            if readable.is_disturbed(global_this) {
+                                destination_blob.detach();
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "ReadableStream has already been used"
+                                )));
+                            }
+                            let proxy_owned = http_proxy_href(global_this);
+                            let proxy_url = proxy_owned.as_deref();
+                            return Ok(ControlFlow::Break(s3_client::upload_stream(
+                                if options.extra_options.is_some() {
+                                    aws_options.credentials.dupe()
+                                } else {
+                                    s3.get_credentials().dupe()
+                                },
+                                s3.path(),
+                                readable,
+                                global_this,
+                                aws_options.options,
+                                aws_options.acl,
+                                aws_options.storage_class,
+                                destination_blob.content_type_or_mime_type(),
+                                // SAFETY: `*const [u8]` borrows from sibling
+                                // `_*_slice` fields on `aws_options`, which
+                                // outlives this call.
+                                aws_options.content_disposition.as_deref(),
+                                aws_options.content_encoding.as_deref(),
+                                proxy_url,
+                                aws_options.request_payer,
+                                None,
+                                core::ptr::null_mut(),
+                            )?));
+                        }
+                        destination_blob.detach();
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "ReadableStream has already been used"
+                        )));
+                    }
+                    let task =
+                        bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
+                            global_this: bun_ptr::BackRef::new(global_this),
+                            // Move `destination_blob` by value into the task.
+                            file_blob: core::mem::replace(
+                                &mut destination_blob,
+                                Blob::init_empty(global_this),
+                            ),
+                            promise: jsc::JSPromiseStrong::init(global_this),
+                            mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
+                        }));
+                    // SAFETY: re-borrow after the early-return paths.
+                    let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                        unreachable!()
+                    };
+                    let producer_hook = locked.on_start_buffering.take().zip(locked.task);
+                    locked.task = Some(NonNull::new(task).unwrap().cast::<c_void>());
+                    locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
+                    // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
+                    let promise = unsafe { (*task).promise.value() };
+                    // Signalled last (see `PendingValue::on_start_buffering`):
+                    // `then_wrap` may run and `*body_value` be replaced inside.
+                    if let Some((on_start_buffering, producer_task)) = producer_hook {
+                        on_start_buffering(producer_task);
+                    }
+                    Ok(ControlFlow::Break(promise))
+                }
+            }
+        };
 
         // `as_class_ref` is the safe shared-borrow downcast (one audited unsafe
         // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
         // take `&self` (interior mutability for the body cell).
         if let Some(response) = data.as_class_ref::<Response>() {
             let bv = std::ptr::from_mut(response.get_body_value());
-            match body_dispatch(bv, &mut |g| response.get_body_readable_stream(g))? {
+            match body_dispatch(bv, &mut || response.get_body_readable_stream())? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
                 core::ops::ControlFlow::Continue(b) => break 'brk b,
             }
@@ -5189,7 +5189,7 @@ pub(crate) fn write_file_internal(
 
         if let Some(request) = data.as_class_ref::<Request>() {
             let bv = std::ptr::from_mut(request.get_body_value());
-            match body_dispatch(bv, &mut |g| request.get_body_readable_stream(g))? {
+            match body_dispatch(bv, &mut || request.get_body_readable_stream())? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
                 core::ops::ControlFlow::Continue(b) => break 'brk b,
             }
@@ -5519,6 +5519,11 @@ bun_jsc::jsc_host_abi! {
         match jsdom_file_construct(global_this, callframe) {
             Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct returns Blob::new (heap::alloc)")),
             Err(jsc::JsError::Thrown) => None,
+            Err(jsc::JsError::Terminated) => {
+                // A constructor runs beneath script: rethrow so the caller keeps unwinding.
+                let _ = bun_jsc::Stopped.throw(global_this);
+                None
+            }
             Err(jsc::JsError::OutOfMemory) => {
                 let _ = global_this.throw_out_of_memory();
                 None
@@ -5905,7 +5910,7 @@ pub(crate) fn on_file_stream_resolve_request_stream(
         bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
     let strong = core::mem::take(&mut this.readable_stream_ref);
-    if let Some(stream) = strong.get(global_this) {
+    if let Some(stream) = strong.get() {
         stream.done(global_this);
     }
     this.promise.resolve(global_this, JSValue::js_number(0.0))?;
@@ -5930,8 +5935,8 @@ pub(crate) fn on_file_stream_reject_request_stream(
 
     this.promise.reject(global_this, Ok(err))?;
 
-    if let Some(stream) = strong.get(global_this) {
-        stream.cancel(global_this);
+    if let Some(stream) = strong.get() {
+        stream.cancel(global_this)?;
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -7027,7 +7032,6 @@ pub trait FileCloser: Sized {
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
     fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
-    fn update(&mut self);
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
@@ -7125,9 +7129,6 @@ macro_rules! impl_file_closer {
             }
             fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
                 &mut self.task
-            }
-            fn update(&mut self) {
-                $T::update(self)
             }
             #[cfg(windows)]
             fn loop_(&self) -> *mut ::bun_libuv_sys::uv_loop_t {

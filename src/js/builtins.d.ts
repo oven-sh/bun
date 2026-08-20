@@ -83,12 +83,6 @@ declare function $argumentCount(): number;
 declare function $arrayPush(array: T[], item: T): void;
 
 /**
- * gets a property on an object
- */
-declare function $getByValWithThis(target: any, receiver: any, propertyKey: string): void;
-/** gets the prototype of an object */
-declare function $getPrototypeOf(value: any): any;
-/**
  * Returns the internal Promise state as a small integer:
  * `0` = pending, `1` = fulfilled, `2` = rejected.
  */
@@ -119,23 +113,6 @@ declare function $getInternalField<Fields extends any[], N extends keyof Fields>
   number: N,
 ): Fields[N];
 /**
- * Use {@link $fulfillPromise} when:
- * - Fulfilling with primitive values (numbers, strings, booleans, null, undefined)
- * - Fulfilling with plain objects that definitely don't have a then method
- * - You're in internal code that has already done the thenable checking
- *
- * Use {@link $resolvePromise} when:
- * - The value might be a promise or thenable
- * - You need the full resolution algorithm (self-check, thenable unwrapping)
- * - You're implementing user-facing APIs where the resolution value is unknown
- */
-declare function $fulfillPromise<T>(promise: Promise<T>, value: NoInfer<T>): void;
-/**
- * Use {@link $fulfillPromise} when:
- * - Fulfilling with primitive values (numbers, strings, booleans, null, undefined)
- * - Fulfilling with plain objects that definitely don't have a then method
- * - You're in internal code that has already done the thenable checking
- *
  * Use {@link $resolvePromise} when:
  * - The value might be a promise or thenable
  * - You need the full resolution algorithm (self-check, thenable unwrapping)
@@ -148,13 +125,7 @@ declare function $resolvePromise<T>(promise: Promise<T>, value: NoInfer<T>): voi
 declare function $rejectPromise(promise: Promise<unknown>, value: unknown): void;
 
 declare function $loadEsmIntoCjs(...args: any[]): TODO;
-declare function $getGeneratorInternalField(): TODO;
-declare function $getAsyncGeneratorInternalField(): TODO;
-declare function $getAbstractModuleRecordInternalField(): TODO;
-declare function $getArrayIteratorInternalField(): TODO;
-declare function $getStringIteratorInternalField(): TODO;
 declare function $getProxyInternalField(): TODO;
-declare function $idWithProfile(): TODO;
 /**
  * True for object-like `JSCell`s. That is, this is roughly equivalent to this
  * JS code:
@@ -172,18 +143,11 @@ declare function $isObject(obj: unknown): obj is object;
 declare function $isArray<T>(obj: T): obj is Extract<T, any[]> | Extract<T, readonly any[]>;
 declare function $isArray(obj: unknown): obj is any[];
 declare function $isCallable(fn: unknown): fn is CallableFunction;
-declare function $isConstructor(fn: unknown): fn is { new (...args: any[]): any };
 declare function $isJSArray(obj: unknown): obj is any[];
 declare function $isProxyObject(obj: unknown): obj is Proxy;
-declare function $isDerivedArray(): TODO;
-declare function $isGenerator(obj: unknown): obj is Generator<any, any, any>;
-declare function $isAsyncGenerator(obj: unknown): obj is AsyncGenerator<any, any, any>;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;
-declare function $isShadowRealm(obj: unknown): obj is ShadowRealm;
-declare function $isStringIterator(obj: unknown): obj is Iterator<string>;
-declare function $isArrayIterator(obj: unknown): obj is Iterator<any>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
 declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: ThisType): any;
 /**
@@ -213,94 +177,20 @@ declare function $putByIdDirectPrivate<T extends Record<`$${K}`, unknown>, K ext
 ): void;
 
 declare function $putByValDirect(obj: any, key: PropertyKey, value: any): void;
-declare function $putByValWithThisSloppy(): TODO;
-declare function $putByValWithThisStrict(): TODO;
 declare function $putInternalField<Fields extends any[], N extends keyof Fields>(
   base: InternalFieldObject<Fields>,
   number: N,
   value: Fields[N],
 ): void;
-declare function $putGeneratorInternalField(): TODO;
-declare function $putAsyncGeneratorInternalField(): TODO;
-declare function $putArrayIteratorInternalField(): TODO;
-declare function $putStringIteratorInternalField(): TODO;
-declare function $superSamplerBegin(): TODO;
-declare function $superSamplerEnd(): TODO;
-declare function $toNumber(x: any): number;
-declare function $toString(x: any): string;
-declare function $toPropertyKey(x: any): PropertyKey;
-/**
- * Often used like
- * `$toObject(this, "Class.prototype.method requires that |this| not be null or undefined");`
- */
-declare function $toObject(object: any, errorMessage?: string): object;
 /**
  * ## References
  * - [WebKit - `emit_intrinsic_newArrayWithSize`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp#L2317)
  */
 declare function $newArrayWithSize<T>(size: number): T[];
-/**
- * Optimized path for creating a new array storing objects with the same homogenous Structure
- * as {@link array}.
- *
- * @param size the initial size of the new array
- * @param array the array whose shape we want to copy
- *
- * @returns a new array
- *
- * ## References
- * - [WebKit - `emit_intrinsic_newArrayWithSpecies`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp#L2328)
- * - [WebKit - #4909](https://github.com/WebKit/WebKit/pull/4909)
- * - [WebKit Bugzilla - Related Issue/Ticket](https://bugs.webkit.org/show_bug.cgi?id=245797)
- */
-declare function $newArrayWithSpecies<T>(size: number, array: T[]): T[];
-declare function $newPromise(): TODO;
-declare function $createPromise(): TODO;
-declare const $iterationKindKey: TODO;
-declare const $iterationKindValue: TODO;
-declare const $iterationKindEntries: TODO;
-declare const $MAX_ARRAY_INDEX: number;
-declare const $MAX_STRING_LENGTH: number;
-declare const $MAX_SAFE_INTEGER: number;
 declare const $ModuleFetch: number;
-declare const $ModuleTranslate: number;
-declare const $ModuleInstantiate: number;
-declare const $ModuleSatisfy: number;
 declare const $ModuleLink: number;
-declare const $ModuleReady: number;
-declare const $promiseRejectionReject: TODO;
-declare const $promiseRejectionHandle: TODO;
 declare const $proxyFieldTarget: TODO;
 declare const $proxyFieldHandler: TODO;
-declare const $generatorFieldState: TODO;
-declare const $generatorFieldNext: TODO;
-declare const $generatorFieldThis: TODO;
-declare const $generatorFieldFrame: TODO;
-declare const $generatorFieldContext: TODO;
-declare const $GeneratorResumeModeNormal: TODO;
-declare const $GeneratorResumeModeThrow: TODO;
-declare const $GeneratorResumeModeReturn: TODO;
-declare const $GeneratorStateCompleted: TODO;
-declare const $GeneratorStateExecuting: TODO;
-declare const $arrayIteratorFieldIndex: TODO;
-declare const $arrayIteratorFieldIteratedObject: TODO;
-declare const $arrayIteratorFieldKind: TODO;
-declare const $mapIteratorFieldMapBucket: TODO;
-declare const $setIteratorFieldSetBucket: TODO;
-declare const $stringIteratorFieldIndex: TODO;
-declare const $stringIteratorFieldIteratedString: TODO;
-declare const $asyncGeneratorFieldSuspendReason: TODO;
-declare const $asyncGeneratorFieldQueueFirst: TODO;
-declare const $asyncGeneratorFieldQueueLast: TODO;
-declare const $AsyncGeneratorStateCompleted: TODO;
-declare const $AsyncGeneratorStateExecuting: TODO;
-declare const $AsyncGeneratorStateAwaitingReturn: TODO;
-declare const $AsyncGeneratorStateSuspendedStart: TODO;
-declare const $AsyncGeneratorStateSuspendedYield: TODO;
-declare const $AsyncGeneratorSuspendReasonYield: TODO;
-declare const $AsyncGeneratorSuspendReasonAwait: TODO;
-declare const $AsyncGeneratorSuspendReasonNone: TODO;
-declare const $abstractModuleRecordFieldState: TODO;
 declare const $processBindingConstants: {
   os: typeof import("os").constants;
   fs: typeof import("fs").constants;
@@ -317,11 +207,9 @@ declare function $autoAllocateChunkSize(): TODO;
 declare function $basename(): TODO;
 declare function $body(): TODO;
 declare function $bunNativePtr(): TODO;
-declare function $byobRequest(): TODO;
 declare function $cancel(): TODO;
 declare function $close(): TODO;
 declare function $code(): TODO;
-declare function $controller(): TODO;
 declare function $createFIFO(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $data(): TODO;
@@ -363,7 +251,6 @@ declare function $normalize(): TODO;
 declare function $parse(): TODO;
 declare function $path(): TODO;
 declare function $port(): TODO;
-declare function $post(): TODO;
 declare function $pull(): TODO;
 declare function $read(): TODO;
 declare function $readable(): TODO;
@@ -382,24 +269,16 @@ declare function $resolveSync(
   isUserRequireResolve?: boolean,
   paths?: string[],
 ): string;
-declare function $resume(): TODO;
 declare function $search(): TODO;
 declare function $searchParams(): TODO;
 declare function $self(): TODO;
 declare function $size(): TODO;
 declare function $start(): TODO;
-declare function $started(): TODO;
-declare function $state(): TODO;
 declare function $status(): TODO;
 declare function $stream(): TODO;
-declare function $streamClosed(): TODO;
-declare function $streamErrored(): TODO;
-declare function $streamReadable(): TODO;
-declare function $streamWritable(): TODO;
 declare function $syscall(): TODO;
 declare function $toNamespacedPath(): TODO;
 declare function $url(): TODO;
-declare function $view(): TODO;
 declare function $whenSignalAborted(signal: AbortSignal, cb: (reason: any) => void): TODO;
 declare function $writable(): TODO;
 declare function $write(): TODO;
@@ -424,11 +303,9 @@ declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;
 declare function $setStateToMax(target: any, state: number): void;
-declare function $trunc(target: number): number;
 declare function $newPromiseCapability(C: PromiseConstructor): TODO;
 /** @deprecated, use new TypeError instead */
 declare function $makeTypeError(message: string): TypeError;
-declare function $newHandledRejectedPromise(error: unknown): Promise<never>;
 
 declare const __internal: unique symbol;
 interface InternalFieldObject<T extends any[]> {
@@ -542,7 +419,6 @@ declare function $ERR_MISSING_ARGS(...args: [string, ...string[]]): TypeError;
 declare function $ERR_MISSING_ARGS(oneOf: string[]): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
 declare function $ERR_TLS_INVALID_PROTOCOL_VERSION(a: string, b: string): TypeError;
-declare function $ERR_TLS_PROTOCOL_VERSION_CONFLICT(a: string, b: string): TypeError;
 declare function $ERR_INVALID_IP_ADDRESS(ip: any): TypeError;
 declare function $ERR_INVALID_ADDRESS_FAMILY(addressType, host, port): RangeError;
 declare function $ERR_OUT_OF_RANGE(name: string, reason: string, value): RangeError;
@@ -571,8 +447,6 @@ declare function $ERR_UNESCAPED_CHARACTERS(arg): TypeError;
 declare function $ERR_HTTP_INVALID_STATUS_CODE(code): RangeError;
 declare function $ERR_UNHANDLED_ERROR(err?): Error;
 declare function $ERR_BUFFER_OUT_OF_BOUNDS(name?: string): RangeError;
-declare function $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(value, expected): TypeError;
-declare function $ERR_CRYPTO_INCOMPATIBLE_KEY(name, value): Error;
 declare function $ERR_CHILD_PROCESS_IPC_REQUIRED(where): Error;
 declare function $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(message): Error;
 declare function $ERR_INVALID_ASYNC_ID(name, value): RangeError;
@@ -591,7 +465,6 @@ declare function $ERR_INSPECTOR_NOT_WORKER(): Error;
 declare function $ERR_INSPECTOR_COMMAND(message: string): Error;
 declare function $ERR_WORKER_UNSUPPORTED_OPERATION(message: string): TypeError;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
-declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
 declare function $ERR_SOCKET_BAD_TYPE(): Error;
 declare function $ERR_ZLIB_INITIALIZATION_FAILED(): Error;
 declare function $ERR_IPC_ONE_PIPE(): Error;
@@ -642,9 +515,7 @@ declare function $ERR_HTTP2_OUT_OF_STREAMS(): Error;
 declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
 declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
-declare function $ERR_INVALID_MIME_SYNTAX(production: string, str: string, invalidIndex: number | -1): TypeError;
 declare function $ERR_SOCKET_CONNECTION_TIMEOUT(): Error;
-declare function $ERR_INVALID_HANDLE_TYPE(): TypeError;
 declare function $ERR_TLS_HANDSHAKE_TIMEOUT(): Error;
 declare function $ERR_VM_MODULE_STATUS(reason: string): Error;
 declare function $ERR_VM_MODULE_ALREADY_LINKED(): Error;
@@ -679,11 +550,6 @@ declare function $min(a: number, b: number): number;
 
 declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: number): undefined;
 
-/**
- * Schedules a callback to be invoked as a microtask.
- */
-declare function $enqueueJob<T extends (...args: any[]) => any>(callback: T, ...args: Parameters<T>): void;
-
 interface Map<K, V> {
   $get: typeof Map.prototype.get;
   $set: typeof Map.prototype.set;
@@ -693,8 +559,6 @@ interface ObjectConstructor {
   $defineProperty: typeof Object.defineProperty;
   $defineProperties: typeof Object.defineProperties;
 }
-
-declare const $Object: ObjectConstructor;
 
 /** gets a property on an object */
 declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
@@ -715,9 +579,3 @@ declare function $getByIdDirectPrivate<T = any, K extends string = string>(
 declare var $Promise: PromiseConstructor;
 
 declare function $isPromise<T>(value: unknown): value is Promise<T>;
-
-declare type $ReadableStream = ReadableStream;
-declare type $ReadableStreamBYOBReader = ReadableStreamBYOBReader;
-declare type $ReadableStreamDefaultReader = ReadableStreamDefaultReader;
-declare type $ReadableStreamDefaultController = ReadableStreamDefaultController;
-declare type $ReadableStreamDirectController = ReadableStreamDirectController;

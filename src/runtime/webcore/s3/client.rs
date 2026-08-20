@@ -1355,7 +1355,7 @@ impl S3DownloadStreamWrapper {
             }
         });
 
-        if let Some(readable) = self_.readable_stream_ref.get(&self_.global) {
+        if let Some(readable) = self_.readable_stream_ref.get() {
             // BACKREF: see `Source::bytes()` — payload live while the
             // readable stream is rooted. R-2: `&` — `on_data` re-enters JS.
             if let Some(bytes) = readable.ptr.bytes() {
@@ -1432,7 +1432,7 @@ impl Drop for S3DownloadStreamWrapper {
     fn drop(&mut self) {
         // Clear the ByteStream's producer handle before `readable_stream_ref`
         // drops so the stream never calls back into a freed wrapper.
-        if let Some(readable) = self.readable_stream_ref.get(&self.global) {
+        if let Some(readable) = self.readable_stream_ref.get() {
             if let Some(bytes) = readable.ptr.bytes() {
                 bytes
                     .parent_const()

@@ -321,6 +321,75 @@ nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
   show("frozen writable:", apn(Object.freeze({ a: 1, b: 2 }), napi_key_writable));
 };
 
+nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  const show = (label, { status, keys, exception }) =>
+    console.log(label, `status=${status}`, `keys=${JSON.stringify(keys)}`, `exception=${exception?.message}`);
+
+  // ownKeys succeeds so key collection completes; the per-key descriptor walk
+  // required by napi_key_enumerable is what invokes the throwing trap.
+  const throwingDescriptor = new Proxy(
+    {},
+    {
+      ownKeys: () => ["a"],
+      getOwnPropertyDescriptor() {
+        throw new Error("gopd trap");
+      },
+    },
+  );
+  show(
+    "own_only gopd throws:",
+    nativeTests.get_all_property_names(
+      throwingDescriptor,
+      napi_key_own_only,
+      napi_key_enumerable,
+      napi_key_keep_numbers,
+    ),
+  );
+  show(
+    "include_prototypes gopd throws on prototype:",
+    nativeTests.get_all_property_names(
+      Object.create(throwingDescriptor),
+      napi_key_include_prototypes,
+      napi_key_enumerable,
+      napi_key_keep_numbers,
+    ),
+  );
+
+};
+
+nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  // Key collection asks the proxy for its prototype once and must succeed so
+  // the descriptor walk is reached; the walk asks again (the target does not
+  // own "a") and that second call throws.
+  let calls = 0;
+  const proxy = new Proxy(
+    {},
+    {
+      ownKeys: () => ["a"],
+      getPrototypeOf() {
+        if (calls++ > 0) throw new Error("getPrototypeOf trap");
+        return null;
+      },
+    },
+  );
+  const { status, keys, exception } = nativeTests.get_all_property_names(
+    Object.create(proxy),
+    napi_key_include_prototypes,
+    napi_key_enumerable,
+    napi_key_keep_numbers,
+  );
+  console.log(`status=${status} keys=${JSON.stringify(keys)} exception=${exception?.message} calls=${calls}`);
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},
@@ -695,6 +764,22 @@ nativeTests.test_type_tag = () => {
   console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));
   console.log("o2 matches o1:", nativeTests.check_tag(o2, 1, 2));
   console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
+};
+
+nativeTests.test_this_value_of_bare_call_through_closure = () => {
+  const { return_this } = nativeTests;
+  // return_this is captured by keep, so the bare call below is resolved through the closure's
+  // scope object, which JSC leaves in the call's this slot. A Node-API callback must still see
+  // the sloppy-mode receiver (globalThis), never that scope object.
+  function keep() {
+    return return_this;
+  }
+  console.log("bare call through closure returned globalThis:", return_this() === globalThis);
+  console.log("call(undefined) returned globalThis:", return_this.call(undefined) === globalThis);
+  console.log("call(5) returned a Number object:", return_this.call(5) instanceof Number);
+  const receiver = {};
+  console.log("call(receiver) returned receiver:", return_this.call(receiver) === receiver);
+  keep();
 };
 
 nativeTests.test_napi_class = () => {
@@ -1197,6 +1282,88 @@ nativeTests.test_napi_instanceof = () => {
   dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
 };
 
+// V8's Object::GetPrototype (what napi_get_prototype wraps in Node) returns null
+// for a Proxy without running its getPrototypeOf trap, so the proxy lines below
+// all read "result=null" with nothing pending, whatever the trap would do.
+// result= is "untouched" if *result was not written and "null handle" if a NULL
+// napi_value was written (see perform_get_prototype in js_test_helpers.cpp).
+nativeTests.test_napi_get_prototype_proxy = () => {
+  const trapError = new RangeError("from getPrototypeOf trap");
+  let trapCalls = 0;
+  const chainProxy = new Proxy({}, {});
+  const names = [
+    [Object.prototype, "Object.prototype"],
+    [Array.prototype, "Array.prototype"],
+    [Function.prototype, "Function.prototype"],
+    [chainProxy, "the proxy"],
+  ];
+
+  function dump(label, object) {
+    const r = nativeTests.perform_get_prototype(object);
+    const named = names.find(([value]) => value === r.result);
+    const result = typeof r.result === "string" ? r.result : named ? named[1] : String(r.result);
+    const exception =
+      r.exception === undefined
+        ? "none"
+        : r.exception === trapError
+          ? "the trap's error"
+          : r.exception instanceof TypeError
+            ? "TypeError"
+            : String(r.exception);
+    console.log(`${label}: status=${r.status} pending=${r.pending} result=${result} exception=${exception}`);
+  }
+
+  dump("plain object", {});
+  dump("null prototype", Object.create(null));
+
+  dump("proxy without traps", new Proxy([], {}));
+  dump("callable proxy", new Proxy(function () {}, {}));
+  dump(
+    "trap returns Array.prototype",
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          trapCalls++;
+          return Array.prototype;
+        },
+      },
+    ),
+  );
+  console.log(`getPrototypeOf trap calls: ${trapCalls}`);
+  dump(
+    "trap throws",
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw trapError;
+        },
+      },
+    ),
+  );
+  dump(
+    "trap returns a number",
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          return 42;
+        },
+      },
+    ),
+  );
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+  dump("revoked proxy", revocable.proxy);
+
+  // Only the object itself is special-cased; a proxy further up the chain is
+  // returned like any other prototype.
+  dump("object whose prototype is a proxy", Object.create(chainProxy));
+
+  dump("plain object again", {});
+};
+
 nativeTests.test_get_value_string = () => {
   function to16Bit(string) {
     if (typeof Bun != "object") return string;
@@ -1482,12 +1649,13 @@ nativeTests.test_ungated_calls_worker_terminate = async () => {
   }
 };
 
-// See ungated_calls_through_timeout in standalone_tests.cpp: 200ms of ungated
-// calls under a 20ms timeout.
+// See ungated_calls_through_timeout in standalone_tests.cpp: 600ms of ungated
+// calls under a 150ms timeout. The timeout is wall-clock from the start of the
+// run, so it must comfortably cover reaching the addon on the slowest lane.
 nativeTests.test_ungated_calls_through_vm_timeout = () => {
   const vm = require("node:vm");
   try {
-    vm.runInNewContext("f(200)", { f: nativeTests.ungated_calls_through_timeout }, { timeout: 20 });
+    vm.runInNewContext("f(600)", { f: nativeTests.ungated_calls_through_timeout }, { timeout: 150 });
     console.log("returned");
   } catch (e) {
     console.log(e.code);

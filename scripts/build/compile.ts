@@ -92,8 +92,8 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     pool: "compile",
   });
 
-  // ─── NASM assemble (Windows-x64 only) ───
-  // BoringSSL's win-x64 assembly is NASM syntax; clang can't assemble it.
+  // ─── NASM assemble (x64 only) ───
+  // BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD are NASM syntax; clang can't assemble it.
   // -MD writes a Make-style depfile; nasm 2.14+ supports it.
   if (cfg.nasm !== undefined) {
     n.rule("nasm", {
@@ -258,8 +258,9 @@ export function cc(n: Ninja, cfg: Config, src: string, opts: Omit<CompileOpts, "
 }
 
 /**
- * Assemble a NASM-syntax `.asm` file. Returns absolute path to the .obj
- * output. Windows-x64 only — gas-syntax `.S` goes through cc().
+ * Assemble a NASM-syntax `.asm` file (BoringSSL win-x64, libjpeg-turbo x86_64
+ * SIMD). Returns absolute path to the object output. gas-syntax `.S` goes
+ * through cc().
  */
 export function nasm(
   n: Ninja,
@@ -450,8 +451,8 @@ export interface LinkOpts {
    * Editing these should trigger relink (cmake's LINK_DEPENDS equivalent).
    */
   implicitInputs?: string[];
-  /** Output linker map to this path (for debugging symbol bloat). */
-  linkerMapOutput?: string | undefined;
+  /** Map files the link's flags make it write alongside the executable (flags.ts linkerMapOutputs). */
+  linkerMapOutputs?: string[];
 }
 
 /**
@@ -461,11 +462,8 @@ export interface LinkOpts {
 export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts: LinkOpts): string {
   const absOut = resolve(cfg.buildDir, out + cfg.exeSuffix);
 
-  // Linker map is an implicit output (ninja tracks it but not in $out)
-  const implicitOutputs: string[] = [];
-  if (opts.linkerMapOutput !== undefined) {
-    implicitOutputs.push(resolve(cfg.buildDir, opts.linkerMapOutput));
-  }
+  // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
+  const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
 
   const node: BuildNode = {
     outputs: [absOut],
@@ -485,15 +483,18 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 }
 
 /**
- * Create a static library. Returns absolute path to output.
+ * Create a static library. Returns absolute path to output. `implicitInputs`
+ * are waited for but not archived (the forbidUndefined stamps of the dep
+ * objects going in).
  */
-export function ar(n: Ninja, cfg: Config, out: string, objects: string[]): string {
+export function ar(n: Ninja, cfg: Config, out: string, objects: string[], implicitInputs: string[] = []): string {
   const absOut = resolve(cfg.buildDir, out);
 
   n.build({
     outputs: [absOut],
     rule: "ar",
     inputs: objects,
+    ...(implicitInputs.length > 0 ? { implicitInputs } : {}),
   });
 
   return absOut;

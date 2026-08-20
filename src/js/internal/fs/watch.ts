@@ -270,4 +270,4 @@ function watch(path, options, listener) {
   return new FSWatcher(path, options, listener);
 }
 
-export default { watch, FSWatcher, createIgnoreMatcher };
+export default { watch, createIgnoreMatcher };

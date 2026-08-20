@@ -36,7 +36,9 @@ export const highwayStringsForTesting: (
     | "indexOfAny"
     | "lastIndexOfAny"
     | "memmem"
-    | "memrmem",
+    | "memrmem"
+    | "memmem16"
+    | "memrmem16",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
@@ -183,15 +185,6 @@ export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindin
    */
   parseManifest: (manifestFileName: string, registryUrl: string) => any;
 };
-
-// Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
-export type Dependency = any;
-export const npa: (name: string) => Dependency = $newRustFunction("dependency.rs", "fromJS", 1);
-
-export const npmTag: (
-  name: string,
-) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
-  $newRustFunction("dependency.rs", "Version.Tag.inferFromJS", 1);
 
 export const readTarball: (tarball: string) => any = $newRustFunction("pack_command.rs", "bindings.jsReadTarball", 1);
 
@@ -654,8 +647,6 @@ export const structuredCloneAdvanced: (
   serializationContext: SerializationContext,
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
-export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
-
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
 export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
@@ -682,8 +673,29 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
-export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
-  $newRustFunction("event_loop.rs", "getActiveTasks", 0);
+// True when the installed watcher registered a real OS source (a PSI trigger
+// on Linux). The watcher installs silently without one when the kernel
+// refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.
+export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction(
+  "memory_pressure.rs",
+  "jsWatcherHasOsBackend",
+  0,
+);
+
+// The exact bytes Bun writes to /proc/pressure/memory to arm its trigger.
+// null where there is no PSI backend (everything except Linux).
+export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
+
+export const getEventLoopStats: () => {
+  activeTasks: number;
+  tasks: number;
+  immediateTasks: number;
+  concurrentTasksEmpty: boolean;
+  concurrentRef: number;
+  numPolls: number;
+  loopActive: boolean;
+  eventLoopAlive: boolean;
+} = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
 export const hostedGitInfo = {
   parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),

@@ -759,12 +759,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
                     buf.extend_from_slice(&buffer);
                     buf.extend_from_slice(source_map_start);
-
-                    let old_len = buf.len();
-                    // Capacity reserved above; resize zero-fills then base64 overwrites.
-                    buf.resize(old_len + encode_len, 0);
-                    let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
-
+                    bun_base64::encode_append(&mut buf, &output_source_map);
                     buf.push(b'\n');
                     buffer = buf.into_boxed_slice();
                 }
@@ -1001,12 +996,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
                     buf.extend_from_slice(&code_result.buffer);
                     buf.extend_from_slice(source_map_start);
-
-                    let old_len = buf.len();
-                    // Capacity reserved above; resize zero-fills then base64 overwrites.
-                    buf.resize(old_len + encode_len, 0);
-                    let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
-
+                    bun_base64::encode_append(&mut buf, &output_source_map);
                     buf.push(b'\n');
                     code_result.buffer = buf.into_boxed_slice();
                     drop(output_source_map);

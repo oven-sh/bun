@@ -2738,6 +2738,11 @@ unsafe extern "C" {
     pub fn uv_timer_stop(handle: *mut Timer) -> c_int;
     pub fn uv_timer_get_due_in(handle: *const Timer) -> u64;
 
+    /// Winsock is initialized on first use inside libuv; anything that calls
+    /// ws2_32 directly (or through c-ares/uSockets) must call this first.
+    /// Thread-safe and idempotent (uv_once).
+    pub fn uv__winsock_ensure();
+
     // dns
     pub fn uv_getaddrinfo(
         loop_: *mut Loop,

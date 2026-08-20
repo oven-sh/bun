@@ -4234,6 +4234,14 @@ pub(super) fn finalize_bundle(
     }
     for chunk in css_chunks_mut.iter() {
         let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
+        // A root that parsed but failed to resolve was demoted in Pass 1; it takes its @import edges back when it builds again.
+        if let Some(file_index) = ctx
+            .get_cached_index(bake::Side::Client, entry_index)
+            .unwrap::<{ bake::Side::Client }>()
+            && dev.client_graph.bundled_files.values()[file_index.get() as usize].failed
+        {
+            continue;
+        }
         dev.client_graph.process_chunk_dependencies(
             &mut ctx,
             incremental_graph::ProcessMode::Css,

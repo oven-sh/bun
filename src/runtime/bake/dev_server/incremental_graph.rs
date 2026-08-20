@@ -1312,18 +1312,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     self.current_chunk_len += len;
                 }
 
-                // A failed file's import edges are whatever its last good build (or a same-bundle re-attach) left; do not follow them.
-                if self.bundled_files.values()[file_index.get() as usize].failed {
-                    if goal == TraceImportGoal::FindErrors {
-                        let owner =
-                            serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                        let fail = self
-                            .dev_bundling_failures()
-                            .get(&owner)
-                            .cloned()
-                            .expect("Failed to get bundling failure");
-                        gts.failures.push(fail);
-                    }
+                if goal == TraceImportGoal::FindErrors
+                    && self.bundled_files.values()[file_index.get() as usize].failed
+                {
+                    let owner =
+                        serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
+                    let fail = self
+                        .dev_bundling_failures()
+                        .get(&owner)
+                        .cloned()
+                        .expect("Failed to get bundling failure");
+                    gts.failures.push(fail);
                     return Ok(());
                 }
             }

@@ -157,7 +157,41 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
 /// defer that work to the event loop.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
-    DeferredDerefTask::schedule(ctx, Tag::from_raw(tag));
+    let tag = Tag::from_raw(tag);
+    clear_remembered_cell(ctx, tag);
+    DeferredDerefTask::schedule(ctx, tag);
+}
+
+/// The cell dies with its claim intact, so the context's `promise_cell` field
+/// still points at it and is about to dangle. Clear it before `on_abort` can
+/// read it again. A plain field write, safe during sweep; the unreleased
+/// claim keeps `ctx` alive through this call.
+fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
+    // SAFETY: `tag` names the concrete type `ctx` was created with, and the
+    // claim being released is a live ref on it.
+    unsafe {
+        match tag {
+            Tag::HTTPServerRequestContext => {
+                (*ctx.cast::<HTTPServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::HTTPSServerRequestContext => {
+                (*ctx.cast::<HTTPSServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPServerRequestContext => {
+                (*ctx.cast::<DebugHTTPServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPSServerRequestContext => {
+                (*ctx.cast::<DebugHTTPSServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::HTTPSServerH3RequestContext => {
+                (*ctx.cast::<HTTPSServerH3RequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPSServerH3RequestContext => {
+                (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).promise_cell_collected()
+            }
+            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree => {}
+        }
+    }
 }
 
 /// Defers the GC-triggered deref to the next event-loop tick so it runs

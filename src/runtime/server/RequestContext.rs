@@ -179,6 +179,13 @@ pub struct RequestContext<
     pub(crate) defer_deinit_until_callback_completes: Cell<Option<DeferDeinitFlag>>,
 
     pub(crate) additional_on_abort: JsCell<Option<AdditionalOnAbortCallback>>,
+
+    /// The `NativePromiseContext` cell whose claim (one ref on this context)
+    /// is still outstanding, or `ZERO`. Not visited by GC: the promise
+    /// reaction keeps the cell alive, and the cell's destructor clears this
+    /// field before the value can dangle. `on_abort` reclaims the ref through
+    /// it so an aborted request is torn down without waiting for GC.
+    promise_cell: Cell<JSValue>,
     // TODO: support builtin compression
 }
 
@@ -673,6 +680,7 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
+        ctx.ctx().promise_cell.set(JSValue::ZERO);
 
         let result = arguments[0];
         result.ensure_still_alive();
@@ -917,6 +925,25 @@ where
         self.ref_count.set(ref_count + 1);
     }
 
+    /// Takes one ref as the cell's claim on this context and remembers the
+    /// cell in `promise_cell`. The settle reactions (`take()` + a field
+    /// clear), `on_abort`, or the cell's destructor release the claim.
+    fn create_promise_cell(&self, global: &JSGlobalObject) -> JSValue {
+        debug_assert!(self.promise_cell.get().is_empty());
+        self.ref_();
+        let cell = NativePromiseContext::create(global, self.as_ctx_ptr());
+        self.promise_cell.set(cell);
+        cell
+    }
+
+    /// Called from the cell's destructor (GC sweep) when the claim was never
+    /// taken: the deref is deferred (or skipped at VM teardown), but the field
+    /// must stop pointing at the dying cell now. A plain field write, safe
+    /// during sweep.
+    pub(crate) fn promise_cell_collected(&self) {
+        self.promise_cell.set(JSValue::ZERO);
+    }
+
     pub(crate) fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
@@ -927,6 +954,7 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
+        ctx.ctx().promise_cell.set(JSValue::ZERO);
 
         let err = arguments[0];
         // Pass the rejection reason through verbatim (including `null` and
@@ -1314,6 +1342,7 @@ where
                 pathname: Cell::new(BunString::empty()),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
+                promise_cell: Cell::new(JSValue::ZERO),
             });
         }
 
@@ -1348,6 +1377,16 @@ where
         }
 
         this.detach_response();
+
+        // The response is gone, so the promise this context subscribed to can
+        // no longer do anything for the request. Reclaim the cell's ref so the
+        // context is torn down now instead of when GC collects the promise;
+        // the settle reactions then see a null `take()` and no-op.
+        let cell = this.promise_cell.replace(JSValue::ZERO);
+        if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
+            this.deref();
+        }
+
         let any_js_calls = core::cell::Cell::new(false);
         let server = this.server();
         let vm = server.vm();
@@ -2111,8 +2150,7 @@ where
                             global: std::ptr::from_ref(global_this),
                             ..Default::default()
                         });
-                        this.ref_();
-                        let cell = NativePromiseContext::create(global_this, this.as_ctx_ptr());
+                        let cell = this.create_promise_cell(global_this);
                         effective_result.then_with_value(
                             global_this,
                             cell,
@@ -2638,8 +2676,7 @@ where
             // If we immediately have the value available, we can skip the extra event loop tick
             match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                 jsc::PromiseResult::Pending => {
-                    ctx.ref_();
-                    let cell = NativePromiseContext::create(this.global_this(), ctx.as_ctx_ptr());
+                    let cell = ctx.create_promise_cell(this.global_this());
                     response_value.then_with_value(
                         this.global_this(),
                         cell,
@@ -2726,8 +2763,7 @@ where
                     stream_log!("handleResolveStream: waiting for pending flush");
                     debug_assert!(self.server.get().is_some());
                     let global_this = self.server().global_this();
-                    self.ref_();
-                    let cell = NativePromiseContext::create(global_this, self.as_ctx_ptr());
+                    let cell = self.create_promise_cell(global_this);
                     // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                     jsc::JSPromise::opaque_ref(flush).to_js().then_with_value(
                         global_this,
@@ -2822,6 +2858,7 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         let req = RequestContextRef::adopt(req.as_ptr());
+        req.ctx().promise_cell.set(JSValue::ZERO);
         req.ctx().handle_resolve_stream();
         Ok(JSValue::UNDEFINED)
     }
@@ -2837,6 +2874,7 @@ where
         };
         let err = args[0];
         let req = RequestContextRef::adopt(req.as_ptr());
+        req.ctx().promise_cell.set(JSValue::ZERO);
 
         req.ctx().handle_reject_stream(global_this, err);
         Ok(JSValue::UNDEFINED)
@@ -3587,8 +3625,7 @@ where
         match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
-                ctx.ref_();
-                let cell = NativePromiseContext::create(server.global_this(), ctx.as_ctx_ptr());
+                let cell = ctx.create_promise_cell(server.global_this());
                 promise_js.then_with_value(
                     server.global_this(),
                     cell,

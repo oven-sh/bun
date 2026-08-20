@@ -12,6 +12,16 @@ async function waitForPendingRequests(server: ReturnType<typeof Bun.serve>, expe
   throw new Error(`Timed out waiting for pendingRequests === ${expected}; got ${server.pendingRequests}`);
 }
 
+// Deliberately never calls Bun.gc: these tests assert the context is torn
+// down by the abort itself, not by GC collecting the pending promise.
+async function waitForPendingRequestsWithoutGC(server: ReturnType<typeof Bun.serve>, expected: number) {
+  for (let i = 0; i < 200; i++) {
+    if (server.pendingRequests === expected) return;
+    await Bun.sleep(10);
+  }
+  throw new Error(`Timed out waiting for pendingRequests === ${expected}; got ${server.pendingRequests}`);
+}
+
 test("RequestContext is freed when client aborts before Promise<Response> settles", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "serve-pending-promise-abort-leak-fixture.ts")],
@@ -217,11 +227,10 @@ test("chunked request body consumed as a ReadableStream is capped at maxRequestB
   await waitForPendingRequests(server, 0);
 }, 15_000);
 
-test("resolve() after abort does not crash and cleans up", async () => {
-  // UAF safety: while the resolve function is reachable, the Promise stays
-  // alive, the NativePromiseContext cell stays alive, and the RequestContext
-  // stays alive. Calling resolve() after abort triggers onResolve, which sees
-  // the aborted state, bails safely, and derefs.
+test("client abort frees the context even while the resolve function stays reachable", async () => {
+  // The held resolve function keeps the handler Promise (and so the
+  // NativePromiseContext cell) alive forever, so GC can never release the
+  // cell's ref on the RequestContext. The abort itself must reclaim it.
   let capturedResolve: ((r: Response) => void) | undefined;
   const { promise: abortObserved, resolve: signalAbort } = Promise.withResolvers<void>();
 
@@ -243,18 +252,71 @@ test("resolve() after abort does not crash and cleans up", async () => {
   await p;
   await abortObserved;
 
-  // While capturedResolve is held, the Promise (and its reaction, and the
-  // cell, and the RequestContext) stay alive. This is the safety guarantee:
-  // no UAF because the ctx outlives any possible resolve() call.
-  Bun.gc(true);
-  await Bun.sleep(0);
-  expect(server.pendingRequests).toBe(1);
+  // The context is torn down on abort, not when GC collects the promise.
+  await waitForPendingRequestsWithoutGC(server, 0);
 
-  // Resolving after abort: onResolve takes the ctx, handleResolve sees
-  // isAbortedOrEnded() and bails, then derefs. Context is freed.
+  // Resolving after the context is gone is a safe no-op: the reaction's
+  // take() returns null.
   capturedResolve!(new Response("very late"));
   capturedResolve = undefined;
-  await waitForPendingRequests(server, 0);
-
+  await Bun.sleep(0);
   expect(server.pendingRequests).toBe(0);
+});
+
+test("client abort while a direct stream pull() is parked frees the context and rejects the pending body read", async () => {
+  // Holding the pull() promise keeps its NativePromiseContext cell alive, so
+  // only the abort can release the context. Before the fix, on_abort returned
+  // at the sink branch without ending request streaming, so req.text() on the
+  // cut-off upload stayed pending and pendingRequests stayed at 1 until GC.
+  let pumpHold: Promise<never> | undefined;
+  const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<unknown>();
+  const { promise: firstWrite, resolve: signalFirstWrite } = Promise.withResolvers<void>();
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req) {
+      req.text().then(
+        () => signalBodyRead("resolved"),
+        err => signalBodyRead(err),
+      );
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          pull(ctrl) {
+            ctrl.write("hello");
+            ctrl.flush();
+            signalFirstWrite();
+            pumpHold = new Promise<never>(() => {});
+            return pumpHold;
+          },
+        }),
+      );
+    },
+  });
+
+  // Raw socket: send a chunked POST, deliver one partial chunk so req.text()
+  // stays pending, then destroy the socket mid-stream.
+  const socket = connect(Number(server.port), "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    socket.on("connect", resolve);
+    socket.on("error", reject);
+  });
+  socket.removeAllListeners("error");
+  socket.on("error", () => {});
+  socket.write(
+    "POST / HTTP/1.1\r\n" + //
+      `Host: 127.0.0.1:${server.port}\r\n` +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "7\r\npartial\r\n",
+  );
+  await firstWrite;
+  socket.destroy();
+
+  // The cut-off upload rejects the pending req.text() at abort time.
+  const err = await bodyRead;
+  expect(err).toBeInstanceOf(Error);
+  await waitForPendingRequestsWithoutGC(server, 0);
+  pumpHold = undefined;
 });

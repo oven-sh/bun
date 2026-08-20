@@ -1543,9 +1543,7 @@ impl PipelineTask {
                     return;
                 }
             };
-            // A file-based decompression bomb fails up front with a clear
-            // error instead of materialising a multi-GB encoded buffer before
-            // `maxPixels` even runs.
+            // A decompression bomb on disk fails before its encoded bytes are even read.
             if size > MAX_INPUT_FILE_BYTES {
                 self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                 return;

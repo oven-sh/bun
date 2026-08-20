@@ -2810,9 +2810,7 @@ fn range_data_text(source: Option<&Source>, r: Range, text: Cow<'static, [u8]>) 
 #[derive(Default, Clone, Copy)]
 pub struct ToSourceOptions {
     pub convert_bom: bool,
-    /// Read the path even if it is not a regular file
-    /// ([`bun_sys::File::read_from_any_file_type`]). Only for a path the user
-    /// named, such as `--config=/dev/null`.
+    /// Read a device too ([`bun_sys::File::read_from_any_file_type`]): only for a path the user named.
     pub any_file_type: bool,
 }
 

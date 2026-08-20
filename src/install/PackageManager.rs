@@ -1587,10 +1587,7 @@ pub fn init(
                     this_cwd.len() + b"/package.json".len(),
                 );
 
-                // This open locates the project and checks the access to the
-                // file. The readers of package.json reject anything but a
-                // regular file later, so like them (`File::open_regular_at`)
-                // it must not block on a FIFO.
+                // Only locates the project: like its readers (`File::open_regular_at`), never block on a FIFO.
                 #[cfg(unix)]
                 let flags = bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
                 #[cfg(not(unix))]

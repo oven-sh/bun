@@ -242,7 +242,7 @@ impl List {
         both_lists!(&self.r#impl, |list| list.items_generated())
     }
 
-    pub(crate) fn original(&self) -> &[LineColumnOffset] {
+    pub fn original(&self) -> &[LineColumnOffset] {
         both_lists!(&self.r#impl, |list| list.items_original())
     }
 

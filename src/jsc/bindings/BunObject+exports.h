@@ -29,7 +29,6 @@
     macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \
-    macro(assetPrefix) \
     macro(cron) \
     macro(cwd) \
     macro(embeddedFiles) \
@@ -46,7 +45,6 @@
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
     macro(allocUnsafe) \
-    macro(braces) \
     macro(build) \
     macro(color) \
     macro(connect) \
@@ -54,9 +52,6 @@
     macro(createShellInterpreter) \
     macro(deflateSync) \
     macro(file) \
-    macro(fs) \
-    macro(gc) \
-    macro(generateHeapSnapshot) \
     macro(gunzipSync) \
     macro(gzipSync) \
     macro(indexOfLine) \
@@ -64,7 +59,6 @@
     macro(jest) \
     macro(listen) \
     macro(mmap) \
-    macro(nanoseconds) \
     macro(openInEditor) \
     macro(registerMacro) \
     macro(resolve) \

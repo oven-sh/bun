@@ -382,15 +382,6 @@ pub(crate) struct PackQueueItem {
     optional: bool,
 }
 
-impl Default for PackQueueItem {
-    fn default() -> Self {
-        Self {
-            path: ZBox::from_bytes(b""),
-            optional: false,
-        }
-    }
-}
-
 // `bun_collections` has no `PriorityQueue`; wrap `BinaryHeap` with a reversed `Ord`
 // (BinaryHeap is a max-heap, so invert `strings::order` to pop smallest first).
 impl Ord for PackQueueItem {
@@ -425,6 +416,14 @@ impl PackQueue {
     }
     fn remove_or_null(&mut self) -> Option<PackQueueItem> {
         self.heap.pop()
+    }
+    /// `(relative path, optional)` ascending, consuming the queue; a `bin` entry is optional (it may not exist).
+    pub(crate) fn into_paths(mut self) -> Vec<(ZBox, bool)> {
+        let mut out = Vec::with_capacity(self.heap.len());
+        while let Some(item) = self.heap.pop() {
+            out.push((item.path, item.optional));
+        }
+        out
     }
 }
 
@@ -1452,7 +1451,7 @@ enum BinType {
     Dir,
 }
 
-struct BinInfo {
+pub(crate) struct BinInfo {
     path: ZBox,
     ty: BinType,
 }
@@ -1890,6 +1889,117 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // `Some` only when FOR_PUBLISH == true.
 pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
+/// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
+/// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".
+pub(crate) fn published_files(
+    root_dir: &Dir,
+    json_root: &Expr,
+    bump: &bun_alloc::Arena,
+    log_level: LogLevel,
+) -> Result<(PackQueue, Vec<BinInfo>), AllocError> {
+    let mut pack_queue: PackQueue = new_pack_queue();
+    let bins = get_package_bins(json_root)?;
+
+    for bin in &bins {
+        match bin.ty {
+            BinType::File => {
+                pack_queue.add(PackQueueItem {
+                    path: ZBox::from_bytes(bin.path.as_bytes()),
+                    optional: true,
+                })?;
+            }
+            BinType::Dir => {
+                let bin_dir = match dir_open_dir_z(
+                    root_dir,
+                    &bin.path,
+                    bun_sys::OpenDirOptions {
+                        iterate: true,
+                        ..Default::default()
+                    },
+                ) {
+                    Ok(d) => d,
+                    Err(_) => {
+                        // non-existent bins are ignored
+                        continue;
+                    }
+                };
+
+                iterate_project_tree(
+                    &mut pack_queue,
+                    &[],
+                    DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
+                    log_level,
+                )?;
+            }
+        }
+    }
+
+    'iterate_project_tree: {
+        if let Some(files) = json_root.get(b"files") {
+            'files_error: {
+                if let Some(mut files_array) = files.as_array() {
+                    let mut includes: Vec<Pattern> = Vec::new();
+                    let mut excludes: Vec<Pattern> = Vec::new();
+
+                    let mut path_buf = PathBuffer::uninit();
+                    while let Some(files_entry) = files_array.next() {
+                        if let Some(file_entry_str) = files_entry.as_string(bump) {
+                            let normalized = resolve_path::normalize_buf::<
+                                resolve_path::platform::Posix,
+                            >(
+                                file_entry_str, &mut path_buf
+                            );
+                            let Some(parsed) = Pattern::from_utf8(normalized)? else {
+                                continue;
+                            };
+                            if parsed.flags.contains(PatternFlags::NEGATED) {
+                                #[cold]
+                                fn push_exclude(v: &mut Vec<Pattern>, p: Pattern) {
+                                    v.push(p);
+                                }
+                                // most "files" entries are not exclusions.
+                                push_exclude(&mut excludes, parsed);
+                            } else {
+                                includes.push(parsed);
+                            }
+
+                            continue;
+                        }
+
+                        break 'files_error;
+                    }
+
+                    iterate_included_project_tree(
+                        &mut pack_queue,
+                        &bins,
+                        &includes,
+                        &excludes,
+                        root_dir,
+                        log_level,
+                    )?;
+                    break 'iterate_project_tree;
+                }
+            }
+
+            Output::err_generic(
+                "expected `files` to be an array of string values",
+                format_args!(""),
+            );
+            Global::crash();
+        } else {
+            // pack from project root
+            iterate_project_tree(
+                &mut pack_queue,
+                &bins,
+                DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
+                log_level,
+            )?;
+        }
+    }
+
+    Ok((pack_queue, bins))
+}
+
 pub(crate) fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
@@ -2266,106 +2376,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         None => get_bundled_deps(&json.root, "bundleDependencies")?.unwrap_or_default(),
     };
 
-    let mut pack_queue: PackQueue = new_pack_queue();
-
-    let bins = get_package_bins(&json.root)?;
-
-    for bin in &bins {
-        match bin.ty {
-            BinType::File => {
-                pack_queue.add(PackQueueItem {
-                    path: ZBox::from_bytes(bin.path.as_bytes()),
-                    optional: true,
-                })?;
-            }
-            BinType::Dir => {
-                let bin_dir = match dir_open_dir_z(
-                    &root_dir,
-                    &bin.path,
-                    bun_sys::OpenDirOptions {
-                        iterate: true,
-                        ..Default::default()
-                    },
-                ) {
-                    Ok(d) => d,
-                    Err(_) => {
-                        // non-existent bins are ignored
-                        continue;
-                    }
-                };
-
-                iterate_project_tree(
-                    &mut pack_queue,
-                    &[],
-                    DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
-                    log_level,
-                )?;
-            }
-        }
-    }
-
-    'iterate_project_tree: {
-        if let Some(files) = json.root.get(b"files") {
-            'files_error: {
-                if let Some(mut files_array) = files.as_array() {
-                    let mut includes: Vec<Pattern> = Vec::new();
-                    let mut excludes: Vec<Pattern> = Vec::new();
-
-                    let mut path_buf = PathBuffer::uninit();
-                    while let Some(files_entry) = files_array.next() {
-                        if let Some(file_entry_str) = files_entry.as_string(bump) {
-                            let normalized = resolve_path::normalize_buf::<
-                                resolve_path::platform::Posix,
-                            >(
-                                file_entry_str, &mut path_buf
-                            );
-                            let Some(parsed) = Pattern::from_utf8(normalized)? else {
-                                continue;
-                            };
-                            if parsed.flags.contains(PatternFlags::NEGATED) {
-                                #[cold]
-                                fn push_exclude(v: &mut Vec<Pattern>, p: Pattern) {
-                                    v.push(p);
-                                }
-                                // most "files" entries are not exclusions.
-                                push_exclude(&mut excludes, parsed);
-                            } else {
-                                includes.push(parsed);
-                            }
-
-                            continue;
-                        }
-
-                        break 'files_error;
-                    }
-
-                    iterate_included_project_tree(
-                        &mut pack_queue,
-                        &bins,
-                        &includes,
-                        &excludes,
-                        &root_dir,
-                        log_level,
-                    )?;
-                    break 'iterate_project_tree;
-                }
-            }
-
-            Output::err_generic(
-                "expected `files` to be an array of string values",
-                format_args!(""),
-            );
-            Global::crash();
-        } else {
-            // pack from project root
-            iterate_project_tree(
-                &mut pack_queue,
-                &bins,
-                DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
-                log_level,
-            )?;
-        }
-    }
+    let (mut pack_queue, bins) = published_files(&root_dir, &json.root, bump, log_level)?;
 
     let mut bundled_pack_queue = iterate_bundled_deps(
         &mut ctx.bundled_deps,

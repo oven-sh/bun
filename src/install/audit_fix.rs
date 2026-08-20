@@ -797,7 +797,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         } else {
             target.iter().flatten().map(|t| t.candidate).collect()
         };
-        chosen.sort_unstable();
+        index_sort::sort_slice_unstable_by(&mut chosen, |a, b| a.cmp(b));
         chosen.dedup();
         for &c in &chosen {
             let candidate = &candidates[c];

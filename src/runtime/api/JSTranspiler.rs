@@ -120,6 +120,7 @@ impl Default for Config {
 // ──────────────────────────────────────────────────────────────────────────
 
 use bun_bundler_jsc::options_jsc::{loader_from_js, target_from_js};
+use bun_collections::index_sort;
 
 fn source_map_option_from_js(
     global: &JSGlobalObject,
@@ -1602,7 +1603,7 @@ fn named_exports_to_js(
     while let Some(entry) = named_exports_iter.next() {
         keys.push(&**entry.key_ptr);
     }
-    keys.sort_unstable();
+    index_sort::sort_slice_unstable_by(&mut keys, |a, b| a.cmp(b));
 
     let names: Vec<BunString> = keys.into_iter().map(BunString::from_bytes).collect();
     bun_jsc::bun_string_jsc::to_js_array(global, &names)

@@ -163,7 +163,7 @@ impl From<JsError> for StringifyError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => StringifyError::OutOfMemory,
-            JsError::Thrown => StringifyError::JsError,
+            JsError::Thrown | JsError::Terminated => StringifyError::JsError,
         }
     }
 }
@@ -1093,7 +1093,7 @@ impl From<JsError> for ToJsError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => ToJsError::OutOfMemory,
-            JsError::Thrown => ToJsError::JsError,
+            JsError::Thrown | JsError::Terminated => ToJsError::JsError,
         }
     }
 }
@@ -1106,11 +1106,10 @@ impl From<bun_ast::ToJSError> for ToJsError {
         match e {
             Up::OutOfMemory => ToJsError::OutOfMemory,
             Up::JSError => ToJsError::JsError,
-            // `value_string_to_js` never yields the macro/identifier variants
-            // (those come from the full `data_to_js` walker); map defensively.
-            Up::CannotConvertArgumentTypeToJS
-            | Up::CannotConvertIdentifierToJS
-            | Up::MacroError => ToJsError::JsError,
+            // `value_string_to_js` never yields these; map defensively.
+            Up::CannotConvertArgumentTypeToJS | Up::CannotConvertIdentifierToJS => {
+                ToJsError::JsError
+            }
         }
     }
 }

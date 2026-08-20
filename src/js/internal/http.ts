@@ -1,6 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, drainMicrotasks, setServerIdleTimeout } = $cpp(
+const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
   "createNodeHTTPInternalBinding",
 ) as {
@@ -21,7 +21,6 @@ const { setServerCustomOptions, setServerAppFlags, drainMicrotasks, setServerIdl
     httpAllowHalfOpen: boolean,
   ) => void;
   drainMicrotasks: () => void;
-  setServerIdleTimeout: (server: any, timeout: number) => void;
 };
 
 const getRawKeys = $newCppFunction("JSFetchHeaders.cpp", "jsFetchHeaders_getRawKeys", 0);
@@ -614,7 +613,6 @@ export {
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,
-  setServerIdleTimeout,
   statusCodeSymbol,
   statusMessageSymbol,
   timeoutTimerSymbol,

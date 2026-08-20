@@ -29,6 +29,7 @@ pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 // resolver never needs); callers here use the map API directly.
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
+use bun_collections::index_sort;
 use bun_glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
@@ -1146,7 +1147,9 @@ impl<'a> Visitor<'a> {
         // Let expansionKeys be the list of keys of matchObj either ending in "/"
         // or containing only a single "*", sorted by the sorting function
         // PATTERN_KEY_COMPARE which orders in descending order of specificity.
-        expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
+        index_sort::sort_slice_by(&mut expansion_keys, |a, b| {
+            strings::glob_length_compare(&a.key, &b.key)
+        });
 
         Entry {
             data: EntryData::Map(EntryDataMap {

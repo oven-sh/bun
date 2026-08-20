@@ -814,7 +814,7 @@ impl StreamResult {
 
 /// Generic controller externs (defined in the generated `JSSink.cpp`). Every
 /// `JSReadable*SinkController` shares the `JSReadableSinkControllerBase`
-/// layout, so one symbol per signal suffices for all sink kinds.
+/// layout, so one symbol per operation suffices for all sink kinds.
 pub(crate) mod controller_abi {
     unsafe extern "C" {
         #[link_name = "JSSinkController__onReady"]
@@ -827,6 +827,13 @@ pub(crate) mod controller_abi {
         pub(crate) safe fn on_close(c: ::bun_jsc::JSValue, reason: ::bun_jsc::JSValue);
         #[link_name = "JSSinkController__detachPtr"]
         pub(crate) safe fn detach_ptr(c: ::bun_jsc::JSValue);
+        /// Returns undefined (drained inline), the pump promise, or the thrown Exception cell.
+        #[link_name = "JSSinkController__assignToStream"]
+        pub(crate) safe fn assign_to_stream(
+            g: &::bun_jsc::JSGlobalObject,
+            stream: ::bun_jsc::JSValue,
+            c: ::bun_jsc::JSValue,
+        ) -> ::bun_jsc::JSValue;
     }
 }
 
@@ -901,8 +908,7 @@ pub enum SourceHandle {
     /// No source attached.
     #[default]
     None,
-    /// Encoded `JSValue` of the C++ controller cell written by
-    /// `${abi}__assignToStream`. `JSValue::ZERO` is the pre-seed sentinel.
+    /// The C++ controller cell of a JS-stream pump (`JSSink::assign_to_stream`).
     JSController(JSValue),
     ByteStream(BackRef<crate::webcore::ByteStream>),
     FileReader(BackRef<crate::webcore::FileReader>),
@@ -934,13 +940,7 @@ impl SourceHandle {
     pub fn close(&mut self, err: Option<SysError>) {
         match *self {
             SourceHandle::None => {}
-            // `JSController(ZERO)` is the `assign_to_stream` pre-seed
-            // placeholder; the real controller value hasn't been installed yet,
-            // so there is no cell to notify.
             SourceHandle::JSController(cpp) => {
-                if cpp == JSValue::ZERO {
-                    return;
-                }
                 let global = VirtualMachine::get().global();
                 // A frame above is unwinding with its exception: not ours to run
                 // over. Otherwise the controller's close is settled here like a
@@ -971,9 +971,6 @@ impl SourceHandle {
         match *self {
             SourceHandle::None => {}
             SourceHandle::JSController(cpp) => {
-                if cpp == JSValue::ZERO {
-                    return;
-                }
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
                     return;
@@ -994,6 +991,25 @@ impl SourceHandle {
             SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
             | SourceHandle::S3DownloadBody(_) => {}
+        }
+    }
+
+    /// The source's JS wrapper was collected while this producer still held the
+    /// source: nothing can read what it delivers from now on. Called from a GC
+    /// sweep: arms must not run JS.
+    pub fn consumer_collected(self) {
+        match self {
+            SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 
@@ -1188,13 +1204,8 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     fn set_destroy_callback_extern(value: JSValue, callback: usize) {
         http_sink_dispatch!(set_destroy_callback(value, callback))
     }
-    fn assign_to_stream_extern(
-        global: &JSGlobalObject,
-        stream: JSValue,
-        ptr: *mut c_void,
-        jsvalue_ptr: *mut *mut c_void,
-    ) -> JSValue {
-        http_sink_dispatch!(assign_to_stream(global, stream, ptr, jsvalue_ptr))
+    fn create_controller_extern(global: &JSGlobalObject, ptr: *mut c_void) -> JSValue {
+        http_sink_dispatch!(create_controller(global, ptr))
     }
 }
 
@@ -2141,9 +2152,6 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
-    fn done(&self) -> bool {
-        self.is_done()
-    }
 }
 
 pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
@@ -2554,9 +2562,6 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
-    }
-    fn done(&self) -> bool {
-        self.done
     }
 }
 

@@ -412,7 +412,7 @@ impl Source {
     ///
     /// Threads that *may* run JS (web workers, debugger, the main VM thread)
     /// must keep using [`configure_thread`] / [`configure_named_thread`].
-    pub(crate) fn configure_thread_no_js() {
+    pub fn configure_thread_no_js() {
         if SOURCE_SET.get() {
             return;
         }
@@ -894,6 +894,10 @@ pub fn is_stdout_tty() -> bool {
 pub fn is_stdin_tty() -> bool {
     stdio_tty_flag(0)
 }
+#[inline]
+pub fn is_stderr_tty() -> bool {
+    stdio_tty_flag(2)
+}
 
 pub fn is_github_action() -> bool {
     if env_var::GITHUB_ACTIONS.get().unwrap_or(false) {
@@ -1073,6 +1077,11 @@ pub fn reset_terminal() {
 }
 
 pub fn reset_terminal_all() {
+    // Reached from `reload_process`, which any thread may call. A thread that
+    // never ran `Source::configure_thread` has zeroed writers, not stdio.
+    if !SOURCE_SET.get() {
+        return;
+    }
     SOURCE.with_borrow_mut(|s| {
         if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
             let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
@@ -1373,6 +1382,11 @@ macro_rules! debug {
 #[inline]
 pub fn print(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
+}
+
+/// Bytes to stdout exactly as given (no UTF-8 replacement), through the same writer `print` uses.
+pub fn print_bytes(bytes: &[u8]) {
+    write_bytes(Destination::Stdout, bytes);
 }
 
 /// `bun.Output.println(fmt, args)` — `print()` with a trailing newline.

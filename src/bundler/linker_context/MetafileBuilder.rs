@@ -34,6 +34,7 @@ use std::io::Write;
 
 use bstr::BStr;
 use bun_collections::VecExt;
+use bun_collections::index_sort;
 use bun_collections::{DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
 use bun_core::string_joiner::StringJoiner;
@@ -1019,7 +1020,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     md.extend_from_slice(b"Modules sorted by bytes contributed to the output bundle. Large modules may indicate bloat.\n\n");
 
     // Sort by bytes_in_output descending
-    input_files.sort_by_key(|b| std::cmp::Reverse(b.bytes_in_output));
+    index_sort::sort_slice_by(&mut input_files, |a, b| {
+        b.bytes_in_output.cmp(&a.bytes_in_output)
+    });
 
     md.extend_from_slice(b"| Output Bytes | % of Total | Module | Format |\n");
     md.extend_from_slice(b"|--------------|------------|--------|--------|\n");
@@ -1206,7 +1209,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                         }
                     }
 
-                    module_sizes.sort_by_key(|b| std::cmp::Reverse(b.bytes));
+                    index_sort::sort_slice_by(&mut module_sizes, |a, b| b.bytes.cmp(&a.bytes));
 
                     let max_modules: usize = 15;
                     for (i, ms) in module_sizes.iter().enumerate() {
@@ -1243,7 +1246,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         });
     }
 
-    highly_imported.sort_by_key(|b| std::cmp::Reverse(b.count));
+    index_sort::sort_slice_by(&mut highly_imported, |a, b| b.count.cmp(&a.count));
 
     // Show most commonly imported modules
     if !highly_imported.is_empty() {
@@ -1294,7 +1297,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         sorted_paths.push(PathOnly { path: key });
     }
 
-    sorted_paths.sort_by(|a, b| a.path.cmp(b.path));
+    index_sort::sort_slice_by(&mut sorted_paths, |a, b| a.path.cmp(b.path));
 
     for sp in sorted_paths.iter() {
         let input_path = sp.path;

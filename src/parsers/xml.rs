@@ -1266,13 +1266,16 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 }
             })
             .collect();
-        let mut utf8 = vec![0u8; simdutf::length::utf8::from::utf16::le(&units)];
-        let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, &mut utf8);
+        let len = simdutf::length::utf8::from::utf16::le(&units);
+        let slot = self.bump.alloc_uninit_slice::<u8>(len);
+        // SAFETY: simdutf only writes into `utf8`; only the `result.count` bytes it wrote are read.
+        let utf8: &'a mut [u8] =
+            unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) };
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, utf8);
         if !result.is_successful() {
             return Err(self.err(result.count * 2, "Invalid UTF-16"));
         }
-        utf8.truncate(result.count);
-        self.src = Self::units_of(self.bump.alloc_slice_copy(&utf8));
+        self.src = Self::units_of(&utf8[..result.count]);
         self.pos = 0;
         self.transcoded = true;
         Ok(())

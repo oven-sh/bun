@@ -721,13 +721,21 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
         // SAFETY: the mapping is `total` bytes and outlives this borrow.
         Some((base, _)) => unsafe { core::slice::from_raw_parts(base.as_ptr(), total) },
         None => {
-            let mut contents = vec![0u8; total];
-            match file.pread_all(&mut contents, 0) {
-                Ok(n) if n == total => {}
-                _ => {
-                    finish(line, &|| "reading header failed\n".into());
-                    return;
-                }
+            let mut contents: Vec<u8> = Vec::new();
+            if contents.try_reserve_exact(total).is_err() {
+                finish(line, &|| "allocation failed\n".into());
+                return;
+            }
+            // SAFETY: `pread_all` only writes into the spare bytes and returns how many it filled.
+            let read = unsafe {
+                bun_core::vec::fill_spare(&mut contents, 0, |spare| {
+                    let read = file.pread_all(&mut spare[..total], 0).ok();
+                    (read.unwrap_or(0), read)
+                })
+            };
+            if read != Some(total) {
+                finish(line, &|| "reading header failed\n".into());
+                return;
             }
             heap_contents = contents;
             &heap_contents

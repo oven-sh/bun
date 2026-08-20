@@ -209,7 +209,7 @@ pub mod dir_iterator {
         }
         #[cfg(not(windows))]
         #[inline]
-        pub(crate) fn as_zstr(&self) -> &bun_core::ZStr {
+        pub fn as_zstr(&self) -> &bun_core::ZStr {
             // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
             // `borrow()` debug_assert.
             unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
@@ -987,19 +987,6 @@ pub(crate) extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::f
         buf.set(arr);
         buf.as_ptr().cast::<core::ffi::c_char>()
     })
-}
-
-/// Small "fire and forget" wrapper around unlink for C usage that handles
-/// EINTR, Windows path conversion, etc.
-///
-/// # Safety
-/// `ptr[0..=len]` must be a valid NUL-terminated path slice for the call.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
-    // SAFETY: caller (C++) guarantees `ptr[0..=len]` is a valid NUL-terminated
-    // path slice for the duration of the call.
-    let path = unsafe { ZStr::from_raw(ptr, len) };
-    let _ = unlink(path);
 }
 
 // libuv-style error constants (negated errno on posix, UV_* on Windows). The
@@ -6033,10 +6020,6 @@ impl DynLib {
         // Windows: FreeLibrary via windows mod; intentionally leaked here
         // (close is a no-op on Windows in our usage).
     }
-    #[inline]
-    pub fn handle(&self) -> *mut c_void {
-        self.handle
-    }
 }
 
 /// `RTLD_*` flags for `dlopen`.
@@ -6979,12 +6962,16 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     let mut access_mask: u32 = w::READ_CONTROL | w::SYNCHRONIZE;
     if (flags & O::RDWR) != 0 {
         access_mask |= w::GENERIC_READ | w::GENERIC_WRITE;
-    } else if (flags & O::APPEND) != 0 {
-        access_mask |= w::GENERIC_WRITE | w::FILE_APPEND_DATA;
     } else if (flags & O::WRONLY) != 0 {
         access_mask |= w::GENERIC_WRITE;
     } else {
         access_mask |= w::GENERIC_READ;
+    }
+    // O_APPEND is orthogonal to the access mode, so it cannot be another arm of
+    // the chain above: `a+` is O_RDWR|O_APPEND and would otherwise never get
+    // FILE_APPEND_DATA, which is what the post-open seek to FILE_END keys off.
+    if (flags & O::APPEND) != 0 {
+        access_mask |= w::GENERIC_WRITE | w::FILE_APPEND_DATA;
     }
 
     // Create disposition is derived from O_CREAT/O_EXCL/O_TRUNC alone; the
@@ -7799,7 +7786,7 @@ pub(crate) fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
 // `std.posix` — wider surface than `bun_errno::posix` (which only has
 // mode_t/E/S/errno). Dependents (`bun_resolver`, `bun_md`, `bun_crash`,
 // `bun_threading`) reach for `Sigaction`, `getrlimit`, `tcgetattr`, raw
-// `read`/`write`/`poll`, `dl_iterate_phdr` etc. We re-export the errno stub
+// `poll`, `dl_iterate_phdr` etc. We re-export the errno stub
 // and layer the libc bits on top so `bun_sys::posix::*` is the single import.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod posix {
@@ -8015,22 +8002,6 @@ pub mod posix {
     pub struct timespec {
         pub(crate) tv_sec: i64,
         pub(crate) tv_nsec: i64,
-    }
-
-    // ── raw I/O (no `Maybe` wrapping) ──
-    #[cfg(unix)]
-    #[inline]
-    pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: caller contract — `buf` points to `count` writable bytes.
-            unsafe { super::linux_syscall::read_raw(fd, buf, count) }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            // SAFETY: caller contract — `buf` points to `count` writable bytes.
-            unsafe { libc::read(fd, buf.cast(), count) }
-        }
     }
 
     // ── poll ──

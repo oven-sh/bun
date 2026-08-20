@@ -7,7 +7,20 @@ struct BunVmHandleRef;
 extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS thread
 extern "C" const BunVmHandleRef* Bun__VmHandle__retainRef(const BunVmHandleRef*); // any thread
 extern "C" void Bun__VmHandle__release(const BunVmHandleRef*);
+namespace JSC {
+class TopExceptionScope;
+}
+namespace Bun {
+// A TerminationException that has unwound past the outermost script frame (!vm.isEntered()) is the VM's stop arriving
+// at native code that keeps running: take it off the VM, reset JSC's request flag as an entry-scope exit would, forbid
+// execution (WebCore's forbidExecution() at the same point). Beneath script it stays pending for JSC to unwind. True if
+// taken. bindings.cpp.
+bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
+}
+extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
+
 namespace WebCore {
+class WorkerMessagingProxy;
 class EventLoopTask;
 }
 // Post through a reference and give it up in one step (a reference taken only to outlive a lock).
@@ -54,12 +67,57 @@ class DOMWrapperWorld;
 #include <wtf/WeakHashSet.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
+#include "DOMURLBaseCache.h"
+#include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
 class GlobalObject;
 }
 
 namespace Bun {
 class StrongRootBlock;
+
+// JSC measures the live size of the heap at the end of each collection, but only
+// publishes it per scope: an eden collection updates
+// Heap::sizeAfterLastEdenCollection() and a full collection updates
+// Heap::sizeAfterLastFullCollection(), so one of the two is always stale. The
+// combined counter (Heap::m_sizeAfterLastCollect) has no accessor. Attached to
+// the heap for the life of the VM, this copies the counter of whichever scope
+// just finished. Unlike Heap::size(), reading it does not walk the heap.
+class HeapSizeAfterLastCollection final : public JSC::HeapObserver {
+    WTF_MAKE_NONCOPYABLE(HeapSizeAfterLastCollection);
+
+public:
+    explicit HeapSizeAfterLastCollection(JSC::Heap& heap)
+        : m_heap(heap)
+    {
+        m_heap.addObserver(this);
+    }
+
+    ~HeapSizeAfterLastCollection() final
+    {
+        m_heap.removeObserver(this);
+    }
+
+    // 0 until the first collection of this heap finishes.
+    size_t get() const { return m_sizeAfterLastCollection; }
+
+private:
+    void willGarbageCollect() final {}
+
+    // Heap::didFinishCollection() notifies observers after updateAllocationLimits()
+    // stored this collection's size, in the end phase of the collection, while
+    // the mutator is stopped. The mutator reads m_sizeAfterLastCollection once
+    // it resumes, the same way it reads JSC's own counters.
+    void didGarbageCollect(JSC::CollectionScope scope) final
+    {
+        m_sizeAfterLastCollection = scope == JSC::CollectionScope::Full
+            ? m_heap.sizeAfterLastFullCollection()
+            : m_heap.sizeAfterLastEdenCollection();
+    }
+
+    JSC::Heap& m_heap;
+    size_t m_sizeAfterLastCollection { 0 };
+};
 }
 
 namespace WebCore {
@@ -134,7 +192,8 @@ public:
 
     virtual ~JSVMClientData();
 
-    static void create(JSC::VM*, void* bunVM, bool isWorkerVM);
+    // `worker` is the WorkerMessagingProxy this VM is being created for, or null on the main thread.
+    static void create(JSC::VM*, void* bunVM, WorkerMessagingProxy* worker);
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
@@ -158,6 +217,11 @@ public:
     // so there is no startup cost worth deferring.
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
+    WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
+
+    // Live size of the heap as measured by the most recent collection, eden or full.
+    size_t heapSizeAfterLastCollection() const { return m_heapSizeAfterLastCollection.get(); }
+
     void* bunVM;
     // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses
     // to post work / ref the loop (never bunVM). Created in create(), released
@@ -166,6 +230,9 @@ public:
     // vmHandle's state byte (Bun__VmHandle__stateAddress): the per-callback "may run script" test is one load.
     const unsigned char* vmHandleState { nullptr };
     ALWAYS_INLINE bool scriptAllowed() const { return Bun__VmHandle__scriptAllowedInline(vmHandleState); }
+    // Stopping: the stop has been requested (any thread; `!scriptAllowed()`). Stopped: it has been carried out on
+    // this thread and JSC forbids execution. Either way no script may be entered on this VM.
+    ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
@@ -219,12 +286,19 @@ private:
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
 
+    WebCore::DOMURLBaseCache m_urlBaseCache;
+
+    Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
+
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
     bool m_isWorkerVM { false };
+    bool m_isNodeWorkerVM { false };
 
 public:
     // upstream's `&vm != commonVMOrNull()`
     bool isWorkerVM() const { return m_isWorkerVM; }
+    // Created by node:worker_threads' Worker (WorkerOptions::Kind::Node), as opposed to the Web Worker constructor.
+    bool isNodeWorkerVM() const { return m_isNodeWorkerVM; }
     // VM thread. Unlinking is the client's own (`remove()` in its destructor).
     void addClient(JSVMClientDataClient& client) { m_clients.append(&client); }
 };

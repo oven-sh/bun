@@ -271,29 +271,46 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         return rope;
     }
 
+    // Sizes are recorded at write() time; rejecting even if buffers were detached later is intended.
+    const double estimatedLength = accumulator.estimatedLength;
+    if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
+        || Bun::WebStreams::exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return String();
+    }
     Vector<uint8_t> bytes;
+    if (estimatedLength > 0 && !bytes.tryReserveInitialCapacity(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return String();
+    }
     for (auto& piece : accumulator.pieces) {
         JSValue value = piece.get();
+        bool appended = true;
         if (value.isString()) {
             String string = asString(value)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            auto utf8 = string.utf8();
-            bytes.append(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+            appended = Bun::WebStreams::appendUTF8WithinStringLimit(string, bytes);
         } else if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
             if (!view->isDetached())
-                bytes.append(view->span());
+                appended = bytes.tryAppend(view->span());
         } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
             auto* impl = buffer->impl();
             if (impl && !impl->isDetached())
-                bytes.append(impl->span());
+                appended = bytes.tryAppend(impl->span());
+        }
+        if (!appended) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return String();
         }
     }
     if (!accumulator.rope.isEmpty()) {
         String rope = accumulator.rope.toString();
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
-        auto utf8 = rope.utf8();
-        bytes.append(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+        if (!Bun::WebStreams::appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return String();
+        }
     }
     if (Bun::WebStreams::exceedsStringLimit(bytes.size())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);

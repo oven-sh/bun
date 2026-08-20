@@ -54,7 +54,7 @@
 #include "JSEventListener.h"
 #include "NodeValidator.h"
 #include "StructuredSerializeOptions.h"
-#include "JSWorkerOptions.h"
+#include "WorkerOptions.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapAnalyzer.h>

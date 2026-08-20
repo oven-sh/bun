@@ -993,15 +993,6 @@ impl FSWatcher {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn has_ref(
-        &self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::from(self.persistent.get()))
-    }
-
     // this can be called from Watcher Thread or JS Context Thread
     pub(crate) fn ref_task(&self) -> bool {
         let _guard = self.mutex.lock_guard();

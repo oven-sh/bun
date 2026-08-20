@@ -122,6 +122,7 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // 2k-line body rewrite.
 use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
+use bun_collections::index_sort;
 
 #[allow(non_snake_case)]
 mod bun_test {
@@ -1607,7 +1608,7 @@ impl CommandLineReporter {
             return Ok(());
         }
 
-        byte_ranges.sort_by(coverage::is_less_than_cmp);
+        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
 
         self.print_code_coverage::<REPORTERS_TEXT, REPORTERS_LCOV, ENABLE_ANSI_COLORS>(
             vm,
@@ -1633,7 +1634,7 @@ impl CommandLineReporter {
         if byte_ranges.is_empty() {
             return None;
         }
-        byte_ranges.sort_by(coverage::is_less_than_cmp);
+        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
@@ -2583,7 +2584,9 @@ impl TestCommand {
                 if let Some(timings) = reporter.timings.as_ref().filter(|t| !t.is_empty()) {
                     write = timings.select_shard(test_files, *shard);
                 } else {
-                    test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
+                    index_sort::sort_slice_by(test_files, |a, b| {
+                        strings::order(a.as_bytes(), b.as_bytes())
+                    });
                     let total = test_files.len();
                     for i in 0..total {
                         if i % (shard.count as usize) == (shard.index as usize) - 1 {
@@ -2714,8 +2717,7 @@ impl TestCommand {
             let watcher =
                 unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
-                let loader = vm.transpiler.options.loader(bun_path::extension(path));
-                let _ = watcher.add_file_by_path_slow(path, loader);
+                let _ = watcher.add_file_by_path_slow(path);
             }
         }
 
@@ -3363,7 +3365,7 @@ impl TestCommand {
                     vm.event_loop_ref().tick();
 
                     while prev_unhandled_count < vm.unhandled_error_counter {
-                        vm.global().handle_rejected_promises();
+                        let _ = vm.global().handle_rejected_promises();
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
@@ -3382,7 +3384,7 @@ impl TestCommand {
                 drop(buntest_strong);
             }
 
-            vm.global().handle_rejected_promises();
+            let _ = vm.global().handle_rejected_promises();
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");

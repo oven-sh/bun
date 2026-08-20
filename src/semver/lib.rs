@@ -761,7 +761,7 @@ pub mod semver_string {
     }
 
     // Bridge to `bun_collections::ArrayHashMap` adapted lookups so callers can
-    // pass `ArrayHashContext` directly to `get_adapted` / `get_or_put_adapted`
+    // pass `ArrayHashContext` directly to `get_index_adapted` / `get_or_put_adapted`
     // / `put_assume_capacity_context` without a per-crate orphan-rule wrapper.
     impl<'a> bun_collections::array_hash_map::ArrayHashAdapter<String, String>
         for ArrayHashContext<'a>

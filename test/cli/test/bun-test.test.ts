@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1882,4 +1882,121 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
+
+  // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
+  // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
+  // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so
+  // the overflow is unreachable there.
+  const maxPathBytes = isLinux ? 4096 : 1024;
+  const existsTest = `import { test } from "bun:test"; test("exists", () => {});`;
+
+  for (const [kind, prefix, len] of [
+    ["absolute", "/", 5000],
+    ["absolute", "/", 100_000],
+    ["relative", "./", 5000],
+  ] as const) {
+    test.skipIf(isWindows)(
+      `${kind} path argument of ${len} bytes (longer than MAX_PATH_BYTES) reports no match instead of panicking`,
+      async () => {
+        using dir = tempDir("scanner-long-arg", { "exists.test.ts": existsTest });
+        const longArg = prefix + Buffer.alloc(len, "a").toString() + ".test.ts";
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", longArg],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("had no matches");
+        expect(exitCode).toBe(1);
+      },
+    );
+  }
+
+  test.skipIf(isWindows)(
+    "a path argument longer than MAX_PATH_BYTES is skipped like a missing path when other arguments match",
+    async () => {
+      using dir = tempDir("scanner-long-arg-mixed", { "exists.test.ts": existsTest });
+      const longArg = "/" + Buffer.alloc(5000, "a").toString() + ".test.ts";
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./exists.test.ts", longArg],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("Ran 1 test across 1 file.");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The directory walk joins parent + entry name for every directory it
+  // descends into and every candidate test file. With pathIgnorePatterns
+  // configured it additionally joins each directory before queueing it, so the
+  // same tree is scanned once per configuration to reach both code paths.
+  for (const [config, files] of [
+    ["no bunfig", {}],
+    ["pathIgnorePatterns configured", { "bunfig.toml": `[test]\npathIgnorePatterns = ["unrelated/**"]\n` }],
+  ] as const) {
+    test.skipIf(isWindows)(
+      `entries whose absolute path exceeds MAX_PATH_BYTES are skipped during the directory walk (${config})`,
+      async () => {
+        using dir = tempDir("scanner-deep-tree", {
+          ...files,
+          "shallow.test.ts": `import { test } from "bun:test"; test("shallow", () => {});`,
+        });
+        const root = String(dir);
+        // Each level adds "/" + segment = 255 bytes. The deepest directory the
+        // scanner can still open is the last one whose path is at most
+        // maxPathBytes - 1 (it reserves one byte for the NUL); the directory
+        // below it is skipped. A 255-byte name in the deepest directory
+        // overflows too: that directory is at most 254 bytes short of the limit
+        // and the name adds 256. The deepest directory gets three such entries:
+        // a test file, a subdirectory, and a symlink. readdir does not report a
+        // symlink's kind, so the scanner stats it first, and that stat builds
+        // the path through the resolver (RealFS::kind) rather than through the
+        // scanner's own joins.
+        const segment = Buffer.alloc(254, "d").toString();
+        const longTestFile = Buffer.alloc(247, "f").toString() + ".test.ts";
+        const longTestLink = Buffer.alloc(247, "l").toString() + ".test.ts";
+        const fitDepth = Math.floor((maxPathBytes - 1 - root.length) / (segment.length + 1));
+        expect([longTestFile.length, longTestLink.length]).toEqual([255, 255]);
+        expect(root.length + fitDepth * 255 + 256).toBeGreaterThan(maxPathBytes);
+
+        // The over-long entries cannot be addressed by absolute path
+        // (ENAMETOOLONG), so walk down the chain and create them relative to
+        // the deepest directory.
+        const script = ["set -e"];
+        for (let level = 1; level <= fitDepth; level++) {
+          script.push(`mkdir ${segment} && cd ${segment}`);
+        }
+        script.push(`touch ${longTestFile}`, `ln -s ${longTestFile} ${longTestLink}`, `mkdir ${segment}`);
+        await using setup = Bun.spawn({
+          cmd: ["bash", "-c", script.join("\n")],
+          env: bunEnv,
+          cwd: root,
+          stderr: "pipe",
+        });
+        const [setupStderr, setupExitCode] = await Promise.all([setup.stderr.text(), setup.exited]);
+        expect(setupStderr).toBe("");
+        expect(setupExitCode).toBe(0);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test"],
+          env: bunEnv,
+          cwd: root,
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("shallow.test.ts:");
+        expect(stderr).toContain("Ran 1 test across 1 file.");
+        expect(exitCode).toBe(0);
+      },
+    );
+  }
 });

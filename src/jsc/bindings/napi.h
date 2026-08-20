@@ -789,8 +789,7 @@ public:
             strongRef.set(globalObject->vm(), value);
         }
 
-        // In NAPI non-experimental, types other than object, function and symbol can't be used as values for references.
-        // In NAPI experimental, they can be, but we must not store weak references to them.
+        // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
         if (can_be_weak) {
             weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
         }
@@ -979,21 +978,11 @@ public:
         : m_callFrame(callFrame)
         , m_dataPtr(dataPtr)
     {
-        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict
-        // mode. So if `this` is null or undefined, we use globalThis instead; otherwise, we convert
-        // `this` to an object.
-        // TODO change to global? or find another way to avoid JSGlobalProxy
-        JSC::JSObject* jscThis = globalObject->globalThis();
-        if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            // TopExceptionScope: this runs before the addon's callback and its
-            // first NAPI_PREAMBLE; a ThrowScope would simulate a throw on
-            // destruction that the next preamble would see as unchecked.
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
-            jscThis = m_callFrame->thisValue().toObject(globalObject);
-            // https://tc39.es/ecma262/#sec-toobject
-            // toObject only throws for undefined and null, which we checked for
-            scope.assertNoException();
-        }
+        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict mode.
+        // Not a ThrowScope: its simulated throw would reach the addon's first NAPI_PREAMBLE unchecked.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+        JSValue jscThis = m_callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy());
+        scope.assertNoException();
         m_callFrame->setThisValue(jscThis);
     }
 

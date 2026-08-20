@@ -166,14 +166,17 @@ pub mod analyze_transpiled_module {
             Self(value.0)
         }
         /// JSC `ScriptFetchParameters::Type` value. `None` maps to `JavaScript`
-        /// (NodesAnalyzeModule's no-attribute default).
+        /// (NodesAnalyzeModule's no-attribute default). JSC's `Text` (4) is never
+        /// produced: with BUN_JSC_ADDITIONS `type: "text"` is host-defined like
+        /// every other non-json/wasm type. Pinned by the static_asserts in
+        /// BunAnalyzeTranspiledModule.cpp.
         #[inline]
         pub fn to_script_fetch_parameters_type(self) -> u8 {
             match self {
                 Self::None | Self::Javascript => 1,
                 Self::Webassembly => 2,
                 Self::Json => 3,
-                _ => 4,
+                _ => 5,
             }
         }
     }

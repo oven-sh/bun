@@ -52,7 +52,7 @@ JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * global
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto thisVal = callFrame->thisValue();
+    auto thisVal = callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::strict());
 
     auto name = thisVal.get(globalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1478,20 +1478,6 @@ JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::J
     return {};
 }
 
-JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue received, WTF::ASCIILiteral expected)
-{
-    WTF::StringBuilder builder;
-    builder.append("Invalid key object type "_s);
-    JSValueToStringSafe(globalObject, builder, received);
-    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
-
-    builder.append(". Expected "_s);
-    builder.append(expected);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
-    throwScope.release();
-    return {};
-}
-
 JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, CryptoKeyType receivedType, ASCIILiteral expected)
 {
     WTF::StringBuilder builder;
@@ -1806,6 +1792,9 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, co
 
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
+    if (!thisValue.isEmpty())
+        thisValue = thisValue.toThis(globalObject, JSC::ECMAMode::strict());
+
     if (thisValue.isEmpty() || thisValue.isUndefined()) {
         return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName));
     }

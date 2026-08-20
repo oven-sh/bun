@@ -347,7 +347,7 @@ pub mod Runtime {
             // so sort the inputs first; the resulting `keys()` iteration order
             // is then byte-lexicographic.
             let mut sorted: Vec<&[u8]> = feature_flags.to_vec();
-            sorted.sort_unstable();
+            bun_collections::index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.cmp(b));
             let mut set = StringSet::new();
             for flag in sorted {
                 let _ = set.insert(flag);
@@ -685,6 +685,13 @@ pub struct VisitArgsOpts<'a> {
 }
 
 #[derive(Clone, Copy)]
+pub struct VisitDeclOpts {
+    pub(crate) was_anonymous_named_expr: bool,
+    pub(crate) could_be_const_value: bool,
+    pub(crate) could_be_macro: bool,
+}
+
+#[derive(Clone, Copy)]
 pub struct TransposeState {
     pub(crate) is_await_target: bool,
     pub(crate) is_then_catch_target: bool,
@@ -845,12 +852,6 @@ impl Default for ExprOrLetStmt {
             decls: bun_collections::RawSlice::EMPTY,
         }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FunctionKind {
-    Stmt,
-    Expr,
 }
 
 #[repr(u8)]

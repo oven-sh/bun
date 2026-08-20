@@ -328,7 +328,7 @@ impl SignalCode {
         #[cfg(not(unix))]
         {
             // Windows numbering: CRT <signal.h> plus libuv's synthetic SIGHUP/SIGQUIT/SIGKILL/
-            // SIGWINCH (src/jsc/bindings/libuv/uv/win.h). The enum discriminants are Linux numbers
+            // SIGWINCH (vendor/libuv/include/uv/win.h). The enum discriminants are Linux numbers
             // and must not leak here (SIGABRT is 22 on Windows, not 6).
             use SignalCode as S;
             match self {
@@ -386,7 +386,8 @@ pub mod features {
     pub fn yaml_parse_inc() {
         YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
-    /// parsers crate calls `bun_core::analytics::Features::xml_parse_inc()`.
+    /// Bumped by the `Bun.XML` API and `.xml` imports (not by internal users
+    /// of the parser, such as the S3 client).
     #[inline]
     pub fn xml_parse_inc() {
         XML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);

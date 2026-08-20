@@ -29,7 +29,7 @@ pub(crate) fn freemem() -> u64 {
 
 // ─── gated: JSC bindings + platform syscall bodies ────────────────────────
 // Every fn body builds JS objects (`JSValue::create_*`, `ZigString::*::to_js`,
-// `global.throw_value`) or reaches `bun_sys::posix::sysctlbyname` /
+// `global.throw_value`) or reaches `bun_sys::posix::sysctl_read*` /
 // `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
 // CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
 
@@ -808,24 +808,14 @@ mod _impl {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
+            // SAFETY: idempotent Winsock init (libuv defers it to first use).
+            unsafe { windows::libuv::uv__winsock_ensure() };
             // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                 let str = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
                 let js = str.to_js(global);
                 str.deref();
                 return js;
-            }
-
-            let mut result: windows::ws2_32::WSADATA = bun_core::ffi::zeroed();
-            // SAFETY: valid out-pointer
-            if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
-                // SAFETY: valid buffer
-                if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
-                    let y = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
-                    let js = y.to_js(global);
-                    y.deref();
-                    return js;
-                }
             }
 
             return Ok(ZigString::init(b"unknown").with_encoding().to_js(global));

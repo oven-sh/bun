@@ -5,7 +5,7 @@ use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
-use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
+use bun_collections::BoundedArray;
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
@@ -120,8 +120,9 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::jest::{self, FileColumns as _, FileId, Summary, TestRunner};
-use crate::test_runner::snapshot::{InlineSnapshotToWrite, Snapshots};
+use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
+use crate::test_runner::snapshot::Snapshots;
+use bun_collections::index_sort;
 
 #[allow(non_snake_case)]
 mod bun_test {
@@ -926,6 +927,11 @@ pub(crate) fn is_node_test_child() -> bool {
         .is_some_and(|value| value == b"child-v8")
 }
 
+/// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
+pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
+    !(reporter.jest.node_test_used || should_drain_event_loop())
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -1613,7 +1619,7 @@ impl CommandLineReporter {
             return Ok(());
         }
 
-        byte_ranges.sort_by(coverage::is_less_than_cmp);
+        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
 
         self.print_code_coverage::<REPORTERS_TEXT, REPORTERS_LCOV, ENABLE_ANSI_COLORS>(
             vm,
@@ -1639,7 +1645,7 @@ impl CommandLineReporter {
         if byte_ranges.is_empty() {
             return None;
         }
-        byte_ranges.sort_by(coverage::is_less_than_cmp);
+        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
@@ -2162,14 +2168,6 @@ impl TestCommand {
             None
         };
 
-        let mut snapshot_file_buf: Vec<u8> = Vec::new();
-        // `Snapshots::ValuesHashMap` would be an inherent associated type alias
-        // (unstable in Rust); spell out the underlying map instead.
-        let mut snapshot_values: bun_collections::HashMap<u64, Box<[u8]>> =
-            bun_collections::HashMap::new();
-        let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
-        let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
-            ArrayHashMap::new();
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
 
         // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
@@ -2222,28 +2220,7 @@ impl TestCommand {
                     .test_options
                     .test_filter_regex()
                     .map(|p| p.cast::<jsc::RegularExpression>()),
-                snapshots: Snapshots {
-                    update_snapshots: ctx.test_options.update_snapshots,
-                    total: 0,
-                    added: 0,
-                    passed: 0,
-                    failed: 0,
-                    // SAFETY: lifetime-erase to `'static`; the backing locals are
-                    // declared in this never-returning frame (`exec()` only exits
-                    // via process exit).
-                    file_buf: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_file_buf) },
-                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    values: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_values) },
-                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    counts: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_counts) },
-                    _current_file: None,
-                    snapshot_dir_path: None,
-                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    inline_snapshots_to_write: unsafe {
-                        bun_ptr::detach_lifetime_mut(&mut inline_snapshots_to_write)
-                    },
-                    last_error_snapshot_name: None,
-                },
+                snapshots: Snapshots::init(ctx.test_options.update_snapshots),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 // `TestRunner` cannot derive `Default` because of the
                 // `&'a TestOptions` field, so spell the remaining fields out
@@ -2257,6 +2234,7 @@ impl TestCommand {
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
+                node_test_used: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -2358,7 +2336,7 @@ impl TestCommand {
             vm.transpiler.options.minify_identifiers = false;
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
-            vm.global().vm().set_control_flow_profiler(true);
+            vm.global().vm().enable_control_flow_profiler();
         }
 
         // For tests, we default to UTC time zone
@@ -2617,7 +2595,9 @@ impl TestCommand {
                 if let Some(timings) = reporter.timings.as_ref().filter(|t| !t.is_empty()) {
                     write = timings.select_shard(test_files, *shard);
                 } else {
-                    test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
+                    index_sort::sort_slice_by(test_files, |a, b| {
+                        strings::order(a.as_bytes(), b.as_bytes())
+                    });
                     let total = test_files.len();
                     for i in 0..total {
                         if i % (shard.count as usize) == (shard.index as usize) - 1 {
@@ -2655,7 +2635,7 @@ impl TestCommand {
         if !test_files.is_empty()
             || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
         {
-            vm.hot_reload = ctx.debug.hot_reload as u8;
+            vm.hot_reload = ctx.debug.hot_reload;
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still
@@ -2663,13 +2643,13 @@ impl TestCommand {
             // runAllTests (separate concern; see O_EVTONLY comment
             // below).
             if ctx.test_options.changed.is_some()
-                && vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH
+                && vm.hot_reload == jsc::virtual_machine::HotReload::Watch
             {
                 ChangedFilesFilter::init_watch_trigger();
             }
 
             match vm.hot_reload {
-                jsc::virtual_machine::HOT_RELOAD_HOT => {
+                jsc::virtual_machine::HotReload::Hot => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -2679,7 +2659,7 @@ impl TestCommand {
                         );
                     }
                 }
-                jsc::virtual_machine::HOT_RELOAD_WATCH => {
+                jsc::virtual_machine::HotReload::Watch => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -2748,8 +2728,7 @@ impl TestCommand {
             let watcher =
                 unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
-                let loader = vm.transpiler.options.loader(bun_path::extension(path));
-                let _ = watcher.add_file_by_path_slow(path, loader);
+                let _ = watcher.add_file_by_path_slow(path);
             }
         }
 
@@ -3052,7 +3031,7 @@ impl TestCommand {
             reporter.write_timings_if_needed();
         }
 
-        if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
+        if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
@@ -3073,10 +3052,8 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
-        // Run `process.on('exit')` handlers like `bun run` does. Node's test
-        // harness verifies mustCall() counts from one, so skipping them made
-        // those assertions silently pass. Must precede the GC-root release
-        // below: handlers are user JS and may touch still-live state.
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
@@ -3086,7 +3063,7 @@ impl TestCommand {
         }
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
-        // `destructOnExit()`'s `collectNow()` can reach the closures they pin
+        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
         // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
         // before dropping `reporter` so finalizers running inside the GC can't
         // observe a dangling `TestRunner`.
@@ -3159,7 +3136,7 @@ impl TestCommand {
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
-                            crate::jsc_hooks::close_isolation_handles(vm);
+                            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                             vm.swap_global_for_test_isolation();
                             reporter
                                 .jest
@@ -3347,7 +3324,7 @@ impl TestCommand {
                         // `global_exit()` diverges, so the `exit_file()` defer
                         // above never fires. Release the active file's
                         // `Strong`s and the preload-hook scope here so
-                        // `destructOnExit()`'s `collectNow()` can reclaim them,
+                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
                         // then clear `RUNNER` so finalizers can't observe a
                         // partially-torn-down `TestRunner`.
                         // SAFETY: single-threaded; raw-ptr reborrow mirrors the
@@ -3402,7 +3379,7 @@ impl TestCommand {
                     vm.event_loop_ref().tick();
 
                     while prev_unhandled_count < vm.unhandled_error_counter {
-                        vm.global().handle_rejected_promises();
+                        let _ = vm.global().handle_rejected_promises();
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
@@ -3421,7 +3398,7 @@ impl TestCommand {
                 drop(buntest_strong);
             }
 
-            vm.global().handle_rejected_promises();
+            let _ = vm.global().handle_rejected_promises();
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");

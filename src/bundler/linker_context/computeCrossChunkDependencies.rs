@@ -1,7 +1,7 @@
 use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::{ArrayHashMap, VecExt, index_sort};
 
 use crate::LinkerContext;
 use crate::js_meta;
@@ -419,7 +419,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // of hash calculation.
         if chunk_metas[chunk_index].dynamic_imports.count() > 0 {
             let dynamic_chunk_indices = chunk_metas[chunk_index].dynamic_imports.keys_mut();
-            dynamic_chunk_indices.sort_unstable();
+            index_sort::sort_slice_unstable_by(dynamic_chunk_indices, |a, b| a.cmp(b));
 
             let chunk = &mut chunks[chunk_index];
             // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity

@@ -321,6 +321,75 @@ nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
   show("frozen writable:", apn(Object.freeze({ a: 1, b: 2 }), napi_key_writable));
 };
 
+nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  const show = (label, { status, keys, exception }) =>
+    console.log(label, `status=${status}`, `keys=${JSON.stringify(keys)}`, `exception=${exception?.message}`);
+
+  // ownKeys succeeds so key collection completes; the per-key descriptor walk
+  // required by napi_key_enumerable is what invokes the throwing trap.
+  const throwingDescriptor = new Proxy(
+    {},
+    {
+      ownKeys: () => ["a"],
+      getOwnPropertyDescriptor() {
+        throw new Error("gopd trap");
+      },
+    },
+  );
+  show(
+    "own_only gopd throws:",
+    nativeTests.get_all_property_names(
+      throwingDescriptor,
+      napi_key_own_only,
+      napi_key_enumerable,
+      napi_key_keep_numbers,
+    ),
+  );
+  show(
+    "include_prototypes gopd throws on prototype:",
+    nativeTests.get_all_property_names(
+      Object.create(throwingDescriptor),
+      napi_key_include_prototypes,
+      napi_key_enumerable,
+      napi_key_keep_numbers,
+    ),
+  );
+
+};
+
+nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  // Key collection asks the proxy for its prototype once and must succeed so
+  // the descriptor walk is reached; the walk asks again (the target does not
+  // own "a") and that second call throws.
+  let calls = 0;
+  const proxy = new Proxy(
+    {},
+    {
+      ownKeys: () => ["a"],
+      getPrototypeOf() {
+        if (calls++ > 0) throw new Error("getPrototypeOf trap");
+        return null;
+      },
+    },
+  );
+  const { status, keys, exception } = nativeTests.get_all_property_names(
+    Object.create(proxy),
+    napi_key_include_prototypes,
+    napi_key_enumerable,
+    napi_key_keep_numbers,
+  );
+  console.log(`status=${status} keys=${JSON.stringify(keys)} exception=${exception?.message} calls=${calls}`);
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},
@@ -695,6 +764,22 @@ nativeTests.test_type_tag = () => {
   console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));
   console.log("o2 matches o1:", nativeTests.check_tag(o2, 1, 2));
   console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
+};
+
+nativeTests.test_this_value_of_bare_call_through_closure = () => {
+  const { return_this } = nativeTests;
+  // return_this is captured by keep, so the bare call below is resolved through the closure's
+  // scope object, which JSC leaves in the call's this slot. A Node-API callback must still see
+  // the sloppy-mode receiver (globalThis), never that scope object.
+  function keep() {
+    return return_this;
+  }
+  console.log("bare call through closure returned globalThis:", return_this() === globalThis);
+  console.log("call(undefined) returned globalThis:", return_this.call(undefined) === globalThis);
+  console.log("call(5) returned a Number object:", return_this.call(5) instanceof Number);
+  const receiver = {};
+  console.log("call(receiver) returned receiver:", return_this.call(receiver) === receiver);
+  keep();
 };
 
 nativeTests.test_napi_class = () => {
@@ -1197,6 +1282,88 @@ nativeTests.test_napi_instanceof = () => {
   dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
 };
 
+// V8's Object::GetPrototype (what napi_get_prototype wraps in Node) returns null
+// for a Proxy without running its getPrototypeOf trap, so the proxy lines below
+// all read "result=null" with nothing pending, whatever the trap would do.
+// result= is "untouched" if *result was not written and "null handle" if a NULL
+// napi_value was written (see perform_get_prototype in js_test_helpers.cpp).
+nativeTests.test_napi_get_prototype_proxy = () => {
+  const trapError = new RangeError("from getPrototypeOf trap");
+  let trapCalls = 0;
+  const chainProxy = new Proxy({}, {});
+  const names = [
+    [Object.prototype, "Object.prototype"],
+    [Array.prototype, "Array.prototype"],
+    [Function.prototype, "Function.prototype"],
+    [chainProxy, "the proxy"],
+  ];
+
+  function dump(label, object) {
+    const r = nativeTests.perform_get_prototype(object);
+    const named = names.find(([value]) => value === r.result);
+    const result = typeof r.result === "string" ? r.result : named ? named[1] : String(r.result);
+    const exception =
+      r.exception === undefined
+        ? "none"
+        : r.exception === trapError
+          ? "the trap's error"
+          : r.exception instanceof TypeError
+            ? "TypeError"
+            : String(r.exception);
+    console.log(`${label}: status=${r.status} pending=${r.pending} result=${result} exception=${exception}`);
+  }
+
+  dump("plain object", {});
+  dump("null prototype", Object.create(null));
+
+  dump("proxy without traps", new Proxy([], {}));
+  dump("callable proxy", new Proxy(function () {}, {}));
+  dump(
+    "trap returns Array.prototype",
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          trapCalls++;
+          return Array.prototype;
+        },
+      },
+    ),
+  );
+  console.log(`getPrototypeOf trap calls: ${trapCalls}`);
+  dump(
+    "trap throws",
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw trapError;
+        },
+      },
+    ),
+  );
+  dump(
+    "trap returns a number",
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          return 42;
+        },
+      },
+    ),
+  );
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+  dump("revoked proxy", revocable.proxy);
+
+  // Only the object itself is special-cased; a proxy further up the chain is
+  // returned like any other prototype.
+  dump("object whose prototype is a proxy", Object.create(chainProxy));
+
+  dump("plain object again", {});
+};
+
 nativeTests.test_get_value_string = () => {
   function to16Bit(string) {
     if (typeof Bun != "object") return string;
@@ -1257,6 +1424,11 @@ nativeTests.test_cleanup_hook_remove_nonexistent = () => {
 nativeTests.test_async_cleanup_hook_remove_nonexistent = () => {
   const addon = require("./build/Debug/test_async_cleanup_hook_remove_nonexistent.node");
   addon.test();
+};
+
+nativeTests.test_async_cleanup_hook_tsfn_release = () => {
+  const addon = require("./build/Debug/test_async_cleanup_hook_tsfn_release.node");
+  addon.start();
 };
 
 nativeTests.test_cleanup_hook_duplicates = () => {
@@ -1392,6 +1564,13 @@ nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
   console.log(nativeTests.use_orphaned_threadsafe_functions());
 };
 
+// A finalizer that runs during a worker's env cleanup and registers another
+// finalizer (an external buffer's): the late one runs in that same cleanup.
+nativeTests.test_finalizer_registered_during_env_cleanup = async () => {
+  console.log("worker exited with", await runOrphanWorker({ lateFinalizer: true }));
+  console.log("late=" + nativeTests.late_finalizer_run_count());
+};
+
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops
 // its last reference, including a call that reports napi_closing. Every
 // iteration must end with as many live threadsafe functions as it started with.
@@ -1438,6 +1617,69 @@ nativeTests.test_threadsafe_function_microtask_order = async () => {
   for (let i = 0; i < 1000 && n < 3; i++) {
     await new Promise(resolve => setImmediate(resolve));
   }
+};
+
+// A script that only ever calls the ungated napi functions (ungated-calls-
+// spin-worker.js has the worker version) still has to be stoppable when the
+// stop is requested while one of those calls is running. Several rounds, since
+// whether it lands inside a call or in the loop itself is down to timing.
+nativeTests.test_ungated_calls_vm_timeout = () => {
+  const vm = require("node:vm");
+  const spin = nativeTests.make_ungated_calls_spinner();
+  for (let i = 0; i < 5; i++) {
+    try {
+      vm.runInNewContext("for (;;) spin(bigint, string);", { spin, bigint: -7n, string: "ungated" }, { timeout: 20 });
+      console.log("returned");
+    } catch (e) {
+      console.log(e.code);
+    }
+  }
+};
+
+nativeTests.test_ungated_calls_worker_terminate = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  for (let i = 0; i < 2; i++) {
+    const worker = new Worker(path.join(__dirname, "ungated-calls-spin-worker.js"));
+    await new Promise((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+    });
+    console.log("terminate() resolved with", await worker.terminate());
+  }
+};
+
+// See ungated_calls_through_timeout in standalone_tests.cpp: 600ms of ungated
+// calls under a 150ms timeout. The timeout is wall-clock from the start of the
+// run, so it must comfortably cover reaching the addon on the slowest lane.
+nativeTests.test_ungated_calls_through_vm_timeout = () => {
+  const vm = require("node:vm");
+  try {
+    vm.runInNewContext("f(600)", { f: nativeTests.ungated_calls_through_timeout }, { timeout: 150 });
+    console.log("returned");
+  } catch (e) {
+    console.log(e.code);
+  }
+};
+
+nativeTests.test_threadsafe_function_call_js_throws = async () => {
+  // main.js exits on the first uncaught exception; this test wants all three.
+  process.removeAllListeners("uncaughtException");
+  let seen = 0;
+  const { promise, resolve } = Promise.withResolvers();
+  process.on("uncaughtException", function handler(err) {
+    seen++;
+    console.log("uncaughtException", seen, err.message);
+    Promise.resolve().then(() => console.log("microtask", seen));
+    if (seen === 3) {
+      process.removeListener("uncaughtException", handler);
+      resolve();
+    }
+  });
+  nativeTests.test_napi_threadsafe_function_call_js_throws();
+  await promise;
+  await new Promise(r => setImmediate(r));
+  console.log("done", seen);
 };
 
 module.exports = nativeTests;

@@ -238,12 +238,6 @@ enum class ReadableStreamType : uint8_t { Bytes };
 // WebIDL `enum ReadableStreamReaderMode { "byob" }` (getReader(options).mode)
 enum class ReadableStreamReaderMode : uint8_t { Byob };
 
-// Cross-realm transform protocol message `type`: "chunk" | "pull" | "error" | "close".
-enum class CrossRealmMessageType : uint8_t { Chunk,
-    Pull,
-    Error,
-    Close };
-
 } // namespace WebStreams
 } // namespace Bun
 
@@ -252,7 +246,6 @@ enum class CrossRealmMessageType : uint8_t { Chunk,
 namespace WebCore {
 using Bun::WebStreams::BunStreamMode;
 using Bun::WebStreams::ControllerKind;
-using Bun::WebStreams::CrossRealmMessageType;
 using Bun::WebStreams::DirectSinkKind;
 using Bun::WebStreams::ReadableStreamReaderMode;
 using Bun::WebStreams::ReadableStreamState;

@@ -115,9 +115,9 @@ describe("a .snap entry bun test cannot read", () => {
     expect(stderr).toContain(`error: Failed to parse snapshot file: ${snapPath}\n`);
     expect(stderr).toContain(`${snapPath}:3:18\n`);
     expect(stderr).not.toContain("Failed to snapshot value");
-    // a.test.ts runs first. The bytes of its unreadable .snap file used to stay in the buffer
+    // a.test.ts must run first. The bytes of its unreadable .snap file used to stay in the buffer
     // that b.test.ts.snap was then read into, so b's valid snapshot failed to parse as well.
-    expect(stderr.indexOf("a.test.ts:")).toBeLessThan(stderr.indexOf("b.test.ts:"));
+    expect(stderr.match(/^\w+\.test\.ts:$/gm)).toEqual(["a.test.ts:", "b.test.ts:"]);
     expect(stderr).toContain("(pass) b");
     expect(stderr).toContain(" 1 pass\n 1 fail\n");
     expect(exitCode).toBe(1);

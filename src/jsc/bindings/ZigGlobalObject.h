@@ -770,6 +770,9 @@ public:
 
     void reload();
 
+    // Drop the ESM module registry and CJS require cache so module state becomes collectable.
+    void clearModuleRegistry();
+
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }

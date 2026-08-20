@@ -708,9 +708,14 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
 
-    // Drop the permanent root on the previous global so its module registry,
-    // require.cache, and user objects become collectable. JSC's CodeCache and
-    // Bun's RuntimeTranspilerCache are VM/process scoped and survive.
+    // Detach the outgoing file's module graph so it's reclaimed even if the old global lingers.
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        oldGlobal->clearModuleRegistry();
+        scope.assertNoException();
+    }
+
+    // Drop the permanent root on the previous global so it becomes collectable.
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
     if (mode == TestIsolationGlobalMode::ReplaceTestGlobal)
         JSC::gcUnprotect(oldGlobal);
@@ -3593,16 +3598,22 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 // DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
 
-void GlobalObject::reload()
+void GlobalObject::clearModuleRegistry()
 {
-    auto& vm = this->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* moduleLoader = this->moduleLoader();
     {
-        auto* moduleLoader = this->moduleLoader();
+        // cellLock() pairs with the GC thread's visitChildrenImpl over these maps.
         WTF::Locker locker { moduleLoader->cellLock() };
         moduleLoader->clearAll();
     }
     this->requireMap()->clear(this);
+}
+
+void GlobalObject::reload()
+{
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    this->clearModuleRegistry();
     RETURN_IF_EXCEPTION(scope, );
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
@@ -4312,17 +4323,10 @@ void GlobalObject::forbidExecution()
     // MicrotaskQueue references Heap.
     vm.defaultMicrotaskQueue().clear();
 
-    // Drop the module registry and require() cache so module-level bindings become unreachable
-    // for the final collection (their ExternalStringImpl deallocators must run before ~VM).
-    {
-        auto* moduleLoader = this->moduleLoader();
-        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread under cellLock().
-        WTF::Locker locker { moduleLoader->cellLock() };
-        moduleLoader->clearAll();
-    }
+    // Drop module registry + require cache so module bindings die before ~VM.
     {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        requireMap()->clear(this);
+        this->clearModuleRegistry();
         scope.clearException();
     }
 

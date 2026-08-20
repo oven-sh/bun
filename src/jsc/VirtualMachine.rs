@@ -5177,13 +5177,17 @@ impl VirtualMachine {
         self.unhandled_error_counter = 0;
 
         let old_global = self.global;
-        // `old_global` valid for VM lifetime (safe ZST-handle deref);
-        // `console` is the live per-VM ConsoleObject.
-        let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
-            JSGlobalObject::opaque_ref(old_global),
-            self.console.cast(),
-            mode,
-        );
+        // Hold a Rust-side scope across the FFI call so the C++ ThrowScope's exception check is balanced.
+        let new_global: *mut JSGlobalObject = {
+            crate::top_scope!(scope, self.global());
+            let new_global = JSGlobalObject::create_for_test_isolation(
+                JSGlobalObject::opaque_ref(old_global),
+                self.console.cast(),
+                mode,
+            );
+            let _ = scope.assert_no_exception_except_termination();
+            new_global
+        };
         self.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
@@ -5195,6 +5199,7 @@ impl VirtualMachine {
                 }
             }
         }
+
     }
 
     /// Loads and evaluates a macro entry module, waiting for its promise.

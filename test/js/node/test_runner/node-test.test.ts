@@ -1097,8 +1097,9 @@ test.concurrent.each([
 
 test.concurrent("run(): a zero-test file reports a file-level pass numbered by its ordinal like node", async () => {
   // The file node's own verdict carries the file's ordinal (2), not the
-  // running child-verdict count (which is 2 after nested's two tests and would
-  // become 3); its test:complete carries the same ordinal.
+  // running child-verdict count, but it still consumes a slot in that
+  // counter: nested's children take 1-2, empty's file verdict takes slot 3
+  // (reported as ordinal 2), and second's child continues at 4.
   using dir = tempDir("node-test-zero-test-file", {
     "nested.test.mjs": `
       import { test } from 'node:test';
@@ -1106,10 +1107,14 @@ test.concurrent("run(): a zero-test file reports a file-level pass numbered by i
       test('b', () => {});
     `,
     "empty.test.mjs": `// intentionally registers no tests`,
+    "second.test.mjs": `
+      import { test } from 'node:test';
+      test('second-top', () => {});
+    `,
     "driver.mjs": `
       import { run } from 'node:test';
       import { fileURLToPath } from 'node:url';
-      const files = ['./nested.test.mjs', './empty.test.mjs'].map(f => fileURLToPath(new URL(f, import.meta.url)));
+      const files = ['./nested.test.mjs', './empty.test.mjs', './second.test.mjs'].map(f => fileURLToPath(new URL(f, import.meta.url)));
       const stream = run({ files });
       const out = { events: [], emptyComplete: null, perFileSummaries: 0, runCounts: null };
       const base = n => n.split(/[\\\\/]/).pop();
@@ -1139,10 +1144,11 @@ test.concurrent("run(): a zero-test file reports a file-level pass numbered by i
         ["pass", "a", 1],
         ["pass", "b", 2],
         ["pass", "empty.test.mjs", 2],
+        ["pass", "second-top", 4],
       ],
       emptyComplete: 2,
-      perFileSummaries: 1,
-      runCounts: { tests: 3, failed: 0, passed: 3, cancelled: 0, skipped: 0, todo: 0, topLevel: 3, suites: 0 },
+      perFileSummaries: 2,
+      runCounts: { tests: 4, failed: 0, passed: 4, cancelled: 0, skipped: 0, todo: 0, topLevel: 4, suites: 0 },
     },
     stderr: "",
     exitCode: 0,

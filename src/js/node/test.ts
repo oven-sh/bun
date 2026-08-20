@@ -396,7 +396,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     }
     if (preAborted) {
       for (; nextFile < files.length; nextFile++) {
-        reportAbortedFile(files[nextFile], opts, reporter, counts, state, nextFile + 1);
+        reportAbortedFile(files[nextFile], opts, reporter, counts, nextFile + 1);
       }
     } else if (state.interrupted) {
       counts.failed++;
@@ -429,7 +429,6 @@ function reportAbortedFile(
   opts: ReturnType<typeof validateRunOptions>,
   reporter: TestsStream,
   counts: Record<string, number>,
-  state: RunInterruptState,
   ordinal: number,
 ) {
   const path = require("node:path");
@@ -519,6 +518,9 @@ async function runOneFile(
     fileCounts.tests++;
     fileCounts.failed++;
     fileCounts.topLevel++;
+    // The file verdict is numbered by ordinal but still occupies a slot in the
+    // running nesting-0 counter the next file's children continue from.
+    state.verdictNumber++;
     reporter.emitMessage("test:complete", {
       __proto__: null,
       ...fileNode,
@@ -613,6 +615,7 @@ async function runOneFile(
       fileCounts.tests++;
       fileCounts.failed++;
       fileCounts.topLevel++;
+      state.verdictNumber++;
     }
 
     reporter.emitMessage("test:complete", {
@@ -641,6 +644,7 @@ async function runOneFile(
       fileCounts.tests++;
       fileCounts.passed++;
       fileCounts.topLevel++;
+      state.verdictNumber++;
       reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
       reporter.emitMessage("test:pass", {
         __proto__: null,
@@ -921,13 +925,6 @@ function reportDirectiveOnlyNode(node: TestNode, mode: "skip" | "todo") {
   noteRunChildDone(node.parent, false);
 }
 
-function hasSkippedAncestorSuite(node: TestNode): boolean {
-  for (let cur = node.parent; cur !== undefined && cur.parent !== undefined; cur = cur.parent) {
-    if (cur.isSuite && cur.skipped) return true;
-  }
-  return false;
-}
-
 function makeCancelledByParentError() {
   return makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
 }
@@ -1090,7 +1087,6 @@ function maybeCompleteSuite(suite: TestNode): boolean {
   suite.suiteReported = true;
   const isTodo = suite.todoFlag || hasTodoAncestor(suite);
   if (isTodo) suite.childrenFailed = 0;
-  if (suite.skipped) suite.childrenFailed = 0;
   const cancelledByHookFailure = !isTodo && hasHookFailedAncestorSuite(suite);
   if (cancelledByHookFailure && suite.childrenFailed === 0) suite.childrenFailed = 1;
   let suiteFailed = suite.childrenFailed > 0;
@@ -3444,13 +3440,6 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     await executeTestNode(node, fn);
     return;
   }
-  if (node.isSuite && node.skipped) {
-    for (const child of node.standaloneChildren ?? []) {
-      reportCancelledNode(child.node);
-    }
-    noteSuiteCollectionSettled(node);
-    return;
-  }
   node.startedAtMs = performance.now();
   const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
   let setupFailed = !isTodoSuite && node.error != null;
@@ -3700,15 +3689,6 @@ function addTest(
 
   const { test } = bunTest();
   const passOptions = bunTestOptions(options);
-
-  if (hasSkippedAncestorSuite(node)) {
-    function cancelledRunner(done: (error?: unknown) => void) {
-      reportCancelledNode(node);
-      done(makeCancelledByParentError());
-    }
-    test(name, cancelledRunner);
-    return Promise.resolve(undefined);
-  }
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
     if (runChildReporterEnabled && effectiveMode === "todo") {
@@ -4018,7 +3998,6 @@ function before(arg0: unknown, arg1: unknown) {
     owner.hooks.before.push(hook);
     return;
   }
-  if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
   const { beforeAll } = bunTest();
   function runBeforeAllHook(done: (error?: unknown) => void) {
     if (runChildReporterEnabled && (owner.hookSetupFailed || hasHookFailedAncestorSuite(owner))) {
@@ -4058,7 +4037,6 @@ function after(arg0: unknown, arg1: unknown) {
     owner.hooks.after.push(hook);
     return;
   }
-  if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
   if (runChildReporterEnabled && owner.isSuite && owner.parent !== undefined) {
     owner.hooks.after.push(hook);
     return;

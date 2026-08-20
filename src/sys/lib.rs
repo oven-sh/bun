@@ -6243,9 +6243,8 @@ pub struct WindowsOpenDirOptions {
     pub iterable: bool,
     pub no_follow: bool,
     pub can_rename_or_delete: bool,
-    /// Report `STATUS_DELETE_PENDING`/`STATUS_FILE_DELETED` as ENOENT instead
-    /// of the EPERM the Win32 conversion produces. A directory in that state
-    /// can never be opened again, so for a deleter it is already gone.
+    /// Report `STATUS_DELETE_PENDING`/`STATUS_FILE_DELETED` as ENOENT: a
+    /// directory in that state can never be opened again.
     pub delete_pending_is_enoent: bool,
     pub op: WindowsOpenDirOp,
 }
@@ -7035,10 +7034,9 @@ pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd
     openat_windows_impl(dir, norm, flags, perm)
 }
 /// Iterable directory open for the recursive delete-tree walk
-/// (`O_DIRECTORY | O_RDONLY | O_NOFOLLOW` semantics). Differs from a plain
-/// `openat` in one way: a directory whose deletion another party already
-/// started reports ENOENT (see `WindowsOpenDirOptions::delete_pending_is_enoent`),
-/// so the walk treats it like an entry that vanished between readdir and open.
+/// (`O_DIRECTORY | O_RDONLY | O_NOFOLLOW` semantics), with
+/// `delete_pending_is_enoent` set: a dir whose deletion already started
+/// reports ENOENT, like an entry that vanished between readdir and open.
 #[cfg(windows)]
 pub fn openat_dir_for_delete_tree(dir: impl AsFd, path: &[u8]) -> Maybe<Fd> {
     let dir = dir.as_fd();

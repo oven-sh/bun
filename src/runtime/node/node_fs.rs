@@ -9661,9 +9661,8 @@ fn dt_open_dir(parent: &sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
     path_buf[len] = 0;
     // SAFETY: NUL written at [len].
     let z = ZStr::from_buf(&path_buf[..], len);
-    // On Windows a concurrent deleter leaves the directory in the
-    // delete-pending state; `openat_dir_for_delete_tree` reports that as
-    // ENOENT so the walk treats it like any other vanished entry.
+    // Windows: a delete-pending directory reports ENOENT, like any other
+    // vanished entry (see `openat_dir_for_delete_tree`).
     #[cfg(windows)]
     let result = sys::openat_dir_for_delete_tree(parent.fd, z.as_bytes());
     #[cfg(not(windows))]
@@ -9815,12 +9814,9 @@ pub(crate) fn zig_delete_tree(
                                 treat_as_dir = false;
                                 continue 'handle_entry;
                             }
-                            Err(E::ENOENT) => {
-                                // A concurrent deleter removed this entry
-                                // between readdir and open. Skip it, same as
-                                // the min-stack walk below.
-                                break 'handle_entry;
-                            }
+                            // The entry vanished between readdir and open: a
+                            // concurrent deleter won. Skip it.
+                            Err(E::ENOENT) => break 'handle_entry,
                             #[cfg(target_os = "macos")]
                             Err(e @ (E::EACCES | E::EPERM)) => {
                                 // Same as the pop-delete site below: node's rimraf
@@ -9853,10 +9849,8 @@ pub(crate) fn zig_delete_tree(
                             entry.kind,
                         ) {
                             Ok(()) => break 'handle_entry,
-                            // A concurrent deleter removed this entry; skip it
-                            // like the in-stack arms above. Only the top-level
-                            // caller needs FileNotFound to propagate, and that
-                            // call is not this site.
+                            // The entry vanished: skip it. FileNotFound only
+                            // matters to the top-level caller, not mid-tree.
                             Err(crate::Error::FileNotFound) => break 'handle_entry,
                             Err(e) => return Err(e),
                         }

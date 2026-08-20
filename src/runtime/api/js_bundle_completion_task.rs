@@ -461,13 +461,20 @@ impl JSBundleCompletionTask {
         }
 
         // Write external sourcemap files next to the compiled executable and
-        // keep them in the output array. Destroy all other non-entry-point files.
+        // keep them, plus the metafiles the bundler wrote, in the output array. Destroy the rest.
         // With --splitting, there can be multiple sourcemap files (one per chunk).
         let mut kept: usize = 0;
         // Swap-compact in place via index iteration so each loop body holds
         // at most one `&mut` into `output_files`.
         for i in 0..output_files.len() {
             let keep_this = if i == entry_point_index {
+                true
+            } else if matches!(result, CompileResult::Success)
+                && matches!(
+                    output_files[i].output_kind,
+                    OutputKind::MetafileJson | OutputKind::MetafileMarkdown
+                )
+            {
                 true
             } else if matches!(result, CompileResult::Success)
                 && output_files[i].output_kind == OutputKind::Sourcemap

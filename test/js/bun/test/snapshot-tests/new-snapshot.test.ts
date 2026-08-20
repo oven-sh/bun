@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
@@ -30,17 +30,44 @@ test("it will create a snapshot file and directory if they don't exist", () => {
   expect(fs.existsSync(tempDir + "/__snapshots__/new-snapshot.test.ts.snap")).toBe(true);
 });
 
+// The name of the file the .snap file is written through must not grow with the name of the .snap
+// file, which can already be as long as the file system allows (255 bytes here).
+test.skipIf(isWindows)("writes the .snap file of a test file with the longest possible name", async () => {
+  const name = Buffer.alloc(250 - ".test.ts".length, "a").toString() + ".test.ts";
+  using dir = tempDir("snap-long-name", {
+    [name]: `import { test, expect } from "bun:test"; test("k", () => expect(1).toMatchSnapshot());`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./" + name],
+    cwd: String(dir),
+    env: { ...bunEnv, CI: "false" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("snapshots: +1 added");
+  expect(exitCode).toBe(0);
+  expect(fs.existsSync(join(String(dir), "__snapshots__", name + ".snap"))).toBe(true);
+});
+
 // The runs below share one project directory on purpose: several `bun test` processes of the
 // same file at the same time (a CI matrix, two terminals) must leave the files they write in
 // one piece. Each process records values of a different length, so two of them writing the same
 // file in place leave the tail of the longer one behind the shorter one.
 describe("snapshot files written by several processes", () => {
-  // `PAD` comes from the environment, so each process records values of its own length.
+  // `PAD` comes from the environment, so each process records values of its own length. The first
+  // snapshot loads the .snap file; the process creates LOADED right after that, and it exits only
+  // once WAIT_FOR exists.
   const SNAPSHOT_TEST_FILE = (count: number) => `
     import { test, expect } from "bun:test";
-    import { existsSync } from "fs";
+    import { existsSync, writeFileSync } from "fs";
     const PAD = Buffer.alloc(Number(process.env.PAD), "#").toString();
-    ${Array.from({ length: count }, (_, i) => `test("k${i}", () => expect({ i: ${i}, s: PAD }).toMatchSnapshot());`).join("\n")}
+    test("k0", () => expect({ i: 0, s: PAD }).toMatchSnapshot());
+    test("loaded", () => {
+      if (process.env.LOADED) writeFileSync(process.env.LOADED, "");
+    });
+    ${Array.from({ length: count - 1 }, (_, i) => `test("k${i + 1}", () => expect({ i: ${i + 1}, s: PAD }).toMatchSnapshot());`).join("\n")}
     test("waits", () => {
       // The test writes WAIT_FOR. The deadline only bounds the damage if it never does.
       const deadline = Date.now() + 30_000;
@@ -78,12 +105,17 @@ describe("snapshot files written by several processes", () => {
 
   test.concurrent("a .snap file has the entries of exactly one process", async () => {
     using dir = tempDir("snap-two-writers", { "a.test.ts": SNAPSHOT_TEST_FILE(COUNT) });
+    const loaded = join(String(dir), "loaded");
     const release = join(String(dir), "release");
 
-    // Both processes start with no .snap file. The one with the short values records its
-    // snapshots, then waits in its last test until the one with the long values has written
-    // the file, and writes its own, shorter, file last.
-    await using short = runTest(String(dir), { PAD: "4", WAIT_FOR: release });
+    // The process with the short values loads the missing .snap file first. Then the one with the
+    // long values runs to the end and writes the file. Then the short one writes its own, shorter,
+    // file over it.
+    await using short = runTest(String(dir), { PAD: "4", LOADED: loaded, WAIT_FOR: release });
+    while (!fs.existsSync(loaded)) {
+      expect(short.exitCode).toBeNull();
+      await Bun.sleep(5);
+    }
     const long = await finished(runTest(String(dir), { PAD: "400" }));
     fs.writeFileSync(release, "");
     expect(long.stderr).toContain(`snapshots: +${COUNT} added`);

@@ -1850,6 +1850,8 @@ pub fn init(
         fs.set_top_level_dir(fs.dirname_store().append(child_cwd)?);
         break 'root_package_json_file child_json;
     };
+    // Opened to report a package.json that cannot be written to. The commands read it by path.
+    drop(root_package_json_file);
 
     let top_level_dir_z = ZBox::from_bytes(fs.top_level_dir());
     bun_sys::chdir(&top_level_dir_z)?;
@@ -1872,21 +1874,12 @@ pub fn init(
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // bun_sys exposes the non-Z `get_fd_path`;
-        // append the NUL ourselves so the static `&ZStr` invariant holds.
+        // By name, not through the file opened above: another process may replace that file.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let plen = if no_project {
-            // Where the file would be; nothing reads it in this mode.
-            let p = original_package_json_path.as_bytes();
-            root_buf[..p.len()].copy_from_slice(p);
-            p.len()
-        } else {
-            // By name, not through the fd: another process may have renamed a new file over it.
-            match bun_sys::realpath(bun_core::zstr!("package.json"), root_buf) {
-                Ok(path) => path.len(),
-                Err(_) => bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len(),
-            }
-        };
+        let tld_no_slash = strings::without_trailing_slash(tld);
+        let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
+        root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
+        root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }

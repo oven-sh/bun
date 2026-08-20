@@ -385,10 +385,8 @@ impl File {
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
         f.write_all(data)
     }
-    /// [`File::write_file`] through a temporary file and a rename; an existing file keeps its mode.
+    /// [`File::write_file`] through a temporary file and a rename. Keeps the file's mode and owner.
     pub fn write_file_atomically(path: &ZStr, data: &[u8], mode: Mode) -> Maybe<()> {
-        use std::io::Write as _;
-
         // Best effort (on Windows it opens the file to read); the open for writing below decides.
         let mut realpath_buf = bun_paths::path_buffer_pool::get();
         let mut target: Vec<u8> = match realpath(path, &mut realpath_buf) {
@@ -398,41 +396,60 @@ impl File {
         target.push(0);
         let target = ZStr::from_slice_with_nul(&target);
 
-        let existing_mode: Option<Mode> = match Self::open(target, O::WRONLY | O::CLOEXEC, 0) {
+        let existing = match Self::open(target, O::WRONLY | O::CLOEXEC, 0) {
             // The rename below only needs the directory; this open reports an unwritable file.
-            Ok(existing) => Some(existing.stat()?.st_mode as Mode & 0o7777),
+            Ok(existing) => Some(existing.stat()?),
             Err(err) if err.get_errno() == E::ENOENT => None,
             Err(err) => return Err(err),
         };
+        let create_mode = existing
+            .as_ref()
+            .map_or(mode, |st| st.st_mode as Mode & 0o7777);
 
         let target_bytes = target.as_bytes();
         let dir_len = target_bytes.len() - bun_paths::basename(target_bytes).len();
-        let mut tmp_path: Vec<u8> =
-            Vec::with_capacity(target_bytes.len() + b"..0123456789abcdef.tmp\0".len());
+        let mut tmp_name_buf = [0u8; 64];
+        let tmp_name =
+            bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
+                .expect("the buffer is sized for this name");
+        let mut tmp_path: Vec<u8> = Vec::with_capacity(dir_len + tmp_name.as_bytes().len() + 1);
         tmp_path.extend_from_slice(&target_bytes[..dir_len]);
-        tmp_path.push(b'.');
-        tmp_path.extend_from_slice(&target_bytes[dir_len..]);
-        write!(tmp_path, ".{:016x}.tmp\0", bun_core::fast_random())
-            .expect("Vec write is infallible");
+        tmp_path.extend_from_slice(tmp_name.as_bytes());
+        tmp_path.push(0);
         let tmp_path = ZStr::from_slice_with_nul(&tmp_path);
 
         let cwd = Fd::cwd();
-        let mut tmpfile = Tmpfile::create_with_mode(cwd, tmp_path, existing_mode.unwrap_or(mode))?;
+        let Ok(mut tmpfile) = Tmpfile::create_with_mode(cwd, tmp_path, create_mode) else {
+            return Self::write_file_in_place(target, data, mode);
+        };
         // Closes the descriptor on every path below. `Tmpfile` does not own it.
         let file = File::from_fd(tmpfile.fd);
-        let result = file.write_all(data).and_then(|()| {
-            // The create applied the umask.
+        let written = file.write_all(data);
+        let renamed = written.is_ok() && {
             #[cfg(unix)]
-            if let Some(existing_mode) = existing_mode {
-                let _ = fchmod(file.handle, existing_mode);
+            if let Some(st) = &existing {
+                // The new inode belongs to this process, and the create applied the umask.
+                let _ = fchown(file.handle, st.st_uid, st.st_gid);
+                let _ = fchmod(file.handle, st.st_mode as Mode & 0o7777);
             }
-            tmpfile.finish(target)
-        });
+            tmpfile.finish(target).is_ok()
+        };
         drop(file);
-        if result.is_err() {
-            let _ = unlinkat(cwd, tmp_path);
+        if renamed {
+            return Ok(());
         }
-        result
+        let _ = unlinkat(cwd, tmp_path);
+        // Writing in place truncates the old file first, so a write that failed is not retried.
+        written?;
+        Self::write_file_in_place(target, data, mode)
+    }
+    /// Where the directory takes no temporary file, or no rename over the target: as before.
+    fn write_file_in_place(target: &ZStr, data: &[u8], mode: Mode) -> Maybe<()> {
+        crate::syslog!(
+            "write_file_atomically({}) writes in place",
+            bstr::BStr::new(target.as_bytes())
+        );
+        Self::open(target, O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC, mode)?.write_all(data)
     }
     /// Like [`File::write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.

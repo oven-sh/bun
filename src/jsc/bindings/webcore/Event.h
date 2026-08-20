@@ -35,10 +35,6 @@
 #include <wtf/TypeCasts.h>
 #include <wtf/text/AtomString.h>
 
-namespace WTF {
-class TextStream;
-}
-
 namespace WebCore {
 
 class EventPath;
@@ -62,7 +58,6 @@ public:
     };
 
     WEBCORE_EXPORT static Ref<Event> create(const AtomString& type, CanBubble, IsCancelable, IsComposed = IsComposed::No);
-    static Ref<Event> createForBindings();
     static Ref<Event> create(const AtomString& type, const EventInit&, IsTrusted = IsTrusted::No);
 
     virtual ~Event();
@@ -88,7 +83,6 @@ public:
     bool composed() const { return m_composed; }
 
     DOMHighResTimeStamp timeStampForBindings(ScriptExecutionContext&) const;
-    MonotonicTime timeStamp() const { return m_createTime; }
 
     void setEventPath(const EventPath&);
     Vector<Ref<EventTarget>> composedPath() const;
@@ -107,34 +101,19 @@ public:
     bool propagationStopped() const { return m_propagationStopped || m_immediatePropagationStopped; }
     bool immediatePropagationStopped() const { return m_immediatePropagationStopped; }
 
-    void resetBeforeDispatch();
     void resetAfterDispatch();
 
     bool defaultPrevented() const { return m_wasCanceled; }
     void preventDefault();
-
-    bool defaultHandled() const { return m_defaultHandled; }
-    void setDefaultHandled() { m_defaultHandled = true; }
-
-    bool isDefaultEventHandlerIgnored() const { return m_isDefaultEventHandlerIgnored; }
-    void setIsDefaultEventHandlerIgnored() { m_isDefaultEventHandlerIgnored = true; }
 
     void setInPassiveListener(bool value) { m_isExecutingPassiveEventListener = value; }
 
     bool cancelBubble() const { return propagationStopped(); }
     void setCancelBubble(bool);
 
-    Event* underlyingEvent() const { return m_underlyingEvent.get(); }
-    void setUnderlyingEvent(Event*);
-
     // Returns true if the dispatch flag is set.
     // https://dom.spec.whatwg.org/#dispatch-flag
     bool isBeingDispatched() const { return eventPhase(); }
-
-    virtual EventTarget* relatedTarget() const { return nullptr; }
-    virtual void setRelatedTarget(EventTarget*) {}
-
-    virtual String debugDescription() const;
 
 protected:
     explicit Event(EventInterface, IsTrusted = IsTrusted::No);
@@ -157,8 +136,6 @@ private:
     unsigned m_propagationStopped : 1;
     unsigned m_immediatePropagationStopped : 1;
     unsigned m_wasCanceled : 1;
-    unsigned m_defaultHandled : 1;
-    unsigned m_isDefaultEventHandlerIgnored : 1;
     unsigned m_isTrusted : 1;
     unsigned m_isExecutingPassiveEventListener : 1;
     unsigned m_currentTargetIsInShadowTree : 1;
@@ -172,8 +149,6 @@ private:
     const EventPath* m_eventPath { nullptr };
     RefPtr<EventTarget> m_target;
     MonotonicTime m_createTime;
-
-    RefPtr<Event> m_underlyingEvent;
 };
 
 inline void Event::preventDefault()
@@ -201,8 +176,6 @@ inline void Event::setCancelBubble(bool cancel)
     if (cancel)
         m_propagationStopped = true;
 }
-
-WTF::TextStream& operator<<(WTF::TextStream&, const Event&);
 
 } // namespace WebCore
 

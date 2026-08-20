@@ -52,7 +52,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",
   "crash_handler.rs": "crash_handler/crash_handler.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",
-  "dependency.rs": "install/dependency.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",
   "event_loop.rs": "jsc/event_loop.rs",
   "ffi.rs": "runtime/ffi/ffi.rs",
@@ -63,6 +62,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
   "jest.rs": "runtime/test_runner/jest.rs",
+  "memory_pressure.rs": "runtime/node/memory_pressure.rs",
   "mysql.rs": "sql_jsc/mysql.rs",
   "napi_body.rs": "runtime/napi/napi_body.rs",
   "node_assert_binding.rs": "runtime/node/node_assert_binding.rs",
@@ -85,6 +85,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "runtime/node/types.rs": "runtime/node/types.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
+  "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",
   "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
   "shell.rs": "runtime/shell/shell.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
@@ -185,10 +186,6 @@ function normalizeSymbolPathPrefix(input: string) {
   }
 
   return input.replaceAll(".rs", "_rs_").replace(/[^A-Za-z]/g, "_");
-}
-
-function cppPointer(call: NativeCall) {
-  return `&${symbol(call)}`;
 }
 
 export function getJS2NativeCPP() {

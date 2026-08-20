@@ -49,6 +49,10 @@ class DOMFormData : public RefCounted<DOMFormData>, public ContextDestructionObs
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(DOMFormData, DOMFormData);
 
 public:
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     using FormDataEntryValue = std::variant<String, RefPtr<Blob>>;
 
     struct Item {
@@ -56,12 +60,10 @@ public:
         FormDataEntryValue data;
     };
 
-    // static Ref<DOMFormData> create(ScriptExecutionContext*, const PAL::TextEncoding&);
     static Ref<DOMFormData> create(ScriptExecutionContext*);
     static Ref<DOMFormData> create(ScriptExecutionContext*, const StringView& urlEncodedString);
 
     const Vector<Item>& items() const { return m_items; }
-    // const PAL::TextEncoding& encoding() const { return m_encoding; }
 
     void append(const String& name, const String& value);
     void append(const String& name, RefPtr<Blob>, const String& filename = {});
@@ -90,12 +92,10 @@ public:
     Iterator createIterator(const ScriptExecutionContext* context) { return Iterator { *this }; }
 
 private:
-    // explicit DOMFormData(ScriptExecutionContext*, const PAL::TextEncoding& = PAL::UTF8Encoding());
     explicit DOMFormData(ScriptExecutionContext*);
 
     void set(const String& name, Item&&);
 
-    // PAL::TextEncoding m_encoding;
     Vector<Item> m_items;
 };
 

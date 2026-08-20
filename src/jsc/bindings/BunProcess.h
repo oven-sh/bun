@@ -32,6 +32,10 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
+    // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
+    WriteBarrier<JSObject> m_onWarning;
+
+    void installDefaultWarningListener(JSC::VM&);
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -51,10 +55,16 @@ public:
 
     bool m_isExitCodeObservable = false;
     bool m_sourceMapsEnabled = false;
+    // Node's per-Environment EmitProcessEnvWarning one-shot for DEP0104.
+    bool m_emitEnvNonstringWarning = true;
     // Re-entry guard for dispatchExitInternal. Per-Process (i.e. per-VM): a
     // function-local static would be shared across worker threads, so a
     // worker's exit would suppress the main thread's 'exit' event.
     bool m_isExiting = false;
+    // DEP0111/DEP0119 latches. Node's deprecate() closures live in each
+    // Environment's own JS, so every worker warns once itself.
+    bool m_warnedProcessBinding = false;
+    bool m_warnedErrname = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
@@ -70,11 +80,14 @@ public:
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
 
+    JSObject* ensureOnWarning(Zig::GlobalObject*);
+
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
+    void clearCachedCwd() { m_cachedCwd.clear(); }
 
     JSValue getArgv(JSGlobalObject* globalObject);
     void setArgv(JSGlobalObject* globalObject, JSValue argv);
@@ -131,7 +144,11 @@ public:
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
-bool isSignalName(WTF::String input);
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+
+// Routes its argument onto the uncaught-exception path. Used by the
+// process.nextTick drain and, via $newCppFunction, by the node-style
+// callback shims in src/js.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
 } // namespace Bun

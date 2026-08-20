@@ -13,8 +13,8 @@ pub mod assert {
 #[path = "node/types.rs"]
 pub mod types;
 pub use types::{
-    BlobOrStringOrBuffer, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob,
-    PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer, mode_from_js,
+    BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, Flavor, PathLike, PathOrBlob,
+    PathOrFileDescriptor, StringObjects, StringOrBuffer, mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;
@@ -183,19 +183,5 @@ impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
     #[inline]
     fn as_err(&self) -> Option<&E> {
         self.as_ref().err()
-    }
-}
-
-/// Extension surface providing `Maybe::todo()` on `bun_sys::Maybe<T>`
-/// (= `core::result::Result<T, bun_sys::Error>`), the type-alias form of
-/// `Maybe` used throughout `node/`.
-pub trait MaybeTodo: Sized {
-    fn todo() -> Self;
-}
-
-impl<T> MaybeTodo for core::result::Result<T, bun_sys::Error> {
-    #[inline]
-    fn todo() -> Self {
-        Err(bun_sys::Error::todo())
     }
 }

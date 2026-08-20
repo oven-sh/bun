@@ -223,6 +223,16 @@ describe("dns", () => {
     expect(isIP(result[0].address)).toBeGreaterThan(0);
   });
 
+  test("lookup with null flags treats them as unset", async () => {
+    // `family: null` already meant unset; `flags: null` must too (node:dns
+    // forwards a null `hints` here). https://github.com/oven-sh/bun/issues/37318
+    // @ts-expect-error
+    const result = await dns.lookup("localhost", { flags: null });
+    expect(result).toBeArray();
+    expect(result.length).toBeGreaterThan(0);
+    expect(isIP(result[0].address)).toBeGreaterThan(0);
+  });
+
   describe("setServers", () => {
     test("triple with non-int32 family (double) throws TypeError", () => {
       // @ts-expect-error

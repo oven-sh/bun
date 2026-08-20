@@ -9,6 +9,12 @@ import tls from "tls";
 
 export interface ConnectProxyOptions {
   requireAuth?: boolean;
+  /**
+   * Intercepts the bytes flowing target -> client once the tunnel is up. Call
+   * `forward` to deliver bytes to the client. Defaults to forwarding every
+   * chunk as it arrives.
+   */
+  onTargetData?: (chunk: Buffer, forward: (bytes: Buffer) => void) => void;
 }
 
 /**
@@ -90,8 +96,15 @@ export function createConnectProxy(options: ConnectProxyOptions = {}): net.Serve
         }
 
         // Set up bidirectional piping
+        const forward = (bytes: Buffer) => {
+          clientSocket.write(bytes);
+        };
         targetSocket!.on("data", chunk => {
-          clientSocket.write(chunk);
+          if (options.onTargetData) {
+            options.onTargetData(chunk, forward);
+          } else {
+            forward(chunk);
+          }
         });
       });
 

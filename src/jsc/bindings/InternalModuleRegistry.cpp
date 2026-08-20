@@ -73,10 +73,13 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     return result;
 }
 
+// Accepts both generator signatures (BUN_FOREACH_ESM_NATIVE_MODULE and BUN_FOREACH_LAZY_ESM_NATIVE_MODULE);
+// only the default export is used here, and a lazy generator always provides that one eagerly.
+template<typename Generator>
 ALWAYS_INLINE JSC::JSValue generateNativeModule(
     JSC::JSGlobalObject* globalObject,
     JSC::VM& vm,
-    const SyntheticSourceProvider::SyntheticSourceGenerator& generator)
+    Generator generator)
 {
     Vector<JSC::Identifier, 4> propertyNames;
     JSC::MarkedArgumentBuffer arguments;

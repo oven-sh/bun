@@ -23,7 +23,7 @@ import {
   verify,
 } from "crypto";
 import fs from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 
@@ -1800,3 +1800,91 @@ test("ECDSA should work", async () => {
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+
+test("generateKeyPair passes the thrown Error to the callback when key export fails", async () => {
+  const { promise, resolve } = Promise.withResolvers<Error & { code?: string }>();
+  // P-224 keygen succeeds, JWK export does not, driving the caught-exception
+  // branch of the async completion. Node surfaces the Error object itself.
+  generateKeyPair(
+    "ec",
+    {
+      namedCurve: "secp224r1",
+      publicKeyEncoding: { format: "jwk" },
+      privateKeyEncoding: { format: "jwk" },
+    } as any,
+    err => resolve(err as any),
+  );
+  const err = await promise;
+  expect(err).toBeInstanceOf(Error);
+  expect(err.code).toBe("ERR_CRYPTO_JWK_UNSUPPORTED_CURVE");
+  expect(err.message).toContain("Unsupported JWK EC curve");
+});
+
+// The async crypto jobs (generateKeyPair, sign, diffieHellman, hkdf, ...) run
+// on the work pool and complete on the JS thread. The native job ctx must be
+// freed before the JS callback is invoked: a callback that never returns
+// (process.exit()) would otherwise strand everything the ctx still owns (the
+// generated EVP_PKEY, key refs, BIGNUMs). These children run with leak
+// checking on, so a stranded OpenSSL allocation fails the child with a
+// LeakSanitizer report.
+describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leaks nothing", () => {
+  const lsanEnv = {
+    ...bunEnv,
+    BUN_DESTRUCT_VM_ON_EXIT: "1",
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+    LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+  };
+  const cases = {
+    "generateKeyPair (KeyObject output)": `crypto.generateKeyPair("rsa", { modulusLength: 512 }, done);`,
+    "generateKeyPair (encrypted PEM output)": `crypto.generateKeyPair("rsa", {
+        modulusLength: 512,
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "secret" },
+      }, done);`,
+    "sign": `{
+        const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+        crypto.sign("sha256", Buffer.from("data"), privateKey, done);
+      }`,
+    "diffieHellman": `{
+        const a = crypto.generateKeyPairSync("x25519", {});
+        const b = crypto.generateKeyPairSync("x25519", {});
+        crypto.diffieHellman({ privateKey: a.privateKey, publicKey: b.publicKey }, done);
+      }`,
+    "hkdf": `crypto.hkdf("sha256", "key", "salt", "info", 32, done);`,
+    "checkPrime": `crypto.checkPrime(7n, done);`,
+    "generatePrime": `crypto.generatePrime(64, done);`,
+    "generateKey (secret)": `crypto.generateKey("hmac", { length: 256 }, done);`,
+    // The second path to the same leak: the completion task is enqueued but
+    // never dispatched (the spin keeps the JS thread busy until exit), so the
+    // shutdown release of queued jobs must free the ctx.
+    "generateKeyPair (exit before completion dispatch)": `{
+        crypto.generateKeyPair("rsa", { modulusLength: 512 }, () => {});
+        const end = Bun.nanoseconds() + 1_000_000_000;
+        while (Bun.nanoseconds() < end) {}
+        process.exit(0);
+      }`,
+  };
+
+  for (const [name, snippet] of Object.entries(cases)) {
+    test.concurrent(name, async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const crypto = require("crypto");
+             const done = err => {
+               if (err) { console.error(err); process.exit(2); }
+               process.exit(0);
+             };
+             ${snippet}`,
+        ],
+        env: lsanEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("LeakSanitizer");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+  }
+});

@@ -91,9 +91,9 @@ impl Editor {
             return false;
         };
 
-        if let Some(path) = BIN_NAME[editor] {
-            if !path.is_empty() {
-                if let Some(bin) = which(buf, path_env, cwd, path) {
+        if let Some(bin_name) = BIN_NAME[editor] {
+            if !bin_name.is_empty() {
+                if let Some(bin) = which(buf, path_env, cwd, bin_name) {
                     *out = bin.as_bytes();
                     return true;
                 }
@@ -451,6 +451,12 @@ impl Default for EditorContext {
 }
 
 impl EditorContext {
+    /// `detect_editor` records `Editor::None` when nothing was found so the
+    /// search is not repeated; to callers that means "no editor".
+    pub(crate) fn found(&self) -> Option<Editor> {
+        self.editor.filter(|e| *e != Editor::None)
+    }
+
     pub(crate) fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
         if self.editor.is_none() {
             self.detect_editor(env);

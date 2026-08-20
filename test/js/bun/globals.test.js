@@ -38,6 +38,22 @@ it("ERR_INVALID_THIS", () => {
     expect(e.name).toBe("TypeError");
     expect(e.message).toBe(`Expected this to be instanceof Request, but received type string ('hellooo')`);
   }
+
+  // A bare call through a closure-captured binding hands the native function
+  // the scope object as `this`; it must be reported like an undefined receiver.
+  const { formData } = Request.prototype;
+  function keep() {
+    return formData;
+  }
+  try {
+    formData();
+    expect.unreachable();
+  } catch (e) {
+    expect(e.code).toBe("ERR_INVALID_THIS");
+    expect(e.name).toBe("TypeError");
+    expect(e.message).toBe("Expected this to be instanceof Request");
+  }
+  expect(keep()).toBe(formData);
 });
 
 it("extendable", () => {

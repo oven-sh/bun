@@ -440,8 +440,7 @@ pub enum ClearCacheDirectoryError {
     },
 }
 
-/// `bun pm cache rm`. Empties the directory rather than removing it, so a symlinked or
-/// mounted cache survives. `protected_dirs`: the setting proves nothing about contents.
+/// `bun pm cache rm`. Empties rather than removes: a symlinked or mounted cache must survive.
 pub fn clear_cache_directory(
     env: &mut DotEnvLoader,
     original_cwd: &[u8],
@@ -476,6 +475,7 @@ pub fn clear_cache_directory(
         });
     }
 
+    // The setting says where the cache is, not that the directory holds only a cache.
     let protected_dirs: [(&'static str, Option<&[u8]>); 5] = [
         ("the home directory", env_var::HOME.get_not_empty()),
         (

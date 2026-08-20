@@ -41,21 +41,25 @@ fn load_bunfig(
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
-    let source =
-        match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
-            Ok(s) => s,
-            Err(err) => {
-                if auto_loaded {
-                    return Ok(());
-                }
-                bun_core::pretty_errorln!(
-                    "{}\nwhile reading config \"{}\"",
-                    err,
-                    BStr::new(config_path.as_bytes()),
-                );
-                Global::exit(1);
+    let options = bun_ast::ToSourceOptions {
+        convert_bom: true,
+        // `--config=/dev/null` is a way to run without a config.
+        any_file_type: !auto_loaded,
+    };
+    let source = match bun_ast::to_source(config_path, options) {
+        Ok(s) => s,
+        Err(err) => {
+            if auto_loaded {
+                return Ok(());
             }
-        };
+            bun_core::pretty_errorln!(
+                "{}\nwhile reading config \"{}\"",
+                err,
+                BStr::new(config_path.as_bytes()),
+            );
+            Global::exit(1);
+        }
+    };
 
     bun_ast::stmt::data::Store::create();
     bun_ast::expr::data::Store::create();

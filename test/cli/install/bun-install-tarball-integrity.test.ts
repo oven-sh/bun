@@ -884,7 +884,7 @@ describe.skipIf(isWindows).concurrent("local tarball that is not a regular file"
     mkfifo(join(String(dir), "dep.tgz"));
 
     const { stdout, stderr, exitCode } = await install(String(dir), join(String(dir), ".bun-cache"));
-    expect(stderr).toContain("error: ENOTSUP extracting tarball from dep");
+    expect(stderr).toContain("error: ENODEV extracting tarball from dep");
     expect(stderr).toContain("error: dep@file:./dep.tgz failed to resolve");
     expect(stdout).not.toContain("installed");
     expect(exitCode).toBe(1);
@@ -904,7 +904,7 @@ describe.skipIf(isWindows).concurrent("local tarball that is not a regular file"
     mkfifo(join(String(dir), "packages", "app", "dep.tgz"));
 
     const { stdout, stderr, exitCode } = await install(String(dir), join(String(dir), ".bun-cache"));
-    expect(stderr).toContain("error: ENOTSUP extracting tarball from dep");
+    expect(stderr).toContain("error: ENODEV extracting tarball from dep");
     expect(stderr).toContain("error: dep@file:./dep.tgz failed to resolve");
     expect(stdout).not.toContain("installed");
     expect(exitCode).toBe(1);
@@ -915,7 +915,7 @@ describe.skipIf(isWindows).concurrent("local tarball that is not a regular file"
     await symlink("/dev/null", join(String(dir), "dep.tgz"));
 
     const { stdout, stderr, exitCode } = await install(String(dir), join(String(dir), ".bun-cache"));
-    expect(stderr).toContain("error: ENOTSUP extracting tarball from dep");
+    expect(stderr).toContain("error: ENODEV extracting tarball from dep");
     expect(stderr).toContain("error: dep@file:./dep.tgz failed to resolve");
     expect(stdout).not.toContain("installed");
     expect(exitCode).toBe(1);
@@ -924,8 +924,8 @@ describe.skipIf(isWindows).concurrent("local tarball that is not a regular file"
   // With a lockfile and an empty cache the tarball is read while the package
   // is installed. Each linker reports that failure in its own words.
   for (const [linker, message] of [
-    ["hoisted", "error: ENOTSUP extracting tarball from dep"],
-    ["isolated", "error: failed to download dep@./dep.tgz: ENOTSUP"],
+    ["hoisted", "error: ENODEV extracting tarball from dep"],
+    ["isolated", "error: failed to download dep@./dep.tgz: ENODEV"],
   ] as const) {
     it(`installing a locked dependency from a FIFO fails (${linker})`, async () => {
       using dir = tempDir("local-tarball-fifo-locked-" + linker, rootProject);

@@ -60,6 +60,7 @@ Key types and functions:
 - `Fd` (`bun_core::Fd`, re-exported) — cross-platform file descriptor. `Fd::cwd()`, `Fd::stdin()/stdout()/stderr()`, `fd.close()`.
 - `File::open(path: &ZStr, flags, mode)` / `File::openat(dir: Fd, path: &[u8], flags, mode)` / `File::make_open(...)` (creates parent dirs) / `File::create(dir, path, truncate)`
 - `file.read(buf)` / `read_all(buf)` / `read_to_end()` / `read_to_end_small()` / `write(buf)` / `write_all(buf)`
+- `File::read_from(dir, path)` and `File::open_regular_at(dir, path)` accept regular files only (a FIFO would block the open, `/dev/zero` has no end). A file bun reads whole because it found it (a config file, a lockfile, a cache entry) goes through them. `File::read_from_any_file_type` is for a path the user named that may be a device, such as `--config=/dev/null`.
 - `bun_sys::open`, `read`, `write`, `pread`, `pwrite`, `stat`, `fstat`, `lstat`, `mkdir`, `unlink`, `rename`, `symlink`, `chmod` — free fns over `Fd`
 - Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 

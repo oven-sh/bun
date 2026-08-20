@@ -1833,7 +1833,7 @@ impl Lockfile {
             }
             break 'bytes bytes;
         };
-        if File::read_regular_from(Fd::cwd(), save_format.filename())
+        if File::read_from(Fd::cwd(), save_format.filename())
             .is_ok_and(|existing| existing == bytes)
         {
             return false;

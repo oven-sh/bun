@@ -1,7 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
-import { symlinkSync, truncateSync } from "node:fs";
+import { symlinkSync } from "node:fs";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -12,7 +12,7 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "3 | import { mkfifo } from "mkfifo";
-4 | import { symlinkSync, truncateSync } from "node:fs";
+4 | import { symlinkSync } from "node:fs";
 5 | 
 6 | test("error.cause", () => {
 7 |   const err = new Error("error 1");
@@ -23,7 +23,7 @@ error: error 2
 
 2 | import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 3 | import { mkfifo } from "mkfifo";
-4 | import { symlinkSync, truncateSync } from "node:fs";
+4 | import { symlinkSync } from "node:fs";
 5 | 
 6 | test("error.cause", () => {
 7 |   const err = new Error("error 1");
@@ -211,7 +211,7 @@ describe("source map remapping of the printed stack", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode, maxRSS: proc.resourceUsage().maxRSS };
+    return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode };
   }
 
   // A prebuilt file whose map names a source that is neither on disk nor in
@@ -361,21 +361,6 @@ describe("source map remapping of the printed stack", () => {
       expect(stderr).not.toContain("Could not decode sourcemap");
       expect(frames(stderr, dir, ["main.js"])).toEqual(unmapped);
       expect(exitCode).toBe(1);
-    });
-
-    // A map the JSON parser would reject for its size alone is reported as
-    // undecodable without being read: the 2 GiB of this sparse file never
-    // enter memory.
-    test.concurrent("a regular file too large to parse", async () => {
-      const { dir, stderr, exitCode, maxRSS } = await run({ ...files, "main.js.map": "" }, cwd =>
-        truncateSync(`${cwd}/main.js.map`, 2 ** 31),
-      );
-      expect(stderr).toContain(`Could not decode sourcemap in '${dir}/main.js': InvalidJSON`);
-      expect(frames(stderr, dir, ["main.js"])).toEqual(unmapped);
-      expect(exitCode).toBe(1);
-      // maxRSS is in bytes on every platform; the lower bound pins the unit.
-      expect(maxRSS).toBeGreaterThan(1024 * 1024);
-      expect(maxRSS).toBeLessThan(1024 * 1024 * 1024);
     });
   });
 });

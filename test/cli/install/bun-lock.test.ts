@@ -1268,15 +1268,16 @@ describe.concurrent("hand-edited bun.lock that lists workspaces but has no packa
   });
 });
 
-// The lockfile is read before anything else happens. A FIFO at its path used
-// to block `bun install` forever inside open(); a character device such as
-// /dev/zero used to be read until the process ran out of memory. No Windows
-// variant: the FIFO and device files are POSIX.
-describe.skipIf(isWindows).concurrent("lockfile path that is not a regular file", () => {
+// `bun install` reads these files on its own. A FIFO at any of their paths used
+// to block it forever inside open(); a character device such as /dev/zero used
+// to be read until the process ran out of memory. No Windows variant: FIFOs and
+// device files are POSIX.
+describe.skipIf(isWindows).concurrent("a file bun install reads is not a regular file", () => {
   const projectFiles = {
     "package.json": JSON.stringify({ name: "not-a-file", workspaces: ["packages/*"] }),
     "packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
   };
+  const installed = "bun install <version> (<revision>)\n\nDone! Checked 2 packages (no changes)";
 
   async function install(cwd: string, ...args: string[]) {
     await using proc = spawn({
@@ -1293,19 +1294,15 @@ describe.skipIf(isWindows).concurrent("lockfile path that is not a regular file"
   }
 
   // Both the load and the "did the lockfile change" comparison before the save
-  // open the path.
+  // open the lockfile.
   for (const lockfile of ["bun.lock", "bun.lockb"]) {
     it(`${lockfile} is a FIFO: it is ignored like a corrupt lockfile and replaced`, async () => {
       using dir = tempDir("bun-lock-fifo", projectFiles);
       mkfifo(join(String(dir), lockfile));
 
       const { out, err, exitCode } = await install(String(dir));
-      expect(err).toBe(`ENOTSUP: failed to open lockfile: '${lockfile}'\n\nwarn: Ignoring lockfile\nSaved lockfile`);
-      expect(out).toMatchInlineSnapshot(`
-        "bun install <version> (<revision>)
-
-        Done! Checked 2 packages (no changes)"
-      `);
+      expect(err).toBe(`ENODEV: failed to open lockfile: '${lockfile}'\n\nwarn: Ignoring lockfile\nSaved lockfile`);
+      expect(out).toBe(installed);
       expect(exitCode).toBe(0);
       expect((await stat(join(String(dir), lockfile))).isFile()).toBe(true);
     });
@@ -1317,7 +1314,7 @@ describe.skipIf(isWindows).concurrent("lockfile path that is not a regular file"
 
     const { out, err, exitCode } = await install(String(dir), "--frozen-lockfile");
     expect(err).toMatchInlineSnapshot(`
-      "ENOTSUP: failed to open lockfile: 'bun.lock'
+      "ENODEV: failed to open lockfile: 'bun.lock'
 
       warn: Ignoring lockfile
       error: lockfile had changes, but lockfile is frozen"
@@ -1333,14 +1330,31 @@ describe.skipIf(isWindows).concurrent("lockfile path that is not a regular file"
 
       const { out, err, exitCode } = await install(String(dir));
       expect(err).toBe("Saved lockfile");
-      expect(out).toMatchInlineSnapshot(`
-        "bun install <version> (<revision>)
-
-        Done! Checked 2 packages (no changes)"
-      `);
+      expect(out).toBe(installed);
       expect(exitCode).toBe(0);
     });
   }
+
+  it(".npmrc is a FIFO: it is skipped like an unreadable one", async () => {
+    using dir = tempDir("bun-lock-npmrc-fifo", projectFiles);
+    mkfifo(join(String(dir), ".npmrc"));
+
+    const { out, err, exitCode } = await install(String(dir));
+    expect(err).toBe("Saved lockfile");
+    expect(out).toBe(installed);
+    expect(exitCode).toBe(0);
+  });
+
+  // Locating the project opens package.json before anything reads it.
+  it("package.json is a FIFO: the install fails", async () => {
+    using dir = tempDir("bun-lock-package-json-fifo", {});
+    mkfifo(join(String(dir), "package.json"));
+
+    const { out, err, exitCode } = await install(String(dir));
+    expect(err).toMatchInlineSnapshot(`"ENODEV: failed to read '<dir>/package.json'"`);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
 });
 
 const makeInstallRunner = (cwd: string) => async (args: string[]) => {

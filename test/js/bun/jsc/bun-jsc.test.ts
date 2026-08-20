@@ -232,6 +232,28 @@ describe("bun:jsc", () => {
     expect(result3.stackTraces).toBeDefined();
     expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
   });
+
+  it("profile accepts a callable Proxy", async () => {
+    // functionRunProfiler used to uncheckedDowncast<JSFunction> the callback after only
+    // checking isCallable(), which aborts asserts builds when the callable is a ProxyObject.
+    const script = `
+      const { profile } = require("bun:jsc");
+      const result = profile(new Proxy(function () { return 1; }, {}));
+      if (!result || typeof result.functions !== "string" || !("stackTraces" in result)) {
+        throw new Error("unexpected profile() result keys: " + JSON.stringify(result && Object.keys(result)));
+      }
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("deserialize rejects an object reference index outside the deserialized object pool", async () => {
@@ -566,4 +588,31 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
+});
+
+describe("JsRef::Weak liveness", () => {
+  // collectSyncWithoutSweep leaves dead cells allocated until the incremental sweeper reaches them.
+  it("dead-but-unswept cells read as not live, kept cells read as live", () => {
+    const { jscInternals } = require("bun:internal-for-testing");
+    let objects: object[] = [];
+    const dropped: bigint[] = [];
+    for (let i = 0; i < 2000; i++) {
+      const o = { i, pad: [i] };
+      objects.push(o);
+      dropped.push(jscInternals.rawCellAddress(o));
+    }
+    const kept = { keep: true };
+    const keptAddr = jscInternals.rawCellAddress(kept);
+    expect(dropped.every(a => jscInternals.isLiveCellAtRawAddress(a))).toBe(true);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+
+    objects = [];
+    jscInternals.collectSyncWithoutSweep();
+
+    // A few may survive via the conservative stack scan; the bulk must read as dead.
+    const stillLive = dropped.filter(a => jscInternals.isLiveCellAtRawAddress(a)).length;
+    expect(stillLive).toBeLessThan(dropped.length / 2);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+    expect(kept.keep).toBe(true);
+  });
 });

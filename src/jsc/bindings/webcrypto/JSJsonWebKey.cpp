@@ -274,7 +274,7 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
     return result;
 }
 
-JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const JsonWebKey& dictionary, bool ignoreExtAndKeyOps)
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const JsonWebKey& dictionary)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -311,7 +311,7 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
         RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "e"_s), eValue);
     }
-    if (!ignoreExtAndKeyOps && !IDLBoolean::isNullValue(dictionary.ext)) {
+    if (!IDLBoolean::isNullValue(dictionary.ext)) {
         auto extValue = toJS<IDLBoolean>(lexicalGlobalObject, throwScope, IDLBoolean::extractValueFromNullable(dictionary.ext));
         RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "ext"_s), extValue);
@@ -321,7 +321,7 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
         RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "k"_s), kValue);
     }
-    if (!ignoreExtAndKeyOps && !IDLSequence<IDLEnumeration<CryptoKeyUsage>>::isNullValue(dictionary.key_ops)) {
+    if (!IDLSequence<IDLEnumeration<CryptoKeyUsage>>::isNullValue(dictionary.key_ops)) {
         auto key_opsValue = toJS<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(lexicalGlobalObject, globalObject, throwScope, IDLSequence<IDLEnumeration<CryptoKeyUsage>>::extractValueFromNullable(dictionary.key_ops));
         RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "key_ops"_s), key_opsValue);

@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -151,6 +151,55 @@ describe("util", () => {
       class Error3 extends Error2 {}
       let err8 = new Error3();
       strictEqual(util.isError(err8), true);
+    });
+
+    // These inputs used to segfault the process, so they run in a child.
+    it.concurrent("handles revoked proxies and getPrototypeOf traps", async () => {
+      const fixture = /* js */ `
+        const { isError } = require("node:util");
+        const attempt = fn => {
+          try {
+            return String(fn());
+          } catch (e) {
+            return "threw " + (e instanceof Error ? e.constructor.name + ": " + e.message : String(e));
+          }
+        };
+        const { proxy: revoked, revoke } = Proxy.revocable({}, {});
+        revoke();
+        console.log("revoked:", attempt(() => isError(revoked)));
+        console.log("throwing trap:", attempt(() => isError(new Proxy({}, { getPrototypeOf() { throw new Error("from trap"); } }))));
+        const thrown = { from: "trap" };
+        let caught;
+        try {
+          isError(new Proxy({}, { getPrototypeOf() { throw thrown; } }));
+        } catch (e) {
+          caught = e;
+        }
+        console.log("throwing trap rethrows the same value:", caught === thrown);
+        console.log("null trap:", attempt(() => isError(new Proxy({}, { getPrototypeOf: () => null }))));
+        console.log("Error.prototype trap:", attempt(() => isError(new Proxy({}, { getPrototypeOf: () => Error.prototype }))));
+        console.log("proxy of an Error:", attempt(() => isError(new Proxy(new Error("x"), {}))));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        [
+          "revoked: threw TypeError: Proxy has already been revoked. No more operations are allowed to be performed on it",
+          "throwing trap: threw Error: from trap",
+          "throwing trap rethrows the same value: true",
+          "null trap: false",
+          "Error.prototype trap: true",
+          "proxy of an Error: true",
+          "",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(0);
     });
   });
 

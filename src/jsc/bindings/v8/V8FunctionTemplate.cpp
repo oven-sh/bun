@@ -1,7 +1,10 @@
 #include "V8FunctionTemplate.h"
 #include "V8Function.h"
 #include "V8HandleScope.h"
+#include "V8String.h"
+#include "V8ObjectTemplate.h"
 #include "shim/FunctionTemplate.h"
+#include "shim/ObjectTemplate.h"
 #include "v8_compatibility_assertions.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::FunctionTemplate)
@@ -32,24 +35,17 @@ Local<FunctionTemplate> FunctionTemplate::New(
     uint16_t allowed_receiver_instance_type_range_start,
     uint16_t allowed_receiver_instance_type_range_end)
 {
-    // only handling simpler cases for now
-    // (pass most of these into v8::Function / JSC::InternalFunction)
-    RELEASE_ASSERT_WITH_MESSAGE(signature.IsEmpty(),
-        "Passing signature to FunctionTemplate::New is not yet supported");
-    RELEASE_ASSERT_WITH_MESSAGE(length == 0,
-        "Passing length to FunctionTemplate::New is not yet supported");
-    RELEASE_ASSERT_WITH_MESSAGE(behavior == ConstructorBehavior::kAllow,
-        "Passing behavior to FunctionTemplate::New is not yet supported");
-    RELEASE_ASSERT_WITH_MESSAGE(side_effect_type == SideEffectType::kHasSideEffect,
-        "Passing side_effect_type to FunctionTemplate::New is not yet supported");
-    RELEASE_ASSERT_WITH_MESSAGE(c_function == nullptr,
-        "Passing c_function to FunctionTemplate::New is not yet supported");
-    RELEASE_ASSERT_WITH_MESSAGE(instance_type == 0,
-        "Passing instance_type to FunctionTemplate::New is not yet supported");
-    RELEASE_ASSERT_WITH_MESSAGE(allowed_receiver_instance_type_range_start == 0,
-        "Passing allowed_receiver_instance_type_range_start to FunctionTemplate::New is not yet supported");
-    RELEASE_ASSERT_WITH_MESSAGE(allowed_receiver_instance_type_range_end == 0,
-        "Passing allowed_receiver_instance_type_range_end to FunctionTemplate::New is not yet supported");
+    // signature, length, behavior, side_effect_type, c_function and the
+    // instance-type hints are accepted and ignored; Bun's shim doesn't yet
+    // enforce receiver checks, declared arity, or V8 fast-API calls.
+    (void)signature;
+    (void)length;
+    (void)behavior;
+    (void)side_effect_type;
+    (void)c_function;
+    (void)instance_type;
+    (void)allowed_receiver_instance_type_range_start;
+    (void)allowed_receiver_instance_type_range_end;
 
     auto globalObject = isolate->globalObject();
     auto& vm = JSC::getVM(globalObject);
@@ -67,9 +63,36 @@ MaybeLocal<Function> FunctionTemplate::GetFunction(Local<Context> context)
     auto& vm = context->vm();
     auto* globalObject = context->globalObject();
     auto* globalInternals = globalObject->V8GlobalInternals();
-    auto* f = shim::Function::create(vm, globalInternals->v8FunctionStructure(globalObject), localToObjectPointer());
+    auto* f = localToObjectPointer()->makeFunction(vm, globalObject, globalInternals);
 
     return globalInternals->currentHandleScope()->createLocal<Function>(vm, f);
+}
+
+Local<ObjectTemplate> FunctionTemplate::InstanceTemplate()
+{
+    auto* functionTemplate = localToObjectPointer();
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(functionTemplate->globalObject());
+    auto& vm = JSC::getVM(globalObject);
+    auto* globalInternals = globalObject->V8GlobalInternals();
+    auto* objectTemplate = functionTemplate->ensureInstanceTemplate(globalObject);
+    return globalInternals->currentHandleScope()->createLocal<ObjectTemplate>(vm, objectTemplate);
+}
+
+Local<ObjectTemplate> FunctionTemplate::PrototypeTemplate()
+{
+    auto* functionTemplate = localToObjectPointer();
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(functionTemplate->globalObject());
+    auto& vm = JSC::getVM(globalObject);
+    auto* globalInternals = globalObject->V8GlobalInternals();
+    auto* objectTemplate = functionTemplate->ensurePrototypeTemplate(globalObject);
+    return globalInternals->currentHandleScope()->createLocal<ObjectTemplate>(vm, objectTemplate);
+}
+
+void FunctionTemplate::SetClassName(Local<String> name)
+{
+    auto* functionTemplate = localToObjectPointer();
+    auto& vm = JSC::getVM(functionTemplate->globalObject());
+    functionTemplate->setClassName(vm, name->localToJSString());
 }
 
 } // namespace v8

@@ -181,6 +181,12 @@ devTest("asset referenced in css", {
     let backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    // The served stylesheet is the chunk with the asset reference resolved and
+    // nothing else: CSS never gets a source map, so no debugId trailer either.
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    expect(stylesheet).toContain("background-image:");
+    expect(stylesheet).not.toContain("debugId");
     await dev.write("bun.png", imageFixtures.bun2);
     backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);

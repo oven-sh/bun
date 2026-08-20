@@ -339,20 +339,6 @@ void JSCryptoKey::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSCryptoKeyOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    if (reason) [[unlikely]]
-        *reason = "Reachable from CryptoKey"_s;
-    return visitor.containsOpaqueRoot(context);
-}
-
-void JSCryptoKeyOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsCryptoKey = static_cast<JSCryptoKey*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsCryptoKey->wrapped(), jsCryptoKey);
-}
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CryptoKey>&& impl)
 {
     return createWrapper<CryptoKey>(globalObject, WTF::move(impl));

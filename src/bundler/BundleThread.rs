@@ -65,6 +65,10 @@ pub trait CompletionStruct: Node + Send + 'static {
         transpiler: &mut Transpiler<'a>,
         bump: &'a Arena,
     ) -> Result<(), crate::Error>;
+    /// Bundle thread, on dequeue: `false` if the owner released this build
+    /// while it was still queued ([`free_released_unstarted`] then frees it).
+    fn try_start(&mut self) -> bool;
+    fn free_released_unstarted(this: *mut Self);
     fn complete_on_bundle_thread(&mut self);
     fn set_result(&mut self, result: BundleV2Result);
     fn set_log(&mut self, log: bun_ast::Log);
@@ -74,8 +78,8 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `FileMap` layout stays in T6.
     fn file_map(&mut self) -> Option<NonNull<FileMap>>;
     /// Returns a §Dispatch handle (erased owner + `&'static` vtable) the impl
-    /// provides, so the bundler can read `result == .err` /
-    /// `jsc_event_loop.enqueueTaskConcurrent` without naming the concrete
+    /// provides, so the bundler can read `result == .err` / `is_cancelled`,
+    /// and post plugin hops to the owning VM, without naming the concrete
     /// struct.
     fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
@@ -170,10 +174,10 @@ impl<C: CompletionStruct> BundleThread<C> {
         // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
         // accesses the same struct concurrently, so we never materialize `&mut Self`.
         // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
-        // `&self` on all platforms (LinuxWaker/Windows/KEventWaker — the latter uses
-        // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
-        // safe to call concurrently with `wait(&self)` in `thread_main` and with
-        // other `enqueue` callers.
+        // `&self` on all platforms and only reads a Copy field (eventfd, mach port,
+        // `WindowsLoop` pointer) to pass to a wake call that is safe from any thread
+        // (eventfd write, mach_msg send, uv_async_send), so the `&Waker` autoref is
+        // sound alongside `wait(&self)` in `thread_main` and other `enqueue` callers.
         unsafe {
             (*instance).queue.push(completion);
             (*instance).waker.wake();
@@ -221,7 +225,13 @@ impl<C: CompletionStruct> BundleThread<C> {
                     break;
                 }
                 // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
-                // until complete_on_bundle_thread() signals completion.
+                // until complete_on_bundle_thread() signals completion — unless it
+                // released the build while it sat here (its VM went away).
+                if !unsafe { (*completion).try_start() } {
+                    C::free_released_unstarted(completion);
+                    continue;
+                }
+                // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
                 let generation = unsafe { (*instance).generation };

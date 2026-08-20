@@ -58,13 +58,13 @@ pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
         return Err(ParseError::Clear);
     }
 
-    for raw_entry in value.split(|b| *b == b',') {
+    for raw_entry in strings::split(value, b",") {
         let entry = strings::trim(raw_entry, b" \t");
         if entry.is_empty() {
             continue;
         }
 
-        let mut params = entry.split(|b| *b == b';');
+        let mut params = strings::split(entry, b";");
         // `splitScalar.first()` == first split segment; always present.
         let alternative = strings::trim(params.next().unwrap(), b" \t");
 
@@ -84,7 +84,7 @@ pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
         if auth.len() >= 2 && auth[0] == b'"' && auth[auth.len() - 1] == b'"' {
             auth = &auth[1..auth.len() - 1];
         }
-        let Some(colon) = auth.iter().rposition(|&b| b == b':') else {
+        let Some(colon) = strings::last_index_of_char(auth, b':') else {
             continue;
         };
         // Same-host alternatives only (empty uri-host).

@@ -163,9 +163,12 @@ if (process.argv.length === 2 &&
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
       if (flag === "--no-warnings" && process.versions.bun) {
-        // Harmless under Bun; keep scanning so a later --expose-internals (or
-        // --expose-gc) in the same Flags line still installs its shim instead
-        // of re-spawning the test as a child process.
+        // Keep scanning so a later --expose-internals / --expose-gc in the
+        // same Flags line still installs its shim in-process. This runs before
+        // the test registers any listener, so dropping the bootstrap printer
+        // plus seeding the alias is exactly the state --no-warnings produces.
+        process.noProcessWarnings = true;
+        process.removeAllListeners('warning');
         continue;
       }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
@@ -308,7 +311,7 @@ const isMacOS = process.platform === 'darwin';
 const isASan = process.config.variables.asan === 1;
 const isRiscv64 = process.arch === 'riscv64';
 const isDebug = process.features.debug;
-const isPi = (() => {
+function isPi() {
   try {
     // Normal Raspberry Pi detection is to find the `Raspberry Pi` string in
     // the contents of `/sys/firmware/devicetree/base/model` but that doesn't
@@ -320,7 +323,7 @@ const isPi = (() => {
   } catch {
     return false;
   }
-})();
+}
 
 const isDumbTerminal = process.env.TERM === 'dumb';
 
@@ -448,7 +451,7 @@ function platformTimeout(ms) {
   if (exports.isAIX || exports.isIBMi)
     return multipliers.two * ms; // Default localhost speed is slower on AIX
 
-  if (isPi)
+  if (isPi())
     return multipliers.two * ms;  // Raspberry Pi devices
 
   if (isRiscv64) {
@@ -913,8 +916,10 @@ function expectsError(validator, exact) {
   }, exact);
 }
 
+const hasInspector = Boolean(process.features.inspector);
+
 function skipIfInspectorDisabled() {
-  if (!process.features.inspector) {
+  if (!hasInspector) {
     skip('V8 inspector is disabled');
   }
 }
@@ -1243,6 +1248,7 @@ const common = {
   printSkipMessage,
   pwdCommand,
   requireNoPackageJSONAbove,
+  hasInspector,
   runWithInvalidFD,
   skip,
   skipIf32Bits,
@@ -1504,7 +1510,7 @@ function installBunExposeInternalsShim() {
               case "--max-http-header-size":
                 return require("node:http").maxHeaderSize;
               case "--insecure-http-parser":
-                return false;
+                return process.execArgv.includes("--insecure-http-parser");
               case "--test-isolation": {
                 // Present in execArgv when a `// Flags:` respawn passed it
                 // through; node's default is "process".

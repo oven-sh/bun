@@ -19,7 +19,6 @@ import {
   tempDir,
   tls,
   tmpdirSync,
-  withoutAggressiveGC,
 } from "harness";
 
 import { once } from "events";
@@ -967,14 +966,7 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
-
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
-        });
+        expect(compare).toEqual(bytes);
         if (withGC) gc();
       });
 
@@ -990,14 +982,8 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         const compare = await response.bytes();
         if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
-
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
-        });
+        expect(compare).toBeInstanceOf(Uint8Array);
+        expect(compare).toEqual(bytes);
         if (withGC) gc();
       });
 
@@ -1015,14 +1001,7 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
-
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
-        });
+        expect(compare).toEqual(bytes);
         if (withGC) gc();
       });
 
@@ -1040,14 +1019,8 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         const compare = await response.bytes();
         if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
-
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
-        });
+        expect(compare).toBeInstanceOf(Uint8Array);
+        expect(compare).toEqual(bytes);
         if (withGC) gc();
       });
 
@@ -1744,18 +1717,29 @@ it("#2794", () => {
   expect(typeof Bun.fetch.bind).toBe("function");
 });
 
-it("#3545", () => {
-  expect(() => fetch("http://example.com?a=b")).not.toThrow();
+it("#3545", async () => {
+  // A query directly after the host, with no path, used to fail to open the socket.
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname, search } = new URL(req.url);
+      return Response.json({ pathname, search });
+    },
+  });
+  const response = await fetch(`${server.url.origin}?a=b`);
+  expect(await response.json()).toEqual({ pathname: "/", search: "?a=b" });
+  expect(response.url).toBe(`${server.url.origin}/?a=b`);
+  expect(response.status).toBe(200);
 });
 
-it("invalid header doesnt crash", () => {
-  expect(() =>
-    fetch("http://example.com", {
-      headers: {
-        ["lol!!!!!" + "emoji" + "😀"]: "hello",
-      },
-    }),
-  ).toThrow();
+it("invalid header doesnt crash", async () => {
+  const promise = fetch("http://127.0.0.1:1/", {
+    headers: {
+      ["lol!!!!!" + "emoji" + "😀"]: "hello",
+    },
+  });
+  await expect(promise).rejects.toBeInstanceOf(TypeError);
+  await expect(promise).rejects.toThrow("Invalid header name: 'lol!!!!!emoji😀'");
 });
 
 it("new Request(https://example.com, otherRequest) uses url from left instead of right", () => {
@@ -1833,7 +1817,7 @@ it("should work with http 100 continue", async () => {
     });
 
     const { promise: start, resolve } = Promise.withResolvers();
-    server.listen(8080, resolve);
+    server.listen(0, resolve);
 
     await start;
 
@@ -1863,7 +1847,7 @@ it("should work with http 100 continue on the same buffer", async () => {
     });
 
     const { promise: start, resolve } = Promise.withResolvers();
-    server.listen(8080, resolve);
+    server.listen(0, resolve);
 
     await start;
 
@@ -2121,11 +2105,15 @@ it.concurrent("should allow very long redirect URLS", async () => {
       });
     },
   });
-  // run it more times to check Malformed_HTTP_Response errors
-  for (let i = 0; i < 100; i++) {
-    const { url, status } = await fetch(`${server.url.origin}/redirect`);
-    expect(url).toBe(`${server.url.origin}${Location}`);
-    expect(status).toBe(404);
+  // Twice: the second round's /redirect rides the connection pooled by the first round's
+  // final response. (The 302's own connection is closed because it carries a body; which
+  // redirect responses get pooled is pinned by connection count in fetch-keepalive.test.ts.)
+  for (let i = 0; i < 2; i++) {
+    const response = await fetch(`${server.url.origin}/redirect`);
+    expect(response.url).toBe(`${server.url.origin}${Location}`);
+    expect(response.redirected).toBe(true);
+    expect(await response.text()).toBe("Not Found");
+    expect(response.status).toBe(404);
   }
 });
 
@@ -2344,9 +2332,8 @@ describe("fetch Response life cycle", () => {
 
     await using serverProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture3],
-      stderr: "inherit",
-      stdout: "inherit",
-      stdin: "inherit",
+      stderr: "pipe",
+      stdout: "pipe",
       env: bunEnv,
       ipc(message) {
         deferred.resolve(message);
@@ -2356,12 +2343,24 @@ describe("fetch Response life cycle", () => {
     const serverUrl = await deferred.promise;
     await using clientProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
-      stderr: "inherit",
-      stdout: "inherit",
-      stdin: "inherit",
+      stderr: "pipe",
+      stdout: "pipe",
       env: bunEnv,
     });
-    expect(await clientProcess.exited).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      clientProcess.stdout.text(),
+      clientProcess.stderr.text(),
+      clientProcess.exited,
+    ]);
+    // The fixture asserts the post-GC Response/Promise counts itself and reports a
+    // violation on stderr; it logs one heap summary per iteration on stdout.
+    expect(stderr).toBe("");
+    expect(stdout.match(/Response: \d+/g)).toHaveLength(10);
+    expect(exitCode).toBe(0);
+
+    serverProcess.kill();
+    const [serverStdout, serverStderr] = await Promise.all([serverProcess.stdout.text(), serverProcess.stderr.text()]);
+    expect({ serverStdout, serverStderr }).toEqual({ serverStdout: "", serverStderr: "" });
   });
   it("should allow to get promise result after response is GC'd", async () => {
     using server = Bun.serve({
@@ -2622,12 +2621,15 @@ describe("fetch should allow duplex", () => {
     }).not.toThrow();
   });
 
+  // The remaining cases each spend their time waiting on their own child process or
+  // servers, so they run concurrently with each other.
+
   // When the download source is faster than the upload target, the response-
   // body ByteStream must pause the source socket instead of buffering the
   // rate difference in-process. Before the fix, a chunk arriving before the
   // upload sink attached flipped the source to BufferAll and RSS grew at the
   // line rate (several GB in seconds on localhost).
-  it("bounds memory when the upload target is slower than the download source", async () => {
+  it.concurrent("bounds memory when the upload target is slower than the download source", async () => {
     const fixture = `
       const net = require("node:net");
       const chunk = Buffer.alloc(64 * 1024, 0x47);
@@ -2678,7 +2680,7 @@ describe("fetch should allow duplex", () => {
   // A type:"direct" stream body where pull does `await controller.write(chunk)`
   // in a loop must suspend when the sink is backpressured: write() returns a
   // pending Promise once the stream buffer is over the high-water mark.
-  it("suspends a type:'direct' body's controller.write() when the upload target is backpressured", async () => {
+  it.concurrent("suspends a type:'direct' body's controller.write() when the upload target is stalled", async () => {
     const fixture = `
       const net = require("node:net");
       const sink = net.createServer(sock => sock.pause());
@@ -2729,7 +2731,7 @@ describe("fetch should allow duplex", () => {
   // Passing a response body as a request body attaches it to a native sink;
   // the source stream must be marked locked + disturbed so a second consumer
   // errors instead of hanging on data that will never be delivered to it.
-  it("locks the response body when it is used as a request body", async () => {
+  it.concurrent("locks the response body when it is used as a request body", async () => {
     await using source = Bun.serve({
       port: 0,
       fetch: () => new Response(new ReadableStream({ pull: c => c.enqueue(new Uint8Array(64 * 1024)) })),
@@ -2771,7 +2773,7 @@ describe("fetch should allow duplex", () => {
   // back-pressure the uploading client rather than buffering the difference:
   // the request-body ByteStream stops reading from the inbound socket while
   // the outbound sink is over its high-water mark.
-  it("bounds memory when a handler forwards req.body to a stalled target", async () => {
+  it.concurrent("bounds memory when a handler forwards req.body to a stalled target", async () => {
     const fixture = `
       const net = require("node:net");
       const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
@@ -3385,134 +3387,155 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
 });
 
 // https://github.com/oven-sh/bun/issues/16682
-it("an explicit numeric `timeout` extends the socket idle deadline past the default", async () => {
-  // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1) and
-  // talks to an in-process server whose handler holds every request idle for
-  // 10s (longer than the worst-case firing window of the 1s idle timer, which
-  // is swept on uSockets' 4s tick) before responding.
-  //
-  //   - `timeout: 60_000` must override the 1s idle default and resolve.
-  //   - `timeout: 0` must keep meaning "no timeout" and resolve.
-  //   - no `timeout` at all must still hit the 1s idle default (control that
-  //     proves the env override and the stall are both real).
-  const script = /* js */ `
-    const HOLD_MS = 10_000;
+it.concurrent(
+  "an explicit numeric `timeout` extends the socket idle deadline past the default",
+  async () => {
+    // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1) and
+    // talks to an in-process server that holds every request idle (no bytes in
+    // either direction) until a control request carrying no `timeout` has been
+    // aborted by that default. The idle timer is swept on uSockets' 4s tick, so
+    // the control fires at the first tick after it is armed (~4s into the test).
+    //
+    //   - `timeout: 60_000` must override the 1s idle default and resolve.
+    //   - `timeout: 0` / `timeout: Infinity` must keep meaning "no timeout" and resolve.
+    //   - the control must still hit the 1s idle default (proves the env override
+    //     and the stall are both real). It is sent only after the server has seen
+    //     the three explicit requests, so their idle timers were armed no later
+    //     than the control's: a build that ignored the explicit `timeout` would
+    //     have aborted them by the sweep that aborts the control, i.e. before the
+    //     server releases the held responses.
+    const script = /* js */ `
+    const explicitArrived = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    let arrived = 0;
     using server = Bun.serve({
       port: 0,
       // Disable Bun.serve's own request idle timeout; only the client-side
       // idle timer under test may abort anything here.
       idleTimeout: 0,
       async fetch(req) {
-        const arrived = Date.now();
-        // Hold the connection idle (no bytes in either direction) until the
-        // hold window has really elapsed on the server's clock.
-        while (Date.now() - arrived < HOLD_MS) {
-          await Bun.sleep(HOLD_MS - (Date.now() - arrived));
-        }
+        if (++arrived === 3) explicitArrived.resolve();
+        await release.promise;
         return new Response("hello");
       },
     });
-    const get = init => fetch(server.url, init).then(r => r.text(), e => "ERR:" + (e?.code ?? e?.name ?? e));
-    const [withTimeout, withZero, withInfinity, withDefault] = await Promise.all([
-      get({ timeout: 60_000 }),
-      get({ timeout: 0 }),
-      get({ timeout: Infinity }),
-      get(undefined),
-    ]);
+    const get = init => fetch(server.url, init).then(r => r.text(), e => e?.name + ": " + e?.message);
+    const explicit = Promise.all([get({ timeout: 60_000 }), get({ timeout: 0 }), get({ timeout: Infinity })]);
+    await explicitArrived.promise;
+    const withDefault = await get(undefined);
+    release.resolve();
+    const [withTimeout, withZero, withInfinity] = await explicit;
     console.log(JSON.stringify({ withTimeout, withZero, withInfinity, withDefault }));
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const out = JSON.parse(stdout.trim().split("\n").pop()!) as Record<string, string>;
-  expect({ withTimeout: out.withTimeout, withZero: out.withZero, withInfinity: out.withInfinity }).toEqual({
-    withTimeout: "hello",
-    withZero: "hello",
-    withInfinity: "hello",
-  });
-  // Control: without an explicit `timeout`, the 1s idle default still aborts
-  // the stalled request.
-  expect(out.withDefault).toStartWith("ERR:");
-  expect(exitCode).toBe(0);
-}, 60_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      withTimeout: "hello",
+      withZero: "hello",
+      withInfinity: "hello",
+      withDefault: "TimeoutError: The operation timed out.",
+    });
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
 
-it("the idle timer is an absolute deadline for the response header block (not re-armed by a byte drip)", async () => {
-  // A server that trickles one response-header byte at a time, each interval
-  // shorter than the request's idle timeout, must not be able to keep the
-  // request alive indefinitely. The idle timer is armed when the request is
-  // written and is not re-armed on partial header reads, so it bounds how long
-  // the header block may take to arrive in total (undici `headersTimeout`
-  // semantics). Once the header block completes the body path re-arms per
-  // chunk, so a slow-but-steady body is still accepted.
-  const BODY = "abc";
-  const HEAD = `HTTP/1.1 200 OK\r\nContent-Length: ${BODY.length}\r\n\r\n`;
-  const DRIP_MS = 2_000;
-  const DRIP_N = 10; // header drip sends this many single bytes, then the rest at once
-  const IDLE_MS = 5_000;
+it.concurrent(
+  "the idle timer is an absolute deadline for the response header block (not re-armed by a byte drip)",
+  async () => {
+    // A server that trickles one response-header byte at a time, each interval
+    // shorter than the request's idle timeout, must not be able to keep the
+    // request alive indefinitely. The idle timer is armed when the request is
+    // written and is not re-armed on partial header reads, so it bounds how long
+    // the header block may take to arrive in total (undici `headersTimeout`
+    // semantics). Once the header block completes the body path re-arms per
+    // chunk, so a slow-but-steady body is still accepted.
+    //
+    // IDLE_MS is 2 ticks of uSockets' 4s timeout sweep, so an armed timer fires
+    // 4-8s later, at the second sweep after it was (re-)armed.
+    const BODY = "body bytes that trickle in one at a time";
+    const HEAD = `HTTP/1.1 200 OK\r\nContent-Length: ${BODY.length}\r\n\r\n`;
+    const DRIP_MS = 1_000;
+    const DRIP_N = 20; // header drip sends this many single bytes, then the rest at once
+    const IDLE_MS = 5_000;
 
-  const sockets = new Set<net.Socket>();
-  const intervals = new Set<ReturnType<typeof setInterval>>();
-  const server = net.createServer(sock => {
-    sockets.add(sock);
-    sock.on("close", () => sockets.delete(sock));
-    sock.on("error", () => {});
-    sock.once("data", chunk => {
-      // /h drips DRIP_N header bytes then bursts the rest + body.
-      // /b bursts the header block then drips the body byte-by-byte.
-      const headerDrip = chunk.includes("/h ");
-      if (!headerDrip) sock.write(HEAD);
-      const dripped = headerDrip ? HEAD.slice(0, DRIP_N) : BODY;
-      const tail = headerDrip ? HEAD.slice(DRIP_N) + BODY : "";
-      let i = 0;
-      const iv = setInterval(() => {
-        if (sock.destroyed) {
+    const sockets = new Set<net.Socket>();
+    const intervals = new Set<ReturnType<typeof setInterval>>();
+    // Resolves, once /b has been requested, with a function that ends /b's body.
+    const bodyDrip = Promise.withResolvers<() => void>();
+    const server = net.createServer(sock => {
+      sockets.add(sock);
+      sock.on("close", () => sockets.delete(sock));
+      sock.on("error", () => {});
+      sock.once("data", chunk => {
+        // /h drips DRIP_N header bytes, then bursts the rest of the head + body so
+        // that a build which keeps re-arming gets a 200 instead of hanging.
+        // /b bursts the head, then drips body bytes; only the test ends its body.
+        const headerDrip = chunk.includes("/h ");
+        if (!headerDrip) sock.write(HEAD);
+        const dripped = headerDrip ? HEAD.slice(0, DRIP_N) : BODY.slice(0, -1);
+        let i = 0;
+        const iv = setInterval(() => {
+          if (!sock.destroyed && i < dripped.length) {
+            sock.write(dripped[i++]);
+            return;
+          }
           clearInterval(iv);
           intervals.delete(iv);
-          return;
+          if (headerDrip && !sock.destroyed) sock.end(HEAD.slice(DRIP_N) + BODY);
+        }, DRIP_MS);
+        intervals.add(iv);
+        if (!headerDrip) {
+          bodyDrip.resolve(() => {
+            clearInterval(iv);
+            intervals.delete(iv);
+            if (!sock.destroyed) sock.end(BODY.slice(i));
+          });
         }
-        if (i < dripped.length) {
-          sock.write(dripped[i++]);
-        } else {
-          clearInterval(iv);
-          intervals.delete(iv);
-          sock.end(tail);
-        }
-      }, DRIP_MS);
-      intervals.add(iv);
+      });
     });
-  });
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
-  const port = (server.address() as AddressInfo).port;
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as AddressInfo).port;
 
-  try {
-    const settle = (path: string) =>
-      fetch(`http://127.0.0.1:${port}${path}`, { timeout: IDLE_MS }).then(
-        async r => ({ ok: true as const, status: r.status, body: await r.text() }),
-        e => ({ ok: false as const, name: e?.name as string, message: String(e?.message ?? e) }),
-      );
+    try {
+      // fetch() resolves once the head is in, so /b's timeout would surface from
+      // text(); catch() rather than a rejection handler on the same then() so it
+      // ends up in the assertion below instead of being thrown out of the test.
+      const settle = (path: string) =>
+        fetch(`http://127.0.0.1:${port}${path}`, { timeout: IDLE_MS })
+          .then(async r => ({ ok: true as const, status: r.status, body: await r.text() }))
+          .catch(e => ({ ok: false as const, name: e?.name as string, message: String(e?.message ?? e) }));
 
-    // /h: DRIP_N bytes * DRIP_MS = ~20s of drip before the response would
-    // complete; the 5s idle deadline (uSockets 4s-tick sweep, so ~5-9s) must
-    // fire first. A build that re-arms on every partial header read resolves
-    // 200 after the full drip instead.
-    // /b: headers arrive in one write, then the 3-byte body trickles at
-    // DRIP_MS/byte (~8s). Each body chunk re-arms the idle timer, so this
-    // resolves despite taking longer than IDLE_MS overall.
-    const [hdr, bod] = await Promise.all([settle("/h"), settle("/b")]);
-    expect({ hdr, bod }).toEqual({
-      hdr: { ok: false, name: "TimeoutError", message: "The operation timed out." },
-      bod: { ok: true, status: 200, body: BODY },
-    });
-  } finally {
-    for (const iv of intervals) clearInterval(iv);
-    for (const s of sockets) s.destroy();
-    await new Promise<void>(r => server.close(() => r()));
-  }
-}, 60_000);
+      // /b goes first, and /h is only sent once the server has /b's request, so
+      // /b's idle timer was armed no later than /h's. /h's header drip (DRIP_N *
+      // DRIP_MS = 20s) outlasts the deadline, so /h is aborted by the second sweep
+      // after it was armed; a build that re-armed on partial header reads would
+      // resolve it with a 200 after the full drip instead. That sweep (or an
+      // earlier one) would also have aborted /b had its body bytes not re-armed
+      // the timer, so /b still being there to receive the rest of its body once
+      // /h has failed is what proves the body path re-arms.
+      const bod = settle("/b");
+      const finishBody = await bodyDrip.promise;
+      const hdr = await settle("/h");
+      finishBody();
+      expect({ hdr, bod: await bod }).toEqual({
+        hdr: { ok: false, name: "TimeoutError", message: "The operation timed out." },
+        bod: { ok: true, status: 200, body: BODY },
+      });
+    } finally {
+      for (const iv of intervals) clearInterval(iv);
+      for (const s of sockets) s.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  },
+  60_000,
+);
 
 it.skipIf(isWindows)("sends the exact Content-Length for a file body of 100 GB", async () => {
   using dir = tempDir("fetch-large-file-body", { "large.bin": "" });

@@ -4973,6 +4973,15 @@ pub mod c {
     ))]
     pub use libc::{getloadavg, sockaddr_dl, sysctlbyname};
 
+    /// `dlsym` pseudo-handle: search the objects loaded after the one that
+    /// contains the caller.
+    #[cfg(all(unix, not(target_os = "android")))]
+    pub use libc::RTLD_NEXT;
+    /// Bionic's `<dlfcn.h>` value for 64-bit targets; the `libc` crate has no
+    /// binding for it on Android.
+    #[cfg(all(target_os = "android", target_pointer_width = "64"))]
+    pub const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
+
     /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
     #[cfg(unix)]
     pub unsafe fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void {

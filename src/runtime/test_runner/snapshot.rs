@@ -287,8 +287,7 @@ impl Snapshots {
         Err(crate::Error::ParseError)
     }
 
-    /// Loads the `exports[`name`] = `value`;` statements of a `.snap` file into `values`.
-    /// Any other statement is an error: skipped, it would count as a missing snapshot.
+    /// Loads the entries of a `.snap` file into `values`. Any other statement is an error.
     fn load_entries(
         values: &mut HashMap<u64, Box<[u8]>>,
         source: &bun_ast::Source,

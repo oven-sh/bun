@@ -1713,10 +1713,13 @@ pub fn join_abs_string_buf_z<'a, P: PlatformT>(
     unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
 }
 
-/// Directory that a non-absolute join base resolves against: the top-level
-/// directory once one has been recorded, otherwise the live working directory.
-/// Returns an empty slice when neither is available.
-fn working_dir(buf: &mut PathBuffer) -> &[u8] {
+/// Directory that a non-absolute `join_abs*` base resolves against: the
+/// top-level directory once one has been recorded, otherwise the live working
+/// directory. Returns an empty slice when neither is available (the join then
+/// anchors the path at the root). Callers that store an environment-supplied
+/// directory for later joins resolve it against this once, so that every
+/// consumer names the same directory even if the process changes directory.
+pub fn working_dir(buf: &mut PathBuffer) -> &[u8] {
     let top_level_dir = bun_core::top_level_dir();
     if crate::is_absolute(top_level_dir) {
         return top_level_dir;

@@ -743,6 +743,7 @@ impl PublishCommand {
     }
 
     fn check_package_version_exists(
+        manager: &PackageManager,
         package_name: &[u8],
         version: &[u8],
         registry: &Npm::Registry::Scope,
@@ -807,13 +808,14 @@ impl PublishCommand {
             headers.append(b"authorization", &auth_buf);
         }
 
+        let http_proxy = manager.http_proxy(&package_url);
         let mut req = http::AsyncHTTP::init_sync(
             http::Method::GET,
             package_url,
             headers.entries,
             headers.content.written_slice(),
             b"",
-            None,
+            http_proxy,
             None,
             http::FetchRedirect::Follow,
         );
@@ -860,6 +862,7 @@ impl PublishCommand {
         if tolerate_republish {
             let version_without_build_tag = dependency::without_build_tag(&ctx.package_version);
             let package_exists = Self::check_package_version_exists(
+                ctx.manager,
                 &ctx.package_name,
                 version_without_build_tag,
                 registry,
@@ -932,6 +935,7 @@ impl PublishCommand {
         // arena so the URL outlives `print_buf.clear()` below.
         let publish_url = URL::parse(crate::cli::cli_dupe(&print_buf));
         print_buf.clear();
+        let http_proxy = ctx.manager.http_proxy(&publish_url);
 
         let mut req = http::AsyncHTTP::init_sync(
             http::Method::PUT,
@@ -939,7 +943,7 @@ impl PublishCommand {
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
-            None,
+            http_proxy.clone(),
             None,
             http::FetchRedirect::Follow,
         );
@@ -1033,7 +1037,7 @@ impl PublishCommand {
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
                     publish_req_body,
-                    None,
+                    http_proxy,
                     None,
                     http::FetchRedirect::Follow,
                 );
@@ -1252,18 +1256,20 @@ impl PublishCommand {
                     ctx.manager.options.publish_config.auth_type,
                 )?;
 
+                let http_proxy = ctx.manager.http_proxy(&done_url);
+
                 loop {
                     response_buf.reset();
 
-                    // Note: `done_url`/`auth_headers.entries` move into
-                    // `init_sync`, so re-clone per iteration.
+                    // Note: `done_url`/`auth_headers.entries`/`http_proxy` move
+                    // into `init_sync`, so re-clone per iteration.
                     let mut req = http::AsyncHTTP::init_sync(
                         http::Method::GET,
                         done_url.clone(),
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
                         b"",
-                        None,
+                        http_proxy.clone(),
                         None,
                         http::FetchRedirect::Follow,
                     );

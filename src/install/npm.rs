@@ -146,6 +146,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     // returns. `init_sync` borrows the URL/header buffers for the duration of
     // the synchronous request only.
     let url = URL::parse(&print_buf);
+    let http_proxy = manager.http_proxy(&url);
 
     // `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
     // allocation; `headers` outlives `req`. `written_slice()` is the safe
@@ -159,7 +160,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.entries,
         header_buf,
         b"",
-        None,
+        http_proxy,
         None,
         http::FetchRedirect::Follow,
     );

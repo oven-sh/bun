@@ -1815,6 +1815,12 @@ declare module "bun:test" {
     toHaveReturned(): void;
 
     /**
+     * Ensures that a mock function has returned successfully at least once.
+     * @alias toHaveReturned
+     */
+    toReturn(): void;
+
+    /**
      * Ensures that a mock function has returned successfully `times` times.
      *
      * An unfulfilled promise counts as a failure, as does a thrown error.
@@ -1834,12 +1840,28 @@ declare module "bun:test" {
     toHaveLastReturnedWith(expected: unknown): void;
 
     /**
+     * Ensures that a mock function has returned a specific value on its last invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     * @alias toHaveLastReturnedWith
+     */
+    lastReturnedWith(expected: unknown): void;
+
+    /**
      * Ensures that a mock function has returned a specific value on the nth invocation.
      * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
      * @param n The 1-based index of the function call
      * @param expected The expected return value
      */
     toHaveNthReturnedWith(n: number, expected: unknown): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value on the nth invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     * @param n The 1-based index of the function call
+     * @param expected The expected return value
+     * @alias toHaveNthReturnedWith
+     */
+    nthReturnedWith(n: number, expected: unknown): void;
 
     /**
      * Ensures that a mock function is called.

@@ -373,24 +373,15 @@ impl BunxCommand {
         package_name: &[u8],
     ) -> crate::Result<Box<[u8]>> {
         let mut subpath = PathBuffer::uninit();
-        let len = {
-            let total = subpath.len();
-            let mut cursor: &mut [u8] = &mut subpath[..];
-            write!(
-                cursor,
-                "{}",
-                format_args!(
-                    "node_modules{sep}{pkg}{sep}package.json",
-                    sep = bun_paths::SEP as char,
-                    pkg = BStr::new(package_name),
-                ),
-            )
-            .expect("unreachable");
-            total - cursor.len()
-        };
-        subpath[len] = 0;
-        // SAFETY: subpath[len] == 0 written above
-        let subpath_z = ZStr::from_buf(&subpath[..], len);
+        let subpath_z = bun_core::fmt::buf_print_z(
+            &mut subpath,
+            format_args!(
+                "node_modules{sep}{pkg}{sep}package.json",
+                sep = bun_paths::SEP as char,
+                pkg = BStr::new(package_name),
+            ),
+        )
+        .map_err(|_| crate::Error::PathTooLong)?;
         Self::get_bin_name_from_subpath(transpiler, dir_fd, subpath_z)
     }
 
@@ -402,21 +393,15 @@ impl BunxCommand {
     ) -> crate::Result<Box<[u8]>> {
         let mut subpath = PathBuffer::uninit();
         if with_stale_check {
-            let len = {
-                let total = subpath.len();
-                let mut cursor: &mut [u8] = &mut subpath[..];
-                write!(
-                    cursor,
+            let subpath_z = bun_core::fmt::buf_print_z(
+                &mut subpath,
+                format_args!(
                     "{}{}package.json",
                     BStr::new(tempdir_name),
                     bun_paths::SEP as char,
-                )
-                .expect("unreachable");
-                total - cursor.len()
-            };
-            subpath[len] = 0;
-            // SAFETY: subpath[len] == 0 written above
-            let subpath_z = ZStr::from_buf(&subpath[..], len);
+                ),
+            )
+            .map_err(|_| crate::Error::PathTooLong)?;
             let target_package_json_fd = match bun_sys::openat(Fd::cwd(), subpath_z, O::RDONLY, 0) {
                 Ok(fd) => fd,
                 Err(_) => return Err(crate::Error::NeedToInstall),
@@ -470,22 +455,16 @@ impl BunxCommand {
             let _ = target_package_json.close();
         }
 
-        let len = {
-            let total = subpath.len();
-            let mut cursor: &mut [u8] = &mut subpath[..];
-            write!(
-                cursor,
+        let subpath_z = bun_core::fmt::buf_print_z(
+            &mut subpath,
+            format_args!(
                 "{tmp}{sep}node_modules{sep}{pkg}{sep}package.json",
                 tmp = BStr::new(tempdir_name),
                 sep = bun_paths::SEP as char,
                 pkg = BStr::new(package_name),
-            )
-            .expect("unreachable");
-            total - cursor.len()
-        };
-        subpath[len] = 0;
-        // SAFETY: subpath[len] == 0 written above
-        let subpath_z = ZStr::from_buf(&subpath[..], len);
+            ),
+        )
+        .map_err(|_| crate::Error::PathTooLong)?;
 
         Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), subpath_z)
     }
@@ -1186,7 +1165,7 @@ impl BunxCommand {
                                         bin = BStr::new(&package_name_for_bin),
                                         exe = EXE_SUFFIX,
                                     )
-                                    .expect("unreachable");
+                                    .map_err(|_| crate::Error::PathTooLong)?;
                                     let written = buf_total - cursor.len();
                                     // SAFETY: `written` bytes initialized above
                                     unsafe {
@@ -1467,7 +1446,7 @@ impl BunxCommand {
                 bin = BStr::new(initial_bin_name),
                 exe = EXE_SUFFIX,
             )
-            .expect("unreachable");
+            .map_err(|_| crate::Error::PathTooLong)?;
             let written = buf_total - cursor.len();
             // SAFETY: `written` bytes initialized above
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
@@ -1532,7 +1511,7 @@ impl BunxCommand {
                             BStr::new(&package_name_for_bin),
                             EXE_SUFFIX,
                         )
-                        .expect("unreachable");
+                        .map_err(|_| crate::Error::PathTooLong)?;
                         let written = buf_total - cursor.len();
                         // SAFETY: `written` bytes initialized above
                         unsafe {

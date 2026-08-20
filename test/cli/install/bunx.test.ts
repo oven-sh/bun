@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, readdirSorted, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
@@ -1380,3 +1380,150 @@ it.concurrent.skipIf(isWindows)(
     }
   },
 );
+
+// bunx formats every path it probes into a fixed-size path buffer (4096 bytes
+// on Linux, 1024 on macOS). The inputs are not bounded: the bin name comes out
+// of a package.json (the project's node_modules or the bunx cache) and the
+// cache directory is derived from $TMPDIR. A path that does not fit must be
+// reported as an error, not abort the process.
+describe("paths that do not fit in the path buffer", () => {
+  // Longer than the path buffer on every platform (~96 KiB on Windows).
+  const longBinName = Buffer.alloc(100_000, "x").toString();
+  const longBinPackageJson = (name: string) =>
+    JSON.stringify({ name, version: "1.0.0", bin: { [longBinName]: "cli.js" } });
+
+  let port: number;
+
+  beforeAll(() => {
+    dummyBeforeAll();
+    port = getPort()!;
+  });
+
+  afterAll(() => {
+    dummyAfterAll();
+  });
+
+  const run = (cwd: string, env: Record<string, string>, ...args: string[]) => {
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", ...args],
+      cwd,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+  };
+
+  // The bin name is read from the package already installed in the project,
+  // before bunx installs anything.
+  it.concurrent("bin name from the project's node_modules", async () => {
+    const { x_dir, env } = setup();
+    const pkg = "bunx-long-bin-fixture";
+    await mkdir(join(x_dir, "node_modules", pkg), { recursive: true });
+    await writeFile(join(x_dir, "node_modules", pkg, "package.json"), longBinPackageJson(pkg));
+
+    const [err, out, exitCode] = await run(x_dir, env, "--no-install", pkg);
+    expect(err).toContain("PathTooLong");
+    expect(out).toHaveLength(0);
+    expect(exitCode).toBe(1);
+  });
+
+  // The bin name is read from the package.json bunx just installed into its
+  // cache, after `bun add` has run.
+  it("bin name from the package installed into the bunx cache", async () => {
+    const { x_dir, env } = setup();
+    const pkg = "bunx-long-bin-fixture";
+    const pkgRoot = tmpdirSync();
+    await mkdir(join(pkgRoot, "package"), { recursive: true });
+    await writeFile(join(pkgRoot, "package", "package.json"), longBinPackageJson(pkg));
+    await writeFile(join(pkgRoot, "package", "cli.js"), `#!/usr/bin/env node\nconsole.log("ran");\n`);
+    const tgzDir = tmpdirSync();
+    await Bun.$`tar -czf ${join(tgzDir, `${pkg}-1.0.0.tgz`)} -C ${pkgRoot} package`;
+
+    // The manifest does not declare the bin: if it did, `bun add` would fail to
+    // link it (ENAMETOOLONG) and bunx would exit with that error before it gets
+    // to read the installed package.json.
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "1.0.0": { as: "1.0.0" } }, 0, tgzDir));
+
+    const [err, , exitCode] = await run(x_dir, { ...env, npm_config_registry: `http://localhost:${port}/` }, pkg);
+    expect(urls).toContain(`http://localhost:${port}/${pkg}-1.0.0.tgz`);
+    expect(err).toContain("PathTooLong");
+    expect(exitCode).toBe(1);
+  });
+
+  // $TMPDIR is padded so that <cache>/node_modules/<pkg>/package.json, which
+  // bunx reads to learn the cached package's bin name, lands right at the
+  // buffer size, while the shorter <cache>/node_modules/.bin/<name> probes
+  // always fit. `overBy` is the package.json path length minus the buffer
+  // size: one byte under, it fits together with its NUL terminator, bunx reads
+  // it and runs the bin it names (this also pins the cache layout the other two
+  // cases depend on); at exactly the buffer size only the terminator is out of
+  // room. Unix only: the cache location includes the uid, and on Windows the
+  // buffer is sized for the longest path the OS can address, so no existing
+  // directory can overflow it.
+  it.concurrent.skipIf(isWindows).each([
+    ["one byte under the path buffer size", -1],
+    ["exactly the path buffer size", 0],
+    ["64 bytes over the path buffer size", 64],
+  ] as const)("cached package.json path is %s", async (_label, overBy) => {
+    const maxPathBytes = isLinux ? 4096 : 1024;
+    const { x_dir, env } = setup();
+    const scope = `@${Buffer.alloc(100, "s").toString()}`;
+    const name = "bunx-deep-cache-fixture";
+    const pkg = `${scope}/${name}`;
+    const realBin = "deep-cache-real-bin";
+    const cacheDirName = `bunx-${process.getuid!()}-${pkg}@latest`;
+
+    // Pad the temp dir with nested directories until
+    // `${tmp}/${cacheDirName}/node_modules/${pkg}/package.json` is exactly
+    // maxPathBytes + overBy long. Each component stays well under NAME_MAX.
+    const tmpLength = maxPathBytes + overBy - `/${cacheDirName}/node_modules/${pkg}/package.json`.length;
+    let tmp = env.TMPDIR;
+    while (tmp.length < tmpLength) {
+      let component = Math.min(200, tmpLength - tmp.length - 1);
+      // Never leave exactly one byte, which would need an empty component.
+      if (tmpLength - tmp.length - 1 - component === 1) component--;
+      tmp += "/" + Buffer.alloc(component, "p").toString();
+    }
+    expect(tmp).toHaveLength(tmpLength);
+    // `name` is the longer of the two bin names bunx probes for.
+    expect(realBin.length).toBeLessThanOrEqual(name.length);
+    expect(`${tmp}/${cacheDirName}/node_modules/.bin/${name}`.length).toBeLessThan(maxPathBytes);
+
+    const cacheDir = join(tmp, cacheDirName);
+    const binDir = join(cacheDir, "node_modules", ".bin");
+    await mkdir(binDir, { recursive: true });
+    chmodSync(cacheDir, 0o755);
+    chmodSync(resolve(cacheDir, ".."), 0o755);
+    // A fresh cache entry, so bunx goes on to look up the bin name inside it.
+    await writeFile(join(cacheDir, "package.json"), "{}\n");
+    // The bin is always there; whether bunx can find out about it depends only
+    // on whether the package.json path fits.
+    await writeFile(join(binDir, realBin), "#!/bin/sh\necho DEEP_CACHE_REAL_BIN_RAN\n");
+    chmodSync(join(binDir, realBin), 0o755);
+    if (overBy < 0) {
+      const packageJson = join(cacheDir, "node_modules", pkg, "package.json");
+      expect(packageJson).toHaveLength(maxPathBytes + overBy);
+      await mkdir(join(cacheDir, "node_modules", pkg), { recursive: true });
+      await writeFile(packageJson, JSON.stringify({ name: pkg, version: "1.0.0", bin: { [realBin]: "cli.js" } }));
+    }
+
+    const [err, out, exitCode] = await run(
+      x_dir,
+      { ...env, TMPDIR: tmp, TMP: tmp, TEMP: tmp, BUN_TMPDIR: tmp },
+      "--no-install",
+      pkg,
+    );
+    if (overBy < 0) {
+      expect(err).toBe("");
+      expect(out).toBe("DEEP_CACHE_REAL_BIN_RAN\n");
+      expect(exitCode).toBe(0);
+    } else {
+      expect(err).toContain(`Could not find an existing '${name}' binary to run.`);
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+  });
+});

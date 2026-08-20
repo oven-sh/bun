@@ -793,7 +793,21 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
+                // Bare clones have no fetch refspec; --prune clears refs renamed upstream.
+                if let Err(err) = exec(
+                    env,
+                    &[
+                        b"git",
+                        b"-C",
+                        path,
+                        b"fetch",
+                        b"--quiet",
+                        b"--prune",
+                        b"origin",
+                        b"+refs/heads/*:refs/heads/*",
+                        b"+refs/tags/*:refs/tags/*",
+                    ],
+                ) {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -818,6 +832,9 @@ impl RepositoryExt for Repository {
                         b"core.longpaths=true",
                         b"--quiet",
                         b"--bare",
+                        // The refresh fetches "origin" by name; ignore clone.defaultRemoteName.
+                        b"-o",
+                        b"origin",
                         url,
                         staging.tmp_path(),
                     ],

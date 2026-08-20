@@ -5,8 +5,32 @@ import { itBundled } from "../expectBundled";
 // https://github.com/evanw/esbuild
 // most of these are from scripts/end-to-end-tests.js but some are from other files
 
+/**
+ * Bundles a group of the suite's single-file programs as one bundle and runs it
+ * once, instead of one bundle and one subprocess per program. Each program
+ * becomes its own module, `in.js` imports them in order, and each program logs
+ * its file name after its checks. The exact stdout proves that every program
+ * ran, and when one throws, stdout ends at the program before it.
+ *
+ * `support` holds the files the programs import or require.
+ *
+ * The export keeps the output an ES module. Without it, bun runs an output whose
+ * top level declares a hoisted `exports`, `module` or `require` (CommonJSSymbol)
+ * as a CommonJS module, where those names are the wrapper's.
+ */
+function programs(sources: Record<string, string>, support: Record<string, string> = {}) {
+  const names = Object.keys(sources);
+  const files: Record<string, string> = {
+    "in.js": [...names.map(name => `import './${name}'`), `export const ran = ${JSON.stringify(names)}`].join("\n"),
+  };
+  for (const name of names) {
+    files[name] = `${sources[name]}\nconsole.log(${JSON.stringify(name)})`;
+  }
+  return { files: { ...files, ...support }, run: { stdout: names.join("\n") } };
+}
+
 // For debug, all files are written to $TEMP/bun-bundle-tests/extra
-describe("bundler", () => {
+describe.concurrent("bundler", () => {
   itBundled("extra/FileAsDirectoryBreak", {
     files: {
       "/index.js": `
@@ -61,47 +85,25 @@ describe("bundler", () => {
   });
   // Test arbitrary module namespace identifier names
   // See https://github.com/tc39/ecma262/pull/2154
-  itBundled("extra/ArbitraryModuleNamespaceIdentifiers1", {
-    files: {
-      "entry.js": `import {'*' as star} from './export.js'; if (star !== 123) throw 'fail'`,
-      "export.js": `let foo = 123; export {foo as '*'}`,
-    },
-    run: true,
-  });
-  itBundled("extra/ArbitraryModuleNamespaceIdentifiers2", {
-    files: {
-      "entry.js": `import {'\\0' as bar} from './export.js'; if (bar !== 123) throw 'fail'`,
-      "export.js": `let foo = 123; export {foo as '\\0'}`,
-    },
-    run: true,
-  });
-  itBundled("extra/ArbitraryModuleNamespaceIdentifiers3", {
-    files: {
-      "entry.js": `import {'\\uD800\\uDC00' as bar} from './export.js'; if (bar !== 123) throw 'fail'`,
-      "export.js": `let foo = 123; export {foo as '\\uD800\\uDC00'}`,
-    },
-    run: true,
-  });
-  itBundled("extra/ArbitraryModuleNamespaceIdentifiers4", {
-    files: {
-      "entry.js": `import {'🍕' as bar} from './export.js'; if (bar !== 123) throw 'fail'`,
-      "export.js": `let foo = 123; export {foo as '🍕'}`,
-    },
-    run: true,
-  });
-  itBundled("extra/ArbitraryModuleNamespaceIdentifiers5", {
-    files: {
-      "entry.js": `import {' ' as bar} from './export.js'; if (bar !== 123) throw 'fail'`,
-      "export.js": `export let foo = 123; export {foo as ' '} from './export.js'`,
-    },
-    run: true,
-  });
-  itBundled("extra/ArbitraryModuleNamespaceIdentifiers6", {
-    files: {
-      "entry.js": `import {'' as ab} from './export.js'; if (ab.foo !== 123 || ab.bar !== 234) throw 'fail'`,
-      "export.js": `export let foo = 123, bar = 234; export * as '' from './export.js'`,
-    },
-    run: true,
+  itBundled("extra/ArbitraryModuleNamespaceIdentifiers", {
+    ...programs(
+      {
+        "1.js": `import {'*' as star} from './export1.js'; if (star !== 123) throw 'fail'`,
+        "2.js": `import {'\\0' as bar} from './export2.js'; if (bar !== 123) throw 'fail'`,
+        "3.js": `import {'\\uD800\\uDC00' as bar} from './export3.js'; if (bar !== 123) throw 'fail'`,
+        "4.js": `import {'🍕' as bar} from './export4.js'; if (bar !== 123) throw 'fail'`,
+        "5.js": `import {' ' as bar} from './export5.js'; if (bar !== 123) throw 'fail'`,
+        "6.js": `import {'' as ab} from './export6.js'; if (ab.foo !== 123 || ab.bar !== 234) throw 'fail'`,
+      },
+      {
+        "export1.js": `let foo = 123; export {foo as '*'}`,
+        "export2.js": `let foo = 123; export {foo as '\\0'}`,
+        "export3.js": `let foo = 123; export {foo as '\\uD800\\uDC00'}`,
+        "export4.js": `let foo = 123; export {foo as '🍕'}`,
+        "export5.js": `export let foo = 123; export {foo as ' '} from './export5.js'`,
+        "export6.js": `export let foo = 123, bar = 234; export * as '' from './export6.js'`,
+      },
+    ),
   });
 
   itBundled("extra/RemoveASMDirective", {
@@ -179,47 +181,25 @@ describe("bundler", () => {
     },
     run: { file: "runtime.js" },
   });
-  itBundled("extra/CJSExport1", {
-    files: {
-      "in.js": `const out = require('./foo'); if (out.__esModule || out.foo !== 123) throw 'fail'`,
-      "foo.js": `exports.foo = 123`,
-    },
-    run: true,
-  });
-  itBundled("extra/CJSExport2", {
-    files: {
-      "in.js": `const out = require('./foo'); if (out.__esModule || out !== 123) throw 'fail'`,
-      "foo.js": `module.exports = 123`,
-    },
-    run: true,
-  });
-  itBundled("extra/CJSExport3", {
-    files: {
-      "in.js": `const out = require('./foo'); if (!out.__esModule || out.foo !== 123) throw 'fail'`,
-      "foo.js": `export const foo = 123`,
-    },
-    run: true,
-  });
-  itBundled("extra/CJSExport4", {
-    files: {
-      "in.js": `const out = require('./foo'); if (!out.__esModule || out.default !== 123) throw 'fail'`,
-      "foo.js": `export default 123`,
-    },
-    run: true,
-  });
-  itBundled("extra/CJSExport5", {
-    files: {
-      "in.js": `const out = require('./foo'); if (!out.__esModule || out.default !== null) throw 'fail'`,
-      "foo.js": `export default function x() {} x = null`,
-    },
-    run: true,
-  });
-  itBundled("extra/CJSExport6", {
-    files: {
-      "in.js": `const out = require('./foo'); if (!out.__esModule || out.default !== null) throw 'fail'`,
-      "foo.js": `export default class x {} x = null`,
-    },
-    run: true,
+  itBundled("extra/CJSExport", {
+    ...programs(
+      {
+        "1.js": `const out = require('./foo1'); if (out.__esModule || out.foo !== 123) throw 'fail'`,
+        "2.js": `const out = require('./foo2'); if (out.__esModule || out !== 123) throw 'fail'`,
+        "3.js": `const out = require('./foo3'); if (!out.__esModule || out.foo !== 123) throw 'fail'`,
+        "4.js": `const out = require('./foo4'); if (!out.__esModule || out.default !== 123) throw 'fail'`,
+        "5.js": `const out = require('./foo5'); if (!out.__esModule || out.default !== null) throw 'fail'`,
+        "6.js": `const out = require('./foo6'); if (!out.__esModule || out.default !== null) throw 'fail'`,
+      },
+      {
+        "foo1.js": `exports.foo = 123`,
+        "foo2.js": `module.exports = 123`,
+        "foo3.js": `export const foo = 123`,
+        "foo4.js": `export default 123`,
+        "foo5.js": `export default function x() {} x = null`,
+        "foo6.js": `export default class x {} x = null`,
+      },
+    ),
   });
   itBundled("extra/CJSExport7", {
     files: {
@@ -390,7 +370,9 @@ describe("bundler", () => {
     format: "cjs",
     run: true,
   });
+  // The `export *` in inner.ts also lands on the entry's module.exports, so out.b is 'b'.
   itBundled("extra/ESBuildIssue1894", {
+    todo: true,
     files: {
       "in.ts": `
         export * from './a.cjs'
@@ -406,7 +388,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    run: true,
+    run: { file: "node.js" },
   });
   // Validate internal and external export correctness regarding "__esModule".
   // An ES module importing itself should not see "__esModule". But a CommonJS
@@ -672,9 +654,9 @@ describe("bundler", () => {
   });
 
   // Various ESM cases
-  itBundled("extra/CatchScope1", {
-    files: {
-      "in.js": `
+  itBundled("extra/CatchScope", {
+    ...programs({
+      "1.js": `
         var x = 0, y = []
         try {
           throw 1
@@ -686,15 +668,7 @@ describe("bundler", () => {
         y.push(x)
         if (y + '' !== '1,2,0') throw 'fail: ' + y
       `,
-    },
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    minifyWhitespace: true,
-    run: true,
-  });
-  itBundled("extra/CatchScope2", {
-    files: {
-      "in.js": `
+      "2.js": `
         var x = 0, y = []
         try {
           throw 1
@@ -707,15 +681,7 @@ describe("bundler", () => {
         y.push(x)
         if (y + '' !== '1,2,3') throw 'fail: ' + y
       `,
-    },
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    minifyWhitespace: true,
-    run: true,
-  });
-  itBundled("extra/CatchScope3", {
-    files: {
-      "in.js": `
+      "3.js": `
         var y = []
         try {
           throw 1
@@ -727,15 +693,7 @@ describe("bundler", () => {
         y.push(x)
         if (y + '' !== '1,2,') throw 'fail: ' + y
       `,
-    },
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    minifyWhitespace: true,
-    run: true,
-  });
-  itBundled("extra/CatchScope4", {
-    files: {
-      "in.js": `
+      "4.js": `
         var y = []
         try {
           throw 1
@@ -747,15 +705,7 @@ describe("bundler", () => {
         y.push(typeof x)
         if (y + '' !== '1,2,undefined') throw 'fail: ' + y
       `,
-    },
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    minifyWhitespace: true,
-    run: true,
-  });
-  itBundled("extra/CatchScope5", {
-    files: {
-      "in.js": `
+      "5.js": `
         var y = []
         try {
           throw 1
@@ -773,15 +723,7 @@ describe("bundler", () => {
         y.push(x)
         if (y + '' !== '1,2,3,1,') throw 'fail: ' + y
       `,
-    },
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    minifyWhitespace: true,
-    run: true,
-  });
-  itBundled("extra/CatchScope6", {
-    files: {
-      "in.js": `
+      "6.js": `
         var y = []
         try { x; y.push('fail') } catch (e) {}
         try {
@@ -792,17 +734,8 @@ describe("bundler", () => {
         try { x; y.push('fail') } catch (e) {}
         if (y + '' !== '1') throw 'fail: ' + y
       `,
-    },
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    minifyWhitespace: true,
-    run: true,
-  });
-
-  // https://github.com/evanw/esbuild/issues/1812
-  itBundled("extra/CatchScope7", {
-    files: {
-      "in.js": `
+      // https://github.com/evanw/esbuild/issues/1812
+      "7.js": `
         let a = 1;
         let def = "PASS2";
         try {
@@ -812,15 +745,7 @@ describe("bundler", () => {
           if (b !== 'PASS1' || d !== 'PASS2') throw 'fail: ' + b + ' ' + d
         }
       `,
-    },
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    minifyWhitespace: true,
-    run: true,
-  });
-  itBundled("extra/CatchScope8", {
-    files: {
-      "in.js": `
+      "8.js": `
         let a = 1;
         let def = "PASS2";
         try {
@@ -830,33 +755,26 @@ describe("bundler", () => {
           if (b !== 'PASS1' || d !== 'PASS2') throw 'fail: ' + b + ' ' + d
         }
       `,
-    },
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    minifyWhitespace: true,
-    run: true,
-  });
-  itBundled("extra/CatchScope9", {
-    files: {
-      "in.js": `
+      "9.js": `
         try {
           throw { x: 'z', z: 123 }
         } catch ({ x, [x]: y }) {
           if (y !== 123) throw 'fail'
         }
       `,
-    },
+    }),
     minifyIdentifiers: true,
     minifySyntax: true,
     minifyWhitespace: true,
-    run: true,
   });
+  // Test cyclic import issues (shouldn't crash on evaluation)
   itBundled("extra/CyclicImport2", {
     files: {
       "entry.js": `import * as foo from './foo'; export default {foo, bar: require('./bar')}`,
       "foo.js": `import * as a from './entry'; import * as b from './bar'; export default {a, b}`,
       "bar.js": `const entry = require('./entry'); export function foo() { return entry }`,
     },
+    run: true,
   });
 
   // Test certain minification transformations
@@ -871,19 +789,16 @@ describe("bundler", () => {
     },
     { value: {}, label: "" },
   ]) {
-    itBundled(`extra/${minify.label || "NoMinify"}1`, {
-      files: {
-        "in.js": `let fn = (x) => { if (x && y) return; function y() {} throw 'fail' }; fn(fn)`,
-      },
-      ...minify.value,
-    });
-    itBundled(`extra/${minify.label || "NoMinify"}2`, {
-      files: {
-        "in.js": `let fn = (a, b) => { if (a && (x = () => y) && b) return; var x; let y = 123; if (x() !== 123) throw 'fail' }; fn(fn)`,
-      },
+    const prefix = minify.label || "NoMinify";
+    itBundled(`extra/${prefix}Hoisting`, {
+      ...programs({
+        "1.js": `let fn = (x) => { if (x && y) return; function y() {} throw 'fail' }; fn(fn)`,
+        "2.js": `let fn = (a, b) => { if (a && (x = () => y) && b) return; var x; let y = 123; if (x() !== 123) throw 'fail' }; fn(fn)`,
+      }),
       ...minify.value,
     });
 
+    // Check property access simplification
     for (const { access, label } of [
       {
         access: ".a",
@@ -894,12 +809,11 @@ describe("bundler", () => {
         label: minify.label + "BracketAccess",
       },
     ]) {
+      // All of the snippets below go into one bundle, `extra/${label}`, as the modules `1.js`, `2.js`, ...
+      const snippets: Record<string, string> = {};
       function add(n: number, files: Record<string, string>) {
-        itBundled(`extra/${label}${n}`, {
-          files,
-          run: true,
-          target: "bun",
-        });
+        if (`${n}.js` in snippets) throw new Error(`${label}${n} is defined twice`);
+        snippets[`${n}.js`] = files["in.js"];
       }
       add(1, {
         "in.js": `if ({a: 1}${access} !== 1) throw 'fail'`,
@@ -977,19 +891,24 @@ describe("bundler", () => {
           catch (e) { if (e === 'fail') throw e }
         `,
       });
-      add(22, {
+      add(23, {
         "in.js": `
           let x = 1;
           ({ set a(y) { x = y } }${access} = 2);
           if (x !== 2) throw 'fail'
         `,
       });
+      itBundled(`extra/${label}`, {
+        ...programs(snippets),
+        ...minify.value,
+        target: "bun",
+      });
     }
 
     // Check try/catch simplification
-    itBundled(`extra/${minify.label || "NoMinify"}CatchScope1`, {
-      files: {
-        "in.js": `
+    itBundled(`extra/${prefix}CatchScope`, {
+      ...programs({
+        "1.js": `
           try {
             try {
               throw 0
@@ -1000,10 +919,35 @@ describe("bundler", () => {
           }
           if (x !== 1) throw 'fail'
         `,
-      },
-      run: true,
+        "3.js": `
+          try {
+            throw 0
+          } catch (x) {
+            var x = 1
+          }
+          if (x !== void 0) throw 'fail'
+        `,
+        "4.js": `
+          let works
+          try {
+            throw { get a() { works = true } }
+          } catch ({ a }) {}
+          if (!works) throw 'fail'
+        `,
+        "5.js": `
+          let works
+          try {
+            throw { *[Symbol.iterator]() { works = true } }
+          } catch ([x]) {
+          }
+          if (!works) throw 'fail'
+        `,
+      }),
+      ...minify.value,
     });
-    itBundled(`extra/${minify.label || "NoMinify"}CatchScope2`, {
+    // Minified, this fails: the direct eval does not stop `y` from being renamed (#35955 fixes that).
+    itBundled(`extra/${prefix}CatchScope2`, {
+      todo: minify.label === "Minify",
       files: {
         "in.js": `
           let y
@@ -1015,53 +959,18 @@ describe("bundler", () => {
           if (y !== 1) throw 'fail'
         `,
       },
-      run: true,
-    });
-    itBundled(`extra/${minify.label || "NoMinify"}CatchScope3`, {
-      files: {
-        "in.js": `
-          try {
-            throw 0
-          } catch (x) {
-            var x = 1
-          }
-          if (x !== void 0) throw 'fail'
-        `,
-      },
-      run: true,
-    });
-    itBundled(`extra/${minify.label || "NoMinify"}CatchScope4`, {
-      files: {
-        "in.js": `
-          let works
-          try {
-            throw { get a() { works = true } }
-          } catch ({ a }) {}
-          if (!works) throw 'fail'
-        `,
-      },
-      run: true,
-    });
-    itBundled(`extra/${minify.label || "NoMinify"}CatchScope5`, {
-      files: {
-        "in.js": `
-          let works
-          try {
-            throw { *[Symbol.iterator]() { works = true } }
-          } catch ([x]) {
-          }
-          if (!works) throw 'fail'
-        `,
-      },
+      ...minify.value,
       run: true,
     });
 
-    // Check variable initializer inlining
-    itBundled(`extra/${minify.label || "NoMinify"}VariableInitializerInlining`, {
+    // Check variable initializer inlining. `fn` must not be inlined as the call `obj.bar()`, which
+    // would pass `obj` as `this`. Bun runs out.js as an ES module, so a plain call gets `undefined`
+    // instead of the `globalThis` the esbuild version expects.
+    itBundled(`extra/${prefix}VariableInitializerInlining`, {
       files: {
         "in.js": `
           function foo() {
-            if (this !== globalThis) throw 'fail'
+            if (this !== globalThis && this !== undefined) throw 'fail'
           }
           function main() {
             let obj = { bar: foo };
@@ -1071,11 +980,13 @@ describe("bundler", () => {
           main()
         `,
       },
+      ...minify.value,
+      run: true,
     });
     // Check global constructor behavior
-    itBundled(`extra/${minify.label || "NoMinify"}GlobalConstructorBehavior1`, {
-      files: {
-        "in.js": `
+    itBundled(`extra/${prefix}GlobalConstructorBehavior`, {
+      ...programs({
+        "1.js": `
           const check = (before, after) => {
             if (Boolean(before) !== after) throw 'fail: Boolean(' + before + ') should not be ' + Boolean(before)
             if (new Boolean(before) === after) throw 'fail: new Boolean(' + before + ') should not be ' + new Boolean(before)
@@ -1094,12 +1005,7 @@ describe("bundler", () => {
           checkSpread([0], false); check([1], true)
           checkSpread([], false)
         `,
-      },
-      run: true,
-    });
-    itBundled(`extra/${minify.label || "NoMinify"}GlobalConstructorBehavior2`, {
-      files: {
-        "in.js": `
+        "2.js": `
           class ToPrimitive { [Symbol.toPrimitive]() { return '100.001' } }
           const someObject = { toString: () => 123, valueOf: () => 321 }
 
@@ -1125,12 +1031,7 @@ describe("bundler", () => {
           checkSpread(['123'], 123)
           checkSpread([], 0)
         `,
-      },
-      run: true,
-    });
-    itBundled(`extra/${minify.label || "NoMinify"}GlobalConstructorBehavior3`, {
-      files: {
-        "in.js": `
+        "3.js": `
           class ToPrimitive { [Symbol.toPrimitive]() { return 100.001 } }
           const someObject = { toString: () => 123, valueOf: () => 321 }
 
@@ -1167,8 +1068,8 @@ describe("bundler", () => {
           }
           checkAndExpectNewToThrow(Symbol('abc'), 'Symbol(abc)')
         `,
-      },
-      run: true,
+      }),
+      ...minify.value,
     });
   }
   // Test minification of hoisted top-level symbols declared in nested scopes.
@@ -1209,112 +1110,84 @@ describe("bundler", () => {
   // wrappers. Previously this didn't work due to a bug that considered for
   // loop initializers to already be in the top-level scope. For more info
   // see: https://github.com/evanw/esbuild/issues/1455.
-  itBundled(`extra/ForLoopInitializerHoisting1`, {
-    files: {
-      "in.js": `
-        if (require('./nested').foo() !== 10) throw 'fail'
-      `,
-      "nested.js": `
-        for (var i = 0; i < 10; i++) ;
-        export function foo() { return i }
-      `,
-    },
-    run: true,
-  });
-  itBundled(`extra/ForLoopInitializerHoisting2`, {
-    files: {
-      "in.js": `
-        if (require('./nested').foo() !== 'c') throw 'fail'
-      `,
-      "nested.js": `
-        for (var i in {a: 1, b: 2, c: 3}) ;
-        export function foo() { return i }
-      `,
-    },
-    run: true,
-  });
-  itBundled(`extra/ForLoopInitializerHoisting3`, {
-    files: {
-      "in.js": `
-        if (require('./nested').foo() !== 3) throw 'fail'
-      `,
-      "nested.js": `
-        for (var i of [1, 2, 3]) ;
-        export function foo() { return i }
-      `,
-    },
-    run: true,
+  itBundled(`extra/ForLoopInitializerHoisting`, {
+    ...programs(
+      {
+        "1.js": `if (require('./nested1').foo() !== 10) throw 'fail'`,
+        "2.js": `if (require('./nested2').foo() !== 'c') throw 'fail'`,
+        "3.js": `if (require('./nested3').foo() !== 3) throw 'fail'`,
+      },
+      {
+        "nested1.js": `
+          for (var i = 0; i < 10; i++) ;
+          export function foo() { return i }
+        `,
+        "nested2.js": `
+          for (var i in {a: 1, b: 2, c: 3}) ;
+          export function foo() { return i }
+        `,
+        "nested3.js": `
+          for (var i of [1, 2, 3]) ;
+          export function foo() { return i }
+        `,
+      },
+    ),
   });
 
   // Test tree shaking
-  itBundled(`extra/TreeShaking1`, {
-    files: {
-      "entry.js": `import * as foo from './foo'; if (global.dce0 !== 123 || foo.abc !== 'abc') throw 'fail'`,
-      "foo/index.js": `global.dce0 = 123; export const abc = 'abc'`,
-      "foo/package.json": `{ "sideEffects": false }`,
+  itBundled(`extra/TreeShaking`, {
+    ...programs(
+      {
+        // Keep because used (ES6)
+        "1.js": `import * as foo from './foo1'; if (global.dce0 !== 123 || foo.abc !== 'abc') throw 'fail'`,
+        // Remove because unused (ES6)
+        "2.js": `import * as foo from './foo2'; if (global.dce1 !== void 0) throw 'fail'`,
+        // Keep because side effects (ES6)
+        "3.js": `import * as foo from './foo3'; if (global.dce2 !== 123) throw 'fail'`,
+        // Keep because used (CommonJS)
+        "4.js": `import foo from './foo4'; if (global.dce3 !== 123 || foo.abc !== 'abc') throw 'fail'`,
+        // Remove because unused (CommonJS)
+        "5.js": `import foo from './foo5'; if (global.dce4 !== void 0) throw 'fail'`,
+        // Keep because side effects (CommonJS)
+        "6.js": `import foo from './foo6'; if (global.dce5 !== 123) throw 'fail'`,
+        // Note: Tree shaking this could technically be considered incorrect because
+        // the import is for a property whose getter in this case has a side effect.
+        // However, this is very unlikely and the vast majority of the time people
+        // would likely rather have the code be tree-shaken. This test case enforces
+        // the technically incorrect behavior as documentation that this edge case
+        // is being ignored.
+        "7.js": `import {foo, bar} from './foo7'; let unused = foo; if (bar) throw 'expected "foo" to be tree-shaken'`,
+      },
+      {
+        "foo1/index.js": `global.dce0 = 123; export const abc = 'abc'`,
+        "foo1/package.json": `{ "sideEffects": false }`,
+        "foo2/index.js": `global.dce1 = 123; export const abc = 'abc'`,
+        "foo2/package.json": `{ "sideEffects": false }`,
+        "foo3/index.js": `global.dce2 = 123; export const abc = 'abc'`,
+        "foo3/package.json": `{ "sideEffects": true }`,
+        "foo4/index.js": `global.dce3 = 123; exports.abc = 'abc'`,
+        "foo4/package.json": `{ "sideEffects": false }`,
+        "foo5/index.js": `global.dce4 = 123; exports.abc = 'abc'`,
+        "foo5/package.json": `{ "sideEffects": false }`,
+        "foo6/index.js": `global.dce5 = 123; exports.abc = 'abc'`,
+        "foo6/package.json": `{ "sideEffects": true }`,
+        "foo7.js": `module.exports = {get foo() { module.exports.bar = 1 }, bar: 0}`,
+      },
+    ),
+    // foo2 and foo5 are removed from the bundle, and so is `let unused = foo` in 7.js.
+    assertNotPresent: {
+      "/out.js": ["dce1 = 123", "dce4 = 123", "unused"],
     },
-    run: true,
   });
-  itBundled(`extra/TreeShaking2`, {
-    files: {
-      "entry.js": `import * as foo from './foo'; if (global.dce1 !== void 0) throw 'fail'`,
-      "foo/index.js": `global.dce1 = 123; export const abc = 'abc'`,
-      "foo/package.json": `{ "sideEffects": false }`,
-    },
-    run: true,
-  });
-  itBundled(`extra/TreeShaking3`, {
-    files: {
-      "entry.js": `import * as foo from './foo'; if (global.dce2 !== 123) throw 'fail'`,
-      "foo/index.js": `global.dce2 = 123; export const abc = 'abc'`,
-      "foo/package.json": `{ "sideEffects": true }`,
-    },
-    run: true,
-  });
-  itBundled(`extra/TreeShaking4`, {
-    files: {
-      "entry.js": `import foo from './foo'; if (global.dce3 !== 123 || foo.abc !== 'abc') throw 'fail'`,
-      "foo/index.js": `global.dce3 = 123; exports.abc = 'abc'`,
-      "foo/package.json": `{ "sideEffects": false }`,
-    },
-    run: true,
-  });
-  itBundled(`extra/TreeShaking5`, {
-    files: {
-      "entry.js": `import foo from './foo'; if (global.dce4 !== void 0) throw 'fail'`,
-      "foo/index.js": `global.dce4 = 123; exports.abc = 'abc'`,
-      "foo/package.json": `{ "sideEffects": false }`,
-    },
-    run: true,
-  });
-  itBundled(`extra/TreeShaking6`, {
-    files: {
-      "entry.js": `import foo from './foo'; if (global.dce5 !== 123) throw 'fail'`,
-      "foo/index.js": `global.dce5 = 123; exports.abc = 'abc'`,
-      "foo/package.json": `{ "sideEffects": true }`,
-    },
-    run: true,
-  });
-  // Note: Tree shaking this could technically be considered incorrect because
-  // the import is for a property whose getter in this case has a side effect.
-  // However, this is very unlikely and the vast majority of the time people
-  // would likely rather have the code be tree-shaken. This test case enforces
-  // the technically incorrect behavior as documentation that this edge case
-  // is being ignored.
-  itBundled(`extra/TreeShaking7`, {
-    files: {
-      "entry.js": `import {foo, bar} from './foo'; let unused = foo; if (bar) throw 'expected "foo" to be tree-shaken'`,
-      "foo.js": `module.exports = {get foo() { module.exports.bar = 1 }, bar: 0}`,
-    },
-    run: true,
-  });
+  // Test for an implicit and explicit "**/" prefix (see https://github.com/evanw/esbuild/issues/1184)
   itBundled(`extra/TreeShaking8`, {
+    // Bun joins the pattern onto the package directory, so "x.*" does not match dir/x.js.
+    todo: true,
     files: {
       "entry.js": `import './foo'; if (global.dce6 !== 123) throw 'fail'`,
       "foo/dir/x.js": `global.dce6 = 123`,
       "foo/package.json": `{ "main": "dir/x", "sideEffects": ["x.*"] }`,
     },
-    skipIfWeDidNotImplementWildcardSideEffects: true,
     run: true,
   });
   itBundled(`extra/TreeShaking9`, {
@@ -1323,7 +1196,6 @@ describe("bundler", () => {
       "foo/dir/x.js": `global.dce6 = 123`,
       "foo/package.json": `{ "main": "dir/x", "sideEffects": ["**/x.*"] }`,
     },
-    skipIfWeDidNotImplementWildcardSideEffects: true,
     run: true,
   });
   itBundled(`extra/TreeShaking10`, {
@@ -1362,49 +1234,30 @@ describe("bundler", () => {
   });
 
   // Test obscure CommonJS symbol edge cases
-  itBundled(`extra/CommonJSSymbol1`, {
-    files: {
-      "in.js": `const ns = require('./foo'); if (ns.foo !== 123 || ns.bar !== 123) throw 'fail'`,
-      "foo.js": `var exports, module; module.exports.foo = 123; exports.bar = exports.foo`,
-    },
+  itBundled(`extra/CommonJSSymbol`, {
+    ...programs(
+      {
+        "1.js": `const ns = require('./foo1'); if (ns.foo !== 123 || ns.bar !== 123) throw 'fail'`,
+        "2.js": `require('./foo2'); require('./bar2')`,
+        "3.js": `const ns = require('./foo3'); if (ns.foo !== void 0 || ns.default.foo !== 123) throw 'fail'`,
+        "4.js": `const ns = require('./foo4'); if (ns !== 123) throw 'fail'`,
+        "5.js": `require('./foo5')`,
+        "6.js": `require('./foo6')`,
+        "7.js": `const ns = require('./foo7'); if (ns.a !== 123 || ns.b.a !== 123) throw 'fail'`,
+      },
+      {
+        "foo1.js": `var exports, module; module.exports.foo = 123; exports.bar = exports.foo`,
+        "foo2.js": `let exports; if (exports !== void 0) throw 'fail'`,
+        "bar2.js": `let module; if (module !== void 0) throw 'fail'`,
+        "foo3.js": `var exports = {foo: 123}; export default exports`,
+        "foo4.ts": `let module = 123; export = module`,
+        "foo5.js": `var require; if (require !== void 0) throw 'fail'`,
+        "foo6.js": `var require = x => x; if (require('does not exist') !== 'does not exist') throw 'fail'`,
+        "foo7.js": `exports.a = 123; exports.b = this`,
+      },
+    ),
   });
-  itBundled(`extra/CommonJSSymbol2`, {
-    files: {
-      "in.js": `require('./foo'); require('./bar')`,
-      "foo.js": `let exports; if (exports !== void 0) throw 'fail'`,
-      "bar.js": `let module; if (module !== void 0) throw 'fail'`,
-    },
-  });
-  itBundled(`extra/CommonJSSymbol3`, {
-    files: {
-      "in.js": `const ns = require('./foo'); if (ns.foo !== void 0 || ns.default.foo !== 123) throw 'fail'`,
-      "foo.js": `var exports = {foo: 123}; export default exports`,
-    },
-  });
-  itBundled(`extra/CommonJSSymbol4`, {
-    files: {
-      "in.js": `const ns = require('./foo'); if (ns !== 123) throw 'fail'`,
-      "foo.ts": `let module = 123; export = module`,
-    },
-  });
-  itBundled(`extra/CommonJSSymbol5`, {
-    files: {
-      "in.js": `require('./foo')`,
-      "foo.js": `var require; if (require !== void 0) throw 'fail'`,
-    },
-  });
-  itBundled(`extra/CommonJSSymbol6`, {
-    files: {
-      "in.js": `require('./foo')`,
-      "foo.js": `var require = x => x; if (require('does not exist') !== 'does not exist') throw 'fail'`,
-    },
-  });
-  itBundled(`extra/CommonJSSymbol7`, {
-    files: {
-      "in.js": `const ns = require('./foo'); if (ns.a !== 123 || ns.b.a !== 123) throw 'fail'`,
-      "foo.js": `exports.a = 123; exports.b = this`,
-    },
-  });
+  // The top-level `this` of the ES module becomes null instead of undefined, so this one only bundles.
   itBundled(`extra/CommonJSSymbol8`, {
     files: {
       "in.js": `const ns = require('./foo'); if (ns.a !== 123 || ns.b !== void 0) throw 'fail'`,
@@ -1702,9 +1555,9 @@ describe("bundler", () => {
   });
   // Object rest pattern tests
   // Test the correctness of side effect order for the TypeScript namespace exports
-  itBundled(`extra/ObjectRestPattern1`, {
-    files: {
-      "in.ts": `
+  itBundled(`extra/ObjectRestPattern`, {
+    ...programs({
+      "1.ts": `
         function fn() {
           let trail = []
           let t = k => (trail.push(k), k)
@@ -1727,12 +1580,7 @@ describe("bundler", () => {
         }
         if (fn() !== ns.result) throw 'fail'
       `,
-    },
-    run: true,
-  });
-  itBundled(`extra/ObjectRestPattern2`, {
-    files: {
-      "in.ts": `
+      "2.ts": `
         let obj = {};
         ({a: obj.a, ...obj.b} = {a: 1, b: 2, c: 3});
         [obj.c, , ...obj.d] = [1, 2, 3];
@@ -1746,26 +1594,15 @@ describe("bundler", () => {
         }
         if (JSON.stringify(obj) !== JSON.stringify(ns)) throw 'fail'
       `,
-    },
-    run: true,
-  });
-  itBundled(`extra/ObjectRestPattern3`, {
-    files: {
-      "in.ts": `
+      "3.ts": `
         var z = {x: {z: 'z'}, y: 'y'}, {x: z, ...y} = z
         if (y.y !== 'y' || z.z !== 'z') throw 'fail'
       `,
-    },
-    run: true,
-  });
-  itBundled(`extra/ObjectRestPattern4`, {
-    files: {
-      "in.ts": `
+      "4.ts": `
         var z = {x: {x: 'x'}, y: 'y'}, {[(z = {z: 'z'}, 'x')]: x, ...y} = z
         if (x.x !== 'x' || y.y !== 'y' || z.z !== 'z') throw 'fail'
       `,
-    },
-    run: true,
+    }),
   });
 
   itBundled("extra/CaseSensitiveImport", {

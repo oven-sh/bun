@@ -1136,14 +1136,6 @@ impl<'a> Parser<'a> {
         //    var __filename = "foo/bar/baz.js"
         //
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
-            // Every bundled module declares these below, so after visiting they can be renamed.
-            if p.options.bundle && !p.module_scope().contains_direct_eval {
-                for ref_ in [p.dirname_ref, p.filename_ref] {
-                    p.symbols.as_mut_slice()[ref_.inner_index() as usize].kind =
-                        js_ast::symbol::Kind::Hoisted;
-                }
-            }
-
             if uses_dirname || uses_filename {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
@@ -1218,6 +1210,19 @@ impl<'a> Parser<'a> {
                 });
                 uses_dirname = false;
                 uses_filename = false;
+            }
+
+            // Renamable per module, unused refs too: an unbound name stays reserved chunk-wide.
+            if p.options.bundle && !p.module_scope().contains_direct_eval {
+                for (ref_, needs_binding) in [
+                    (p.dirname_ref, uses_dirname),
+                    (p.filename_ref, uses_filename),
+                ] {
+                    if !needs_binding {
+                        p.symbols.as_mut_slice()[ref_.inner_index() as usize].kind =
+                            js_ast::symbol::Kind::Hoisted;
+                    }
+                }
             }
         }
 

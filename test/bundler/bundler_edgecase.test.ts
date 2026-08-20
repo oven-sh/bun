@@ -3374,12 +3374,14 @@ describe("bundler", () => {
     },
   });
   // A module that declares its own `__dirname` must not be confused with the ones the
-  // bundler injects into the other modules of the same chunk.
+  // bundler injects into the other modules of the same chunk. The bundler's unused
+  // symbol for that module must not reserve the name either: u.ts comes first in the
+  // chunk, so its own declarations keep the plain names.
   itBundled("edgecase/DirnameFilenamePerModuleUserDeclared", {
     files: {
       "/entry.ts": /* ts */ `
-        import * as a from "./a/a";
         import * as u from "./u/u";
+        import * as a from "./a/a";
         ${dirnameEntryPrelude}
         console.log(JSON.stringify({
           entry: [rel(__dirname), rel(__filename)],
@@ -3396,11 +3398,57 @@ describe("bundler", () => {
       `,
     },
     target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('var __dirname = "user-dir"');
+      api.expectFile("/out.js").toContain('var __filename = "user-file"');
+    },
     run: {
       stdout: JSON.stringify({
         entry: ["", "/entry.ts"],
         a: ["/a", "/a/a.ts"],
         u: ["user-dir", "user-file"],
+      }),
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/15996: the same for a module that exports its
+  // own `__dirname` and `__filename`. Nothing else in the bundle uses the names, so they
+  // must not be renamed.
+  itBundled("edgecase/DirnameFilenameUserExported", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export const __filename = "user-file";
+        export const __dirname = "user-dir";
+        console.log(__dirname, __filename);
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__dirname2");
+      api.expectFile("/out.js").not.toContain("__filename2");
+    },
+    run: { stdout: "user-dir user-file" },
+  });
+  itBundled("edgecase/DirnameFilenamePerModuleCompile", {
+    compile: true,
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as b from "./b/b";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          b: [rel(b.dir()), rel(b.file())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+    },
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts"],
       }),
     },
   });

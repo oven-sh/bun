@@ -3253,9 +3253,6 @@ pub mod serializer {
                     resolutions: old.resolutions,
                     scripts: old.scripts,
                     resolution: match old.resolution.tag {
-                        ResolutionTag::Uninitialized => {
-                            Resolution::init(TaggedValue::Uninitialized)
-                        }
                         ResolutionTag::Root => Resolution::init(TaggedValue::Root),
                         ResolutionTag::Npm => {
                             Resolution::init(TaggedValue::Npm(old.resolution.npm().migrate()))
@@ -3284,7 +3281,10 @@ pub mod serializer {
                         ResolutionTag::SingleFileModule => Resolution::init(
                             TaggedValue::SingleFileModule(*old.resolution.single_file_module()),
                         ),
-                        _ => Resolution::init(TaggedValue::Uninitialized),
+                        // `load_fields` already rejected every other tag byte.
+                        _ => {
+                            return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
+                        }
                     },
                 };
 
@@ -3325,20 +3325,19 @@ pub mod serializer {
             if end_pos as u64 <= end_at {
                 let src = &stream.buffer[stream.pos..stream.pos + bytes.len()];
                 if matches!(field, PackageField::Resolution) {
-                    // Validate the tag discriminant on the *raw stream bytes*
-                    // before they are copied into the typed column. `ResolutionTag`
-                    // is a `#[repr(u8)]` enum with non-contiguous discriminants
-                    // (0,1,2,4,8,16,32,64,72,80,100); copying an out-of-range byte
-                    // into `ResolutionType.tag` and then reading it would be
-                    // immediate UB, and a `matches!` over all 11 typed variants is
-                    // provably exhaustive and would be optimized away. Check the
-                    // raw u8 here. Layout: `ResolutionType` is `#[repr(C)]
-                    // { tag: Tag, _padding: [u8; 7], value: ... }`, so the
-                    // discriminant is the first byte of each element.
+                    // Validate the tag of every element on the raw stream bytes
+                    // before they are copied into the typed column. `ResolutionType`
+                    // is `#[repr(C)] { tag: Tag, _padding: [u8; 7], value: ... }`,
+                    // so the tag is the first byte of each element. The accepted
+                    // values are the `ResolutionTag` constants except
+                    // `Uninitialized` (0): a package is appended only once it is
+                    // resolved, so no saved package carries that tag. Loading one
+                    // would keep its dependents bound to a package nothing can
+                    // install, and `Resolution::eql` has no arm for it.
                     let stride = mem::size_of::<ResolutionType<SemverIntType>>();
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[0], 0 | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 72 | 80 | 100) {
+                        if !matches!(raw[0], 1 | 2 | 4 | 8 | 16 | 32 | 64 | 72 | 80 | 100) {
                             return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
                         }
                     }

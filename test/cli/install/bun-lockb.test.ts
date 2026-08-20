@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { copyFile, exists, open, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -349,6 +349,134 @@ it("rejects a binary lockfile whose package scripts flag byte is out of range", 
   expect(code).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
 });
+
+// The `resolution` column follows the name (8) and name_hash (8) columns. Each
+// entry is a 72-byte (64 in format v2) `Resolution` whose first byte is the tag:
+// 1 = root, 2 = npm, 72 = workspace, ... and 0 = uninitialized, which a saved
+// package never has.
+function packageResolutionTagOffsets(lockb: Buffer): number[] {
+  const fmt = lockb.readUInt32LE(42);
+  const N = Number(lockb.readBigUInt64LE(86));
+  const begin = Number(lockb.readBigUInt64LE(110));
+  const resolutionSize = fmt === 2 ? 64 : 72;
+  const resolutionStart = begin + N * (8 + 8);
+  const offsets: number[] = [];
+  for (let i = 0; i < N; i++) {
+    offsets.push(resolutionStart + i * resolutionSize);
+  }
+  return offsets;
+}
+
+it("rejects a binary lockfile in which a package has an uninitialized resolution", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "lockb-uninitialized-resolution",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "a-dep": "1.0.1",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockbPath = join(packageDir, "bun.lockb");
+  expect(await exists(lockbPath)).toBe(true);
+
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  const offsets = packageResolutionTagOffsets(lockb);
+  expect(offsets.map(offset => lockb[offset])).toEqual([1, 2, 2]);
+  // One of the root's dependencies still resolves to package 1, but the
+  // package no longer says where it comes from.
+  lockb[offsets[1]] = 0;
+  await write(lockbPath, lockb);
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "bun.lockb"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("invalid resolution tag");
+    expect(out).not.toContain('version ""');
+    expect(code).toBe(1);
+  }
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--no-progress"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+  // The lockfile is rejected and the install resolves every dependency again
+  // instead of silently skipping the one bound to the unresolved package.
+  expect(err).toContain("invalid resolution tag");
+  expect(err).toContain("Ignoring lockfile");
+  expect(out).toContain("no-deps@1.0.0");
+  expect(out).toContain("a-dep@1.0.1");
+  expect(out).toContain("2 packages installed");
+  expect(code).toBe(0);
+  expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
+  expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
+
+  // The unresolved package is not written back out.
+  const saved = Buffer.from(await file(lockbPath).arrayBuffer());
+  expect(packageResolutionTagOffsets(saved).map(offset => saved[offset])).toEqual([1, 2, 2]);
+});
+
+it("rejects a format v2 binary lockfile in which a package has an uninitialized resolution", async () => {
+  // `bun bun.lockb` only prints the lockfile, so this exercises the v2
+  // migration path of the loader without a registry.
+  using dir = tempDir("lockb-v2-uninitialized-resolution", {});
+  const lockbPath = join(String(dir), "bun.lockb");
+  const lockb = Buffer.from(await file(join(__dirname, "fixtures", "bun.lockb.v2")).arrayBuffer());
+  expect(lockb.readUInt32LE(42)).toBe(2);
+  const offsets = packageResolutionTagOffsets(lockb);
+  expect(offsets.map(offset => lockb[offset])).toEqual([1, 2, 2, 2, 2, 2, 2]);
+
+  await write(lockbPath, lockb);
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "bun.lockb"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toBe("");
+    expect(out).toContain("# yarn lockfile v1");
+    expect(code).toBe(0);
+  }
+
+  lockb[offsets[1]] = 0;
+  await write(lockbPath, lockb);
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "bun.lockb"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("invalid resolution tag");
+    expect(out).toBe("");
+    expect(code).toBe(1);
+  }
+});
+
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

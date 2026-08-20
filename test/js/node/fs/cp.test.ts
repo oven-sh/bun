@@ -384,6 +384,30 @@ for (const [name, copy] of impls) {
       assertContent(basename + "/hello/world/b.txt", "b");
     });
 
+    // The ported implementation creates a missing destination parent with a
+    // recursive mkdir. When the parent's name is a symlink to a missing target,
+    // that mkdir reports ENOENT (as node's does); it used to report EEXIST.
+    // `force: false` always takes the ported implementation; a directory does
+    // everywhere but macOS, where the native copy fails with the same ENOENT.
+    // On Windows the mkdir's existence probe does not follow the link yet, so
+    // that is fixed separately.
+    for (const [what, src, options] of [
+      ["a directory with 'recursive: true'", "/from", { recursive: true }],
+      ["a file with 'force: false'", "/from/a.txt", { force: false }],
+    ] as const) {
+      test.skipIf(isWindows)(`${what} into a symlink-to-nowhere parent fails with ENOENT`, async () => {
+        await using basename = tempDir("cp", {
+          "from/a.txt": "a",
+        });
+        fs.symlinkSync("missing", basename + "/dangling");
+
+        const e = await copyShouldThrow(basename + src, basename + "/dangling/dest", options);
+        expect(e.code).toBe("ENOENT");
+
+        expect(fs.readdirSync(String(basename)).sort()).toEqual(["dangling", "from"]);
+      });
+    }
+
     test("relative paths for directories", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

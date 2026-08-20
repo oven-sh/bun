@@ -1214,14 +1214,9 @@ impl<'a> Parser<'a> {
 
             // Renamable per module, unused refs too: an unbound name stays reserved chunk-wide.
             if p.options.bundle && !p.module_scope().contains_direct_eval {
-                for (ref_, needs_binding) in [
-                    (p.dirname_ref, uses_dirname),
-                    (p.filename_ref, uses_filename),
-                ] {
-                    if !needs_binding {
-                        p.symbols.as_mut_slice()[ref_.inner_index() as usize].kind =
-                            js_ast::symbol::Kind::Hoisted;
-                    }
+                for ref_ in [p.dirname_ref, p.filename_ref] {
+                    p.symbols.as_mut_slice()[ref_.inner_index() as usize].kind =
+                        js_ast::symbol::Kind::Hoisted;
                 }
             }
         }

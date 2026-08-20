@@ -751,7 +751,9 @@ describe("crypto.KeyObjects", () => {
 
       expect(first.publicKey.equals(first.publicKey)).toBeTrue();
 
-      expect(first.publicKey.equals(createPublicKey(first.publicKey.export({ format: "pem", type: "spki" }))));
+      expect(
+        first.publicKey.equals(createPublicKey(first.publicKey.export({ format: "pem", type: "spki" }))),
+      ).toBeTrue();
 
       expect(first.publicKey.equals(second.publicKey)).toBeFalse();
       expect(first.publicKey.equals(second.privateKey)).toBeFalse();

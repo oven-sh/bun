@@ -1,8 +1,9 @@
-// Custom oxlint rules for Bun's built-in JavaScript (src/js/**).
+// Custom oxlint rules for Bun's built-in JavaScript (src/js/**) and its test
+// suite (test/**).
 //
-// Registered via `jsPlugins` in oxlint.json. Rules are written against
-// oxlint's ESTree-compatible AST (see the `oxlint/plugins-dev` type
-// definitions). Run with `bun run lint`.
+// Registered via `jsPlugins` in oxlint.json; which rule applies to which tree
+// is configured there. Rules are written against oxlint's ESTree-compatible
+// AST (see the `oxlint/plugins-dev` type definitions). Run with `bun run lint`.
 
 /**
  * Return a textual key for a simple static member expression chain made of
@@ -211,11 +212,145 @@ const noDuplicateConditionalPropertyAccess = {
   },
 };
 
+// `bun test` rewrites imports of these to bun:test, and injects the bun:test
+// globals into files that import none of them.
+const TEST_MODULES = new Set(["bun:test", "@jest/globals", "vitest"]);
+
+function isTestModuleSpecifier(node) {
+  return node && node.type === "Literal" && TEST_MODULES.has(node.value);
+}
+
+/**
+ * True for the initializer of `const { expect } = require("bun:test")` or
+ * `const { expect } = Bun.jest(path)` (how the shared harness files obtain a
+ * per-file `expect`).
+ */
+function isTestModuleValue(init) {
+  if (!init || init.type !== "CallExpression") return false;
+  const { callee } = init;
+  if (callee.type === "Identifier") {
+    return callee.name === "require" && isTestModuleSpecifier(init.arguments[0]);
+  }
+  return memberExpressionKey(callee) === "Bun.jest";
+}
+
+/**
+ * True if the `expect` that `call` invokes is bun:test's: it either resolves
+ * to nothing (the global `bun test` injects) or to a binding taken from a
+ * test module. A local `function expect` / `const expect` (Node's own tests
+ * use the name for expected values) is left alone.
+ */
+function isBunTestExpect(context, call) {
+  let variable = null;
+  for (let scope = context.sourceCode.getScope(call); scope; scope = scope.upper) {
+    variable = scope.set.get("expect");
+    if (variable) break;
+  }
+  if (!variable) return true;
+  return variable.defs.some(def => {
+    switch (def.type) {
+      case "ImportBinding":
+        return isTestModuleSpecifier(def.parent.source);
+      case "Variable":
+        return isTestModuleValue(def.node.init);
+      default:
+        return false;
+    }
+  });
+}
+
+// Properties of an expectation that return another expectation rather than
+// asserting; `expect(x).not;` is "no matcher", not "matcher not called".
+const EXPECT_MODIFIERS = new Set(["not", "resolves", "rejects"]);
+
+/**
+ * Walk up from an `expect(...)` call. Returns the outermost node of the
+ * `expect(...).a.b` chain if the statement discards it without ever calling a
+ * matcher, or `null` if a matcher is called (`expect(x).toBe(1)`) or the
+ * value is consumed by something else (assigned, passed as an argument,
+ * returned, used as a condition), which this rule does not second-guess.
+ */
+function discardedExpectChain(call) {
+  let chainEnd = call;
+  let cur = call;
+  for (;;) {
+    const parent = cur.parent;
+    switch (parent.type) {
+      case "MemberExpression":
+        if (parent.object !== cur) return null;
+        chainEnd = parent;
+        break;
+      case "ExpressionStatement":
+        return chainEnd;
+      case "SequenceExpression":
+        // `(expect(a), b)` discards `expect(a)` whatever happens to the rest.
+        if (parent.expressions[parent.expressions.length - 1] !== cur) return chainEnd;
+        break;
+      case "ConditionalExpression":
+        if (parent.test === cur) return null;
+        break;
+      case "AwaitExpression":
+      case "ChainExpression":
+      case "ParenthesizedExpression":
+      case "TSNonNullExpression":
+      case "TSAsExpression":
+      case "TSSatisfiesExpression":
+      case "TSTypeAssertion":
+      case "LogicalExpression":
+        break;
+      default:
+        // Includes CallExpression: either a matcher was called or the
+        // expectation is an argument to something else.
+        return null;
+    }
+    cur = parent;
+  }
+}
+
+const noUnusedExpect = {
+  meta: {
+    type: "problem",
+    docs: {
+      description:
+        "Disallow discarding an `expect(...)` without calling a matcher on it. " +
+        "`expect(x);`, `expect(a, b);` and `expect(x).toBeTruthy;` build an expectation and assert nothing.",
+    },
+    messages: {
+      noMatcher: "This `expect(...)` never calls a matcher, so it asserts nothing. Chain one, e.g. `.toBe(...)`.",
+      secondArgument:
+        "This `expect(a, b)` never calls a matcher, so it asserts nothing. " +
+        "The second argument of `expect()` is a failure message, not an expected value; write `expect(a).toBe(b)`.",
+      matcherNotCalled:
+        "`.{{name}}` is read but not called, so this `expect(...)` asserts nothing. Did you mean `.{{name}}(...)`?",
+    },
+    schema: [],
+  },
+  create(context) {
+    return {
+      CallExpression(node) {
+        if (node.callee.type !== "Identifier" || node.callee.name !== "expect") return;
+        const chainEnd = discardedExpectChain(node);
+        if (chainEnd === null || !isBunTestExpect(context, node)) return;
+
+        const property = chainEnd.type === "MemberExpression" && !chainEnd.computed ? chainEnd.property.name : null;
+        if (property !== null && !EXPECT_MODIFIERS.has(property)) {
+          context.report({ node: chainEnd, messageId: "matcherNotCalled", data: { name: property } });
+        } else if (chainEnd === node && node.arguments.length >= 2) {
+          context.report({ node, messageId: "secondArgument" });
+        } else {
+          context.report({ node: chainEnd, messageId: "noMatcher" });
+        }
+      },
+    };
+  },
+};
+
 export default {
   meta: {
     name: "bun",
   },
   rules: {
     "no-duplicate-conditional-property-access": noDuplicateConditionalPropertyAccess,
+    "no-unused-expect": noUnusedExpect,
   },
 };

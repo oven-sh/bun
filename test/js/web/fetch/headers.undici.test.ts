@@ -518,23 +518,23 @@ test("arg validation", () => {
 
 describe("function signature verification", async () => {
   test("function length", () => {
-    expect(Headers.prototype.append.length, 2);
-    expect(Headers.prototype.constructor.length, 0);
-    expect(Headers.prototype.delete.length, 1);
-    expect(Headers.prototype.entries.length, 0);
-    expect(Headers.prototype.forEach.length, 1);
-    expect(Headers.prototype.get.length, 1);
-    expect(Headers.prototype.has.length, 1);
-    expect(Headers.prototype.keys.length, 0);
-    expect(Headers.prototype.set.length, 2);
-    expect(Headers.prototype.values.length, 0);
-    expect(Headers.prototype[Symbol.iterator].length, 0);
-    expect(Headers.prototype.toString.length, 0);
+    expect(Headers.prototype.append.length).toBe(2);
+    expect(Headers.prototype.constructor.length).toBe(0);
+    expect(Headers.prototype.delete.length).toBe(1);
+    expect(Headers.prototype.entries.length).toBe(0);
+    expect(Headers.prototype.forEach.length).toBe(1);
+    expect(Headers.prototype.get.length).toBe(1);
+    expect(Headers.prototype.has.length).toBe(1);
+    expect(Headers.prototype.keys.length).toBe(0);
+    expect(Headers.prototype.set.length).toBe(2);
+    expect(Headers.prototype.values.length).toBe(0);
+    expect(Headers.prototype[Symbol.iterator].length).toBe(0);
+    expect(Headers.prototype.toString.length).toBe(0);
   });
 
   test("function equality", () => {
-    expect(Headers.prototype.entries, Headers.prototype[Symbol.iterator]);
-    expect(Headers.prototype.toString, Object.prototype.toString);
+    expect(Headers.prototype.entries).toBe(Headers.prototype[Symbol.iterator]);
+    expect(Headers.prototype.toString).toBe(Object.prototype.toString);
   });
 
   test("toString and Symbol.toStringTag", () => {

@@ -3018,7 +3018,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         const buf = Buffer.from(ab);
 
         expect(buf instanceof Buffer).toBe(true);
-        expect(buf.parent, buf.buffer);
+        expect(buf.parent).toBe(buf.buffer);
         expect(buf.buffer).toBe(ab);
         expect(buf.length).toBe(ab.byteLength);
 

@@ -13,7 +13,7 @@ use crate::invalid_package_id;
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
 use super::PackageManager;
 use super::enqueue;
-use super::run_tasks::{self, RunTasksCallbacks};
+use super::run_tasks::{self, RunTasksCallbacks, RunTasksFlags};
 use crate::package_manager_task as Task;
 use crate::resolution::Tag as ResolutionTag;
 
@@ -104,10 +104,14 @@ pub enum Packages<'a> {
 /// `RunTasksCallbacks` impl for the void-callback `runTasks` call in
 /// `populateManifestCache`.
 struct ManifestsOnlyCallbacks;
-impl RunTasksCallbacks for ManifestsOnlyCallbacks {
-    type Ctx = ();
-    const PROGRESS_BAR: bool = true;
-    const MANIFESTS_ONLY: bool = true;
+impl RunTasksCallbacks<'_> for ManifestsOnlyCallbacks {
+    fn flags(&self) -> RunTasksFlags {
+        RunTasksFlags {
+            progress_bar: true,
+            manifests_only: true,
+            ..Default::default()
+        }
+    }
 }
 
 /// Populate the manifest cache for packages included from `root_pkg_ids`. Only manifests of
@@ -320,15 +324,9 @@ pub fn populate_manifest_cache(
                 // callback, so this is the unique live borrow.
                 let manager = unsafe { &mut *closure.manager };
                 let log_level = manager.options.log_level;
-                // void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
-                // `manager` as both receiver and ctx (aliased &mut); the generic
-                // context collapses to `&mut ()`.
-                if let Err(err) = run_tasks::run_tasks::<ManifestsOnlyCallbacks>(
-                    manager,
-                    &mut (),
-                    true,
-                    log_level,
-                ) {
+                if let Err(err) =
+                    run_tasks::run_tasks(manager, &mut ManifestsOnlyCallbacks, true, log_level)
+                {
                     closure.err = Some(err);
                     return true;
                 }

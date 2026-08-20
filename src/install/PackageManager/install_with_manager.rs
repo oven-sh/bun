@@ -39,7 +39,7 @@ use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
-use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
+use crate::package_manager_real::run_tasks::{RunTasksCallbacks, RunTasksFlags, run_tasks};
 use crate::package_manager_real::{
     UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
     save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
@@ -998,9 +998,13 @@ pub fn install_with_manager(
 /// `runAndWaitFn::isDone` (no hooks, `progress_bar = true`). Only these
 /// flags differ from the default.
 struct InstallWaitCallbacks;
-impl RunTasksCallbacks for InstallWaitCallbacks {
-    type Ctx = ();
-    const PROGRESS_BAR: bool = true;
+impl RunTasksCallbacks<'_> for InstallWaitCallbacks {
+    fn flags(&self) -> RunTasksFlags {
+        RunTasksFlags {
+            progress_bar: true,
+            ..Default::default()
+        }
+    }
 }
 
 struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
@@ -1034,11 +1038,8 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
         this.drain_dependency_list();
 
-        // void RunTasksCallbacks — the trait dispatch needs a
-        // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
-        // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
         let log_level = this.options.log_level;
-        if let Err(err) = run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level) {
+        if let Err(err) = run_tasks(this, &mut InstallWaitCallbacks, CHECK_PEERS, log_level) {
             closure.err = Some(err);
             return true;
         }

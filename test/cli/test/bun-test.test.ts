@@ -1447,6 +1447,44 @@ describe("bun test", () => {
       expect(stderr).toContain("1 fail");
     });
 
+    // `bun run` and `bun test` transpile the same file to different output now, so they must not
+    // share a transpiler cache entry. The file needs an explicit `bun:test` import (injected
+    // globals already bail out of the cache) and 4KB of source (the cache floor).
+    test("the rewrite is not lost to a transpiler cache entry from bun run", async () => {
+      const contents = [
+        `import { test, expect } from "bun:test";`,
+        `test("tail", () => expect(1).toBe(2));`,
+        `// ${Buffer.alloc(5000, "x").toString()}`,
+      ].join("\n");
+      using dir = tempDir("tail-cache", { "cached.test.ts": contents });
+      const cacheDir = join(String(dir), "cache");
+      mkdirSync(cacheDir);
+      const env = {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+        // Debug builds read the cache but serve from it only with this set.
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+      };
+      await using warm = Bun.spawn({
+        cmd: [bunExe(), "run", "cached.test.ts"],
+        env,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await warm.exited;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "cached.test.ts"],
+        env,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toMatch(/at <anonymous> \(.*cached\.test\.ts:2:\d+\)/);
+      expect(stderr).toContain("1 fail");
+      expect(exitCode).toBe(1);
+    });
+
     // This arrow is rewritten in this very file, and its toString() text lands in a different
     // module, so the rewrite must not reference anything from the module it was made in.
     test("the rewrite survives a Function.toString round-trip into another module", async () => {

@@ -1262,7 +1262,13 @@ test.concurrent.each([
       ["a2", 2],
     ],
     run2: [["b1", 1]],
-    fileIds: isolationArg === "" ? [["a.test.mjs", 1], ["b.test.mjs", 1]] : [],
+    fileIds:
+      isolationArg === ""
+        ? [
+            ["a.test.mjs", 1],
+            ["b.test.mjs", 1],
+          ]
+        : [],
     stderr: "",
     exitCode: 0,
   });

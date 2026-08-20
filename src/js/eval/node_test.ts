@@ -265,11 +265,7 @@ async function main() {
     // has no tag filter yet); fail loudly like the sibling filter flags rather
     // than run every test.
     if (isolation !== "none") {
-      fatal(
-        new Error(
-          "--experimental-test-tag-filter requires --test-isolation=none in Bun's node:test CLI mode",
-        ),
-      );
+      fatal(new Error("--experimental-test-tag-filter requires --test-isolation=none in Bun's node:test CLI mode"));
     }
     runOptions.testTagFilters = tagFilters;
   }

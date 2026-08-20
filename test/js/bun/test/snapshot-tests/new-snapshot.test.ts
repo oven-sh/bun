@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
@@ -161,3 +161,31 @@ describe("a .snap entry bun test cannot read", () => {
     expect(fs.readFileSync(snapPath, "utf8")).toBe(edited);
   });
 });
+
+// /dev/full reads as empty and refuses every write with ENOSPC.
+test.skipIf(!isLinux || !fs.existsSync("/dev/full"))(
+  "a .snap file that cannot be written does not leak into the next test file",
+  async () => {
+    using dir = tempDir("snap-unwritable", {
+      "a.test.ts": A_TEST,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("b1", () => expect(1).toMatchSnapshot());
+        test("b2", () => expect(2).toMatchSnapshot());
+      `,
+    });
+    fs.mkdirSync(join(String(dir), "__snapshots__"));
+    fs.symlinkSync("/dev/full", join(String(dir), "__snapshots__", "a.test.ts.snap"));
+
+    // a's entry is written, and fails to be written, when b1 opens b's own .snap file.
+    const { stderr, exitCode } = await runBunTest(String(dir));
+    expect(stderr.match(/^\w+\.test\.ts:$/gm)).toEqual(["a.test.ts:", "b.test.ts:"]);
+    expect(stderr).toContain("Failed write to snapshot file");
+    expect(stderr).toContain(" 2 pass\n 1 fail\n");
+    expect(exitCode).toBe(1);
+    // b's file used to start with a's unwritten entry, followed by a second header.
+    expect(fs.readFileSync(join(String(dir), "__snapshots__", "b.test.ts.snap"), "utf8")).toBe(
+      `${HEADER}\nexports[\`b2 1\`] = \`2\`;\n`,
+    );
+  },
+);

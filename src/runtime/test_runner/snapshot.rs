@@ -383,19 +383,22 @@ impl Snapshots {
         Some((&mut e_index.index, &mut e_binary.right))
     }
 
+    /// Empties the per-file state: the next `.snap` file is read into the same buffer.
+    fn take_file_buf(&mut self) -> Vec<u8> {
+        self.values.clear();
+        self.counts.clear();
+        core::mem::take(&mut self.file_buf)
+    }
+
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
-        if let Some(file) = self._current_file.take() {
-            file.file
-                .write_all(&self.file_buf)
-                .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
-            let _ = file.file.close();
-            self.file_buf.clear();
-            self.file_buf.shrink_to_fit();
-
-            self.values.clear();
-
-            self.counts.clear();
-        }
+        let Some(file) = self._current_file.take() else {
+            return Ok(());
+        };
+        let contents = self.take_file_buf();
+        file.file
+            .write_all(&contents)
+            .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+        let _ = file.file.close();
         Ok(())
     }
 
@@ -957,9 +960,7 @@ impl Snapshots {
             }
 
             if let Err(err) = self.parse_file(&file) {
-                // Otherwise the next `.snap` file is appended to this one and parsed with it.
-                self.file_buf = Vec::new();
-                self.values.clear();
+                drop(self.take_file_buf());
                 return Err(err);
             }
             self._current_file = Some(file);

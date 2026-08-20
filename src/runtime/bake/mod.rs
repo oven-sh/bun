@@ -325,6 +325,10 @@ impl Framework {
                 .iter()
                 .zip(bundler_options.define.values.iter())
             {
+                // As in `Bun.build`, `drop` wins over a `define` of the same identifier.
+                if bundler_options.drop.keys().iter().any(|d| *d == &**k) {
+                    continue;
+                }
                 let parsed =
                     bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
                 out.options.define.insert(k, parsed)?;

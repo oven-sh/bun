@@ -434,9 +434,9 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
 pub struct EditorContext {
     pub(crate) editor: Option<Editor>,
-    // Note: `name`/`path` are never freed; `path` is backed by
-    // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.
+    /// Name or absolute path tried first by `detect_editor`; empty means environment only.
     pub name: &'static [u8],
+    /// Always a `dirname_store` copy: the thread spawned by `Editor::open` outlives this context.
     pub path: &'static [u8],
 }
 
@@ -459,10 +459,25 @@ impl EditorContext {
 
     pub(crate) fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
         if self.editor.is_none() {
+            if self.name.is_empty() {
+                // bunfig `[debug] editor`; the CLI context is process-lifetime.
+                if let Some(ctx) = bun_options_types::context::try_get() {
+                    self.name = &ctx.debug.editor;
+                }
+            }
             self.detect_editor(env);
         }
     }
 
+    fn resolve(&mut self, editor: Editor, path: &[u8]) {
+        self.editor = Some(editor);
+        self.path = Fs::FileSystem::instance()
+            .dirname_store
+            .append_slice(path)
+            .expect("unreachable");
+    }
+
+    /// Each tier only accepts a binary that exists; otherwise the next tier is tried.
     pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         let mut buf = PathBuffer::uninit();
         // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
@@ -474,12 +489,15 @@ impl EditorContext {
 
         // first: choose from user preference
         if !self.name.is_empty() {
-            // /usr/bin/vim
+            // /usr/bin/vim (`which` does not consult PATH for an absolute path)
             if bun_paths::is_absolute(self.name) {
-                self.editor =
-                    Some(Editor::by_name(bun_paths::basename(self.name)).unwrap_or(Editor::Other));
-                self.path = self.name;
-                return;
+                // SAFETY: see note above — exclusive per-call reborrow.
+                if let Some(bin) = which(unsafe { &mut *buf_ptr }, b"", b"", self.name) {
+                    let editor_ =
+                        Editor::by_name(bun_paths::basename(self.name)).unwrap_or(Editor::Other);
+                    self.resolve(editor_, bin.as_bytes());
+                    return;
+                }
             }
 
             // "vscode"
@@ -492,22 +510,14 @@ impl EditorContext {
                     Fs::FileSystem::instance().top_level_dir,
                     &mut out,
                 ) {
-                    self.editor = Some(editor_);
-                    self.path = Fs::FileSystem::instance()
-                        .dirname_store
-                        .append_slice(out)
-                        .expect("unreachable");
+                    self.resolve(editor_, out);
                     return;
                 }
 
                 // not in path, try common ones
                 let mut static_out: &'static [u8] = b"";
                 if Editor::by_fallback_path_for_editor(editor_, Some(&mut static_out)) {
-                    self.editor = Some(editor_);
-                    self.path = Fs::FileSystem::instance()
-                        .dirname_store
-                        .append_slice(static_out)
-                        .expect("unreachable");
+                    self.resolve(editor_, static_out);
                     return;
                 }
             }
@@ -523,22 +533,14 @@ impl EditorContext {
                 Fs::FileSystem::instance().top_level_dir,
                 &mut out,
             ) {
-                self.editor = Some(editor_);
-                self.path = Fs::FileSystem::instance()
-                    .dirname_store
-                    .append_slice(out)
-                    .expect("unreachable");
+                self.resolve(editor_, out);
                 return;
             }
 
             // not in path, try common ones
             let mut static_out: &'static [u8] = b"";
             if Editor::by_fallback_path_for_editor(editor_, Some(&mut static_out)) {
-                self.editor = Some(editor_);
-                self.path = Fs::FileSystem::instance()
-                    .dirname_store
-                    .append_slice(static_out)
-                    .expect("unreachable");
+                self.resolve(editor_, static_out);
                 return;
             }
         }
@@ -551,11 +553,7 @@ impl EditorContext {
             Fs::FileSystem::instance().top_level_dir,
             &mut out,
         ) {
-            self.editor = Some(editor_);
-            self.path = Fs::FileSystem::instance()
-                .dirname_store
-                .append_slice(out)
-                .expect("unreachable");
+            self.resolve(editor_, out);
             return;
         }
 

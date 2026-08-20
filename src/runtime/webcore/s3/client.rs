@@ -614,12 +614,11 @@ impl S3UploadStreamWrapper {
         unsafe { &*self.task }
     }
 
-    /// Whether `resolve` must release the pump's +1 (`upload_stream`) itself. A
-    /// native source still attached: S3 failed first, so `end_from_stream`, which
-    /// releases it after clearing `source`, never runs. A JS pump: the `.then` shim
-    /// (`handle_*_stream`) that releases it never runs once script is forbidden or
-    /// once the pump's controller has been collected (`NetworkSink::cell_released`).
-    /// Decided before settling, as the failure path's `source.close()` clears `source`.
+    /// Whether `resolve` must release the pump's +1 (`upload_stream`) itself, i.e.
+    /// its usual releaser can no longer run: `end_from_stream` (native source, which
+    /// it clears first) because S3 failed first, or the `.then` shim of a JS pump
+    /// (`handle_*_stream`) because script is forbidden or its controller is gone.
+    /// Read before settling: the failure path's `source.close()` clears `source`.
     fn pump_ref_is_stranded(&mut self) -> bool {
         let native_fast_path = !matches!(self.readable_stream_ref, ReadableStreamStrong::Empty);
         let script_allowed = self.global.bun_vm().script_allowed();

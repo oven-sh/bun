@@ -2143,9 +2143,8 @@ pub struct NetworkSink {
     pub(crate) upstream_error: jsc::strong::Optional,
     pub(crate) ended: bool,
     pub(crate) done: bool,
-    /// `JsSinkType::finalize` ran: the JS cell that held this sink is gone. On the
-    /// `upload_stream` path that cell is the pump's controller, which only gets
-    /// here when collected while still attached, so the pump can never finish.
+    /// `JsSinkType::finalize` ran. On the `upload_stream` path only the pump's
+    /// controller does that, and only if collected while attached: the pump is dead.
     pub(crate) cell_released: bool,
 }
 

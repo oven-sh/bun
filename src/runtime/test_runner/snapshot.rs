@@ -41,8 +41,6 @@ pub struct Snapshots {
     snapshot_dir_path: Option<&'static [u8]>,
     inline_snapshots_to_write: IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
-    /// Set by `parse_file` with `Error::ParseError`, thrown by `Expect::snapshot`.
-    pub(crate) parse_error_message: Option<String>,
 }
 
 // Re-export the TSV-mandated container name so the field type matches verbatim.
@@ -70,7 +68,6 @@ impl Snapshots {
             snapshot_dir_path: None,
             inline_snapshots_to_write: IndexMap::new(),
             last_error_snapshot_name: None,
-            parse_error_message: None,
         }
     }
 }
@@ -226,7 +223,6 @@ impl Snapshots {
     }
 
     pub(crate) fn parse_file(&mut self, file: &File) -> Result<(), Error> {
-        self.parse_error_message = None;
         if self.file_buf.is_empty() {
             return Ok(());
         }
@@ -267,31 +263,22 @@ impl Snapshots {
             self.file_buf.as_slice(),
         );
 
-        let mut log = bun_ast::Log::init();
-        let result = Self::load_entries(&mut self.values, &source, &mut log);
-        if result.is_ok() && log.errors == 0 {
-            return Ok(());
+        let mut temp_log = bun_ast::Log::init();
+        let result = Self::load_entries(&mut self.values, &source, &mut temp_log);
+        if temp_log.errors > 0 {
+            let _ = temp_log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                bun_output::error_writer(),
+            ));
+            bun_output::flush();
         }
-
-        // `Expect::snapshot` throws a plain error, so the rendered messages go into its text.
-        let mut message = format!(
-            "Failed to parse snapshot file: {}\n\n",
-            bstr::BStr::new(snapshot_file_path.as_bytes())
-        );
-        log.print(&mut message).expect("infallible: in-memory write");
-        if !log.msgs.is_empty() {
-            message.push('\n');
-        }
-        message.push_str("Fix the file, or run \"bun test --update-snapshots\" to rewrite it.");
-        self.parse_error_message = Some(message);
-        Err(crate::Error::ParseError)
+        result
     }
 
     /// Loads the entries of a `.snap` file into `values`. Any other statement is an error.
     fn load_entries(
         values: &mut HashMap<u64, Box<[u8]>>,
         source: &bun_ast::Source,
-        log: &mut bun_ast::Log,
+        temp_log: &mut bun_ast::Log,
     ) -> Result<(), Error> {
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
@@ -304,8 +291,9 @@ impl Snapshots {
         let arena = bun_alloc::Arena::new();
 
         let parser =
-            js_parser::Parser::init(opts, log, source, &vm.transpiler.options.define, &arena)?;
-        let mut ast = match parser.parse()? {
+            js_parser::Parser::init(opts, temp_log, source, &vm.transpiler.options.define, &arena)
+                .map_err(|_| crate::Error::ParseError)?;
+        let mut ast = match parser.parse().map_err(|_| crate::Error::ParseError)? {
             bun_js_parser::Result::Ast(ast) => ast,
             _ => return Err(crate::Error::ParseError),
         };
@@ -325,7 +313,7 @@ impl Snapshots {
                 }
                 let Some((name, value)) = Self::exports_assignment(&mut stmt.data, exports_ref)
                 else {
-                    log.add_error(
+                    temp_log.add_error(
                         Some(source),
                         stmt.loc,
                         "Expected a snapshot entry: exports[`name`] = `value`;",
@@ -333,7 +321,7 @@ impl Snapshots {
                     continue;
                 };
                 let bun_ast::ExprData::EString(name_string) = &mut name.data else {
-                    log.add_error(
+                    temp_log.add_error(
                         Some(source),
                         name.loc,
                         "The snapshot name must be a template literal without substitutions",
@@ -341,7 +329,7 @@ impl Snapshots {
                     continue;
                 };
                 let bun_ast::ExprData::EString(value_string) = &mut value.data else {
-                    log.add_error(
+                    temp_log.add_error(
                         Some(source),
                         value.loc,
                         "The snapshot value must be a template literal without substitutions",
@@ -353,6 +341,9 @@ impl Snapshots {
             }
         }
 
+        if temp_log.errors > 0 {
+            return Err(crate::Error::ParseError);
+        }
         Ok(())
     }
 
@@ -383,22 +374,19 @@ impl Snapshots {
         Some((&mut e_index.index, &mut e_binary.right))
     }
 
-    /// Empties the per-file state: the next `.snap` file is read into the same buffer.
-    fn take_file_buf(&mut self) -> Vec<u8> {
-        self.values.clear();
-        self.counts.clear();
-        core::mem::take(&mut self.file_buf)
-    }
-
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
-        let Some(file) = self._current_file.take() else {
-            return Ok(());
-        };
-        let contents = self.take_file_buf();
-        file.file
-            .write_all(&contents)
-            .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
-        let _ = file.file.close();
+        if let Some(file) = self._current_file.take() {
+            file.file
+                .write_all(&self.file_buf)
+                .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+            let _ = file.file.close();
+            self.file_buf.clear();
+            self.file_buf.shrink_to_fit();
+
+            self.values.clear();
+
+            self.counts.clear();
+        }
         Ok(())
     }
 
@@ -960,7 +948,9 @@ impl Snapshots {
             }
 
             if let Err(err) = self.parse_file(&file) {
-                drop(self.take_file_buf());
+                // Or the next `.snap` file is appended to this one and parsed with it.
+                self.file_buf = Vec::new();
+                self.values.clear();
                 return Err(err);
             }
             self._current_file = Some(file);

@@ -1223,6 +1223,58 @@ describe("expect()", () => {
     expect(f1).not.toEqual(f2);
   });
 
+  // Two different callables are never equal, whatever kind of function object they are.
+  // Built-in constructors and mock functions are not ordinary functions internally, and
+  // none of them has own enumerable properties, so a property walk would call them equal.
+  test("deepEquals compares every kind of callable by identity", () => {
+    expect(Array).not.toEqual(Object);
+    expect(Array).not.toStrictEqual(Object);
+    expect(Function.prototype).not.toEqual(Object);
+    expect(() => expect(Array).toEqual(Object)).toThrow();
+    expect(() => expect(Map).toStrictEqual(Set)).toThrow();
+
+    expect({ type: Array }).not.toEqual({ type: Object });
+    expect({ type: Array }).not.toStrictEqual({ type: Object });
+    expect({ type: Map }).not.toEqual({ type: Set });
+    expect({ type: Symbol }).not.toEqual({ type: Object });
+    expect({ type: BigInt }).not.toEqual({ type: Object });
+    expect({ type: Function }).not.toEqual({ type: Object });
+    expect({ type: Uint8Array }).not.toEqual({ type: Int8Array });
+
+    expect([Array]).not.toEqual([Object]);
+    expect([Array]).not.toStrictEqual([Object]);
+    expect([Array]).not.toContainEqual(Object);
+    expect(new Set([Array])).not.toEqual(new Set([Object]));
+    expect(new Map([[Array, 1]])).not.toEqual(new Map([[Object, 1]]));
+    expect(new Map([["type", Array]])).not.toEqual(new Map([["type", Object]]));
+
+    expect(jest.fn()).not.toEqual(jest.fn());
+    expect({ onChange: jest.fn() }).not.toEqual({ onChange: jest.fn() });
+    expect({ onChange: jest.fn() }).not.toStrictEqual({ onChange: jest.fn() });
+
+    expect(new Proxy(function () {}, {})).not.toEqual(new Proxy(function () {}, {}));
+    expect({ fn: new Proxy(() => {}, {}) }).not.toStrictEqual({ fn: new Proxy(() => {}, {}) });
+
+    expect({ type: Array }).not.toEqual(expect.objectContaining({ type: Object }));
+
+    const calledWith = jest.fn();
+    calledWith(Array);
+    expect(calledWith).toHaveBeenCalledWith(Array);
+    expect(calledWith).not.toHaveBeenCalledWith(Object);
+
+    // The same callable on both sides is still equal, and asymmetric matchers still apply.
+    const onChange = jest.fn();
+    const callable = new Proxy(() => {}, {});
+    expect(Array).toEqual(Array);
+    expect({ type: Array, onChange, callable }).toEqual({ type: Array, onChange, callable });
+    expect({ type: Array, onChange, callable }).toStrictEqual({ type: Array, onChange, callable });
+    expect([Map, Set]).toEqual([Map, Set]);
+    expect(new Set([Map, Set])).toEqual(new Set([Set, Map]));
+    expect(new Map([[Array, onChange]])).toEqual(new Map([[Array, onChange]]));
+    expect({ type: Array, onChange }).toEqual({ type: expect.any(Function), onChange: expect.any(Function) });
+    expect({ type: Array }).toEqual(expect.objectContaining({ type: Array }));
+  });
+
   test("deepEquals set and map", () => {
     let e = new Map();
     e.set("a", 1);

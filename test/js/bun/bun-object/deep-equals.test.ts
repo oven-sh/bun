@@ -1,3 +1,4 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import vm from "node:vm";
 
@@ -49,7 +50,6 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(b, a)).toBe(false);
   });
 
-  // we may change this in the future
   it("functions that are not reference-equal are never equal", () => {
     function foo() {}
     function bar() {}
@@ -57,6 +57,51 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(foo, foo)).toBe(true);
     expect(deepEquals(foo, bar)).toBe(false);
     expect(deepEquals(foo, baz)).toBe(false);
+  });
+
+  // Built-in constructors, Function.prototype and mock functions are InternalFunction
+  // objects and a Proxy over a function is a ProxyObject, none of which is an ordinary
+  // JSFunction. Like ordinary functions, they have no own enumerable properties, so
+  // they must be compared by identity rather than by walking properties.
+  function target() {}
+  it.each<[string, unknown, unknown]>([
+    ["Array and Object", Array, Object],
+    ["Map and Set", Map, Set],
+    ["Symbol and Object", Symbol, Object],
+    ["BigInt and Object", BigInt, Object],
+    ["Function and Object", Function, Object],
+    ["Error and TypeError", Error, TypeError],
+    ["Uint8Array and Int8Array", Uint8Array, Int8Array],
+    ["Function.prototype and Object", Function.prototype, Object],
+    ["a built-in constructor and a plain object", Array, {}],
+    ["two mock functions", mock(() => 1), mock(() => 1)],
+    ["two Proxies over functions", new Proxy(function () {}, {}), new Proxy(function () {}, {})],
+    ["a Proxy over a built-in constructor and its target", new Proxy(Array, {}), Array],
+    ["a Proxy over a function and its target", new Proxy(target, {}), target],
+  ])("callables that are not reference-equal are never equal: %s", (_, a, b) => {
+    expect(deepEquals(a, b)).toBe(false);
+    expect(deepEquals(b, a)).toBe(false);
+    expect(deepEquals({ type: a }, { type: b })).toBe(false);
+    expect(deepEquals([a], [b])).toBe(false);
+    expect(deepEquals(new Set([a]), new Set([b]))).toBe(false);
+    expect(deepEquals(new Map([[a, 1]]), new Map([[b, 1]]))).toBe(false);
+    expect(deepEquals(new Map([["type", a]]), new Map([["type", b]]))).toBe(false);
+  });
+
+  it("the same callable is equal to itself wherever it appears", () => {
+    const mocked = mock(() => 1);
+    const proxied = new Proxy(function () {}, {});
+    expect(deepEquals(Array, Array)).toBe(true);
+    expect(deepEquals(proxied, proxied)).toBe(true);
+    expect(deepEquals({ type: Array, mocked, proxied }, { type: Array, mocked, proxied })).toBe(true);
+    expect(deepEquals([Map, mocked], [Map, mocked])).toBe(true);
+    expect(deepEquals(new Set([Map, Set]), new Set([Set, Map]))).toBe(true);
+    expect(deepEquals(new Map([[Array, mocked]]), new Map([[Array, mocked]]))).toBe(true);
+  });
+
+  it("a Proxy over a non-callable object is still compared by its properties", () => {
+    expect(deepEquals(new Proxy({ a: 1 }, {}), new Proxy({ a: 1 }, {}))).toBe(true);
+    expect(deepEquals(new Proxy({ a: 1 }, {}), new Proxy({ a: 2 }, {}))).toBe(false);
   });
 
   describe("global object", () => {

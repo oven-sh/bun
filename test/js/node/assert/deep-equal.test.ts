@@ -633,6 +633,23 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  // Built-in constructors are not ordinary functions internally (InternalFunction) and a
+  // Proxy over a function is a ProxyObject; node rejects any two distinct callables alike.
+  { name: "two distinct built-in constructors", a: () => Array, b: () => Object, strict: false, loose: false },
+  {
+    name: "objects holding distinct built-in constructors",
+    a: () => ({ type: Map }),
+    b: () => ({ type: Set }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two distinct Proxies over functions",
+    a: () => new Proxy(() => {}, {}),
+    b: () => new Proxy(() => {}, {}),
+    strict: false,
+    loose: false,
+  },
   { name: "an arguments object and an array", a: () => argumentsObject(1), b: () => [1], strict: false, loose: false },
   {
     name: "two equal arguments objects",

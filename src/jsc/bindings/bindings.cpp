@@ -1245,6 +1245,16 @@ template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, boo
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
     VM& vm = globalObject->vm();
+
+    // Two distinct callables are never equal (jest: `typeof a !== "object"`; the identical
+    // pair already returned from sameValue). This has to be a callability check rather than
+    // a JSFunctionType arm below: built-in constructors like Array and Map and mock functions
+    // are InternalFunctionType, and a Proxy over a function is ProxyObjectType, so all of
+    // them would otherwise reach the own-property walk and compare equal.
+    if (c1->isCallable() || c2->isCallable()) {
+        return false;
+    }
+
     uint8_t c1Type = c1->type();
     uint8_t c2Type = c2->type();
 
@@ -1737,10 +1747,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
         return true;
     }
-    case JSFunctionType: {
-        return false;
-    }
-
     case JSAsJSONType:
     case JSDOMWrapperType: {
         if (c2Type == c1Type) {

@@ -9655,24 +9655,9 @@ fn dt_err(errno: E) -> crate::Error {
 
 #[inline]
 fn dt_open_dir(parent: &sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
-    let mut path_buf = PathBuffer::uninit();
-    let len = name.len().min(path_buf.len() - 1);
-    path_buf[..len].copy_from_slice(&name[..len]);
-    path_buf[len] = 0;
-    // SAFETY: NUL written at [len].
-    let z = ZStr::from_buf(&path_buf[..], len);
-    // Windows: a delete-pending directory reports ENOENT, like any other
+    // On Windows a delete-pending directory reports ENOENT, like any other
     // vanished entry (see `openat_dir_for_delete_tree`).
-    #[cfg(windows)]
-    let result = sys::openat_dir_for_delete_tree(parent.fd, z.as_bytes());
-    #[cfg(not(windows))]
-    let result = Syscall::openat(
-        parent.fd,
-        z,
-        sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW,
-        0,
-    );
-    match result {
+    match sys::openat_dir_for_delete_tree(parent.fd, name) {
         Ok(fd) => Ok(sys::Dir::from_fd(fd)),
         Err(e) => Err(e.get_errno()),
     }

@@ -5708,6 +5708,120 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
   expect(proc.exitCode).toBe(0);
 });
 
+// oven-sh/bun#39708, oven-sh/bun#36984: a recursive `rm` that loses a race
+// against a concurrent deleter must keep walking instead of bailing out. The
+// bail-out left the rest of the tree behind (and on Windows surfaced
+// EFAULT/EPERM). A real concurrent deleter is not deterministic, so LD_PRELOAD
+// a shim that plays one: for marked names it really removes the entry, then
+// reports ENOENT, which is exactly what the loser of the race observes.
+// glibc-only, same as the statfs shim above.
+it.skipIf(!isGlibc || !cc)("fs.rm recursive keeps walking when a concurrent deleter wins (#39708)", () => {
+  using dir = tempDir("rm-race-shim", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <string.h>
+#include <sys/types.h>
+
+static int (*next_unlinkat)(int, const char *, int);
+static int (*next_openat)(int, const char *, int, ...);
+
+int unlinkat(int dirfd, const char *path, int flags) {
+  if (!next_unlinkat) next_unlinkat = dlsym(RTLD_NEXT, "unlinkat");
+  // Interposition probe: report success without deleting anything.
+  if (strstr(path, "bun-shim-probe-keep")) return 0;
+  if (strstr(path, "bun-race-doomed-file")) {
+    // The concurrent deleter wins: the entry is really gone, we get ENOENT.
+    next_unlinkat(dirfd, path, flags);
+    errno = ENOENT;
+    return -1;
+  }
+  return next_unlinkat(dirfd, path, flags);
+}
+
+int openat(int dirfd, const char *path, int flags, ...) {
+  if (!next_openat) next_openat = dlsym(RTLD_NEXT, "openat");
+  if (!next_unlinkat) next_unlinkat = dlsym(RTLD_NEXT, "unlinkat");
+  if ((flags & O_DIRECTORY) && strstr(path, "bun-race-doomed-dir")) {
+    next_unlinkat(dirfd, path, AT_REMOVEDIR);
+    errno = ENOENT;
+    return -1;
+  }
+  va_list ap;
+  va_start(ap, flags);
+  mode_t mode = va_arg(ap, mode_t);
+  va_end(ap);
+  return next_openat(dirfd, path, flags, mode);
+}
+`,
+    "bun-shim-probe-keep.txt": "probe",
+    "root/bun-race-doomed-file.txt": "doomed",
+    "root/bun-race-doomed-dir/.gitkeep": "", // emptied below; shim rmdir needs it empty
+    "root/keep-a.txt": "x",
+    "root/keep-sub/nested.txt": "x",
+    "child.js": `
+const fs = require("node:fs");
+// Probe: the shim swallows unlinkat for this name. If rmSync reports success
+// but the file is still there, the shim interposed the symbol the recursive
+// walk uses. If not, fail loudly instead of passing vacuously.
+fs.rmSync("bun-shim-probe-keep.txt", { recursive: true });
+if (!fs.existsSync("bun-shim-probe-keep.txt")) {
+  console.error("shim did not interpose unlinkat");
+  process.exit(3);
+}
+fs.rmSync("root", { recursive: true, force: true });
+if (fs.existsSync("root")) {
+  console.error("leftover tree: " + JSON.stringify(fs.readdirSync("root", { recursive: true })));
+  process.exit(4);
+}
+`,
+  });
+
+  // The doomed dir must be empty so the shim's rmdir of it succeeds.
+  fs.unlinkSync(path.join(String(dir), "root/bun-race-doomed-dir/.gitkeep"));
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c")],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build rm race shim:\n${compile.stderr.toString()}`);
+  }
+
+  const existing = bunEnv.LD_PRELOAD;
+  const proc = Bun.spawnSync({
+    cmd: [bunExe(), "child.js"],
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    cwd: String(dir),
+  });
+  expect(proc.stderr.toString()).toBe("");
+  expect(proc.exitCode).toBe(0);
+});
+
+// The same race without a shim: concurrent rm calls on one tree. Every call
+// must resolve (force: true) and the tree must be gone. On Windows the loser
+// used to reject with EPERM (EFAULT/EACCES before the port) when it opened a
+// directory whose deletion the winner had already started.
+it("concurrent recursive force rm of the same tree all resolve (#39708)", async () => {
+  using dir = tempDir("rm-concurrent", {});
+  for (let round = 0; round < 40; round++) {
+    const target = path.join(String(dir), `victim-${round}`);
+    fs.mkdirSync(path.join(target, "sub"), { recursive: true });
+    fs.writeFileSync(path.join(target, "a.txt"), "x");
+    fs.writeFileSync(path.join(target, "sub", "b.txt"), "x");
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, () => fs.promises.rm(target, { recursive: true, force: true })),
+    );
+    const rejected = results.filter(r => r.status === "rejected").map(r => String((r as PromiseRejectedResult).reason));
+    expect(rejected).toEqual([]);
+    expect(fs.existsSync(target)).toBe(false);
+  }
+});
+
 it("fs.Stat constructor", () => {
   expect(new Stats()).toMatchObject({
     "atimeMs": undefined,

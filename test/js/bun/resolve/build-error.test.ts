@@ -316,3 +316,71 @@ test("BuildMessage finalize frees with the same allocator it was created with", 
     Bun.gc(true);
   }
 });
+
+// A file that failed to load is not kept as failed: the next load of it reads
+// the file again, so a file that is fixed in the meantime loads.
+describe.concurrent("a file whose build failed loads once it is fixed", () => {
+  async function runMain(files: Record<string, string>) {
+    using dir = tempDir("build-error-refetch", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  const settledAs = `namespace => ({ x: namespace.x }), error => error.name`;
+
+  test("by import() and by require()", async () => {
+    const result = await runMain({
+      "bad.ts": `export const x = ;`,
+      "main.mjs": `
+        const result = {};
+        result.broken = await import("./bad.ts").then(${settledAs});
+        try {
+          result.brokenRequire = { x: require("./bad.ts").x };
+        } catch (error) {
+          result.brokenRequire = error.name;
+        }
+        await Bun.write("./bad.ts", "export const x = 1;");
+        result.fixed = await import("./bad.ts").then(${settledAs});
+        result.fixedRequire = { x: require("./bad.ts").x };
+        console.log(JSON.stringify(result));
+      `,
+    });
+
+    expect(result).toEqual({
+      stdout: JSON.stringify({
+        broken: "BuildMessage",
+        brokenRequire: "BuildMessage",
+        fixed: { x: 1 },
+        fixedRequire: { x: 1 },
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("after a module that imports it failed to load", async () => {
+    const result = await runMain({
+      "bad.ts": `export const x = ;`,
+      "importer.ts": `import { x } from "./bad.ts"; export const y = x;`,
+      "main.mjs": `
+        const result = {};
+        result.importer = await import("./importer.ts").then(() => "fulfilled", error => error.name);
+        await Bun.write("./bad.ts", "export const x = 1;");
+        result.fixed = await import("./bad.ts").then(${settledAs});
+        console.log(JSON.stringify(result));
+      `,
+    });
+
+    expect(result).toEqual({
+      stdout: JSON.stringify({ importer: "BuildMessage", fixed: { x: 1 } }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

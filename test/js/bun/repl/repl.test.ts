@@ -105,8 +105,10 @@ class ScreenModel {
 
   private control(command: string, params: string, sequence: string): void {
     if (command === "m") return; // colors
-    // The line editor only ever sends a single parameter.
-    if (!/^\d*$/.test(params)) throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(sequence)}`);
+    // The line editor only ever sends a single parameter, and never one past a terminal's size.
+    if (!/^\d{0,4}$/.test(params)) {
+      throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(sequence)}`);
+    }
     const n = params === "" ? undefined : Number(params);
     switch (command) {
       case "A":

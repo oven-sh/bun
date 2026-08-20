@@ -1103,12 +1103,19 @@ for (const [title, envOverride, root] of [
   ["relative $XDG_CACHE_HOME resolves against the cwd", { XDG_CACHE_HOME: "rel-xdg" }, ["rel-xdg", ".bun"]],
   ["empty $XDG_CACHE_HOME falls through to $HOME", { XDG_CACHE_HOME: "" }, ["fake-home", ".bun"]],
   ["relative $HOME resolves against the cwd", { HOME: "rel-home", USERPROFILE: "rel-home" }, ["rel-home", ".bun"]],
+  [
+    "relative $HOME still resolves against the cwd when $BUN_INSTALL_GLOBAL_DIR picks the global directory",
+    { BUN_INSTALL_GLOBAL_DIR: "explicit-global", HOME: "rel-home", USERPROFILE: "rel-home" },
+    ["rel-home", ".bun"],
+  ],
   ["unset $BUN_INSTALL falls through to $HOME", {}, ["fake-home", ".bun"]],
 ] as const) {
   test(`bun pm bin -g: ${title}`, async () => {
     // `bun pm bin -g` needs a package.json in the global directory it ends up in.
+    const globalDir =
+      (envOverride as Record<string, string>).BUN_INSTALL_GLOBAL_DIR ?? [...root, "install/global"].join("/");
     using dir = tempDir("pm-global-dir-env", {
-      [[...root, "install/global/package.json"].join("/")]: JSON.stringify({ name: "global", version: "1.0.0" }),
+      [`${globalDir}/package.json`]: JSON.stringify({ name: "global", version: "1.0.0" }),
     });
     const cwd = String(dir);
     const binDir = join(cwd, ...root, "bin");

@@ -128,12 +128,10 @@ describe("bun", () => {
     // colors.
     test.concurrent("a tty stdout still gets colors", async () => {
       let output = "";
-      const sawColor = Promise.withResolvers<void>();
       const decoder = new TextDecoder();
       await using terminal = new Bun.Terminal({
         data(_t, chunk: Uint8Array) {
           output += decoder.decode(chunk, { stream: true });
-          if (/\u001b\[\d+m/.test(output)) sawColor.resolve();
         },
       });
       const proc = Bun.spawn({
@@ -141,8 +139,14 @@ describe("bun", () => {
         env: colorEnv,
         terminal,
       });
-      await sawColor.promise;
       await proc.exited;
+      // PTY data can still be in flight after waitpid. Poll with a deadline
+      // (below the 5s test timeout) so a regression fails here with the
+      // captured output, not by timeout.
+      const deadline = Date.now() + 2_000;
+      while (!/\u001b\[\d+m/.test(output) && Date.now() < deadline) {
+        await Bun.sleep(10);
+      }
       expect(output).toMatch(/\u001b\[\d+m/);
     });
   });

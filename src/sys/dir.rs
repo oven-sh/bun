@@ -217,12 +217,16 @@ impl Dir {
             if need_to_retry {
                 // Since we closed the handle that the previous iterator used, we
                 // need to re-open the dir and re-create the iterator.
-                let new_dir = match openat_a(
+                #[cfg(windows)]
+                let reopened = crate::openat_dir_for_delete_tree(parent_dir, &name);
+                #[cfg(not(windows))]
+                let reopened = openat_a(
                     parent_dir,
                     &name,
                     O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
                     0,
-                ) {
+                );
+                let new_dir = match reopened {
                     Ok(fd) => fd,
                     Err(e) => match e.get_errno() {
                         E::ENOTDIR => {

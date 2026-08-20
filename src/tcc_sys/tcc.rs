@@ -11,34 +11,31 @@ pub type TCCErrorFunc = Option<unsafe extern "C" fn(opaque: *mut c_void, msg: *c
 /// Typed error callback signature for a given context type.
 pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char);
 
-// `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
-// not Android, not FreeBSD (the vendored fork doesn't support those targets).
-// On those platforms these `extern "C"` decls would be undefined at link:
-// `bun_runtime::ffi::ffi_body::{Source::add,
-// CompileC::compile}` are reachable from `extern "C"` JS bindings and the
-// monomorphized refs land in `libbun_rust.a` regardless of any
-// `if !ENABLE_TINYCC { return }` runtime guard. Swap the `extern` block for
-// stub *definitions* on those targets so the link resolves; the gated Rust
-// callers never reach them at runtime (they early-return with "not available
-// in this build"), and the `unreachable!()` makes any future gate regression
-// loud rather than silently UB.
-//
-// Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`
-// and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
+// `cfg(bun_tinycc)` is set by `scripts/build/rust.ts` exactly when the build
+// links libtcc (`cfg.tinycc`: the `--tinycc` option, off by default on Android
+// and FreeBSD, which the vendored fork doesn't support). Without libtcc these
+// `extern "C"` decls would be undefined at link: `bun_runtime::ffi::ffi_body::
+// {Source::add, CompileC::compile}` are reachable from `extern "C"` JS
+// bindings and the monomorphized refs land in `libbun_rust.a` regardless of
+// any `if !ENABLE_TINYCC { return }` runtime guard. So a build without libtcc
+// gets stub *definitions* instead; the gated Rust callers never reach them at
+// runtime (`ENABLE_TINYCC` is `cfg!(bun_tinycc)`, so they early-return with
+// "not available in this build"), and the `unreachable!()` makes any future
+// gate regression loud rather than silently UB.
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
-        #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
+        #[cfg(bun_tinycc)]
         unsafe extern "C" {
             $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
         }
         $(
-            #[cfg(any(target_os = "android", target_os = "freebsd"))]
+            #[cfg(not(bun_tinycc))]
             #[allow(unused_variables, clippy::missing_safety_doc)]
             unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
                 unreachable!(concat!(
                     stringify!($name),
-                    " called but TinyCC is disabled on this target — keep the ",
-                    "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
+                    " called but this build has no TinyCC; keep the ENABLE_TINYCC ",
+                    "early-returns in bun_runtime::ffi in sync with this stub"
                 ));
             }
         )*

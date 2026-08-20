@@ -10,11 +10,16 @@
  *   import), so it is read as text.
  * - The rustflags put the Rust half of the binary on the CPU baseline the C++
  *   half is compiled for (`cpuTargetFlags` in scripts/build/flags.ts).
+ * - The `tinycc` option decides whether libtcc is linked, so the Rust side
+ *   (the `tcc_*` externs and the `ENABLE_TINYCC` runtime gate) has to follow
+ *   the same option, through a cfg the rustflags carry.
  */
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { generateBuildOptionsRs } from "../../../scripts/build/buildOptionsRs.ts";
 import {
   resolveConfig,
   type Abi,
@@ -217,5 +222,116 @@ describe("CPU baseline", () => {
     const linuxX64 = resolve({ os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" });
     expect(cpuFlags(linuxX64)).toEqual(["-Ctarget-cpu=nehalem"]);
     expect(cpuFlags(withAbi(linuxX64, "android"))).toEqual(["-Ctarget-cpu=nehalem"]);
+  });
+});
+
+describe("tinycc option", () => {
+  // `cfg.tinycc` (`--tinycc=on|off`; config.ts defaults it off on Android and
+  // FreeBSD) is what puts libtcc into the link (scripts/build/deps/tinycc.ts).
+  // Two things on the Rust side have to agree with it: src/tcc_sys/tcc.rs
+  // declares the `tcc_*` symbols as externs (undefined at link time when
+  // libtcc isn't built) or defines stubs for them, and
+  // `bun_core::Environment::ENABLE_TINYCC` is the runtime gate behind
+  // bun:ffi's "cc() is not available in this build". `#[cfg]` can't read a
+  // const, so the option reaches Rust as a cfg in the rustflags and both of
+  // them key on it. These tests pin that chain; each link of it used to carry
+  // its own copy of the platform list instead, which left `--tinycc=off`
+  // (or any change to the list in config.ts) unknown to the Rust half of the
+  // build.
+
+  const linux: PartialConfig = { os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" };
+
+  /** Resolve a config whose generated files land in `scratch`. */
+  function configure(partial: PartialConfig, scratch: string): Config {
+    return resolve({ buildDir: scratch, ...partial });
+  }
+
+  function rustflags(cfg: Config): string[] {
+    return cargoBuildInvocation(cfg).env.CARGO_ENCODED_RUSTFLAGS!.split("\x1f");
+  }
+
+  /** The cfg that `ENABLE_TINYCC` reads in the build_options.rs generated for `cfg`. */
+  function enableTinyccCfg(cfg: Config): string {
+    const source = readFileSync(generateBuildOptionsRs(cfg), "utf8");
+    const match = /^pub const ENABLE_TINYCC: bool = cfg!\((\w+)\);$/m.exec(source);
+    if (!match) {
+      const actual = /^pub const ENABLE_TINYCC: bool = .*$/m.exec(source)?.[0] ?? "(no ENABLE_TINYCC constant)";
+      throw new Error(`ENABLE_TINYCC in build_options.rs must be one cfg!() that rust.ts sets, got: ${actual}`);
+    }
+    return match[1]!;
+  }
+
+  /** The cfg's name, as a default linux configure spells it. */
+  function cfgName(): string {
+    using scratch = tempDir("build-rust-tinycc", {});
+    return enableTinyccCfg(configure(linux, String(scratch)));
+  }
+
+  /** What `ENABLE_TINYCC` evaluates to in the cargo build rust.ts emits for `cfg`. */
+  function rustEnableTinycc(cfg: Config): boolean {
+    const name = enableTinyccCfg(cfg);
+    const flags = rustflags(cfg);
+    // Declared whether or not it is set: rustc's unexpected_cfgs lint fires
+    // on the builds that leave an undeclared cfg unset.
+    expect(flags).toContain(`--check-cfg=cfg(${name})`);
+    return flags.includes(`--cfg=${name}`);
+  }
+
+  const cases: { name: string; partial: PartialConfig; tinycc: boolean }[] = [
+    { name: "linux", partial: linux, tinycc: true },
+    { name: "linux --tinycc=off", partial: { ...linux, tinycc: false }, tinycc: false },
+    { name: "debug --tinycc=off", partial: { ...linux, buildType: "Debug", tinycc: false }, tinycc: false },
+    { name: "windows", partial: { os: "windows", arch: "x64", winsysroot: "/fake" }, tinycc: true },
+    // config.ts's platform exclusions arrive through the option like everything else.
+    { name: "freebsd", partial: { os: "freebsd", arch: "x64", freebsdSysroot: "/fake" }, tinycc: false },
+    {
+      name: "freebsd --tinycc=on",
+      partial: { os: "freebsd", arch: "x64", freebsdSysroot: "/fake", tinycc: true },
+      tinycc: true,
+    },
+  ];
+
+  for (const { name, partial, tinycc } of cases) {
+    test(`${name}: the Rust build sees tinycc=${tinycc}`, () => {
+      using scratch = tempDir("build-rust-tinycc", {});
+      const cfg = configure(partial, String(scratch));
+      // The option itself resolves as documented; under test is whether the
+      // Rust build gets the value the dep graph acts on.
+      expect(cfg.tinycc).toBe(tinycc);
+      expect(rustEnableTinycc(cfg)).toBe(tinycc);
+    });
+  }
+
+  test("the cfg is registered in Cargo.toml for bare cargo", () => {
+    // `cargo check` / clippy / miri run without rust.ts's rustflags, so the
+    // `--check-cfg` there doesn't reach them.
+    const unexpectedCfgs = /^unexpected_cfgs\s*=.*$/m.exec(readFileSync(join(repoRoot, "Cargo.toml"), "utf8"))?.[0];
+    expect(unexpectedCfgs).toContain(`'cfg(${cfgName()})'`);
+  });
+
+  test("bun_tcc_sys declares the tcc_* externs under the cfg and stubs them without it", () => {
+    const name = cfgName();
+    const source = readFileSync(join(repoRoot, "src", "tcc_sys", "tcc.rs"), "utf8").replace(/\/\/[^\n]*/g, "");
+    const macro = /^macro_rules! tcc_externs \{\n([\s\S]*?)^\}/m.exec(source);
+    if (!macro) throw new Error("macro_rules! tcc_externs not found in src/tcc_sys/tcc.rs");
+    const body = macro[1]!;
+
+    expect(body).toMatch(new RegExp(String.raw`#\[cfg\(${name}\)\]\s*unsafe extern "C" \{`));
+    expect(body).toMatch(new RegExp(String.raw`#\[cfg\(not\(${name}\)\)\][^{]*\bunsafe extern "C" fn `));
+    // A platform predicate here would be a second copy of the list in
+    // config.ts, which is exactly what the cfg replaces.
+    expect(body).not.toMatch(/\btarget_os\b|\btarget_arch\b|\btarget_env\b/);
+
+    // Every tcc_* symbol the link has to satisfy goes through that macro: a
+    // `fn tcc_*` declared anywhere else would be outside the cfg.
+    const strays: string[] = [];
+    for (const rel of new Bun.Glob("src/**/*.rs").scanSync({ cwd: repoRoot })) {
+      const file = rel.replaceAll("\\", "/");
+      if (file === "src/tcc_sys/tcc.rs") continue;
+      // Searched as bytes: decoding ~1500 files to strings is what makes this
+      // slow under an ASAN build.
+      if (readFileSync(join(repoRoot, rel)).includes("fn tcc_")) strays.push(file);
+    }
+    expect(strays).toEqual([]);
   });
 });

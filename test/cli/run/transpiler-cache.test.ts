@@ -140,8 +140,8 @@ describe("transpiler cache", () => {
     // Stand-in for the shared, world-writable system temp dir. Pre-create
     // bun/@t@ inside it the way another local user could on a multi-user host.
     const shared_tmp = join(temp_dir, "shared-tmp");
-    const shared_cache = join(shared_tmp, "bun", "@t@");
-    mkdirSync(shared_cache, { recursive: true });
+    const shared_bun = join(shared_tmp, "bun");
+    mkdirSync(join(shared_bun, "@t@"), { recursive: true });
 
     // No per-user cache location is available (no BUN_RUNTIME_TRANSPILER_CACHE_PATH,
     // no XDG_CACHE_HOME, no HOME) — the only remaining candidate is the shared
@@ -160,9 +160,10 @@ describe("transpiler cache", () => {
       }),
     ).toSpawn("no-tmpdir-cache");
 
-    // No cache entry may be written into (or read back from) a directory that
-    // another local user could own and pre-populate.
-    expect(readdirSync(shared_cache)).toEqual([]);
+    // Nothing may be written under the shared dir, whatever leaf name a
+    // fallback would pick: only the pre-created decoy remains, and it is empty.
+    expect(readdirSync(shared_bun)).toEqual(["@t@"]);
+    expect(readdirSync(join(shared_bun, "@t@"))).toEqual([]);
 
     // A per-user cache location still works.
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("no-tmpdir-cache");

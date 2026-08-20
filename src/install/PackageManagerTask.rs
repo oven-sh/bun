@@ -621,7 +621,7 @@ fn read_and_extract(
             tarball_path,
         )?
     } else {
-        File::read_from(Fd::cwd(), tarball_path)?
+        File::read_regular_from(Fd::cwd(), tarball_path)?
     };
     // `defer allocator.free(bytes)` → Vec<u8> drops at scope exit
     tarball.run(log, &bytes)

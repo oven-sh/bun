@@ -25,6 +25,7 @@ import {
   VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
 
@@ -10005,6 +10006,48 @@ describe("manifest cache temporary files", () => {
     trapIsReady();
     expect((await installed).cached).toBe(name);
   });
+});
+
+// A FIFO at the cache entry's path used to block the install forever in
+// open(); a device file used to be read until the process ran out of memory.
+test.skipIf(isWindows)("npm manifest cache entry that is not a regular file is skipped and replaced", async () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const cacheDir = join(packageDir, ".bun-cache");
+  await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }));
+
+  async function install() {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+      // Only matters if the install blocks on the cache entry.
+      timeout: 30_000,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("+ no-deps@1.0.0");
+    expect(exitCode).toBe(0);
+  }
+
+  await install();
+  const manifestFiles = (await readdirSorted(cacheDir)).filter(name => name.endsWith(".npm"));
+  expect(manifestFiles).toHaveLength(1);
+  const manifestPath = join(cacheDir, manifestFiles[0]);
+
+  await Promise.all([
+    rm(manifestPath),
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    rm(join(packageDir, "bun.lockb"), { force: true }),
+    rm(join(packageDir, "bun.lock"), { force: true }),
+  ]);
+  mkfifo(manifestPath);
+
+  await install();
+  expect((await lstat(manifestPath)).isFile()).toBe(true);
+  expect(parseManifest(manifestPath, registryUrl()).name).toBe("no-deps");
 });
 
 describe("manifest conditional requests", () => {

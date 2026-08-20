@@ -513,8 +513,8 @@ impl Lockfile {
 
         let mut lockfile_format = LockfileFormat::Text;
         let file: File = 'file: {
-            match File::openat(dir, zstr!("bun.lock"), sys::O::RDONLY, 0) {
-                sys::Result::Ok(f) => break 'file f,
+            match File::open_regular_at(dir, zstr!("bun.lock")) {
+                sys::Result::Ok((f, _)) => break 'file f,
                 sys::Result::Err(text_open_err) => {
                     if text_open_err.errno != sys::SystemErrno::ENOENT as u16 {
                         return LoadResult::Err(LoadResultErr {
@@ -527,8 +527,8 @@ impl Lockfile {
 
                     lockfile_format = LockfileFormat::Binary;
 
-                    match File::openat(dir, zstr!("bun.lockb"), sys::O::RDONLY, 0) {
-                        sys::Result::Ok(f) => break 'file f,
+                    match File::open_regular_at(dir, zstr!("bun.lockb")) {
+                        sys::Result::Ok((f, _)) => break 'file f,
                         sys::Result::Err(binary_open_err) => {
                             if binary_open_err.errno != sys::SystemErrno::ENOENT as u16 {
                                 return LoadResult::Err(LoadResultErr {
@@ -1884,14 +1884,8 @@ impl Lockfile {
             }
             break 'bytes bytes;
         };
-        if File::openat(
-            Fd::cwd(),
-            save_format.filename().as_bytes(),
-            sys::O::RDONLY,
-            0,
-        )
-        .and_then(|existing| existing.read_to_end())
-        .is_ok_and(|existing| existing == bytes)
+        if File::read_regular_from(Fd::cwd(), save_format.filename())
+            .is_ok_and(|existing| existing == bytes)
         {
             return false;
         }

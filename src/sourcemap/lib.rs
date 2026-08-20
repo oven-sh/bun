@@ -527,14 +527,24 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let load_path =
                     bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
 
-                // `bun_sys::File::read_from` returns an owned `Vec<u8>`,
-                // freed on scope exit by `Vec`'s Drop.
-                let data = match bun_sys::File::read_from(bun_core::Fd::cwd(), load_path) {
-                    Ok(data) => data,
-                    Err(_) => break 'try_external,
+                let Ok((map_file, map_size)) =
+                    bun_sys::File::open_regular_at(bun_core::Fd::cwd(), load_path)
+                else {
+                    break 'try_external;
+                };
+                // A map larger than any source the JSON parser accepts is
+                // invalid without reading it.
+                let parsed = if map_size > bun_ast::Source::MAX_PARSEABLE_LEN as u64 {
+                    Err(crate::Error::InvalidJSON)
+                } else {
+                    let data = match map_file.read_to_end() {
+                        Ok(data) => data,
+                        Err(_) => break 'try_external,
+                    };
+                    parse_json(&data, result)
                 };
 
-                match parse_json(&data, result) {
+                match parsed {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsExternalMap, parsed),
                     Err(err) => {
                         // Print warning even if this came from non-visible code like

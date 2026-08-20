@@ -358,9 +358,49 @@ impl File {
             Err(e) => Err(e),
         }
     }
+    /// Open `path` for reading, but only if it is a regular file. Returns the
+    /// file and its size.
+    ///
+    /// For a path whose file type bun does not control (a lockfile or other
+    /// file in the project, a cache entry, a `.map` next to a script): a plain
+    /// `O_RDONLY` open of a FIFO blocks until a writer shows up, and
+    /// [`File::read_to_end`] of a character device such as `/dev/zero` never
+    /// reaches EOF. The open is non-blocking on unix so a FIFO cannot block
+    /// it, and the type is checked on the open descriptor, so the check cannot
+    /// race with a swap of the path. A directory fails with `EISDIR`, every
+    /// other non-regular file with `ENOTSUP`.
+    pub fn open_regular_at(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, u64)> {
+        let dir = dir.as_fd();
+        // On Windows `O_NONBLOCK` opens an overlapped handle, which the
+        // synchronous reads cannot use; the fstat check below still rejects
+        // pipes and devices there.
+        #[cfg(unix)]
+        let flags = O::RDONLY | O::CLOEXEC | O::NONBLOCK;
+        #[cfg(not(unix))]
+        let flags = O::RDONLY | O::CLOEXEC;
+        let file = Self::openat(dir, path, flags, 0)?;
+        let st = file.stat()?;
+        let mode = st.st_mode as Mode;
+        if !S::ISREG(mode) {
+            let errno = if S::ISDIR(mode) {
+                E::EISDIR
+            } else {
+                E::ENOTSUP
+            };
+            return Err(Error::new(errno, Tag::open).with_path(path));
+        }
+        Ok((file, st.st_size.max(0) as u64))
+    }
+    /// [`File::read_from`] for a path that has to be a regular file; see
+    /// [`File::open_regular_at`].
+    pub fn read_regular_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
+        let dir = dir.as_fd();
+        let (f, _) = Self::open_regular_at(dir, path)?;
+        f.read_to_end()
+    }
     /// Normalize a
     /// user-provided relative path against the resolver's cached
-    /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.
+    /// `top_level_dir` (NOT a fresh `getcwd()`), then [`File::read_regular_from`].
     ///
     /// The cached `top_level_dir` lives in `bun_resolver::fs` (T5), which
     /// `bun_sys` (T1) must not depend on, so callers pass it explicitly.
@@ -376,7 +416,7 @@ impl File {
             &mut buf.0,
             &[input_path],
         );
-        Self::read_from(dir, normalized.as_bytes())
+        Self::read_regular_from(dir, normalized.as_bytes())
     }
     /// `bun.sys.File.writeFile` — open + write + close.
     pub fn write_file(dir: impl AsFd, path: &ZStr, data: &[u8]) -> Maybe<()> {

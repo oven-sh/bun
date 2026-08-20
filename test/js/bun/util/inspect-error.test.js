@@ -1,5 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { symlinkSync, truncateSync } from "node:fs";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -9,24 +11,25 @@ test("error.cause", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
-3 | 
-4 | test("error.cause", () => {
-5 |   const err = new Error("error 1");
-6 |   const err2 = new Error("error 2", { cause: err });
+"3 | import { mkfifo } from "mkfifo";
+4 | import { symlinkSync, truncateSync } from "node:fs";
+5 | 
+6 | test("error.cause", () => {
+7 |   const err = new Error("error 1");
+8 |   const err2 = new Error("error 2", { cause: err });
                        ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:6:20)
+      at <anonymous> ([dir]/inspect-error.test.js:8:20)
 
-1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
-3 | 
-4 | test("error.cause", () => {
-5 |   const err = new Error("error 1");
+2 | import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+3 | import { mkfifo } from "mkfifo";
+4 | import { symlinkSync, truncateSync } from "node:fs";
+5 | 
+6 | test("error.cause", () => {
+7 |   const err = new Error("error 1");
                       ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:5:19)
+      at <anonymous> ([dir]/inspect-error.test.js:7:19)
 "
 `);
 });
@@ -38,15 +41,15 @@ test("Error", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"30 | "
-31 | \`);
-32 | });
-33 | 
-34 | test("Error", () => {
-35 |   const err = new Error("my message");
+"33 | "
+34 | \`);
+35 | });
+36 | 
+37 | test("Error", () => {
+38 |   const err = new Error("my message");
                        ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:35:19)
+      at <anonymous> ([dir]/inspect-error.test.js:38:19)
 "
 `);
 });
@@ -105,7 +108,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:86:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:89:7)"
     `);
   }
 });
@@ -134,7 +137,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:114:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:117:7)"
     `);
   }
 });
@@ -148,7 +151,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:143:19)"
+    at <anonymous> ([file]:146:19)"
 `);
 });
 
@@ -196,8 +199,10 @@ describe("source map remapping of the printed stack", () => {
       .map(line => line.replaceAll(prefix, ""));
   }
 
-  async function run(files) {
+  // `prepare(dir)` runs once the files exist, for what a file tree can't express.
+  async function run(files, prepare = () => {}) {
     using dir = tempDir("inspect-error-sourcemap", files);
+    prepare(String(dir));
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       cwd: String(dir),
@@ -206,7 +211,7 @@ describe("source map remapping of the printed stack", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode };
+    return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode, maxRSS: proc.resourceUsage().maxRSS };
   }
 
   // A prebuilt file whose map names a source that is neither on disk nor in
@@ -325,6 +330,53 @@ describe("source map remapping of the printed stack", () => {
       uncaughtAfterStack: positions(out.presentStack),
     });
     expect(exitCode).toBe(1);
+  });
+
+  // The `main.js.map` next to a prebuilt file is read when the error is
+  // printed. It is only a source map if it is a regular file: a FIFO used to
+  // block the exiting process forever in open(), and a device such as
+  // /dev/zero used to be read until the process ran out of memory. The frames
+  // then stay unmapped, as with no map at all.
+  describe.skipIf(isWindows)("external map that is not a regular file", () => {
+    const files = {
+      "main.js": [
+        "// @bun",
+        'function thrower() { throw new Error("HOSTILE"); }',
+        'console.log("{}");',
+        "thrower();",
+        "",
+      ].join("\n"),
+    };
+    const unmapped = ["at thrower (main.js:2:28)", "at main.js:4:8"];
+
+    test.concurrent("a FIFO", async () => {
+      const { dir, stderr, exitCode } = await run(files, cwd => mkfifo(`${cwd}/main.js.map`));
+      expect(stderr).not.toContain("Could not decode sourcemap");
+      expect(frames(stderr, dir, ["main.js"])).toEqual(unmapped);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a character device", async () => {
+      const { dir, stderr, exitCode } = await run(files, cwd => symlinkSync("/dev/null", `${cwd}/main.js.map`));
+      expect(stderr).not.toContain("Could not decode sourcemap");
+      expect(frames(stderr, dir, ["main.js"])).toEqual(unmapped);
+      expect(exitCode).toBe(1);
+    });
+
+    // A map the JSON parser would reject for its size alone is reported as
+    // undecodable without being read: the 2 GiB of this sparse file never
+    // enter memory.
+    test.concurrent("a regular file too large to parse", async () => {
+      const { dir, stderr, exitCode, maxRSS } = await run({ ...files, "main.js.map": "" }, cwd =>
+        truncateSync(`${cwd}/main.js.map`, 2 ** 31),
+      );
+      expect(stderr).toContain(`Could not decode sourcemap in '${dir}/main.js': InvalidJSON`);
+      expect(frames(stderr, dir, ["main.js"])).toEqual(unmapped);
+      expect(exitCode).toBe(1);
+      // maxRSS is in bytes on every platform; the lower bound pins the unit.
+      expect(maxRSS).toBeGreaterThan(1024 * 1024);
+      expect(maxRSS).toBeLessThan(1024 * 1024 * 1024);
+    });
   });
 });
 

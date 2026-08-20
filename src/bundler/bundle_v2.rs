@@ -2650,6 +2650,13 @@ pub mod bv2_impl {
                 .loader(&self.transpiler.options.loaders)
                 .unwrap_or(Loader::File);
 
+            // #8467: stash the pre-symlink spelling (in `pretty` until overwritten below) for output naming; matches esbuild.
+            if is_entry_point && path.is_symlink && path.is_file() && !path.pretty.is_empty() {
+                self.graph
+                    .entry_point_original_names
+                    .put(source_index.get(), path.pretty)?;
+            }
+
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
             // `Path<'static>` alias so `path` doesn't keep `self` borrowed.
@@ -4593,19 +4600,9 @@ pub mod bv2_impl {
                                 return;
                             };
                             let mut resolved = resolved;
-                            let Ok(source_index) =
-                                this.enqueue_entry_item(&mut resolved, true, target)
-                            else {
+                            let Ok(_) = this.enqueue_entry_item(&mut resolved, true, target) else {
                                 return;
                             };
-
-                            // Store the original entry point name for virtual entries that fall back to file resolution
-                            if let Some(idx) = source_index {
-                                let _ = this
-                                    .graph
-                                    .entry_point_original_names
-                                    .put(idx, &resolve.import_record.specifier);
-                            }
                             return;
                         }
 

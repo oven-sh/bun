@@ -746,6 +746,242 @@ test("decorators with different property key types", () => {
   let A = foo("a", "b", "c");
 });
 
+// A computed key must be evaluated exactly once: the decorator has to receive the key the
+// member was actually defined under. Every `key()` below returns a different string each
+// time it is evaluated, so a second evaluation decorates (or defines) the wrong property.
+describe("decorated members with computed keys", () => {
+  function keyCounter() {
+    const state = { evaluations: 0, decorated: [] as string[] };
+    return {
+      state,
+      key(name: string) {
+        state.evaluations++;
+        return `${name}${state.evaluations}`;
+      },
+      dec(_target: any, propertyKey: string) {
+        state.decorated.push(propertyKey);
+      },
+    };
+  }
+
+  function ownKeys(target: object) {
+    return Object.getOwnPropertyNames(target).filter(name => !["length", "name", "prototype"].includes(name));
+  }
+
+  test("methods and accessors are decorated under the key they were defined with", () => {
+    const { state, key, dec } = keyCounter();
+
+    class A {
+      @dec [key("method")]() {}
+      @dec get [key("getter")]() {
+        return 1;
+      }
+      @dec set [key("setter")](_value: number) {}
+      @dec static [key("staticMethod")]() {}
+    }
+
+    expect({
+      ...state,
+      prototypeKeys: ownKeys(A.prototype),
+      staticKeys: ownKeys(A),
+    }).toEqual({
+      evaluations: 4,
+      decorated: ["method1", "getter2", "setter3", "staticMethod4"],
+      prototypeKeys: ["constructor", "method1", "getter2", "setter3"],
+      staticKeys: ["staticMethod4"],
+    });
+  });
+
+  test("parameter decorators on a method with a computed key", () => {
+    const { state, key } = keyCounter();
+    function paramDec(_target: any, propertyKey: string, index: number) {
+      state.decorated.push(`${propertyKey}[${index}]`);
+    }
+
+    class A {
+      [key("method")](@paramDec _a: string, @paramDec _b: string) {}
+    }
+
+    expect({ ...state, prototypeKeys: ownKeys(A.prototype) }).toEqual({
+      evaluations: 1,
+      decorated: ["method1[1]", "method1[0]"],
+      prototypeKeys: ["constructor", "method1"],
+    });
+  });
+
+  test("instance fields are initialized under the decorated key, without re-evaluating it per instance", () => {
+    const { state, key, dec } = keyCounter();
+
+    class A {
+      @dec [key("field")] = "value";
+    }
+    const first = new A();
+    const second = new A();
+
+    expect({
+      ...state,
+      first: Object.entries(first),
+      second: Object.entries(second),
+    }).toEqual({
+      evaluations: 1,
+      decorated: ["field1"],
+      first: [["field1", "value"]],
+      second: [["field1", "value"]],
+    });
+  });
+
+  test("static fields are initialized under the decorated key", () => {
+    const { state, key, dec } = keyCounter();
+
+    class A {
+      @dec static [key("staticField")] = 42;
+    }
+
+    expect({ ...state, statics: ownKeys(A).map(name => [name, A[name]]) }).toEqual({
+      evaluations: 1,
+      decorated: ["staticField1"],
+      statics: [["staticField1", 42]],
+    });
+  });
+
+  test("fields without an initializer", () => {
+    const { state, key, dec } = keyCounter();
+
+    class A {
+      @dec [key("field")]: string;
+      @dec declare [key("declared")]: string;
+      @dec static [key("staticField")]: string;
+    }
+    new A();
+
+    expect(state).toEqual({
+      evaluations: 3,
+      decorated: ["field1", "declared2", "staticField3"],
+    });
+  });
+
+  test("an instance created while the class is being defined uses the decorated key", () => {
+    const { state, key, dec } = keyCounter();
+
+    class A {
+      static instance = new A();
+      @dec [key("field")] = "value";
+    }
+
+    expect({
+      ...state,
+      duringDefinition: Object.keys(A.instance),
+      afterDefinition: Object.keys(new A()),
+    }).toEqual({
+      evaluations: 1,
+      decorated: ["field1"],
+      duringDefinition: ["field1"],
+      afterDefinition: ["field1"],
+    });
+  });
+
+  test("each class keeps its own keys", () => {
+    const { state, key, dec } = keyCounter();
+
+    class A {
+      @dec [key("a")] = "a";
+      @dec [key("am")]() {}
+    }
+    class B {
+      @dec [key("b")] = "b";
+      @dec [key("bm")]() {}
+    }
+
+    expect({
+      ...state,
+      a: Object.keys(new A()),
+      b: Object.keys(new B()),
+      aPrototype: ownKeys(A.prototype),
+      bPrototype: ownKeys(B.prototype),
+    }).toEqual({
+      evaluations: 4,
+      decorated: ["a1", "am2", "b3", "bm4"],
+      a: ["a1"],
+      b: ["b3"],
+      aPrototype: ["constructor", "am2"],
+      bPrototype: ["constructor", "bm4"],
+    });
+  });
+
+  test("evaluation order", () => {
+    const evaluated: string[] = [];
+    const key = (name: string) => (evaluated.push(name), name);
+    function dec() {}
+
+    class A {
+      @dec [key("method")]() {}
+      @dec [key("field")] = 1;
+      [key("undecoratedMethod")]() {}
+      @dec static [key("staticField")] = 2;
+      @dec get [key("getter")]() {
+        return 1;
+      }
+    }
+
+    // Decorated fields leave the class body (their initializers move into the constructor or
+    // after the class), so their keys are evaluated right before the class. Everything that
+    // stays in the body is evaluated in source order, like an undecorated class.
+    expect(evaluated).toEqual(["field", "staticField", "method", "undecoratedMethod", "getter"]);
+  });
+
+  test("transpiled output evaluates each computed key once", () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "ts",
+      tsconfig: { compilerOptions: { experimentalDecorators: true } },
+    });
+    const output = transpiler.transformSync(`
+      declare const dec: any;
+      declare function key(): string;
+      class A {
+        @dec [key()]() {}
+        @dec [key()] = 1;
+        @dec static [key()] = 2;
+        @dec [key()]: string;
+        @dec ["literal"]() {}
+        @dec [1] = 3;
+      }
+    `);
+    expect(output).toMatchInlineSnapshot(`
+      "import { __legacyDecorateClassTS as __legacyDecorateClassTS_3r173x8m } from "bun:wrap";
+      var __bun_temp_ref_1$, __bun_temp_ref_2$ = key(), __bun_temp_ref_3$ = key(), __bun_temp_ref_4$ = key();
+
+      class A {
+        constructor() {
+          this[__bun_temp_ref_2$] = 1;
+          this[1] = 3;
+        }
+        [__bun_temp_ref_1$ = key()]() {}
+        ["literal"]() {}
+      }
+      A[__bun_temp_ref_3$] = 2;
+      __legacyDecorateClassTS_3r173x8m([
+        dec
+      ], A.prototype, __bun_temp_ref_1$, null);
+      __legacyDecorateClassTS_3r173x8m([
+        dec
+      ], A.prototype, __bun_temp_ref_2$, undefined);
+      __legacyDecorateClassTS_3r173x8m([
+        dec
+      ], A.prototype, __bun_temp_ref_4$, undefined);
+      __legacyDecorateClassTS_3r173x8m([
+        dec
+      ], A.prototype, "literal", null);
+      __legacyDecorateClassTS_3r173x8m([
+        dec
+      ], A.prototype, 1, undefined);
+      __legacyDecorateClassTS_3r173x8m([
+        dec
+      ], A, __bun_temp_ref_3$, undefined);
+      "
+    `);
+  });
+});
+
 test("only property decorators", () => {
   let a = 0;
   class A {

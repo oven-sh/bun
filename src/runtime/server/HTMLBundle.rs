@@ -150,6 +150,7 @@ pub struct Route {
     // FFI userdata — *Route is recovered from uws callback
     // userdata (on_aborted, JSBundleCompletionTask backref). §Pointers FFI
     // rule → `bun_ptr::RefPtr<HTMLBundle>` + `impl RefCounted`.
+    // Owns one ref on the bundle (taken in `init`, released in `Drop`).
     pub(crate) bundle: IntrusiveRc<HTMLBundle>,
     /// One HTMLBundle.Route can be specified multiple times
     ref_count: RefCount<Route>,
@@ -804,11 +805,12 @@ impl Drop for Route {
     fn drop(&mut self) {
         // pending responses keep a ref to the route
         debug_assert!(self.pending_responses.get().is_empty());
-        // `pending_responses` (Vec) and `bundle` (IntrusiveRc) auto-drop.
         // `state` has no `Drop` glue for the intrusive-pointer variants — release
         // them explicitly.
         // `with_mut` is fine here — refcount==0 so no other `&Route` exists.
         self.state.with_mut(|s| s.deinit());
+        // `IntrusiveRc` has no `Drop`; release the ref `init` took on the bundle.
+        self.bundle.deref();
         // The Box free is handled by IntrusiveRc dealloc.
     }
 }

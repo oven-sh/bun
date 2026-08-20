@@ -3223,6 +3223,249 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+
+  // The bundler inlines `var __dirname = "..."` / `var __filename = "..."` into every
+  // module that uses them. Modules that are not wrapped in a closure share the chunk's
+  // top-level scope, so each module needs its own binding or the last module printed
+  // overwrites the value for all of them. The modules below read the values inside
+  // functions that the entry point calls after every module has been evaluated, which
+  // is when the collision is observable. The entry point prints every path relative to
+  // its own directory so the expected output is the same on every platform.
+  const dirnameModule = /* ts */ `
+    export function dir() { return __dirname; }
+    export function file() { return __filename; }
+  `;
+  const dirnameEntryPrelude = /* ts */ `
+    const base = __dirname;
+    const rel = (p: string) => p.slice(base.length).replaceAll("\\\\", "/");
+  `;
+  itBundled("edgecase/DirnameFilenamePerModule", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as b from "./b/b";
+        import c from "./c/c.cjs";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          b: [rel(b.dir()), rel(b.file())],
+          c: [rel(c.dir()), rel(c.file())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+      "/c/c.cjs": /* js */ `
+        module.exports = { dir: () => __dirname, file: () => __filename };
+      `,
+    },
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts"],
+        c: ["/c", "/c/c.cjs"],
+      }),
+    },
+  });
+  itBundled("edgecase/DirnameFilenamePerModuleCJSFormat", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as b from "./b/b";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          b: [rel(b.dir()), rel(b.file())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+    },
+    target: "bun",
+    format: "cjs",
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts"],
+      }),
+    },
+  });
+  itBundled("edgecase/DirnameFilenamePerModuleMinifyIdentifiers", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as b from "./b/b";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          b: [rel(b.dir()), rel(b.file())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+    },
+    target: "bun",
+    minifyIdentifiers: true,
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts"],
+      }),
+    },
+  });
+  // A module with a direct eval() keeps the literal names `__dirname` / `__filename`
+  // so that the eval'd code can still see them. The other modules are renamed around it.
+  itBundled("edgecase/DirnameFilenamePerModuleDirectEval", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as e from "./e/e";
+        import f from "./f/f.cjs";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          e: [rel(e.dir()), rel(e.file())],
+          eEval: [rel(e.evalDir()), rel(e.evalFile())],
+          f: [rel(f.dir()), rel(f.file())],
+          fEval: [rel(f.evalDir()), rel(f.evalFile())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/e/e.ts": /* ts */ `
+        ${dirnameModule}
+        export function evalDir() { return eval("__dirname"); }
+        export function evalFile() { return eval("__filename"); }
+      `,
+      "/f/f.cjs": /* js */ `
+        exports.dir = () => __dirname;
+        exports.file = () => __filename;
+        exports.evalDir = () => eval("__dirname");
+        exports.evalFile = () => eval("__filename");
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        e: ["/e", "/e/e.ts"],
+        eEval: ["/e", "/e/e.ts"],
+        f: ["/f", "/f/f.cjs"],
+        fEval: ["/f", "/f/f.cjs"],
+      }),
+    },
+  });
+  // A module that declares its own `__dirname` must not be confused with the ones the
+  // bundler injects into the other modules of the same chunk.
+  itBundled("edgecase/DirnameFilenamePerModuleUserDeclared", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as u from "./u/u";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          u: [u.dir(), u.file()],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/u/u.ts": /* ts */ `
+        const __dirname = "user-dir";
+        const __filename = "user-file";
+        export function dir() { return __dirname; }
+        export function file() { return __filename; }
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts"],
+        u: ["user-dir", "user-file"],
+      }),
+    },
+  });
+  itBundled("edgecase/DirnameFilenamePerModuleSplitting", {
+    files: {
+      "/entry1.ts": /* ts */ `
+        import * as a from "./a/a";
+        import * as shared from "./shared/shared";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.dir()), rel(a.file())],
+          shared: [rel(shared.dir()), rel(shared.file())],
+        }));
+      `,
+      "/entry2.ts": /* ts */ `
+        import * as b from "./b/b";
+        import * as shared from "./shared/shared";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          b: [rel(b.dir()), rel(b.file())],
+          shared: [rel(shared.dir()), rel(shared.file())],
+        }));
+      `,
+      "/a/a.ts": dirnameModule,
+      "/b/b.ts": dirnameModule,
+      "/shared/shared.ts": dirnameModule,
+    },
+    entryPoints: ["/entry1.ts", "/entry2.ts"],
+    outdir: "/out",
+    splitting: true,
+    target: "bun",
+    run: [
+      {
+        file: "/out/entry1.js",
+        stdout: JSON.stringify({
+          entry: ["", "/entry1.ts"],
+          a: ["/a", "/a/a.ts"],
+          shared: ["/shared", "/shared/shared.ts"],
+        }),
+      },
+      {
+        file: "/out/entry2.js",
+        stdout: JSON.stringify({
+          entry: ["", "/entry2.ts"],
+          b: ["/b", "/b/b.ts"],
+          shared: ["/shared", "/shared/shared.ts"],
+        }),
+      },
+    ],
+  });
+  // `define` replaces the identifiers during the visit pass, so nothing is injected.
+  itBundled("edgecase/DirnameFilenameDefine", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as a from "./a/a";
+        console.log(JSON.stringify({ entry: [__dirname, __filename], a: [a.dir(), a.file()] }));
+      `,
+      "/a/a.ts": dirnameModule,
+    },
+    target: "bun",
+    define: {
+      __dirname: '"/defined"',
+      __filename: '"/defined/entry.js"',
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__dirname");
+      api.expectFile("/out.js").not.toContain("__filename");
+    },
+    run: {
+      stdout: JSON.stringify({
+        entry: ["/defined", "/defined/entry.js"],
+        a: ["/defined", "/defined/entry.js"],
+      }),
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

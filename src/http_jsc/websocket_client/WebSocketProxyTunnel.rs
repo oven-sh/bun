@@ -23,8 +23,7 @@
 //!   `(*ctx).wrapper` — either would touch `wrapper`'s bytes through the
 //!   Box-provenance `ctx` and alias the caller's shared `&SslWrapper` (harmless — no Unique tag to pop, since every `SslWrapper` method is `&self`).
 //!   They access only disjoint fields (`ref_count`, `ssl`, `sni_hostname`,
-//!   `write_buffer`, `socket`, `upgrade_client`, `connected_websocket`) via
-//!   `(*ctx).field` raw projections.
+//!   `write_buffer`, `socket`, `owner`) via `(*ctx).field` raw projections.
 //! - The `*mut SSL` needed by `on_handshake` is snapshotted into `self.ssl` in
 //!   `start()` so it can be read without going through `wrapper`.
 //!
@@ -50,14 +49,10 @@ bun_core::declare_scope!(WebSocketProxyTunnel, visible);
 
 /// Union type for upgrade client to maintain type safety.
 /// The upgrade client can be either HTTP or HTTPS depending on the proxy connection.
-///
-/// `Copy` so callbacks can snapshot the value and dispatch on the copy without
-/// holding a borrow of the tunnel across the re-entrant call.
 #[derive(Clone, Copy)]
 pub(crate) enum UpgradeClientUnion {
     Http(*mut HttpUpgradeClient),
     Https(*mut HttpsUpgradeClient),
-    None,
 }
 
 impl UpgradeClientUnion {
@@ -71,7 +66,6 @@ impl UpgradeClientUnion {
             UpgradeClientUnion::Https(client) => unsafe {
                 HttpsUpgradeClient::handle_decrypted_data(*client, data)
             },
-            UpgradeClientUnion::None => {}
         }
     }
 
@@ -85,7 +79,6 @@ impl UpgradeClientUnion {
             UpgradeClientUnion::Https(client) => unsafe {
                 HttpsUpgradeClient::terminate(*client, code)
             },
-            UpgradeClientUnion::None => {}
         }
     }
 
@@ -99,24 +92,30 @@ impl UpgradeClientUnion {
             UpgradeClientUnion::Https(client) => unsafe {
                 HttpsUpgradeClient::on_proxy_tls_handshake_complete(*client)
             },
-            UpgradeClientUnion::None => {}
         }
-    }
-
-    fn is_none(&self) -> bool {
-        matches!(self, UpgradeClientUnion::None)
     }
 }
 
 type WebSocketClient = crate::websocket_client::WebSocket<false>;
 
+/// The ref holder the SSLWrapper callbacks are forwarded to.
+///
+/// `Copy` so callbacks can snapshot the value and dispatch on the copy without
+/// holding a borrow of the tunnel across the re-entrant call.
+#[derive(Clone, Copy)]
+enum Owner {
+    /// Handshake phase: the upgrade client drives TLS and the WebSocket upgrade.
+    Upgrading(UpgradeClientUnion),
+    /// After a successful upgrade: the WebSocket client owns the tunnel.
+    Connected(NonNull<WebSocketClient>),
+    /// The holder let go (or never attached); callbacks are dropped.
+    Detached,
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct WebSocketProxyTunnel {
     ref_count: Cell<u32>,
-    /// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
-    upgrade_client: UpgradeClientUnion,
-    /// Reference to the connected WebSocket client - used after successful upgrade
-    connected_websocket: *mut WebSocketClient,
+    owner: Owner,
     /// SSL wrapper for TLS inside tunnel
     wrapper: Option<SslWrapperType>,
     /// Socket reference (the proxy connection)
@@ -167,8 +166,7 @@ impl WebSocketProxyTunnel {
 
         let boxed = Box::new(WebSocketProxyTunnel {
             ref_count: Cell::new(1),
-            upgrade_client,
-            connected_websocket: ptr::null_mut(),
+            owner: Owner::Upgrading(upgrade_client),
             wrapper: None,
             socket,
             write_buffer: StreamBuffer::default(),
@@ -308,23 +306,24 @@ impl WebSocketProxyTunnel {
             return;
         }
 
-        // Snapshot backref pointers via short raw-ptr reads; the dispatch below may
+        // Snapshot the owner via a short raw-ptr read; the dispatch below may
         // re-enter `tunnel.write/shutdown/clear_connected_web_socket/detach_upgrade_client`,
         // so no `&Self`/`&mut Self` may be live across it.
-        // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
-        let (connected_websocket, upgrade_client) =
-            unsafe { ((*this).connected_websocket, (*this).upgrade_client) };
+        // SAFETY: ScopedRef guard holds a ref; `this` is live. Read of a `Copy` field.
+        let owner = unsafe { (*this).owner };
 
-        // If we have a connected WebSocket client, forward data to it
-        if !connected_websocket.is_null() {
-            // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
+        match owner {
+            // SAFETY: BACKREF: WebSocket owns tunnel via ref(); cleared before WebSocket frees.
             // No `&`/`&mut WebSocket` is live in this frame across the call.
-            unsafe { WebSocketClient::handle_tunnel_data(connected_websocket, decrypted_data) };
-            return;
+            Owner::Connected(websocket) => unsafe {
+                WebSocketClient::handle_tunnel_data(websocket.as_ptr(), decrypted_data)
+            },
+            // Forward to the upgrade client for WebSocket response processing
+            Owner::Upgrading(upgrade_client) => {
+                upgrade_client.handle_decrypted_data(decrypted_data)
+            }
+            Owner::Detached => {}
         }
-
-        // Otherwise, forward to the upgrade client for WebSocket response processing
-        upgrade_client.handle_decrypted_data(decrypted_data);
     }
 
     /// SSLWrapper callback: Called after TLS handshake completes
@@ -342,12 +341,11 @@ impl WebSocketProxyTunnel {
         // re-enter `tunnel.detach_upgrade_client()` / `tunnel.write()`, so no borrow of
         // `*this` may span the dispatch.
         // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
-        let (upgrade_client, reject_unauthorized) =
-            unsafe { ((*this).upgrade_client, (*this).reject_unauthorized) };
+        let (owner, reject_unauthorized) = unsafe { ((*this).owner, (*this).reject_unauthorized) };
 
-        if upgrade_client.is_none() {
+        let Owner::Upgrading(upgrade_client) = owner else {
             return;
-        }
+        };
 
         if !success {
             upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
@@ -395,30 +393,22 @@ impl WebSocketProxyTunnel {
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onClose");
 
-        // Snapshot backref pointers; `fail()`/`terminate()` re-enter
+        // Snapshot the owner; `fail()`/`terminate()` re-enter
         // `tunnel.clear_connected_web_socket()` / `tunnel.shutdown()` /
         // `tunnel.detach_upgrade_client()`, so no borrow of `*this` may span them.
-        // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
-        let (connected_websocket, upgrade_client) =
-            unsafe { ((*this).connected_websocket, (*this).upgrade_client) };
+        // SAFETY: ScopedRef guard holds a ref; `this` is live. Read of a `Copy` field.
+        let owner = unsafe { (*this).owner };
 
-        // If we have a connected WebSocket client, notify it of the close
-        if !connected_websocket.is_null() {
-            // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
-            unsafe {
-                let _ws_guard = bun_ptr::ScopedRef::new(connected_websocket);
-                (*connected_websocket).fail(ErrorCode::Ended)
-            };
-            return;
+        match owner {
+            // SAFETY: BACKREF: WebSocket owns tunnel via ref(); cleared before WebSocket frees.
+            Owner::Connected(websocket) => unsafe {
+                let _ws_guard = bun_ptr::ScopedRef::new(websocket.as_ptr());
+                websocket.as_ref().fail(ErrorCode::Ended)
+            },
+            Owner::Upgrading(upgrade_client) => upgrade_client.terminate(ErrorCode::Ended),
+            // Already cleaned up (prevents re-entrancy during cleanup)
+            Owner::Detached => {}
         }
-
-        // Check if upgrade client is already cleaned up (prevents re-entrancy during cleanup)
-        if upgrade_client.is_none() {
-            return;
-        }
-
-        // Otherwise notify the upgrade client
-        upgrade_client.terminate(ErrorCode::Ended);
     }
 
     /// Clear the connected WebSocket reference. Called before tunnel shutdown during
@@ -430,19 +420,28 @@ impl WebSocketProxyTunnel {
     /// because it can be reached from inside an SSLWrapper callback while the
     /// driving frame holds `&SslWrapper`; the raw write covers only this field.
     pub(crate) unsafe fn clear_connected_web_socket(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; raw place write, field-scoped.
-        unsafe { (*this).connected_websocket = ptr::null_mut() };
+        // SAFETY: `this` is live per caller contract; raw place accesses, field-scoped.
+        unsafe {
+            if matches!((*this).owner, Owner::Connected(_)) {
+                (*this).owner = Owner::Detached;
+            }
+        }
     }
 
     /// Clear the upgrade client reference. Called before tunnel shutdown during
     /// cleanup so that the SSLWrapper's synchronous onHandshake/onClose callbacks
-    /// do not re-enter the upgrade client's terminate/clearData path.
+    /// do not re-enter the upgrade client's terminate/clearData path. The upgrade
+    /// client outlives the hand-off to the WebSocket, so this also runs while `Connected`.
     ///
     /// # Safety
     /// Same contract as [`Self::clear_connected_web_socket`].
     pub(crate) unsafe fn detach_upgrade_client(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; raw place write, field-scoped.
-        unsafe { (*this).upgrade_client = UpgradeClientUnion::None };
+        // SAFETY: `this` is live per caller contract; raw place accesses, field-scoped.
+        unsafe {
+            if matches!((*this).owner, Owner::Upgrading(_)) {
+                (*this).owner = Owner::Detached;
+            }
+        }
     }
 
     /// SSLWrapper callback: Called with encrypted data to send to network
@@ -530,14 +529,14 @@ impl WebSocketProxyTunnel {
         }
 
         // Tunnel drained - let the connected WebSocket flush its send_buffer.
-        // `handle_tunnel_writable()` re-enters `tunnel.write()`; snapshot the pointer
+        // `handle_tunnel_writable()` re-enters `tunnel.write()`; snapshot the owner
         // into a local so no `&Self` borrow is active across the dispatch.
         // SAFETY: `this` is live; read of `Copy` field.
-        let connected_websocket = unsafe { (*this).connected_websocket };
-        if !connected_websocket.is_null() {
+        let owner = unsafe { (*this).owner };
+        if let Owner::Connected(websocket) = owner {
             // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
             // No `&`/`&mut WebSocket` is live in this frame across the call.
-            unsafe { WebSocketClient::handle_tunnel_writable(connected_websocket) };
+            unsafe { WebSocketClient::handle_tunnel_writable(websocket.as_ptr()) };
         }
     }
 
@@ -619,11 +618,12 @@ extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
     ws: *mut WebSocketClient,
 ) {
     bun_core::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
+    // `ws` is null when the open handler closed the WebSocket from inside didConnect().
+    let owner = match NonNull::new(ws) {
+        Some(ws) => Owner::Connected(ws),
+        None => Owner::Detached,
+    };
     // SAFETY: C++ guarantees a live, non-null tunnel pointer; raw field-scoped
-    // writes, nothing re-enters.
-    unsafe {
-        (*tunnel).connected_websocket = ws;
-        // Clear the upgrade client reference since we're now in connected phase
-        (*tunnel).upgrade_client = UpgradeClientUnion::None;
-    }
+    // write, nothing re-enters.
+    unsafe { (*tunnel).owner = owner };
 }

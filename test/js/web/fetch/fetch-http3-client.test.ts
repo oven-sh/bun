@@ -269,6 +269,20 @@ describe("fetch protocol: http3", () => {
     expect(await res.text()).toBe("");
   });
 
+  test.each([
+    ["a 204", "/status?code=204&body=", {}],
+    ["a 304", "/status?code=304&body=", {}],
+    ["a HEAD request", "/head", { method: "HEAD" }],
+  ])("the response to %s has a null body", async (_, path, init) => {
+    const res = await fetch(`${base}${path}`, { ...h3, ...init });
+    expect({
+      body: res.body,
+      text: await res.text(),
+      bodyUsed: res.bodyUsed,
+      cloneBody: res.clone().body,
+    }).toEqual({ body: null, text: "", bodyUsed: false, cloneBody: null });
+  });
+
   test("gzip response is decompressed", async () => {
     const res = await fetch(`${base}/gzip`, h3);
     expect(await res.text()).toBe("compressed body over h3");

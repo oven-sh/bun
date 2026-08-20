@@ -54,14 +54,19 @@ function notImplemented() {
  * @typedef {import('events').EventEmitter} EventEmitter
  */
 
+function closeEmptyBody(controller) {
+  controller.close();
+}
+
 class BodyReadable extends ReadableFromWeb {
   #response;
   #bodyUsed;
 
   constructor(response, options = {}) {
-    var { body } = response;
-    if (!body) throw new Error("Response body is null");
-    super(options, body);
+    // undici's request() returns a body for every response, so one that has none
+    // (204, 304, a HEAD request) reads as an empty body here:
+    // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L118-L126
+    super(options, response.body ?? new ReadableStream({ start: closeEmptyBody }));
 
     this.#response = response;
     this.#bodyUsed = response.bodyUsed;
@@ -232,7 +237,7 @@ async function request(
     throw new Error(`Request failed with status code ${statusCode}`);
   }
 
-  const body = resp.body ? new BodyReadable(resp) : null;
+  const body = new BodyReadable(resp);
 
   return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }

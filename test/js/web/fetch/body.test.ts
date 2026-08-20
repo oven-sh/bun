@@ -1328,3 +1328,128 @@ test("a fetch() Response still reports the Content-Length after .body created th
   (await upstream).end(payload);
   expect(await stream.text()).toBe(payload);
 });
+
+// WHATWG fetch (main fetch, "set internalResponse's body to null"): a response to
+// a HEAD request, or with a null body status (204, 205, 304), has a null body,
+// whatever the server frames after the head. Node and browsers agree. Bun used to
+// hand out an empty stream instead, so reading it used the body up and clone()
+// threw afterwards.
+describe.concurrent("a fetch() Response that cannot have a body", () => {
+  // Every response closes its connection, so each fetch() below gets its own
+  // socket and the server answers exactly one request per socket. The HEAD
+  // answer carries the Content-Length of the GET body, as RFC 9110 section 9.3.2
+  // wants. RFC 9110 section 15.3.6 forbids content on a 205, but HTTP/1.1 framing
+  // can still carry it, and the bytes must then be received and dropped.
+  const wire: Record<string, string> = {
+    "/204": "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
+    "/205": "HTTP/1.1 205 Reset Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    "/205-with-content": "HTTP/1.1 205 Reset Content\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+    "/304": 'HTTP/1.1 304 Not Modified\r\nETag: "x"\r\nConnection: close\r\n\r\n',
+    "/head": "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n",
+    "/empty": "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+  };
+
+  function listen() {
+    return Bun.listen<{ request: string }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { request: "" };
+        },
+        data(socket, data) {
+          socket.data.request += data.toString("latin1");
+          if (!socket.data.request.includes("\r\n\r\n")) return;
+          const target = socket.data.request.split(" ")[1];
+          socket.end(wire[target]);
+        },
+      },
+    });
+  }
+
+  test.each([
+    ["204", "/204", undefined, 204, null],
+    ["205", "/205", undefined, 205, "0"],
+    ["205 whose server sent content anyway", "/205-with-content", undefined, 205, "5"],
+    ["304", "/304", undefined, 304, null],
+    ["200 to a HEAD request", "/head", { method: "HEAD" }, 200, "5"],
+  ])("%s: the body is null and reading it does not use it up", async (_, path, init, status, contentLength) => {
+    using listener = listen();
+    const response = await fetch(`http://127.0.0.1:${listener.port}${path}`, init);
+    await expect(response.json()).rejects.toThrow(SyntaxError);
+    expect({
+      status: response.status,
+      contentLength: response.headers.get("content-length"),
+      body: response.body,
+      text: await response.text(),
+      bytes: await response.bytes(),
+      bodyUsed: response.bodyUsed,
+      cloneBody: response.clone().body,
+    }).toEqual({
+      status,
+      contentLength,
+      body: null,
+      text: "",
+      bytes: new Uint8Array(0),
+      bodyUsed: false,
+      cloneBody: null,
+    });
+  });
+
+  test("a 200 with empty content still has a body", async () => {
+    using listener = listen();
+    const response = await fetch(`http://127.0.0.1:${listener.port}/empty`);
+    expect(response.body).toBeInstanceOf(ReadableStream);
+    expect(await response.text()).toBe("");
+    expect(response.bodyUsed).toBe(true);
+  });
+
+  test.each([
+    ["204", "/204", undefined],
+    ["200 to a HEAD request", "/head", { method: "HEAD" }],
+  ])("%s: an abort after the response arrived has no body to error", async (_, path, init) => {
+    using listener = listen();
+    const controller = new AbortController();
+    const response = await fetch(`http://127.0.0.1:${listener.port}${path}`, { ...init, signal: controller.signal });
+    controller.abort();
+    expect(response.body).toBeNull();
+    expect(await response.text()).toBe("");
+  });
+
+  test("content that arrives after a 205 resolved is drained, so the process can exit", async () => {
+    // The server sends 3 of the 5 declared bytes with the head and the other 2
+    // only once fetch() has resolved. Nothing but the fetch refs the event loop,
+    // so the process only exits if the fetch takes those 2 bytes off the socket
+    // instead of keeping them for a body reader that cannot exist.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import net from "node:net";
+          let upstream;
+          const server = net.createServer(socket => {
+            upstream = socket;
+            socket.unref();
+            socket.once("data", () => {
+              socket.write("HTTP/1.1 205 Reset Content\\r\\nContent-Length: 5\\r\\n\\r\\nhel");
+            });
+          });
+          server.unref();
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          const response = await fetch("http://127.0.0.1:" + server.address().port + "/");
+          const body = response.body;
+          upstream.write("lo");
+          console.log(JSON.stringify({ status: response.status, body, text: await response.text() }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ status: 205, body: null, text: "" });
+    expect(exitCode).toBe(0);
+  });
+});

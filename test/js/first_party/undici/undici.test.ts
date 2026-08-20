@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { request } from "undici";
+import { request, fetch as undiciFetch } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -85,6 +85,27 @@ describe("undici", () => {
       } catch (e) {
         expect((e as Error).message).toBe("Body not allowed for GET or HEAD requests");
       }
+    });
+
+    // undici's fetch() gives these responses a null body, as the Fetch spec
+    // says. undici's request() hands out a body object for every response,
+    // and this one is empty.
+    it.each([
+      ["a 204", "/status/204", 204, {}],
+      ["the response to a HEAD request", "/head", 200, { method: "HEAD" }],
+    ])("%s has no body", async (_, path, expectedStatus, init) => {
+      const response = await undiciFetch(`${hostUrl}${path}`, init);
+      expect({ status: response.status, body: response.body }).toEqual({ status: expectedStatus, body: null });
+
+      const { statusCode, body } = await request(`${hostUrl}${path}`, init);
+      expect(statusCode).toBe(expectedStatus);
+      expect(body.bodyUsed).toBe(false);
+      expect(await body.text()).toBe("");
+      expect(body.bodyUsed).toBe(true);
+
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of (await request(`${hostUrl}${path}`, init)).body) chunks.push(chunk);
+      expect(chunks).toEqual([]);
     });
 
     it("should allow a query string to be passed", async () => {

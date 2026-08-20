@@ -1869,13 +1869,43 @@ impl FetchTasklet {
         response
     }
 
+    /// WHATWG fetch gives a response to a HEAD request, or one with a null body
+    /// status, a null body whatever the server frames after the head
+    /// (<https://fetch.spec.whatwg.org/#main-fetch>, "set internalResponse's body
+    /// to null"). 101 is the exception: the HTTP client only accepts one for a
+    /// request that asked to upgrade, and the upgraded connection is then the
+    /// body (`fetch.upgrade.test.ts`). The other 1xx statuses are interim
+    /// responses that the HTTP client never reports as the response.
+    fn response_body_is_null(&self, status_code: u16) -> bool {
+        (crate::server::http_status_text::is_null_body(status_code) && status_code != 101)
+            || self
+                .http
+                .as_deref()
+                .is_some_and(|http_| http_.method() == Method::HEAD)
+    }
+
+    /// The body for `response_body_is_null`. Bytes the server frames anyway (a
+    /// 205 with content, say) are dropped: the ones already here now, the rest
+    /// by the HTTP thread, which drains them as it does the body of a Response
+    /// that was collected unread, so the connection can still be pooled. No
+    /// Response is attached to the tasklet yet, so `ignore_remaining_response_body`
+    /// only switches the transport over and releases the event loop.
+    /// `is_waiting_body` stays false: neither those bytes nor a transport
+    /// failure during the drain may reach the body.
+    fn null_body_value(&mut self) -> BodyValue {
+        self.scheduled_response_buffer = MutableString::default();
+        if self.result.has_more {
+            self.ignore_remaining_response_body();
+        }
+        BodyValue::Null
+    }
+
     fn to_response(&mut self) -> Response {
         bun_output::scoped_log!(FetchTasklet, "toResponse");
         debug_assert!(self.metadata.is_some());
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
         let http_response = &metadata.response;
-        self.is_waiting_body = self.result.has_more;
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
         let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
@@ -1896,6 +1926,12 @@ impl FetchTasklet {
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
+        let body = if self.response_body_is_null(status_code) {
+            self.null_body_value()
+        } else {
+            self.is_waiting_body = self.result.has_more;
+            self.to_body_value()
+        };
         Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
@@ -1904,7 +1940,7 @@ impl FetchTasklet {
                 status_text: status_text.into(),
                 ..Default::default()
             },
-            Body::new(self.to_body_value()),
+            Body::new(body),
             url,
             redirected,
         )

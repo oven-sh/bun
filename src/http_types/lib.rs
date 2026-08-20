@@ -13,8 +13,7 @@ pub use ETag::wtf;
 
 // `mime_type_list_enum::MimeTypeList` is a hand-generated `&'static str`
 // newtype (PERF: stand-in for a packed-u14 table), so
-// `Table`/`Compact`/`EXTENSIONS`/`sniff`/`from_table`/`create_hash_table`/`ALL`
-// all compile.
+// `Table`/`Compact`/`EXTENSIONS`/`sniff`/`from_table` all compile.
 pub mod MimeType;
 
 /// RFC 9110 Content-Length is

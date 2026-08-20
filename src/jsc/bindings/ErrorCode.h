@@ -66,6 +66,8 @@ JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, co
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
+// Throws createInvalidThisError(callFrame->thisValue()) and returns the empty value; one call at each generated host-function's invalid-this branch.
+JSC::EncodedJSValue throwInvalidThisCallError(JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);

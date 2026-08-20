@@ -485,28 +485,47 @@ ${moduleSpans
 );
 
 // This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
+// JS modules (ids below nativeStartIndex, in enum order) come from one table so the
+// per-module code is a row of data rather than a switch arm; native modules keep a switch.
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+createInternalModuleById.h"),
   `// clang-format off
+struct InternalJSModule {
+  ASCIILiteral moduleId;
+  ASCIILiteral fileName;
+  ASCIILiteral url;
+  uint32_t codeOffset;
+  uint32_t codeLength;
+};
+
+static constexpr InternalJSModule internalJSModules[${nativeStartIndex}] = {
+  ${moduleList
+    .slice(0, nativeStartIndex)
+    .map(id => {
+      const moduleName = idToPublicSpecifierOrEnumName(id);
+      const fileBase = JSON.stringify(id.replace(/\.[mc]?[tj]s$/, ".js"));
+      const urlString = "builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/");
+      return `{ "${moduleName}"_s, ${fileBase}_s, "${urlString}"_s, InternalModuleRegistryConstants::${idToEnumName(id)}CodeOffset, InternalModuleRegistryConstants::${idToEnumName(id)}CodeLength },`;
+    })
+    .join("\n  ")}
+};
+
 JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
 {
+  if (static_cast<size_t>(id) < ${nativeStartIndex}) {
+    const InternalJSModule& m = internalJSModules[static_cast<size_t>(id)];
+    INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, m.moduleId, m.fileName, m.codeOffset, m.codeLength, m.url);
+  }
   switch (id) {
-    // JS internal modules
+    // Native modules
     ${moduleList
-      .map((id, n) => {
-        const moduleName = idToPublicSpecifierOrEnumName(id);
-        const fileBase = JSON.stringify(id.replace(/\.[mc]?[tj]s$/, ".js"));
-        const urlString = "builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/");
-        const inner =
-          n >= nativeStartIndex
-            ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
-            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${moduleName}"_s, ${fileBase}_s, ` +
-              `InternalModuleRegistryConstants::${idToEnumName(id)}CodeOffset, ` +
-              `InternalModuleRegistryConstants::${idToEnumName(id)}CodeLength, "${urlString}"_s);`;
-        return `case Field::${idToEnumName(id)}: {
-      ${inner}
-    }`;
-      })
+      .map((id, n) => [id, n] as const)
+      .filter(([, n]) => n >= nativeStartIndex)
+      .map(
+        ([id]) => `case Field::${idToEnumName(id)}: {
+      return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});
+    }`,
+      )
       .join("\n    ")}
     default: {
       __builtin_unreachable();

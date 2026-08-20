@@ -1790,6 +1790,14 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, co
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
 }
 
+JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), typeName));
+    return {};
+}
+
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
     if (!thisValue.isEmpty())

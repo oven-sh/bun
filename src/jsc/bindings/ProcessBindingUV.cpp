@@ -111,6 +111,18 @@ extern "C" bool Bun__Node__ProcessPendingDeprecation;
 namespace Bun {
 namespace ProcessBindingUV {
 
+struct UVErrnoEntry {
+    ASCIILiteral name;
+    ASCIILiteral description;
+    int value;
+};
+
+static constexpr UVErrnoEntry uvErrnoEntries[] = {
+#define UV_ERRNO_ENTRY(name, desc) { #name ""_s, desc ""_s, UV_##name },
+    BUN_UV_ERRNO_MAP(UV_ERRNO_ENTRY)
+#undef UV_ERRNO_ENTRY
+};
+
 JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -140,11 +152,10 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     }
 
     auto err = arg0.toInt32(globalObject);
-#define CASE(name, desc) \
-    if (err == UV_##name) return JSValue::encode(JSC::jsString(vm, String(#name##_s)));
-
-    BUN_UV_ERRNO_MAP(CASE)
-#undef CASE
+    for (auto& entry : uvErrnoEntries) {
+        if (err == entry.value)
+            return JSValue::encode(JSC::jsString(vm, String(entry.name)));
+    }
 
     // node: `Unknown system error ${err}` (no colon), matching util.getSystemErrorName.
     return JSValue::encode(jsString(vm, makeString("Unknown system error "_s, err)));
@@ -155,18 +166,13 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
     auto& vm = JSC::getVM(globalObject);
     auto map = JSC::JSMap::create(vm, globalObject->mapStructure());
 
-    // Inlining each of these via macros costs like 300 KB.
-    const auto putProperty = [](JSC::VM& vm, JSC::JSMap* map, JSC::JSGlobalObject* globalObject, ASCIILiteral name, int value, ASCIILiteral desc) -> void {
+    for (auto& entry : uvErrnoEntries) {
         auto arr = JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 2);
         // RETURN_IF_EXCEPTION
-        arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(name)));
-        arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(desc)));
-        map->set(globalObject, JSC::jsNumber(value), arr);
-    };
-
-#define PUT_PROPERTY(name, desc) putProperty(vm, map, globalObject, #name##_s, UV_##name, desc##_s);
-    BUN_UV_ERRNO_MAP(PUT_PROPERTY)
-#undef PUT_PROPERTY
+        arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(entry.name)));
+        arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(entry.description)));
+        map->set(globalObject, JSC::jsNumber(entry.value), arr);
+    }
 
     return JSValue::encode(map);
 }
@@ -180,17 +186,8 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
     EnsureStillAliveScope ensureStillAlive(bindingObject);
     bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "errname"_s), JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
 
-    // Inlining each of these via macros costs like 300 KB.
-    // Before: 96305608
-    // After:  95973832
-    const auto putNamedProperty = [](JSC::VM& vm, JSObject* bindingObject, const ASCIILiteral name, int value) -> void {
-        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, name), JSC::jsNumber(value));
-    };
-
-#define PUT_PROPERTY(name, desc) \
-    putNamedProperty(vm, bindingObject, "UV_" #name##_s, UV_##name);
-    BUN_UV_ERRNO_MAP(PUT_PROPERTY)
-#undef PUT_PROPERTY
+    for (auto& entry : uvErrnoEntries)
+        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, makeString("UV_"_s, entry.name)), JSC::jsNumber(entry.value));
 
     bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "getErrorMap"_s), JSC::JSFunction::create(vm, globalObject, 0, "getErrorMap"_s, jsGetErrorMap, ImplementationVisibility::Public));
 

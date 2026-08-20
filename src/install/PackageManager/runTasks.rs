@@ -317,12 +317,14 @@ fn run_tasks_erased(
                             let resolution =
                                 &manager.lockfile.packages.items_resolution()[pkg_id as usize];
 
-                            installer.install_package_with_name_and_resolution::<false, false>(
+                            installer.install_package_with_name_and_resolution(
                                 ctx.dependency_id,
                                 pkg_id,
                                 log_level,
                                 apply.pkgname,
                                 resolution,
+                                false,
+                                false,
                             );
                         }
                     }
@@ -340,7 +342,8 @@ fn run_tasks_erased(
         // through `installer.manager` for the duration of this block, never
         // via the function-scope `manager` shadow, so the two `&mut` do not
         // overlap in use.
-        let installer: &mut Store::Installer<'_> = unsafe { &mut *extract_ctx.cast::<Store::Installer<'_>>() };
+        let installer: &mut Store::Installer<'_> =
+            unsafe { &mut *extract_ctx.cast::<Store::Installer<'_>>() };
         let installer_ptr: *mut Store::Installer<'_> = installer;
         let batch = installer.task_queue.pop_batch();
         let mut iter = batch.iterator();
@@ -566,7 +569,12 @@ fn run_tasks_erased(
                             _ => PackageManifestError::PackageManifestHTTP5xx,
                         };
 
-                        (cb.on_package_manifest_error)(extract_ctx, name, err.into(), &task.url_buf);
+                        (cb.on_package_manifest_error)(
+                            extract_ctx,
+                            name,
+                            err.into(),
+                            &task.url_buf,
+                        );
 
                         continue;
                     }
@@ -679,7 +687,8 @@ fn run_tasks_erased(
 
                         let dependency_list = core::mem::take(dependency_list_entry);
 
-                        process_dependency_list_for_ctx(cb,
+                        process_dependency_list_for_ctx(
+                            cb,
                             manager,
                             dependency_list,
                             extract_ctx,
@@ -809,7 +818,8 @@ fn run_tasks_erased(
 
                     if cb.has_on_package_download_error {
                         if cb.is_store_installer {
-                            (cb.on_package_download_error_store)(extract_ctx,
+                            (cb.on_package_download_error_store)(
+                                extract_ctx,
                                 task.task_id,
                                 extract.name.slice(),
                                 &extract.resolution,
@@ -819,7 +829,8 @@ fn run_tasks_erased(
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
                                 [extract.dependency_id as usize];
-                            (cb.on_package_download_error_pkg)(extract_ctx,
+                            (cb.on_package_download_error_pkg)(
+                                extract_ctx,
                                 package_id,
                                 extract.name.slice(),
                                 &extract.resolution,
@@ -896,7 +907,8 @@ fn run_tasks_erased(
                         };
 
                         if cb.is_store_installer {
-                            (cb.on_package_download_error_store)(extract_ctx,
+                            (cb.on_package_download_error_store)(
+                                extract_ctx,
                                 task.task_id,
                                 extract.name.slice(),
                                 &extract.resolution,
@@ -906,7 +918,8 @@ fn run_tasks_erased(
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
                                 [extract.dependency_id as usize];
-                            (cb.on_package_download_error_pkg)(extract_ctx,
+                            (cb.on_package_download_error_pkg)(
+                                extract_ctx,
                                 package_id,
                                 extract.name.slice(),
                                 &extract.resolution,
@@ -1058,7 +1071,12 @@ fn run_tasks_erased(
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if cb.has_on_package_manifest_error {
-                        (cb.on_package_manifest_error)(extract_ctx, name, err, &req.network.url_buf);
+                        (cb.on_package_manifest_error)(
+                            extract_ctx,
+                            name,
+                            err,
+                            &req.network.url_buf,
+                        );
                     } else {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -1098,7 +1116,8 @@ fn run_tasks_erased(
                     .expect("infallible: task queued");
                 let dependency_list = core::mem::take(dependency_list_entry);
 
-                process_dependency_list_for_ctx(cb,
+                process_dependency_list_for_ctx(
+                    cb,
                     manager,
                     dependency_list,
                     extract_ctx,
@@ -1179,7 +1198,8 @@ fn run_tasks_erased(
                             }
                         };
                         if cb.is_store_installer {
-                            (cb.on_package_download_error_store)(extract_ctx,
+                            (cb.on_package_download_error_store)(
+                                extract_ctx,
                                 task.id,
                                 alias,
                                 resolution,
@@ -1187,7 +1207,8 @@ fn run_tasks_erased(
                                 fail_url,
                             );
                         } else {
-                            (cb.on_package_download_error_pkg)(extract_ctx,
+                            (cb.on_package_download_error_pkg)(
+                                extract_ctx,
                                 package_id,
                                 alias,
                                 resolution,
@@ -1222,8 +1243,10 @@ fn run_tasks_erased(
 
                 if cb.has_on_extract {
                     if cb.is_package_installer {
-                        unsafe { &mut *extract_ctx.cast::<PackageInstaller<'_>>() }.fix_cached_lockfile_package_slices();
-                        (cb.on_extract_package_installer)(extract_ctx,
+                        unsafe { &mut *extract_ctx.cast::<PackageInstaller<'_>>() }
+                            .fix_cached_lockfile_package_slices();
+                        (cb.on_extract_package_installer)(
+                            extract_ctx,
                             task.id,
                             dependency_id,
                             // SAFETY: `task.tag` is Extract/LocalTarball — `data.extract`
@@ -1374,7 +1397,8 @@ fn run_tasks_erased(
                                     manager.lockfile.str(&res_git.resolved),
                                 );
                                 drained_any = true;
-                                (cb.on_package_download_error_store)(extract_ctx,
+                                (cb.on_package_download_error_store)(
+                                    extract_ctx,
                                     checkout_id,
                                     name,
                                     res,
@@ -1394,7 +1418,8 @@ fn run_tasks_erased(
                             let resolved = &clone.res.git().resolved;
                             let checkout_id =
                                 Task::Id::for_git_checkout(url, manager.lockfile.str(resolved));
-                            (cb.on_package_download_error_store)(extract_ctx,
+                            (cb.on_package_download_error_store)(
+                                extract_ctx,
                                 checkout_id,
                                 name,
                                 &clone.res,
@@ -1483,7 +1508,8 @@ fn run_tasks_erased(
                         .remove(&task.id)
                         .expect("infallible: task queued");
 
-                    process_dependency_list_for_ctx(cb,
+                    process_dependency_list_for_ctx(
+                        cb,
                         manager,
                         dependency_list,
                         extract_ctx,
@@ -1517,7 +1543,8 @@ fn run_tasks_erased(
                         // only enqueued for git resolutions; `value.git` is the
                         // active union arm.
                         let repo = &resolution.git().repo;
-                        (cb.on_package_download_error_store)(extract_ctx,
+                        (cb.on_package_download_error_store)(
+                            extract_ctx,
                             task.id,
                             alias.slice(),
                             resolution,
@@ -1544,9 +1571,11 @@ fn run_tasks_erased(
                     if cb.is_package_installer {
                         // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
                         // keeping just in case for now
-                        unsafe { &mut *extract_ctx.cast::<PackageInstaller<'_>>() }.fix_cached_lockfile_package_slices();
+                        unsafe { &mut *extract_ctx.cast::<PackageInstaller<'_>>() }
+                            .fix_cached_lockfile_package_slices();
 
-                        (cb.on_extract_package_installer)(extract_ctx,
+                        (cb.on_extract_package_installer)(
+                            extract_ctx,
                             task.id,
                             git_checkout.dependency_id,
                             // SAFETY: `task.tag == GitCheckout` — `data.git_checkout`

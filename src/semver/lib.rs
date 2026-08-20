@@ -527,7 +527,8 @@ pub mod semver_string {
         #[inline]
         fn inline_len(self) -> usize {
             let bits = u64::from_le_bytes(self.bytes);
-            let zero_bytes = bits.wrapping_sub(0x0101_0101_0101_0101) & !bits & 0x8080_8080_8080_8080;
+            let zero_bytes =
+                bits.wrapping_sub(0x0101_0101_0101_0101) & !bits & 0x8080_8080_8080_8080;
             (zero_bytes.trailing_zeros() / 8) as usize
         }
 

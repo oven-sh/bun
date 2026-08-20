@@ -951,8 +951,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       ? `
         JSC::JSBoundFunction* thisBoundFunction = dynamicDowncast<JSC::JSBoundFunction>(callFrame->thisValue());
         if (!thisBoundFunction) [[unlikely]] {
-          scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
-          return {};
+          RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s));
         }
         JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
         ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(thisBoundFunctionThisValue);
@@ -964,8 +963,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       ${
         invalidThisBehavior == InvalidThisBehavior.Throw
           ? `
-    scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
-    return {};`
+    RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s));`
           : `return JSValue::encode(JSC::jsUndefined());`
       }
   }

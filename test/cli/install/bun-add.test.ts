@@ -1,8 +1,20 @@
 import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { readdirSync } from "fs";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+  withFileSizeLimit,
+} from "harness";
 import { join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
@@ -2998,4 +3010,27 @@ it("bun add --trust keeps the new package when another --trust package is alread
       "b-scripted": "file:./b-scripted",
     },
   });
+});
+
+// The limit of one block cuts the write of package.json short (the lockfile is smaller than a
+// block and is written first). Written in place, package.json would be left as that one block.
+it.skipIf(isWindows)("bun add keeps the old package.json when the write fails", async () => {
+  const original = JSON.stringify({ name: "app", description: Buffer.alloc(3000, "x").toString() }, null, 2) + "\n";
+  using dir = tempDir("bun-add-write-fails", {
+    "package.json": original,
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+  });
+  await using proc = spawn({
+    cmd: withFileSizeLimit(1, [bunExe(), "add", "./dep"]),
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("failed to write package.json");
+  expect(stderr).toContain("EFBIG");
+  expect(exitCode).toBe(1);
+  expect(await file(join(String(dir), "package.json")).text()).toBe(original);
+  expect(readdirSync(String(dir)).filter(name => name.endsWith(".tmp"))).toEqual([]);
 });

@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, withFileSizeLimit } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 describe.concurrent("bun pm version", () => {
@@ -316,6 +317,21 @@ describe.concurrent("bun pm version", () => {
       );
       expect(error).toContain("Failed to parse package.json");
       expect(code).toBe(1);
+    });
+
+    it.skipIf(isWindows)("keeps the old package.json when the write fails", async () => {
+      const original = JSON.stringify({ name: "test-package", version: "1.0.0" }, null, 2) + "\n";
+      await using testDir = tempDir(`version-${i++}`, { "package.json": original });
+
+      const { error, code } = await runCommand(
+        withFileSizeLimit(0, [bunExe(), "pm", "version", "patch", "--no-git-tag-version"]),
+        testDir,
+        false,
+      );
+      expect(error).toContain("Failed to write package.json: EFBIG");
+      expect(code).toBe(1);
+      expect(await Bun.file(join(testDir, "package.json")).text()).toBe(original);
+      expect(readdirSync(testDir)).toEqual(["package.json"]);
     });
   });
 

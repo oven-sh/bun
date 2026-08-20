@@ -538,11 +538,16 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
+/// The flag reroutes the main VM's uncaught handling to node:test's process
+/// listeners, which only the main thread's `node:test` instance installs; a
+/// Worker loading the module (it inherits the env var) must not flip it.
 pub(crate) fn js_node_test_register_child(
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     _callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    jsc::virtual_machine::IS_NODE_TEST_RUN_CHILD.store(true, core::sync::atomic::Ordering::Relaxed);
+    if global.bun_vm().worker_ref().is_none() {
+        jsc::virtual_machine::IS_NODE_TEST_RUN_CHILD.store(true, core::sync::atomic::Ordering::Relaxed);
+    }
     Ok(JSValue::UNDEFINED)
 }
 

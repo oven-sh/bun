@@ -3480,7 +3480,7 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     } catch (err) {
       if (!isTodoSuite) {
         node.childrenFailed++;
-        node.error ??= err;
+        node.error ??= err ?? makeTestFailure("suite failed");
         setupFailed = true;
       }
     }
@@ -3843,7 +3843,9 @@ function addSuite(
       build = runWithNode(suiteNode, buildSuiteNodeFn);
     } catch (err) {
       suiteNode.childrenFailed++;
-      suiteNode.error = err;
+      // A nullish throw must still read as a failure: runStandaloneEntry seeds
+      // its cancel-children check from error != null (same rule as executeTestNode).
+      suiteNode.error = err ?? makeTestFailure("suite failed");
     }
     const entry: StandaloneEntry = { node: suiteNode, fn, isSuite: true };
     if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
@@ -3904,7 +3906,7 @@ function addSuite(
           }
           function recordSuiteBodyFailed(err: unknown) {
             suiteNode.childrenFailed++;
-            suiteNode.error = err;
+            suiteNode.error = err ?? makeTestFailure("suite failed");
             if (!isTodoAdvisory) suiteNode.hookSetupFailed = true;
           }
           function onWrappedSuiteFailed(err: unknown) {

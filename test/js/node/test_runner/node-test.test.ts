@@ -840,6 +840,22 @@ test.concurrent.each([
         throw new Error('async body boom');
       });
     `,
+    // A nullish throw must fail the suite and cancel the children the same
+    // way; node reports both shapes identically to the Error ones above.
+    "sync-null.test.mjs": `
+      import { describe, test } from 'node:test';
+      describe('s', () => {
+        test('declared', () => {});
+        throw null;
+      });
+    `,
+    "async-undefined.test.mjs": `
+      import { describe, test } from 'node:test';
+      describe('s', async () => {
+        test('declared', () => {});
+        throw undefined;
+      });
+    `,
     "driver.mjs": `
       import { run } from 'node:test';
       import { fileURLToPath } from 'node:url';
@@ -862,15 +878,16 @@ test.concurrent.each([
     const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return JSON.parse(stdout.trim() || "null");
   }
-  // Same event streams real node v26.3.0 emits for these fixtures.
-  expect(await runDriver("./sync.test.mjs")).toEqual([
+  // Same event streams real node v26.3.0 emits for all four fixtures.
+  const expected = [
     ["fail", "declared", "cancelledByParent"],
     ["fail", "s", "testCodeFailure"],
-  ]);
-  expect(await runDriver("./async.test.mjs")).toEqual([
-    ["fail", "declared", "cancelledByParent"],
-    ["fail", "s", "testCodeFailure"],
-  ]);
+  ];
+  const fixtures = ["./sync.test.mjs", "./async.test.mjs", "./sync-null.test.mjs", "./async-undefined.test.mjs"];
+  const results = await Promise.all(fixtures.map(runDriver));
+  expect(Object.fromEntries(fixtures.map((f, i) => [f, results[i]]))).toEqual(
+    Object.fromEntries(fixtures.map(f => [f, expected])),
+  );
 });
 
 test.concurrent.each([

@@ -5278,6 +5278,43 @@ describe.concurrent("bun-install", () => {
         });
       }
     }
+
+    // A workspace member needs a name, so an empty member manifest already fails
+    // before anything is installed. Pinned here because it is the same kind of file.
+    it("an empty workspace member manifest fails on the missing name and keeps the lockfile", async () => {
+      using dir = tempDir("empty-workspace-member", {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/foo/package.json": JSON.stringify({ name: "foo", dependencies: { dep: "file:../../dep" } }),
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      });
+      await using first = spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await first.exited).toBe(0);
+      const lockfileBefore = await file(join(String(dir), "bun.lock")).text();
+      expect(lockfileBefore).toContain('"dep"');
+
+      await writeFile(join(String(dir), "packages", "foo", "package.json"), "");
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(stderr, String(dir))).toBe(
+        ['error: Missing "name" from package.json in packages/foo/package.json', "    at <dir>/package.json"].join(
+          "\n",
+        ),
+      );
+      expect(exitCode).toBe(1);
+      expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockfileBefore);
+    });
   });
 
   test.serial("should report error on invalid format for dependencies", async () => {

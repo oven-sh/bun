@@ -5098,8 +5098,11 @@ pub mod bv2_impl {
             // resolve is dropped here (defer resolve.deinit())
         }
 
+        /// Joins whatever the pass still has on the pool before tearing the workers down: a pass that fails between scheduling and the step that normally joins (`enqueue_entry_points_*` -> `wait_for_parse` on an unresolvable entry point, `link` -> `generate_chunks_in_parallel` for the source-map tasks) gets here with tasks still running `Worker::get`. The dev server's asynchronous pass is joined by the event loop and only gets here once `is_done()`.
         pub fn deinit_without_freeing_arena(&mut self) {
-            // `link()` schedules these but only `generate_chunks_in_parallel` joins them; an early return (no chunks, a link error) gets here with pool threads still running them.
+            if !self.asynchronous && self.graph.pending_items > 0 {
+                self.wait_for_parse();
+            }
             self.linker.source_maps.wait_for_tasks();
             debug_assert_eq!(
                 self.linker

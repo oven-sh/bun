@@ -397,15 +397,25 @@ impl ShellLsTask {
     /// discovered subdirectory.
     fn enqueue(&mut self, name: &[u8]) {
         let new_path = self.join(name);
-        let subtask = ShellLsTask::create(
-            self.cmd,
-            self.opts,
-            self.task_count,
-            self.cwd,
-            new_path,
-            self.event_loop,
-            self.interp,
-        );
+        // Pool thread: the subtask inherits our poster rather than deriving
+        // one from the VM (`ShellTask::new` is JS-thread only).
+        let subtask = bun_core::heap::into_raw(Box::new(ShellLsTask {
+            cmd: self.cmd,
+            opts: self.opts,
+            print_directory: false,
+            task_count: self.task_count,
+            cwd: self.cwd,
+            path: new_path,
+            output: Vec::new(),
+            is_absolute: false,
+            err: None,
+            now_secs: 0,
+            event_loop: self.event_loop,
+            interp: self.interp,
+            task: ShellTask::new_child(&self.task),
+        }));
+        // SAFETY: freshly allocated above.
+        unsafe { (*subtask).task.interp = self.interp };
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
         // outlives every in-flight task (see `next`). `subtask` is freshly
         // heap-allocated and scheduled via raw `WorkPool::schedule` (no
@@ -739,6 +749,15 @@ fn civil_from_days(z: i64) -> (i32, u8, u8) {
 
 impl bun_event_loop::Taskable for ShellLsTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellLsTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {

@@ -81,7 +81,7 @@ static JSC::JSPromise* invokePromiseReturningMethodFast(JSC::VM& vm, JSC::JSGlob
 
 // The [[writeAlgorithm]] dispatch. The reachable SinkKind set on a writable default
 // controller is {JavaScript, Nothing, Transform} (CrossRealm: transferable streams are not
-// implemented, so setUpCrossRealmTransformWritable never creates one).
+// implemented, so nothing creates one).
 // Returns nullptr with no exception pending when the write completed synchronously with a
 // non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSC::JSValue chunk)
@@ -564,8 +564,10 @@ void writableStreamDefaultControllerError(JSGlobalObject* globalObject, JSWritab
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = controller->m_stream.get();
     ASSERT(stream->m_state == WritableStreamState::Writable);
+    writableStreamStartErroring(globalObject, stream, error);
+    // After StartErroring, not before as in the spec: it reaches an in-flight codec chunk through the algorithms.
     writableStreamDefaultControllerClearAlgorithms(controller);
-    RELEASE_AND_RETURN(scope, writableStreamStartErroring(globalObject, stream, error));
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 void writableStreamDefaultControllerErrorIfNeeded(JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSValue error)

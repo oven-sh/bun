@@ -21,7 +21,13 @@
 
 import type { Dependency } from "../source.ts";
 
-const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
+// oven-sh/lol-html is cloudflare/lol-html plus content-handler suspension
+// (`HtmlRewriter::resume()`), maintained on the `bun` branch. The upstream
+// base commit is recorded here so a rebase onto a new upstream tag is
+// `git rebase --onto <new-tag> <LOLHTML_UPSTREAM_BASE> bun` in the fork.
+const LOLHTML_UPSTREAM_BASE = "77127cd2b8545998756e8d64e36ee2313c4bb312"; // v2.7.2
+const LOLHTML_COMMIT = "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e";
+void LOLHTML_UPSTREAM_BASE;
 
 export const lolhtml: Dependency = {
   name: "lolhtml",
@@ -29,7 +35,7 @@ export const lolhtml: Dependency = {
 
   source: () => ({
     kind: "github-archive",
-    repo: "cloudflare/lol-html",
+    repo: "oven-sh/lol-html",
     commit: LOLHTML_COMMIT,
   }),
 

@@ -104,3 +104,33 @@ describe("X509Certificate.subjectAltName", () => {
     expect(cert.toLegacyObject().subjectaltname).toBe("");
   });
 });
+
+describe("X509Certificate.prototype property descriptors", () => {
+  // validFromDate/validToDate were registered as CustomAccessorOrValue instead of
+  // CustomAccessor, so reading their descriptors asserted in debug builds.
+  test("validFromDate and validToDate descriptors read like their siblings", () => {
+    const proto = X509Certificate.prototype;
+    for (const name of ["validFromDate", "validToDate", "validFrom", "validTo"] as const) {
+      const desc = Object.getOwnPropertyDescriptor(proto, name)!;
+      expect({ ...desc, get: typeof desc.get }).toEqual({
+        get: "function",
+        set: undefined,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+
+    const all = Object.getOwnPropertyDescriptors(proto);
+    expect(typeof all.validFromDate.get).toBe("function");
+    expect(typeof all.validToDate.get).toBe("function");
+  });
+
+  test("extracted validFromDate/validToDate getters work on an instance", () => {
+    const cert = new X509Certificate(wildcardSanCertPem);
+    const getFrom = Object.getOwnPropertyDescriptor(X509Certificate.prototype, "validFromDate")!.get!;
+    const getTo = Object.getOwnPropertyDescriptor(X509Certificate.prototype, "validToDate")!.get!;
+    expect(getFrom.call(cert)).toBeInstanceOf(Date);
+    expect(getFrom.call(cert)).toEqual(cert.validFromDate);
+    expect(getTo.call(cert)).toEqual(cert.validToDate);
+  });
+});

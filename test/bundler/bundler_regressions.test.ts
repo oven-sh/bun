@@ -1,7 +1,633 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
+const extRuntime = {
+  "/node_modules/ext/index.js": /* js */ `
+    export const join = (...p) => p.join("/");
+    export const dirname = p => p.split("/").slice(0, -1).join("/");
+    export const sep = "/";
+    export default { join, dirname, sep };
+  `,
+  "/node_modules/ext/package.json": /* json */ `{ "name": "ext", "type": "module", "main": "index.js" }`,
+};
+
+/** Top-level `import` statements of a chunk, in output order. */
+const importStatements = (code: string) => code.match(/^import\b[^;]*;/gm) ?? [];
+
 describe("bundler", () => {
+  // https://github.com/oven-sh/bun/issues/8671
+  // Every source file's external `import path from "node:path"` used to survive
+  // into the chunk as its own `import pathN from "path"`.
+  itBundled("regression/ExternalImportDedupeDefault#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        console.log(a(), b(), c());
+      `,
+      "/a.js": /* js */ `
+        import path from "node:path";
+        import { shared } from "./shared.js";
+        export const a = () => path.posix.join(shared, "a");
+      `,
+      "/b.js": /* js */ `
+        import path from "node:path";
+        import { shared } from "./shared.js";
+        export const b = () => path.posix.join(shared, "b");
+      `,
+      "/c.js": /* js */ `
+        import path from "node:path";
+        import { shared } from "./shared.js";
+        export const c = () => path.posix.join(shared, "c");
+      `,
+      "/shared.js": /* js */ `export const shared = "shared";`,
+    },
+    target: "bun",
+    external: ["node:path"],
+    run: { stdout: "shared/a shared/b shared/c" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const imports = out.match(/^import .* from "path";$/gm) ?? [];
+      expect(imports).toEqual(['import path from "path";']);
+      expect(out).not.toMatch(/\bpath2\b/);
+    },
+  });
+  itBundled("regression/ExternalImportDedupeNamedAndStar#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        import { d } from "./d.js";
+        console.log(a(), b(), c(), d);
+      `,
+      "/a.js": /* js */ `
+        import { join } from "ext";
+        import * as ns from "ext";
+        export const a = () => join(ns.sep, "a");
+      `,
+      "/b.js": /* js */ `
+        import { join } from "ext";
+        import * as ns from "ext";
+        export const b = () => join(ns.sep, "b");
+      `,
+      // brings in a binding the earlier imports don't cover: must be kept
+      "/c.js": /* js */ `
+        import { dirname } from "ext";
+        export const c = () => dirname("x/y");
+      `,
+      // bare side-effect import: second occurrence redundant
+      "/d.js": /* js */ `
+        import "ext";
+        export const d = "d";
+      `,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "//a //b x d" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const importLines = (out.match(/^import .*"ext";$/gm) ?? []).sort();
+      expect(importLines).toEqual([
+        'import * as ns from "ext";',
+        'import { dirname } from "ext";',
+        'import { join } from "ext";',
+      ]);
+    },
+  });
+  // A later import that adds a new binding must be kept; its overlapping
+  // bindings stay distinct so the two statements don't declare the same name.
+  itBundled("regression/ExternalImportDedupePartialOverlap#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        console.log(a(), b(), c());
+      `,
+      "/a.js": /* js */ `
+        import { join } from "ext";
+        export const a = () => join("x", "a");
+      `,
+      "/b.js": /* js */ `
+        import { join, sep } from "ext";
+        export const b = () => join(sep, "b");
+      `,
+      "/c.js": /* js */ `
+        import { join } from "ext";
+        export const c = () => join("x", "c");
+      `,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "x/a //b x/c" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.match(/^import .* from "ext";$/gm)).toEqual([
+        'import { join } from "ext";',
+        'import { join as join2, sep } from "ext";',
+      ]);
+    },
+  });
+  itBundled("regression/ExternalImportDedupePartialOverlapDefault#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        console.log(a(), b(), c());
+      `,
+      "/a.js": /* js */ `
+        import ext from "ext";
+        export const a = () => ext.join("x", "a");
+      `,
+      "/b.js": /* js */ `
+        import ext, { sep } from "ext";
+        export const b = () => ext.join(sep, "b");
+      `,
+      "/c.js": /* js */ `
+        import ext from "ext";
+        export const c = () => ext.join("x", "c");
+      `,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "x/a //b x/c" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.match(/^import .* from "ext";$/gm)).toEqual([
+        'import ext from "ext";',
+        'import ext2, { sep } from "ext";',
+      ]);
+    },
+  });
+  itBundled("regression/ExternalImportDedupeSplitting#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        console.log(a(), b());
+      `,
+      "/entry2.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        console.log(b(), a());
+      `,
+      "/a.js": /* js */ `
+        import ext from "ext";
+        export const a = () => ext.join("x", "a");
+      `,
+      "/b.js": /* js */ `
+        import ext from "ext";
+        export const b = () => ext.join("x", "b");
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: true,
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "x/a x/b" },
+      { file: "/out/entry2.js", stdout: "x/b x/a" },
+    ],
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir).filter(f => f.endsWith(".js") && f !== "entry1.js" && f !== "entry2.js");
+      expect(chunks.length).toBe(1);
+      const chunk = api.readFile("/out/" + chunks[0]);
+      expect(chunk.match(/^import .* from "ext";$/gm) ?? []).toEqual(['import ext from "ext";']);
+    },
+  });
+  // A second import from the same path that adds no new bindings is dropped,
+  // but the import kept for the first file must keep the renamer's name for
+  // the shared binding so the second file's uses still resolve.
+  itBundled("regression/ExternalImportDedupeMinified#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        console.log(a(), b());
+      `,
+      "/a.js": /* js */ `
+        import ext from "ext";
+        export const a = () => ext.join("x", "a");
+      `,
+      "/b.js": /* js */ `
+        import ext from "ext";
+        export const b = () => ext.join("x", "b");
+      `,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: { stdout: "x/a x/b" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect([...out.matchAll(/from"ext"/g)]).toHaveLength(1);
+    },
+  });
+  // compute_cross_chunk_dependencies captures both re-exported external refs
+  // before this pass runs; merging them would make the entry chunk's cross-
+  // chunk import declare the same local twice.
+  for (const [kind, reexportingFile, join] of [
+    ["Named", /* js */ `import { join as j } from "ext"; export { j };`, (binding: string) => binding],
+    ["Star", /* js */ `import * as j from "ext"; export { j };`, (binding: string) => `${binding}.join`],
+  ] as const) {
+    itBundled(`regression/ExternalImportDedupeSplittingReexport${kind}#8671`, {
+      files: {
+        "/entry1.js": /* js */ `
+          import { j as a } from "./a.js";
+          import { j as b } from "./b.js";
+          console.log(${join("a")}("x", "y"), ${join("b")}("p", "q"));
+        `,
+        "/entry2.js": /* js */ `
+          import { j as a } from "./a.js";
+          import { j as b } from "./b.js";
+          console.log(${join("b")}("x", "y"), ${join("a")}("p", "q"));
+        `,
+        "/a.js": reexportingFile,
+        "/b.js": reexportingFile,
+      },
+      entryPoints: ["/entry1.js", "/entry2.js"],
+      format: "esm",
+      splitting: true,
+      external: ["ext"],
+      runtimeFiles: extRuntime,
+      outdir: "/out",
+      run: [
+        { file: "/out/entry1.js", stdout: "x/y p/q" },
+        { file: "/out/entry2.js", stdout: "x/y p/q" },
+      ],
+    });
+  }
+  // The first import of a path is the one that is kept, even a bare one, so
+  // the order in which the externals are evaluated is unchanged. Dropping the
+  // bare import in favour of the later binding import would move "side" after
+  // "other".
+  itBundled("regression/ExternalImportDedupeKeepsEvaluationOrder#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        import "./b.js";
+        import "./c.js";
+        console.log("entry");
+      `,
+      "/a.js": /* js */ `
+        import "side";
+        import { tag } from "other";
+        console.log("a", tag);
+      `,
+      "/b.js": /* js */ `
+        import { v } from "side";
+        console.log("b", v);
+      `,
+      "/c.js": /* js */ `
+        import "side";
+        import { tag } from "other";
+        console.log("c", tag);
+      `,
+    },
+    format: "esm",
+    external: ["side", "other"],
+    runtimeFiles: {
+      "/node_modules/side/index.js": /* js */ `console.log("evaluating side"); export const v = "V";`,
+      "/node_modules/side/package.json": /* json */ `{ "name": "side", "type": "module", "main": "index.js" }`,
+      "/node_modules/other/index.js": /* js */ `console.log("evaluating other"); export const tag = "O";`,
+      "/node_modules/other/package.json": /* json */ `{ "name": "other", "type": "module", "main": "index.js" }`,
+    },
+    run: {
+      stdout: `
+        evaluating side
+        evaluating other
+        a O
+        b V
+        c O
+        entry
+      `,
+    },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import"side";',
+        'import { tag } from "other";',
+        'import { v } from "side";',
+      ]);
+    },
+  });
+  // Clause order does not matter; the same export name from a different
+  // package is a different binding.
+  itBundled("regression/ExternalImportDedupeClauseOrder#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        console.log(a, b, c);
+      `,
+      "/a.js": /* js */ `
+        import { join, sep } from "ext";
+        export const a = join("a", sep);
+      `,
+      "/b.js": /* js */ `
+        import { sep, join } from "ext";
+        export const b = join(sep, "b");
+      `,
+      "/c.js": /* js */ `
+        import { join } from "ext2";
+        export const c = join("c");
+      `,
+    },
+    format: "esm",
+    external: ["ext", "ext2"],
+    runtimeFiles: {
+      ...extRuntime,
+      "/node_modules/ext2/index.js": /* js */ `export const join = (...p) => "ext2:" + p.join("/");`,
+      "/node_modules/ext2/package.json": /* json */ `{ "name": "ext2", "type": "module", "main": "index.js" }`,
+    },
+    run: { stdout: "a// //b ext2:c" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { join, sep } from "ext";',
+        'import { join as join2 } from "ext2";',
+      ]);
+    },
+  });
+  // The entry point re-exports a binding whose import statement was dropped;
+  // the export clause has to print the kept statement's name.
+  itBundled("regression/ExternalImportDedupeEntryReexport#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        export { joinA } from "./a.js";
+        export { joinB } from "./b.js";
+      `,
+      "/a.js": /* js */ `import { join } from "ext"; export { join as joinA };`,
+      "/b.js": /* js */ `import { join } from "ext"; export { join as joinB };`,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: {
+      ...extRuntime,
+      "/consumer.js": /* js */ `
+        import { joinA, joinB } from "./out.js";
+        console.log(joinA("a", "1"), joinB("b", "2"), joinA === joinB);
+      `,
+    },
+    run: { file: "/consumer.js", stdout: "a/1 b/2 true" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual(['import { join } from "ext";']);
+    },
+  });
+  // Import attributes are part of what the statement imports: the two JSON
+  // imports collapse, the attribute-less one stays separate.
+  itBundled("regression/ExternalImportDedupeImportAttributes#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        console.log(a, b, c);
+      `,
+      "/a.js": /* js */ `
+        import data from "pkg" with { type: "json" };
+        export const a = data;
+      `,
+      "/b.js": /* js */ `
+        import data from "pkg";
+        export const b = data;
+      `,
+      "/c.js": /* js */ `
+        import data from "pkg" with { type: "json" };
+        export const c = data;
+      `,
+    },
+    target: "bun",
+    format: "esm",
+    external: ["pkg"],
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import data from "pkg" with { type: "json" };',
+        'import data2 from "pkg";',
+      ]);
+    },
+  });
+  // Without splitting a source file is copied into every entry-point chunk
+  // that reaches it, while the symbol merge is global. Only statements with an
+  // identical clause list may merge there: merging r into p in entry2 and into
+  // q in entry3 would otherwise link p's and q's `x`, and entry1, which keeps
+  // both p and q, would declare that binding twice.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplitting#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { p } from "./p.js";
+        import { q } from "./q.js";
+        console.log(p, q);
+      `,
+      "/entry2.js": /* js */ `
+        import { p } from "./p.js";
+        import { r } from "./r.js";
+        console.log(p, r);
+      `,
+      "/entry3.js": /* js */ `
+        import { q } from "./q.js";
+        import { r } from "./r.js";
+        console.log(q, r);
+      `,
+      "/p.js": /* js */ `import { sep } from "ext"; export const p = "p" + sep;`,
+      "/q.js": /* js */ `import { sep, join } from "ext"; export const q = join("q", sep);`,
+      "/r.js": /* js */ `import { sep } from "ext"; export const r = "r" + sep;`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js", "/entry3.js"],
+    format: "esm",
+    splitting: false,
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "p/ q//" },
+      { file: "/out/entry2.js", stdout: "p/ r/" },
+      { file: "/out/entry3.js", stdout: "q// r/" },
+    ],
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out/entry2.js"))).toEqual(['import { sep } from "ext";']);
+      expect(importStatements(api.readFile("/out/entry1.js"))).toHaveLength(2);
+      expect(importStatements(api.readFile("/out/entry3.js"))).toHaveLength(2);
+    },
+  });
+  // shared.js is the kept statement in entry1's chunk and a dropped one in
+  // entry2's chunk; every chunk still declares the merged binding exactly once.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingSharedFile#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { s } from "./shared.js";
+        import { o1 } from "./only1.js";
+        console.log(s, o1);
+      `,
+      "/entry2.js": /* js */ `
+        import { o2 } from "./only2.js";
+        import { s } from "./shared.js";
+        console.log(s, o2);
+      `,
+      "/shared.js": /* js */ `import * as ns from "ext"; export const s = ns.sep;`,
+      "/only1.js": /* js */ `import * as ns from "ext"; export const o1 = ns.join("only", "1");`,
+      "/only2.js": /* js */ `import * as ns from "ext"; export const o2 = ns.join("only", "2");`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "/ only/1" },
+      { file: "/out/entry2.js", stdout: "/ only/2" },
+    ],
+    onAfterBundle(api) {
+      for (const file of ["/out/entry1.js", "/out/entry2.js"]) {
+        expect(importStatements(api.readFile(file))).toEqual(['import * as ns from "ext";']);
+      }
+    },
+  });
+  // `import { x, x as y }` binds one export to two locals. Merging b.js's
+  // identical pair into the one `sep` ref recorded for a.js in entry1 would make
+  // entry2, where b.js is the kept statement, declare the same local twice.
+  // Such statements are left alone.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingDuplicateAlias#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { A } from "./a.js";
+        import { B } from "./b.js";
+        console.log(A, B);
+      `,
+      "/entry2.js": /* js */ `
+        import { B } from "./b.js";
+        console.log(B);
+      `,
+      "/a.js": /* js */ `import { sep, sep as sep1 } from "ext"; export const A = sep + sep1 + "a";`,
+      "/b.js": /* js */ `import { sep, sep as sep1 } from "ext"; export const B = sep + sep1 + "b";`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "//a //b" },
+      { file: "/out/entry2.js", stdout: "//b" },
+    ],
+    onAfterBundle(api) {
+      // Neither statement is merged: each file keeps its own two locals.
+      const entry1 = importStatements(api.readFile("/out/entry1.js"));
+      expect(entry1).toHaveLength(2);
+      expect(entry1[0]).toBe('import { sep, sep as sep1 } from "ext";');
+      expect(entry1[1]).toMatch(/^import \{ sep as (\w+), sep as (?!\1\b)\w+ \} from "ext";$/);
+      expect(importStatements(api.readFile("/out/entry2.js"))).toEqual(['import { sep, sep as sep1 } from "ext";']);
+    },
+  });
+  // Without splitting, only statements written the same way merge, so a chunk
+  // never prints a local name taken from a file it does not contain: entry2
+  // keeps p.js's `path` even though entry1 merged nothing with q.js's `ext`,
+  // and entry2's own `ext` is not pushed aside by a name from q.js.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingLocalNames#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { q } from "./q.js";
+        import { p } from "./p.js";
+        console.log(q, p);
+      `,
+      "/entry2.js": /* js */ `
+        import { p } from "./p.js";
+        const ext = "local";
+        console.log(p, ext);
+      `,
+      "/p.js": /* js */ `import path from "ext"; export const p = path.join("p", "1");`,
+      "/q.js": /* js */ `import ext from "ext"; export const q = ext.join("q", "1");`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "q/1 p/1" },
+      { file: "/out/entry2.js", stdout: "p/1 local" },
+    ],
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out/entry1.js"))).toEqual([
+        'import ext from "ext";',
+        'import path from "ext";',
+      ]);
+      const entry2 = api.readFile("/out/entry2.js");
+      expect(importStatements(entry2)).toEqual(['import path from "ext";']);
+      expect(entry2).toMatch(/\b(?:var|let|const) ext = "local"/);
+    },
+  });
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingMinified#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { s } from "./shared.js";
+        import { o1 } from "./only1.js";
+        console.log(s, o1);
+      `,
+      "/entry2.js": /* js */ `
+        import { o2 } from "./only2.js";
+        import { s } from "./shared.js";
+        console.log(s, o2);
+      `,
+      "/shared.js": /* js */ `import { join, sep } from "ext"; export const s = join("s", sep);`,
+      "/only1.js": /* js */ `import { join, sep } from "ext"; export const o1 = join("o1", sep);`,
+      "/only2.js": /* js */ `import { join, sep } from "ext"; export const o2 = join("o2", sep);`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "s// o1//" },
+      { file: "/out/entry2.js", stdout: "s// o2//" },
+    ],
+    onAfterBundle(api) {
+      for (const file of ["/out/entry1.js", "/out/entry2.js"]) {
+        expect([...api.readFile(file).matchAll(/from"ext"/g)]).toHaveLength(1);
+      }
+    },
+  });
+  // A default import and `{ default as x }` bind the same export through two
+  // different clause slots; the pass does not try to unify them.
+  itBundled("regression/ExternalImportDedupeDefaultViaNamedClause#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        console.log(a, b);
+      `,
+      "/a.js": /* js */ `import ext from "ext"; export const a = ext.sep;`,
+      "/b.js": /* js */ `import { default as ext } from "ext"; export const b = ext.sep;`,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "/ /" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import ext from "ext";',
+        'import { default as ext2 } from "ext";',
+      ]);
+    },
+  });
+
   // Exercises the bundler's chunking/linking internals end-to-end: code
   // splitting produces cross-chunk imports (sorted deterministically), CSS is
   // compiled into its own chunk, symbols are renamed across chunks, and every

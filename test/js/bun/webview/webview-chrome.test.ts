@@ -77,7 +77,7 @@ const PLAYWRIGHT_SHELL_DIR =
 
 function findChrome(): string | undefined {
   if (process.env.BUN_CHROME_PATH) {
-    return isExecutablePath(process.env.BUN_CHROME_PATH) ? process.env.BUN_CHROME_PATH : undefined;
+    return process.env.BUN_CHROME_PATH;
   }
 
   // $PATH — same as `which google-chrome` etc.

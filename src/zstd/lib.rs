@@ -700,7 +700,7 @@ macro_rules! embed_compressed {
         let __bytes: &'static [u8] = {
             #[cfg(bun_codegen_embed)]
             {
-                static __INFLATED: ::bun_core::Once<::std::vec::Vec<u8>> = ::bun_core::Once::new();
+                static __INFLATED: ::bun_core::Once<::std::boxed::Box<[u8]>> = ::bun_core::Once::new();
                 __INFLATED
                     .get_or_init(|| {
                         $crate::inflate_embedded_nul(::core::include_bytes!(::core::concat!(
@@ -710,7 +710,6 @@ macro_rules! embed_compressed {
                             ".zst"
                         )))
                     })
-                    .as_slice()
             }
             #[cfg(not(bun_codegen_embed))]
             {
@@ -738,7 +737,7 @@ macro_rules! embed_compressed {
         let __bytes: &'static [u8] = {
             #[cfg(bun_codegen_embed)]
             {
-                static __INFLATED: ::bun_core::Once<::std::vec::Vec<u8>> = ::bun_core::Once::new();
+                static __INFLATED: ::bun_core::Once<::std::boxed::Box<[u8]>> = ::bun_core::Once::new();
                 __INFLATED
                     .get_or_init(|| {
                         $crate::inflate_embedded(::core::include_bytes!(::core::concat!(
@@ -748,7 +747,6 @@ macro_rules! embed_compressed {
                             ".zst"
                         )))
                     })
-                    .as_slice()
             }
             #[cfg(not(bun_codegen_embed))]
             {
@@ -762,16 +760,18 @@ macro_rules! embed_compressed {
 /// Cold, shared body of [`embed_compressed!`]'s release arm.
 #[cold]
 #[inline(never)]
-pub fn inflate_embedded(compressed: &'static [u8]) -> Vec<u8> {
-    decompress_alloc(compressed).expect("embedded asset: invalid zstd frame")
+pub fn inflate_embedded(compressed: &'static [u8]) -> Box<[u8]> {
+    decompress_alloc(compressed)
+        .expect("embedded asset: invalid zstd frame")
+        .into_boxed_slice()
 }
 
 /// [`inflate_embedded`] plus a trailing NUL byte.
 #[cold]
 #[inline(never)]
-pub fn inflate_embedded_nul(compressed: &'static [u8]) -> Vec<u8> {
-    let mut inflated = inflate_embedded(compressed);
+pub fn inflate_embedded_nul(compressed: &'static [u8]) -> Box<[u8]> {
+    let mut inflated = decompress_alloc(compressed).expect("embedded asset: invalid zstd frame");
     inflated.reserve_exact(1);
     inflated.push(0);
-    inflated
+    inflated.into_boxed_slice()
 }

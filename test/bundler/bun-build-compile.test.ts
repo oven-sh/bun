@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import { bunEnv, bunExe, isArm64, isGlibc, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -105,6 +105,211 @@ describe("Bun.build compile", () => {
 
     // The test passes if compilation succeeds - the actual embedded resource
     // path handling is verified by the successful compilation
+  });
+});
+
+// `Bun.Build.Libc` is "glibc" | "musl". "-glibc" selects the glibc build of bun, which on a glibc host
+// is the running binary itself, so the accepting tests below never download anything.
+describe("compile target libc segments", () => {
+  const arch = isArm64 ? "arm64" : "x64";
+  // Targets are named `-vX.Y.Z`; Bun.version additionally carries `-debug` / `-canary.N` suffixes.
+  const version = Bun.version.split("-")[0];
+  // Tests that actually compile copy and rewrite the whole bun binary (~1GB under debug+ASAN), which
+  // blows the 5s default; the parse-only tests below stay on the default.
+  const compileTimeout = 60_000;
+  // `bun build --compile` prints one timed line per stage; only the timings vary. A cross-compile
+  // additionally appends the resolved target to the compile line, so these summaries also assert
+  // that the target was the running binary.
+  const stages = (stdout: string) => stdout.replace(/^\s*\[[\d.]+m?s\] +/gm, "");
+  const bundledAndCompiled = "bundle  1 modules\ncompile  app\n";
+
+  test.skipIf(!isGlibc)(
+    "Bun.build accepts a bun-linux-<arch>-glibc target",
+    async () => {
+      using dir = tempDir("build-compile-glibc-api", {
+        "app.js": `console.log("glibc-target-ok");`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: {
+          target: `bun-linux-${arch}-glibc`,
+          outfile: join(String(dir), "app"),
+        },
+      });
+      expect(result.success).toBe(true);
+
+      await using proc = Bun.spawn({
+        cmd: [result.outputs[0].path],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "glibc-target-ok\n", stderr: "", exitCode: 0 });
+    },
+    compileTimeout,
+  );
+
+  test.skipIf(!isGlibc)(
+    "bun build --compile accepts --target=bun-linux-<arch>-glibc",
+    async () => {
+      using dir = tempDir("build-compile-glibc-cli", {
+        "app.js": `console.log("glibc-target-ok");`,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${arch}-glibc`, "app.js", "--outfile", "app"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect({ stdout: stages(buildStdout), stderr: buildStderr, exitCode: buildExitCode }).toEqual({
+        stdout: bundledAndCompiled,
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [join(String(dir), "app")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "glibc-target-ok\n", stderr: "", exitCode: 0 });
+    },
+    compileTimeout,
+  );
+
+  // Rejected while parsing the target, on every host. The message has to describe what the parser
+  // actually tripped on, not whichever libc word happens to appear somewhere in the target.
+  test.concurrent.each([
+    ["bun-windows-x64-glibc", "error: invalid target, glibc only exists on linux\n"],
+    ["bun-windows-x64-musl", "error: invalid target, musl libc only exists on linux\n"],
+    [
+      "bun-darwin-arm64-android",
+      "error: invalid target, android only exists with linux (use bun-linux-arm64-android)\n",
+    ],
+    [
+      "bun-linux-x64-glibc-invalid",
+      'error: Unsupported target "invalid" in "bun-linux-x64-glibc-invalid"\n' +
+        "To see the supported targets:\n" +
+        "  https://bun.com/docs/bundler/executables\n",
+    ],
+    [
+      "bun-x64-glibc-v1.2",
+      `error: Please pass a complete version number to --target. For example, --target=bun-v${version}\n`,
+    ],
+    ["bun-wasm", "error: invalid target, WebAssembly is not supported. Sorry!\n"],
+  ])("bun build --compile rejects --target=%s", async (target, expectedStderr) => {
+    using dir = tempDir("build-compile-target-invalid", {
+      "app.js": `console.log("unreachable");`,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=${target}`, "app.js", "--outfile", "app"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ stdout, stderr, exitCode, files: readdirSync(String(dir)) }).toEqual({
+      stdout: "",
+      stderr: expectedStderr,
+      exitCode: 1,
+      files: ["app.js"],
+    });
+  });
+
+  test.each(["bun-darwin-arm64-glibc", "bun-linux-x64-glibc-invalid"])("Bun.build rejects target %s", target => {
+    using dir = tempDir("build-compile-target-invalid-api", {
+      "app.js": `console.log("unreachable");`,
+    });
+
+    expect(() =>
+      Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: {
+          target: target as Bun.Build.CompileTarget,
+          outfile: join(String(dir), "app"),
+        },
+      }),
+    ).toThrow(new TypeError(`Unknown compile target: ${target}`));
+  });
+
+  // Which libc a target resolved to is only visible from a bun built against the other one: the
+  // running bun's own libc is satisfied by the running binary, anything else has to be fetched.
+  // The fetch is pointed at a local 404 server, so instead of downloading, the build fails naming
+  // the bun it resolved to.
+  describe.skipIf(!isLinux)("libc selection", () => {
+    const npmArch = isArm64 ? "aarch64" : "x64";
+    const [otherLibc, otherSuffix] = isMusl ? ["glibc", ""] : ["musl", "-musl"];
+
+    async function compileFor(target: string) {
+      using dir = tempDir("build-compile-libc-selection", {
+        "app.js": `console.log("libc-selection");`,
+      });
+      let fetches = 0;
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch() {
+          fetches++;
+          return new Response(null, { status: 404 });
+        },
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", `--target=${target}`, "app.js", "--outfile", "app"],
+        env: {
+          ...bunEnv,
+          BUN_COMPILE_TARGET_TARBALL_URL: server.url.href,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+          // A CI proxy must not sit between the build and the local server.
+          HTTP_PROXY: undefined,
+          http_proxy: undefined,
+          HTTPS_PROXY: undefined,
+          https_proxy: undefined,
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      return { stdout: stages(stdout), stderr, exitCode, fetches };
+    }
+
+    test(
+      "a Linux target without a libc segment is the running bun's libc",
+      async () => {
+        expect(await compileFor(`bun-linux-${arch}`)).toEqual({
+          stdout: bundledAndCompiled,
+          stderr: "",
+          exitCode: 0,
+          fetches: 0,
+        });
+      },
+      compileTimeout,
+    );
+
+    test("a libc segment for the other libc selects that build instead of the running bun", async () => {
+      expect(await compileFor(`bun-linux-${arch}-${otherLibc}`)).toEqual({
+        stdout: "bundle  1 modules\n",
+        stderr:
+          `Target platform 'bun-linux-${npmArch}${otherSuffix}-v${version}' is not available for download. ` +
+          "Check if this version of Bun supports this target.\n",
+        exitCode: 1,
+        fetches: 1,
+      });
+    });
   });
 });
 

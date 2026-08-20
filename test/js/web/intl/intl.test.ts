@@ -188,6 +188,46 @@ describe("Intl.Collator", () => {
   });
 });
 
+// ICU reads its own default locale from LC_ALL, then LC_MESSAGES, then LANG the
+// first time a calendar or collator is opened. A value it cannot parse (a
+// language subtag of 12 or more bytes, or a path) used to leave that default
+// unset, and the first Date#toString / localeCompare / Intl constructor then
+// crashed inside ICU. Bun's own default locale does not come from these
+// variables, so every value, parseable or not, must give the en-US output.
+describe.concurrent("locale variables in the environment", () => {
+  const script = `console.log(JSON.stringify([
+    new Date(0).toString(),
+    "a".localeCompare("b"),
+    (1234.5).toLocaleString(),
+    new Intl.DateTimeFormat().resolvedOptions().locale,
+  ]))`;
+
+  test.each([
+    // eleven bytes is the longest language subtag ICU accepts
+    { LANG: "abcdefghijkl" },
+    { LANG: "/usr/lib/locale/en_US" },
+    { LC_MESSAGES: "abcdefghijkl" },
+    { LC_ALL: "abcdefghijkl", LANG: "en_US.UTF-8" },
+    { LC_ALL: "de_DE.UTF-8" },
+  ])("%o", async vars => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_MESSAGES: undefined, ...vars },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)",
+      -1,
+      "1,234.5",
+      "en-US",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Segmenter — brkitr/* raw (incl. cjdict)
 // ---------------------------------------------------------------------------

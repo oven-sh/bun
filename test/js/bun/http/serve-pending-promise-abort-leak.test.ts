@@ -395,7 +395,12 @@ test("async server.upgrade() frees the context while the handler promise stays p
 
   await waitForPendingRequestsWithoutGC(server, 0);
 
+  // Resolving after the context is gone is a safe no-op: the reaction's
+  // take() returns null.
+  capturedResolve!(new Response("late"));
   capturedResolve = undefined;
+  await Bun.sleep(0);
+  expect(server.pendingRequests).toBe(0);
   ws.close();
 });
 

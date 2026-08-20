@@ -211,7 +211,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.allow_ts_decorators {
                 opts.ts_decorators = p.parse_type_script_decorators()?;
                 opts.has_class_decorators = class_opts.ts_decorators.len() > 0;
-                has_decorators = has_decorators || opts.ts_decorators.len() > 0;
             }
 
             // This property may turn out to be a type in TypeScript, which should be ignored
@@ -240,12 +239,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                has_decorators = has_decorators || opts.has_argument_decorators;
+                has_decorators =
+                    has_decorators || opts.ts_decorators.len() > 0 || opts.has_argument_decorators;
             } else {
                 // The property was dropped (e.g. a TypeScript overload signature or
-                // abstract method), which drops its decorators and computed key too.
-                // Discard any scopes recorded while parsing them or the visit pass
-                // will hit a scope order mismatch.
+                // abstract method), which drops its decorators and computed key too,
+                // so they must not count towards `has_decorators`. Discard any scopes
+                // recorded while parsing them or the visit pass will hit a scope
+                // order mismatch.
                 p.discard_scopes_up_to(property_scope_index);
             }
         }

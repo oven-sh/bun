@@ -204,7 +204,7 @@ function createWindow(windowUrl) {
         });
         return;
       }
-      return originalElementAppendChild.call(document.head, element);
+      return originalElementAppendChild.call(this, element);
     },
   });
 

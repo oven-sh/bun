@@ -209,6 +209,9 @@ describe("transpiler cache", () => {
     const OUTPUT_BYTE_OFFSET_AT = 30;
     const OUTPUT_BYTE_LENGTH_AT = 38;
     const OUTPUT_HASH_AT = 46;
+    const SOURCEMAP_BYTE_OFFSET_AT = 54;
+    const SOURCEMAP_BYTE_LENGTH_AT = 62;
+    const SOURCEMAP_HASH_AT = 70;
 
     async function primeAndLocateEntry(marker: string) {
       // >= MINIMUM_CACHE_SIZE so the source is cached, and the marker string
@@ -259,6 +262,22 @@ describe("transpiler cache", () => {
       writeFileSync(entryPath, data);
 
       expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("ORIGINAL_OUTPUT_2");
+    });
+
+    test("when sourcemap_hash is zeroed", async () => {
+      const entryPath = await primeAndLocateEntry("ORIGINAL_OUTPUT_3");
+      const data = readFileSync(entryPath);
+      const smOff = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
+      const smLen = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
+      expect(smLen).toBeGreaterThan(0);
+      data.fill(0xff, smOff, smOff + smLen);
+      data.writeBigUInt64LE(0n, SOURCEMAP_HASH_AT);
+      writeFileSync(entryPath, data);
+
+      // A tampered sourcemap does not change stdout, so rejection is observed
+      // through the entry being deleted and rewritten with a real hash.
+      expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("ORIGINAL_OUTPUT_3");
+      expect(readFileSync(entryPath).readBigUInt64LE(SOURCEMAP_HASH_AT)).not.toBe(0n);
     });
   });
   test("does not inline process.env", async () => {

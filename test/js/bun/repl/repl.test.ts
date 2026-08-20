@@ -14,6 +14,8 @@ async function runRepl(
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
   const { env = {} } = options;
 
+  // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
+  using home = tempDir("repl-home", {});
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
     stdin: Buffer.from(inputStr),
@@ -21,6 +23,8 @@ async function runRepl(
     stderr: "pipe",
     env: {
       ...bunEnv,
+      HOME: String(home),
+      USERPROFILE: String(home),
       TERM: "dumb",
       NO_COLOR: "1",
       ...env,
@@ -158,6 +162,8 @@ async function withTerminalRepl(
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
 
+  // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
+  using home = tempDir("repl-home", {});
   await using terminal = new Bun.Terminal({
     cols,
     rows: 40,
@@ -176,6 +182,8 @@ async function withTerminalRepl(
     terminal,
     env: {
       ...bunEnv,
+      HOME: String(home),
+      USERPROFILE: String(home),
       TERM: "xterm-256color",
       ...options.env,
     },
@@ -237,11 +245,10 @@ async function withTerminalRepl(
 
   await fn({ terminal, proc, send, waitFor, waitForScreen, allOutput });
 
-  // Clean exit. Ctrl+E then Ctrl+U first discards whatever the test left on
-  // the line (Ctrl+U only deletes what is before the cursor), so `.exit` is
-  // not appended to it (which would leave the REPL running until the kill
-  // below).
-  send("\x05\x15.exit\n");
+  // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
+  // the line, wherever the cursor is, so `.exit` is not appended to it (which
+  // would leave the REPL running until the kill below).
+  send("\x01\x0b.exit\n");
   await Promise.race([proc.exited, Bun.sleep(2000)]);
   if (!proc.killed) proc.kill();
 }

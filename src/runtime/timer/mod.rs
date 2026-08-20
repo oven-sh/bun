@@ -1357,14 +1357,6 @@ pub(crate) struct ID {
     pub id: i32,
     pub kind: KindBig,
 }
-impl Default for ID {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            kind: KindBig::SetTimeout,
-        }
-    }
-}
 impl ID {
     #[inline]
     fn async_id(self) -> u64 {

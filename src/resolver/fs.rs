@@ -123,16 +123,6 @@ pub struct EntryCache {
     pub(crate) kind: EntryKind,
 }
 
-impl Default for EntryCache {
-    fn default() -> Self {
-        Self {
-            symlink: Interned::EMPTY,
-            fd: Fd::INVALID,
-            kind: EntryKind::File,
-        }
-    }
-}
-
 // `cache` / `need_stat` are lazily populated by `Entry::kind` /
 // `Entry::symlink` while callers hold a shared
 // `&Entry`. `EntryCache` is `Copy`, so `Cell` gives us safe

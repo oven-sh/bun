@@ -997,14 +997,6 @@ pub enum JsError {
 
 bun_alloc::oom_from_alloc!(JsError);
 
-impl From<crate::Error> for JsError {
-    fn from(_: crate::Error) -> Self {
-        // Mapping to `Thrown` here lets `?` propagate while the actual throw
-        // is handled by the host-fn wrapper.
-        JsError::Thrown
-    }
-}
-
 /// Write `parts` consecutively
 /// into `dest` and return the written prefix as a mutable slice. Panics if
 /// `sum(parts.len()) > dest.len()`.

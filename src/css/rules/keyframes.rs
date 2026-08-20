@@ -1,5 +1,3 @@
-use core::hash::{Hash, Hasher};
-
 use crate as css;
 use crate::css_rules::Location;
 use crate::css_values::ident::{CustomIdent, is_reserved_custom_ident};
@@ -24,29 +22,6 @@ pub enum KeyframesName {
 }
 
 // A generic type alias keyed by `KeyframesName` with the custom hash/eq below.
-
-impl Hash for KeyframesName {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash only the underlying string bytes; the variant tag does NOT participate.
-        match self {
-            KeyframesName::Ident(ident) => state.write(ident.v()),
-            KeyframesName::Custom(s) => state.write(s),
-        }
-    }
-}
-
-impl PartialEq for KeyframesName {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (KeyframesName::Ident(a), KeyframesName::Ident(b)) => {
-                bun_core::strings::eql(a.v(), b.v())
-            }
-            (KeyframesName::Custom(a), KeyframesName::Custom(b)) => bun_core::strings::eql(a, b),
-            _ => false,
-        }
-    }
-}
-impl Eq for KeyframesName {}
 
 impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {

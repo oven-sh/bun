@@ -25,16 +25,6 @@ pub struct ResolveMessage {
     pub(crate) logged: Cell<bool>,
 }
 
-impl Default for ResolveMessage {
-    fn default() -> Self {
-        Self {
-            msg: bun_ast::Msg::default(),
-            referrer: None,
-            logged: Cell::new(false),
-        }
-    }
-}
-
 /// `ImportKind.label()` — the canonical table lives in
 /// `bun_ast::ImportKind::label`, but
 /// `bun_ast::MetadataResolve.import_kind` is the type-only `bun_ast::ImportKind`.

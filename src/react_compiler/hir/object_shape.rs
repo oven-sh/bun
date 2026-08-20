@@ -211,16 +211,6 @@ impl ShapeRegistry {
     }
 }
 
-impl Clone for ShapeRegistry {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base,
-            entries: self.entries.clone(),
-            next_anon: self.next_anon,
-        }
-    }
-}
-
 // =============================================================================
 // Builder functions (matching TS addFunction, addHook, addObject)
 // =============================================================================

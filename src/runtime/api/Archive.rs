@@ -33,12 +33,6 @@ pub(crate) struct GzipOptions {
     pub level: u8,
 }
 
-impl Default for GzipOptions {
-    fn default() -> Self {
-        Self { level: 6 }
-    }
-}
-
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
 // needs a custom `finalize` and no constructor, which the proc-macro does not
 // expose.

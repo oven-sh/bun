@@ -613,18 +613,6 @@ pub struct us_socket_stream_buffer_t {
     pub(crate) cursor: usize,
 }
 
-impl Default for us_socket_stream_buffer_t {
-    fn default() -> Self {
-        Self {
-            list_ptr: ptr::null_mut(),
-            list_cap: 0,
-            list_len: 0,
-            total_bytes_written: 0,
-            cursor: 0,
-        }
-    }
-}
-
 /// Minimal structural mirror of `bun_io::StreamBuffer` for tier-0 interop.
 /// The higher-tier `bun_io::StreamBuffer` is field-identical and converts via
 /// `From`/`Into` (added in the move-in pass).

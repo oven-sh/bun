@@ -540,17 +540,6 @@ pub mod store {
         pub is_all_ascii: Option<bool>,
     }
 
-    impl Default for Store {
-        fn default() -> Self {
-            Self {
-                data: Data::Bytes(Bytes::default()),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: None,
-            }
-        }
-    }
-
     /// Backing data for a `Store`.
     #[derive(bun_core::EnumTag)]
     #[enum_tag(existing = DataTag)]

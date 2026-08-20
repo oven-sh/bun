@@ -860,12 +860,6 @@ impl Environment {
     }
 }
 
-impl Default for Environment {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cold]
 #[inline(never)]
 fn shape_not_found(shape_id: &str) -> CompilerDiagnostic {

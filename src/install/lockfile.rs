@@ -2377,12 +2377,6 @@ impl Scratch {
     }
 }
 
-impl Default for Scratch {
-    fn default() -> Self {
-        Self::init()
-    }
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // LockfileFields — disjoint split borrow alongside StringBuilder
 // ────────────────────────────────────────────────────────────────────────────

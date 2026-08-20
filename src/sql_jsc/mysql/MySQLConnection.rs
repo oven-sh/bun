@@ -1635,11 +1635,6 @@ impl MySQLConnection {
 pub enum FlushQueueError {
     AuthenticationFailed,
 }
-impl From<FlushQueueError> for crate::Error {
-    fn from(_: FlushQueueError) -> Self {
-        crate::Error::AuthenticationFailed
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Writer / Reader — protocol-layer adapters wrapping the connection's

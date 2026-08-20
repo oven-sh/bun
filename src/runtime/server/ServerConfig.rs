@@ -1672,17 +1672,6 @@ pub struct FromJSOptions {
     pub(crate) previous_routes: bool,
 }
 
-impl Default for FromJSOptions {
-    fn default() -> Self {
-        Self {
-            allow_bake_config: true,
-            is_fetch_required: true,
-            previous_fetch: false,
-            previous_routes: false,
-        }
-    }
-}
-
 pub struct UserRouteBuilder {
     pub(crate) route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional

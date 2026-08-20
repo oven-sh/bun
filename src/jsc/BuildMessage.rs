@@ -16,15 +16,6 @@ pub struct BuildMessage {
     pub(crate) logged: Cell<bool>,
 }
 
-impl Default for BuildMessage {
-    fn default() -> Self {
-        Self {
-            msg: bun_ast::Msg::default(),
-            logged: Cell::new(false),
-        }
-    }
-}
-
 impl BuildMessage {
     // `#[JsClass]` emits `BuildMessageClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut BuildMessage> {

@@ -1334,14 +1334,6 @@ pub enum SetError {
 }
 bun_core::impl_tag_error!(SetError);
 bun_core::oom_from_alloc!(SetError);
-impl From<SetError> for crate::Error {
-    fn from(e: SetError) -> Self {
-        match e {
-            SetError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-            SetError::Clobber => crate::Error::Clobber,
-        }
-    }
-}
 
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).

@@ -123,16 +123,6 @@ struct JSS3Error {
     path: BunString,
 }
 
-impl Default for JSS3Error {
-    fn default() -> Self {
-        Self {
-            code: BunString::empty(),
-            message: BunString::empty(),
-            path: BunString::empty(),
-        }
-    }
-}
-
 impl JSS3Error {
     fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
         Self {

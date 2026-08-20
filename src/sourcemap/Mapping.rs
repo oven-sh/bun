@@ -49,17 +49,6 @@ pub struct Mapping {
     pub name_index: i32, // = -1
 }
 
-impl Default for Mapping {
-    fn default() -> Self {
-        Self {
-            generated: LineColumnOffset::default(),
-            original: LineColumnOffset::default(),
-            source_index: 0,
-            name_index: -1,
-        }
-    }
-}
-
 /// Optimization: if we don't care about the "names" column, then don't store the names.
 #[derive(Clone, Copy, Default)]
 pub struct MappingWithoutName {

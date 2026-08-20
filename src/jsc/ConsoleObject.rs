@@ -587,15 +587,6 @@ struct Column {
     width: u32,
 }
 
-impl Default for Column {
-    fn default() -> Self {
-        Self {
-            name: BunString::empty(),
-            width: 1,
-        }
-    }
-}
-
 enum RowKey {
     /// Property-name UTF-8 slice + visible width (plain-object tabular data).
     /// `to_utf8` refs the WTF impl (or owns a transcoded copy) and Drop

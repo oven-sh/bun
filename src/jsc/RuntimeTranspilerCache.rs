@@ -597,18 +597,6 @@ pub struct RuntimeTranspilerCache {
     // arena scratch is needed at all.
 }
 
-impl Default for RuntimeTranspilerCache {
-    fn default() -> Self {
-        Self {
-            input_hash: None,
-            input_byte_length: None,
-            features_hash: None,
-            exports_kind: ExportsKind::None,
-            entry: None,
-        }
-    }
-}
-
 pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
 }

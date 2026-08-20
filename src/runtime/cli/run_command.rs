@@ -80,16 +80,6 @@ pub struct ExecCfg {
     pub(crate) allow_fast_run_for_extensions: bool,
 }
 
-impl Default for ExecCfg {
-    fn default() -> Self {
-        Self {
-            bin_dirs_only: false,
-            log_errors: true,
-            allow_fast_run_for_extensions: true,
-        }
-    }
-}
-
 /// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
 /// [`RunCommand::configure_env_for_run_without_linker`].
 #[derive(Clone, Copy)]

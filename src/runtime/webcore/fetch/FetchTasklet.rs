@@ -2770,41 +2770,6 @@ pub struct FetchOptions {
     pub(crate) compress: Option<http::compress_body::CompressOption>,
 }
 
-impl Default for FetchOptions {
-    fn default() -> Self {
-        // Zero-values for the required fields
-        // (method/headers/body/url/bools/unix_socket_path) so
-        // callers can use `..Default::default()` struct-update syntax while
-        // still overriding the required fields explicitly.
-        Self {
-            method: Method::GET,
-            headers: Headers::default(),
-            body: HTTPRequestBody::default(),
-            disable_timeout: false,
-            idle_timeout_seconds: None,
-            disable_keepalive: false,
-            disable_decompression: false,
-            max_redirects: None,
-            reject_unauthorized: true,
-            url: ZigURL::default(),
-            verbose: http::HTTPVerboseLevel::None,
-            redirect_type: FetchRedirect::Follow,
-            proxy: None,
-            proxy_headers: None,
-            url_proxy_buffer: Box::default(),
-            signal: None,
-            hostname: None,
-            check_server_identity: StrongOptional::empty(),
-            unix_socket_path: ZigStringSlice::EMPTY,
-            ssl_config: None,
-            upgraded_connection: false,
-            forced_protocol: None,
-            is_node_http_client: false,
-            compress: None,
-        }
-    }
-}
-
 pub(crate) struct FetchTaskletPromiseSettle {
     held: StrongOptional,
     promise: jsc::JSPromiseStrong,

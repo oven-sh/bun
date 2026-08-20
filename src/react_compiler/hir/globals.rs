@@ -177,15 +177,6 @@ impl GlobalRegistry {
     }
 }
 
-impl Clone for GlobalRegistry {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base,
-            entries: self.entries.clone(),
-        }
-    }
-}
-
 // =============================================================================
 // Static base registries (initialized once, shared across all Environments)
 // =============================================================================

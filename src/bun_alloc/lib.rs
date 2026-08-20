@@ -585,11 +585,6 @@ impl Mutex {
 pub(crate) struct MutexGuard {
     _guard: std::sync::MutexGuard<'static, ()>,
 }
-impl Default for Mutex {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 // Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.
 // This is the crate root, so define it here. Re-exported as `bun_core::OOM`.

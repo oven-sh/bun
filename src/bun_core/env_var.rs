@@ -489,11 +489,6 @@ pub(crate) mod kind {
                 deser: DeserOpts::DEFAULT,
             };
         }
-        impl Default for CtorOptions {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
-        }
 
         /// Control how deserializing and deserialization errors are handled.
         ///
@@ -534,11 +529,6 @@ pub(crate) mod kind {
                 error_handling: ErrorHandling::DebugWarn,
                 empty_string_as: EmptyStringAs::Erroneous,
             };
-        }
-        impl Default for DeserOpts {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
         }
 
         // `ip` (var_name + opts) lives on the struct so handle_error can read it; it is

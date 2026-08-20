@@ -63,45 +63,6 @@ impl OutputFile {
     }
 }
 
-impl Clone for OutputFile {
-    fn clone(&self) -> Self {
-        let owned_src_path_text = self.owned_src_path_text.clone();
-        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
-        let text: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
-        let src_path = if !self.owned_src_path_text.is_empty() {
-            fs::Path {
-                is_disabled: self.src_path.is_disabled,
-                is_symlink: self.src_path.is_symlink,
-                ..fs::Path::init(text)
-            }
-        } else {
-            self.src_path
-        };
-        OutputFile {
-            loader: self.loader,
-            input_loader: self.input_loader,
-            src_path,
-            owned_src_path_text,
-            value: self.value.clone(),
-            size: self.size,
-            size_without_sourcemap: self.size_without_sourcemap,
-            hash: self.hash,
-            is_executable: self.is_executable,
-            source_map_index: self.source_map_index,
-            bytecode_index: self.bytecode_index,
-            module_info_index: self.module_info_index,
-            output_kind: self.output_kind,
-            dest_path: self.dest_path.clone(),
-            side: self.side,
-            entry_point_index: self.entry_point_index,
-            referenced_css_chunks: self.referenced_css_chunks.clone(),
-            source_index: self.source_index,
-            bake_extra: self.bake_extra,
-        }
-    }
-}
-
 #[derive(Default, Clone, Copy)]
 pub struct BakeExtra {
     pub route: BakeRouteKind,

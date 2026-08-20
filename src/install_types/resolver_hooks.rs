@@ -384,15 +384,6 @@ pub struct TarballInfo {
     pub package_name: SemverString,
 }
 
-impl Default for TarballInfo {
-    fn default() -> Self {
-        TarballInfo {
-            uri: URI::Local(SemverString::default()),
-            package_name: SemverString::default(),
-        }
-    }
-}
-
 impl TarballInfo {
     pub fn eql(&self, that: &TarballInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
         URI::eql(self.uri, that.uri, this_buf, that_buf)

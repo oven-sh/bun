@@ -30,7 +30,7 @@ function programs(sources: Record<string, string>, support: Record<string, strin
 }
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/extra
-describe.concurrent("bundler", () => {
+describe("bundler", () => {
   itBundled("extra/FileAsDirectoryBreak", {
     files: {
       "/index.js": `

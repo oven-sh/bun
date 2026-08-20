@@ -1738,10 +1738,10 @@ describe("stream release after a queued END_STREAM", () => {
   }
 
   /**
-   * Tears the case's session down and checks that the streams it still held (the stalled ones) go
-   * with it (the stalled streams and the callback of the stalled frame), which on the server side
-   * happens once its socket has closed. So a case that leaves something behind fails on its own, and
-   * no case starts with another case's streams around.
+   * Tears the case's session down and checks that the handles it still held (the stalled stream on
+   * both sides and the callback of its queued tail) go with it, which on the server side happens once
+   * its socket has closed. So a case that leaves something behind fails on its own, and no case
+   * starts with another case's streams around.
    */
   async function closeAll(
     client: http2.ClientHttp2Session,

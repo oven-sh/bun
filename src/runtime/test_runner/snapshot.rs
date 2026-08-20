@@ -41,8 +41,7 @@ pub struct Snapshots {
     snapshot_dir_path: Option<&'static [u8]>,
     inline_snapshots_to_write: IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
-    /// Why `parse_file` rejected the `.snap` file of the last `get_or_put` that returned
-    /// `Error::ParseError`: the file's path and the rejected lines of it.
+    /// Set by `parse_file` with `Error::ParseError`, thrown by `Expect::snapshot`.
     pub(crate) parse_error_message: Option<String>,
 }
 
@@ -262,8 +261,7 @@ impl Snapshots {
         // SAFETY: buf[pos] == 0 written above
         let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-        // `source` borrows `file_buf`, which nothing touches until `load_entries` returns:
-        // it writes to `values` only.
+        // `source` aliases `file_buf` (lifetime erased); `load_entries` writes to `values` only.
         let source = bun_ast::Source::init_path_string(
             snapshot_file_path.as_bytes(),
             self.file_buf.as_slice(),
@@ -275,8 +273,7 @@ impl Snapshots {
             return Ok(());
         }
 
-        // The matcher throws this as a plain error, so the message itself carries the rendered
-        // messages (the `.snap` line, `error: ...`, `at path:line:col`, as the bundler prints them).
+        // `Expect::snapshot` throws a plain error, so the rendered messages go into its text.
         let mut message = format!(
             "Failed to parse snapshot file: {}\n\n",
             bstr::BStr::new(snapshot_file_path.as_bytes())
@@ -291,10 +288,7 @@ impl Snapshots {
     }
 
     /// Loads the `exports[`name`] = `value`;` statements of a `.snap` file into `values`.
-    ///
-    /// Every other statement goes to `log` as an error. An entry this reader cannot read (a
-    /// `${}` substitution in the name or the value, for example) must not pass for a missing
-    /// snapshot: `get_or_put` would then append a second entry with the same name under it.
+    /// Any other statement is an error: skipped, it would count as a missing snapshot.
     fn load_entries(
         values: &mut HashMap<u64, Box<[u8]>>,
         source: &bun_ast::Source,
@@ -374,8 +368,7 @@ impl Snapshots {
         let bun_ast::ExprData::EBinary(e_binary) = &mut s_expr.value.data else {
             return None;
         };
-        // deref the `StoreRef`s to plain `&mut` structs so the borrow checker sees
-        // `.left`/`.right` and `.target`/`.index` as disjoint fields.
+        // Plain `&mut` structs, so `.left`/`.right` and `.target`/`.index` split-borrow.
         let e_binary = &mut **e_binary;
         if e_binary.op != bun_ast::Op::Code::BinAssign {
             return None;
@@ -965,8 +958,7 @@ impl Snapshots {
             }
 
             if let Err(err) = self.parse_file(&file) {
-                // Nothing is written back for a rejected file. Drop its contents here, or the
-                // next file's contents are appended to them and parsed along with them.
+                // Otherwise the next `.snap` file is appended to this one and parsed with it.
                 self.file_buf = Vec::new();
                 self.values.clear();
                 return Err(err);

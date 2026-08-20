@@ -1379,8 +1379,7 @@ pub(crate) fn edit(
                     let installed = request.version.literal.slice(request.version_buf());
                     let resolved = resolutions[request.package_id as usize].npm().version;
                     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                    // `foo@npm:bar` (no version part) parses as a dist-tag but
-                    // spells no tag, so it is not kept verbatim below.
+                    // `foo@npm:bar` parses as a dist-tag but spells no tag to keep verbatim
                     let bare_alias =
                         split_npm_alias(installed).is_some_and(|(_, version)| version.is_empty());
                     // `bun update <name>` keeps a dist-tag literal as written unless --latest, like the bare path.

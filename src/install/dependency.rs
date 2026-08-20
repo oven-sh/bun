@@ -945,8 +945,7 @@ impl TagExt for Tag {
                         }
                     }
 
-                    // no version after the alias means `latest`, like the
-                    // empty string above
+                    // no version after the alias means `latest`
                     return Tag::DistTag;
                 }
             }
@@ -1197,7 +1196,6 @@ pub(crate) fn parse_with_tag(
                         }
 
                         // npm:foo without a version resolves to `latest`
-                        // (the empty tag defaults below)
                         tag_to_use = if i < dependency.len() {
                             sliced.sub(&dependency[i + 1..]).value()
                         } else {

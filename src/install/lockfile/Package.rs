@@ -3278,9 +3278,6 @@ pub mod serializer {
                         ResolutionTag::RemoteTarball => Resolution::init(
                             TaggedValue::RemoteTarball(*old.resolution.remote_tarball()),
                         ),
-                        ResolutionTag::SingleFileModule => Resolution::init(
-                            TaggedValue::SingleFileModule(*old.resolution.single_file_module()),
-                        ),
                         // `load_fields` already rejected every other tag byte.
                         _ => {
                             return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
@@ -3329,15 +3326,26 @@ pub mod serializer {
                     // before they are copied into the typed column. `ResolutionType`
                     // is `#[repr(C)] { tag: Tag, _padding: [u8; 7], value: ... }`,
                     // so the tag is the first byte of each element. The accepted
-                    // values are the `ResolutionTag` constants except
-                    // `Uninitialized` (0): a package is appended only once it is
-                    // resolved, so no saved package carries that tag. Loading one
-                    // would keep its dependents bound to a package nothing can
-                    // install, and `Resolution::eql` has no arm for it.
+                    // tags are the ones a writer produces, the same set the bun.lock
+                    // writer persists. `Uninitialized` is the in-memory default of a
+                    // package that is not resolved yet and `SingleFileModule` is a
+                    // placeholder without a producer. A loaded package with either
+                    // tag keeps its dependents resolved while nothing can install it.
                     let stride = mem::size_of::<ResolutionType<SemverIntType>>();
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[0], 1 | 2 | 4 | 8 | 16 | 32 | 64 | 72 | 80 | 100) {
+                        if !matches!(
+                            ResolutionTag(raw[0]),
+                            ResolutionTag::Root
+                                | ResolutionTag::Npm
+                                | ResolutionTag::Folder
+                                | ResolutionTag::LocalTarball
+                                | ResolutionTag::Github
+                                | ResolutionTag::Git
+                                | ResolutionTag::Symlink
+                                | ResolutionTag::Workspace
+                                | ResolutionTag::RemoteTarball
+                        ) {
                             return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
                         }
                     }

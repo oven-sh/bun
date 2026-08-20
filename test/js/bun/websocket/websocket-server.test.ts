@@ -1231,7 +1231,10 @@ describe("ServerWebSocket", () => {
           ws.cork(() => {
             throw new Error("boom");
           }),
-        ).toThrow();
+        ).toThrow("boom");
+        // A returned Error is a return value, not a throw.
+        const returned = new Error("returned");
+        expect(ws.cork(() => returned)).toBe(returned);
 
         setTimeout(() => {
           ws.cork(() => {

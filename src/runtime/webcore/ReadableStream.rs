@@ -250,7 +250,7 @@ impl ReadableStream {
     }
 
     /// Cancel the stream (an `AbortError` reason) and mark its native source done. The source's own
-    /// cancel failure is the cancel promise's (handled) rejection; `Err` is a termination met in there.
+    /// cancel failure is the cancel promise's (handled) rejection; `Err` is anything thrown synchronously.
     pub fn cancel(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__cancel(self.value, global_this);
         self.done(global_this);

@@ -166,3 +166,25 @@ test("mocking a builtin", async () => {
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
 });
+
+test("a factory export getter that throws fails the import", async () => {
+  mock.module("mock-module-getter-throws", () => ({
+    get a() {
+      throw new Error("export getter");
+    },
+    b: 2,
+  }));
+  expect(async () => await import("mock-module-getter-throws")).toThrow("export getter");
+});
+
+test("a factory export getter that throws while patching an already-imported module throws from mock.module", async () => {
+  const before = spyFixture.iSpy;
+  expect(() =>
+    mock.module("./spymodule-fixture", () => ({
+      get iSpy() {
+        throw new Error("export getter");
+      },
+    })),
+  ).toThrow("export getter");
+  mock.module("./spymodule-fixture", () => ({ iSpy: before }));
+});

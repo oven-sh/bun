@@ -899,6 +899,21 @@ describe("expect()", () => {
       }).toThrow(/baz/),
     ).toThrow("/baz/");
 
+    // If matching the message against the RegExp throws, that error propagates
+    // instead of being read as the match result.
+    for (const not of [false, true]) {
+      const re = /bar/;
+      re.test = () => {
+        throw new Error("from test()");
+      };
+      expect(() => {
+        const e = expect(() => {
+          throw new Error("bar");
+        });
+        (not ? e.not : e).toThrow(re);
+      }).toThrow("from test()");
+    }
+
     expect(() => {
       return true;
     }).not.toThrow();

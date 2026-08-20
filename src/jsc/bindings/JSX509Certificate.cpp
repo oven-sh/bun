@@ -210,10 +210,7 @@ void JSX509Certificate::finishCreation(VM& vm)
     m_subject.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
         auto scope = DECLARE_THROW_SCOPE(init.vm);
         auto value = init.owner->computeSubject(init.owner->view(), init.owner->globalObject(), false);
-        if (scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
-            return init.set(jsEmptyString(init.vm));
-        }
+        RETURN_IF_EXCEPTION(scope, init.property.setMayBeNull(init.vm, init.owner, nullptr));
         if (!value.isString()) {
             init.set(jsEmptyString(init.owner->vm()));
             return;
@@ -224,10 +221,7 @@ void JSX509Certificate::finishCreation(VM& vm)
     m_issuer.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
         auto scope = DECLARE_THROW_SCOPE(init.vm);
         JSValue value = init.owner->computeIssuer(init.owner->view(), init.owner->globalObject(), false);
-        if (scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
-            return init.set(jsEmptyString(init.vm));
-        }
+        RETURN_IF_EXCEPTION(scope, init.property.setMayBeNull(init.vm, init.owner, nullptr));
         if (value.isString()) {
             init.set(value.toString(init.owner->globalObject()));
         } else {

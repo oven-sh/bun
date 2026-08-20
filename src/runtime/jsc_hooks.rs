@@ -2058,9 +2058,7 @@ fn console_print_runtime_object_inner<const C: bool>(
             let _ = bun_io::Write::write_all(writer_, pf!("<r>Headers ").as_bytes());
             let prev_quote_keys = formatter.quote_keys;
             formatter.quote_keys = true;
-            let result = to_json_function
-                .call(formatter.global_this, value, &[])
-                .unwrap_or_else(|err| formatter.global_this.take_exception(err));
+            let result = to_json_function.call(formatter.global_this, value, &[])?;
             let mut w = AsFmt::new(writer_);
             // UFCS — `Formatter` has an inherent `print_as` (const-generic
             // `FORMAT`, `&mut dyn bun_io::Write`); we need the trait's

@@ -869,15 +869,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalOb
         return JSValue::encode(jsUndefined());
     // onFlush may throw (e.g. a read request's chunkSteps threw). This is a boundary:
     // convert the abrupt completion into the direct controller's error action so the
-    // stream errors instead of surfacing as an uncaught nextTick exception.
+    // stream errors instead of surfacing as an uncaught nextTick exception. If erroring
+    // the stream itself throws, that is left for the tick runner to report.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     controller->onFlush(globalObject);
     if (scope.exception()) [[unlikely]] {
         JSC::JSValue error = takeAbruptCompletion(globalObject, scope);
         if (!error)
-            return JSValue::encode(jsUndefined());
+            return {};
         controller->handleError(globalObject, error);
-        scope.clearExceptionExceptTermination();
+        RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsUndefined());
 }

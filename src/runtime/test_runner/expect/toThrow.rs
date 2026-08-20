@@ -151,9 +151,7 @@ pub(crate) fn to_throw(
             }
             // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
             if let Some(test_fn) = expected_value.get(global, "test")? {
-                let matches = test_fn
-                    .call(global, expected_value, &[received_message])
-                    .unwrap_or_else(|err| global.take_exception(err));
+                let matches = test_fn.call(global, expected_value, &[received_message])?;
                 if !matches.to_boolean() {
                     return Ok(JSValue::UNDEFINED);
                 }
@@ -273,9 +271,7 @@ pub(crate) fn to_throw(
             if let Some(received_message) = received_message_opt {
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if let Some(test_fn) = expected_value.get(global, "test")? {
-                    let matches = test_fn
-                        .call(global, expected_value, &[received_message])
-                        .unwrap_or_else(|err| global.take_exception(err));
+                    let matches = test_fn.call(global, expected_value, &[received_message])?;
                     if matches.to_boolean() {
                         return Ok(JSValue::UNDEFINED);
                     }

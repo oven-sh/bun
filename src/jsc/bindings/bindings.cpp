@@ -5592,8 +5592,7 @@ restart:
                         }
                     }
                 }
-                // Ignore exceptions from Proxy "getPrototype" trap.
-                CLEAR_IF_EXCEPTION(scope);
+                RETURN_IF_EXCEPTION(scope, );
             }
             return;
         }
@@ -5705,8 +5704,7 @@ restart:
             if (iterating == globalObject)
                 break;
             JSValue prototype = iterating->getPrototype(globalObject);
-            // Ignore exceptions from Proxy "getPrototypeOf" trap.
-            CLEAR_IF_EXCEPTION(scope);
+            RETURN_IF_EXCEPTION(scope, );
             if (!prototype)
                 break;
             iterating = prototype.getObject();
@@ -5714,11 +5712,6 @@ restart:
     }
 
     properties.releaseData();
-
-    if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        return;
-    }
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
@@ -5774,10 +5767,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     {
 
         JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
-        if (scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
-            return;
-        }
+        RETURN_IF_EXCEPTION(scope, );
     }
 
     auto vector = properties.data()->propertyNameVector();

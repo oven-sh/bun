@@ -725,6 +725,31 @@ describe("mock()", () => {
     );
     expect(fn()).toBe("1");
   });
+  test("withImplementation (callback throws)", () => {
+    const fn = jest.fn(() => "1");
+    expect(() =>
+      fn.withImplementation(
+        () => "2",
+        () => {
+          expect(fn()).toBe("2");
+          throw new Error("from callback");
+        },
+      ),
+    ).toThrow("from callback");
+    expect(fn()).toBe("1");
+  });
+  test("copying name/length from the implementation propagates getter errors", () => {
+    const impl = function () {};
+    Object.defineProperty(impl, "length", {
+      get() {
+        throw new Error("length getter");
+      },
+    });
+    expect(() => jest.fn(impl)).toThrow("length getter");
+    const obj = { method: impl };
+    expect(() => jest.spyOn(obj, "method")).toThrow("length getter");
+    expect(obj.method).toBe(impl);
+  });
   test("withImplementation (async)", async () => {
     const fn = jest.fn(() => "1");
     expect(fn()).toBe("1");

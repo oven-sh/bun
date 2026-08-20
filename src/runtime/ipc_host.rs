@@ -34,20 +34,17 @@ pub(crate) fn attach_windows_socket_payload(
     message: JSValue,
     fd: bun_sys::Fd,
     peer_pid: u32,
-) -> Option<Box<[u8]>> {
+) -> JsResult<Option<Box<[u8]>>> {
     if peer_pid == 0 {
-        return None;
+        return Ok(None);
     }
     let Some(hex) = IPC::windows_export_socket_hex(fd, peer_pid) else {
         log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
-        return None;
+        return Ok(None);
     };
-    let Ok(str_js) = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex) else {
-        global.clear_exception();
-        return None;
-    };
+    let str_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex)?;
     message.put(global, IPC::WIN_SOCKET_INFO_KEY, str_js);
-    Some(hex)
+    Ok(Some(hex))
 }
 
 #[bun_jsc::host_fn]
@@ -262,7 +259,7 @@ pub(crate) fn do_send(
 
     #[cfg(windows)]
     if let Some(h) = &mut zig_handle {
-        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
+        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid)? {
             Some(hex) => {
                 h.win_export_hex = Some(hex);
                 h.peer_pid = peer_pid;

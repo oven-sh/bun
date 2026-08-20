@@ -4217,18 +4217,12 @@ pub mod formatter {
             value: JSValue,
         ) -> JsResult<()> {
             if let Some(func) = value.get(self.global_this, "toJSON")? {
-                match func.call(self.global_this, value, &[]) {
-                    Err(_) => {
-                        self.global_this.clear_exception();
-                    }
-                    Ok(result) => {
-                        let prev_quote_keys = self.quote_keys;
-                        self.quote_keys = true;
-                        let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-                        let tag = Tag::get(result, self.global_this)?;
-                        return self.format::<C>(tag, writer_, result, self.global_this);
-                    }
-                }
+                let result = func.call(self.global_this, value, &[])?;
+                let prev_quote_keys = self.quote_keys;
+                self.quote_keys = true;
+                let _r = defer_restore!(self.quote_keys, prev_quote_keys);
+                let tag = Tag::get(result, self.global_this)?;
+                return self.format::<C>(tag, writer_, result, self.global_this);
             }
 
             if writer_.write_all(b"{}").is_err() {
@@ -4605,9 +4599,7 @@ pub mod formatter {
                     self.quote_keys = true;
                     let _r = defer_restore!(self.quote_keys, prev_quote_keys);
 
-                    let result = to_json_function
-                        .call(self.global_this, value, &[])
-                        .unwrap_or_else(|err| self.global_this.take_exception(err));
+                    let result = to_json_function.call(self.global_this, value, &[])?;
                     return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
                 }
 

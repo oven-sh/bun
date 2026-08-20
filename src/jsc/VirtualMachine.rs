@@ -6915,23 +6915,6 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     let mut combined_string: Vec<u8> = Vec::new();
     write!(&mut combined_string, "{}:{}", *user_namespace, file_path).expect("unreachable");
     let out_ = bun_core::String::borrow_utf8(&combined_string);
-    let jsval = match out_.to_js(global) {
-        Ok(v) => v,
-        Err(_) => {
-            return Ok(Some(ErrorableString::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                global.try_take_exception().unwrap_or(JSValue::UNDEFINED),
-            )));
-        }
-    };
-    let out = match jsval.to_bun_string(global) {
-        Ok(v) => v,
-        Err(_) => {
-            return Ok(Some(ErrorableString::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                global.try_take_exception().unwrap_or(JSValue::UNDEFINED),
-            )));
-        }
-    };
+    let out = out_.to_js(global)?.to_bun_string(global)?;
     Ok(Some(ErrorableString::ok(out)))
 }

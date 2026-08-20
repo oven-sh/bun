@@ -1751,19 +1751,14 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
     return JSC::JSFunction::create(vm, globalObject, processObjectInternalsLoadEnvFileCodeGenerator(vm), globalObject);
 }
 
-// Lazy PropertyCallback builders that enter JS. reifyAllStaticProperties wraps these in
-// DeferTerminationForAWhile; a non-termination throw is cleared+reported so the worker's
-// reifyAllStaticProperties (node:worker_threads preload) doesn't leave a pending exception.
+// Lazy PropertyCallback builders that enter JS. A throw returns empty with the exception
+// pending; reifyStaticProperty leaves the slot unfilled and its callers propagate.
 static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::FunctionExecutable* (*generator)(VM&), const JSC::ArgList& args)
 {
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* function = JSC::JSFunction::create(vm, globalObject, generator(vm), globalObject);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject->globalThis(), args);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
@@ -2699,8 +2694,9 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     auto process = uncheckedDowncast<Process>(processObject);
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
+    RETURN_IF_EXCEPTION(scope, {});
     report->putDirect(vm, JSC::Identifier::fromString(vm, "compact"_s), JSC::jsBoolean(false), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), JSC::jsEmptyString(vm), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "filename"_s), JSC::jsEmptyString(vm), 0);
@@ -2711,7 +2707,6 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsBoolean(false), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsString(vm, String("SIGUSR2"_s)), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "writeReport"_s), JSC::JSFunction::create(vm, globalObject, 1, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public), 0);
-    RETURN_IF_EXCEPTION(scope, {});
     return report;
 }
 
@@ -2741,17 +2736,13 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     //      v8_use_snapshot: 1
     //    }
     // }
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* shareableBuiltins = JSC::constructEmptyArray(globalObject, nullptr);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return JSC::jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i18n_support"_s), JSC::jsNumber(1), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
     // Node 26's common.gypi evaluates enable_thin_lto/lto_jobs conditions; gyp
@@ -2878,18 +2869,14 @@ extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGl
 static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, JSObject* ports, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSFunction* getStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetNodeWorkerStdioStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
     args.append(JSC::jsNumber(fd));
     args.append(ports);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStream, JSC::getCallData(getStream), globalObject->globalThis(), args);
-    if (auto* exception = scope.exception()) {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
@@ -2898,7 +2885,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto& vm = JSC::getVM(globalObject);
     if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
         return constructNodeWorkerStdioStream(globalObject, processObject, ports, fd);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -2911,11 +2898,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
-    if (auto* exception = scope.exception()) {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
 
     ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
     JSC::JSArray* resultObject = uncheckedDowncast<JSC::JSArray>(result);
@@ -2938,10 +2921,12 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     forceSync = true;
 #endif
     if (forceSync) {
-        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+        JSValue sink = resultObject->getIndex(globalObject, 1);
+        RETURN_IF_EXCEPTION(scope, {});
+        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
     }
 
-    return resultObject->getIndex(globalObject, 0);
+    RELEASE_AND_RETURN(scope, resultObject->getIndex(globalObject, 0));
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -2963,7 +2948,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
         return constructNodeWorkerStdioStream(globalObject, processObject, ports, 0);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
@@ -2974,11 +2959,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     JSC::CallData callData = JSC::getCallData(getStdinStream);
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
-    if (auto* exception = scope.exception()) {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
@@ -3211,15 +3192,9 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 static JSValue constructEnv(VM& vm, JSObject* processObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(processObject->globalObject());
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue env = globalObject->processEnvObject();
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return JSC::jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return env;
 }
 
@@ -4270,15 +4245,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * g
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSArray* array = JSC::constructEmptyArray(processObject->globalObject(), nullptr);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(processObject->globalObject(), exception);
-        return JSC::jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return array;
 }
 
@@ -4405,25 +4374,15 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 // return require.cache.get(Bun.main)
 static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 {
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
     auto* bun = globalObject->bunObject();
     auto& builtinNames = Bun::builtinNames(vm);
     JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return JSC::jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     auto* requireMap = globalObject->requireMap();
     JSValue mainModule = requireMap->get(globalObject, mainValue);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return JSC::jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return mainModule;
 }
 
@@ -4445,15 +4404,9 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return JSC::jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
     }
@@ -4482,8 +4435,9 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     //     cached_builtins: [Getter]
     // }
     auto* globalObject = processObject->globalObject();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* object = constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // node:inspector serves a CDP endpoint, precise coverage and breakpoint
     // pausing; the long tail of CDP domains (Network, NodeWorker, Target,
@@ -4508,7 +4462,6 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
 
-    RETURN_IF_EXCEPTION(scope, {});
     return object;
 }
 

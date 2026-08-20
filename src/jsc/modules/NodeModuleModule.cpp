@@ -1172,10 +1172,18 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
 
             auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
 
+            auto scope = DECLARE_THROW_SCOPE(vm);
             NakedPtr<JSC::Exception> returnedException = nullptr;
             auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
-            ASSERT(!returnedException);
-            init.set(result.toObject(globalObject));
+            if (returnedException) [[unlikely]] {
+                // Termination / stack exhaustion; the getter's caller must see it.
+                JSC::throwException(globalObject, scope, returnedException.get());
+                init.property.setMayBeNull(vm, init.owner, nullptr);
+                return;
+            }
+            JSObject* object = result.toObject(globalObject);
+            RETURN_IF_EXCEPTION(scope, init.property.setMayBeNull(vm, init.owner, nullptr));
+            init.set(object);
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(

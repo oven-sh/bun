@@ -239,8 +239,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
         RETURN_IF_EXCEPTION(throwScope, {});
         errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTF::move(type)));
         Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
-        if (throwScope.exception()) [[unlikely]]
-            (void)throwScope.tryClearException();
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTF::move(type), WTF::move(listener), WTF::move(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});

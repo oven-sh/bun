@@ -1036,8 +1036,6 @@ void populateESMExports(
         exportNames.reserveCapacity(size + 2);
         exportValues.ensureCapacity(size + 2);
 
-        CLEAR_IF_EXCEPTION(scope);
-
         if (hasESModuleMarker) {
             if (canPerformFastEnumeration(structure)) {
                 exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
@@ -1056,10 +1054,7 @@ void populateESMExports(
             } else {
                 JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                 exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
-                if (scope.exception()) [[unlikely]] {
-                    if (!vm.hasPendingTerminationException()) (void)scope.tryClearException();
-                    return;
-                }
+                RETURN_IF_EXCEPTION(scope, );
 
                 for (auto property : properties) {
                     if (property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()) [[unlikely]]
@@ -1114,10 +1109,7 @@ void populateESMExports(
         } else {
             JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
-            if (scope.exception()) [[unlikely]] {
-                if (!vm.hasPendingTerminationException()) (void)scope.tryClearException();
-                return;
-            }
+            RETURN_IF_EXCEPTION(scope, );
 
             for (auto property : properties) {
                 if (property.isEmpty() || property.isNull() || property == vm.propertyNames->defaultKeyword || property.isPrivateName() || property.isSymbol()) [[unlikely]]

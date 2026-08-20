@@ -449,10 +449,12 @@ impl ServerWebSocket {
             global_object,
             this_value: JSValue::ZERO,
             callback: on_open_handler,
-            result: JSValue::ZERO,
+            result: Ok(JSValue::ZERO),
         };
         ws.cork(&mut corker, Corker::run);
-        let result = corker.result;
+        let result = corker
+            .result
+            .unwrap_or_else(|e| global_object.take_exception(e));
         self.update_flags(|f| f.set_opened(true));
         if let Some(err_value) = result.to_error() {
             bun_output::scoped_log!(WebSocketServer, "onOpen exception");
@@ -527,11 +529,13 @@ impl ServerWebSocket {
             global_object,
             this_value: JSValue::ZERO,
             callback: on_message_handler,
-            result: JSValue::ZERO,
+            result: Ok(JSValue::ZERO),
         };
 
         ws.cork(&mut corker, Corker::run);
-        let result = corker.result;
+        let result = corker
+            .result
+            .unwrap_or_else(|e| global_object.take_exception(e));
 
         if result.is_empty_or_undefined_or_null() {
             return Ok(());
@@ -588,11 +592,13 @@ impl ServerWebSocket {
                 global_object,
                 this_value: JSValue::ZERO,
                 callback: on_drain,
-                result: JSValue::ZERO,
+                result: Ok(JSValue::ZERO),
             };
             let _loop_guard = vm.enter_event_loop_scope();
             self.websocket().cork(&mut corker, Corker::run);
-            let result = corker.result;
+            let result = corker
+                .result
+                .unwrap_or_else(|e| global_object.take_exception(e));
 
             if let Some(err_value) = result.to_error() {
                 handler.run_error_callback(on_error, global_object, err_value)?;
@@ -1034,17 +1040,11 @@ impl ServerWebSocket {
             global_object: global_this,
             this_value,
             callback,
-            result: JSValue::ZERO,
+            result: Ok(JSValue::ZERO),
         };
         self.websocket().cork(&mut corker, Corker::run);
 
-        let result = corker.result;
-
-        if result.is_any_error() {
-            return Err(global_this.throw_value(result));
-        }
-
-        Ok(result)
+        corker.result
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1591,13 +1591,13 @@ struct Corker<'a> {
     global_object: &'a JSGlobalObject,
     this_value: JSValue,
     callback: JSValue,
-    result: JSValue,
+    result: JsResult<JSValue>,
 }
 
 impl<'a> Corker<'a> {
     fn run(&mut self) {
         let this_value = self.this_value;
-        self.result = match self.callback.call(
+        self.result = self.callback.call(
             self.global_object,
             if this_value.is_empty() {
                 JSValue::UNDEFINED
@@ -1605,9 +1605,6 @@ impl<'a> Corker<'a> {
                 this_value
             },
             self.args,
-        ) {
-            Ok(v) => v,
-            Err(err) => self.global_object.take_exception(err),
-        };
+        );
     }
 }

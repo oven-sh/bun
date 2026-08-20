@@ -534,7 +534,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subject, (JSGlobalObject * glob
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->subject())));
+    JSString* subject = thisObject->subject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(subject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -598,7 +600,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuer, (JSGlobalObject * globa
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->issuer())));
+    JSString* issuer = thisObject->issuer();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(issuer));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuerCertificate, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

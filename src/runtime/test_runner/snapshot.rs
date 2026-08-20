@@ -41,6 +41,9 @@ pub struct Snapshots {
     snapshot_dir_path: Option<&'static [u8]>,
     inline_snapshots_to_write: IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
+    /// Why `parse_file` rejected the `.snap` file of the last `get_or_put` that returned
+    /// `Error::ParseError`: the file's path and the rejected lines of it.
+    pub(crate) parse_error_message: Option<String>,
 }
 
 // Re-export the TSV-mandated container name so the field type matches verbatim.
@@ -68,6 +71,7 @@ impl Snapshots {
             snapshot_dir_path: None,
             inline_snapshots_to_write: IndexMap::new(),
             last_error_snapshot_name: None,
+            parse_error_message: None,
         }
     }
 }
@@ -223,20 +227,10 @@ impl Snapshots {
     }
 
     pub(crate) fn parse_file(&mut self, file: &File) -> Result<(), Error> {
+        self.parse_error_message = None;
         if self.file_buf.is_empty() {
             return Ok(());
         }
-
-        // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
-        // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
-        let vm = VirtualMachine::get().as_mut();
-        let opts = js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone(),
-            bun_ast::Loader::Js,
-        );
-        // Thread a per-call arena — js_parser is bump-allocated.
-        let arena = bun_alloc::Arena::new();
-        let mut temp_log = bun_ast::Log::init();
 
         // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
         // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
@@ -268,81 +262,133 @@ impl Snapshots {
         // SAFETY: buf[pos] == 0 written above
         let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
+        // `source` borrows `file_buf`, which nothing touches until `load_entries` returns:
+        // it writes to `values` only.
         let source = bun_ast::Source::init_path_string(
             snapshot_file_path.as_bytes(),
             self.file_buf.as_slice(),
         );
 
-        let parser = js_parser::Parser::init(
-            opts,
-            &mut temp_log,
-            &source,
-            &vm.transpiler.options.define,
-            &arena,
-        )?;
+        let mut log = bun_ast::Log::init();
+        let result = Self::load_entries(&mut self.values, &source, &mut log);
+        if result.is_ok() && log.errors == 0 {
+            return Ok(());
+        }
 
-        let parse_result = parser.parse()?;
-        let mut ast = match parse_result {
+        // The matcher throws this as a plain error, so the message itself carries the rendered
+        // messages (the `.snap` line, `error: ...`, `at path:line:col`, as the bundler prints them).
+        let mut message = format!(
+            "Failed to parse snapshot file: {}\n\n",
+            bstr::BStr::new(snapshot_file_path.as_bytes())
+        );
+        log.print(&mut message).expect("infallible: in-memory write");
+        if !log.msgs.is_empty() {
+            message.push('\n');
+        }
+        message.push_str("Fix the file, or run \"bun test --update-snapshots\" to rewrite it.");
+        self.parse_error_message = Some(message);
+        Err(crate::Error::ParseError)
+    }
+
+    /// Loads the `exports[`name`] = `value`;` statements of a `.snap` file into `values`.
+    ///
+    /// Every other statement goes to `log` as an error. An entry this reader cannot read (a
+    /// `${}` substitution in the name or the value, for example) must not pass for a missing
+    /// snapshot: `get_or_put` would then append a second entry with the same name under it.
+    fn load_entries(
+        values: &mut HashMap<u64, Box<[u8]>>,
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> Result<(), Error> {
+        // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
+        // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
+        let vm = VirtualMachine::get().as_mut();
+        let opts = js_parser::ParserOptions::init(
+            vm.transpiler.options.jsx.clone(),
+            bun_ast::Loader::Js,
+        );
+        // Thread a per-call arena — js_parser is bump-allocated.
+        let arena = bun_alloc::Arena::new();
+
+        let parser =
+            js_parser::Parser::init(opts, log, source, &vm.transpiler.options.define, &arena)?;
+        let mut ast = match parser.parse()? {
             bun_js_parser::Result::Ast(ast) => ast,
             _ => return Err(crate::Error::ParseError),
         };
-
-        if ast.exports_ref.is_empty() {
-            return Ok(());
-        }
         let exports_ref = ast.exports_ref;
-
-        // TODO: when common js transform changes, keep this updated or add flag to support this version
 
         for part in ast.parts.as_mut_slice() {
             // `part.stmts` is an arena-owned `StoreSlice<Stmt>`; arena outlives this
             // loop and `ast` is owned here, so unique access is upheld.
             for stmt in part.stmts.slice_mut() {
-                match &mut stmt.data {
-                    bun_ast::StmtData::SExpr(expr) => {
-                        if let bun_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
-                            // deref `StoreRef` once to a plain `&mut E::Binary`
-                            // so the borrow checker can see `.left`/`.right` as disjoint
-                            // field projections (custom `DerefMut` blocks split-borrows
-                            // otherwise).
-                            let e_binary = &mut **e_binary;
-                            if e_binary.op == bun_ast::Op::Code::BinAssign {
-                                let (left, right) = (&mut e_binary.left, &mut e_binary.right);
-                                if let bun_ast::ExprData::EIndex(e_index) = &mut left.data {
-                                    // split-borrow `index`/`target` so we can take
-                                    // `&mut` on `index` (EString::slice needs &mut) while reading
-                                    // `target` immutably.
-                                    let target_is_exports = matches!(
-                                        &e_index.target.data,
-                                        bun_ast::ExprData::EIdentifier(target) if target.ref_.eql(exports_ref)
-                                    );
-                                    if target_is_exports {
-                                        if let bun_ast::ExprData::EString(index) =
-                                            &mut e_index.index.data
-                                        {
-                                            if let bun_ast::ExprData::EString(value_string) =
-                                                &mut right.data
-                                            {
-                                                let key = index.slice(&arena);
-                                                let value = value_string.slice(&arena);
-                                                let value_clone: Box<[u8]> =
-                                                    Box::<[u8]>::from(value);
-                                                let name_hash: u64 = hash(key);
-                                                self.values.insert(name_hash, value_clone);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
+                if matches!(
+                    stmt.data,
+                    bun_ast::StmtData::SComment(_)
+                        | bun_ast::StmtData::SDirective(_)
+                        | bun_ast::StmtData::SEmpty(_)
+                ) {
+                    continue;
                 }
+                let Some((name, value)) = Self::exports_assignment(&mut stmt.data, exports_ref)
+                else {
+                    log.add_error(
+                        Some(source),
+                        stmt.loc,
+                        "Expected a snapshot entry: exports[`name`] = `value`;",
+                    );
+                    continue;
+                };
+                let bun_ast::ExprData::EString(name_string) = &mut name.data else {
+                    log.add_error(
+                        Some(source),
+                        name.loc,
+                        "The snapshot name must be a template literal without substitutions",
+                    );
+                    continue;
+                };
+                let bun_ast::ExprData::EString(value_string) = &mut value.data else {
+                    log.add_error(
+                        Some(source),
+                        value.loc,
+                        "The snapshot value must be a template literal without substitutions",
+                    );
+                    continue;
+                };
+                let name_hash: u64 = hash(name_string.slice(&arena));
+                values.insert(name_hash, Box::<[u8]>::from(value_string.slice(&arena)));
             }
         }
 
-        let _ = &mut ast;
         Ok(())
+    }
+
+    /// The `name` and `value` expressions of a `exports[name] = value;` statement.
+    fn exports_assignment(
+        stmt: &mut bun_ast::StmtData,
+        exports_ref: bun_ast::Ref,
+    ) -> Option<(&mut bun_ast::Expr, &mut bun_ast::Expr)> {
+        let bun_ast::StmtData::SExpr(s_expr) = stmt else {
+            return None;
+        };
+        let bun_ast::ExprData::EBinary(e_binary) = &mut s_expr.value.data else {
+            return None;
+        };
+        // deref the `StoreRef`s to plain `&mut` structs so the borrow checker sees
+        // `.left`/`.right` and `.target`/`.index` as disjoint fields.
+        let e_binary = &mut **e_binary;
+        if e_binary.op != bun_ast::Op::Code::BinAssign {
+            return None;
+        }
+        let bun_ast::ExprData::EIndex(e_index) = &mut e_binary.left.data else {
+            return None;
+        };
+        let e_index = &mut **e_index;
+        match &e_index.target.data {
+            bun_ast::ExprData::EIdentifier(target) if target.ref_.eql(exports_ref) => {}
+            _ => return None,
+        }
+        Some((&mut e_index.index, &mut e_binary.right))
     }
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
@@ -918,7 +964,13 @@ impl Snapshots {
                 }
             }
 
-            self.parse_file(&file)?;
+            if let Err(err) = self.parse_file(&file) {
+                // Nothing is written back for a rejected file. Drop its contents here, or the
+                // next file's contents are appended to them and parsed along with them.
+                self.file_buf = Vec::new();
+                self.values.clear();
+                return Err(err);
+            }
             self._current_file = Some(file);
         }
 

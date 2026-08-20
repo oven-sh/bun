@@ -323,10 +323,9 @@ test("client abort while a direct stream pull() is parked frees the context and 
 });
 
 test("client abort while a direct stream pull() is parked rejects a parked for-await body read", async () => {
-  // Same scenario as above, but the upload is consumed as a stream (body
-  // `Used`, not `Locked`). The rejection can only come through
-  // request_body_readable_stream_ref, which finalize_without_deinit drops
-  // without erroring, so on_abort itself must end request streaming.
+  // Same scenario as above, but the upload is consumed with
+  // for-await(req.body), which keeps the body Locked. The Locked arm of
+  // end_request_streaming rejects the parked read.
   let pumpHold: Promise<never> | undefined;
   const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<unknown>();
   const { promise: firstWrite, resolve: signalFirstWrite } = Promise.withResolvers<void>();
@@ -379,6 +378,7 @@ test("client abort while a direct stream pull() is parked rejects a parked for-a
 
   const err = await bodyRead;
   expect(err).toBeInstanceOf(Error);
+  expect((err as Error).name).toBe("AbortError");
   await waitForPendingRequestsWithoutGC(server, 0);
   pumpHold = undefined;
 });
@@ -440,8 +440,43 @@ test("client abort while a direct stream pull() is parked rejects a parked textS
 
   const err = await bodyRead;
   expect(err).toBeInstanceOf(Error);
+  expect((err as Error).name).toBe("AbortError");
   await waitForPendingRequestsWithoutGC(server, 0);
   pumpHold = undefined;
+});
+
+test("async server.upgrade() frees the context while the handler promise stays parked", async () => {
+  // The upgrade detaches the response and disarms onAborted, so neither
+  // on_abort nor an end path can run afterwards. The upgrade itself must
+  // reclaim the cell's ref, or the held resolve parks the context forever.
+  let capturedResolve: ((r: Response) => void) | undefined;
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req, srv) {
+      return new Promise<Response>(resolve => {
+        capturedResolve = resolve;
+        // Upgrade from a macrotask, so on_response parks the promise and
+        // takes the cell ref before the upgrade runs.
+        setImmediate(() => srv.upgrade(req));
+      });
+    },
+    websocket: {
+      message() {},
+    },
+  });
+
+  const ws = new WebSocket(`ws://localhost:${server.port}/`);
+  const { promise: opened, resolve: signalOpen, reject: failOpen } = Promise.withResolvers<void>();
+  ws.onopen = () => signalOpen();
+  ws.onerror = () => failOpen(new Error("websocket upgrade failed"));
+  await opened;
+
+  await waitForPendingRequestsWithoutGC(server, 0);
+
+  capturedResolve = undefined;
+  ws.close();
 });
 
 test("413 on a chunked upload frees the context while the handler promise stays parked", async () => {

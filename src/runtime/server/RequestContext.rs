@@ -950,7 +950,7 @@ where
     /// collects the promise; the settle reactions then see a null `take()`
     /// and no-op. A no-op when no claim is outstanding (the common case on
     /// paths reached from a settle reaction, which already cleared the field).
-    fn reclaim_promise_cell(&self) {
+    pub(crate) fn reclaim_promise_cell(&self) {
         let cell = self.promise_cell.replace(JSValue::ZERO);
         if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
             self.deref();

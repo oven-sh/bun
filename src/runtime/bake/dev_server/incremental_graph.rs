@@ -1564,8 +1564,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
             let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
+            let loader = self.bundled_files.values()[dep.dependency.get() as usize]
+                .html_route_bundle_index
+                .is_some()
+                .then_some(bun_ast::Loader::Html);
             bun_core::handle_oom(
-                bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(key, target),
+                bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
+                    key, target, loader,
+                ),
             );
         }
 

@@ -850,6 +850,90 @@ describe("html route whose file is not named .html", () => {
       exitCode: 0,
     });
   });
+
+  // When a file is deleted, the files that import it are bundled again so that
+  // they report the missing import. This goes through the bundler directly, not
+  // through the entry point list, and has to bundle the route file as html too.
+  test.concurrent("dev server reports a deleted file that the page references", async () => {
+    using dir = tempDir("bun-serve-html-htm-deleted-import", {
+      "index.htm": htmPage("htm page"),
+      "app.ts": `console.log("app");`,
+      "serve.ts": /*ts*/ `
+        import { unlinkSync } from "node:fs";
+        import page from "./index.htm" with { type: "html" };
+
+        using server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
+        async function fetchPage() {
+          const response = await fetch(server.url);
+          const text = await response.text();
+          return { status: response.status, title: text.match(/<title>(.*?)<\\/title>/)?.[1] ?? null };
+        }
+
+        const first = await fetchPage();
+        unlinkSync("app.ts");
+        let deleted = await fetchPage();
+        const deadline = Date.now() + 30_000;
+        while (deleted.status === 200 && Date.now() < deadline) {
+          await Bun.sleep(10);
+          deleted = await fetchPage();
+        }
+        console.log(JSON.stringify({ first, deleted }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        first: { status: 200, title: "htm page" },
+        deleted: { status: 500, title: "Bun - Build Failed" },
+      }),
+      exitCode: 0,
+    });
+  });
+
+  // An onResolve plugin whose filter matches the route file takes the entry
+  // point through the plugin path of the bundler. The file is still bundled as
+  // html when the plugin declines, and when it resolves the file to itself.
+  test.concurrent("onResolve plugin that declines or returns the file", async () => {
+    using dir = tempDir("bun-serve-html-htm-resolve-plugin", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "index.htm": htmPage("htm page"),
+      "app.ts": `console.log("app");`,
+      "plugin.ts": /*ts*/ `
+        export default {
+          name: "resolve-htm",
+          setup(build) {
+            build.onResolve({ filter: /\\.htm$/ }, args => (globalThis.returnTheFile ? { path: args.path } : undefined));
+          },
+        };
+      `,
+      "serve.ts": /*ts*/ `
+        import page from "./index.htm" with { type: "html" };
+
+        async function serveOnce(development) {
+          using server = Bun.serve({ port: 0, development, routes: { "/": page } });
+          const response = await fetch(server.url);
+          const text = await response.text();
+          return { status: response.status, title: text.match(/<title>(.*?)<\\/title>/)?.[1] ?? null };
+        }
+
+        const results = {};
+        for (const returnTheFile of [false, true]) {
+          globalThis.returnTheFile = returnTheFile;
+          results[returnTheFile ? "returned" : "declined"] = { dev: await serveOnce(true), prod: await serveOnce(false) };
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    const page = { status: 200, title: "htm page" };
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        declined: { dev: page, prod: page },
+        returned: { dev: page, prod: page },
+      }),
+      exitCode: 0,
+    });
+  });
 });
 
 // A plugin can resolve the route's html file to a different file. The bundle

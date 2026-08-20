@@ -595,9 +595,7 @@ impl ValkeyClient {
 
         // A failure the client detected itself (idle timeout, protocol or
         // handshake error) has always been a deliberate close; `on_close` reads
-        // `failed` and skips the retry policy. It is not `is_manually_closed`:
-        // that flag is copied into `duplicate()`, and a duplicate of a failed
-        // client should still reconnect.
+        // `failed` and skips the retry policy.
         let closed = self.close(uws::CloseCode::Failure); // unconditionally, whatever `val` is
         val.and(closed)
     }
@@ -605,8 +603,13 @@ impl ValkeyClient {
     /// `fail()` passes `Failure`, the one code whose close callback has run by
     /// the time this returns (see `CloseCode`); everything after a failure
     /// relies on that, and an RST instead of a FIN costs nothing once the
-    /// connection's commands have been rejected. `disconnect()` and the
-    /// finalizer pass `FastShutdown`, the graceful close.
+    /// connection's commands have been rejected (on plain TCP it trades
+    /// TIME_WAIT for an abortive close the peer can see). `disconnect()` and
+    /// the finalizer pass `FastShutdown`, the graceful close, which this
+    /// finishes as a `Failure` if usockets deferred it: a TLS fast shutdown
+    /// parks behind ciphertext the kernel would not take, and a peer that has
+    /// stopped reading never lets it through. Either way the close callback
+    /// has run when this returns.
     ///
     /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
     /// runs by hand here, whatever that left.
@@ -631,6 +634,13 @@ impl ValkeyClient {
             && !socket.is_established();
         // TODO: make socket.close() return a JsResult.
         socket.close(code);
+        // Still open means usockets parked the fast shutdown behind its
+        // ciphertext spill (`us_internal_ssl_close`, crypto/openssl.c), with
+        // no timer; that only happens for a close with no reason pointer,
+        // which is what `AnySocket::close` passes.
+        if code == uws::CloseCode::FastShutdown && !socket.is_closed() {
+            socket.close(uws::CloseCode::Failure);
+        }
         let thrown = if global.has_exception() {
             Err(bun_jsc::JsError::Thrown)
         } else {
@@ -1151,7 +1161,7 @@ impl ValkeyClient {
             match value {
                 RESPValue::Error(err) => {
                     if self.parent().is_subscriber() {
-                        self.fail(err, RedisError::InvalidResponse)?;
+                        self.fail(err, RedisError::ServerError)?;
                         return Ok(());
                     }
                     // A raw subscription request from a client that is not (yet) a
@@ -1437,65 +1447,63 @@ impl ValkeyClient {
         let mut promise = command::Promise::create(global_this, checked_command.meta);
 
         let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(promise.promise.get());
-        if self.flags.failed {
+        if let Some(message) = self.send_rejection() {
             let _ = promise.reject(
                 global_this,
-                Ok(global_this
-                    .err(
-                        bun_jsc::ErrorCode::REDIS_CONNECTION_CLOSED,
-                        format_args!("Connection has failed"),
-                    )
-                    .to_js()),
+                Ok(Self::send_rejection_error(global_this, message)),
             );
         } else {
-            // Handle disconnected state with offline queue
-            match self.status {
-                Status::Connected => {
-                    self.enqueue(&checked_command, promise)?;
+            self.enqueue(&checked_command, promise)?;
 
-                    // Schedule auto-flushing to process this command if pipelining is enabled
-                    if self.flags.enable_auto_pipelining
-                        && checked_command
-                            .meta
-                            .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
-                        && self.status == Status::Connected
-                        && !self.queue.is_empty()
-                    {
-                        self.register_auto_flusher(self.vm);
-                    }
-                }
-                Status::NeverConnected | Status::Connecting | Status::Disconnected => {
-                    // Only queue if offline queue is enabled
-                    if self.flags.enable_offline_queue {
-                        self.enqueue(&checked_command, promise)?;
-                    } else {
-                        let _ = promise.reject(
-                            global_this,
-                            Ok(global_this
-                                .err(
-                                    bun_jsc::ErrorCode::REDIS_CONNECTION_CLOSED,
-                                    format_args!(
-                                        "Connection is closed and offline queue is disabled"
-                                    ),
-                                )
-                                .to_js()),
-                        );
-                    }
-                }
+            // Schedule auto-flushing to process this command if pipelining is enabled
+            if self.flags.enable_auto_pipelining
+                && checked_command
+                    .meta
+                    .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
+                && self.status == Status::Connected
+                && !self.queue.is_empty()
+            {
+                self.register_auto_flusher(self.vm);
             }
         }
 
         Ok(js_promise)
     }
 
+    /// Why `send()` would reject a command outright instead of sending or
+    /// queueing it in the current state, or `None` when it would be accepted.
+    pub(crate) fn send_rejection(&self) -> Option<&'static str> {
+        if self.flags.failed {
+            return Some("Connection has failed");
+        }
+        if self.status != Status::Connected && !self.flags.enable_offline_queue {
+            return Some("Connection is closed and offline queue is disabled");
+        }
+        None
+    }
+
+    pub(crate) fn send_rejection_error(
+        global_this: &JSGlobalObject,
+        message: &'static str,
+    ) -> JSValue {
+        global_this
+            .err(
+                bun_jsc::ErrorCode::REDIS_CONNECTION_CLOSED,
+                format_args!("{message}"),
+            )
+            .to_js()
+    }
+
     /// Close the Valkey connection
     pub(crate) fn disconnect(&mut self) -> JsResult<()> {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
-        if self.status == Status::Connected || self.status == Status::Connecting {
-            return self.close(uws::CloseCode::FastShutdown);
+        match self.status {
+            Status::Connected | Status::Connecting => self.close(uws::CloseCode::FastShutdown),
+            // Between retries: the manual flag makes the close terminal.
+            Status::Disconnected if self.flags.is_reconnecting => self.parent().cancel_reconnect(),
+            Status::NeverConnected | Status::Disconnected => Ok(()),
         }
-        Ok(())
     }
 
     /// Get a writer for the connected socket

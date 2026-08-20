@@ -465,6 +465,11 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("Start/Stop returns a profile with a root node", async () => {
       await checkSameOutput("test_v8_cpu_profiler");
     });
+    it("accepts overlapping sessions and returns a profile for each", async () => {
+      // Regression test for dd-trace's profiler, which calls Start() for the
+      // next cycle before Stop() of the current one (see @datadog/pprof).
+      await checkSameOutput("test_v8_cpu_profiler_overlapping_sessions");
+    });
   });
 
   describe("uv_os_getpid", () => {

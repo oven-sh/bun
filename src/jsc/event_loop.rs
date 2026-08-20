@@ -1282,11 +1282,38 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 3);
+    let result = JSValue::create_empty_object(global_object, 8);
     result.put(
         global_object,
         b"activeTasks",
         JSValue::js_number(vm_ref.active_tasks as f64),
+    );
+    result.put(
+        global_object,
+        b"tasks",
+        JSValue::js_number(event_loop.tasks.readable_length() as f64),
+    );
+    result.put(
+        global_object,
+        b"immediateTasks",
+        JSValue::js_number(
+            (event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len()) as f64,
+        ),
+    );
+    result.put(
+        global_object,
+        b"concurrentTasksEmpty",
+        JSValue::from(event_loop.concurrent_tasks.is_empty()),
+    );
+    result.put(
+        global_object,
+        b"loopActive",
+        JSValue::from(vm_ref.platform_loop_opt().is_some_and(|h| h.is_active())),
+    );
+    result.put(
+        global_object,
+        b"eventLoopAlive",
+        JSValue::from(vm_ref.is_event_loop_alive()),
     );
     result.put(
         global_object,

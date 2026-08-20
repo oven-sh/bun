@@ -2360,19 +2360,7 @@ pub(crate) mod debug_allocator_data {
     }
 }
 
-/// `bun.feature_flag.*` runtime env-var getters. The canonical typed
-/// accessors live in `env_var::feature_flag`; this stub provides the
-/// `.get()` accessor surface for flags not yet wired there.
-pub mod feature_flag {
-    macro_rules! flag { ($($name:ident),* $(,)?) => { $(
-        #[allow(non_camel_case_types)] pub struct $name;
-        impl $name { #[inline] pub fn get(&self) -> bool { false } }
-    )* } }
-    flag!(
-        BUN_FEATURE_FLAG_NO_LIBDEFLATE,
-        BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE
-    );
-}
+pub use env_var::feature_flag;
 /// `bun.linuxKernelVersion()`. Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,
 /// ioctl_ficlone, RWF_NONBLOCK) and cannot depend on `bun_analytics`. Parses
 /// `uname(2).release` major.minor.patch directly; the full Semver parse with
@@ -2718,8 +2706,6 @@ pub mod ffi {
     unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::WSADATA {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
     #[cfg(windows)]

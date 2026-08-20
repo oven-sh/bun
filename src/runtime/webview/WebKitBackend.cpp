@@ -160,7 +160,7 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
     // READABLE|WRITABLE. ipc=0 — we're not doing SCM_RIGHTS fd passing.
     // us_poll_start_rc doesn't touch loop.active; updateKeepAlive is the
     // sole ref manager. kind=1 (.dynamic) → dispatch via s_hostVTable.
-    sock = us_socket_from_fd(&s_hostGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0);
+    sock = us_socket_from_fd(&s_hostGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0, 0);
     if (!sock) {
         // us_socket_from_fd calls us_poll_free on failure but doesn't close
         // the fd (ownership was ours). Leak it and the child stays alive
@@ -474,6 +474,7 @@ void HostClient::rejectAllAndMarkDead(const WTF::String& reason)
         settleSlot(g, v, v->m_pendingEval, false, err);
         settleSlot(g, v, v->m_pendingScreenshot, false, err);
         settleSlot(g, v, v->m_pendingMisc, false, err);
+        v->m_closed = true;
     }
     viewsById.clear();
     updateKeepAlive();

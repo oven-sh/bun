@@ -171,18 +171,34 @@ impl Rm {
                             // Check that none of the paths will delete the root.
                             {
                                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
+                                // Operands are unbounded user input, so neither
+                                // step may use the fixed-size thread-local
+                                // buffers behind `join` / `normalize_string`.
+                                // Normalizing never grows a path by more than
+                                // one byte.
+                                let mut join_spill = Vec::new();
+                                let mut normalize_buf = Vec::new();
 
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
                                     let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
                                         path
                                     } else {
-                                        resolve_path::join::<platform::Auto>(&[&cwd, path])
+                                        resolve_path::join_spill::<platform::Auto>(
+                                            &mut join_spill,
+                                            &[&cwd, path],
+                                        )
                                     };
-                                    let normalized = resolve_path::normalize_string::<
+                                    if normalize_buf.len() <= resolved.len() {
+                                        normalize_buf.resize(resolved.len() + 1, 0);
+                                    }
+                                    let normalized = resolve_path::normalize_string_buf::<
                                         false,
                                         platform::Auto,
-                                    >(resolved);
+                                        false,
+                                    >(
+                                        resolved, &mut normalize_buf[..]
+                                    );
                                     let dirname =
                                         resolve_path::dirname::<platform::Auto>(normalized);
                                     if dirname.is_empty() {
@@ -580,7 +596,6 @@ impl JoinStyle {
 pub enum EntryKindHint {
     Idk,
     Dir,
-    File,
 }
 
 /// One per filepath argument; owns the root
@@ -711,8 +726,7 @@ impl ShellRmTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
-            // Counted until `ShellTask::on_finish` (see `ShellTask::schedule_no_ref`).
-            (*st).poster.embedded_work_scheduled();
+            (*st).arm();
             WorkPool::schedule(&raw mut (*st).task);
         }
     }
@@ -856,11 +870,16 @@ impl ShellRmTask {
     }
 
     /// Join into `buf` honoring [`join_style`].
-    fn buf_join<'a>(&self, buf: &'a mut bun_paths::PathBuffer, parts: &[&[u8]]) -> &'a ZStr {
+    fn buf_join<'a>(
+        &self,
+        buf: &'a mut bun_paths::PathBuffer,
+        spill: &'a mut Vec<u8>,
+        parts: &[&[u8]],
+    ) -> &'a ZStr {
         if self.join_style == JoinStyle::Posix {
-            resolve_path::join_z_buf::<platform::Posix>(buf.as_mut_slice(), parts)
+            resolve_path::join_z_buf_spill::<platform::Posix>(buf.as_mut_slice(), spill, parts)
         } else {
-            resolve_path::join_z_buf::<platform::Windows>(buf.as_mut_slice(), parts)
+            resolve_path::join_z_buf_spill::<platform::Windows>(buf.as_mut_slice(), spill, parts)
         }
     }
 
@@ -894,7 +913,9 @@ impl ShellRmTask {
             }
             return ZBox::from_vec(out);
         }
-        ZBox::from_bytes(resolve_path::join::<platform::Auto>(parts))
+        let mut spill = Vec::new();
+        let joined = resolve_path::join_spill::<platform::Auto>(&mut spill, parts);
+        ZBox::from_bytes(joined)
     }
 
     #[inline]
@@ -918,11 +939,12 @@ impl ShellRmTask {
         // `path` are read-only after construction.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
         match kind_hint {
-            EntryKindHint::Idk | EntryKindHint::File => {
+            EntryKindHint::Idk => {
                 let mut vtable = RemoveFileVTable {
                     task: self,
-                    child_of_dir: false,
-                    need_to_wait_out: Some(&mut waiting),
+                    on_dir: OnDir::Recurse {
+                        need_to_wait_out: &mut waiting,
+                    },
                 };
                 self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable)?;
             }
@@ -1022,10 +1044,7 @@ impl ShellRmTask {
         let mut iterator = dir_iterator::iterate(fd);
         let mut child_vtable = RemoveFileVTable {
             task: self,
-            child_of_dir: true,
-            // Never read: `child_of_dir == true` makes both vtable callbacks
-            // enqueue and return early before reaching `remove_entry_dir`.
-            need_to_wait_out: None,
+            on_dir: OnDir::Enqueue,
         };
 
         // The loop may have already enqueued child DirTasks (bumping
@@ -1036,6 +1055,7 @@ impl ShellRmTask {
         // `delete_after_waiting_for_children` on this dir and the owning
         // `ShellRmTask` would never be freed.
         let mut i: usize = 0;
+        let mut join_spill = Vec::new();
         let loop_result: bun_sys::Maybe<()> = loop {
             let current = match iterator.next() {
                 Err(e) => break Err(self.error_with_path(&e, path.as_bytes())),
@@ -1061,7 +1081,7 @@ impl ShellRmTask {
                     // Copy the join into an owned ZBox so `buf` is free to
                     // be re-borrowed by the vtable callback.
                     let file_path = {
-                        let joined = self.buf_join(buf, &[path.as_bytes(), name]);
+                        let joined = self.buf_join(buf, &mut join_spill, &[path.as_bytes(), name]);
                         ZBox::from_bytes(joined.as_bytes())
                     };
                     if let Err(e) = self.remove_entry_file(
@@ -1494,18 +1514,19 @@ impl DirTask {
                 ShellRmTask::decr_pending_and_maybe_deinit(tm);
                 return;
             }
-            let poster = (*me.task_manager).task.poster.clone();
+            // The root rm task is still out (pending > 0), so its poster is set.
+            let poster = (*me.task_manager)
+                .task
+                .poster
+                .as_ref()
+                .expect("rm root task on the pool is armed")
+                .clone();
             (me, poster)
         };
         match &mut me.concurrent_task {
             EventLoopTask::Js(ct) => {
                 ct.from(this, AutoDeinit::ManualDeinit);
-                // Posted while the rm task is counted work: the VM has not closed.
-                let bun_jsc::vm_handle::Posted::Queued =
-                    poster.post_js(core::ptr::NonNull::from(ct))
-                else {
-                    unreachable!("VM handle closed with shell rm work outstanding");
-                };
+                poster.post_js(core::ptr::NonNull::from(ct));
             }
             EventLoopTask::Mini(at) => {
                 let at = at.from(this, dir_task_run_from_main_thread_mini);
@@ -1595,14 +1616,47 @@ impl RemoveFileHandler for DummyRemoveFile {
 
 struct RemoveFileVTable<'a> {
     task: &'a ShellRmTask,
-    child_of_dir: bool,
-    /// Out-param forwarded to [`ShellRmTask::remove_entry_dir`] on the
-    /// `child_of_dir == false` path so [`ShellRmTask::remove_entry`] learns
-    /// — without re-reading the (possibly already-freed) DirTask — that
-    /// `need_to_wait` was published. `None` when `child_of_dir == true`, where
-    /// both callbacks return before the recursive call.
-    need_to_wait_out: Option<&'a mut bool>,
+    on_dir: OnDir<'a>,
 }
+
+/// What [`RemoveFileVTable`] does when the entry it was asked to unlink turns
+/// out to be a directory.
+enum OnDir<'a> {
+    /// The entry is a child found while iterating a directory
+    /// ([`ShellRmTask::remove_entry_dir`]): enqueue it as its own [`DirTask`].
+    Enqueue,
+    /// The entry is the [`DirTask`] itself ([`ShellRmTask::remove_entry`]):
+    /// recurse into [`ShellRmTask::remove_entry_dir`] here. The out-param lets
+    /// `remove_entry` learn that `need_to_wait` was published without
+    /// re-reading the (possibly already-freed) DirTask.
+    Recurse { need_to_wait_out: &'a mut bool },
+}
+
+impl RemoveFileVTable<'_> {
+    fn on_dir(
+        &mut self,
+        parent: *mut DirTask,
+        path: &ZStr,
+        is_absolute: bool,
+        buf: &mut bun_paths::PathBuffer,
+    ) -> bun_sys::Maybe<()> {
+        match &mut self.on_dir {
+            OnDir::Enqueue => {
+                self.task.enqueue_no_join(
+                    parent,
+                    ZBox::from_bytes(path.as_bytes()),
+                    EntryKindHint::Dir,
+                );
+                Ok(())
+            }
+            OnDir::Recurse { need_to_wait_out } => {
+                self.task
+                    .remove_entry_dir(parent, is_absolute, buf, need_to_wait_out)
+            }
+        }
+    }
+}
+
 impl RemoveFileHandler for RemoveFileVTable<'_> {
     fn on_is_dir(
         &mut self,
@@ -1611,21 +1665,7 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
-        if self.child_of_dir {
-            self.task.enqueue_no_join(
-                parent,
-                ZBox::from_bytes(path.as_bytes()),
-                EntryKindHint::Dir,
-            );
-            return Ok(());
-        }
-        // `child_of_dir == false` is only constructed in `remove_entry`, which
-        // sets `need_to_wait_out` to `Some(&mut waiting)`.
-        let out = self
-            .need_to_wait_out
-            .as_deref_mut()
-            .expect("set when child_of_dir == false");
-        self.task.remove_entry_dir(parent, is_absolute, buf, out)
+        self.on_dir(parent, path, is_absolute, buf)
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     fn on_dir_not_empty(
@@ -1635,20 +1675,7 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
-        if self.child_of_dir {
-            self.task.enqueue_no_join(
-                parent,
-                ZBox::from_bytes(path.as_bytes()),
-                EntryKindHint::Dir,
-            );
-            return Ok(());
-        }
-        // See `on_is_dir`.
-        let out = self
-            .need_to_wait_out
-            .as_deref_mut()
-            .expect("set when child_of_dir == false");
-        self.task.remove_entry_dir(parent, is_absolute, buf, out)
+        self.on_dir(parent, path, is_absolute, buf)
     }
 }
 

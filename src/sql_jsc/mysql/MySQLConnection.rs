@@ -75,16 +75,9 @@ pub struct MySQLConnection {
     full_auth_requested: bool,
 
     auth_data: Vec<u8>,
-    // PERF: database/user/password/options could be sub-slices into options_buf
-    // (single backing allocation). Only options_buf would need to be
-    // Box<[u8]>; the others could be ranges into it. Restore the
-    // single-buffer layout and revert init()'s database/username/password/options
-    // params from Box<[u8]> back to &[u8] (1 caller-side alloc, not 5).
     database: Box<[u8]>,
     user: Box<[u8]>,
     password: Box<[u8]>,
-    _options: Box<[u8]>,
-    options_buf: Box<[u8]>,
     secure: Option<*mut SslCtx>,
     tls_config: SSLConfig,
     tls_status: TLSStatus,
@@ -117,8 +110,6 @@ impl Default for MySQLConnection {
             database: Box::default(),
             user: Box::default(),
             password: Box::default(),
-            _options: Box::default(),
-            options_buf: Box::default(),
             secure: None,
             tls_config: SSLConfig::default(),
             tls_status: TLSStatus::None,
@@ -131,15 +122,13 @@ impl Default for MySQLConnection {
 
 // SAFETY: `MySQLConnection` is the `connection` field embedded inside
 // `JSMySQLConnection`; never constructed standalone.
-bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn get_js_connection; }
+bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn mut get_js_connection; }
 
 impl MySQLConnection {
     pub(crate) fn init(
         database: Box<[u8]>,
         username: Box<[u8]>,
         password: Box<[u8]>,
-        options: Box<[u8]>,
-        options_buf: Box<[u8]>,
         tls_config: SSLConfig,
         secure: Option<*mut SslCtx>,
         ssl_mode: SSLMode,
@@ -149,8 +138,6 @@ impl MySQLConnection {
             database,
             user: username,
             password,
-            _options: options,
-            options_buf,
             socket: Socket::SocketTcp(uws::SocketTCP::detached()),
             queue: MySQLRequestQueue::init(),
             statements: PreparedStatementsMap::default(),
@@ -169,13 +156,28 @@ impl MySQLConnection {
     }
 
     pub(crate) fn can_pipeline(&mut self) -> bool {
-        self.queue.can_pipeline(self.js_connection_ref())
+        let js_connection = self.js_connection_ref();
+        js_connection
+            .connection
+            .get()
+            .queue
+            .can_pipeline(js_connection)
     }
     pub(crate) fn can_prepare_query(&mut self) -> bool {
-        self.queue.can_prepare_query(self.js_connection_ref())
+        let js_connection = self.js_connection_ref();
+        js_connection
+            .connection
+            .get()
+            .queue
+            .can_prepare_query(js_connection)
     }
     pub(crate) fn can_execute_query(&mut self) -> bool {
-        self.queue.can_execute_query(self.js_connection_ref())
+        let js_connection = self.js_connection_ref();
+        js_connection
+            .connection
+            .get()
+            .queue
+            .can_execute_query(js_connection)
     }
 
     #[inline]
@@ -306,7 +308,6 @@ impl MySQLConnection {
         let _read_buffer = core::mem::take(&mut self.read_buffer);
         let statements = core::mem::take(&mut self.statements);
         let _tls_config = core::mem::take(&mut self.tls_config);
-        let _options_buf = core::mem::take(&mut self.options_buf);
 
         for stmt in statements.values() {
             // The map holds an intrusive ref on every cached prepared statement;
@@ -323,7 +324,6 @@ impl MySQLConnection {
             // SAFETY: FFI — secure is an owned SSL_CTX* freed exactly once here
             unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
         }
-        // _options_buf dropped at scope exit (Box<[u8]> frees via Drop)
     }
 
     pub(crate) fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
@@ -587,6 +587,10 @@ impl MySQLConnection {
             reader
                 .ensure_capacity(packet_length)
                 .map_err(|_| AnyMySQLError::ShortRead)?;
+            if header_length as usize == PacketHeader::MAX_PAYLOAD_LENGTH {
+                self.process_split_packet(reader)?;
+                continue;
+            }
             // `NewReader<C>: Copy` so the scopeguard captures by copy; the inner
             // `C` writes through a raw pointer so the offset update still lands.
             // Always skip the full packet, we dont care about padding or unread bytes.
@@ -1128,6 +1132,65 @@ impl MySQLConnection {
                 connection: std::ptr::from_mut::<Self>(self),
             },
         }
+    }
+
+    fn process_split_packet<C: ReaderContext>(
+        &mut self,
+        reader: NewReader<C>,
+    ) -> Result<(), AnyMySQLError> {
+        if self.status != ConnectionState::Connected {
+            return Err(AnyMySQLError::UnexpectedPacket);
+        }
+        let buffered = reader.peek();
+        let mut sequence_id = PacketHeader::decode(buffered)
+            .ok_or(AnyMySQLError::ShortRead)?
+            .sequence_id;
+        let mut wire_length: usize = 0;
+        let mut payload_length: usize = 0;
+        loop {
+            let header =
+                PacketHeader::decode(&buffered[wire_length..]).ok_or(AnyMySQLError::ShortRead)?;
+            if header.sequence_id != sequence_id {
+                return Err(AnyMySQLError::UnexpectedPacket);
+            }
+            sequence_id = sequence_id.wrapping_add(1);
+            wire_length += PacketHeader::SIZE + header.length as usize;
+            payload_length += header.length as usize;
+            u32::try_from(wire_length).map_err(|_| AnyMySQLError::Overflow)?;
+            if buffered.len() < wire_length {
+                return Err(AnyMySQLError::ShortRead);
+            }
+            if (header.length as usize) < PacketHeader::MAX_PAYLOAD_LENGTH {
+                break;
+            }
+        }
+
+        let mut payload: Vec<u8> = Vec::new();
+        payload
+            .try_reserve_exact(payload_length)
+            .map_err(|_| AnyMySQLError::OutOfMemory)?;
+        let mut offset = PacketHeader::SIZE;
+        while offset < wire_length {
+            let end = (offset + PacketHeader::MAX_PAYLOAD_LENGTH).min(wire_length);
+            payload.extend_from_slice(&buffered[offset..end]);
+            offset = end + PacketHeader::SIZE;
+        }
+
+        reader.set_offset_from_start(wire_length);
+        self.sequence_id = sequence_id;
+        let payload_length = u32::try_from(payload_length).map_err(|_| AnyMySQLError::Overflow)?;
+        let mut cursor: usize = 0;
+        let mut message_start: usize = 0;
+        let assembled: NewReader<StackReader<'_>> =
+            StackReader::init(&payload, &mut cursor, &mut message_start);
+        self.handle_command(assembled, payload_length)
+            .map_err(|err| {
+                if err == AnyMySQLError::ShortRead {
+                    AnyMySQLError::UnexpectedPacket
+                } else {
+                    err
+                }
+            })
     }
 
     fn check_if_prepared_statement_is_done(&mut self, statement: &mut MySQLStatement) {

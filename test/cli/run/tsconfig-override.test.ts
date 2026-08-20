@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 describe("bun run --tsconfig-override", () => {
@@ -301,5 +301,32 @@ describe("bun run --tsconfig-override", () => {
       expect(stderr).toBe("");
     }
     expect(exitCode).toBe(0);
+  });
+
+  describe.concurrent("path longer than the OS path limit", () => {
+    // Longer than PATH_MAX on every platform (4096 on Linux, 1024 on macOS).
+    const tooLong = Buffer.alloc(5000, "a").toString();
+
+    for (const [kind, tsconfigArg] of [
+      ["absolute", "/" + tooLong],
+      ["relative", tooLong],
+    ] as const) {
+      test(`${kind} path is reported as unreadable instead of crashing`, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--tsconfig-override", tsconfigArg, "-e", "console.log('ran')"],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        // Windows leaves the verdict on a path this long to the file system.
+        if (!isWindows) expect(stderr).toContain(`Cannot read file "${path.resolve(tsconfigArg)}": ENAMETOOLONG`);
+        expect(stdout).toBe("ran\n");
+        expect(proc.signalCode).toBeNull();
+        expect(exitCode).toBe(0);
+      });
+    }
   });
 });

@@ -200,6 +200,64 @@ test("--parallel --bail stops dispatching new files after threshold", async () =
   expect(exitCode).toBe(1);
 });
 
+test(
+  "--parallel --bail: a worker that dies mid-file after the bail is reported as a crash",
+  async () => {
+    // Two files run side by side. `a` fails (tripping --bail=1) only once `b`
+    // is running; `b` then waits for a's worker to be gone (it is shut down
+    // right after the bail) before exiting mid-file. The coordinator has to
+    // report that exit as a crash of b: only a worker panic makes sibling
+    // deaths collateral, a plain bail does not.
+    const poll = `
+    const deadline = Date.now() + 30_000;
+    function waitFor(cond) { while (!cond() && Date.now() < deadline) Bun.sleepSync(5); }
+  `;
+    using dir = tempDir("parallel-bail-then-exit", {
+      "a.test.js": `
+      import { test, expect } from "bun:test";
+      import { existsSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      ${poll}
+      test("fail once b is running", () => {
+        waitFor(() => existsSync(join(import.meta.dir, "b-started")));
+        writeFileSync(join(import.meta.dir, "a-pid"), String(process.pid));
+        expect(1).toBe(2);
+      }, 60_000);
+    `,
+      "b.test.js": `
+      import { test } from "bun:test";
+      import { existsSync, readFileSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      ${poll}
+      test("exit after a's worker is gone", () => {
+        writeFileSync(join(import.meta.dir, "b-started"), "");
+        const pidFile = join(import.meta.dir, "a-pid");
+        let pid = 0;
+        waitFor(() => existsSync(pidFile) && (pid = Number(readFileSync(pidFile, "utf8"))) > 0);
+        waitFor(() => { try { process.kill(pid, 0); return false; } catch { return true; } });
+        process.exit(7);
+      }, 60_000);
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--bail=1"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Bailed out after 1 failure");
+    expect(stderr).toContain("b.test.js");
+    expect(stderr).toContain("(worker crashed: exit code 7)");
+    expect(stderr).not.toContain("sibling worker panicked");
+    expect(exitCode).toBe(1);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
 // POSIX classifies worker crashes as panics by fatal signal — see
 // is_panic_status. (On Windows a crash caught by Bun's crash handler exits
 // with code 3, indistinguishable from process.exit(3); the Windows
@@ -925,11 +983,18 @@ test("--parallel: back-to-back huge result lines drain in linear time without co
   expect(exitCode).toBe(1);
 }, 90_000);
 
-test("--parallel: a test writing garbage to fd 3 does not hang the coordinator", async () => {
+test("--parallel: a test writing garbage to fd 3 gets its worker killed and the run continues", async () => {
+  const passing = (name: string) =>
+    `import {test,expect} from "bun:test"; test(${JSON.stringify(name)},()=>expect(1).toBe(1));`;
+  // Files are dispatched in sorted order: a-bad goes out first, so a-next is
+  // still undispatched when its worker is killed and only runs if the run
+  // carries on (respawn or a steal by the other worker).
   using dir = tempDir("parallel-hostile-fd3", {
-    "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
-    "bad.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+    "a-bad.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
       test("bad",()=>{ writeSync(3, Buffer.from([0xff,0xff,0xff,0xff,0x42])); });`,
+    "a-next.test.js": passing("next"),
+    "b1.test.js": passing("b1"),
+    "b2.test.js": passing("b2"),
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2"],
@@ -938,19 +1003,24 @@ test("--parallel: a test writing garbage to fd 3 does not hang the coordinator",
     stderr: "pipe",
     stdout: "pipe",
   });
-  const result = await Promise.race([
-    Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
-    Bun.sleep(15000).then(() => "TIMEOUT" as const),
-  ]);
-  expect(result).not.toBe("TIMEOUT");
-  const [stdout, stderr, exitCode] = result as [string, string, number];
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("PARALLEL");
-  // ok.test.js's pass survives; bad.test.js's worker is treated as crashed
-  // once its IPC pipe is dropped — no retry, so the run is deterministically
-  // 1 pass / 1 fail. The coordinator kill(9)s the hostile worker, which on
-  // POSIX surfaces as SIGKILL (non-panic → no whole-run abort).
+  // fd 3 is the worker's IPC channel. On POSIX the coordinator's own frame
+  // decoder rejects the bytes; on Windows they break libuv's IPC framing
+  // underneath it and surface as a read error. Both must end the same way:
+  // the coordinator kills that worker and says so, rather than printing the
+  // status the kill produced (SIGKILL) or, when the kill was skipped, the
+  // "exit code 0" of a worker that later shut itself down. Writing to the
+  // channel is not a Bun crash, so the rest of the run still completes.
+  expect(stderr).toContain("a-bad.test.js (worker killed: corrupt IPC frame, something wrote to fd 3)");
+  expect(stderr).not.toContain("worker crashed");
+  expect(stderr).not.toContain("Aborting");
   expect(stderr).not.toContain("retrying");
-  expect(stderr).toContain("Ran ");
+  expect(stderr).toContain("(pass) next");
+  expect(stderr).toContain("(pass) b1");
+  expect(stderr).toContain("(pass) b2");
+  expect(stderr).toContain("\n 3 pass\n 1 fail\n");
+  expect(stderr).toContain("Ran 4 tests across 4 files.");
   expect(exitCode).toBe(1);
 });
 

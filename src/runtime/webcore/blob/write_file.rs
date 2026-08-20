@@ -6,18 +6,20 @@ use core::sync::atomic::Ordering;
 
 use crate::Error;
 use bun_core::ZigString;
-use bun_io::{self as io, IntrusiveIoRequest as _};
+use bun_io as io;
+#[cfg(not(windows))]
+use bun_io::IntrusiveIoRequest as _;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
-#[cfg(not(windows))]
-use crate::webcore::blob::ClosingState;
 use crate::webcore::blob::{
-    self, Blob, FileCloser, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
+    self, Blob, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
 };
+#[cfg(not(windows))]
+use crate::webcore::blob::{ClosingState, FileCloser};
 use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -26,13 +28,23 @@ bun_output::declare_scope!(WriteFile, hidden);
 // as a plain Rust enum: it only ever travels through the Rust fn-pointer
 // callbacks below (`WriteFileOnWriteFileCallback`), never across FFI, so the
 // layout is unconstrained.
+/// One `write()` attempt on the pool thread.
+#[cfg(not(windows))]
+pub(crate) enum WriteStep {
+    Wrote(usize),
+    /// A pipe/socket is full: park on the io loop.
+    WouldBlock,
+    /// `errno`/`system_error` are set.
+    Failed,
+}
+
 pub enum WriteFileResultType {
     Result(SizeType),
     Err(Box<SystemError>),
 }
 
 pub type WriteFileOnWriteFileCallback =
-    fn(ctx: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated>;
+    fn(ctx: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()>;
 
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
@@ -43,20 +55,28 @@ pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 unsafe impl Send for WriteFile {}
 
 impl bun_jsc::JobContext for WriteFile {
+    const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
     /// The completion is delivered through `on_complete_callback(ctx, ..)`.
     type Js = ();
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
         None
     }
     fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
-        Ok(WriteFile::then(this, cx.global())?)
+        WriteFile::then(this, cx.global())
+    }
+    /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
+    /// state this job can be stuck in.
+    #[cfg(not(windows))]
+    unsafe fn cancel(this: *mut Self) {
+        // SAFETY: fn contract; see `ReadFile::cancel`.
+        unsafe {
+            if (*this).io_parking.cancel() {
+                io::IoRequestLoop::schedule(&mut (*this).io_request);
+            }
+        }
     }
 }
 
@@ -81,6 +101,8 @@ pub struct WriteFile {
     pub(crate) io_task: Option<WriteFileTask>,
     pub(crate) io_poll: io::Poll,
     pub(crate) io_request: io::Request,
+    #[cfg(not(windows))]
+    pub(crate) io_parking: super::IoParking,
     pub(crate) state: AtomicU8, // ClosingState
 
     pub(crate) on_complete_ctx: *mut c_void,
@@ -171,72 +193,7 @@ impl MkdirpTarget for WriteFile {
     }
 }
 
-impl FileCloser for WriteFile {
-    const IO_TAG: io::Tag = io::Tag::WriteFile;
-    fn opened_fd(&self) -> Fd {
-        self.opened_fd
-    }
-    fn set_opened_fd(&mut self, fd: Fd) {
-        self.opened_fd = fd;
-    }
-    fn close_after_io(&self) -> bool {
-        self.close_after_io
-    }
-    fn state(&self) -> &AtomicU8 {
-        &self.state
-    }
-    fn io_request(&mut self) -> Option<&mut io::Request> {
-        Some(&mut self.io_request)
-    }
-    fn io_poll(&mut self) -> &mut io::Poll {
-        &mut self.io_poll
-    }
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
-        &mut self.task
-    }
-    fn update(&mut self) {
-        WriteFile::update(self)
-    }
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
-        unreachable!()
-    }
-
-    fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
-        // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.
-        let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
-        fn on_done(ctx: *mut ()) {
-            // SAFETY: ctx is `self as *mut WriteFile` set below.
-            let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
-            <WriteFile as FileCloser>::on_io_request_closed(this);
-        }
-        // SAFETY: `request` is `&mut self.io_request` (intrusive), so `this` is the live
-        // parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
-        let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
-        io::Action::Close(io::CloseAction {
-            fd,
-            poll,
-            ctx: this.cast::<()>(),
-            tag: <Self as FileCloser>::IO_TAG,
-            on_done,
-        })
-    }
-
-    // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
-    // the trait method cannot be marked `unsafe fn`, so the lint is
-    // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
-    // in `on_io_request_closed` and is guaranteed live.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
-        // (intrusive) registered in `on_io_request_closed`; recover parent.
-        let this = unsafe { WriteFile::from_task_ptr(task) };
-        // SAFETY: `this` is the live parent (see above); scoped access.
-        unsafe { (*this).close_after_io = false };
-        // SAFETY: as above; exclusive borrow scoped to the call.
-        WriteFile::update(unsafe { &mut *this });
-    }
-}
+crate::webcore::blob::impl_file_closer!(WriteFile);
 
 impl WriteFile {
     #[cfg(not(windows))]
@@ -244,6 +201,10 @@ impl WriteFile {
 
     pub fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
+        #[cfg(not(windows))]
+        if !self.io_parking.fire() {
+            return;
+        }
         self.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_write_loop_task,
@@ -255,6 +216,10 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
         let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
+        #[cfg(not(windows))]
+        if !this.io_parking.fire() {
+            return;
+        }
         this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask {
@@ -270,6 +235,12 @@ impl WriteFile {
         request.scheduled = false;
         // SAFETY: `request` points to WriteFile.io_request (intrusive); recover parent.
         let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        // SAFETY: `this` is the live parent (see above); io thread owns it while parked.
+        if !unsafe { (*this).io_parking.arm() } {
+            // SAFETY: as above.
+            unsafe { (*this).fail_cancelled() };
+            return <Self as crate::webcore::blob::FileCloser>::schedule_close(request);
+        }
         // SAFETY: `request` points to WriteFile.io_request (intrusive), so `this` is the
         // live parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
         let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
@@ -282,14 +253,28 @@ impl WriteFile {
         })
     }
 
+    /// See `ReadFile::fail_cancelled`.
+    #[cfg(not(windows))]
+    fn fail_cancelled(&mut self) {
+        let err = sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write);
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        self.system_error = Some(err.to_system_error().into());
+        self.state
+            .store(ClosingState::Closing as u8, Ordering::SeqCst);
+    }
+
+    /// See `ReadFile::wait_for_readable`: the caller returns without touching
+    /// `self` again.
     #[cfg(not(windows))]
     pub(crate) fn wait_for_writable(&mut self) {
+        if !self.io_parking.park() {
+            self.fail_cancelled();
+            return self.on_finish();
+        }
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_writable);
-        if !self.io_request.scheduled {
-            io::IoRequestLoop::schedule(&mut self.io_request);
-        }
+        io::IoRequestLoop::schedule(&mut self.io_request);
     }
 
     #[cfg(not(windows))]
@@ -313,6 +298,8 @@ impl WriteFile {
             io_task: None,
             io_poll: io::Poll::default(),
             io_request: io::Request::new(Self::on_request_writable),
+            #[cfg(not(windows))]
+            io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
             on_complete_ctx: on_write_file_context,
             on_complete_callback,
@@ -350,7 +337,7 @@ impl WriteFile {
     // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     #[cfg(not(windows))]
-    pub(crate) fn do_write(&mut self, off: usize, len: usize, wrote: &mut usize) -> bool {
+    pub(crate) fn do_write(&mut self, off: usize, len: usize) -> WriteStep {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
@@ -359,38 +346,26 @@ impl WriteFile {
         //
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
         loop {
-            match &result {
-                bun_sys::Result::Ok(res) => {
-                    *wrote = *res;
-                    self.total_written += *res;
+            match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+                Ok(wrote) => {
+                    self.total_written += wrote;
+                    return WriteStep::Wrote(wrote);
                 }
-                bun_sys::Result::Err(err) => {
-                    if err.get_errno() == io::RETRY {
-                        if !self.could_block {
-                            // regular files cannot use epoll.
-                            // this is fine on kqueue, but not on epoll.
-                            continue;
-                        }
-                        self.wait_for_writable();
-                        return false;
-                    } else {
-                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                        self.system_error = Some(err.to_system_error().into());
-                        return false;
-                    }
+                // regular files cannot use epoll.
+                // this is fine on kqueue, but not on epoll.
+                Err(err) if err.get_errno() == io::RETRY && !self.could_block => continue,
+                Err(err) if err.get_errno() == io::RETRY => return WriteStep::WouldBlock,
+                Err(err) => {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                    return WriteStep::Failed;
                 }
             }
-            break;
         }
-
-        true
     }
 
-    pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
+    pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> jsc::JsResult<()> {
         let cb = this.on_complete_callback;
         let cb_ctx = this.on_complete_ctx;
         let system_error = this.system_error.take();
@@ -539,9 +514,8 @@ impl WriteFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
         // (intrusive) registered in `on_writable`/`init`; recover parent.
         let this = unsafe { WriteFile::from_task_ptr(task) };
-        // On macOS, we use one-shot mode, so we don't need to unregister.
-        #[cfg(target_os = "macos")]
-        {
+        // On kqueue platforms we use one-shot mode, so we don't need to unregister.
+        if bun_core::Environment::IS_KQUEUE {
             // SAFETY: `this` is the live parent (see above); scoped access.
             unsafe { (*this).close_after_io = false };
         }
@@ -571,18 +545,11 @@ impl WriteFile {
             let remain_len = remain_full.len() - off;
 
             if remain_len > 0 && self.errno.is_none() {
-                let mut wrote: usize = 0;
-                let continue_writing = self.do_write(off, remain_len, &mut wrote);
-                if !continue_writing {
-                    // Stop writing, we errored
-                    if self.errno.is_some() {
-                        self.on_finish();
-                        return;
-                    }
-
-                    // Stop writing, we need to wait for it to become writable.
-                    return;
-                }
+                let wrote = match self.do_write(off, remain_len) {
+                    WriteStep::Wrote(n) => n,
+                    WriteStep::WouldBlock => return self.wait_for_writable(),
+                    WriteStep::Failed => return self.on_finish(),
+                };
 
                 // Do not immediately attempt to write again if it's not a regular file.
                 if self.could_block
@@ -644,8 +611,6 @@ mod windows_impl {
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
         pub(crate) event_loop: *mut EventLoop,
-        /// How the mkdirp pool completion gets back to the VM.
-        pub(crate) loop_handle: bun_jsc::LoopHandle,
         pub poll_ref: KeepAlive,
 
         pub(crate) owned_fd: bool,
@@ -653,23 +618,18 @@ mod windows_impl {
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
-    #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-    pub enum WriteFileWindowsError {
+    #[derive(thiserror::Error, Debug)]
+    pub(crate) enum WriteFileWindowsError {
         #[error("WriteFileWindowsDeinitialized")]
         WriteFileWindowsDeinitialized,
-        #[error("JSTerminated")]
-        JSTerminated,
+        /// Delivering the result entered JS (settled the promise) and an exception is pending.
+        #[error("JSError")]
+        Js(jsc::JsError),
     }
 
-    impl From<JsTerminated> for WriteFileWindowsError {
-        fn from(_: JsTerminated) -> Self {
-            WriteFileWindowsError::JSTerminated
-        }
-    }
-
-    impl PartialEq<crate::Error> for WriteFileWindowsError {
-        fn eq(&self, other: &crate::Error) -> bool {
-            <&'static str>::from(self) == other.name()
+    impl From<jsc::JsError> for WriteFileWindowsError {
+        fn from(err: jsc::JsError) -> Self {
+            WriteFileWindowsError::Js(err)
         }
     }
 
@@ -703,7 +663,6 @@ mod windows_impl {
                     base: null_mut(),
                     len: 0,
                 }],
-                loop_handle: bun_jsc::virtual_machine::VirtualMachine::get().loop_handle(),
                 event_loop,
                 fd: -1,
                 err: None,
@@ -941,7 +900,7 @@ mod windows_impl {
                     )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
                 return;
             }
@@ -954,7 +913,7 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
             }
         }
@@ -987,7 +946,8 @@ mod windows_impl {
                 path: bun_core::dirname(path)
                     // this shouldn't happen
                     .unwrap_or(path) as *const [u8],
-                ..Default::default()
+                ticket: bun_jsc::virtual_machine::VirtualMachine::get().ticket(),
+                task: Default::default(),
             });
         }
 
@@ -1003,7 +963,7 @@ mod windows_impl {
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
                 match unsafe { Self::throw(this, err_) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
                 return;
             }
@@ -1012,14 +972,14 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::open(this) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
             }
         }
 
         /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
-        /// `*mut Self` and returns the event-loop `JsResult<()>` (always `Ok`;
-        /// the inner body already swallows `JSTerminated`).
+        /// `*mut Self` and returns the event-loop `jsc::JsResult<()>` (always `Ok`: the inner body
+        /// reports a delivery exception itself).
         fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
             // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
             // pointer was stashed in `on_mkdirp_complete_concurrent` below;
@@ -1029,7 +989,11 @@ mod windows_impl {
             Ok(())
         }
 
-        fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
+        fn on_mkdirp_complete_concurrent(
+            ctx: *mut (),
+            err_: bun_sys::Result<()>,
+            ticket: &bun_jsc::Ticket,
+        ) {
             // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
             // by `mkdirp` above; sole owner on this concurrent path.
             let this = unsafe { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
@@ -1039,17 +1003,9 @@ mod windows_impl {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
-            let ct = ConcurrentTask::create(ManagedTask::new::<WriteFileWindows>(
-                this,
-                Self::on_mkdirp_complete_task,
+            ticket.post(ConcurrentTask::create(
+                ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
             ));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = this.loop_handle.post_task(ct) {
-                // VM torn down: nobody will settle the promise. Free the hop (the
-                // ConcurrentTask owns the boxed ManagedTask); the operation's
-                // buffers/fd go with the process's teardown of its owner.
-                // SAFETY: refused ⇒ we own the task box.
-                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };
-            }
         }
 
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
@@ -1078,7 +1034,7 @@ mod windows_impl {
                     )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
                 return;
             }
@@ -1089,7 +1045,7 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
             }
         }
@@ -1303,10 +1259,7 @@ pub struct WriteFilePromise {
 }
 
 impl WriteFilePromise {
-    pub(crate) fn run(
-        handler: *mut c_void,
-        count: WriteFileResultType,
-    ) -> Result<(), JsTerminated> {
+    pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()> {
         let handler = handler.cast::<Self>();
         // SAFETY: handler is the Box-allocated WriteFilePromise created in
         // Blob.rs (`heap::into_raw(Box::new(WriteFilePromise { .. }))`); consumed here.
@@ -1369,7 +1322,7 @@ impl WriteFileWaitFromLockedValueTask {
     pub(crate) fn then(
         mut this: Box<WriteFileWaitFromLockedValueTask>,
         value: &mut body::Value,
-    ) -> Result<(), JsTerminated> {
+    ) -> jsc::JsResult<()> {
         let promise: *mut JSPromise = std::ptr::from_mut(this.promise.get());
         let global_ref = this.global_this;
         let global_this = global_ref.get();

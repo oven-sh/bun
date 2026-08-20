@@ -638,7 +638,10 @@ impl<'a> ShellSrcBuilder<'a> {
             // `needs_escape_bunstr` is true for empty strings: `${''}` must still
             // produce an argument. Routing through appendJSStrRef makes the \x08
             // marker recognized regardless of quote context (e.g. inside single quotes).
-            if needs_escape_bunstr(bunstr) || is_if_clause_keyword_bunstr(bunstr) {
+            if needs_escape_bunstr(bunstr)
+                || is_if_clause_keyword_bunstr(bunstr)
+                || self.outbuf_ends_with_var_ref()
+            {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);
             }
@@ -665,7 +668,10 @@ impl<'a> ShellSrcBuilder<'a> {
             return Ok(false);
         }
         if ALLOW_ESCAPE {
-            if needs_escape_utf8_ascii_latin1(utf8) || IfClauseTok::from_text(utf8).is_some() {
+            if needs_escape_utf8_ascii_latin1(utf8)
+                || IfClauseTok::from_text(utf8).is_some()
+                || self.outbuf_ends_with_var_ref()
+            {
                 let bunstr = OwnedString::new(BunString::clone_utf8(utf8));
                 self.append_js_str_ref(bunstr.get())?;
                 return Ok(true);
@@ -674,6 +680,17 @@ impl<'a> ShellSrcBuilder<'a> {
 
         self.append_utf8_impl(utf8)?;
         Ok(true)
+    }
+
+    fn outbuf_ends_with_var_ref(&self) -> bool {
+        match self
+            .outbuf
+            .iter()
+            .rposition(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+        {
+            Some(i) => self.outbuf[i] == b'$',
+            None => false,
+        }
     }
 
     pub(crate) fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {

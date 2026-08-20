@@ -1490,16 +1490,14 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Create the source origin
     SourceOrigin sourceOrigin { WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher };
 
-    // Process contextExtensions if they exist
-    JSScope* functionScope = options.parsingContext ? options.parsingContext : globalObject;
+    JSScope* functionScope = options.parsingContext->globalScope();
 
     if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {
         auto* contextExtensionsArray = dynamicDowncast<JSArray>(options.contextExtensions);
         unsigned length = contextExtensionsArray ? contextExtensionsArray->length() : 0;
 
         if (length > 0) {
-            // Get the global scope from the parsing context
-            JSScope* currentScope = options.parsingContext->globalScope();
+            JSScope* currentScope = functionScope;
 
             // Create JSWithScope objects for each context extension
             for (unsigned i = 0; i < length; i++) {
@@ -1515,8 +1513,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
             functionScope = currentScope;
         }
     }
-
-    options.parsingContext->setGlobalScopeExtension(functionScope);
 
     // Create the function using constructAnonymousFunction with the appropriate scope chain
     JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTF::move(options), JSC::SourceTaintedOrigin::Untainted, functionScope);

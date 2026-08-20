@@ -932,9 +932,7 @@ impl ReadFile {
 #[cfg(windows)]
 pub struct ReadFileUV {
     pub(crate) loop_: *mut libuv::uv_loop_t,
-    /// Raw, not `&EventLoop`: `finalize` passes it to `EventLoop::enter_scope`,
-    /// which writes through it. A `&`-derived pointer would carry
-    /// `SharedReadOnly` provenance (same as `WriteFileWindows.event_loop`).
+    /// Raw, not `&EventLoop`: `finalize`'s `enter_scope` writes through it.
     pub(crate) event_loop: *mut EventLoop,
     pub(crate) file_store: FileStore,
     pub(crate) byte_store: ByteStore,

@@ -1126,8 +1126,7 @@ impl<'a> ReadFileUV<'a> {
         // continuation still queued.
         // SAFETY: VM-owned event loop is valid for the process lifetime;
         // `enter_scope` calls enter() now and exit() on drop.
-        let _guard =
-            unsafe { EventLoop::enter_scope(core::ptr::from_ref(event_loop).cast_mut()) };
+        let _guard = unsafe { EventLoop::enter_scope(core::ptr::from_ref(event_loop).cast_mut()) };
 
         // The completion must run BEFORE the cleanup below (store deref / req.deinit /
         // box drop / event_loop.unref) — it may inspect store. A libuv callback returns void: an

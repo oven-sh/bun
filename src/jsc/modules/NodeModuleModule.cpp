@@ -42,16 +42,12 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 
-// The contents of module.builtinModules. As in Node, a builtin is listed
-// without the "node:" prefix unless it only resolves with the prefix, like
-// "node:sqlite" and "node:test". The list also includes Bun's builtin modules
-// and Bun's thirdparty overrides: users pass this list as the 'external'
-// option of a bundler, and that has to exclude things like 'ws', which only
-// works with Bun's native 'ws' implementation and not the JS one on NPM.
-//
-// Bun::isBuiltinModule() (isBuiltinModule.cpp) accepts this list plus a few
-// internal names. test/internal/source-lints/builtin-module-tables.test.ts
-// keeps the two tables in sync.
+// module.builtinModules. As in Node, a builtin is listed without the "node:"
+// prefix unless it only resolves with the prefix ("node:sqlite", "node:test").
+// Bun's own modules and Bun's thirdparty overrides are listed too, so that
+// users who pass this list as a bundler's 'external' option exclude things
+// like 'ws', which only works with Bun's native implementation and not the JS
+// one on NPM. builtin-module-tables.test.ts checks it against isBuiltinModule.cpp.
 static constexpr ASCIILiteral builtinModuleNames[] = {
     "_http_agent"_s,
     "_http_client"_s,

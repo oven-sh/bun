@@ -20,6 +20,11 @@ pub(crate) type Platform = WindowsWatcher;
 pub struct WindowsWatcher {
     pub(crate) iocp: HANDLE,
     pub(crate) watcher: DirWatcher,
+    /// A `ReadDirectoryChangesW` request issued by [`DirWatcher::prepare`] has not
+    /// completed yet. The requests share `watcher.buf` and `watcher.overlapped`, so
+    /// only one may be in flight: a second one would be completed into the buffer
+    /// while the records of the first one are still being read.
+    pub(crate) request_pending: bool,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
 }
@@ -33,6 +38,7 @@ impl Default for WindowsWatcher {
                 buf: [0u8; 64 * 1024],
                 dir_handle: w::INVALID_HANDLE_VALUE,
             },
+            request_pending: false,
             buf: PathBuffer::uninit(),
             base_idx: 0,
         }
@@ -301,9 +307,15 @@ impl WindowsWatcher {
 
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        if let Err(err) = self.watcher.prepare() {
-            bun_core::scoped_log!(watcher, "prepare() returned error");
-            return Err(err);
+        // A wait that timed out returns with its request still pending, and that request
+        // is the one a later call waits for. Issuing another one per call queued an
+        // additional request on the directory for every cycle that ended in a timeout.
+        if !self.request_pending {
+            if let Err(err) = self.watcher.prepare() {
+                bun_core::scoped_log!(watcher, "prepare() returned error");
+                return Err(err);
+            }
+            self.request_pending = true;
         }
 
         let mut nbytes: w::DWORD = 0;
@@ -342,6 +354,7 @@ impl WindowsWatcher {
                 if overlapped != &mut self.watcher.overlapped as *mut w::OVERLAPPED {
                     continue;
                 }
+                self.request_pending = false;
                 if nbytes == 0 {
                     // ReadDirectoryChangesW internal change-buffer overflow — too many
                     // events arrived between drain and re-arm. This is NOT a shutdown
@@ -359,6 +372,7 @@ impl WindowsWatcher {
                     if let Err(err) = self.watcher.prepare() {
                         return Err(err);
                     }
+                    self.request_pending = true;
                     continue;
                 }
                 return Ok(Some(EventIterator {

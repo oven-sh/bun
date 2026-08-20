@@ -610,6 +610,7 @@ describe("global bin dir", () => {
     expect(result.exitCode).toBe(0);
 
     expect(await exists(join(binDir, binEntry("own-bin")))).toBeFalse();
+    if (isWindows) expect(await exists(join(binDir, "own-bin.bunx"))).toBeFalse();
     expect(await readFile(join(binDir, binEntry("bun")), "utf8")).toBe("the bun binary");
     expect(await readFile(join(binDir, binEntry("adir"), "inner.txt"), "utf8")).toBe("keep");
     if (!isWindows) expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));

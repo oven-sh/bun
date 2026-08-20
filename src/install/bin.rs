@@ -838,6 +838,10 @@ pub struct Linker<'a> {
 static UMASK: AtomicU32 = AtomicU32::new(0);
 static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
 
+/// The two files a Windows bin shim consists of, appended to the bin name.
+#[cfg(windows)]
+const SHIM_SUFFIXES: [&[u8]; 2] = [b".bunx", b".exe"];
+
 impl<'a> Linker<'a> {
     pub fn ensure_umask() {
         // Single-winner gate: only the thread that flips false->true performs
@@ -853,10 +857,8 @@ impl<'a> Linker<'a> {
         }
     }
 
-    /// Removes the bin at `abs_dest`, but only if it is one this package's
-    /// bins were linked to. The global bin directory also holds `bun` itself
-    /// and whatever else the user keeps on `$PATH`, and a package's `bin` map
-    /// chooses the names, so a name alone never justifies a delete.
+    /// The package's `bin` map chooses the names, so only an entry that was
+    /// linked to this package is removed.
     fn unlink_bin_or_shim(&self, abs_dest: &ZStr) {
         if !self.existing_bin_belongs_to_package(abs_dest) {
             self.log_foreign_bin("removing", abs_dest);
@@ -874,30 +876,17 @@ impl<'a> Linker<'a> {
         }
     }
 
-    /// Removes `<abs_dest>.bunx` and `<abs_dest>.exe` without looking at them.
-    /// Callers must already know that the pair is this package's.
+    /// Callers must know that the pair is this package's.
     #[cfg(windows)]
     fn remove_shim_pair(abs_dest: &ZStr) {
-        let mut dest_buf = WPathBuffer::uninit();
-        let abs_dest_w =
-            strings::convert_utf8_to_utf16_in_buffer(dest_buf.as_mut_slice(), abs_dest.as_bytes());
-        let abs_dest_w_len = abs_dest_w.len();
-        let bunx_suffix = w!(".bunx\x00");
-        dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
-        // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
-        let abs_bunx_file =
-            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
-        let _ = sys::unlink_w(abs_bunx_file);
-        let exe_suffix = w!(".exe\x00");
-        dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
-        // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
-        let abs_exe_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
-        let _ = sys::unlink_w(abs_exe_file);
+        let mut path_buf = path::path_buffer_pool::get();
+        for suffix in SHIM_SUFFIXES {
+            if let Some(file) = Self::path_with_suffix(&mut path_buf[..], abs_dest, suffix) {
+                let _ = sys::unlink(file);
+            }
+        }
     }
 
-    /// Something that is not this package's bin occupies a name this package
-    /// wants in the global bin directory. The callers' error messages only name
-    /// the package, so the path goes to the debug log.
     fn fail_on_foreign_global_bin(&mut self, abs_dest: &ZStr) {
         self.log_foreign_bin("replacing", abs_dest);
         self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::EEXIST));
@@ -913,12 +902,8 @@ impl<'a> Linker<'a> {
         );
     }
 
-    /// Whether the bin already at `abs_dest` was linked to this package: on
-    /// POSIX a symlink into the package directory, on Windows a shim whose
-    /// `.bunx` sidecar names a file in the package directory. Anything else
-    /// (a missing entry, a regular file such as the `bun` binary, a directory,
-    /// the user's own symlink, another package's bin) is not ours to replace
-    /// or remove.
+    /// True for a symlink into the package directory (on Windows: a shim whose
+    /// `.bunx` points into it), the only entry the linker may replace or remove.
     #[cfg(not(windows))]
     fn existing_bin_belongs_to_package(&self, abs_dest: &ZStr) -> bool {
         let mut link_buf = path::path_buffer_pool::get();
@@ -931,12 +916,14 @@ impl<'a> Linker<'a> {
     #[cfg(windows)]
     fn existing_bin_belongs_to_package(&self, abs_dest: &ZStr) -> bool {
         let mut bunx_path_buf = path::path_buffer_pool::get();
-        let bunx_path = Self::path_with_suffix(&mut bunx_path_buf[..], abs_dest, b".bunx");
+        let Some(bunx_path) = Self::path_with_suffix(&mut bunx_path_buf[..], abs_dest, b".bunx")
+        else {
+            return false;
+        };
         let Ok(bunx_file) = sys::File::openat(Fd::cwd(), bunx_path, sys::O::RDONLY, 0) else {
             return false;
         };
-        // The sidecar starts with `[WSTR:bin_path][u16:'"']`, see
-        // `windows-shim/BinLinkingShim.rs`.
+        // Layout: `[WSTR:bin_path][u16:'"']...`, see windows-shim/BinLinkingShim.rs.
         let mut shim_buf = path::w_path_buffer_pool::get();
         let Ok(read) = bunx_file.read_all(bytemuck::cast_slice_mut(&mut shim_buf[..])) else {
             return false;
@@ -950,44 +937,43 @@ impl<'a> Linker<'a> {
         self.bin_target_is_inside_package(abs_dest, bin_path.as_bytes())
     }
 
-    /// The counterpart of the EEXIST check in `create_symlink`. A shim is the
-    /// pair `<name>.exe` + `<name>.bunx`, written with truncation, so the
-    /// check has to happen before anything is written: the pair may be
-    /// rewritten only when the sidecar says it is this package's. A `.exe`
-    /// without a sidecar is a real program (`bun.exe` itself lives here).
+    /// Runs before the shim files are written (they are opened with truncation).
+    /// A `.exe` without a `.bunx` is a real program, `bun.exe` for example.
     #[cfg(windows)]
     fn global_shim_conflicts(&self, abs_dest: &ZStr) -> bool {
         if self.existing_bin_belongs_to_package(abs_dest) {
             return false;
         }
         let mut path_buf = path::path_buffer_pool::get();
-        if sys::exists_z(Self::path_with_suffix(
-            &mut path_buf[..],
-            abs_dest,
-            b".bunx",
-        )) {
-            return true;
+        for suffix in SHIM_SUFFIXES {
+            // A name too long to check is also too long to write.
+            let Some(file) = Self::path_with_suffix(&mut path_buf[..], abs_dest, suffix) else {
+                return true;
+            };
+            if sys::exists_z(file) {
+                return true;
+            }
         }
-        sys::exists_z(Self::path_with_suffix(&mut path_buf[..], abs_dest, b".exe"))
+        false
     }
 
-    /// `abs_dest` + `suffix`, NUL-terminated, in `buf`.
+    /// `None` when `abs_dest` + `suffix` does not fit in `buf`.
     #[cfg(windows)]
-    fn path_with_suffix<'b>(buf: &'b mut [u8], abs_dest: &ZStr, suffix: &[u8]) -> &'b ZStr {
+    fn path_with_suffix<'b>(buf: &'b mut [u8], abs_dest: &ZStr, suffix: &[u8]) -> Option<&'b ZStr> {
         let dest = abs_dest.as_bytes();
+        let len = dest.len() + suffix.len();
+        if len >= buf.len() {
+            return None;
+        }
         buf[..dest.len()].copy_from_slice(dest);
-        buf[dest.len()..dest.len() + suffix.len()].copy_from_slice(suffix);
-        buf[dest.len() + suffix.len()] = 0;
-        ZStr::from_buf(buf, dest.len() + suffix.len())
+        buf[dest.len()..len].copy_from_slice(suffix);
+        buf[len] = 0;
+        Some(ZStr::from_buf(buf, len))
     }
 
-    /// Whether `stored_target`, the path recorded in the bin at `abs_dest`
-    /// (the symlink target, or the bin path in a `.bunx` shim), names a file
-    /// inside the package this linker links: `<node_modules>/<package_name>/`
-    /// or, under the native binlink redirect, the platform package's
-    /// directory. Bun records the target relative to the bin directory (POSIX)
-    /// or to its parent (Windows shims), so the relative form of each package
-    /// directory is accepted next to the absolute one.
+    /// `stored_target` is the symlink target or the `.bunx` bin path. Bun writes
+    /// it relative to the bin directory (POSIX) or to that directory's parent
+    /// (Windows), so both the relative and the absolute package directory match.
     fn bin_target_is_inside_package(&self, abs_dest: &ZStr, stored_target: &[u8]) -> bool {
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
         // SAFETY: `target_node_modules_path` is set at construction to either
@@ -1041,9 +1027,16 @@ impl<'a> Linker<'a> {
     }
 
     fn is_inside_dir(target: &[u8], dir: &[u8]) -> bool {
+        // Windows paths keep the casing of whatever produced them (an fd, an
+        // environment variable), and the file system does not care.
+        let has_prefix: fn(&[u8], &[u8]) -> bool = if cfg!(windows) {
+            strings::has_prefix_case_insensitive
+        } else {
+            strings::has_prefix
+        };
         !dir.is_empty()
             && target.len() > dir.len()
-            && strings::has_prefix(target, dir)
+            && has_prefix(target, dir)
             && target[dir.len()] == SEP
     }
 
@@ -1280,11 +1273,9 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        // From here on the pair at the destination is this package's: its old
-        // shim, or the one being written. A failure below leaves a truncated
-        // `.bunx` that `unlink_bin_or_shim` could no longer attribute to the
-        // package, so remove the pair here instead. Declared before the file
-        // handles below, so it runs after they are closed.
+        // A failure below leaves a truncated `.bunx` that `unlink_bin_or_shim`
+        // cannot attribute to the package. Declared before the file handles so
+        // it runs after they are closed.
         let remove_pair_on_failure = scopeguard::guard((), |()| Self::remove_shim_pair(abs_dest));
 
         // `encode_into` reinterprets this byte buffer as `[u16]`.
@@ -1495,15 +1486,13 @@ impl<'a> Linker<'a> {
             }
         }
 
-        // A project's `node_modules/.bin` is owned by the installer, so whatever
-        // entry is there is stale. The global bin directory is shared with the
-        // user (and with `bun` itself): only a link to this package may be
-        // replaced there. Either way only the entry itself is removed, never a
-        // directory's contents; a directory makes the retry fail with EEXIST.
+        // Anything in a project's `node_modules/.bin` is stale. The global bin
+        // directory is the user's: only this package's own link may be replaced.
         if global && !self.existing_bin_belongs_to_package(abs_dest) {
             self.fail_on_foreign_global_bin(abs_dest);
             return;
         }
+        // Not delete_tree: a directory stays and makes the retry fail with EEXIST.
         let _ = sys::unlink(abs_dest);
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
             self.err = Some(err.into());

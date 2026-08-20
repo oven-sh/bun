@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1054,6 +1054,112 @@ test("decorator and declare", () => {
 
   new A();
   expect(counter).toBe(1);
+});
+
+describe("decorated declare/abstract fields in a class expression", () => {
+  // tsc rejects experimental decorators inside class expressions (TS1206) and its output just
+  // drops them, and a `declare`/`abstract` field has nothing else to emit. These run in a
+  // child process because the bug was a transpiler crash.
+  const source = `
+    const A = class {
+      @dec declare a: number;
+      @dec static declare b: number;
+      @dec abstract c: string;
+      @dec declare [key]: number;
+      @dec declare private d: number;
+      e = 1;
+      @dec f = 2;
+      @dec m() {}
+    };
+  `;
+
+  test.concurrent("are removed from the transpiled output", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const transpiler = new Bun.Transpiler({
+            loader: "ts",
+            tsconfig: { compilerOptions: { experimentalDecorators: true } },
+          });
+          process.stdout.write(transpiler.transformSync(${JSON.stringify(source)}));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "const A = class {
+        e = 1;
+        f = 2;
+        m() {}
+      };"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("do not define a property or run the decorator", async () => {
+    using dir = tempDir("legacy-decorators-class-expr", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+      "index.ts": `
+        const calls: string[] = [];
+        const dec = (_target: unknown, name: PropertyKey) => { calls.push(String(name)); };
+        const key = "computed";
+        ${source}
+        class Outer {
+          Inner = class {
+            @dec declare a: number;
+            e = 1;
+          };
+        }
+        export default (class {
+          @dec declare a: number;
+          e = 1;
+        });
+        const a = new A();
+        console.log(JSON.stringify({
+          calls,
+          a: { ...a },
+          aHasStatic: "b" in A,
+          inner: { ...new (new Outer().Inner)() },
+          m: typeof a.m,
+        }));
+      `,
+      "main.ts": `
+        import Anon from "./index.ts";
+        console.log(JSON.stringify({ ...new Anon() }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(
+      stdout
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line)),
+    ).toEqual([
+      {
+        calls: [],
+        a: { e: 1, f: 2 },
+        aHasStatic: false,
+        inner: { e: 1 },
+        m: "function",
+      },
+      { e: 1 },
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {

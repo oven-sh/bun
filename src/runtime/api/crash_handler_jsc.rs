@@ -97,14 +97,17 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Triggers a segfault with the fault PC inside a system DLL rather than
-    /// inside bun.exe. Exercises the Windows fault-context unwinder: the walk
-    /// must recover the bun frames that called into the DLL.
+    /// Triggers a segfault with the fault PC inside a system library (ntdll.dll,
+    /// libc) rather than inside bun's own executable. Windows: exercises the
+    /// fault-context unwinder, which must recover the bun frames that called
+    /// into the DLL. Everywhere: frame 0 of the trace string must name the
+    /// image it is in, the way a crash inside a `.node` addon names the addon.
     #[bun_jsc::host_fn]
-    fn js_segfault_in_dll(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    fn js_segfault_in_dll(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         #[cfg(windows)]
         {
+            let _ = global;
             // `RtlFillMemory` is exported by ntdll.dll, so the faulting
             // instruction is outside bun.exe's image.
             #[link(name = "ntdll")]
@@ -117,10 +120,33 @@ pub(crate) mod js_bindings {
         }
         #[cfg(not(windows))]
         {
-            // No equivalent on POSIX (the fault-context walk is fp-based and
-            // doesn't care which image the fault is in); fall through to the
-            // in-bun segfault so the test hook is defined everywhere.
-            return js_segfault(_global, _frame);
+            const BAD_ADDRESS: usize = 0xDEADBEEF;
+            // libc's own `strlen`, not this executable's PLT stub for it (which
+            // is what `libc::strlen as usize` is in a non-PIE executable): the
+            // faulting pc has to be inside libc's image.
+            // SAFETY: RTLD_NEXT is a valid pseudo-handle and the name is NUL-terminated.
+            let strlen = unsafe { libc::dlsym(libc::RTLD_NEXT, c"strlen".as_ptr()) };
+            if strlen.is_null() {
+                return Err(global.throw(format_args!("dlsym(RTLD_NEXT, \"strlen\") failed")));
+            }
+            // Under ASAN bun's SIGSEGV handler is not installed (see `js_segfault`),
+            // so hand the handler the context the fault below would have given it.
+            if Environment::ENABLE_ASAN {
+                crash_handler::crash_handler(
+                    crash_handler::CrashReason::SegmentationFault(BAD_ADDRESS),
+                    crash_handler::TraceSeed::Fault {
+                        pc: strlen as usize,
+                        fp: bun_core::debug::frame_address(),
+                    },
+                );
+            }
+            // SAFETY: the symbol is libc's `strlen`, which has this signature.
+            let strlen: unsafe extern "C" fn(*const core::ffi::c_char) -> usize =
+                unsafe { core::mem::transmute(strlen) };
+            // SAFETY: intentionally reading from an invalid address so the
+            // fault happens inside libc for testing.
+            let len = unsafe { strlen(core::hint::black_box(BAD_ADDRESS as *const _)) };
+            core::hint::black_box(len);
         }
         #[allow(unreachable_code)]
         Ok(JSValue::UNDEFINED)

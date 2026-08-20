@@ -834,6 +834,47 @@ describe("CLI argument error messages", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("--loader with an unknown loader lists the names the flag accepts", async () => {
+    using dir = tempDir("build-loader-unknown", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--loader", ".cool:wtf", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain('invalid loader "wtf", expected one of:');
+    expect(exitCode).toBe(1);
+
+    const listed = stderr
+      .split("\n")
+      .filter(line => line.startsWith("-  "))
+      .map(line => line.slice("-  ".length).trim());
+    // "sh" is the spelling the flag accepts for the shell loader; the list used
+    // to print the enum variant name "bunsh" instead, which the flag rejects.
+    expect(listed).toContain("sh");
+    expect(listed).toContain("mjs");
+    expect(listed).toContain("js");
+
+    // Every name in the list must be accepted. The flag is parsed the same way
+    // by every command, so map one made-up extension to each name in a single run.
+    await using accepted = Bun.spawn({
+      cmd: [bunExe(), ...listed.flatMap((name, i) => ["--loader", `.l${i}:${name}`]), "-e", "console.log('ok')"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [acceptedStdout, acceptedStderr, acceptedExitCode] = await Promise.all([
+      accepted.stdout.text(),
+      accepted.stderr.text(),
+      accepted.exited,
+    ]);
+    expect({ stdout: acceptedStdout, stderr: acceptedStderr }).toEqual({ stdout: "ok\n", stderr: "" });
+    expect(acceptedExitCode).toBe(0);
+  });
+
   test("--define without a separator names the flag and shows an example", async () => {
     using dir = tempDir("build-define-err", { "in.js": "console.log(FOO)" });
     await using proc = Bun.spawn({

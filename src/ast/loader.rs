@@ -12,18 +12,7 @@ use enum_map::Enum;
 /// - bun-native-bundler-plugin-api/bundler_plugin.h
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
-#[derive(
-    Copy,
-    Clone,
-    Default,
-    Eq,
-    PartialEq,
-    Debug,
-    Hash,
-    Enum,
-    strum::IntoStaticStr,
-    strum::VariantNames,
-)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
 // The lower_snake names are exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
 #[strum(serialize_all = "snake_case")]
@@ -184,6 +173,11 @@ impl Loader {
         })
     }
 
+    /// Formats every name `from_string` accepts as `\n-  name` lines.
+    pub fn accepted_names_list() -> impl core::fmt::Display {
+        AcceptedNamesList
+    }
+
     #[inline]
     pub fn is_jsx(self) -> bool {
         self == Loader::Jsx || self == Loader::Tsx
@@ -245,6 +239,17 @@ impl Loader {
             | Loader::Md => SideEffects::NoSideEffectsPureData,
             _ => SideEffects::HasSideEffects,
         }
+    }
+}
+
+struct AcceptedNamesList;
+
+impl core::fmt::Display for AcceptedNamesList {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for name in Loader::NAMES.keys() {
+            write!(f, "\n-  {}", bstr::BStr::new(name))?;
+        }
+        Ok(())
     }
 }
 

@@ -67,7 +67,7 @@ const LINUX_HARDCODED_BROWSERS = [
 ];
 
 // Playwright's registry names each cache directory per platform — linux x64 carries no arch
-// suffix: https://github.com/microsoft/playwright/blob/v1.62.1/packages/playwright-core/src/server/registry/index.ts#L75
+// suffix: https://github.com/microsoft/playwright/blob/26a9e470a7b3c7822084b09fb7f13902c5f37b51/packages/playwright-core/src/server/registry/index.ts#L75
 const PLAYWRIGHT_SHELL_DIR =
   process.platform === "win32"
     ? "chrome-headless-shell-win64"

@@ -1883,6 +1883,13 @@ fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> &'a [u8] {
+    if parts.is_empty() {
+        if IS_SENTINEL {
+            unreachable!();
+        }
+        return cwd;
+    }
+
     if !crate::is_absolute_windows(cwd) {
         // `cwd` becomes the first part under the working directory; that base passes the check above, so this recurses once.
         let mut working_dir_buf = crate::path_buffer_pool::get();
@@ -1897,13 +1904,6 @@ fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
         all_parts.extend_from_slice(parts);
         let len = join_abs_string_buf_windows::<IS_SENTINEL>(dir, &mut *buf, &all_parts).len();
         return &buf[..len];
-    }
-
-    if parts.is_empty() {
-        if IS_SENTINEL {
-            unreachable!();
-        }
-        return cwd;
     }
 
     // path.resolve is a bit different on Windows, as there are multiple possible filesystem roots.
@@ -2845,6 +2845,13 @@ mod tests {
             join_abs_string::<platform::Nt>(b"rel", &[b"bin"]),
             b"\\\\?\\\\work\\rel\\bin"
         );
+    }
+
+    #[test]
+    fn join_abs_with_no_parts_returns_the_base_unchanged_on_both_arms() {
+        record_working_dir();
+        assert_eq!(join_abs_string::<platform::Posix>(b"rel", &[]), b"rel");
+        assert_eq!(join_abs_string::<platform::Windows>(b"rel", &[]), b"rel");
     }
 
     #[test]

@@ -620,6 +620,49 @@ describe("fs.watch", () => {
     ]);
   });
 
+  // On Windows, libuv reports the removal of the watched directory as a rename
+  // whose filename is the directory's own absolute path, and keeps re-arming
+  // the watch, which fails the same way on every tick of the event loop
+  // (nodejs/node#61398). Bun reports it once, as basename(watched path) like
+  // the Linux backend, and stops the watch. The second watcher proves that no
+  // further event arrives from the first one (the re-armed watch reported
+  // again on every tick) and that a new watch of the same path watches the
+  // recreated directory instead of joining the dead watch.
+  for (const recursive of [false, true]) {
+    test.skipIf(!isWindows)(
+      `removing the watched directory is reported once, by basename (windows, recursive: ${recursive})`,
+      async () => {
+        using dir = tempDir("fs-watch-rmdir-self-win", { "watched-dir": {} });
+        const target = path.join(String(dir), "watched-dir");
+        const events: [string, string | null][] = [];
+        const removed = Promise.withResolvers<void>();
+        const watcher = fs.watch(target, { recursive }, (eventType, filename) => {
+          events.push([eventType, filename]);
+          removed.resolve();
+        });
+        watcher.once("error", removed.reject);
+        let again: FSWatcher | undefined;
+        try {
+          fs.rmdirSync(target);
+          await removed.promise;
+
+          fs.mkdirSync(target);
+          const seen = Promise.withResolvers<[string, string | null]>();
+          again = fs.watch(target, { recursive }, (eventType, filename) => seen.resolve([eventType, filename]));
+          again.once("error", seen.reject);
+          fs.writeFileSync(path.join(target, "created-after.txt"), "x");
+          const [, filename] = await seen.promise;
+          expect(filename).toBe("created-after.txt");
+
+          expect(events).toEqual([["rename", "watched-dir"]]);
+        } finally {
+          again?.close();
+          watcher.close();
+        }
+      },
+    );
+  }
+
   // Past fs.inotify.max_queued_events the kernel drops events and queues one
   // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing
   // the inotify fd, the same shape node uses for overflow on Windows.

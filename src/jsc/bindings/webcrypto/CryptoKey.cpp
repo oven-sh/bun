@@ -28,14 +28,8 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmRegistry.h"
 #include "WebCoreOpaqueRoot.h"
-#include <wtf/CryptographicallyRandomNumber.h>
 #include <openssl/rand.h>
-#include <openssl/evp.h>
-#include "CryptoKeyRSA.h"
-#include "CryptoKeyEC.h"
-#include "CryptoKeyHMAC.h"
 namespace WebCore {
 
 CryptoKey::CryptoKey(CryptoAlgorithmIdentifier algorithmIdentifier, Type type, bool extractable, CryptoKeyUsageBitmap usages)

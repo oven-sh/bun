@@ -208,12 +208,8 @@ const _: () = {
 };
 
 impl<'a> Subprocess<'a> {
-    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any)
-    /// for the caller to `deref()`. Clears `started` so `StaticPipeWriter::
-    /// on_write`'s own release site becomes a no-op if a queued write-complete
-    /// callback still fires after the caller closes the pipe (Windows: a
-    /// `uv_write` whose I/O already completed is delivered with its real
-    /// status after `uv_close`, not `ECANCELED`).
+    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any) for
+    /// the caller to `deref()` after closing the writer; see `StaticPipeWriter`.
     fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
         match self.stdin.get() {
             Writable::Buffer(buffer) => {
@@ -443,6 +439,11 @@ impl Subprocess<'_> {
 
     pub(crate) fn update_has_pending_activity(&self) {
         if self.flags.get().contains(Flags::IS_SYNC) {
+            return;
+        }
+        // The wrapper is gone (finalize() closing stdio that a stopped worker
+        // left pending): there is nothing to keep alive or release.
+        if self.this_value.get().is_finalized() {
             return;
         }
 
@@ -835,7 +836,7 @@ impl Subprocess<'_> {
         };
         // `ipc()` centralises the single unsafe `JsCell` deref; `do_send` may
         // re-enter JS, but only the SendQueue is borrowed, not `*self`.
-        crate::ipc_host::do_send(this.ipc(), global, call_frame, context)
+        crate::ipc_host::do_send(this.ipc(), global, call_frame, context, this.pid() as u32)
     }
 
     pub(crate) fn disconnect_ipc(&self, next_tick: bool) {
@@ -849,7 +850,9 @@ impl Subprocess<'_> {
         _global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.disconnect_ipc(true);
+        if let Some(ipc_data) = this.ipc() {
+            ipc_data.disconnect();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -936,7 +939,7 @@ impl Subprocess<'_> {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
-        let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
         // (mirrors the original `&'a` return — the global outlives `self`).
         let global_this = self.global_this;
@@ -1256,10 +1259,11 @@ impl Subprocess<'_> {
         #[cfg(windows)]
         for item in self.stdio_pipes.replace(Vec::new()) {
             if let StdioResult::Buffer(buffer) = item {
-                // `uv_close` is async — the pipe must outlive this scope until
-                // `on_pipe_close` runs and reclaims the allocation. Hand the
-                // `Box` back to libuv as a raw pointer.
-                Box::leak(buffer).close(on_pipe_close);
+                // `uv_close` is async — the pipe must outlive this scope until the
+                // close callback reclaims the allocation; `close_and_destroy` also
+                // copes with a pipe that never got `uv_pipe_init`'d.
+                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
+                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
             }
         }
         #[cfg(not(windows))]
@@ -1351,7 +1355,7 @@ impl Subprocess<'_> {
 
         if let Some(ipc_data) = this.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
-            // get here (that is what allowed `computeHasPendingActivity` to drop
+            // get here (that is what allowed `compute_has_pending_activity` to drop
             // to false and let GC collect us). Detach and release our ref; any
             // still-queued close task holds its own ref and frees the SendQueue
             // when it runs.
@@ -1432,7 +1436,7 @@ impl Subprocess<'_> {
             }
             IPC::DecodedIPCMessage::Data(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC message from child");
-                let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
+                let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
                 let _keep = jsc::EnsureStillAlive(this_jsvalue);
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
@@ -1465,16 +1469,14 @@ impl Subprocess<'_> {
 
     pub(crate) fn handle_ipc_close(&self) {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
-        let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
         let global_this = self.global_this;
         let global_this = global_this.get();
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {
-            // Avoid keeping the callback alive longer than necessary
-            js::ipc_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
-
+            // The ipc callback is kept: a server/dgram handle still adopting at EOF is delivered afterwards, as in node.
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) =
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
@@ -1537,6 +1539,42 @@ pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
 #[inline]
 pub(crate) fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
     Source::Any(Box::new(ArrayBufferSource(ab)))
+}
+
+/// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
+/// Subprocess owns without a reader/writer in front of them; record that so a
+/// thread teardown closes them through us (and `finalize_streams` then finds
+/// the slots empty) instead of anyone closing them twice.
+#[cfg(windows)]
+impl Subprocess<'_> {
+    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
+        // SAFETY: `this` is the live boxed Subprocess (stable address).
+        let me = unsafe { &*this };
+        for item in me.stdio_pipes.get().iter() {
+            if let StdioResult::Buffer(buffer) = item {
+                bun_sys::windows::libuv::open_handles::set_owner(
+                    core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer)
+                        .cast_mut()
+                        .cast(),
+                    this.cast(),
+                    Some(Self::stop_for_vm_teardown),
+                );
+            }
+        }
+    }
+
+    /// `uv::open_handles` entry point: close every stdio pipe still held here.
+    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
+        // SAFETY: recorded by `record_stdio_pipe_ownership` for this live
+        // Subprocess; each pipe leaves the list as its uv_close is issued.
+        let me = unsafe { &*this.cast::<Self>() };
+        for item in me.stdio_pipes.replace(Vec::new()) {
+            if let StdioResult::Buffer(buffer) = item {
+                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
+                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
+            }
+        }
+    }
 }
 
 #[cfg(windows)]

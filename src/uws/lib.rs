@@ -31,7 +31,7 @@ pub use bun_uws_sys::{
 /// hook, so no `catch_unwind` wrapper is emitted.
 pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
-pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
+pub use bun_uws_sys::{h3 as H3, quic, socket_transfer, udp, vtable};
 pub type Socket = us_socket_t;
 
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
@@ -101,7 +101,7 @@ pub struct SocketAddress {
     pub is_ipv6: bool,
 }
 
-pub use bun_uws_sys::loop_::on_thread_exit;
+pub use bun_uws_sys::loop_::free_thread_loop;
 
 /// # Safety
 /// `filename` and `error_msg` must be valid NUL-terminated C strings.
@@ -198,6 +198,9 @@ pub mod ssl_wrapper {
     /// writes we loop until we have no more data to write/backpressure.
     const BUFFER_SIZE: usize = 65536;
 
+    /// Stack scratch shared by `SSL_read` / `BIO_read` / the pending-event pops.
+    type IoBuffer = bun_core::vec::UninitBuf<BUFFER_SIZE>;
+
     /// Cap on peer-initiated TLS renegotiations per
     /// [`MAX_RENEGOTIATION_WINDOW`]. Mirrors the `us_reneg_policy` defaults in
     /// the uSockets C path (openssl.c) and Node's
@@ -214,6 +217,17 @@ pub mod ssl_wrapper {
         pub flags: Flags,
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
+        traffic: Cell<Traffic>,
+    }
+
+    /// Re-entrancy state of [`SSLWrapper::handle_traffic`].
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Traffic {
+        Idle,
+        /// A pass is on the stack.
+        Running,
+        /// A callback of the running pass called `handle_traffic` again.
+        RerunRequested,
     }
 
     /// CamelCase alias for callers that use the alternate spelling
@@ -480,6 +494,7 @@ pub mod ssl_wrapper {
                 ssl: Cell::new(Some(ssl)),
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
+                traffic: Cell::new(Traffic::Idle),
             })
         }
 
@@ -675,7 +690,7 @@ pub mod ssl_wrapper {
             // SSL_shutdown only queues close_notify into the write BIO; nothing
             // else pumps it on the memory-BIO paths (duplex / named pipe), so
             // drain it now or the peer never sees our shutdown.
-            let mut buffer = [0u8; BUFFER_SIZE];
+            let mut buffer = IoBuffer::uninit();
             self.handle_writing(&mut buffer);
             ret == 1 // truly closed
         }
@@ -962,7 +977,7 @@ pub mod ssl_wrapper {
         }
 
         /// Handle reading data. Returns true if we can call handle_writing.
-        fn handle_reading(&self, buffer: &mut [u8; BUFFER_SIZE]) -> bool {
+        fn handle_reading(&self, buffer: &mut IoBuffer) -> bool {
             let mut read: usize = 0;
 
             // read data from the input BIO
@@ -972,7 +987,8 @@ pub mod ssl_wrapper {
                     return false;
                 };
 
-                let available = &mut buffer[read..];
+                // SAFETY: write-only view of the unfilled tail; SSL_read only stores into it.
+                let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
                 // SAFETY: ssl is a live SSL*; available is a valid mutable slice.
                 let just_read = unsafe {
                     boring_sys::SSL_read(
@@ -1042,7 +1058,8 @@ pub mod ssl_wrapper {
                         // flush the reading
                         if read > 0 {
                             log!("triggering data callback (read {})", read);
-                            self.trigger_data_callback(&buffer[0..read]);
+                            // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                            self.trigger_data_callback(unsafe { buffer.filled(read) });
                             // The data callback may have closed the connection
                             if self.ssl.get().is_none() || self.flags.closed_notified() {
                                 return false;
@@ -1067,13 +1084,14 @@ pub mod ssl_wrapper {
                 self.handle_end_of_renegotiation();
 
                 read += usize::try_from(just_read).expect("int cast");
-                if read == buffer.len() {
+                if read == BUFFER_SIZE {
                     log!(
                         "triggering data callback (read {}) and resetting read buffer",
                         read
                     );
                     // we filled the buffer
-                    self.trigger_data_callback(&buffer[0..read]);
+                    // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                    self.trigger_data_callback(unsafe { buffer.filled(read) });
                     // The callback may have closed the connection - check before continuing
                     // Check ssl first as a proxy for whether we were deinited
                     if self.ssl.get().is_none() || self.flags.closed_notified() {
@@ -1085,7 +1103,8 @@ pub mod ssl_wrapper {
             // we finished reading
             if read > 0 {
                 log!("triggering data callback (read {})", read);
-                self.trigger_data_callback(&buffer[0..read]);
+                // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                self.trigger_data_callback(unsafe { buffer.filled(read) });
                 // The callback may have closed the connection
                 // Check ssl first as a proxy for whether we were deinited
                 if self.ssl.get().is_none() || self.flags.closed_notified() {
@@ -1095,7 +1114,7 @@ pub mod ssl_wrapper {
             true
         }
 
-        fn handle_writing(&self, buffer: &mut [u8]) {
+        fn handle_writing(&self, buffer: &mut IoBuffer) {
             let mut read: usize = 0;
             loop {
                 let Some(ssl) = self.ssl.get() else { return };
@@ -1104,7 +1123,8 @@ pub mod ssl_wrapper {
                 else {
                     return;
                 };
-                let available = &mut buffer[read..];
+                // SAFETY: write-only view of the unfilled tail; BIO_read only stores into it.
+                let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
                 // SAFETY: output is a valid BIO*; available is a valid mutable slice.
                 let just_read = unsafe {
                     boring_sys::BIO_read(
@@ -1115,8 +1135,9 @@ pub mod ssl_wrapper {
                 };
                 if just_read > 0 {
                     read += usize::try_from(just_read).expect("int cast");
-                    if read == buffer.len() {
-                        self.trigger_wanna_write_callback(&buffer[0..read]);
+                    if read == BUFFER_SIZE {
+                        // SAFETY: the BIO_read calls above wrote `[0..read]` contiguously.
+                        self.trigger_wanna_write_callback(unsafe { buffer.filled(read) });
                         read = 0;
                     }
                 } else {
@@ -1124,23 +1145,55 @@ pub mod ssl_wrapper {
                 }
             }
             if read > 0 {
-                self.trigger_wanna_write_callback(&buffer[0..read]);
+                // SAFETY: the BIO_read calls above wrote `[0..read]` contiguously.
+                self.trigger_wanna_write_callback(unsafe { buffer.filled(read) });
             }
         }
 
+        /// Not re-entrant. A call made from inside a pass's callback (a write
+        /// from `on_data`, a synchronous peer feeding `receive_data`) flushes the
+        /// ciphertext queued so far and schedules another pass; decrypting there
+        /// would hand the owner the next chunk while it is still inside its
+        /// callback for the previous one.
         fn handle_traffic(&self) {
+            if self.traffic.get() != Traffic::Idle {
+                log!("handleTraffic re-entered, flushing and deferring to the outer pass");
+                let mut buffer = IoBuffer::uninit();
+                self.handle_writing(&mut buffer);
+                self.traffic.set(Traffic::RerunRequested);
+                return;
+            }
+            loop {
+                self.traffic.set(Traffic::Running);
+                self.traffic_pass();
+                if self.traffic.get() != Traffic::RerunRequested {
+                    break;
+                }
+            }
+            self.traffic.set(Traffic::Idle);
+        }
+
+        fn traffic_pass(&self) {
             // always handle the handshake first
             if self.update_handshake_state() {
                 // shared stack buffer for reading and writing
                 // PERF: 64KiB on-stack array — verify stack-size headroom.
-                let mut buffer = [0u8; BUFFER_SIZE];
+                let mut buffer = IoBuffer::uninit();
                 // drain the input BIO first
                 self.handle_writing(&mut buffer);
 
                 // drain the output BIO in loop, because read can trigger writing and vice versa
-                while self.has_pending_read() && self.handle_reading(&mut buffer) {
+                // Once a callback re-entered, the next pass takes over: the bytes it fed in
+                // may belong to the handshake, which only update_handshake_state reports.
+                while self.traffic.get() == Traffic::Running
+                    && self.has_pending_read()
+                    && self.handle_reading(&mut buffer)
+                {
                     // read data can trigger writing so we need to handle it
                     self.handle_writing(&mut buffer);
+                }
+                if self.traffic.get() != Traffic::Running {
+                    return;
                 }
 
                 // The SSL_do_handshake/SSL_read calls above may have parked
@@ -1159,7 +1212,7 @@ pub mod ssl_wrapper {
         /// `init_with_ctx`), so this is a no-op FFI probe otherwise. The
         /// callbacks run JS which may close the wrapper; `self.ssl` is
         /// re-checked between pops.
-        fn flush_pending_events(&self, buffer: &mut [u8; BUFFER_SIZE]) {
+        fn flush_pending_events(&self, buffer: &mut IoBuffer) {
             if self.handlers.get().on_session.is_some() {
                 loop {
                     let Some(ssl) = self.ssl.get() else { return };
@@ -1175,9 +1228,11 @@ pub mod ssl_wrapper {
                     if len <= 0 {
                         break;
                     }
+                    // SAFETY: the pop memcpy'd exactly `len` bytes into `[0..len]`.
+                    let entry = unsafe { buffer.filled(len as usize) };
                     let handlers = self.handlers.get();
                     if let Some(on_session) = handlers.on_session {
-                        on_session(handlers.ctx, &buffer[..len as usize]);
+                        on_session(handlers.ctx, entry);
                     }
                 }
             }
@@ -1196,9 +1251,11 @@ pub mod ssl_wrapper {
                     if len <= 0 {
                         break;
                     }
+                    // SAFETY: the pop memcpy'd exactly `len` bytes into `[0..len]`.
+                    let entry = unsafe { buffer.filled(len as usize) };
                     let handlers = self.handlers.get();
                     if let Some(on_keylog) = handlers.on_keylog {
-                        on_keylog(handlers.ctx, &buffer[..len as usize]);
+                        on_keylog(handlers.ctx, entry);
                     }
                 }
             }

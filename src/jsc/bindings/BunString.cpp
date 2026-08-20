@@ -94,11 +94,13 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         return JSValue::encode(jsEmptyString(vm));
     }
     if (simdutf::validate_ascii(ptr, length)) {
+        if (length > WTF::String::MaxLength) [[unlikely]] {
+            return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+        }
         return JSValue::encode(jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length))));
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(ptr), length });
-    EXCEPTION_ASSERT(str.isNull() == !!scope.exception());
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(ptr), length });
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -143,22 +145,6 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
     return JSValue::encode(bunString->transferToJS(globalObject));
-}
-
-// int64_t max to say "not a number"
-extern "C" [[ZIG_EXPORT(nothrow)]] int64_t BunString__toInt32(const BunString* bunString)
-{
-    if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) {
-        return std::numeric_limits<int64_t>::max();
-    }
-
-    String str = bunString->toWTFString();
-    auto val = WTF::parseIntegerAllowingTrailingJunk<int32_t>(str);
-    if (val) {
-        return val.value();
-    }
-
-    return std::numeric_limits<int64_t>::max();
 }
 
 namespace Bun {
@@ -347,25 +333,6 @@ static Ref<WTF::StringImpl> isolatedCopyForSharing(WTF::StringImpl& impl)
     return copy;
 }
 
-Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
-{
-    if (impl->isAtom() || impl->isSymbol())
-        return isolatedCopyForSharing(impl);
-
-    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
-        return isolatedCopyForSharing(impl);
-
-    if (impl->length() < kMinCrossThreadShareableLength)
-        return isolatedCopyForSharing(impl);
-
-    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
-    // Force hash computation on this thread before sharing
-    impl->hash();
-    impl->setNeverAtomize();
-
-    return impl;
-}
-
 WTF::String toCrossThreadShareable(const WTF::String& string)
 {
     auto* impl = string.impl();
@@ -441,7 +408,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(bytes), length });
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(bytes), length });
     if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
@@ -557,27 +524,6 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
     }
 
     return JSValue::encode(array);
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toWTFString(BunString* bunString)
-{
-    WTF::String str;
-    if (bunString->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
-            str = Zig::toString(bunString->impl.zig);
-        } else {
-            str = Zig::toStringCopy(bunString->impl.zig);
-        }
-
-    } else if (bunString->tag == BunStringTag::StaticZigString) {
-        str = Zig::toStringStatic(bunString->impl.zig);
-    } else {
-        return;
-    }
-
-    auto impl = str.releaseImpl();
-    bunString->impl.wtf = impl.leakRef();
-    bunString->tag = BunStringTag::WTFStringImpl;
 }
 
 extern "C" BunString URL__getFileURLString(BunString* filePath)
@@ -758,20 +704,6 @@ extern "C" uint32_t URL__port(WTF::URL* url)
 extern "C" BunString URL__pathname(WTF::URL* url)
 {
     return Bun::toStringRef(url->path().toStringWithoutCopying());
-}
-
-size_t BunString::utf8ByteLength(const WTF::String& str)
-{
-    if (str.isEmpty())
-        return 0;
-
-    if (str.is8Bit()) {
-        const auto s = str.span8();
-        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(s.data()), static_cast<size_t>(s.size()));
-    } else {
-        const auto s = str.span16();
-        return simdutf::utf8_length_from_utf16(reinterpret_cast<const char16_t*>(s.data()), static_cast<size_t>(s.size()));
-    }
 }
 
 WTF::String BunString::toWTFString() const

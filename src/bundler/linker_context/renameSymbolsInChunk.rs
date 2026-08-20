@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use core::cmp::Ordering;
 
 use crate::bundled_ast::Flags as AstFlags;
@@ -157,7 +157,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             }
         }
 
-        list.sort_unstable_by(|a, b| {
+        index_sort::sort_slice_unstable_by(&mut list, |a, b| {
             if StableRef::is_less_than((), *a, *b) {
                 Ordering::Less
             } else if StableRef::is_less_than((), *b, *a) {

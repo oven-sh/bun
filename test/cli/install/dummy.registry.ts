@@ -125,13 +125,14 @@ export async function createTestContext(opts?: { linker: "hoisted" | "isolated" 
   // Create bunfig.toml with the prefixed registry URL
   await writeFile(
     join(pkg_dir, "bunfig.toml"),
-    `
-[install]
-cache = false
-registry = "${ctx.registry_url}"
-saveTextLockfile = false
-${opts ? `linker = "${opts.linker}"` : ""}
-`,
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: ctx.registry_url,
+        saveTextLockfile: false,
+        linker: opts?.linker,
+      },
+    }),
   );
 
   return ctx;
@@ -382,13 +383,14 @@ export async function dummyBeforeEach(opts?: { linker: "hoisted" | "isolated" })
   package_dir = packageDirGetter();
   await writeFile(
     join(package_dir, "bunfig.toml"),
-    `
-[install]
-cache = false
-registry = "http://localhost:${server.port}/"
-saveTextLockfile = false
-${opts ? `linker = "${opts.linker}"` : ""}
-`,
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `http://localhost:${server.port}/`,
+        saveTextLockfile: false,
+        linker: opts?.linker,
+      },
+    }),
   );
 }
 

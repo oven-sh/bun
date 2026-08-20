@@ -322,10 +322,16 @@ pub trait SizeHandlerSpec {
     const LEFT_ID: PropertyId;
     const RIGHT_ID: PropertyId;
     const SHORTHAND_CATEGORY: PropertyCategory;
-    /// Optional prefix feature for the shorthand.
+    /// Compat feature of the logical longhands. Where the targets lack it, `flush`
+    /// lowers them to physical properties.
     const FEATURE: Option<Feature>;
-    /// `shorthand_extra.?.shorthand_feature`.
+    /// Compat feature of the `*-block` / `*-inline` pair shorthands.
     const SHORTHAND_FEATURE: Option<Feature>;
+    /// Compat feature of the 4-side shorthand itself. `inset` shipped together with
+    /// the logical inset properties, so where the targets lack it `flush` emits the
+    /// four physical longhands instead. `None` when the shorthand is emitted
+    /// regardless of targets (`margin`, `padding`, `scroll-margin`).
+    const PHYSICAL_SHORTHAND_FEATURE: Option<Feature>;
 
     // ---- value-type bindings ----
     // In every instantiation in this file the longhand value type is
@@ -808,6 +814,10 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         self.has_any = true;
     }
 
+    fn is_supported(feature: Option<Feature>, context: &PropertyHandlerContext) -> bool {
+        feature.is_none_or(|feature| !context.should_compile_logical(feature))
+    }
+
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
@@ -819,15 +829,11 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         let bottom = self.bottom.take();
         let left = self.left.take();
         let right = self.right.take();
-        let logical_supported = match S::FEATURE {
-            Some(feature) => !context.should_compile_logical(feature),
-            None => true,
-        };
+        let logical_supported = Self::is_supported(S::FEATURE, context);
+        let shorthand_supported = Self::is_supported(S::PHYSICAL_SHORTHAND_FEATURE, context);
 
         match (top, bottom, left, right) {
-            (Some(top), Some(bottom), Some(left), Some(right))
-                if S::SHORTHAND_CATEGORY != PropertyCategory::Logical || logical_supported =>
-            {
+            (Some(top), Some(bottom), Some(left), Some(right)) if shorthand_supported => {
                 dest.push(S::make_shorthand(top, bottom, left, right));
             }
             (top, bottom, left, right) => {
@@ -992,11 +998,8 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         context: &mut PropertyHandlerContext,
     ) {
         // _ = this; // autofix
-        let shorthand_supported = logical_supported
-            && match S::SHORTHAND_FEATURE {
-                Some(f) => !context.should_compile_logical(f),
-                None => true,
-            };
+        let shorthand_supported =
+            logical_supported && Self::is_supported(S::SHORTHAND_FEATURE, context);
 
         let (start_prop, end_prop) = match pair {
             LogicalSidePair::Block => (S::BLOCK_START, S::BLOCK_END),
@@ -1250,6 +1253,7 @@ impl SizeHandlerSpec for MarginSpec {
     const SHORTHAND_CATEGORY: PropertyCategory = PropertyCategory::Physical;
     const FEATURE: Option<Feature> = Some(Feature::LogicalMargin);
     const SHORTHAND_FEATURE: Option<Feature> = Some(Feature::LogicalMarginShorthand);
+    const PHYSICAL_SHORTHAND_FEATURE: Option<Feature> = None;
     type Shorthand = Margin;
     type BlockShorthand = MarginBlock;
     type InlineShorthand = MarginInline;
@@ -1287,6 +1291,7 @@ impl SizeHandlerSpec for PaddingSpec {
     const SHORTHAND_CATEGORY: PropertyCategory = PropertyCategory::Physical;
     const FEATURE: Option<Feature> = Some(Feature::LogicalPadding);
     const SHORTHAND_FEATURE: Option<Feature> = Some(Feature::LogicalPaddingShorthand);
+    const PHYSICAL_SHORTHAND_FEATURE: Option<Feature> = None;
     type Shorthand = Padding;
     type BlockShorthand = PaddingBlock;
     type InlineShorthand = PaddingInline;
@@ -1324,6 +1329,7 @@ impl SizeHandlerSpec for ScrollMarginSpec {
     const SHORTHAND_CATEGORY: PropertyCategory = PropertyCategory::Physical;
     const FEATURE: Option<Feature> = None;
     const SHORTHAND_FEATURE: Option<Feature> = None;
+    const PHYSICAL_SHORTHAND_FEATURE: Option<Feature> = None;
     type Shorthand = ScrollMargin;
     type BlockShorthand = ScrollMarginBlock;
     type InlineShorthand = ScrollMarginInline;
@@ -1361,6 +1367,7 @@ impl SizeHandlerSpec for InsetSpec {
     const SHORTHAND_CATEGORY: PropertyCategory = PropertyCategory::Physical;
     const FEATURE: Option<Feature> = Some(Feature::LogicalInset);
     const SHORTHAND_FEATURE: Option<Feature> = Some(Feature::LogicalInset);
+    const PHYSICAL_SHORTHAND_FEATURE: Option<Feature> = Some(Feature::LogicalInset);
     type Shorthand = Inset;
     type BlockShorthand = InsetBlock;
     type InlineShorthand = InsetInline;

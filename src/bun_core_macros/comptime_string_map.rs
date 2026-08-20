@@ -275,8 +275,8 @@ fn key_index_parts(
     crate_path: &TokenStream,
     name: &Ident,
     keys: &[(Vec<u8>, Span)],
-    arms: TokenStream,
-    miss: TokenStream,
+    arms: &TokenStream,
+    miss: &TokenStream,
 ) -> (TokenStream, TokenStream) {
     if keys.len() <= MAX_COMPARE_TREE_KEYS {
         let body = quote! {
@@ -359,8 +359,8 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
         &crate_path,
         &name,
         &keys,
-        quote! { #(#eq_arms)* },
-        quote!(::core::primitive::u32::MAX),
+        &quote! { #(#eq_arms)* },
+        &quote!(::core::primitive::u32::MAX),
     );
 
     // Same dispatch with a caller-supplied comparator; monomorphized only
@@ -572,8 +572,8 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
             &crate_path,
             &name,
             &keys,
-            quote! { #(#eq_arms)* },
-            quote!(false),
+            &quote! { #(#eq_arms)* },
+            &quote!(false),
         );
         if keys.len() <= MAX_COMPARE_TREE_KEYS {
             (body, statics)

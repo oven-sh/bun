@@ -158,9 +158,13 @@ struct ErasedCallbacks {
 
 impl ErasedCallbacks {
     fn of<C: RunTasksCallbacks>() -> Self {
-        // SAFETY (all closures): only ever invoked by `run_tasks_erased` with the
-        // `*mut C::Ctx` that `run_tasks::<C>` erased, which is the sole live
-        // handle to that context for the duration of the call.
+        /// Recovers the `&mut C::Ctx` that `run_tasks::<C>` erased.
+        fn ctx<'a, C: RunTasksCallbacks>(ctx: *mut ()) -> &'a mut C::Ctx {
+            // SAFETY: only ever called by `run_tasks_erased` with the pointer
+            // `run_tasks::<C>` erased from a `&mut C::Ctx`, which is the sole
+            // live handle to that context for the duration of the call.
+            unsafe { &mut *ctx.cast() }
+        }
         Self {
             progress_bar: C::PROGRESS_BAR,
             manifests_only: C::MANIFESTS_ONLY,
@@ -170,22 +174,15 @@ impl ErasedCallbacks {
             has_on_resolve: C::HAS_ON_RESOLVE,
             is_package_installer: C::IS_PACKAGE_INSTALLER,
             is_store_installer: C::IS_STORE_INSTALLER,
-            on_package_manifest_error: |ctx, name, err, url| {
-                C::on_package_manifest_error(unsafe { &mut *ctx.cast() }, name, err, url)
+            on_package_manifest_error: |c, name, err, url| {
+                C::on_package_manifest_error(ctx::<C>(c), name, err, url)
             },
-            on_package_download_error_store: |ctx, task_id, name, resolution, err, url| {
-                C::on_package_download_error_store(
-                    unsafe { &mut *ctx.cast() },
-                    task_id,
-                    name,
-                    resolution,
-                    err,
-                    url,
-                )
+            on_package_download_error_store: |c, task_id, name, resolution, err, url| {
+                C::on_package_download_error_store(ctx::<C>(c), task_id, name, resolution, err, url)
             },
-            on_package_download_error_pkg: |ctx, package_id, name, resolution, err, url| {
+            on_package_download_error_pkg: |c, package_id, name, resolution, err, url| {
                 C::on_package_download_error_pkg(
-                    unsafe { &mut *ctx.cast() },
+                    ctx::<C>(c),
                     package_id,
                     name,
                     resolution,
@@ -193,20 +190,38 @@ impl ErasedCallbacks {
                     url,
                 )
             },
-            on_extract_package_installer: |ctx, task_id, dependency_id, data, log_level| {
+            on_extract_package_installer: |c, task_id, dependency_id, data, log_level| {
                 C::on_extract_package_installer(
-                    unsafe { &mut *ctx.cast() },
+                    ctx::<C>(c),
                     task_id,
                     dependency_id,
                     data,
                     log_level,
                 )
             },
-            on_extract_store_installer: |ctx, task_id| {
-                C::on_extract_store_installer(unsafe { &mut *ctx.cast() }, task_id)
+            on_extract_store_installer: |c, task_id| {
+                C::on_extract_store_installer(ctx::<C>(c), task_id)
             },
-            on_resolve: |ctx| C::on_resolve(unsafe { &mut *ctx.cast() }),
+            on_resolve: |c| C::on_resolve(ctx::<C>(c)),
         }
+    }
+}
+
+impl ErasedCallbacks {
+    /// `C::as_package_installer`: `ctx` *is* the installer when `is_package_installer`.
+    fn package_installer<'a>(&self, ctx: *mut ()) -> &'a mut PackageInstaller<'a> {
+        debug_assert!(self.is_package_installer);
+        // SAFETY: `is_package_installer` means `C::Ctx == PackageInstaller`, and
+        // `ctx` is the erased `&mut C::Ctx` (see `ErasedCallbacks::of`).
+        unsafe { &mut *ctx.cast() }
+    }
+
+    /// `C::as_store_installer`: `ctx` *is* the installer when `is_store_installer`.
+    fn store_installer<'a>(&self, ctx: *mut ()) -> &'a mut Store::Installer<'a> {
+        debug_assert!(self.is_store_installer);
+        // SAFETY: `is_store_installer` means `C::Ctx == Store::Installer`, and
+        // `ctx` is the erased `&mut C::Ctx` (see `ErasedCallbacks::of`).
+        unsafe { &mut *ctx.cast() }
     }
 }
 
@@ -309,7 +324,7 @@ fn run_tasks_erased(
                         if let Some(ctx) = apply.install_context.as_mut() {
                             // `extract_ctx` *is* the installer here.
                             let installer: &mut PackageInstaller =
-                                unsafe { &mut *extract_ctx.cast::<PackageInstaller<'_>>() };
+                                cb.package_installer(extract_ctx);
                             let path = core::mem::take(&mut ctx.path);
                             installer.node_modules.path = path;
                             installer.current_tree_id = ctx.tree_id;
@@ -342,8 +357,7 @@ fn run_tasks_erased(
         // through `installer.manager` for the duration of this block, never
         // via the function-scope `manager` shadow, so the two `&mut` do not
         // overlap in use.
-        let installer: &mut Store::Installer<'_> =
-            unsafe { &mut *extract_ctx.cast::<Store::Installer<'_>>() };
+        let installer: &mut Store::Installer<'_> = cb.store_installer(extract_ctx);
         let installer_ptr: *mut Store::Installer<'_> = installer;
         let batch = installer.task_queue.pop_batch();
         let mut iter = batch.iterator();
@@ -1243,7 +1257,7 @@ fn run_tasks_erased(
 
                 if cb.has_on_extract {
                     if cb.is_package_installer {
-                        unsafe { &mut *extract_ctx.cast::<PackageInstaller<'_>>() }
+                        cb.package_installer(extract_ctx)
                             .fix_cached_lockfile_package_slices();
                         (cb.on_extract_package_installer)(
                             extract_ctx,
@@ -1571,7 +1585,7 @@ fn run_tasks_erased(
                     if cb.is_package_installer {
                         // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
                         // keeping just in case for now
-                        unsafe { &mut *extract_ctx.cast::<PackageInstaller<'_>>() }
+                        cb.package_installer(extract_ctx)
                             .fix_cached_lockfile_package_slices();
 
                         (cb.on_extract_package_installer)(

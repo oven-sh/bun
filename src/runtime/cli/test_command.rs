@@ -1679,6 +1679,16 @@ impl CommandLineReporter {
         reporters_lcov: bool,
         enable_ansi_colors: bool,
     ) -> crate::Result<()> {
+        // Both spellings are compile-time constants; pick one by the runtime flag.
+        macro_rules! pretty_lit {
+            ($fmt:literal) => {
+                if enable_ansi_colors {
+                    bun_core::pretty_fmt!($fmt, true).as_bytes()
+                } else {
+                    bun_core::pretty_fmt!($fmt, false).as_bytes()
+                }
+            };
+        }
         // `perf::Ctx` ends its span on Drop.
         let _trace = if reporters_text && reporters_lcov {
             bun::perf::trace("TestCommand.printCodeCoverageLCovAndText")
@@ -1736,10 +1746,7 @@ impl CommandLineReporter {
         let mut failing = false;
 
         if reporters_text {
-            if console
-                .write_all(&Output::pretty_fmt_rt("<r><d>", enable_ansi_colors))
-                .is_err()
-            {
+            if console.write_all(pretty_lit!("<r><d>")).is_err() {
                 return Ok(());
             }
             if console
@@ -1749,10 +1756,7 @@ impl CommandLineReporter {
                 return Ok(());
             }
             if console
-                .write_all(&Output::pretty_fmt_rt(
-                    "|---------|---------|-------------------<r>\n",
-                    enable_ansi_colors,
-                ))
+                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
                 .is_err()
             {
                 return Ok(());
@@ -1767,18 +1771,14 @@ impl CommandLineReporter {
                 return Ok(());
             }
             if console
-                .write_all(&Output::pretty_fmt_rt(
-                    " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n",
-                    enable_ansi_colors,
+                .write_all(pretty_lit!(
+                    " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n"
                 ))
                 .is_err()
             {
                 return Ok(());
             }
-            if console
-                .write_all(&Output::pretty_fmt_rt("<d>", enable_ansi_colors))
-                .is_err()
-            {
+            if console.write_all(pretty_lit!("<d>")).is_err() {
                 return Ok(());
             }
             if console
@@ -1788,10 +1788,7 @@ impl CommandLineReporter {
                 return Ok(());
             }
             if console
-                .write_all(&Output::pretty_fmt_rt(
-                    "|---------|---------|-------------------<r>\n",
-                    enable_ansi_colors,
-                ))
+                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
                 .is_err()
             {
                 return Ok(());
@@ -1986,11 +1983,11 @@ impl CommandLineReporter {
                     enable_ansi_colors,
                 )?;
 
-                console.write_all(&Output::pretty_fmt_rt("<r><d> |<r>\n", enable_ansi_colors))?;
+                console.write_all(pretty_lit!("<r><d> |<r>\n"))?;
             }
 
             console.write_all(&console_buffer)?;
-            console.write_all(&Output::pretty_fmt_rt("<r><d>", enable_ansi_colors))?;
+            console.write_all(pretty_lit!("<r><d>"))?;
             // Disarm the lcov cleanup guard before the early `Ok(())`; the
             // temp file is left for the OS.
             if console
@@ -2001,10 +1998,7 @@ impl CommandLineReporter {
                 return Ok(());
             }
             if console
-                .write_all(&Output::pretty_fmt_rt(
-                    "|---------|---------|-------------------<r>\n",
-                    enable_ansi_colors,
-                ))
+                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
                 .is_err()
             {
                 let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);

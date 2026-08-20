@@ -89,13 +89,13 @@ impl LayerName {
             let try_parse_fn =
                 |i: &mut css::css_parser::Parser<'_>| -> css::css_parser::CssResult<&'static [u8]> {
                     let start_location = i.current_source_location();
-                    let tok = i.next_including_whitespace()?.clone();
+                    let tok = *i.next_including_whitespace()?;
                     if !matches!(tok, css::Token::Delim(c) if c == u32::from(b'.')) {
                         return Err(start_location.new_basic_unexpected_token_error(tok));
                     }
 
                     let start_location = i.current_source_location();
-                    let tok = i.next_including_whitespace()?.clone();
+                    let tok = *i.next_including_whitespace()?;
                     if let css::Token::Ident(ident) = tok {
                         return Ok(ident);
                     }

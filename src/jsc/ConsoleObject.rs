@@ -5637,38 +5637,45 @@ pub mod formatter {
             writer: &mut WrappedWriter<'_>,
             slice: &[N],
         ) {
-            writer.print(format_args!(
-                "{}{}{}{}",
-                pfmt!("<r><yellow>", C),
-                N::display(slice[0]),
-                if N::IS_BIGINT { "n" } else { "" },
-                pfmt!("<r>", C),
-            ));
-            let leftover = &slice[1..];
+            // Only the per-element `Display` differs by `N`; the loop is shared.
+            Self::write_typed_array_elements::<C>(
+                writer,
+                slice.len(),
+                N::IS_BIGINT,
+                &mut |w, i| w.print(format_args!("{}", N::display(slice[i]))),
+            );
+        }
+
+        fn write_typed_array_elements<const C: bool>(
+            writer: &mut WrappedWriter<'_>,
+            len: usize,
+            is_bigint: bool,
+            print_element: &mut dyn FnMut(&mut WrappedWriter<'_>, usize),
+        ) {
+            let suffix = if is_bigint { "n" } else { "" };
+            writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+            print_element(writer, 0);
+            writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
             const MAX: usize = 512;
-            let leftover = &leftover[..leftover.len().min(MAX)];
-            for &el in leftover {
+            let shown = len.min(MAX + 1);
+            for i in 1..shown {
                 writer.print_comma::<C>();
                 if writer.failed {
                     return;
                 }
                 writer.space();
 
-                writer.print(format_args!(
-                    "{}{}{}{}",
-                    pfmt!("<r><yellow>", C),
-                    N::display(el),
-                    if N::IS_BIGINT { "n" } else { "" },
-                    pfmt!("<r>", C),
-                ));
+                writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+                print_element(writer, i);
+                writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
             }
 
-            if slice.len() > MAX + 1 {
+            if len > MAX + 1 {
                 writer.print(format_args!(
                     "{}{}, ... {} more{}",
                     pfmt!("<r><d>", C),
-                    if N::IS_BIGINT { "n" } else { "" },
-                    slice.len() - MAX - 1,
+                    suffix,
+                    len - MAX - 1,
                     pfmt!("<r>", C),
                 ));
             }

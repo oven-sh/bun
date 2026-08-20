@@ -337,7 +337,7 @@ fn parse_at_rule<P: AtRuleParser>(
         }
     };
     let next = match input.next() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(_) => {
             return match P::rule_without_block(parser, prelude, start) {
                 Ok(v) => Ok(v),
@@ -542,15 +542,13 @@ fn parse_nested_block<T>(
 ) -> CssResult<T> {
     // Everything that does not depend on `T` lives in the two out-of-line
     // halves so the ~135 instantiations of this fn stay small.
-    let state = match nested_block_enter(parser) {
-        Ok(state) => state,
-        Err(err) => return Err(err),
-    };
+    let state = nested_block_enter(parser)?;
     let result = parser.parse_entirely((), |(), p| parsefn(p));
     nested_block_exit(parser, state, result.is_err());
     result
 }
 
+#[derive(Clone, Copy)]
 struct NestedBlockState {
     block_type: BlockType,
     saved_stop_before: Delimiters,
@@ -2922,7 +2920,7 @@ where
                 };
                 parse_qualified_rule(&start, self.input, self.parser, delimiters)
             } else {
-                let token = tok.clone();
+                let token = *tok;
                 self.input
                     .parse_until_after(Delimiters::SEMICOLON, move |_i| {
                         Err(start.source_location().new_unexpected_token_error(token))
@@ -3332,7 +3330,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     if tok.is_parse_error() {
-                        let tok = tok.clone();
+                        let tok = *tok;
                         return Err(self.new_unexpected_token_error(tok));
                     }
                 }
@@ -3346,7 +3344,7 @@ impl<'a> Parser<'a> {
         if let Token::Percentage { unit_value, .. } = tok {
             return Ok(*unit_value);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3356,7 +3354,7 @@ impl<'a> Parser<'a> {
         if matches!(tok, Token::Comma) {
             return Ok(());
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3370,7 +3368,7 @@ impl<'a> Parser<'a> {
                 return Ok(iv);
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3381,7 +3379,7 @@ impl<'a> Parser<'a> {
         if let Token::Number(n) = tok {
             return Ok(n.value);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3393,7 +3391,7 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3403,7 +3401,7 @@ impl<'a> Parser<'a> {
         if matches!(tok, Token::OpenParen) {
             return Ok(());
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3413,7 +3411,7 @@ impl<'a> Parser<'a> {
         if matches!(tok, Token::Colon) {
             return Ok(());
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3423,7 +3421,7 @@ impl<'a> Parser<'a> {
         if let Token::QuotedString(s) = tok {
             return Ok(*s);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3433,7 +3431,7 @@ impl<'a> Parser<'a> {
         if let Token::Ident(s) = tok {
             return Ok(*s);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3447,7 +3445,7 @@ impl<'a> Parser<'a> {
             Token::QuotedString(s) => return Ok(*s),
             _ => {}
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3459,7 +3457,7 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3469,7 +3467,7 @@ impl<'a> Parser<'a> {
         if let Token::Function(fn_name) = tok {
             return Ok(*fn_name);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3481,7 +3479,7 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3491,7 +3489,7 @@ impl<'a> Parser<'a> {
         if matches!(tok, Token::OpenCurly) {
             return Ok(());
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3508,7 +3506,7 @@ impl<'a> Parser<'a> {
             }
             _ => {}
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3527,7 +3525,7 @@ impl<'a> Parser<'a> {
             }
             _ => {}
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3645,9 +3643,7 @@ impl<'a> Parser<'a> {
         // it: `T` is often large and this fn has ~160 instantiations.
         let result = parsefn(closure, self);
         if result.is_ok() {
-            if let Err(err) = self.expect_exhausted() {
-                return Err(err);
-            }
+            self.expect_exhausted()?;
         }
         result
     }
@@ -3658,7 +3654,7 @@ impl<'a> Parser<'a> {
         let start = self.state();
         let result: CssResult<()> = match self.next() {
             Ok(t) => {
-                let t = t.clone();
+                let t = *t;
                 Err(start.source_location().new_unexpected_token_error(t))
             }
             Err(e) => {
@@ -3785,7 +3781,7 @@ impl<'a> Parser<'a> {
     /// Create a new unexpected token or EOF ParseError at the current location
     pub(crate) fn new_error_for_next_token(&mut self) -> ParseError<ParserError> {
         let token = match self.next() {
-            Ok(t) => t.clone(),
+            Ok(t) => *t,
             Err(e) => return e,
         };
         self.new_error(BasicParseErrorKind::unexpected_token(token))
@@ -4015,13 +4011,13 @@ pub mod nth {
                         }
                     }
                 } else {
-                    let tok = next_tok.clone();
+                    let tok = *next_tok;
                     return Err(input.new_unexpected_token_error(tok));
                 }
             }
             _ => {}
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(input.new_unexpected_token_error(tok))
     }
 
@@ -4059,7 +4055,7 @@ pub mod nth {
                 return Ok((a, b_sign * b));
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(input.new_unexpected_token_error(tok))
     }
 

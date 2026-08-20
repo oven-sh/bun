@@ -2289,30 +2289,33 @@ pub struct PropertyName(pub *const c_void);
 `;
 
 function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {} }) {
+  const name = className(typeName);
   return `
-  JSC::Structure* ${className(typeName)}Structure() const { return m_${className(typeName)}.getInitializedOnMainThread(this); }
-  JSC::JSObject* ${className(typeName)}Constructor() const { return m_${className(typeName)}.constructorInitializedOnMainThread(this); }
-  JSC::JSObject* ${className(typeName)}Prototype() const { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
-  JSC::LazyClassStructure m_${className(typeName)};
+  JSC::Structure* ${name}Structure() const { return m_generatedLazyClasses[GeneratedLazyClass${name}].getInitializedOnMainThread(this); }
+  JSC::JSObject* ${name}Constructor() const { return m_generatedLazyClasses[GeneratedLazyClass${name}].constructorInitializedOnMainThread(this); }
+  JSC::JSObject* ${name}Prototype() const { return m_generatedLazyClasses[GeneratedLazyClass${name}].prototypeInitializedOnMainThread(this); }
     `.trim();
 }
 
+// All generated classes share one `initLater` callback: it recovers the class's
+// index from the `LazyClassStructure`'s position in `m_generatedLazyClasses` and
+// calls through this table, instead of instantiating a callback per class.
 function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noConstructor = false }) {
-  return `
-          m_${className(typeName)}.initLater(
-              [](LazyClassStructure::Initializer& init) {
-                 init.setPrototype(WebCore::${className(typeName)}::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
-                 init.setStructure(WebCore::${className(typeName)}::createStructure(init.vm, init.global, init.prototype));
-                 ${
-                   noConstructor
-                     ? ""
-                     : `init.setConstructor(WebCore::${className(
-                         typeName,
-                       )}::createConstructor(init.vm, init.global, init.prototype));`
-                 }
-              });
+  const name = className(typeName);
+  return `{ WebCore::${name}::createPrototype, WebCore::${name}::createStructure, ${
+    noConstructor ? "nullptr" : `WebCore::${name}::createConstructor`
+  } },`;
+}
 
-      `.trim();
+function generateLazyClassStructureHeaderTail(classes) {
+  return `
+  enum GeneratedLazyClass : unsigned {
+    ${classes.map((a, i) => `GeneratedLazyClass${className(a.name)} = ${i},`).join("\n    ")}
+  };
+  // A plain array (not std::array) so OBJECT_OFFSETOF(GlobalObject, m_generatedLazyClasses[i])
+  // works for the static property table in ZigGlobalObject.lut.txt.
+  JSC::LazyClassStructure m_generatedLazyClasses[${classes.length}];
+`;
 }
 
 const GENERATED_CLASSES_HEADER = [
@@ -2480,11 +2483,31 @@ ${classes
 `;
 }
 
-function initLazyClasses(initLaterFunctions) {
+function initLazyClasses(initTableRows) {
   return `
+struct GeneratedLazyClassInit {
+    JSC::JSObject* (*createPrototype)(JSC::VM&, WebCore::JSDOMGlobalObject*);
+    JSC::Structure* (*createStructure)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
+    JSC::JSObject* (*createConstructor)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
+};
+
+static constexpr GeneratedLazyClassInit generatedLazyClassInits[] = {
+    ${initTableRows.map(a => a.trim()).join("\n    ")}
+};
 
 ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
-    ${initLaterFunctions.map(a => a.trim()).join("\n    ")}
+    static_assert(std::size(generatedLazyClassInits) == std::extent_v<decltype(m_generatedLazyClasses)>);
+    for (auto& lazyClass : m_generatedLazyClasses) {
+        lazyClass.initLater([](LazyClassStructure::Initializer& init) {
+            auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.global);
+            size_t index = &init.classStructure - globalObject->m_generatedLazyClasses;
+            const GeneratedLazyClassInit& fns = generatedLazyClassInits[index];
+            init.setPrototype(fns.createPrototype(init.vm, globalObject));
+            init.setStructure(fns.createStructure(init.vm, init.global, init.prototype));
+            if (fns.createConstructor)
+                init.setConstructor(fns.createConstructor(init.vm, init.global, init.prototype));
+        });
+    }
 }
 
 `.trim();
@@ -2496,7 +2519,8 @@ function visitLazyClasses(classes) {
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
 {
-      ${classes.map(a => `thisObject->m_${className(a.name)}.visit(visitor);`).join("\n      ")}
+    for (auto& lazyClass : thisObject->m_generatedLazyClasses)
+        lazyClass.visit(visitor);
 }
 
   `.trim();
@@ -2671,7 +2695,8 @@ function writeCppSerializers() {
 
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
-    classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),
+    classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n") +
+      generateLazyClassStructureHeaderTail(classes),
   );
 
   await writeIfNotChanged(

@@ -3364,6 +3364,52 @@ template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& vi
     anything.visit(visitor);
 }
 
+// Member kinds whose visit is layout-generic: every LazyProperty<JSGlobalObject, T>
+// is one tagged pointer word and every WriteBarrier<T> to a cell is one JSCell*,
+// whatever T is, so a (byte offset, kind) pair is enough to visit them.
+enum class GlobalObjectGCMemberKind : uint8_t {
+    Other,
+    LazyProperty,
+    LazyClassStructure,
+    WriteBarrierCell,
+    WriteBarrierValue,
+};
+template<typename T> static constexpr GlobalObjectGCMemberKind globalObjectGCMemberKind = GlobalObjectGCMemberKind::Other;
+template<typename T> static constexpr GlobalObjectGCMemberKind globalObjectGCMemberKind<LazyProperty<JSGlobalObject, T>> = GlobalObjectGCMemberKind::LazyProperty;
+template<> constexpr GlobalObjectGCMemberKind globalObjectGCMemberKind<LazyClassStructure> = GlobalObjectGCMemberKind::LazyClassStructure;
+template<typename T> static constexpr GlobalObjectGCMemberKind globalObjectGCMemberKind<WriteBarrier<T>> = GlobalObjectGCMemberKind::WriteBarrierCell;
+template<> constexpr GlobalObjectGCMemberKind globalObjectGCMemberKind<WriteBarrier<Unknown>> = GlobalObjectGCMemberKind::WriteBarrierValue;
+
+struct GlobalObjectGCMember {
+    unsigned offset;
+    GlobalObjectGCMemberKind kind;
+};
+
+template<class Visitor>
+static NEVER_INLINE void visitGlobalObjectTableMembers(GlobalObject* thisObject, Visitor& visitor, std::span<const GlobalObjectGCMember> members)
+{
+    auto* base = reinterpret_cast<uint8_t*>(thisObject);
+    for (auto& member : members) {
+        void* slot = base + member.offset;
+        switch (member.kind) {
+        case GlobalObjectGCMemberKind::LazyProperty:
+            static_cast<LazyProperty<JSGlobalObject, JSCell>*>(slot)->visit(visitor);
+            break;
+        case GlobalObjectGCMemberKind::LazyClassStructure:
+            static_cast<LazyClassStructure*>(slot)->visit(visitor);
+            break;
+        case GlobalObjectGCMemberKind::WriteBarrierCell:
+            visitor.append(*static_cast<WriteBarrier<JSCell>*>(slot));
+            break;
+        case GlobalObjectGCMemberKind::WriteBarrierValue:
+            visitor.append(*static_cast<WriteBarrier<Unknown>*>(slot));
+            break;
+        case GlobalObjectGCMemberKind::Other:
+            break;
+        }
+    }
+}
+
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, WriteBarrier<T>& barrier)
 {
     visitor.append(barrier);
@@ -3405,8 +3451,19 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
             guarded->visitAggregate(visitor);
     }
 
-#define VISIT_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
-    visitGlobalObjectMember(visitor, thisObject->name);
+    // The LazyProperty / LazyClassStructure / WriteBarrier members (the vast
+    // majority) are visited from an offset table by one loop; the handful of
+    // other member types keep an explicit call.
+    static constexpr GlobalObjectGCMember gcMembers[] = {
+#define GLOBALOBJECT_GC_MEMBER_ENTRY(visibility, T, name) \
+    { OBJECT_OFFSETOF(GlobalObject, name), globalObjectGCMemberKind<T> },
+        FOR_EACH_GLOBALOBJECT_GC_MEMBER(GLOBALOBJECT_GC_MEMBER_ENTRY)
+#undef GLOBALOBJECT_GC_MEMBER_ENTRY
+    };
+    visitGlobalObjectTableMembers(thisObject, visitor, gcMembers);
+#define VISIT_GLOBALOBJECT_GC_MEMBER(visibility, T, name)                          \
+    if constexpr (globalObjectGCMemberKind<T> == GlobalObjectGCMemberKind::Other) \
+        visitGlobalObjectMember(visitor, thisObject->name);
     FOR_EACH_GLOBALOBJECT_GC_MEMBER(VISIT_GLOBALOBJECT_GC_MEMBER)
 #undef VISIT_GLOBALOBJECT_GC_MEMBER
 

@@ -16,7 +16,7 @@ for (const timeout of [0, 1, 10, 20, 100, 300]) {
     // The whole budget for timeout(0) is TLS-fetch setup + abort plumbing,
     // which a debug build exceeds; still asserts the abort lands well before
     // the server's 1000ms reply.
-    const THRESHOLD = isDebug ? 500 : 50;
+    const THRESHOLD = isDebug || Bun.env.BUN_OHOS === "1" ? 500 : 50;
 
     const time = performance.now();
     try {

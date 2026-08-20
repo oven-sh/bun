@@ -1170,9 +1170,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
 
     // Fast path: no `file:` prefix → forward the caller-owned `specifier`
     // by value without `dupe_ref()`/`deref()` refcount churn. Only the
-    // URL-decoded branch produces a string we must release. Single-slash
-    // `file:/path` is a valid WHATWG file URL, so match on the scheme, not
-    // on `file://`.
+    // URL-decoded branch produces a string we must release.
     let specifier_for_resolve = if specifier.has_prefix_comptime(b"file:") {
         owned.decoded_specifier = jsc::URL::path_from_file_url(specifier);
         owned.decoded_specifier

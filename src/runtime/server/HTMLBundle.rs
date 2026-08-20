@@ -130,6 +130,23 @@ impl HTMLBundle {
     pub(crate) fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
+
+    /// The error a route reports when a build of its file finishes without an
+    /// html page in its output. `Route::on_complete` and the dev server's
+    /// `finalize_bundle` both reach this state, for example when a plugin
+    /// resolves or loads the file as something other than html.
+    pub(crate) fn no_html_page_log(&self) -> Log {
+        let mut log = Log::init();
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "Bundling {} did not produce an html page. A plugin may have resolved or loaded the file as something other than html.",
+                bun_core::fmt::quote(&self.path)
+            ),
+        );
+        log
+    }
 }
 
 /// Deprecated: use Route instead.
@@ -426,6 +443,21 @@ impl Route {
         self.server.get().expect("server set").on_request_complete();
     }
 
+    /// Production says nothing about why a route failed to build, see
+    /// `resume_pending_responses`.
+    fn set_build_error(&self, server: AnyServer, log: Log) {
+        if server.config().is_development() {
+            // `Output.errorWriterBuffered()` → process-global writer;
+            // `Log::print` accepts it via the `*mut io::Writer`
+            // `IntoLogWrite` adapter and dispatches on
+            // `enable_ansi_colors_stderr` internally.
+            let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+            let _ = log.print(writer);
+            bun_output::flush();
+        }
+        self.state.set(State::Err(log));
+    }
+
     pub(crate) fn on_plugins_resolved(
         &self,
         plugins: Option<NonNull<JSBundler::Plugin>>,
@@ -442,6 +474,16 @@ impl Route {
         // `Config` owns its fields and
         // drops on early-return.
         config.entry_points.insert(&self.bundle.path)?;
+        // The runtime made this file an HTMLBundle, possibly through an import
+        // attribute or a bunfig `[loader]` entry. The build picks loaders by
+        // extension, so map the file's extension (the same key `Path::loader`
+        // looks up, `""` for no extension) to html for this build.
+        config.loaders = Some(bun_options_types::schema::api::LoaderMap {
+            extensions: vec![Box::from(
+                bun_paths::fs::PathName::init(&self.bundle.path).ext,
+            )],
+            loaders: vec![bun_options_types::schema::api::Loader::html],
+        });
         let xform = &vm.transpiler.options.transform_options;
         if let Some(public_path) = xform.serve_public_path.as_deref() {
             if !public_path.is_empty() {
@@ -573,18 +615,9 @@ impl Route {
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
-                if server.config().is_development() {
-                    // `Output.errorWriterBuffered()` → process-global writer;
-                    // `Log::print` accepts it via the `*mut io::Writer`
-                    // `IntoLogWrite` adapter and dispatches on
-                    // `enable_ansi_colors_stderr` internally.
-                    let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-                    let _ = log.print(writer);
-                    bun_output::flush();
-                }
-                self.state.set(State::Err(log));
+                self.set_build_error(server, log);
             }
-            BundleV2Result::Value(bundle) => {
+            BundleV2Result::Value(bundle) => 'bundle: {
                 if bun_core::Environment::ENABLE_LOGS {
                     bun_output::scoped_log!(debug, "onComplete: success");
                 }
@@ -611,6 +644,16 @@ impl Route {
                     );
                     bun_output::flush();
                 }
+
+                // The build succeeds without an html page when a plugin resolves
+                // or loads the entry point as something else.
+                let Some(html_index) = output_files.iter().position(|output_file| {
+                    output_file.output_kind == bundler_options::OutputKind::EntryPoint
+                        && output_file.loader == Loader::Html
+                }) else {
+                    self.set_build_error(server, self.bundle.no_html_page_log());
+                    break 'bundle;
+                };
 
                 // `AnyRoute::Static` carries
                 // an intrusive `*mut StaticRoute` here; defer appending the HTML
@@ -695,10 +738,7 @@ impl Route {
                         route_path = &route_path[1..];
                     }
 
-                    if this_html_route.is_none()
-                        && output_files[i].output_kind == bundler_options::OutputKind::EntryPoint
-                        && output_files[i].loader == Loader::Html
-                    {
+                    if i == html_index {
                         // Defer registration so we retain unique ownership for `clone()`.
                         this_html_route = Some((static_route, Box::<[u8]>::from(route_path)));
                         continue;
@@ -711,9 +751,8 @@ impl Route {
                     ));
                 }
 
-                let (html_route, html_route_path) = this_html_route.unwrap_or_else(|| {
-                    panic!("Internal assertion failure: HTML entry point not found in HTMLBundle.")
-                });
+                let (html_route, html_route_path) =
+                    this_html_route.expect("the loop above visited html_index");
                 // SAFETY: html_route is a fresh heap::alloc with ref_count=1;
                 // sole owner before registration.
                 let html_route_clone =

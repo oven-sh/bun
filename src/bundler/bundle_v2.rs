@@ -416,6 +416,8 @@ pub mod bv2_impl {
             pub(crate) const SSR: u8 = 1 << 2;
             /// When set, `.CLIENT` is also set.
             pub(crate) const CSS: u8 = 1 << 3;
+            /// The html file of a route. When set, `.CLIENT` is also set.
+            pub(crate) const HTML: u8 = 1 << 4;
             #[inline]
             pub(crate) fn client(self) -> bool {
                 self.0 & Self::CLIENT != 0
@@ -431,6 +433,10 @@ pub mod bv2_impl {
             #[inline]
             pub(crate) fn css(self) -> bool {
                 self.0 & Self::CSS != 0
+            }
+            #[inline]
+            pub(crate) fn html(self) -> bool {
+                self.0 & Self::HTML != 0
             }
         }
 
@@ -2620,11 +2626,16 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// `loader` overrides the loader the file's extension selects. The dev
+        /// server passes `Loader::Html` for the html file of a route, which the
+        /// runtime may have loaded as html through an import attribute or a
+        /// bunfig `[loader]` entry that the bundler's loader table does not have.
         pub(crate) fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
             is_entry_point: bool,
             target: options::Target,
+            loader: Option<Loader>,
         ) -> Result<Option<IndexInt>, Error> {
             let result = &mut *resolve;
             // borrowck: clone the active path out so we don't hold a `&mut`
@@ -2646,9 +2657,10 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+            let loader = loader.unwrap_or_else(|| {
+                path.loader(&self.transpiler.options.loaders)
+                    .unwrap_or(Loader::File)
+            });
 
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
@@ -3002,6 +3014,7 @@ pub mod bv2_impl {
                             &mut { file_map_result },
                             true,
                             self.transpiler.options.target,
+                            None,
                         )?;
                         continue;
                     }
@@ -3027,7 +3040,7 @@ pub mod bv2_impl {
                     }
                     break 'brk main_target;
                 };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target)?;
+                let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
             }
             Ok(())
         }
@@ -3122,8 +3135,9 @@ pub mod bv2_impl {
 
                 if flags.client() {
                     'brk: {
+                        let loader = flags.html().then_some(Loader::Html);
                         let Some(source_index) =
-                            self.enqueue_entry_item(&mut resolved, true, Target::Browser)?
+                            self.enqueue_entry_item(&mut resolved, true, Target::Browser, loader)?
                         else {
                             break 'brk;
                         };
@@ -3142,11 +3156,16 @@ pub mod bv2_impl {
                         &mut resolved,
                         true,
                         self.transpiler.options.target,
+                        None,
                     )?;
                 }
                 if flags.ssr() {
-                    let _ =
-                        self.enqueue_entry_item(&mut resolved, true, Target::ServerComponentsSsr)?;
+                    let _ = self.enqueue_entry_item(
+                        &mut resolved,
+                        true,
+                        Target::ServerComponentsSsr,
+                        None,
+                    )?;
                 }
             }
             Ok(())
@@ -3183,7 +3202,7 @@ pub mod bv2_impl {
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target)? else {
+                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target, None)? else {
                     continue;
                 };
             }
@@ -4594,7 +4613,7 @@ pub mod bv2_impl {
                             };
                             let mut resolved = resolved;
                             let Ok(source_index) =
-                                this.enqueue_entry_item(&mut resolved, true, target)
+                                this.enqueue_entry_item(&mut resolved, true, target, None)
                             else {
                                 return;
                             };

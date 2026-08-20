@@ -1580,6 +1580,25 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
+    /// The html file of a route is bundled as html whatever its extension is.
+    /// Every other client file is bundled with the loader of its extension.
+    fn append_client_entry_point(
+        &self,
+        entry_points: &mut EntryPointList,
+        index: usize,
+    ) -> Result<(), crate::Error> {
+        debug_assert!(matches!(SIDE, Side::Client));
+        let abs_path = &self.bundled_files.keys()[index];
+        if self.bundled_files.values()[index]
+            .html_route_bundle_index
+            .is_some()
+        {
+            entry_points.append_html(abs_path)
+        } else {
+            entry_points.append_js(abs_path, bake::Graph::Client)
+        }
+    }
+
     /// `IncrementalGraph(side).invalidate` (spec :1589). Given a set of paths,
     /// mark the relevant files as stale and append them into `entry_points`.
     pub(crate) fn invalidate(
@@ -1640,16 +1659,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             ) {
                                 entry_points.append_css(k)?;
                             } else {
-                                entry_points.append_js(k, bake::Graph::Client)?;
+                                self.append_client_entry_point(entry_points, dep.get() as usize)?;
                             }
                             it = entry.next_dependency;
                         }
-                        entry_points.append_js(owned_path, bake::Graph::Client)?;
+                        self.append_client_entry_point(entry_points, index)?;
                     }
                     // When re-bundling SCBs, only bundle the server.
                     Content::Js(_) | Content::Unknown => {
                         if !self.bundled_files.values()[index].is_hmr_root {
-                            entry_points.append_js(owned_path, bake::Graph::Client)?;
+                            self.append_client_entry_point(entry_points, index)?;
                         }
                     }
                 },

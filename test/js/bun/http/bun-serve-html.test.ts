@@ -736,6 +736,269 @@ test("serve html whose file is deleted before its first bundle", async () => {
   });
 });
 
+/** Runs the `serve.ts` of a fixture directory to completion. */
+async function runServeFixture(dir: { toString(): string }, env: Record<string, string> = {}) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.ts"],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr, exitCode };
+}
+
+// The runtime turns a module into an HTMLBundle when its loader is html, and
+// the loader can come from an import attribute or from a bunfig [loader] entry
+// as well as from the .html extension. The dev server and the production build
+// picked the loader of the route's file by its extension only, so a route whose
+// file is not named .html was bundled as an asset. The bundle then finished
+// without an html page for the route, and the process crashed: the dev server
+// while it rendered the page, the production build while it registered the
+// outputs.
+describe("html route whose file is not named .html", () => {
+  const htmPage = (title: string) =>
+    `<!DOCTYPE html><html><head><title>${title}</title></head><body><script type="module" src="./app.ts"></script></body></html>`;
+
+  // Serves the route with the dev server and then with a production build,
+  // and fetches the page and the script the page was given in each mode.
+  const serveInBothModes = (importStatement: string) => /*ts*/ `
+    ${importStatement}
+
+    async function serveOnce(development) {
+      using server = Bun.serve({ port: 0, development, routes: { "/": page } });
+      const response = await fetch(server.url);
+      const text = await response.text();
+      const scriptSrc = text.match(/<script[^>]*\\ssrc="([^"]+)"/)?.[1] ?? null;
+      const scriptStatus = scriptSrc === null ? null : (await fetch(new URL(scriptSrc, server.url))).status;
+      return { status: response.status, title: text.match(/<title>(.*?)<\\/title>/)?.[1] ?? null, scriptSrc, scriptStatus };
+    }
+
+    console.log(JSON.stringify({ dev: await serveOnce(true), prod: await serveOnce(false) }));
+  `;
+
+  const served = {
+    status: 200,
+    title: "htm page",
+    // The route's own script, not the "./app.ts" of the source file.
+    scriptSrc: expect.stringMatching(/^\/.+\.js$/),
+    scriptStatus: 200,
+  };
+
+  test.concurrent("import attribute", async () => {
+    using dir = tempDir("bun-serve-html-htm-import-attribute", {
+      "index.htm": htmPage("htm page"),
+      "app.ts": `console.log("app");`,
+      "serve.ts": serveInBothModes(`import page from "./index.htm" with { type: "html" };`),
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ result: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+      result: { dev: served, prod: served },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("bunfig [loader]", async () => {
+    using dir = tempDir("bun-serve-html-htm-bunfig-loader", {
+      "bunfig.toml": `[loader]\n".htm" = "html"\n`,
+      "index.htm": htmPage("htm page"),
+      "app.ts": `console.log("app");`,
+      "serve.ts": serveInBothModes(`import page from "./index.htm";`),
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ result: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+      result: { dev: served, prod: served },
+      exitCode: 0,
+    });
+  });
+
+  // A changed route file is bundled again through the incremental graph, which
+  // has to mark it as the html file of a route too.
+  test.concurrent("dev server bundles the edited file as html again", async () => {
+    using dir = tempDir("bun-serve-html-htm-edit", {
+      "index.htm": htmPage("htm page"),
+      "app.ts": `console.log("app");`,
+      "serve.ts": /*ts*/ `
+        import { writeFileSync } from "node:fs";
+        import page from "./index.htm" with { type: "html" };
+
+        using server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
+        async function fetchPage() {
+          const response = await fetch(server.url);
+          const text = await response.text();
+          return { status: response.status, title: text.match(/<title>(.*?)<\\/title>/)?.[1] ?? null };
+        }
+
+        const first = await fetchPage();
+        writeFileSync("index.htm", ${JSON.stringify(htmPage("edited htm page"))});
+        let edited = await fetchPage();
+        const deadline = Date.now() + 30_000;
+        while (edited.title !== "edited htm page" && Date.now() < deadline) {
+          await Bun.sleep(10);
+          edited = await fetchPage();
+        }
+        console.log(JSON.stringify({ first, edited }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        first: { status: 200, title: "htm page" },
+        edited: { status: 200, title: "edited htm page" },
+      }),
+      exitCode: 0,
+    });
+  });
+});
+
+// A plugin can resolve the route's html file to a different file. The bundle
+// then finishes without an html page and without an error for the file. Both
+// the dev server and the production build used to crash on that: the dev
+// server when it rendered the page, the production build when it registered
+// the outputs. Now the route reports a build failure.
+describe("html route whose file a plugin resolves to a different file", () => {
+  // With BUN_ASSUME_PERFECT_INCREMENTAL=0, the default of release builds, the
+  // dev server bundles a failed route again for the next request, and that
+  // bundle has to report the failure again. With 1, the default of debug
+  // builds, the next request is answered from the recorded failure.
+  test.concurrent.each(["0", "1"])("BUN_ASSUME_PERFECT_INCREMENTAL=%s", async assumePerfectIncremental => {
+    using dir = tempDir("bun-serve-html-route-resolved-elsewhere", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "index.html": `<!DOCTYPE html><html><head><title>never served</title></head><body></body></html>`,
+      "app.ts": `console.log("app");`,
+      "plugin.ts": /*ts*/ `
+        import { join } from "node:path";
+        export default {
+          name: "resolve-html-elsewhere",
+          setup(build) {
+            build.onResolve({ filter: /index\\.html$/ }, () => ({ path: join(import.meta.dir, "app.ts") }));
+          },
+        };
+      `,
+      "serve.ts": /*ts*/ `
+        import page from "./index.html";
+
+        async function serve(development, requestCount) {
+          using server = Bun.serve({ port: 0, development, routes: { "/": page } });
+          const responses = [];
+          for (let i = 0; i < requestCount; i++) {
+            const response = await fetch(server.url);
+            const text = await response.text();
+            responses.push({ status: response.status, title: text.match(/<title>(.*?)<\\/title>/)?.[1] ?? null });
+          }
+          return responses;
+        }
+
+        console.log(
+          JSON.stringify({
+            // The second request reaches the route after its bundle has failed.
+            devServer: await serve(true, 2),
+            // Every request builds the route again.
+            devWithoutHmr: await serve({ hmr: false }, 2),
+            // Requests after the failed build are the subject of #37916.
+            production: await serve(false, 1),
+          }),
+        );
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir, {
+      BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental,
+    });
+    const failurePage = { status: 500, title: "Bun - Build Failed" };
+    const emptyFailure = { status: 500, title: null };
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        devServer: [failurePage, failurePage],
+        devWithoutHmr: [emptyFailure, emptyFailure],
+        production: [emptyFailure],
+      }),
+      exitCode: 0,
+    });
+    // Printed by the dev server and by the development build. Production says nothing.
+    expect(stderr).toMatch(
+      /error: Bundling "[^"]*index\.html" did not produce an html page\. A plugin may have resolved or loaded the file as something other than html\./,
+    );
+  });
+});
+
+// server.reload() hands the dev server a new route object for the same html
+// file. The dev server used to give it a second route bundle and deliver the
+// bundled html there, so a request that was deferred on the original bundle
+// while it was still building crashed the process once the bundle finished.
+test.concurrent("server.reload() while an html route's first bundle is still in flight", async () => {
+  using dir = tempDir("bun-serve-html-reload-during-bundle", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    // Holds the first bundle open until serve.ts has reloaded the server, so
+    // the request that started the bundle stays deferred on it meanwhile.
+    "plugin.ts": /*ts*/ `
+      export default {
+        name: "hold-bundle",
+        setup(build) {
+          build.onLoad({ filter: /app\\.ts$/ }, async () => {
+            globalThis.bundleStarted.resolve();
+            await globalThis.releaseBundle.promise;
+            return { loader: "ts", contents: "console.log('app');" };
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+
+      globalThis.bundleStarted = Promise.withResolvers();
+      globalThis.releaseBundle = Promise.withResolvers();
+
+      const options = { port: 0, development: true, routes: { "/": html } };
+      const server = Bun.serve(options);
+
+      // Asks the dev server over its HMR socket which route bundle currently
+      // backs "/": the client's "set url" message ('n' + route pattern) is
+      // answered with 'n' + the route bundle index as a u32.
+      async function routeBundleIndex() {
+        const url = new URL("/_bun/hmr", server.url);
+        url.protocol = "ws:";
+        const ws = new WebSocket(url);
+        ws.binaryType = "arraybuffer";
+        const { promise, resolve, reject } = Promise.withResolvers();
+        ws.onerror = reject;
+        ws.onclose = () => reject(new Error("hmr socket closed before answering"));
+        ws.onmessage = ({ data }) => {
+          const view = new DataView(data);
+          if (view.getUint8(0) === "n".charCodeAt(0)) resolve(view.getUint32(1, true));
+        };
+        ws.onopen = () => ws.send(new TextEncoder().encode("n/"));
+        try {
+          return await promise;
+        } finally {
+          ws.onclose = null;
+          ws.close();
+        }
+      }
+
+      const first = fetch(server.url).then(res => res.status);
+      await globalThis.bundleStarted.promise;
+      const before = await routeBundleIndex();
+
+      server.reload(options);
+      const after = await routeBundleIndex();
+
+      globalThis.releaseBundle.resolve();
+      const second = fetch(server.url).then(res => res.status);
+
+      console.log(JSON.stringify({ first: await first, second: await second, sameRouteBundle: before === after }));
+      server.stop(true);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({ first: 200, second: 200, sameRouteBundle: true }),
+    exitCode: 0,
+  });
+});
+
 test("wildcard static routes", async () => {
   await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `

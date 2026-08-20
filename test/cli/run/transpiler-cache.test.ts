@@ -192,7 +192,8 @@ describe("transpiler cache", () => {
     for (const result of results) {
       expect(result).toSpawn("long-cache-dir");
     }
-    // Neither the over-long location nor the one from `env` received an entry.
+    // Every variant overrode the cache location from `env`, so none of the runs
+    // exercised that one instead of its over-long value.
     expect(existsSync(cache_dir)).toBeFalse();
   });
   test("works if the cache is not user-readable", async () => {

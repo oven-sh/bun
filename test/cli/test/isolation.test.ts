@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -1101,6 +1101,100 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
+});
+
+// The swap fails a multipart S3 upload the finished file left open. Two things
+// about how it does so:
+// - The AbortMultipartUpload that failing it sends must reach S3. It is a new
+//   request started by the swap's own sweep, so it must not be caught and
+//   aborted by that sweep (retry: 0 makes the one attempt the only one).
+// - The file's pump machinery is usually garbage by then (file a collects it
+//   on purpose), so nothing on the JS side can release the upload's native
+//   wrapper any more; failing the upload has to release it itself. On a debug
+//   build the wrapper's and the upload's own teardown log lines show both were
+//   freed exactly once: the wrapper at the swap, the upload once the rollback
+//   came back (or at the exit teardown, if it had not yet).
+test.concurrent("--isolate: a multipart S3 upload left open is rolled back and freed", async () => {
+  const testFile = (body: string) => `
+    import { test } from "bun:test";
+    const seen = async (method) => (await (await fetch(process.env.STAND_IN + "__seen")).json()).includes(method);
+    ${body}
+  `;
+  using dir = tempDir("isolate-s3-rollback", {
+    "a.test.js": testFile(`
+      const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: process.env.STAND_IN, retry: 0 });
+      s3.file("key").write(new Response(new ReadableStream({
+        pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return new Promise(() => {}); },
+      }))).catch(() => {});
+      test("a: the upload gets its first part out, then waits for more", async () => {
+        while (!(await seen("PUT"))) await Bun.sleep(10);
+        Bun.gc(true);
+        Bun.gc(true);
+      });
+    `),
+    "b.test.js": testFile(`
+      test("b: the swap rolled a's upload back", async () => {
+        while (!(await seen("DELETE"))) await Bun.sleep(10);
+      });
+    `),
+    "host.js": `
+      const seen = [];
+      const standIn = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          if (req.url.endsWith("/__seen")) return Response.json(seen.map(r => r.split(" ")[0]));
+          await req.arrayBuffer();
+          const url = new URL(req.url);
+          seen.push(req.method + " " + url.pathname + url.search);
+          if (req.method === "POST") {
+            return new Response("<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>");
+          }
+          return new Response(undefined, { headers: { etag: '"part"' } });
+        },
+      });
+      const child = Bun.spawn({
+        cmd: [process.execPath, "test", "--isolate", "./a.test.js", "./b.test.js"],
+        env: { ...process.env, STAND_IN: standIn.url.href, BUN_DEBUG_S3UploadStream: "1", BUN_DEBUG_S3MultiPartUpload: "1", BUN_DESTRUCT_VM_ON_EXIT: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      const output = stdout + stderr;
+      standIn.stop(true);
+      console.log(JSON.stringify({
+        seen,
+        wrappers: output.match(/^\\[s3uploadstream\\] deinit /gm)?.length ?? 0,
+        uploads: output.match(/^\\[s3multipartupload\\] deinit$/gm)?.length ?? 0,
+        passed: /\\b2 pass\\b/.test(output) && !/\\b[1-9]\\d* fail\\b/.test(output),
+        exitCode,
+        output: exitCode === 0 ? "" : output,
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "host.js"],
+    cwd: String(dir),
+    // The S3 client does not honor NO_PROXY; an inherited proxy would hijack the
+    // requests to the stand-in.
+    env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    seen: [
+      "POST /b/key?uploads=",
+      "PUT /b/key?partNumber=1&uploadId=upload-1&x-id=UploadPart",
+      "DELETE /b/key?uploadId=upload-1",
+    ],
+    wrappers: isDebug ? 1 : 0,
+    uploads: isDebug ? 1 : 0,
+    passed: true,
+    exitCode: 0,
+    output: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
 // fs.watchFile's StatWatcher is thread-safe-refcounted: the scheduler queue

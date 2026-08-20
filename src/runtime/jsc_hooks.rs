@@ -1780,6 +1780,9 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
     }
     // Entries that stay registered across a test-isolation swap.
     let mut kept: Vec<ActiveHandle> = Vec::new();
+    // Failed once the registry is empty: the rollback a failed multipart upload
+    // sends registers itself, and popped by this loop it would be aborted at once.
+    let mut uploads: Vec<ptr::NonNull<crate::webcore::s3::MultiPartUpload>> = Vec::new();
     loop {
         // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
         // the close below re-enters JS.
@@ -1827,10 +1830,12 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             ActiveHandle::S3Download(t) => unsafe {
                 crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask::stop_for_vm_teardown(t.as_ptr())
             },
-            // SAFETY: live until it unregisters in its `Drop`; may free itself inside.
-            ActiveHandle::S3Upload(u) => unsafe {
-                crate::webcore::s3::MultiPartUpload::stop_for_vm_teardown(u.as_ptr())
-            },
+            // SAFETY: live until it unregisters in its `Drop`, i.e. right now; the
+            // ref taken here keeps it so until `stop_for_vm_teardown` below.
+            ActiveHandle::S3Upload(u) => {
+                unsafe { u.as_ref() }.ref_();
+                uploads.push(u);
+            }
             // A live VM cannot cancel a build: hop tasks it already queued here
             // would still be dispatched against the finished pass. The build
             // runs on; its completion lands on the next file's global.
@@ -1847,6 +1852,10 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
                 let _ = crate::dns_jsc::Resolver::close_channel_for_terminate(r.as_ptr());
             },
         }
+    }
+    for upload in uploads {
+        // SAFETY: kept live by the ref taken above, which this consumes.
+        unsafe { crate::webcore::s3::MultiPartUpload::stop_for_vm_teardown(upload.as_ptr()) };
     }
     for handle in kept {
         handle.register();

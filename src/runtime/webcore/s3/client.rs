@@ -616,8 +616,9 @@ impl S3UploadStreamWrapper {
 
     /// Whether `resolve` must release the pump's +1 (`upload_stream`) itself. A
     /// native source still attached: S3 failed first, so `end_from_stream`, which
-    /// releases it after clearing `source`, never runs. A JS pump once script is
-    /// forbidden: the `.then` shim (`handle_*_stream`) that releases it never runs.
+    /// releases it after clearing `source`, never runs. A JS pump: the `.then` shim
+    /// (`handle_*_stream`) that releases it never runs once script is forbidden or
+    /// once the pump's controller has been collected (`NetworkSink::cell_released`).
     /// Decided before settling, as the failure path's `source.close()` clears `source`.
     fn pump_ref_is_stranded(&mut self) -> bool {
         let native_fast_path = !matches!(self.readable_stream_ref, ReadableStreamStrong::Empty);
@@ -628,7 +629,7 @@ impl S3UploadStreamWrapper {
         match sink.source {
             crate::webcore::streams::SourceHandle::ByteStream(_)
             | crate::webcore::streams::SourceHandle::FileReader(_) => true,
-            _ => !native_fast_path && !script_allowed,
+            _ => !native_fast_path && (!script_allowed || sink.cell_released),
         }
     }
 

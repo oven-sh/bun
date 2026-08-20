@@ -2572,66 +2572,26 @@ describe("VM teardown ordering", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  // An S3 upload aborted by its worker's teardown must not retry onto the
-  // closed VM: the retry would complete on the HTTP thread against a dead handle.
-  test("terminating a worker mid S3 upload does not retry onto the dead VM", async () => {
-    let first = true;
-    using server = Bun.serve({
-      port: 0,
-      fetch: () => {
-        if (first) {
-          first = false;
-          return new Promise(() => {}); // the upload terminate() interrupts
-        }
-        return new Response("no", { status: 503 }); // any retry fails fast
-      },
-    });
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { Worker } = require("worker_threads");
-         const w = new Worker(
-           'const { workerData, parentPort } = require("worker_threads");' +
-           'const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: workerData.url, retry: 3 });' +
-           // writer(): a MultiPartUpload, whose single-send failure path retries.
-           'const wr = s3.file("key").writer({ retry: 3 }); wr.write(Buffer.alloc(1024 * 1024)); wr.end().catch(() => {});' +
-           'parentPort.postMessage("uploading");',
-           { eval: true, workerData: { url: "${server.url.href}" } });
-         w.once("message", async () => {
-           console.log("exit", await w.terminate());
-           // Outlive any retry the HTTP thread would complete.
-           setTimeout(() => process.exit(0), 500);
-         });`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("exit 1\n");
-    expect(exitCode).toBe(0);
-  });
-
   // A streaming S3 upload (a MultiPartUpload fed by s3file.write(stream) or by
   // s3file.writer()) buffers bytes until it has a whole part, so most of the
-  // time it has no request out on the HTTP thread. The test above only covers an
-  // upload with a request out: teardown aborts that request and its failure
-  // tears the upload down. With nothing out, only the stop phase can end the
-  // upload, and it has to drop everything the upload holds: the upload itself
+  // time it has no request out on the HTTP thread, and only the stop phase can
+  // end it. It has to drop everything the upload holds: the upload itself
   // (buffered bytes, credentials), and for s3file.write(stream) the wrapper
   // around the source stream, which also holds the stream and the sink. The
-  // "request out" rows are here too: the stop phase now ends the upload first,
-  // and the request coming back afterwards must not free anything twice.
+  // "request out" rows cover the other order: the stop phase ends the upload
+  // first, and the request coming back must not free anything twice, nor, now
+  // that the upload is already finished, retry onto the VM that is going away.
+  // The multipart row ends an upload that has to roll back: the rollback and
+  // its retries are refused on the spot during teardown, and the upload still
+  // has to free itself.
   //
   // Two oracles. On a debug build, each object's own teardown log line: exactly
   // one MultiPartUpload deinit per row, and one S3UploadStreamWrapper deinit per
   // s3file.write(stream). On the ASAN build (a release build, so no debug logs),
-  // LeakSanitizer at the host's exit: without the fix it reports the upload and
-  // everything it holds. ASAN itself catches a double release on every row (the
-  // request coming back touches a freed upload). The sink behind s3file.writer()
-  // is not freed on any path, fixed or not (#34999), so the writer() rows run
-  // without leak detection.
+  // LeakSanitizer at the host's exit, which reported the upload in these rows
+  // before the fix, and ASAN itself for a double release on every row. The sink
+  // behind s3file.writer() is not freed on any path, fixed or not (#34999), so
+  // the writer() rows run without leak detection.
   describe.skipIf(!isDebug && !isASAN)("an S3 upload still open when its VM goes", () => {
     const ROWS: {
       name: string;
@@ -2639,8 +2599,11 @@ describe("VM teardown ordering", () => {
       // response body delivers one chunk and then stays open until the host ends it).
       start: string;
       endUpstream?: boolean;
-      // The host waits for the stand-in to receive a request before it tears the VM down.
+      // The host waits for the stand-in to receive a request (a part, for a multipart row)
+      // before it tears the VM down.
       waitForRequest?: boolean;
+      // The stand-in answers the multipart initiate, so the upload gets as far as its first part.
+      multipart?: boolean;
       wrappers: number;
       mainThread?: boolean;
       leakCheck?: false;
@@ -2676,6 +2639,13 @@ describe("VM teardown ordering", () => {
         leakCheck: false,
       },
       {
+        name: "s3file.write(new Response(jsStream)) with its first part in flight, worker terminated",
+        start: `file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return new Promise(() => {}); } }))).catch(() => {});`,
+        multipart: true,
+        waitForRequest: true,
+        wrappers: 1,
+      },
+      {
         name: "s3file.write(response) still waiting for bytes, process.exit() on the main thread",
         start: `const res = await fetch(upstream); file.write(res).catch(() => {});`,
         wrappers: 1,
@@ -2691,6 +2661,9 @@ describe("VM teardown ordering", () => {
         async fetch(req) {
           // Read, so the request left unanswered holds no body buffer of its own.
           await req.arrayBuffer();
+          if (${!!row.multipart} && req.method === "POST") {
+            return new Response("<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>");
+          }
           gotRequest.resolve();
           return new Promise(() => {});
         },

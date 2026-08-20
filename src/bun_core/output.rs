@@ -454,21 +454,6 @@ impl Source {
         Self::get_force_color_depth().unwrap_or(ColorDepth::None) != ColorDepth::None
     }
 
-    pub(crate) fn is_color_terminal() -> bool {
-        #[cfg(windows)]
-        {
-            // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
-            // Windows 10 build 10586 is the first Windows release that supports 256 colors.
-            // Windows 10 build 14931 is the first release that supports 16m/TrueColor.
-            // Every other version supports 16 colors.
-            return true;
-        }
-        #[cfg(not(windows))]
-        {
-            Self::color_depth() != ColorDepth::None
-        }
-    }
-
     pub fn color_depth() -> ColorDepth {
         *LAZY_COLOR_DEPTH.get_or_init(compute_color_depth)
     }
@@ -491,13 +476,14 @@ impl Source {
                     let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
                 }
 
+                // FORCE_COLOR and NO_COLOR override both streams. Otherwise
+                // the decision is per stream: a piped stdout must stay free of
+                // ANSI codes even when stderr is a TTY, and vice versa.
                 let mut enable_color: Option<bool> = None;
                 if Self::is_force_color() {
                     enable_color = Some(true);
                 } else if Self::is_no_color() {
                     enable_color = Some(false);
-                } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {
-                    enable_color = Some(true);
                 }
 
                 ENABLE_ANSI_COLORS_STDOUT

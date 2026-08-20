@@ -1,6 +1,7 @@
 import { spawnSync } from "bun";
+import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,116 @@ describe("bun", () => {
         expect(stdout.toString()).toMatch(/\u001b\[\d+m/);
       });
     }
+  });
+
+  // #39762: a piped stream must not get ANSI codes because the other stream
+  // is a TTY. `bun test | pbcopy` copied raw escape codes to the clipboard
+  // since stderr (a TTY) forced colors onto the piped stdout.
+  //
+  // openpty via bun:ffi so one stdio fd can be a real TTY while the other is
+  // a pipe. glibc keeps openpty in libutil; musl and macOS keep everything in
+  // libc. Same pattern as test/js/bun/terminal/terminal-spawn.test.ts.
+  describe.skipIf(isWindows)("per-stream color detection", () => {
+    const colorEnv = {
+      ...bunEnv,
+      NO_COLOR: undefined,
+      FORCE_COLOR: undefined,
+      TERM: "xterm-256color",
+    };
+
+    const openptyDecl = {
+      openpty: {
+        args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.i32,
+      },
+    } as const;
+    const closeDecl = {
+      close: { args: [FFIType.i32], returns: FFIType.i32 },
+    } as const;
+
+    function openPty(): { slave: number; close(): void } {
+      const lib =
+        process.platform === "darwin"
+          ? dlopen("libc.dylib", { ...openptyDecl, ...closeDecl })
+          : isMusl
+            ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", {
+                ...openptyDecl,
+                ...closeDecl,
+              })
+            : dlopen("libutil.so.1", openptyDecl);
+      const libc = process.platform === "darwin" || isMusl ? lib : dlopen("libc.so.6", closeDecl);
+
+      const masterBuf = new Int32Array(1);
+      const slaveBuf = new Int32Array(1);
+      expect((lib.symbols as any).openpty(masterBuf, slaveBuf, null, null, null)).toBe(0);
+      return {
+        slave: slaveBuf[0],
+        close() {
+          (libc.symbols as any).close(masterBuf[0]);
+          (libc.symbols as any).close(slaveBuf[0]);
+        },
+      };
+    }
+
+    test.concurrent("piped stdout stays plain when stderr is a tty", async () => {
+      const pty = openPty();
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", "console.log({ a: 1 })"],
+          env: colorEnv,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: pty.slave,
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).not.toMatch(/\u001b\[/);
+        expect(stdout).toContain("a: 1");
+        expect(exitCode).toBe(0);
+      } finally {
+        pty.close();
+      }
+    });
+
+    test.concurrent("piped stderr stays plain when stdout is a tty", async () => {
+      const pty = openPty();
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", "console.error({ a: 1 })"],
+          env: colorEnv,
+          stdin: "ignore",
+          stdout: pty.slave,
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toMatch(/\u001b\[/);
+        expect(stderr).toContain("a: 1");
+        expect(exitCode).toBe(0);
+      } finally {
+        pty.close();
+      }
+    });
+
+    // Guard against overcorrection: a stream that is itself a TTY keeps
+    // colors.
+    test.concurrent("a tty stdout still gets colors", async () => {
+      let output = "";
+      const sawColor = Promise.withResolvers<void>();
+      const decoder = new TextDecoder();
+      await using terminal = new Bun.Terminal({
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (/\u001b\[\d+m/.test(output)) sawColor.resolve();
+        },
+      });
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "console.log({ a: 1 })"],
+        env: colorEnv,
+        terminal,
+      });
+      await sawColor.promise;
+      await proc.exited;
+      expect(output).toMatch(/\u001b\[\d+m/);
+    });
   });
 
   describe("revision", () => {

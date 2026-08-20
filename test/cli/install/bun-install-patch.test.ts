@@ -10,6 +10,7 @@ import {
   VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
+import { pathToFileURL } from "url";
 
 const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
@@ -1170,13 +1171,24 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   const consumerPackageJson = (dependencies: Record<string, string>, rest: Record<string, unknown> = {}) =>
     JSON.stringify({ name: "consumer", dependencies: { "no-deps": "1.0.0", ...dependencies }, ...rest });
 
+  const gitEnv = {
+    ...bunEnv,
+    // Set on the asan lanes, where it makes `bun install` kill its own git clones (#33982).
+    BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+
   const lockfileHasPatches = async (packageDir: string) =>
     (await Bun.file(join(packageDir, "bun.lock")).text()).includes("patchedDependencies");
 
   const noDepsFile = (packageDir: string, name: string) => Bun.file(join(packageDir, "node_modules", "no-deps", name));
 
-  async function installUnpatched(packageDir: string) {
-    await runBunInstall(bunEnv, packageDir);
+  async function installUnpatched(packageDir: string, env = bunEnv) {
+    await runBunInstall(env, packageDir);
     expect({
       noDeps: await noDepsFile(packageDir, "package.json").json(),
       patched: await noDepsFile(packageDir, "patched.txt").exists(),
@@ -1198,26 +1210,28 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   });
 
   describe.each(["hoisted", "isolated"] as const)("are ignored by the consumer (%s linker)", linker => {
-    test.concurrent("file: dependency added to an existing install", async () => {
-      const { packageDir, packageJson } = await registry.createTestDir({
+    // A consumer with `no-deps` installed, plus `dep/` that is not a dependency yet.
+    async function installedConsumer() {
+      const dir = await registry.createTestDir({
         bunfigOpts: { linker },
         files: { "package.json": consumerPackageJson({}), dep: patchingDep },
       });
-      await runBunInstall(bunEnv, packageDir);
+      await runBunInstall(bunEnv, dir.packageDir);
+      return dir;
+    }
+
+    test.concurrent("file: dependency added to an existing install", async () => {
+      const { packageDir, packageJson } = await installedConsumer();
 
       await Bun.write(packageJson, consumerPackageJson({ "patching-dep": "file:./dep" }));
       await installUnpatched(packageDir);
     });
 
-    // The tarball is extracted after `no-deps` was taken from the lockfile, so
-    // the entry it used to add reached the installer without a patch hash. This
-    // is the install that panicked.
+    // A tarball or a git checkout is extracted after `no-deps` was taken from
+    // the lockfile, so the entry it used to add reached the installer without a
+    // patch hash. These are the installs that panicked.
     test.concurrent("tarball dependency added to an existing install", async () => {
-      const { packageDir, packageJson } = await registry.createTestDir({
-        bunfigOpts: { linker },
-        files: { "package.json": consumerPackageJson({}), dep: patchingDep },
-      });
-      await runBunInstall(bunEnv, packageDir);
+      const { packageDir, packageJson } = await installedConsumer();
 
       await using pack = Bun.spawn({
         cmd: [bunExe(), "pm", "pack", "--quiet"],
@@ -1231,6 +1245,16 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 
       await Bun.write(packageJson, consumerPackageJson({ "patching-dep": "./dep/patching-dep-1.0.0.tgz" }));
       await installUnpatched(packageDir);
+    });
+
+    test.concurrent("git dependency added to an existing install", async () => {
+      const { packageDir, packageJson } = await installedConsumer();
+
+      const repo = join(packageDir, "dep");
+      await $`git init -q && git add -A && git commit -q -m init --no-gpg-sign`.cwd(repo).env(gitEnv).quiet();
+
+      await Bun.write(packageJson, consumerPackageJson({ "patching-dep": `git+${pathToFileURL(repo)}` }));
+      await installUnpatched(packageDir, gitEnv);
     });
 
     // https://github.com/oven-sh/bun/issues/13531

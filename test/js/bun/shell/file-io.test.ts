@@ -23,6 +23,25 @@ describe("IOWriter file output redirection", () => {
       .runAsTest("zero-length write should trigger onIOWriterChunk callback");
   });
 
+  describe("fd-dup redirect followed by a word", () => {
+    // `2>&1` has no file operand, so `b` must stay an argument of echo.
+    TestBuilder.command`echo a 2>&1 b`
+      .ensureTempDir()
+      .exitCode(0)
+      .stdout("a b\n")
+      .stderr("")
+      .doesNotExist("b")
+      .runAsTest("2>&1 does not consume the next word as a file");
+
+    TestBuilder.command`echo a 1>&2 b`
+      .ensureTempDir()
+      .exitCode(0)
+      .stdout("")
+      .stderr("a b\n")
+      .doesNotExist("b")
+      .runAsTest("1>&2 does not consume the next word as a file");
+  });
+
   describe("drainBufferedData edge cases", () => {
     TestBuilder.command`echo -n ${"x".repeat(1024 * 10)} > large.txt`
       .exitCode(0)

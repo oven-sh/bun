@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync, VerdaccioRegistry } from "harness";
+import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 // Two package manager processes that edit the same project at the same time. Each one reads
@@ -15,8 +15,20 @@ describe("package manager processes that share a project", () => {
   // tests are about processes that share a project; two projects that fill one cache with the
   // same package at the same time is a different race (the CI runner points every process at
   // one cache), and the project lock does not serialize different projects on purpose.
-  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(tmpdirSync(), "cache") };
-  const PACKAGES = ["no-deps@1.0.0", "a-dep@1.0.1", "is-number@1.0.0", "left-pad@1.0.0", "lifecycle-postinstall@1.0.0"];
+  const cacheDir = join(tmpdirSync(), "cache");
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
+  // Packages with an index.js to edit, and nothing to run.
+  const PATCHABLE = [
+    "no-deps@1.0.0",
+    "is-number@1.0.0",
+    "left-pad@1.0.0",
+    "basic-1@1.0.0",
+    "no-deps-esm@1.0.0",
+    "no-deps-exports@1.0.0",
+    "no-deps-tags@1.0.0",
+    "no-deps-browser-field@1.0.0",
+  ];
+  const PACKAGES = [...PATCHABLE, "a-dep@1.0.1", "lifecycle-postinstall@1.0.0"];
 
   beforeAll(async () => {
     await registry.start();
@@ -28,7 +40,11 @@ describe("package manager processes that share a project", () => {
     registry.stop();
   });
 
-  async function run(cwd: string, ...args: string[]) {
+  function run(cwd: string, ...args: string[]) {
+    return runWithEnv(env, cwd, ...args);
+  }
+
+  async function runWithEnv(env: Record<string, string | undefined>, cwd: string, ...args: string[]) {
     await using proc = spawn({
       cmd: [bunExe(), ...args],
       cwd,
@@ -233,6 +249,64 @@ describe("package manager processes that share a project", () => {
     expect(result.stderr).not.toContain("Waiting for another bun process");
     expect((await file(packageJson).json()).dependencies).toEqual({ "no-deps": "1.0.0", "left-pad": "1.0.0" });
     expect(existsSync(join(packageDir, "node_modules", "left-pad"))).toBe(true);
+  });
+
+  // `bun patch <pkg>` installs, then replaces the package's hard links into the cache with copies,
+  // so that the user's edits stay out of the cache. The install pass of a sibling used to link the
+  // package from the cache again, and the `--commit` processes used to drop each other's entries.
+  test.concurrent("bun patch of eight packages started together, then eight commits", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const names = PATCHABLE.map(spec => spec.split("@")[0]);
+    await write(
+      packageJson,
+      JSON.stringify({ name: "patched", dependencies: Object.fromEntries(PATCHABLE.map(spec => spec.split("@"))) }),
+    );
+    await installed(packageDir);
+
+    for (const result of await Promise.all(names.map(name => run(packageDir, "patch", name)))) succeeded(result);
+    for (const name of names) appendFileSync(join(packageDir, "node_modules", name, "index.js"), "\n// edited\n");
+    const editedInCache = PATCHABLE.filter(spec =>
+      readFileSync(join(cacheEntry(spec), "index.js"), "utf8").includes("// edited"),
+    );
+    const commits = names.map(name => run(packageDir, "patch", "--commit", join("node_modules", name)));
+    for (const result of await Promise.all(commits)) succeeded(result);
+
+    expect({
+      editedInCache,
+      patchedDependencies: (await file(packageJson).json()).patchedDependencies,
+      patchFiles: readdirSync(join(packageDir, "patches")).sort(),
+    }).toEqual({
+      editedInCache: [],
+      patchedDependencies: Object.fromEntries(PATCHABLE.map(spec => [spec, `patches/${spec}.patch`])),
+      patchFiles: PATCHABLE.map(spec => `${spec}.patch`).sort(),
+    });
+    succeeded(await run(packageDir, "install", "--frozen-lockfile"));
+  });
+
+  // The directory the cache keeps `name@version` in. Its name also carries the registry.
+  function cacheEntry(spec: string) {
+    const [name, version] = spec.split("@");
+    const entries = readdirSync(cacheDir).filter(entry => {
+      if (!entry.startsWith(`${name}@`)) return false;
+      return JSON.parse(readFileSync(join(cacheDir, entry, "package.json"), "utf8")).version === version;
+    });
+    expect(entries).toHaveLength(1);
+    return join(cacheDir, entries[0]);
+  }
+
+  // `bun link` in a package directory removes the entry the global directory has for the package
+  // and creates it again. Eight of them used to remove each other's entries and fail with EEXIST.
+  test.concurrent("bun link of one package started eight times registers it", async () => {
+    using dir = tempDir("link-register", {
+      "lib/package.json": JSON.stringify({ name: "linked-lib", version: "1.0.0" }),
+    });
+    const libDir = join(String(dir), "lib");
+    const globalDir = join(String(dir), "install", "global");
+    const linkEnv = { ...env, BUN_INSTALL: String(dir), BUN_INSTALL_GLOBAL_DIR: globalDir };
+
+    const results = await Promise.all(Array.from({ length: 8 }, () => runWithEnv(linkEnv, libDir, "link")));
+    for (const result of results) succeeded(result);
+    expect(realpathSync(join(globalDir, "node_modules", "linked-lib"))).toBe(realpathSync(libDir));
   });
 
   // Every `bunx <pkg>@<version>` of one version shares one install directory under the temp dir.

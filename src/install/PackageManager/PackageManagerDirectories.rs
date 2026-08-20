@@ -332,11 +332,14 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             // encapsulates the BackRef deref + singleton-liveness invariant.
             let env = unsafe { &*this }.env_mut();
             // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
-            let cache_dir = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }));
-            // SAFETY: see fn safety contract.
-            unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
+            let opened = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }))
+                .and_then(|cache_dir| {
+                    // SAFETY: see fn safety contract.
+                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
+                    Dir::cwd().make_open_path(&cache_dir.path, Default::default())
+                });
 
-            match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
+            match opened {
                 Ok(d) => return d,
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
@@ -375,46 +378,35 @@ pub struct CacheDir {
     pub path: Vec<u8>,
 }
 
-pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
-    if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
-        return CacheDir {
-            path: FileSystem::instance().abs(&[dir]).to_vec(),
-        };
-    }
+/// Fails with `ENAMETOOLONG` when the configured directory (user-controlled, so
+/// possibly longer than any path the OS accepts) does not fit a `PathBuffer`.
+pub fn fetch_cache_directory_path(
+    env: &mut DotEnvLoader,
+    options: Option<&Options>,
+) -> sys::Maybe<CacheDir> {
+    let parts: &[&[u8]] = if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
+        &[dir]
+    } else if let Some(dir) = options
+        .map(|opts| opts.cache_directory)
+        .filter(|dir| !dir.is_empty())
+    {
+        &[dir]
+    } else if let Some(dir) = env.get(b"BUN_INSTALL") {
+        &[dir, b"install/", b"cache/"]
+    } else if let Some(dir) = env_var::XDG_CACHE_HOME
+        .get()
+        .or_else(|| env_var::HOME.get())
+    {
+        &[dir, b".bun/", b"install/", b"cache/"]
+    } else {
+        &[b"node_modules/.bun-cache"]
+    };
 
-    if let Some(opts) = options {
-        if !opts.cache_directory.is_empty() {
-            return CacheDir {
-                path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(),
-            };
-        }
-    }
-
-    if let Some(dir) = env.get(b"BUN_INSTALL") {
-        let parts: [&[u8]; 3] = [dir, b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-        };
-    }
-
-    if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-        let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-        };
-    }
-
-    if let Some(dir) = env_var::HOME.get() {
-        let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-        };
-    }
-
-    let fallback_parts: [&[u8]; 1] = [b"node_modules/.bun-cache"];
-    CacheDir {
-        path: FileSystem::instance().abs(&fallback_parts).to_vec(),
-    }
+    let mut buf = path::path_buffer_pool::get();
+    let Some(abs) = FileSystem::instance().abs_buf_checked(parts, &mut buf[..]) else {
+        return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(parts[0]));
+    };
+    Ok(CacheDir { path: abs.to_vec() })
 }
 
 // ─────────────────────── cached folder name printers ──────────────────────────

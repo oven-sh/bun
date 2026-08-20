@@ -1,40 +1,51 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
-// Inspecting a value can run user code (e.g. a custom inspect method) that
-// throws. The matcher utils must surface that as a catchable JS exception,
-// not abort the process.
-test("matcher utils propagate exceptions thrown while inspecting the value", () => {
-  const caught: Record<string, unknown> = {};
-  expect.extend({
-    _printThrowingValue(received) {
-      try {
-        this.utils.stringify(received);
-      } catch (e) {
-        caught.stringify = e;
-      }
-      try {
-        this.utils.printExpected(received);
-      } catch (e) {
-        caught.printExpected = e;
-      }
-      try {
-        this.utils.printReceived(received);
-      } catch (e) {
-        caught.printReceived = e;
-      }
-      return { pass: true, message: () => "" };
-    },
+// Inspecting a value can run user code (a custom inspect method) that throws.
+// The matcher utils must surface that as a catchable JS exception. The
+// unfixed build aborts the process instead, so the input runs in a child.
+test("matcher utils propagate exceptions thrown while inspecting the value", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { expect } from "bun:test";
+        const caught = {};
+        expect.extend({
+          _printThrowingValue(received) {
+            for (const util of ["stringify", "printExpected", "printReceived"]) {
+              try {
+                this.utils[util](received);
+                caught[util] = "did not throw";
+              } catch (e) {
+                caught[util] = e.message;
+              }
+            }
+            return { pass: true, message: () => "" };
+          },
+        });
+        expect({
+          [Symbol.for("nodejs.util.inspect.custom")]() {
+            throw new Error("inspect failed");
+          },
+        })._printThrowingValue();
+        console.log(JSON.stringify(caught));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  // @ts-expect-error: _printThrowingValue is registered dynamically via expect.extend
-  expect({
-    [Symbol.for("nodejs.util.inspect.custom")]() {
-      throw new Error("inspect failed");
-    },
-  })._printThrowingValue();
-
-  expect(Object.keys(caught)).toEqual(["stringify", "printExpected", "printReceived"]);
-  for (const error of Object.values(caught)) {
-    expect(error).toHaveProperty("message", "inspect failed");
-  }
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      stringify: "inspect failed",
+      printExpected: "inspect failed",
+      printReceived: "inspect failed",
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
 });

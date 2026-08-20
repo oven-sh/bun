@@ -412,7 +412,7 @@ impl Source {
     ///
     /// Threads that *may* run JS (web workers, debugger, the main VM thread)
     /// must keep using [`configure_thread`] / [`configure_named_thread`].
-    pub(crate) fn configure_thread_no_js() {
+    pub fn configure_thread_no_js() {
         if SOURCE_SET.get() {
             return;
         }
@@ -1077,6 +1077,11 @@ pub fn reset_terminal() {
 }
 
 pub fn reset_terminal_all() {
+    // Reached from `reload_process`, which any thread may call. A thread that
+    // never ran `Source::configure_thread` has zeroed writers, not stdio.
+    if !SOURCE_SET.get() {
+        return;
+    }
     SOURCE.with_borrow_mut(|s| {
         if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
             let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");

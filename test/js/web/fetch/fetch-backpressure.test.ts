@@ -15,6 +15,14 @@ const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB
 const TOTAL = CHUNK * COUNT;
 
+// The 1 GiB "server stops writing while stalled" tests sample the server's
+// write progress every 10 ms to detect backpressure. Under full-suite
+// parallel load on OHOS, CPU contention delays those samples and the 60 s
+// default can be exhausted even though backpressure works (verified: stall
+// detected in 30 ms, full 1 GiB drains in ~2 s when run alone). Give OHOS
+// runs more headroom; other platforms keep the upstream timeout.
+const DRAIN_TIMEOUT = Bun.env.BUN_OHOS === "1" ? 180_000 : 60_000;
+
 type Kind = "h1" | "h1-chunked" | "h1-gzip" | "h1-tls" | "h2" | "h3";
 
 async function serve(kind: Kind, count = COUNT): Promise<{ url: string; sent: () => number } & AsyncDisposable> {
@@ -252,7 +260,7 @@ for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind
         let total = first.value!.byteLength;
         for (let r; !(r = await reader.read()).done; ) total += r.value.byteLength;
         expect({ sent: server.sent(), total }).toEqual({ sent: CHUNK * big, total: CHUNK * big });
-      }, 60_000);
+      }, DRAIN_TIMEOUT);
     }
   });
 }
@@ -293,7 +301,7 @@ describe.concurrent("fetch() receive backpressure — Readable.fromWeb bridge", 
 
     release();
     expect({ err: await done, sent: server.sent(), got }).toEqual({ err: null, sent: CHUNK * big, got: CHUNK * big });
-  }, 60_000);
+  }, DRAIN_TIMEOUT);
 
   // The buffered window between the HTTP-thread recv and `res.write()` is a
   // chain of native Vecs (FetchTasklet staging + ByteStream overflow) that are
@@ -597,7 +605,7 @@ describe("fetch() receive backpressure — body stream nothing is reading", () =
 
       await reader.cancel();
       await server.untilClosed();
-    }, 60_000);
+    }, DRAIN_TIMEOUT);
   }
 
   // The other half of the rule: a small body nobody reads is still taken off the socket, so

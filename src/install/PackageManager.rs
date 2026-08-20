@@ -1937,9 +1937,8 @@ pub fn init(
         let mut global_len: usize = 0;
         if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
             let parts: [&[u8]; 2] = [xdg_dir, b".npmrc"];
-            let p = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-                started_in, &mut buf, &parts,
-            );
+            let p =
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(started_in, &mut buf, &parts);
             if bun_sys::exists_z(p) {
                 global_len = p.len();
             }

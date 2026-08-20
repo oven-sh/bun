@@ -990,7 +990,11 @@ describe("embedded libraries with a relative temp directory", () => {
       const cwd = String(dir);
 
       {
-        await using proc = Bun.spawn({ cmd: [cc!, "-shared", "-fPIC", "-o", "libhello.so", "libhello.c"], cwd, env: bunEnv });
+        await using proc = Bun.spawn({
+          cmd: [cc!, "-shared", "-fPIC", "-o", "libhello.so", "libhello.c"],
+          cwd,
+          env: bunEnv,
+        });
         expect(await proc.exited).toBe(0);
       }
       {

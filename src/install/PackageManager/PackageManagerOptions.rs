@@ -332,13 +332,18 @@ fn global_install_root() -> Option<&'static [u8]> {
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = resolve_path::working_dir(&mut cwd_buf);
         if let Some(dir) = env_var::BUN_INSTALL.get_not_empty() {
-            return Some(Box::from(resolve_path::join_abs_string::<platform::Auto>(cwd, &[dir])));
+            return Some(Box::from(resolve_path::join_abs_string::<platform::Auto>(
+                cwd,
+                &[dir],
+            )));
         }
         let home_dir = env_var::XDG_CACHE_HOME
             .get_not_empty()
             .or_else(|| env_var::HOME.get_not_empty())?;
         let parts: [&[u8]; 2] = [home_dir, b".bun"];
-        Some(Box::from(resolve_path::join_abs_string::<platform::Auto>(cwd, &parts)))
+        Some(Box::from(resolve_path::join_abs_string::<platform::Auto>(
+            cwd, &parts,
+        )))
     })
     .as_deref()
 }

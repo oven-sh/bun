@@ -1733,16 +1733,20 @@ describe("stream release after a queued END_STREAM", () => {
   }
 
   /**
-   * Tears the case's session down and waits for the streams it still held (the stalled ones) to go,
-   * which on the server side happens once its socket has closed, so that the next case starts without
-   * them.
+   * Tears the case's session down and checks that the streams it still held (the stalled ones) go
+   * with it, which on the server side happens once its socket has closed. So a case that leaves a
+   * stream behind fails on its own, and no case starts with another case's streams around.
    */
   async function closeAll(client: http2.ClientHttp2Session, server: http2.Http2Server): Promise<void> {
     client.destroy();
     await new Promise(resolve => server.close(resolve));
-    for (let i = 0; i < 50 && rootedHandles().some(entry => entry.includes("Http2Stream#")); i++) {
+    const streamsLeft = () => rootedHandles().filter(entry => entry.includes("Http2Stream#"));
+    let left = streamsLeft();
+    for (let i = 0; i < 50 && left.length > 0; i++) {
       await new Promise(resolve => setImmediate(resolve));
+      left = streamsLeft();
     }
+    expect(left).toEqual([]);
   }
 
   /**

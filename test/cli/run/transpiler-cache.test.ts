@@ -170,7 +170,7 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(1);
   });
   test("works if the cache is not user-readable", async () => {
-    mkdirSync(cache_dir, { recursive: true });
+    mkdirSync(cache_dir, { recursive: true, mode: 0o755 });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(1);

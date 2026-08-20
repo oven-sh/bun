@@ -226,47 +226,49 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (!isESM) {
         if (globalObject) [[likely]] {
             if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
-                auto overrideHandler = uncheckedDowncast<JSObject>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
-                if (overrideHandler) [[likely]] {
-                    ASSERT(overrideHandler->isCallable());
-                    JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
-
-                    JSValue parentID = jsUndefined();
-                    if (auto* parent = dynamicDowncast<Bun::JSCommonJSModule>(parentModuleObject)) {
-                        parentID = parent->filename();
-                    } else {
-                        parentID = from;
-                    }
-
-                    MarkedArgumentBuffer args;
-                    args.append(moduleName);
-                    args.append(parentModuleObject);
-                    auto parentIdStr = parentID.toWTFString(globalObject);
-                    auto bunStr = Bun::toString(parentIdStr);
-                    args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
-
-                    // Pass options object with paths if provided
-                    if (!userPathList.isUndefinedOrNull()) {
-                        JSObject* options = JSC::constructEmptyObject(globalObject);
-                        options->putDirect(vm, JSC::Identifier::fromString(vm, "paths"_s), userPathList);
-                        args.append(options);
-                    }
-
-                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    if (!isRequireDotResolve) {
-                        JSString* string = result.toString(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        auto str = string->value(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
-                        if (!prefixed.isNull()) {
-                            return JSValue::encode(jsString(vm, prefixed));
-                        }
-                        return JSC::JSValue::encode(string);
-                    }
-                    return JSC::JSValue::encode(result);
+                JSValue overrideHandler = globalObject->m_moduleResolveFilenameOverride.get();
+                JSC::CallData overrideCallData = JSC::getCallData(overrideHandler);
+                if (overrideCallData.type == JSC::CallData::Type::None) [[unlikely]] {
+                    return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Module._resolveFilename is not a function"_s);
                 }
+
+                JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
+
+                JSValue parentID = jsUndefined();
+                if (auto* parent = dynamicDowncast<Bun::JSCommonJSModule>(parentModuleObject)) {
+                    parentID = parent->filename();
+                } else {
+                    parentID = from;
+                }
+
+                MarkedArgumentBuffer args;
+                args.append(moduleName);
+                args.append(parentModuleObject);
+                auto parentIdStr = parentID.toWTFString(globalObject);
+                auto bunStr = Bun::toString(parentIdStr);
+                args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
+
+                // Pass options object with paths if provided
+                if (!userPathList.isUndefinedOrNull()) {
+                    JSObject* options = JSC::constructEmptyObject(globalObject);
+                    options->putDirect(vm, JSC::Identifier::fromString(vm, "paths"_s), userPathList);
+                    args.append(options);
+                }
+
+                JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, overrideCallData, parentModuleObject, args);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!isRequireDotResolve) {
+                    JSString* string = result.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto str = string->value(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
+                    if (!prefixed.isNull()) {
+                        return JSValue::encode(jsString(vm, prefixed));
+                    }
+                    return JSC::JSValue::encode(string);
+                }
+                return JSC::JSValue::encode(result);
             }
         }
 

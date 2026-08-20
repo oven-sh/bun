@@ -201,18 +201,18 @@ public:
     const_iterator begin() const { return const_iterator(*this, m_commonHeaders.begin(), m_uncommonHeaders.begin(), m_setCookieHeaders.begin()); }
     const_iterator end() const { return const_iterator(*this, m_commonHeaders.end(), m_uncommonHeaders.end(), m_setCookieHeaders.end()); }
 
+    // Names are unordered (iteration sorts them), but Set-Cookie values are an ordered list:
+    // getSetCookie() exposes the order, and of two cookies with the same name the later one wins.
     friend bool operator==(const HTTPHeaderMap& a, const HTTPHeaderMap& b)
     {
-        if (a.m_commonHeaders.size() != b.m_commonHeaders.size() || a.m_uncommonHeaders.size() != b.m_uncommonHeaders.size() || a.m_setCookieHeaders.size() != b.m_setCookieHeaders.size())
+        if (a.m_commonHeaders.size() != b.m_commonHeaders.size() || a.m_uncommonHeaders.size() != b.m_uncommonHeaders.size())
+            return false;
+
+        if (a.m_setCookieHeaders != b.m_setCookieHeaders)
             return false;
 
         for (auto& commonHeader : a.m_commonHeaders) {
             if (b.get(commonHeader.key) != commonHeader.value)
-                return false;
-        }
-
-        for (auto& uncommonHeader : a.m_setCookieHeaders) {
-            if (b.m_setCookieHeaders.find(uncommonHeader) == notFound)
                 return false;
         }
 

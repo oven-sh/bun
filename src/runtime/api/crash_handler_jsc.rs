@@ -23,6 +23,7 @@ pub(crate) mod js_bindings {
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
+            ("segfaultAtPc", __jsc_host_js_segfault_at_pc),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -124,6 +125,28 @@ pub(crate) mod js_bindings {
         }
         #[allow(unreachable_code)]
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Reports a segmentation fault as if the faulting instruction were at the
+    /// code address passed in (a number, e.g. a `bun:ffi` function's `.ptr`),
+    /// which is how the signal and exception handlers seed the trace from a
+    /// real fault. Lets a test choose which image frame 0 falls into without
+    /// a real fault, which ASAN builds would not route to the crash handler.
+    /// On POSIX the rest of the trace is this function's callers; on Windows
+    /// the walk needs a fault `CONTEXT`, so the trace is frame 0 alone.
+    #[bun_jsc::host_fn]
+    fn js_segfault_at_pc(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let pc = frame.argument(0).to_number(global)? as usize;
+        crash_handler::suppress_core_dumps_if_necessary();
+        let fp = if cfg!(windows) {
+            0
+        } else {
+            bun_core::debug::frame_address()
+        };
+        crash_handler::crash_handler(
+            crash_handler::CrashReason::SegmentationFault(0),
+            crash_handler::TraceSeed::Fault { pc, fp },
+        );
     }
 
     #[bun_jsc::host_fn]

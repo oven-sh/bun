@@ -790,7 +790,7 @@ mod draft {
             Output::disable_scoped_debug_writer();
         }
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = BoundedArray::<u8, TRACE_STRING_CAPACITY>::default();
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
@@ -1049,9 +1049,30 @@ mod draft {
                         &trace_buf
                     };
 
+                    // Decided before the trace string is encoded so that the
+                    // feature bit ends up in it, which is what lets bun.report
+                    // and Sentry tell these crashes apart from Bun's own.
+                    let native_module = native_module_of_crash(trace);
+                    if native_module.is_some() {
+                        bun_analytics::features::native_module_crash
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+
                     if debug_trace {
                         // SAFETY: single-threaded mutation under panic_mutex
                         HAS_PRINTED_MESSAGE.store(true, Ordering::Relaxed);
+
+                        if let Some(module) = &native_module {
+                            if writeln!(
+                                writer,
+                                "Crashed inside native module: {}",
+                                bstr::BStr::new(module.const_slice())
+                            )
+                            .is_err()
+                            {
+                                abort();
+                            }
+                        }
 
                         dump_stack_trace(trace, WriteStackTraceLimits::default());
 
@@ -1120,6 +1141,19 @@ mod draft {
                                 if writer.write_all(
                                 b"Bun has run out of memory.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                             ).is_err() { abort(); }
+                            } else if let Some(module) = &native_module {
+                                let colors = enable_ansi_colors_stderr();
+                                if write!(
+                                    writer,
+                                    "Bun has crashed inside the native module {}\"{}\"{}.\n\nThis is most likely a bug in that module, not in Bun.\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
+                                    Output::pretty_fmt_rt("<red><d>", colors),
+                                    bstr::BStr::new(module.const_slice()),
+                                    Output::pretty_fmt_rt("<r>", colors),
+                                )
+                                .is_err()
+                                {
+                                    abort();
+                                }
                             } else {
                                 if writer.write_all(
                                 b"Bun has crashed. This indicates a bug in Bun, not your code.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
@@ -1753,7 +1787,7 @@ mod draft {
         let reason =
             CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = BoundedArray::<u8, TRACE_STRING_CAPACITY>::default();
         {
             let _panic_guard = PANIC_MUTEX.lock();
             let writer = &mut stderr_writer();
@@ -2403,12 +2437,60 @@ mod draft {
         }
     };
 
+    /// Longest image name a [`StackLine`] keeps. Every non-bun frame carries its
+    /// name in the trace string.
+    const MAX_OBJECT_NAME_LEN: usize = 64;
+
+    /// Holds the trace string of a crash whose 20 captured frames all carry a
+    /// `MAX_OBJECT_NAME_LEN` name (about 1.5 KB), plus the header and a fault
+    /// address. `report()` copies it into 4 KB command-line buffers.
+    const TRACE_STRING_CAPACITY: usize = 2048;
+
+    type ObjectName = BoundedArray<u8, MAX_OBJECT_NAME_LEN>;
+
+    /// The image a captured address belongs to. This decides both how the
+    /// frame is encoded (bun frames carry no name so that bun.report can remap
+    /// them) and who a crash at that address is attributed to.
+    enum Object {
+        Bun,
+        /// Part of the operating system, or linked by Bun itself: libc,
+        /// ntdll.dll, the dyld shared cache. A fault in here was caused by
+        /// whatever called into it.
+        System(ObjectName),
+        /// Loaded by something other than Bun: a Node-API addon, a `bun:ffi`
+        /// library, or a library one of those depends on.
+        ThirdParty(ObjectName),
+    }
+
+    impl Object {
+        /// `None` when the loader has no name for the image.
+        fn named(image_path: &[u8], is_system: bool) -> Option<Object> {
+            let basename = bun_paths::basename(image_path);
+            if basename.is_empty() {
+                return None;
+            }
+            let mut name = ObjectName::default();
+            let _ = name.append_slice(&basename[..basename.len().min(MAX_OBJECT_NAME_LEN)]);
+            Some(if is_system {
+                Object::System(name)
+            } else {
+                Object::ThirdParty(name)
+            })
+        }
+
+        /// `None` for bun itself.
+        fn name(&self) -> Option<&[u8]> {
+            match self {
+                Object::Bun => None,
+                Object::System(name) | Object::ThirdParty(name) => Some(name.const_slice()),
+            }
+        }
+    }
+
     struct StackLine {
+        /// Offset inside `object`. For bun this is what bun.report remaps.
         address: i32,
-        // None -> from bun.exe
-        object: Option<Box<[u8]>>,
-        // Box<[u8]> rather than a borrowed slice into caller's `name_bytes`,
-        // since the only caller writes into a stack buffer and the value is consumed immediately.
+        object: Object,
     }
 
     impl StackLine {
@@ -2423,27 +2505,34 @@ mod draft {
                 let mut temp: [u16; 512] = [0; 512];
                 let name = bun_sys::windows::get_module_name_w(module, &mut temp)?;
 
-                let image_path = bun_sys::windows::exe_path_w();
+                // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
+                // Use a wrapping cast so an oversize/underflowed module offset
+                // produces a junk frame instead of panicking *inside* the crash
+                // handler (which would escalate to a double-panic and lose the
+                // entire report).
+                let address = addr.wrapping_sub(base_address) as i32;
 
+                if name == bun_sys::windows::exe_path_w().as_slice() {
+                    return Some(StackLine {
+                        address,
+                        object: Object::Bun,
+                    });
+                }
+
+                let mut windows_directory = [0u16; bun_sys::windows::MAX_PATH];
+                let is_system =
+                    bun_sys::windows::system_windows_directory_w(&mut windows_directory)
+                        .is_some_and(|directory| is_inside_directory_w(name, directory));
+
+                // Only the basename is converted: `name_bytes` is sized for a
+                // path component, not for a whole path of non-ASCII characters.
+                let basename = bun_paths::basename_windows(name);
                 return Some(StackLine {
-                    // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
-                    // Use a wrapping cast so an oversize/underflowed module offset
-                    // produces a junk frame instead of panicking *inside* the crash
-                    // handler (which would escalate to a double-panic and lose the
-                    // entire report).
-                    address: addr.wrapping_sub(base_address) as i32,
-
-                    object: if name != image_path.as_slice() {
-                        // GetModuleFileNameW output never has a trailing separator
-                        // or bare drive prefix, so `basename_windows`'s
-                        // stripping is a no-op on this domain.
-                        let basename = bun_paths::basename_windows(name);
-                        Some(Box::<[u8]>::from(
-                            &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
-                        ))
-                    } else {
-                        None
-                    },
+                    address,
+                    object: Object::named(
+                        strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
+                        is_system,
+                    )?,
                 });
             }
             #[cfg(target_os = "macos")]
@@ -2509,14 +2598,31 @@ mod draft {
                                         // The reason we are subtracting this known offset is mostly just so that we can
                                         // fit it within a signed 32-bit integer. The VLQs will be shorter too.
                                         return Some(StackLine {
-                                            object: None,
+                                            object: Object::Bun,
                                             address: i32::try_from(image_relative_address)
                                                 .expect("int cast"),
                                         });
-                                    } else {
-                                        // these libraries are not interesting, mark as unknown
+                                    }
+
+                                    let image_name = bun_sys::c::_dyld_get_image_name(i);
+                                    if image_name.is_null() {
                                         return None;
                                     }
+                                    // SAFETY: dyld returns a NUL-terminated path that stays
+                                    // valid while the image is loaded, and the image is
+                                    // loaded: we just found `address` inside it.
+                                    let image_path =
+                                        unsafe { bun_core::ffi::cstr(image_name) }.to_bytes();
+                                    // Everything Apple ships, including the dyld shared
+                                    // cache, lives under one of these two prefixes.
+                                    let is_system = image_path.starts_with(b"/usr/lib/")
+                                        || image_path.starts_with(b"/System/");
+                                    return Some(StackLine {
+                                        object: Object::named(image_path, is_system)?,
+                                        // Same wrapping cast as Windows: the offset is only
+                                        // informational for a library that is not bun.
+                                        address: address.wrapping_sub(base_address) as i32,
+                                    });
                                 }
                             }
                             _ => {}
@@ -2533,9 +2639,17 @@ mod draft {
                 let _ = name_bytes;
                 let address = addr.saturating_sub(1);
                 let m = bun_sys::elf::find_loaded_module(address)?;
+                if m.is_main_program {
+                    return Some(StackLine {
+                        address: i32::try_from(address - m.base_address).expect("int cast"),
+                        object: Object::Bun,
+                    });
+                }
                 return Some(StackLine {
-                    address: i32::try_from(address - m.base_address).expect("int cast"),
-                    object: None,
+                    // Same wrapping cast as Windows: the offset is only
+                    // informational for a library that is not bun.
+                    address: address.wrapping_sub(m.base_address) as i32,
+                    object: Object::named(&m.name, is_system_library_elf(&m.name))?,
                 });
             }
         }
@@ -2546,17 +2660,108 @@ mod draft {
                 return Ok(());
             };
 
-            if let Some(object) = &known.object {
+            if let Some(object) = known.object.name() {
+                // The name goes into the URL verbatim, and bun.report reads it
+                // back as `len` characters, so it has to stay ASCII and free of
+                // URL syntax.
+                let mut encodable = ObjectName::default();
+                for &byte in object {
+                    let _ = encodable.append(match byte {
+                        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'-' | b'+' => byte,
+                        _ => b'_',
+                    });
+                }
                 writer.write_all(VLQ::encode(1).slice())?;
-                writer.write_all(
-                    VLQ::encode(i32::try_from(object.len()).expect("int cast")).slice(),
-                )?;
-                writer.write_all(object)?;
+                writer.write_all(VLQ::encode(encodable.len() as i32).slice())?;
+                writer.write_all(encodable.const_slice())?;
             }
 
             writer.write_all(VLQ::encode(known.address).slice())?;
             Ok(())
         }
+    }
+
+    /// Whether a shared object came with the operating system, judged by where
+    /// it lives. A library that user code loads from a system directory is
+    /// treated as system too, which errs towards reporting a Bun crash.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    fn is_system_library_elf(path: &[u8]) -> bool {
+        // The vDSO is reported with a bare name ("linux-vdso.so.1").
+        if !strings::contains_char(path, b'/') {
+            return true;
+        }
+        // Also matches /lib64, /usr/lib64, /usr/lib/x86_64-linux-gnu and
+        // FreeBSD's /libexec/ld-elf.so.1. /usr/local/lib is deliberately not
+        // here: that is where user-installed libraries go.
+        if path.starts_with(b"/lib") || path.starts_with(b"/usr/lib") {
+            return true;
+        }
+        #[cfg(target_os = "android")]
+        if path.starts_with(b"/system/") || path.starts_with(b"/apex/") {
+            return true;
+        }
+        // Nix and Guix keep libc in a store path instead, so also recognize
+        // the libraries Bun itself links against (and the ones glibc loads
+        // lazily) by name.
+        const LIBC_FAMILY: &[&[u8]] = &[
+            b"libc.",
+            b"libm.",
+            b"libdl.",
+            b"libpthread.",
+            b"librt.",
+            b"libresolv.",
+            b"libgcc_s.",
+            b"libnss_",
+            b"ld-",
+        ];
+        let basename = bun_paths::basename(path);
+        LIBC_FAMILY
+            .iter()
+            .any(|prefix| basename.starts_with(prefix))
+    }
+
+    /// `path` names something inside `directory` (which has no trailing
+    /// separator). Windows paths compare case-insensitively, and
+    /// `GetModuleFileNameW` reports whatever casing the image was loaded with.
+    #[cfg(windows)]
+    fn is_inside_directory_w(path: &[u16], directory: &[u16]) -> bool {
+        fn is_separator(unit: u16) -> bool {
+            unit == u16::from(b'\\') || unit == u16::from(b'/')
+        }
+        fn fold(unit: u16) -> u16 {
+            match u8::try_from(unit) {
+                Ok(byte) => u16::from(byte.to_ascii_lowercase()),
+                Err(_) => unit,
+            }
+        }
+        !directory.is_empty()
+            && path.len() > directory.len()
+            && is_separator(path[directory.len()])
+            && path[..directory.len()]
+                .iter()
+                .zip(directory)
+                .all(|(&a, &b)| fold(a) == fold(b) || (is_separator(a) && is_separator(b)))
+    }
+
+    /// Names the third-party image the crash happened in, if any. The
+    /// innermost frame that belongs to an image at all decides: if that is
+    /// Bun's own code, this is a Bun crash, whatever native code is further
+    /// up the stack. System libraries do not decide anything because a fault
+    /// inside `memcpy` belongs to whoever passed it the pointer, and neither
+    /// do frames outside every image (JIT code, `bun:ffi` trampolines).
+    fn native_module_of_crash(trace: &StackTrace) -> Option<ObjectName> {
+        let mut name_bytes: [u8; 1024] = [0; 1024];
+        for &addr in &trace.instruction_addresses[0..trace.index] {
+            let Some(line) = StackLine::from_address(addr, &mut name_bytes) else {
+                continue;
+            };
+            match line.object {
+                Object::Bun => return None,
+                Object::System(_) => continue,
+                Object::ThirdParty(name) => return Some(name),
+            }
+        }
+        None
     }
 
     struct TraceString<'a> {

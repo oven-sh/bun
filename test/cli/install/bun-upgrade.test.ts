@@ -13,7 +13,7 @@ import {
   tmpdirSync,
 } from "harness";
 import { readdirSync, statSync } from "node:fs";
-import { copyFile, link, writeFile } from "node:fs/promises";
+import { copyFile, link, realpath, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 
@@ -39,7 +39,7 @@ const unpackFailure = isWindows ? "error: Failed to verify Bun (code: ENOENT)\n"
 async function installStandIn(dir: string): Promise<string> {
   const execPath = join(dir, basename(bunExe()));
   try {
-    await link(bunExe(), execPath);
+    await link(await realpath(bunExe()), execPath);
   } catch {
     await copyFile(bunExe(), execPath);
   }
@@ -55,11 +55,13 @@ beforeAll(async () => {
   standInExe = await installStandIn(standInDir);
 });
 
-// The first line of every release flow names the version bun decided to
-// install. Canary builds (CI and `bun bd`) word it as a downgrade; release
-// builds announce the new version.
+// Every release flow prints one line naming the version bun decided to install.
+// Canary builds (CI and `bun bd`) word it as a downgrade; release builds
+// announce the new version. It is not necessarily the first line: when the
+// version fetch takes longer than the progress bar's delay (a loaded machine
+// running a debug build), a "Fetching version tags" line precedes it on POSIX.
 function expectTargetsRelease(stderr: string, version: string) {
-  expect(stderr.split("\n")[0]).toBeOneOf([
+  expect(stderr.split("\n")).toContainAnyValues([
     `Downgrading from Bun ${Bun.version}-canary to Bun v${version}`,
     `Bun v${version} is out! You're on v${Bun.version}`,
   ]);
@@ -356,10 +358,10 @@ it.concurrent(
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     closeTempDirHandle();
 
-    if (stderr.startsWith("Congrats!")) {
+    if (stderr.includes("Congrats!")) {
       // A non-canary build is "already on" the version the server advertises
       // (its own) and stops before the download, so nothing may have changed.
-      expect(stderr).toBe(`Congrats! You're already on the latest version of Bun (which is v${version})\n`);
+      expect(stderr).toEndWith(`Congrats! You're already on the latest version of Bun (which is v${version})\n`);
       expect(readdirSync(installDir)).toEqual([exeName]);
     } else {
       expectTargetsRelease(stderr, version);

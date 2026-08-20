@@ -180,15 +180,15 @@ test.skipIf(!isASAN)(
   timeout,
 );
 
-// Regression: Bun.file().stat() (and bun:jsc's startSamplingProfiler) went
-// through a NodeFS that hung off the VirtualMachine as a raw box no teardown
-// path freed, so every Worker that called it leaked 4104 bytes on exit,
-// terminated or not. That box is gone: the pool task never needed it. stat()
-// runs from a timer so that the allocation's stack holds no module-evaluation
-// frame, which leaksan.supp would suppress (how this stayed hidden in scripts
-// that stat() at top level).
+// Regression: the per-VM NodeFS that Bun.file().stat() (and bun:jsc's
+// startSamplingProfiler) use hung off the VirtualMachine as a raw box no
+// teardown path freed, so every Worker that called it leaked 4104 bytes on
+// exit, terminated or not. It now belongs to the VM's runtime state, which
+// teardown drops. stat() runs from a timer so that the allocation's stack holds
+// no module-evaluation frame, which leaksan.supp would suppress (how this
+// stayed hidden in scripts that stat() at top level).
 test.skipIf(!isASAN)(
-  "a worker's Bun.file().stat() does not leak a per-VM NodeFS when it exits or is terminated",
+  "a worker's Bun.file().stat() does not leak the per-VM NodeFS when it exits or is terminated",
   async () => {
     await using proc = Bun.spawn({
       cmd: [

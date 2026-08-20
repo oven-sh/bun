@@ -80,6 +80,10 @@ pub(crate) struct RuntimeState {
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
+    /// The `node:fs` binding for native callers outside the module. Lazy-init
+    /// by [`crate::node::node_fs_binding::Binding::for_vm`]; it never gets a JS
+    /// wrapper, so it is freed when this box drops in [`deinit_runtime_state`].
+    pub(crate) node_fs_binding: core::cell::OnceCell<Box<crate::node::node_fs_binding::Binding>>,
     /// Synthetic `bun:main` wrapper source.
     pub(crate) entry_point: ServerEntryPoint,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
@@ -238,6 +242,21 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     unsafe { &(*state).global_dns_data }
 }
 
+/// Per-VM lazy slot behind [`crate::node::node_fs_binding::Binding::for_vm`].
+#[inline]
+pub(crate) fn vm_node_fs_binding()
+-> &'static core::cell::OnceCell<Box<crate::node::node_fs_binding::Binding>> {
+    let state = runtime_state();
+    debug_assert!(
+        !state.is_null(),
+        "vm_node_fs_binding before init_runtime_state"
+    );
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
+    // address is stable for the VM's lifetime and only read (interior
+    // mutability via `OnceCell`).
+    unsafe { &(*state).node_fs_binding }
+}
+
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
 /// thread's). `WTFTimer` may be entered off the VM's JS thread (the locked
 /// `All.wtf_timers` heap exists for exactly that), and the
@@ -374,6 +393,7 @@ unsafe fn init_runtime_state(
         },
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
+        node_fs_binding: core::cell::OnceCell::new(),
         entry_point: ServerEntryPoint::default(),
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the

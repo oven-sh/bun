@@ -66,9 +66,10 @@ where
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
 fn run_async<A: FsArgument>(
+    this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, A, &mut VirtualMachine) -> JSValue,
+    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
 ) -> JsResult<JSValue> {
     // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
@@ -120,7 +121,7 @@ fn run_async<A: FsArgument>(
     // bindings below.
     // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(global, args, vm))
+    Ok(create_task(global, this, args, vm))
 }
 
 #[inline(always)]
@@ -147,11 +148,25 @@ impl Binding {
     // `pub const js = jsc.Codegen.JSNodeJSFS;` + `toJS`/`fromJS`/`fromJSDirect`
     // → provided by `#[bun_jsc::JsClass]` derive.
 
-    // `pub const new = bun.TrivialNew(@This());`
-    pub(crate) fn new(init: Self) -> Box<Self> {
-        Box::new(init)
+    fn init(vm: *mut VirtualMachine) -> Box<Self> {
+        let binding = Box::new(Self::default());
+        // R-2: init-time write before anything else can see the binding;
+        // `with_mut` here is trivially un-aliased (sole owner of the fresh `Box`).
+        binding.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
+        binding
     }
 
+    /// The binding for native callers outside the `node:fs` module
+    /// (`Blob.stat()` / `unlink()`, `Bun__mkdirp`); the module gets its own
+    /// from [`create_binding`]. A per-VM instance keeps the path buffer inside
+    /// `NodeFS` off the stack without an allocation per call. This one lives in
+    /// the VM's `RuntimeState` and never gets a JS wrapper, so VM teardown
+    /// frees it, not [`Self::finalize`].
+    pub(crate) fn for_vm(global: &JSGlobalObject) -> &Self {
+        crate::jsc_hooks::vm_node_fs_binding().get_or_init(|| Self::init(global.bun_vm_ptr()))
+    }
+
+    /// Only [`create_binding`]'s boxes get a wrapper, and the wrapper owns them.
     pub fn finalize(self: Box<Self>) {
         drop(self);
     }
@@ -170,11 +185,7 @@ impl Binding {
 
     /// `callAsync(.cp)` — `AsyncCpTask::create` copies its paths via
     /// `to_thread_safe()`, so the arena is dropped with `slice`.
-    pub(crate) fn cp(
-        _this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -198,7 +209,7 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(global, cp_args, vm))
+        Ok(AsyncCpTask::create(global, this, cp_args, vm))
     }
 
     /// `callSync(.cp)`.
@@ -228,7 +239,7 @@ impl Binding {
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
     pub(crate) fn readdir(
-        _this: &Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -261,7 +272,7 @@ impl Binding {
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
         }
-        Ok(async_::Readdir::create(global, rd_args, vm))
+        Ok(async_::Readdir::create(global, this, rd_args, vm))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -327,11 +338,11 @@ macro_rules! node_fs_bindings {
                 pub const $sync: NodeFSFunction =
                     call_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>();
                 pub fn $async_(
-                    _this: &Self,
+                    this: &Self,
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(global, frame, async_::$F::create)
+                    run_async::<$Args>(this, global, frame, async_::$F::create)
                 }
             )*
         }
@@ -392,16 +403,9 @@ impl Binding {
 }
 
 pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
-    let module = Binding::new(Binding::default());
-
-    let vm = global.bun_vm_ptr();
-    // R-2: init-time write before the JS wrapper exists; `with_mut` here is
-    // trivially un-aliased (sole owner of the fresh `Box`).
-    module.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
-
-    // `module` was `Box::new`-allocated; ownership transfers to the GC
-    // wrapper, which calls `Binding::finalize` to reclaim it.
-    Binding::to_js_boxed(module, global)
+    // Ownership transfers to the GC wrapper, which calls `Binding::finalize`
+    // to reclaim it.
+    Binding::to_js_boxed(Binding::init(global.bun_vm_ptr()), global)
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the

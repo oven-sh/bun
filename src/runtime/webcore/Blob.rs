@@ -2177,12 +2177,14 @@ impl BlobExt for Blob {
                     .expect("infallible: store present")
                     .data
                     .as_file();
+                let binding = crate::node::fs::Binding::for_vm(global_this);
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
                         Ok(crate::node::fs::async_::Stat::create(
                             global_this,
+                            binding,
                             crate::node::fs::args::Stat {
                                 path: crate::node::types::PathLike::EncodedSlice(match path_like {
                                     // Already UTF-8 — take an owned copy.
@@ -2202,6 +2204,7 @@ impl BlobExt for Blob {
                         let vm = global_this.bun_vm().as_mut();
                         Ok(crate::node::fs::async_::Fstat::create(
                             global_this,
+                            binding,
                             crate::node::fs::args::Fstat {
                                 fd: *fd,
                                 big_int: false,

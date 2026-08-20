@@ -208,6 +208,11 @@ pub use super::node_fs_constant as constants;
 pub use super::node_fs_stat_watcher as StatWatcher;
 pub use super::node_fs_watcher as Watcher;
 
+/// `Binding` is the JSC-class instance that owns the per-thread `NodeFS`
+/// (`super::node_fs_binding::Binding`). Re-exported so the async `create()`
+/// entry points keep their `&mut Binding` signature.
+pub use super::node_fs_binding::Binding;
+
 /// `jsc.JSPromise.Strong` — re-exported under its Rust crate name:
 /// `bun_jsc::js_promise::Strong` / the `JSPromiseStrong` alias.
 use bun_jsc::JSPromiseStrong;
@@ -643,6 +648,7 @@ mod _async_tasks {
 
         pub(crate) fn create(
             global_object: &JSGlobalObject,
+            binding: &Binding,
             task_args: A,
             vm: &mut VirtualMachine,
         ) -> JSValue {
@@ -688,11 +694,15 @@ mod _async_tasks {
             match F {
                 NodeFSFunctionEnum::Open => {
                     let args: &args::Open = args_as!(args::Open);
-                    let mut path_buf = paths::path_buffer_pool::get();
                     let path = if strings::eql_comptime(args.path.slice(), b"/dev/null") {
                         ZStr::from_static(b"\\\\.\\NUL\0")
                     } else {
-                        args.path.slice_z(&mut *path_buf)
+                        // SAFETY (R-2): single-JS-thread `JsCell` projection of the
+                        // scratch path buffer; the borrow is held only across the
+                        // libuv enqueue below (which copies `path` internally) and
+                        // never across a JS re-entry point.
+                        args.path
+                            .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
@@ -851,8 +861,11 @@ mod _async_tasks {
                 }
                 NodeFSFunctionEnum::Statfs => {
                     let args: &args::StatFS = args_as!(args::StatFS);
-                    let mut path_buf = paths::path_buffer_pool::get();
-                    let path = args.path.slice_z(&mut *path_buf);
+                    // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
+                    // across the libuv enqueue (copies `path` internally).
+                    let path = args
+                        .path
+                        .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf });
                     // SAFETY: libuv copies `path` internally before return.
                     let rc = unsafe {
                         uv::uv_fs_statfs(
@@ -1292,6 +1305,7 @@ mod _async_tasks {
 
         pub(crate) fn create(
             global_object: &JSGlobalObject,
+            _binding: &Binding,
             args: A,
             vm: &mut VirtualMachine,
         ) -> JSValue {
@@ -1508,6 +1522,7 @@ mod _async_tasks {
         /// tracker, and this VM's loop.
         pub(crate) fn create(
             global_object: &JSGlobalObject,
+            _binding: &Binding,
             cp_args: args::Cp,
             vm: &mut VirtualMachine,
         ) -> JSValue {
@@ -9580,18 +9595,22 @@ fn map_rm_errno_narrow(e: E) -> E {
 /// `path` must point to a valid NUL-terminated C string.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__mkdirp(
-    _global_this: &JSGlobalObject,
+    global_this: &JSGlobalObject,
     path: *const c_char,
 ) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
-    NodeFS::default()
-        .mkdir_recursive(&args::Mkdir {
-            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                path_bytes, false,
-            )),
-            recursive: true,
-            ..Default::default()
+    // R-2: blocking syscalls, no JS re-entry; the `&mut NodeFS` is scoped to the call.
+    Binding::for_vm(global_this)
+        .node_fs
+        .with_mut(|node_fs| {
+            node_fs.mkdir_recursive(&args::Mkdir {
+                path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                    path_bytes, false,
+                )),
+                recursive: true,
+                ..Default::default()
+            })
         })
         .is_ok()
 }

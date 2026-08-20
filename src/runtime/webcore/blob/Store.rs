@@ -235,6 +235,7 @@ impl FileExt for File {
                 // task is created on the JS thread that owns it.
                 Ok(node_fs::async_::Unlink::create(
                     global_this,
+                    node_fs::Binding::for_vm(global_this),
                     node_fs::args::Unlink {
                         path: PathLike::EncodedSlice(encoded_slice),
                     },

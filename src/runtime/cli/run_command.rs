@@ -686,9 +686,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // remaining env-var seeding.
         let env_loader = this_transpiler.env_mut();
 
+        // Like npm, `npm_config_local_prefix` and the `npm_package_*` vars below
+        // describe this run and overwrite what an outer `bun run` exported
+        // (`cd pkg && bun run x` must see `pkg`'s values); name/version are left
+        // alone only when package.json lacks them. `npm_config_user_agent` /
+        // `npm_execpath` are deliberately inherited.
         env_loader
             .map
-            .put_default(b"npm_config_local_prefix", top_level_dir)
+            .put(b"npm_config_local_prefix", top_level_dir)
             .expect("unreachable");
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
@@ -738,26 +743,22 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
             if !package_json.name.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)
-                        .expect("unreachable");
-                }
+                env_loader
+                    .map
+                    .put(NpmArgs::PACKAGE_NAME, &package_json.name)
+                    .expect("unreachable");
             }
 
             env_loader
                 .map
-                .put_default(b"npm_package_json", package_json.source.path.text)
+                .put(b"npm_package_json", package_json.source.path.text)
                 .expect("unreachable");
 
             if !package_json.version.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
-                        .expect("unreachable");
-                }
+                env_loader
+                    .map
+                    .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
+                    .expect("unreachable");
             }
 
             if let Some(config) = package_json.config.as_deref() {

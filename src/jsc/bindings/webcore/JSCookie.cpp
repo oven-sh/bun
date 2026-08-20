@@ -30,16 +30,6 @@ namespace WebCore {
 
 using namespace JSC;
 
-// Helper for getting wrapped Cookie from JS value
-static Cookie* toCookieWrapped(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, JSValue value)
-{
-    auto& vm = getVM(lexicalGlobalObject);
-    auto* impl = JSCookie::toWrapped(vm, value);
-    if (!impl) [[unlikely]]
-        throwVMTypeError(lexicalGlobalObject, throwScope);
-    return impl;
-}
-
 static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, JSValue expiresValue)
 {
     if (expiresValue.isUndefined() || expiresValue.isNull()) {
@@ -233,7 +223,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_serialize);
 static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionParse);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionFrom);
-static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionSerialize);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_name);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_value);
 static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_value);
@@ -604,31 +593,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
     return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, globalObject, WTF::move(cookie)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionSerialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 1)
-        return JSValue::encode(jsEmptyString(vm));
-
-    Vector<Ref<Cookie>> cookies;
-
-    // Process each cookie argument
-    for (unsigned i = 0; i < callFrame->argumentCount(); i++) {
-        auto* cookieImpl = toCookieWrapped(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(i));
-        RETURN_IF_EXCEPTION(throwScope, {});
-
-        if (cookieImpl)
-            cookies.append(*cookieImpl);
-    }
-
-    // Let the C++ Cookie::serialize handle the work
-    String result = Cookie::serialize(vm, cookies);
-
-    return JSValue::encode(jsString(vm, result));
-}
-
 // Property getters/setters
 JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_name, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
@@ -938,14 +902,6 @@ void JSCookie::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSCookieOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
 DEFINE_VISIT_CHILDREN(JSCookie);
 
 template<typename Visitor>
@@ -956,13 +912,6 @@ void JSCookie::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     visitor.append(thisObject->m_expires);
-}
-
-void JSCookieOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsCookie = static_cast<JSCookie*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsCookie->wrapped(), jsCookie);
 }
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Cookie>&& impl)

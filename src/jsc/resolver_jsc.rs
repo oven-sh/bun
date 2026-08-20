@@ -1,10 +1,11 @@
 //! Host fns / C++ exports for `node:module` `_nodeModulePaths`. Lives here so
 //! `resolver/` has no JSC references.
 
+use crate::HostReturn as _;
 use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString, strings};
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
@@ -77,7 +78,7 @@ extern "C" fn node_module_paths_js_value(
         let mut index: Option<usize> = Some(suffix.len());
         while let Some(end) = index {
             let part: &[u8];
-            match suffix[..end].iter().rposition(|&b| b == SEP) {
+            match strings::last_index_of_char(&suffix[..end], SEP) {
                 Some(delim) => {
                     part = &suffix[delim + 1..end];
                     index = Some(delim);
@@ -118,7 +119,7 @@ extern "C" fn node_module_paths_js_value(
 
     OwnedString::as_raw_slice(&list)
         .to_js_array(global)
-        .unwrap_or(JSValue::ZERO)
+        .or_pending_exception()
 }
 
 /// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below.

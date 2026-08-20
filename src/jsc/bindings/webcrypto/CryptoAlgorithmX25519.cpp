@@ -25,7 +25,6 @@
 #include "CryptoAlgorithmX25519Params.h"
 #include "CryptoKeyOKP.h"
 #include "ScriptExecutionContext.h"
-#include "CryptoDigest.h"
 #include <openssl/curve25519.h>
 #include <wtf/CryptographicUtilities.h>
 

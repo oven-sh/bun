@@ -57,10 +57,10 @@ fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag
         ExprData::EString(s) => {
             let name = estring_to_store_str(&s);
             let bytes = name.slice();
-            if let Some(idx) = bytes.iter().position(|&b| b == b':') {
+            if let Some(idx) = bun_core::strings::index_of_char_usize(bytes, b':') {
                 let namespace = &bytes[..idx];
                 let local = &bytes[idx + 1..];
-                if local.contains(&b':') {
+                if bun_core::strings::contains_char(local, b':') {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::Syntax,
                         reason:

@@ -11,6 +11,4 @@
 //! path compiling. All behaviour lives in the lower crate; nothing here owns
 //! logic.
 
-pub use bun_event_loop::any_event_loop::{
-    EnteredEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
-};
+pub use bun_event_loop::any_event_loop::{EnteredEventLoop, EventLoopHandle, EventLoopTask};

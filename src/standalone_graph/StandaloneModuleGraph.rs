@@ -1177,16 +1177,12 @@ impl CompileResult {
     }
 }
 
-/// Copies `self_exe` to the temp file `temp_name` inside `out_dir` and writes
-/// the module graph into the copy. Returns the copy's fd, open for reading and
-/// writing. The caller renames `temp_name` over the outfile, which is in the
-/// same directory, so the rename never crosses a filesystem. (A cross-device
-/// rename degrades to a copy over the outfile, which destroys the previous
-/// executable when the copy fails.)
+/// Copies `self_exe` to `temp_name` inside `out_dir`, the outfile's directory,
+/// and writes the module graph into the copy. The caller renames the copy over
+/// the outfile; within one directory the rename cannot fail with EXDEV.
 ///
-/// On Windows the copy and the move take paths, not directory handles:
-/// `temp_name` is the absolute path of the temp file inside the outfile's
-/// directory and `out_dir` is unused.
+/// Windows copies and moves by path: `temp_name` is absolute and `out_dir` is
+/// unused.
 pub(crate) fn inject(
     bytes: &[u8],
     self_exe: &ZStr,
@@ -1882,10 +1878,8 @@ pub fn to_executable(
         bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     };
 
-    // The new executable is staged in the outfile's directory and renamed over
-    // the outfile, so the rename never crosses a filesystem. The name is seeded
-    // with `fast_random()` so that concurrent builds into one directory do not
-    // collide: `tmpname` mixes the seed with a timestamp they can share.
+    // `tmpname` mixes the seed with a timestamp, which concurrent builds into
+    // one directory can share; `fast_random()` keeps their names apart.
     let mut temp_name_buf = [0u8; 1024];
     let temp_name: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",

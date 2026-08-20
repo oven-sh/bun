@@ -9,7 +9,7 @@
 
 import { getProtectedObjects } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -1290,22 +1290,71 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   });
 });
 
+// Native code holds a stream's JS object through Strong handles from the moment the stream exists
+// until free_resources drops them, and holds the write callback of every frame it queues (the
+// writable's bound onwrite, which holds its stream) until the frame is written or dropped. Dropping a
+// handle is synchronous, so the release cases below read the handles before and after instead of
+// collecting: a stream or callback that was not released is still listed, named, and nothing about
+// it depends on the GC. A baseline is subtracted as a multiset, so handles that other activity holds
+// throughout, or releases late, do not matter.
+
+/** Names a stream by its side and its id on the session: "ServerHttp2Stream#5". */
+const label = (stream: http2.Http2Stream) => `${stream.constructor.name}#${stream.id}`;
+
+/**
+ * One entry per handle native code holds on an Http2Stream (as `label` names it) or on a function
+ * ("function bound onwrite"), sorted. `instanceof` is the guard because the list also holds JSC's own
+ * protected cells, which are not all objects.
+ */
+function rootedHandles(): string[] {
+  const entries: string[] = [];
+  for (const o of getProtectedObjects()) {
+    if (o instanceof Duplex && /Http2Stream$/.test(o.constructor.name)) entries.push(label(o as http2.Http2Stream));
+    else if (o instanceof Function) entries.push(`function ${o.name}`);
+  }
+  return entries.sort();
+}
+
+/** The entries of `rootedHandles()` that `baseline` does not account for. */
+function rootedBeyondNow(baseline: string[]): string[] {
+  const accountedFor = [...baseline];
+  return rootedHandles().filter(entry => {
+    const i = accountedFor.indexOf(entry);
+    if (i === -1) return true;
+    accountedFor.splice(i, 1);
+    return false;
+  });
+}
+
+/**
+ * Resolves to the handles still held beyond `baseline` once the releases have had time to land (the
+ * last handle of a completed stream goes one immediate after the stream closes).
+ */
+async function rootedBeyond(baseline: string[]): Promise<string[]> {
+  let left = rootedBeyondNow(baseline);
+  for (let i = 0; i < 50 && left.length > 0; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+    left = rootedBeyondNow(baseline);
+  }
+  return left;
+}
+
 describe("inbound stream lifecycle", () => {
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;
-    const refs: WeakRef<object>[] = [];
+    const rootedWhileOpen: boolean[] = [];
     let closedCount = 0;
     const allOpen = Promise.withResolvers<void>();
     const allClosed = Promise.withResolvers<void>();
     const server = http2.createServer();
-    server.on("stream", (stream: any) => {
-      refs.push(new WeakRef(stream));
+    server.on("stream", stream => {
+      rootedWhileOpen.push(rootedHandles().includes(label(stream)));
       stream.on("error", () => {});
       stream.on("close", () => {
         if (++closedCount === total) allClosed.resolve();
       });
       stream.resume();
-      if (refs.length === total) allOpen.resolve();
+      if (rootedWhileOpen.length === total) allOpen.resolve();
     });
     server.listen(0);
     await once(server, "listening");
@@ -1313,6 +1362,7 @@ describe("inbound stream lifecycle", () => {
     try {
       c.sendPreface();
       c.sendEmptySettings();
+      const baseline = rootedHandles();
       for (let i = 0; i < total; i++) {
         c.sendFrame(FrameType.HEADERS, 0x4, 1 + 2 * i, requestHeaderBlock("POST"));
       }
@@ -1323,16 +1373,8 @@ describe("inbound stream lifecycle", () => {
         c.sendFrame(FrameType.RST_STREAM, 0, 1 + 2 * i, cancel);
       }
       await allClosed.promise;
-      // The streams' native release rides the deferred teardown chain
-      // (setImmediate: rstNextTick / delayed destroy), so drain an immediate
-      // turn before each GC pass - gcTick's Bun.sleep(0) alone leaves the
-      // release pending on slow FinalizationRegistry lanes (alpine/musl
-      // needed a retry at 20 passes; collection is late there, not stuck).
-      for (let i = 0; i < 50 && refs.some(ref => ref.deref() !== undefined); i++) {
-        await new Promise(resolve => setImmediate(resolve));
-        await gcTick();
-      }
-      expect(refs.filter(ref => ref.deref() !== undefined).length).toBe(0);
+      expect(rootedWhileOpen).toEqual(Array(total).fill(true));
+      expect(await rootedBeyond(baseline)).toEqual([]);
     } finally {
       c.destroy();
       server.close();
@@ -1690,56 +1732,15 @@ describe("stream release after a queued END_STREAM", () => {
     return `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
   }
 
-  /** Names a stream by its side and its id on the session: "ServerHttp2Stream#5". */
-  const label = (stream: http2.Http2Stream) => `${stream.constructor.name}#${stream.id}`;
-
   /**
-   * One entry per Strong handle that native code holds on an Http2Stream object, naming the stream.
-   * A stream's JS object is held that way from the moment the stream exists until free_resources
-   * drops the handles (two for a server stream, one for a client stream). So a stream that is not
-   * released keeps its entries here for as long as its session lives, and a released one loses them
-   * at once: the handles are dropped, not collected, which is what makes this exact.
-   */
-  function rootedStreams(): string[] {
-    return getProtectedObjects()
-      .filter(o => o instanceof Duplex && /Http2Stream$/.test(o.constructor.name))
-      .map(o => label(o as http2.Http2Stream))
-      .sort();
-  }
-
-  /** The entries of `rootedStreams()` that `baseline` does not account for. */
-  function rootedBeyondNow(baseline: string[]): string[] {
-    const accountedFor = [...baseline];
-    return rootedStreams().filter(entry => {
-      const i = accountedFor.indexOf(entry);
-      if (i === -1) return true;
-      accountedFor.splice(i, 1);
-      return false;
-    });
-  }
-
-  /**
-   * Resolves to the handles still held beyond `baseline` once the releases have had time to land (the
-   * last handle of a completed stream goes one immediate after the stream closes).
-   */
-  async function rootedBeyond(baseline: string[]): Promise<string[]> {
-    let left = rootedBeyondNow(baseline);
-    for (let i = 0; i < 50 && left.length > 0; i++) {
-      await new Promise(resolve => setImmediate(resolve));
-      left = rootedBeyondNow(baseline);
-    }
-    return left;
-  }
-
-  /**
-   * Tears the case's session down and waits for the handles it still held (on the stalled streams)
-   * to go, which on the server side happens once its socket has closed, so that the next case starts
-   * from an empty set.
+   * Tears the case's session down and waits for the streams it still held (the stalled ones) to go,
+   * which on the server side happens once its socket has closed, so that the next case starts without
+   * them.
    */
   async function closeAll(client: http2.ClientHttp2Session, server: http2.Http2Server): Promise<void> {
     client.destroy();
     await new Promise(resolve => server.close(resolve));
-    for (let i = 0; i < 50 && rootedStreams().length > 0; i++) {
+    for (let i = 0; i < 50 && rootedHandles().some(entry => entry.includes("Http2Stream#")); i++) {
       await new Promise(resolve => setImmediate(resolve));
     }
   }
@@ -1762,7 +1763,7 @@ describe("stream release after a queued END_STREAM", () => {
     req.on("error", reject);
     req.on("response", () => {
       queuedAtResponse = client.state.outboundQueueSize!;
-      rootedAtResponse = rootedStreams().includes(label(req));
+      rootedAtResponse = rootedHandles().includes(label(req));
     });
     req.on("data", (chunk: Buffer) => {
       received += chunk.length;
@@ -1777,14 +1778,14 @@ describe("stream release after a queued END_STREAM", () => {
     const queuedAfterEnd: number[] = [];
     const server = http2.createServer();
     server.on("stream", stream => {
-      rootedWhileOpen.push(rootedStreams().includes(label(stream)));
+      rootedWhileOpen.push(rootedHandles().includes(label(stream)));
       stream.respond({ ":status": 200 });
       stream.end(BODY);
       queuedAfterEnd.push(stream.session!.state.outboundQueueSize!);
     });
     const client = http2.connect(await listen(server), { settings: { initialWindowSize: WINDOW } });
     try {
-      const baseline = rootedStreams();
+      const baseline = rootedHandles();
       const received: number[] = [];
       for (let i = 0; i < STREAMS; i++) {
         received.push((await roundTrip(client, { ":path": "/" })).received);
@@ -1822,7 +1823,7 @@ describe("stream release after a queued END_STREAM", () => {
       let stalledError: Error | null = null;
       stalled.on("error", err => (stalledError = err));
       await once(stalled, "response");
-      const baseline = rootedStreams();
+      const baseline = rootedHandles();
       for (let i = 0; i < STREAMS; i++) {
         await roundTrip(client, { ":path": "/" });
       }
@@ -1855,7 +1856,7 @@ describe("stream release after a queued END_STREAM", () => {
         stream.end(STALLED_BODY);
         return;
       }
-      rootedWhileOpen.push(rootedStreams().includes(label(stream)));
+      rootedWhileOpen.push(rootedHandles().includes(label(stream)));
       stream.resume();
       // Answer once the request's END_STREAM has been processed, like a handler that consumes the
       // request body does: the queued response is then the only thing the stream still waits for.
@@ -1880,7 +1881,7 @@ describe("stream release after a queued END_STREAM", () => {
         res.end(STALLED_BODY);
         return;
       }
-      rootedWhileOpen.push(rootedStreams().includes(label(res.stream)));
+      rootedWhileOpen.push(rootedHandles().includes(label(res.stream)));
       req.resume();
       req.on("end", () => res.end("ok"));
     });
@@ -1912,7 +1913,7 @@ describe("stream release after a queued END_STREAM", () => {
     try {
       // The server's window applies to requests opened after its SETTINGS frame has been received.
       await once(client, "remoteSettings");
-      const baseline = rootedStreams();
+      const baseline = rootedHandles();
       const responses: { queuedAtResponse: number; rootedAtResponse: boolean }[] = [];
       for (let i = 0; i < STREAMS; i++) {
         responses.push(await roundTrip(client, { ":method": "POST", ":path": "/" }, BODY));

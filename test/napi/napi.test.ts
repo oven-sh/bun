@@ -660,6 +660,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("done 3");
     });
 
+    // Items still queued when the function stops being dispatched. Node's
+    // process.exit() leaves them alone; an addon's call_js is usually written
+    // for a live env and aborts when handed a null one at exit (the finalizer
+    // is not printed: bun runs it at exit, node does not).
+    it("drops the queued items at process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_queued_items_at_process_exit", []);
+      expect(result).toBe("exiting with 3 items queued");
+    });
+
+    it("does not re-enter call_js when its callback calls process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_process_exit_inside_callback", []);
+      expect(result).toBe("call_js: item 1, env live, js_callback set");
+    });
+
+    // A worker's env really goes away while the addon's threads live on, so
+    // each item goes back to call_js the normal way, with the live env (calling
+    // into JS is refused: napi_cannot_run_js, 23, as this addon is built with
+    // NAPI_EXPERIMENTAL), and then the finalizer runs. Node does the same when
+    // its env cleanup turns the loop a last time.
+    it.each([
+      ["exit", 0],
+      ["terminate", 1],
+    ])("delivers the queued items with the live env when the creating worker is gone (%s)", async (how, code) => {
+      const result = await checkSameOutput(`test_threadsafe_function_queued_items_at_worker_${how}`, []);
+      // printf ends its lines with \r\n on Windows.
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          ...[1, 2, 3].flatMap(item => [
+            `call_js: item ${item}, env live, js_callback set`,
+            `call_js: item ${item}, call_function 23`,
+          ]),
+          "finalize: env live",
+          `worker exited with ${code}`,
+          "resolved to undefined",
+        ].join("\n"),
+      );
+    });
+
+    // After napi_tsfn_abort nothing queued runs any more: each item goes back
+    // to call_js with a null env and js_callback (the documented "free this"
+    // signal), then the function finalizes.
+    it("hands the queued items back with a null env after abort instead of running them", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_hands_queued_items_back", []);
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          "abort: 0",
+          ...[1, 2, 3].map(item => `call_js: item ${item}, env null, js_callback null`),
+          "finalize: env live",
+          "finalized: true",
+          "resolved to undefined",
+        ].join("\n"),
+      );
+    });
+
     // An addon's own threads outlive the worker that created the threadsafe
     // function (next-swc's tokio pool does this): the last call and the last
     // release land after the worker's VM, and its event loop, are gone.

@@ -77,6 +77,195 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
       expect(areEqual).toBe(false);
     });
   });
+
+  // A DOMException has no own properties: name, message and code are getters on
+  // the prototype backed by native state, and cause is a non-enumerable own
+  // property. It compares like an Error: name, message, cause, then any own
+  // enumerable properties.
+  describe("DOMException", () => {
+    class SubException extends DOMException {}
+
+    it.each([
+      [
+        "the same name and message",
+        () => new DOMException("boom", "AbortError"),
+        () => new DOMException("boom", "AbortError"),
+      ],
+      ["no arguments", () => new DOMException(), () => new DOMException()],
+      ["an omitted and an empty message", () => new DOMException(), () => new DOMException("", "Error")],
+      [
+        "a name given as a string and as an option",
+        () => new DOMException("boom", "AbortError"),
+        () => new DOMException("boom", { name: "AbortError" }),
+      ],
+      [
+        "equal object causes",
+        () => new DOMException("boom", { name: "AbortError", cause: { code: 1 } }),
+        () => new DOMException("boom", { name: "AbortError", cause: { code: 1 } }),
+      ],
+      [
+        "the same extra own property",
+        () => Object.assign(new DOMException("boom", "AbortError"), { extra: 1 }),
+        () => Object.assign(new DOMException("boom", "AbortError"), { extra: 1 }),
+      ],
+      [
+        "a structured clone",
+        () => new DOMException("boom", "DataCloneError"),
+        () => structuredClone(new DOMException("boom", "DataCloneError")),
+      ],
+      [
+        "subclass instances with the same state",
+        () => new SubException("boom", "AbortError"),
+        () => new SubException("boom", "AbortError"),
+      ],
+    ])("DOMExceptions with %s are equal", (_label, makeA, makeB) => {
+      expect(deepEquals(makeA(), makeB())).toBe(true);
+      expect(deepEquals(makeB(), makeA())).toBe(true);
+    });
+
+    it.each([
+      [
+        "different names",
+        () => new DOMException("boom", "AbortError"),
+        () => new DOMException("boom", "NotFoundError"),
+      ],
+      [
+        "different messages",
+        () => new DOMException("boom", "AbortError"),
+        () => new DOMException("other", "AbortError"),
+      ],
+      ["a default and an explicit name", () => new DOMException("boom"), () => new DOMException("boom", "AbortError")],
+      [
+        "different causes",
+        () => new DOMException("boom", { name: "AbortError", cause: 1 }),
+        () => new DOMException("boom", { name: "AbortError", cause: 2 }),
+      ],
+      [
+        "different object causes",
+        () => new DOMException("boom", { name: "AbortError", cause: { code: 1 } }),
+        () => new DOMException("boom", { name: "AbortError", cause: { code: 2 } }),
+      ],
+      [
+        "a cause on one side only",
+        () => new DOMException("boom", { name: "AbortError", cause: 1 }),
+        () => new DOMException("boom", "AbortError"),
+      ],
+      [
+        "different extra own properties",
+        () => Object.assign(new DOMException("boom", "AbortError"), { extra: 1 }),
+        () => Object.assign(new DOMException("boom", "AbortError"), { extra: 2 }),
+      ],
+      [
+        "an extra own property on one side only",
+        () => Object.assign(new DOMException("boom", "AbortError"), { extra: 1 }),
+        () => new DOMException("boom", "AbortError"),
+      ],
+      [
+        "subclass instances with different messages",
+        () => new SubException("boom", "AbortError"),
+        () => new SubException("other", "AbortError"),
+      ],
+    ])("DOMExceptions with %s are not equal", (_label, makeA, makeB) => {
+      expect(deepEquals(makeA(), makeB())).toBe(false);
+      expect(deepEquals(makeB(), makeA())).toBe(false);
+    });
+
+    // new DOMException("boom") has the default name "Error", so the plain object
+    // and the Error below match it on name and message; only the kind of object
+    // differs.
+    it.each([
+      ["an empty object", () => ({})],
+      ["a plain object with name and message properties", () => ({ name: "Error", message: "boom" })],
+      ["an Error", () => new Error("boom")],
+    ])("a DOMException is never equal to %s", (_label, makeOther) => {
+      expect(deepEquals(new DOMException("boom"), makeOther())).toBe(false);
+      expect(deepEquals(makeOther(), new DOMException("boom"))).toBe(false);
+    });
+
+    it("an undefined cause and a missing cause differ only in strict mode, as for Error", () => {
+      const domExceptions = [
+        new DOMException("boom", { name: "AbortError", cause: undefined }),
+        new DOMException("boom", "AbortError"),
+      ] as const;
+      const errors = [new Error("boom", { cause: undefined }), new Error("boom")] as const;
+      expect(deepEquals(...domExceptions)).toBe(!strict);
+      expect(deepEquals(...errors)).toBe(!strict);
+    });
+
+    it("a subclass instance and a base instance with the same state are equal only when not strict", () => {
+      expect(deepEquals(new SubException("boom", "AbortError"), new DOMException("boom", "AbortError"))).toBe(!strict);
+      expect(deepEquals(new SubException("boom", "AbortError"), new DOMException("other", "AbortError"))).toBe(false);
+    });
+
+    it("compares DOMExceptions nested in other values", () => {
+      const make = (name: string) => ({
+        reasons: [new DOMException("boom", name)],
+        byKey: new Map([["k", new DOMException("boom", name)]]),
+      });
+      expect(deepEquals(make("AbortError"), make("AbortError"))).toBe(true);
+      expect(deepEquals(make("AbortError"), make("TimeoutError"))).toBe(false);
+    });
+
+    it("compares a DOMException used as a cause", () => {
+      const make = (name: string) => new Error("outer", { cause: new DOMException("inner", name) });
+      expect(deepEquals(make("AbortError"), make("AbortError"))).toBe(true);
+      expect(deepEquals(make("AbortError"), make("TimeoutError"))).toBe(false);
+    });
+
+    it("a getter on the cause that throws propagates", () => {
+      const throwing = () =>
+        new DOMException("boom", {
+          name: "AbortError",
+          cause: {
+            get value() {
+              throw new RangeError("from cause");
+            },
+          },
+        });
+      expect(() => deepEquals(throwing(), throwing())).toThrow(RangeError);
+    });
+
+    it("reads each cause once per side, as for Error", () => {
+      let reads = 0;
+      const cause = () => ({
+        get value() {
+          reads++;
+          return 1;
+        },
+      });
+      deepEquals(
+        new DOMException("boom", { name: "AbortError", cause: cause() }),
+        new DOMException("boom", { name: "AbortError", cause: cause() }),
+      );
+      expect(reads).toBe(2);
+      reads = 0;
+      deepEquals(new Error("boom", { cause: cause() }), new Error("boom", { cause: cause() }));
+      expect(reads).toBe(2);
+    });
+
+    // Each level used to be compared twice, once per argument order, so a chain
+    // of n causes took 2^n comparisons.
+    it("compares a long chain of causes in linear time", () => {
+      const chain = (depth: number, leafMessage: string) => {
+        let exception = new DOMException(leafMessage, "AbortError");
+        for (let i = 0; i < depth; i++) {
+          exception = new DOMException(`level ${i}`, { name: "AbortError", cause: exception });
+        }
+        return exception;
+      };
+      expect(deepEquals(chain(64, "leaf"), chain(64, "leaf"))).toBe(true);
+      expect(deepEquals(chain(64, "leaf"), chain(64, "other leaf"))).toBe(false);
+    });
+
+    it("terminates on a cause cycle", () => {
+      const cyclic = () => {
+        const exception = new DOMException("boom", { name: "AbortError", cause: null });
+        exception.cause = exception;
+        return exception;
+      };
+      expect(deepEquals(cyclic(), cyclic())).toBe(true);
+    });
+  });
 });
 
 // The cases documented at https://bun.sh/docs/api/utils#bun-deepequals as the

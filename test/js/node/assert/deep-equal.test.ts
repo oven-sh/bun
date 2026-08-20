@@ -59,6 +59,8 @@ function withExtraProperty<T extends object>(value: T): T {
   return Object.assign(value, { extra: 1 });
 }
 
+class SubDOMException extends DOMException {}
+
 function selfReferencingObject() {
   const object: Record<string, unknown> = {};
   object.self = object;
@@ -390,6 +392,130 @@ const cases: Case[] = [
     loose: false,
   },
 
+  // DOMException: Error.prototype is in its chain, so node compares it like an
+  // error (name, message, cause, then own enumerable properties), even though
+  // name and message are prototype getters rather than own properties.
+  {
+    name: "two DOMExceptions with the same name and message",
+    a: () => new DOMException("x", "AbortError"),
+    b: () => new DOMException("x", "AbortError"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two DOMExceptions constructed without arguments",
+    a: () => new DOMException(),
+    b: () => new DOMException(),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a DOMException and its structured clone",
+    a: () => new DOMException("x", "DataCloneError"),
+    b: () => structuredClone(new DOMException("x", "DataCloneError")),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "DOMExceptions with different names",
+    a: () => new DOMException("x", "AbortError"),
+    b: () => new DOMException("x", "NotFoundError"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "DOMExceptions with different messages",
+    a: () => new DOMException("x", "AbortError"),
+    b: () => new DOMException("y", "AbortError"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a DOMException and an empty object",
+    a: () => new DOMException("x"),
+    b: () => ({}),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an empty object and a DOMException",
+    a: () => ({}),
+    b: () => new DOMException("x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a DOMException and an Error with the same message",
+    a: () => new DOMException("x"),
+    b: () => new Error("x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "DOMExceptions with different causes",
+    a: () => new DOMException("x", { name: "AbortError", cause: 1 }),
+    b: () => new DOMException("x", { name: "AbortError", cause: 2 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "DOMExceptions with equal object causes",
+    a: () => new DOMException("x", { name: "AbortError", cause: { code: 1 } }),
+    b: () => new DOMException("x", { name: "AbortError", cause: { code: 1 } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a DOMException with a cause and one without",
+    a: () => new DOMException("x", { name: "AbortError", cause: 1 }),
+    b: () => new DOMException("x", "AbortError"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a DOMException with an undefined cause and one without a cause",
+    a: () => new DOMException("x", { name: "AbortError", cause: undefined }),
+    b: () => new DOMException("x", "AbortError"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal, as it does for Error",
+  },
+  {
+    name: "a DOMException with an extra own property",
+    a: () => withExtraProperty(new DOMException("x", "AbortError")),
+    b: () => new DOMException("x", "AbortError"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "DOMExceptions with the same extra own property",
+    a: () => withExtraProperty(new DOMException("x", "AbortError")),
+    b: () => withExtraProperty(new DOMException("x", "AbortError")),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a DOMException subclass instance and a DOMException with the same state",
+    a: () => new SubDOMException("x", "AbortError"),
+    b: () => new DOMException("x", "AbortError"),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "DOMException subclass instances with different messages",
+    a: () => new SubDOMException("x", "AbortError"),
+    b: () => new SubDOMException("y", "AbortError"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "arrays holding DOMExceptions with different names",
+    a: () => [new DOMException("x", "AbortError")],
+    b: () => [new DOMException("x", "TimeoutError")],
+    strict: false,
+    loose: false,
+  },
+
   // Map and Set.
   {
     name: "maps with different insertion order",
@@ -708,6 +834,22 @@ describe("util.isDeepStrictEqual", () => {
     expect(calls).toBe(2);
   });
 
+  test("reads a DOMException's cause once per side", () => {
+    let calls = 0;
+    const make = () =>
+      new DOMException("x", {
+        name: "AbortError",
+        cause: {
+          get k() {
+            calls++;
+            return 42;
+          },
+        },
+      });
+    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+    expect(calls).toBe(2);
+  });
+
   // The third argument was added in Node v26.
   describe("skipPrototype", () => {
     class Foo {
@@ -736,6 +878,11 @@ describe("util.isDeepStrictEqual", () => {
       ["Map value", () => new Map([["k", new Foo(1)]]), () => new Map([["k", new Bar(1)]])],
       ["Set element", () => new Set([new Foo(1)]), () => new Set([new Bar(1)])],
       ["Error cause", () => new Error("e", { cause: new Foo(1) }), () => new Error("e", { cause: new Bar(1) })],
+      [
+        "DOMException cause",
+        () => new DOMException("e", { name: "AbortError", cause: new Foo(1) }),
+        () => new DOMException("e", { name: "AbortError", cause: new Bar(1) }),
+      ],
     ])("propagates through %s", (_name, makeA, makeB) => {
       expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
       expect(util.isDeepStrictEqual(makeA(), makeB(), true)).toBe(true);

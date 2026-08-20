@@ -295,6 +295,85 @@ describe("expect()", () => {
       expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "1", "b": "2" }));
     });
 
+    // name and message are prototype getters and cause is a non-enumerable own
+    // property, so none of them is visible to the own-property walk; they are
+    // compared the same way they are for Error.
+    test("DOMException", () => {
+      expect(new DOMException("boom", "AbortError")).toEqual(new DOMException("boom", "AbortError"));
+      expect(new DOMException("boom", "AbortError")).toStrictEqual(new DOMException("boom", "AbortError"));
+      expect(new DOMException()).toEqual(new DOMException());
+
+      expect(new DOMException("boom", "AbortError")).not.toEqual(new DOMException("boom", "NotFoundError"));
+      expect(new DOMException("boom", "AbortError")).not.toEqual(new DOMException("other", "AbortError"));
+      expect(new DOMException("boom", "AbortError")).not.toStrictEqual(new DOMException("other", "AbortError"));
+
+      expect(new DOMException("boom")).not.toEqual({});
+      expect({}).not.toEqual(new DOMException("boom"));
+      expect(new DOMException("boom")).not.toEqual(new Error("boom"));
+      expect(new Error("boom")).not.toEqual(new DOMException("boom"));
+
+      expect(new DOMException("boom", { name: "AbortError", cause: { code: 1 } })).toEqual(
+        new DOMException("boom", { name: "AbortError", cause: { code: 1 } }),
+      );
+      expect(new DOMException("boom", { name: "AbortError", cause: 1 })).not.toEqual(
+        new DOMException("boom", { name: "AbortError", cause: 2 }),
+      );
+      expect(new DOMException("boom", { name: "AbortError", cause: 1 })).not.toEqual(
+        new DOMException("boom", "AbortError"),
+      );
+
+      expect(Object.assign(new DOMException("boom", "AbortError"), { extra: 1 })).toEqual(
+        Object.assign(new DOMException("boom", "AbortError"), { extra: 1 }),
+      );
+      expect(Object.assign(new DOMException("boom", "AbortError"), { extra: 1 })).not.toEqual(
+        Object.assign(new DOMException("boom", "AbortError"), { extra: 2 }),
+      );
+      expect(Object.assign(new DOMException("boom", "AbortError"), { extra: 1 })).not.toEqual(
+        new DOMException("boom", "AbortError"),
+      );
+
+      expect({ reason: [new DOMException("boom", "AbortError")] }).toEqual({
+        reason: [new DOMException("boom", "AbortError")],
+      });
+      expect({ reason: [new DOMException("boom", "AbortError")] }).not.toEqual({
+        reason: [new DOMException("boom", "TimeoutError")],
+      });
+    });
+
+    test("DOMException inside asymmetric matchers", () => {
+      expect({ reason: new DOMException("boom", "AbortError") }).toEqual(
+        expect.objectContaining({ reason: new DOMException("boom", "AbortError") }),
+      );
+      expect({ reason: new DOMException("boom", "AbortError") }).not.toEqual(
+        expect.objectContaining({ reason: new DOMException("boom", "TimeoutError") }),
+      );
+      expect([new DOMException("boom", "AbortError")]).toEqual(
+        expect.arrayContaining([new DOMException("boom", "AbortError")]),
+      );
+      expect([new DOMException("boom", "AbortError")]).not.toEqual(
+        expect.arrayContaining([new DOMException("boom", "TimeoutError")]),
+      );
+    });
+
+    test("DOMException causes are read once per side", () => {
+      let reads = 0;
+      const make = () =>
+        new DOMException("boom", {
+          name: "AbortError",
+          cause: {
+            get value() {
+              reads++;
+              return 1;
+            },
+          },
+        });
+      expect(make()).toEqual(make());
+      expect(reads).toBe(2);
+      reads = 0;
+      expect(make()).toStrictEqual(make());
+      expect(reads).toBe(2);
+    });
+
     // TODO: FormData
     // It would need to compare Blob, which is tricky.
   });
@@ -324,6 +403,21 @@ describe("expect()", () => {
 
     expect(new RegExp("s", "g")).toEqual(new RegExp("s", "g"));
     expect(new RegExp("s", "g")).not.toEqual(new RegExp("s", "i"));
+  });
+
+  test("deepEquals error causes", () => {
+    expect(new Error("boom", { cause: { code: 1 } })).toEqual(new Error("boom", { cause: { code: 1 } }));
+    expect(new Error("boom", { cause: { code: 1 } })).toStrictEqual(new Error("boom", { cause: { code: 1 } }));
+    expect(new Error("boom", { cause: 1 })).not.toEqual(new Error("boom", { cause: 2 }));
+    expect(new Error("boom", { cause: 1 })).not.toStrictEqual(new Error("boom", { cause: 2 }));
+    expect(new Error("boom", { cause: 1 })).not.toEqual(new Error("boom"));
+    expect(new Error("boom")).not.toEqual(new Error("boom", { cause: 1 }));
+
+    // Only the presence of the property distinguishes these two.
+    expect(new Error("boom", { cause: undefined })).toEqual(new Error("boom"));
+    if (isBun) {
+      expect(new Error("boom", { cause: undefined })).not.toStrictEqual(new Error("boom"));
+    }
   });
 
   test("deepEquals and deleted properties", () => {

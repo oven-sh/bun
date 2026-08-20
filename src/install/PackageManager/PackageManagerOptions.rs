@@ -298,10 +298,8 @@ pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
-// `join_abs_string_buf` requires an absolute base (asserts on Windows,
-// mangles on POSIX). A non-absolute env var falls through to the next
-// candidate; cwd is not a valid resolve base here because it changes
-// between `open_global_dir` and `open_global_bin_dir`.
+// `join_abs_string_buf` asserts an absolute base. A non-absolute env var
+// falls through to the next candidate.
 #[inline]
 fn get_abs(v: Option<&'static [u8]>) -> Option<&'static [u8]> {
     v.filter(|p| bun_paths::is_absolute(p))

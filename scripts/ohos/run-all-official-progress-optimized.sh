@@ -284,7 +284,8 @@ run_test() {
   case "$f" in
     *socket.io/*|*grpc-js/*|*jsonwebtoken/*|*pg-gateway/*|*resvg/*|*@napi-rs/*|*@fastify/*|*@electric-sql/*)
       _serial=1 ;;
-    *fetch/fetch-http3-cold-post*|*hono/hello-world*|*wpt-h2/*|*canvas/*|*socket.io*)
+    *fetch/fetch-http3-cold-post*|*hono/hello-world*|*wpt-h2/*|*canvas/*|*socket.io*|\
+    *fetch/fetch-tcp-stress*)
       _serial=1 ;;
     # native-plugin 编译/加载 .node 与并发 bun 进程冲突（_Znwm symbol not
     # found：任何并发 bun test 进程存在时 .node 的 libc++ 符号解析竞争）。

@@ -925,29 +925,34 @@ impl<'a> Linker<'a> {
 
         bun_core::analytics::Features::binlinks_inc();
 
+        // Only this bin's outcome decides whether the link just made is kept.
+        let prior_err = self.err.take();
         #[cfg(not(windows))]
         {
             self.create_symlink(abs_target, abs_dest, global);
         }
         #[cfg(windows)]
         {
-            let target = match sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
-                Ok(f) => f,
+            match sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
+                Ok(target) => self.create_windows_shim(&target, abs_target, abs_dest, global),
                 Err(err) => {
                     let err: crate::Error = err.into();
+                    // ignore directories, creating a shim for one won't do anything
                     if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
-                        // ignore directories, creating a shim for one won't do anything
                         self.err = Some(err);
                     }
-                    return;
                 }
-            };
-            self.create_windows_shim(&target, abs_target, abs_dest, global);
+            }
         }
+        let err = self.err;
+        self.err = prior_err.or(err);
 
-        if self.err.is_some() {
+        if err.is_some() {
             // cleanup on error just in case
             Self::unlink_bin_or_shim(abs_dest);
+            if let Some(seen) = self.seen.as_deref_mut() {
+                seen.remove(abs_dest.as_bytes());
+            }
             return;
         }
 

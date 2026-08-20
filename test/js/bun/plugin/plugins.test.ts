@@ -197,6 +197,22 @@ plugin({
   },
 });
 
+// Rejects the first load of each path and serves every later one. The test
+// reads back how often it was called for its path.
+const rejectsOnceCalls = new Map<string, number>();
+plugin({
+  name: "rejects once per path",
+  setup(builder) {
+    builder.onResolve({ filter: /.*/, namespace: "rejects-once" }, ({ path }) => ({ path, namespace: "rejects-once" }));
+    builder.onLoad({ filter: /.*/, namespace: "rejects-once" }, async ({ path }) => {
+      const calls = (rejectsOnceCalls.get(path) ?? 0) + 1;
+      rejectsOnceCalls.set(path, calls);
+      if (calls === 1) throw new Error("not ready yet");
+      return { contents: `export default ${calls};`, loader: "js" };
+    });
+  },
+});
+
 // This is to test that it works when imported from a separate file
 import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
@@ -506,6 +522,26 @@ describe("errors", () => {
       await import("rejected-promise2:hi");
       throw -1;
     }).toThrow("Rejected Promise");
+  });
+
+  // A module whose onLoad rejected is not kept as failed: the next import() of
+  // it calls onLoad again, so a failure that was transient stays transient.
+  it("an onLoad that rejected is called again by the next import()", async () => {
+    // A path of its own, so that a re-run of this test starts from an unloaded module.
+    const path = `module-${rejectsOnceCalls.size}`;
+    const first = await import(`rejects-once:${path}`).then(
+      () => "fulfilled",
+      error => error.message,
+    );
+    const second = await import(`rejects-once:${path}`).then(
+      namespace => namespace.default,
+      error => error.message,
+    );
+    expect({ first, second, calls: rejectsOnceCalls.get(path) }).toEqual({
+      first: "not ready yet",
+      second: 2,
+      calls: 2,
+    });
   });
 
   it("can work with http urls", async () => {

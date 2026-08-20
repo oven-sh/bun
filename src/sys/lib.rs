@@ -6243,6 +6243,10 @@ pub struct WindowsOpenDirOptions {
     pub iterable: bool,
     pub no_follow: bool,
     pub can_rename_or_delete: bool,
+    /// Report `STATUS_DELETE_PENDING`/`STATUS_FILE_DELETED` as ENOENT instead
+    /// of the EPERM the Win32 conversion produces. A directory in that state
+    /// can never be opened again, so for a deleter it is already gone.
+    pub delete_pending_is_enoent: bool,
     pub op: WindowsOpenDirOp,
 }
 #[cfg(windows)]
@@ -6779,6 +6783,12 @@ pub(crate) fn open_dir_at_windows_nt_path(
             0,
         )
     };
+    if options.delete_pending_is_enoent
+        && (rc == bun_windows_sys::ntstatus::DELETE_PENDING
+            || rc == bun_windows_sys::ntstatus::FILE_DELETED)
+    {
+        return Err(Error::from_code(E::ENOENT, Tag::open));
+    }
     match windows::Win32Error::from_nt_status(rc) {
         windows::Win32Error::SUCCESS => Ok(Fd::from_system(fd)),
         code => Err(Error::from_code(code.to_e(), Tag::open)),
@@ -7024,6 +7034,30 @@ pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd
     let norm = normalize_path_windows(dir, path, &mut wbuf.0[..])?;
     openat_windows_impl(dir, norm, flags, perm)
 }
+/// Iterable directory open for the recursive delete-tree walk
+/// (`O_DIRECTORY | O_RDONLY | O_NOFOLLOW` semantics). Differs from a plain
+/// `openat` in one way: a directory whose deletion another party already
+/// started reports ENOENT (see `WindowsOpenDirOptions::delete_pending_is_enoent`),
+/// so the walk treats it like an entry that vanished between readdir and open.
+#[cfg(windows)]
+pub fn openat_dir_for_delete_tree(dir: impl AsFd, path: &[u8]) -> Maybe<Fd> {
+    let dir = dir.as_fd();
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let wide = convert_path_u8_to_u16(&mut wbuf.0[..], path)?;
+    let mut buf2 = bun_paths::w_path_buffer_pool::get();
+    let norm = normalize_path_windows(dir, wide, &mut buf2.0[..])?;
+    open_dir_at_windows_nt_path(
+        dir,
+        norm,
+        WindowsOpenDirOptions {
+            iterable: true,
+            no_follow: true,
+            delete_pending_is_enoent: true,
+            ..Default::default()
+        },
+    )
+}
+
 /// `openatWindowsA` — UTF-8 input.
 #[cfg(windows)]
 #[inline(never)]

@@ -9661,12 +9661,19 @@ fn dt_open_dir(parent: &sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
     path_buf[len] = 0;
     // SAFETY: NUL written at [len].
     let z = ZStr::from_buf(&path_buf[..], len);
-    match Syscall::openat(
+    // On Windows a concurrent deleter leaves the directory in the
+    // delete-pending state; `openat_dir_for_delete_tree` reports that as
+    // ENOENT so the walk treats it like any other vanished entry.
+    #[cfg(windows)]
+    let result = sys::openat_dir_for_delete_tree(parent.fd, z.as_bytes());
+    #[cfg(not(windows))]
+    let result = Syscall::openat(
         parent.fd,
         z,
         sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW,
         0,
-    ) {
+    );
+    match result {
         Ok(fd) => Ok(sys::Dir::from_fd(fd)),
         Err(e) => Err(e.get_errno()),
     }
@@ -9808,6 +9815,12 @@ pub(crate) fn zig_delete_tree(
                                 treat_as_dir = false;
                                 continue 'handle_entry;
                             }
+                            Err(E::ENOENT) => {
+                                // A concurrent deleter removed this entry
+                                // between readdir and open. Skip it, same as
+                                // the min-stack walk below.
+                                break 'handle_entry;
+                            }
                             #[cfg(target_os = "macos")]
                             Err(e @ (E::EACCES | E::EPERM)) => {
                                 // Same as the pop-delete site below: node's rimraf
@@ -9845,6 +9858,8 @@ pub(crate) fn zig_delete_tree(
                     let top_fd = stack[top_idx].iter.iter.dir;
                     match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
                         Ok(()) => break 'handle_entry,
+                        // A concurrent deleter already unlinked this entry.
+                        Err(E::ENOENT) => break 'handle_entry,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
                             continue 'handle_entry;

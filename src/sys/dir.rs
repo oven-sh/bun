@@ -143,12 +143,21 @@ impl Dir {
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
                 'handle_entry: loop {
                     if treat_as_dir {
-                        let new_dir = match openat_a(
+                        // Windows: a delete-pending child reports ENOENT, so a
+                        // concurrent deleter does not abort the walk.
+                        #[cfg(windows)]
+                        let opened = crate::openat_dir_for_delete_tree(
+                            top.iter.dir(),
+                            entry.name.slice_u8(),
+                        );
+                        #[cfg(not(windows))]
+                        let opened = openat_a(
                             top.iter.dir(),
                             entry.name.slice_u8(),
                             O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
                             0,
-                        ) {
+                        );
+                        let new_dir = match opened {
                             Ok(fd) => fd,
                             Err(e) => match e.get_errno() {
                                 E::ENOTDIR => {
@@ -260,12 +269,18 @@ impl Dir {
                     },
                 }
             } else {
-                return match openat_a(
+                // Windows: a delete-pending dir reports ENOENT (see the
+                // child-open site in `delete_tree`).
+                #[cfg(windows)]
+                let opened = crate::openat_dir_for_delete_tree(self.fd, sub_path);
+                #[cfg(not(windows))]
+                let opened = openat_a(
                     self.fd,
                     sub_path,
                     O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
                     0,
-                ) {
+                );
+                return match opened {
                     Ok(fd) => Ok(Some(fd)),
                     Err(e) => match e.get_errno() {
                         E::ENOENT => Ok(None),

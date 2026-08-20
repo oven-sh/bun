@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, rmSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, chownSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir, withFileSizeLimit } from "harness";
 import { join } from "path";
 
 const isRoot = !isWindows && process.getuid?.() === 0;
@@ -457,6 +457,23 @@ describe.concurrent("bun pm pkg", () => {
       const { error, code } = await runPmPkg(["set", "emptyString="], dir, false);
       expect(error).toContain("Empty value");
       expect(code).toBe(1);
+    });
+
+    it.skipIf(isWindows)("should keep the old package.json when the write fails", async () => {
+      const original = createTestPackageJson();
+      using dir = tempDir("pm-pkg-write-fails", { "package.json": original });
+      await using proc = spawn({
+        cmd: withFileSizeLimit(0, [bunExe(), "pm", "pkg", "set", "name=renamed"]),
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Failed to write package.json: EFBIG");
+      expect(exitCode).toBe(1);
+      expect(await Bun.file(join(dir, "package.json")).text()).toBe(original);
+      expect(readdirSync(dir)).toEqual(["package.json"]);
     });
   });
 

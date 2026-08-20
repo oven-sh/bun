@@ -77,7 +77,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSBroadcastChannelPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSBroadcastChannelPrototype* ptr = new (NotNull, JSC::allocateCell<JSBroadcastChannelPrototype>(vm)) JSBroadcastChannelPrototype(vm, globalObject, structure);
+        JSBroadcastChannelPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBroadcastChannelPrototype))) JSBroadcastChannelPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -91,7 +91,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -237,7 +237,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
 void JSBroadcastChannelPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSBroadcastChannel::info(), JSBroadcastChannelPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSBroadcastChannel::info(), JSBroadcastChannelPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     Bun::WebStreams::installInspectCustom(vm, this, jsBroadcastChannelPrototype_inspectCustom);
 }
@@ -414,12 +414,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_unref, (JSGlobalObj
 
 JSC::GCClient::IsoSubspace* JSBroadcastChannel::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSBroadcastChannel, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBroadcastChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBroadcastChannel = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBroadcastChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBroadcastChannel = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSBroadcastChannel, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBroadcastChannel, m_subspaceForBroadcastChannel));
 }
 
 void JSBroadcastChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

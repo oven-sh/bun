@@ -40,7 +40,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSCompressionStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSCompressionStreamPrototype* ptr = new (NotNull, JSC::allocateCell<JSCompressionStreamPrototype>(vm)) JSCompressionStreamPrototype(vm, structure);
+        JSCompressionStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCompressionStreamPrototype))) JSCompressionStreamPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -54,7 +54,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -92,7 +92,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCompressionStreamPrototype_inspectCustom, (JSGlobalOb
 void JSCompressionStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSCompressionStream::info(), JSCompressionStreamPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSCompressionStream::info(), JSCompressionStreamPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsCompressionStreamPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -129,12 +129,7 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSCompressionStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSCompressionStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCompressionStreamConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCompressionStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCompressionStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCompressionStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCompressionStreamConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSCompressionStreamConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCompressionStreamConstructor, m_subspaceForCompressionStreamConstructor));
 }
 
 template<> void JSCompressionStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -203,7 +198,7 @@ JSCompressionStream* JSCompressionStream::create(VM& vm, Structure* structure)
 
 Structure* JSCompressionStream::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSCompressionStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -225,12 +220,7 @@ JSValue JSCompressionStream::getConstructor(VM& vm, const JSGlobalObject* global
 
 GCClient::IsoSubspace* JSCompressionStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCompressionStream, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCompressionStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCompressionStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCompressionStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCompressionStream = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSCompressionStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCompressionStream, m_subspaceForCompressionStream));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

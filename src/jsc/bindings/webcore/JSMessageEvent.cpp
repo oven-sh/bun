@@ -223,7 +223,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSMessageEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSMessageEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSMessageEventPrototype>(vm)) JSMessageEventPrototype(vm, globalObject, structure);
+        JSMessageEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSMessageEventPrototype))) JSMessageEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -237,7 +237,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -312,7 +312,7 @@ const ClassInfo JSMessageEventPrototype::s_info = { "MessageEvent"_s, &Base::s_i
 void JSMessageEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSMessageEvent::info(), JSMessageEventPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSMessageEvent::info(), JSMessageEventPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -462,12 +462,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMessageEventPrototypeFunction_initMessageEvent, (JSGl
 
 JSC::GCClient::IsoSubspace* JSMessageEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSMessageEvent, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMessageEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessageEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMessageEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMessageEvent = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSMessageEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessageEvent, m_subspaceForMessageEvent));
 }
 
 template<typename Visitor>

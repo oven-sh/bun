@@ -44,7 +44,7 @@ static const HashTableValue JSHTTPParserPrototypeTableValues[] = {
 void JSHTTPParserPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, info(), JSHTTPParserPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), JSHTTPParserPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

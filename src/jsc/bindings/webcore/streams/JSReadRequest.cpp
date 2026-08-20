@@ -64,17 +64,12 @@ JSReadRequest* JSReadRequest::create(VM& vm, Structure* structure, ReadRequestKi
 
 Structure* JSReadRequest::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSReadRequest::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadRequest, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadRequest = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadRequest, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadRequest, m_subspaceForReadRequest));
 }
 
 DEFINE_VISIT_CHILDREN(JSReadRequest);
@@ -269,17 +264,12 @@ JSReadIntoRequest* JSReadIntoRequest::create(VM& vm, Structure* structure, ReadI
 
 Structure* JSReadIntoRequest::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSReadIntoRequest::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadIntoRequest, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadIntoRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadIntoRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadIntoRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadIntoRequest = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadIntoRequest, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadIntoRequest, m_subspaceForReadIntoRequest));
 }
 
 DEFINE_VISIT_CHILDREN(JSReadIntoRequest);

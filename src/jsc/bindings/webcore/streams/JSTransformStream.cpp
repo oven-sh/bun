@@ -42,7 +42,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSTransformStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSTransformStreamPrototype* ptr = new (NotNull, JSC::allocateCell<JSTransformStreamPrototype>(vm)) JSTransformStreamPrototype(vm, structure);
+        JSTransformStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTransformStreamPrototype))) JSTransformStreamPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -56,7 +56,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -101,12 +101,7 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSTransformStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSTransformStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTransformStreamConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTransformStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTransformStreamConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTransformStreamConstructor, m_subspaceForTransformStreamConstructor));
 }
 
 template<> void JSTransformStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -201,16 +196,16 @@ JSC_DEFINE_HOST_FUNCTION(jsTransformStreamPrototype_inspectCustom, (JSGlobalObje
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "backpressure"_s), jsBoolean(thisObject->m_backpressure), 0);
+    Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "writable"_s, thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "backpressure"_s, jsBoolean(thisObject->m_backpressure));
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TransformStream"_s, data));
 }
 
 void JSTransformStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTransformStream::info(), JSTransformStreamPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSTransformStream::info(), JSTransformStreamPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsTransformStreamPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -239,7 +234,7 @@ JSTransformStream* JSTransformStream::create(VM& vm, Structure* structure)
 
 Structure* JSTransformStream::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSTransformStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -261,12 +256,7 @@ JSValue JSTransformStream::getConstructor(VM& vm, const JSGlobalObject* globalOb
 
 GCClient::IsoSubspace* JSTransformStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTransformStream, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTransformStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStream = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTransformStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTransformStream, m_subspaceForTransformStream));
 }
 
 DEFINE_VISIT_CHILDREN(JSTransformStream);

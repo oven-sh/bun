@@ -393,12 +393,7 @@ const JSC::ClassInfo JSStringDecoder::s_info = { "StringDecoder"_s, &Base::s_inf
 
 JSC::GCClient::IsoSubspace* JSStringDecoder::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStringDecoder, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStringDecoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStringDecoder = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStringDecoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStringDecoder = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStringDecoder, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForStringDecoder, m_subspaceForStringDecoder));
 }
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, JSStringDecoderPrototype::Base);
@@ -543,7 +538,7 @@ static const HashTableValue JSStringDecoderPrototypeTableValues[]
 void JSStringDecoderPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSStringDecoder::info(), JSStringDecoderPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSStringDecoder::info(), JSStringDecoderPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

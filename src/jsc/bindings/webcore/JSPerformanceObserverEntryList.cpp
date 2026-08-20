@@ -65,7 +65,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceObserverEntryListPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceObserverEntryListPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserverEntryListPrototype>(vm)) JSPerformanceObserverEntryListPrototype(vm, globalObject, structure);
+        JSPerformanceObserverEntryListPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceObserverEntryListPrototype))) JSPerformanceObserverEntryListPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -79,7 +79,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -125,7 +125,7 @@ const ClassInfo JSPerformanceObserverEntryListPrototype::s_info = { "Performance
 void JSPerformanceObserverEntryListPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceObserverEntryList::info(), JSPerformanceObserverEntryListPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceObserverEntryList::info(), JSPerformanceObserverEntryListPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -231,12 +231,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntr
 
 JSC::GCClient::IsoSubspace* JSPerformanceObserverEntryList::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceObserverEntryList, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceObserverEntryList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceObserverEntryList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceObserverEntryList, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceObserverEntryList, m_subspaceForPerformanceObserverEntryList));
 }
 
 void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

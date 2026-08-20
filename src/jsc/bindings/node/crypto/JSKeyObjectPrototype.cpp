@@ -26,7 +26,7 @@ static const JSC::HashTableValue JSKeyObjectPrototypeTableValues[] = {
 void JSKeyObjectPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSKeyObjectPrototype::info(), JSKeyObjectPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSKeyObjectPrototype::info(), JSKeyObjectPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

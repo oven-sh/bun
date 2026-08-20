@@ -174,7 +174,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSErrorEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSErrorEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSErrorEventPrototype>(vm)) JSErrorEventPrototype(vm, globalObject, structure);
+        JSErrorEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSErrorEventPrototype))) JSErrorEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -188,7 +188,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -262,7 +262,7 @@ const ClassInfo JSErrorEventPrototype::s_info = { "ErrorEvent"_s, &Base::s_info,
 void JSErrorEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSErrorEvent::info(), JSErrorEventPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSErrorEvent::info(), JSErrorEventPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -373,12 +373,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsErrorEvent_error, (JSGlobalObject * lexicalGlobalObje
 
 JSC::GCClient::IsoSubspace* JSErrorEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSErrorEvent, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForErrorEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForErrorEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForErrorEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForErrorEvent = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSErrorEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForErrorEvent, m_subspaceForErrorEvent));
 }
 
 template<typename Visitor>

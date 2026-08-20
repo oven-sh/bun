@@ -380,7 +380,7 @@ public:
 
     static JSStatsPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSStatsPrototype* prototype = new (NotNull, JSC::allocateCell<JSStatsPrototype>(vm)) JSStatsPrototype(vm, structure);
+        JSStatsPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatsPrototype))) JSStatsPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -396,7 +396,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -412,7 +412,7 @@ private:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
 
-        reifyStaticProperties(vm, this->classInfo(), JSStatsPrototypeTableValues, *this);
+        Bun::reifyStaticPropertyTable(vm, this->classInfo(), JSStatsPrototypeTableValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
 };
@@ -424,7 +424,7 @@ public:
 
     static JSBigIntStatsPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSBigIntStatsPrototype* prototype = new (NotNull, JSC::allocateCell<JSBigIntStatsPrototype>(vm)) JSBigIntStatsPrototype(vm, structure);
+        JSBigIntStatsPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBigIntStatsPrototype))) JSBigIntStatsPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -440,7 +440,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -456,7 +456,7 @@ private:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
 
-        reifyStaticProperties(vm, this->classInfo(), JSBigIntStatsPrototypeTableValues, *this);
+        Bun::reifyStaticPropertyTable(vm, this->classInfo(), JSBigIntStatsPrototypeTableValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
 };
@@ -483,7 +483,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -521,7 +521,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -539,7 +539,7 @@ private:
 
 JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
         14);
 
     // Add property transitions for all stat fields
@@ -568,7 +568,7 @@ JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* g
 
 JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
         18);
 
     // Add property transitions for all bigint stat fields
@@ -886,26 +886,26 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     }
 
     JSFinalObject* object = JSC::JSFinalObject::create(vm, structure);
-    object->putDirect(vm, Identifier::fromString(vm, "dev"_s), dev, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "mode"_s), mode, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "nlink"_s), nlink, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "uid"_s), uid, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "gid"_s), gid, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "rdev"_s), rdev, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "blksize"_s), blksize, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "ino"_s), ino, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "size"_s), size, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "blocks"_s), blocks, 0);
+    Bun::putDirectNamed(vm, object, "dev"_s, dev);
+    Bun::putDirectNamed(vm, object, "mode"_s, mode);
+    Bun::putDirectNamed(vm, object, "nlink"_s, nlink);
+    Bun::putDirectNamed(vm, object, "uid"_s, uid);
+    Bun::putDirectNamed(vm, object, "gid"_s, gid);
+    Bun::putDirectNamed(vm, object, "rdev"_s, rdev);
+    Bun::putDirectNamed(vm, object, "blksize"_s, blksize);
+    Bun::putDirectNamed(vm, object, "ino"_s, ino);
+    Bun::putDirectNamed(vm, object, "size"_s, size);
+    Bun::putDirectNamed(vm, object, "blocks"_s, blocks);
     object->putDirect(vm, identifier(vm, DateFieldType::atime), atimeMs, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::mtime), mtimeMs, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::ctime), ctimeMs, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::birthtime), birthtimeMs, 0);
 
     if constexpr (isBigInt) {
-        object->putDirect(vm, Identifier::fromString(vm, "atimeNs"_s), atimeNs, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "mtimeNs"_s), mtimeNs, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "ctimeNs"_s), ctimeNs, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "birthtimeNs"_s), birthtimeNs, 0);
+        Bun::putDirectNamed(vm, object, "atimeNs"_s, atimeNs);
+        Bun::putDirectNamed(vm, object, "mtimeNs"_s, mtimeNs);
+        Bun::putDirectNamed(vm, object, "ctimeNs"_s, ctimeNs);
+        Bun::putDirectNamed(vm, object, "birthtimeNs"_s, birthtimeNs);
     }
 
     return object;

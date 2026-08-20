@@ -105,7 +105,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSWebSocketPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSWebSocketPrototype* ptr = new (NotNull, JSC::allocateCell<JSWebSocketPrototype>(vm)) JSWebSocketPrototype(vm, globalObject, structure);
+        JSWebSocketPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWebSocketPrototype))) JSWebSocketPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -119,7 +119,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -390,7 +390,7 @@ template<> void JSWebSocketDOMConstructor::initializeProperties(VM& vm, JSDOMGlo
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSWebSocket::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    reifyStaticProperties(vm, JSWebSocket::info(), JSWebSocketConstructorTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSWebSocket::info(), JSWebSocketConstructorTableValues, *this);
 }
 
 /* Hash table for prototype */
@@ -424,7 +424,7 @@ const ClassInfo JSWebSocketPrototype::s_info = { "WebSocket"_s, &Base::s_info, n
 void JSWebSocketPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSWebSocket::info(), JSWebSocketPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSWebSocket::info(), JSWebSocketPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -945,12 +945,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_terminate, (JSGlobalObject
 
 JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWebSocket, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWebSocket.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWebSocket = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWebSocket.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWebSocket = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSWebSocket, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWebSocket, m_subspaceForWebSocket));
 }
 
 size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)

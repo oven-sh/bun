@@ -145,7 +145,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSCloseEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSCloseEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSCloseEventPrototype>(vm)) JSCloseEventPrototype(vm, globalObject, structure);
+        JSCloseEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCloseEventPrototype))) JSCloseEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -159,7 +159,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -231,7 +231,7 @@ const ClassInfo JSCloseEventPrototype::s_info = { "CloseEvent"_s, &Base::s_info,
 void JSCloseEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSCloseEvent::info(), JSCloseEventPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSCloseEvent::info(), JSCloseEventPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -316,12 +316,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCloseEvent_reason, (JSGlobalObject * lexicalGlobalObj
 
 JSC::GCClient::IsoSubspace* JSCloseEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCloseEvent, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCloseEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCloseEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCloseEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCloseEvent = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSCloseEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCloseEvent, m_subspaceForCloseEvent));
 }
 
 void JSCloseEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

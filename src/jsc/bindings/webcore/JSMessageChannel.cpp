@@ -59,7 +59,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSMessageChannelPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSMessageChannelPrototype* ptr = new (NotNull, JSC::allocateCell<JSMessageChannelPrototype>(vm)) JSMessageChannelPrototype(vm, globalObject, structure);
+        JSMessageChannelPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSMessageChannelPrototype))) JSMessageChannelPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -73,7 +73,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -140,7 +140,7 @@ const ClassInfo JSMessageChannelPrototype::s_info = { "MessageChannel"_s, &Base:
 void JSMessageChannelPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSMessageChannel::info(), JSMessageChannelPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSMessageChannel::info(), JSMessageChannelPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -214,12 +214,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port2, (JSGlobalObject * lexicalGlobal
 
 JSC::GCClient::IsoSubspace* JSMessageChannel::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSMessageChannel, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMessageChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessageChannel = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMessageChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMessageChannel = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSMessageChannel, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessageChannel, m_subspaceForMessageChannel));
 }
 
 template<typename Visitor>

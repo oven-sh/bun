@@ -49,6 +49,13 @@ static constexpr HandlerTableEntry handlerTable[] = {
 #undef WEB_STREAMS_HANDLER_TABLE_ENTRY
 static_assert(std::size(handlerTable) == static_cast<size_t>(JSStreamsRuntime::Handler::Count));
 
+#define WEB_STREAMS_STRUCTURE_TABLE_ENTRY(memberName, ClassName) ClassName::createStructure,
+static constexpr JSC::Structure* (*internalStructureTable[])(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue) = {
+    FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_STRUCTURE_TABLE_ENTRY)
+};
+#undef WEB_STREAMS_STRUCTURE_TABLE_ENTRY
+static_assert(std::size(internalStructureTable) == static_cast<size_t>(JSStreamsRuntime::InternalStructure::Count));
+
 void JSStreamsRuntime::initialize(Zig::GlobalObject* globalObject)
 {
     m_globalObject = globalObject;
@@ -76,12 +83,14 @@ void JSStreamsRuntime::initialize(Zig::GlobalObject* globalObject)
             jsWebStreamsCountQueuingStrategySize, ImplementationVisibility::Public));
     });
 
-#define WEB_STREAMS_INIT_STRUCTURE(memberName, ClassName)                                                \
-    m_##memberName.initLater([](const JSC::LazyProperty<JSGlobalObject, Structure>::Initializer& init) { \
-        init.set(ClassName::createStructure(init.vm, init.owner, jsNull()));                             \
-    });
-    FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_INIT_STRUCTURE)
-#undef WEB_STREAMS_INIT_STRUCTURE
+    for (auto& structure : m_internalStructures) {
+        structure.initLater([](const JSC::LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+            auto* self = JSStreamsRuntime::from(init.owner);
+            size_t i = &init.property - self->m_internalStructures;
+            ASSERT(i < std::size(self->m_internalStructures));
+            init.set(internalStructureTable[i](init.vm, init.owner, jsNull()));
+        });
+    }
 
     m_readManyResultStructure.initLater([](const JSC::LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
         auto* globalObject = init.owner;
@@ -107,10 +116,9 @@ void JSStreamsRuntime::visit(Visitor& visitor)
     m_byteLengthQueuingStrategySizeFunction.visit(visitor);
     m_countQueuingStrategySizeFunction.visit(visitor);
 
-#define WEB_STREAMS_VISIT_STRUCTURE(memberName, ClassName) m_##memberName.visit(visitor);
-    FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_VISIT_STRUCTURE)
+    for (auto& structure : m_internalStructures)
+        structure.visit(visitor);
     m_readManyResultStructure.visit(visitor);
-#undef WEB_STREAMS_VISIT_STRUCTURE
 }
 
 template void JSStreamsRuntime::visit(JSC::AbstractSlotVisitor&);
@@ -126,10 +134,10 @@ JSFunction* JSStreamsRuntime::countQueuingStrategySizeFunction(const Zig::Global
     return m_countQueuingStrategySizeFunction.getInitializedOnMainThread(m_globalObject);
 }
 
-#define WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR(memberName, ClassName)      \
-    Structure* JSStreamsRuntime::memberName(const Zig::GlobalObject*)     \
-    {                                                                     \
-        return m_##memberName.getInitializedOnMainThread(m_globalObject); \
+#define WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR(memberName, ClassName)                                                                    \
+    Structure* JSStreamsRuntime::memberName(const Zig::GlobalObject*)                                                                   \
+    {                                                                                                                                   \
+        return m_internalStructures[static_cast<size_t>(InternalStructure::memberName)].getInitializedOnMainThread(m_globalObject); \
     }
 FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR)
 #undef WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR

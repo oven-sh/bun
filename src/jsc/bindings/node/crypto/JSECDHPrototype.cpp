@@ -37,7 +37,7 @@ static const JSC::HashTableValue JSECDHPrototypeTableValues[] = {
 void JSECDHPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSECDHPrototype::info(), JSECDHPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSECDHPrototype::info(), JSECDHPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

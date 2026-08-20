@@ -126,7 +126,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSSubtleCryptoPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSSubtleCryptoPrototype* ptr = new (NotNull, JSC::allocateCell<JSSubtleCryptoPrototype>(vm)) JSSubtleCryptoPrototype(vm, globalObject, structure);
+        JSSubtleCryptoPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSSubtleCryptoPrototype))) JSSubtleCryptoPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -140,7 +140,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -201,7 +201,7 @@ const ClassInfo JSSubtleCryptoPrototype::s_info = { "SubtleCrypto"_s, &Base::s_i
 void JSSubtleCryptoPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSSubtleCrypto::info(), JSSubtleCryptoPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSSubtleCrypto::info(), JSSubtleCryptoPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -802,12 +802,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports, (JSGlobalOb
 
 JSC::GCClient::IsoSubspace* JSSubtleCrypto::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSSubtleCrypto, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForSubtleCrypto.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubtleCrypto = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForSubtleCrypto.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForSubtleCrypto = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSSubtleCrypto, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForSubtleCrypto, m_subspaceForSubtleCrypto));
 }
 
 void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

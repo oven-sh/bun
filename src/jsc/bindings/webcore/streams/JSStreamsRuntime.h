@@ -326,6 +326,13 @@ class JSStreamsRuntime final {
     WTF_MAKE_NONCOPYABLE(JSStreamsRuntime);
 
 public:
+#define WEB_STREAMS_STRUCTURE_INDEX_ENTRY(memberName, ClassName) memberName,
+    enum class InternalStructure : uint8_t {
+        FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_STRUCTURE_INDEX_ENTRY)
+        Count
+    };
+#undef WEB_STREAMS_STRUCTURE_INDEX_ENTRY
+
     // Index of every handler in m_handlers, in macro order (both lists).
     // clang-format off
 #define WEB_STREAMS_HANDLER_INDEX_ENTRY(name) name,
@@ -382,10 +389,7 @@ private:
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_byteLengthQueuingStrategySizeFunction;
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_countQueuingStrategySizeFunction;
 
-#define WEB_STREAMS_DECLARE_STRUCTURE_MEMBER(memberName, ClassName) \
-    JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_##memberName;
-    FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DECLARE_STRUCTURE_MEMBER)
-#undef WEB_STREAMS_DECLARE_STRUCTURE_MEMBER
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_internalStructures[static_cast<size_t>(InternalStructure::Count)];
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_readManyResultStructure;
 };
 

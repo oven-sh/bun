@@ -124,7 +124,7 @@ JSC::JSValue KeyObject::exportJwkAkpKey(JSC::JSGlobalObject* lexicalGlobalObject
 
     JSObject* jwk = JSC::constructEmptyObject(lexicalGlobalObject);
 
-    jwk->putDirect(vm, Identifier::fromString(vm, "kty"_s), jsNontrivialString(vm, "AKP"_s));
+    Bun::putDirectNamed(vm, jwk, "kty"_s, jsNontrivialString(vm, "AKP"_s));
     jwk->putDirect(vm, Identifier::fromString(vm, "alg"_s),
         jsNontrivialString(vm, WTF::String(name).convertToASCIIUppercase()));
 
@@ -135,7 +135,7 @@ JSC::JSValue KeyObject::exportJwkAkpKey(JSC::JSGlobalObject* lexicalGlobalObject
     }
     JSValue encodedPub = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, publicData.span(), BufferEncodingType::base64url));
     RETURN_IF_EXCEPTION(scope, {});
-    jwk->putDirect(vm, Identifier::fromString(vm, "pub"_s), encodedPub);
+    Bun::putDirectNamed(vm, jwk, "pub"_s, encodedPub);
 
     if (exportType == CryptoKeyType::Private) {
         auto seed = getPrivateSeed(pkey);
@@ -145,7 +145,7 @@ JSC::JSValue KeyObject::exportJwkAkpKey(JSC::JSGlobalObject* lexicalGlobalObject
         }
         JSValue encodedPriv = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, seed.span(), BufferEncodingType::base64url));
         RETURN_IF_EXCEPTION(scope, {});
-        jwk->putDirect(vm, Identifier::fromString(vm, "priv"_s), encodedPriv);
+        Bun::putDirectNamed(vm, jwk, "priv"_s, encodedPriv);
     }
 
     return jwk;
@@ -781,7 +781,7 @@ void KeyObject::getRsaKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope
 
     auto pubKey = rsa.getPublicKey();
 
-    result->putDirect(vm, Identifier::fromString(vm, "modulusLength"_s), jsNumber(ncrypto::BignumPointer::GetBitCount(pubKey.n)));
+    Bun::putDirectNamed(vm, result, "modulusLength"_s, jsNumber(ncrypto::BignumPointer::GetBitCount(pubKey.n)));
 
     auto publicExponentHex = BignumPointer::toHex(pubKey.e);
     if (!publicExponentHex) {
@@ -795,20 +795,20 @@ void KeyObject::getRsaKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope
         return;
     }
 
-    result->putDirect(vm, Identifier::fromString(vm, "publicExponent"_s), publicExponent);
+    Bun::putDirectNamed(vm, result, "publicExponent"_s, publicExponent);
 
     if (pkey.id() == EVP_PKEY_RSA_PSS) {
         auto maybeParams = rsa.getPssParams();
         if (maybeParams.has_value()) {
             auto& params = maybeParams.value();
-            result->putDirect(vm, Identifier::fromString(vm, "hashAlgorithm"_s), jsString(vm, params.digest));
+            Bun::putDirectNamed(vm, result, "hashAlgorithm"_s, jsString(vm, params.digest));
 
             if (params.mgf1_digest.has_value()) {
                 auto digest = params.mgf1_digest.value();
-                result->putDirect(vm, Identifier::fromString(vm, "mgf1HashAlgorithm"_s), jsString(vm, digest));
+                Bun::putDirectNamed(vm, result, "mgf1HashAlgorithm"_s, jsString(vm, digest));
             }
 
-            result->putDirect(vm, Identifier::fromString(vm, "saltLength"_s), jsNumber(params.salt_length));
+            Bun::putDirectNamed(vm, result, "saltLength"_s, jsNumber(params.salt_length));
         }
     }
 }
@@ -825,8 +825,8 @@ void KeyObject::getDsaKeyDetails(JSC::JSGlobalObject* globalObject, JSC::ThrowSc
     size_t modulusLength = dsa.getModulusLength();
     size_t divisorLength = dsa.getDivisorLength();
 
-    result->putDirect(vm, Identifier::fromString(vm, "modulusLength"_s), jsNumber(modulusLength));
-    result->putDirect(vm, Identifier::fromString(vm, "divisorLength"_s), jsNumber(divisorLength));
+    Bun::putDirectNamed(vm, result, "modulusLength"_s, jsNumber(modulusLength));
+    Bun::putDirectNamed(vm, result, "divisorLength"_s, jsNumber(divisorLength));
 }
 
 void KeyObject::getEcKeyDetails(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* result)
@@ -842,7 +842,7 @@ void KeyObject::getEcKeyDetails(JSC::JSGlobalObject* globalObject, JSC::ThrowSco
 
     String namedCurve = String::fromUTF8(OBJ_nid2sn(nid));
 
-    result->putDirect(vm, Identifier::fromString(vm, "namedCurve"_s), jsString(vm, namedCurve));
+    Bun::putDirectNamed(vm, result, "namedCurve"_s, jsString(vm, namedCurve));
 }
 
 JSObject* KeyObject::asymmetricKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope)

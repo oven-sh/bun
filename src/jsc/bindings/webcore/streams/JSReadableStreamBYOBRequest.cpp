@@ -43,7 +43,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSReadableStreamBYOBRequestPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSReadableStreamBYOBRequestPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamBYOBRequestPrototype>(vm)) JSReadableStreamBYOBRequestPrototype(vm, structure);
+        JSReadableStreamBYOBRequestPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamBYOBRequestPrototype))) JSReadableStreamBYOBRequestPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -57,7 +57,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -120,7 +120,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom, (JS
 void JSReadableStreamBYOBRequestPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSReadableStreamBYOBRequest::info(), JSReadableStreamBYOBRequestPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSReadableStreamBYOBRequest::info(), JSReadableStreamBYOBRequestPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamBYOBRequestPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -149,7 +149,7 @@ JSReadableStreamBYOBRequest* JSReadableStreamBYOBRequest::create(VM& vm, Structu
 
 Structure* JSReadableStreamBYOBRequest::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSReadableStreamBYOBRequest::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -171,12 +171,7 @@ JSValue JSReadableStreamBYOBRequest::getConstructor(VM& vm, const JSGlobalObject
 
 GCClient::IsoSubspace* JSReadableStreamBYOBRequest::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamBYOBRequest, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamBYOBRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamBYOBRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBRequest = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamBYOBRequest, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamBYOBRequest, m_subspaceForReadableStreamBYOBRequest));
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamBYOBRequest);

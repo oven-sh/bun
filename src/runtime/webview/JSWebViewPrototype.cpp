@@ -84,7 +84,7 @@ public:
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
-        auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -98,7 +98,7 @@ private:
     void finishCreation(VM& vm, JSGlobalObject* globalObject)
     {
         Base::finishCreation(vm);
-        reifyStaticProperties(vm, JSWebView::info(), JSWebViewPrototypeTableValues, *this);
+        Bun::reifyStaticPropertyTable(vm, JSWebView::info(), JSWebViewPrototypeTableValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
         // close() is synchronous: writes the Close frame, rejects any pending

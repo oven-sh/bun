@@ -64,12 +64,7 @@ JSC::GCClient::IsoSubspace* JSHash::subspaceFor(JSC::VM& vm)
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
 
-    return WebCore::subspaceForImpl<JSHash, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSHash.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSHash = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSHash.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSHash = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSHash, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSHash, m_subspaceForJSHash));
 }
 
 JSHash* JSHash::create(JSC::VM& vm, JSC::Structure* structure)
@@ -156,7 +151,7 @@ bool JSHash::update(std::span<const uint8_t> input)
 void JSHashPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSHash::info(), JSHashPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSHash::info(), JSHashPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -411,7 +406,7 @@ JSC_DEFINE_HOST_FUNCTION(callHash, (JSC::JSGlobalObject * globalObject, JSC::Cal
 
 JSC::Structure* JSHashConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer& init)

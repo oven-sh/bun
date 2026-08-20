@@ -883,6 +883,8 @@ public:
 
 namespace Bun {
 
+void putDirectNamed(JSC::VM&, JSC::JSObject*, ASCIILiteral name, JSC::JSValue);
+
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
 {
     return globalObject->bunVM();

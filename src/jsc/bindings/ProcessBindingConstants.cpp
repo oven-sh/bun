@@ -73,10 +73,10 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
         { "UV_UDP_REUSEADDR", static_cast<double>(4) },
     };
     putNumericConstants(vm, osObj, kConstants1);
-    osObj->putDirect(vm, Identifier::fromString(vm, "dlopen"_s), dlopenObj);
-    osObj->putDirect(vm, Identifier::fromString(vm, "errno"_s), errnoObj);
-    osObj->putDirect(vm, Identifier::fromString(vm, "signals"_s), signalsObj);
-    osObj->putDirect(vm, Identifier::fromString(vm, "priority"_s), priorityObj);
+    Bun::putDirectNamed(vm, osObj, "dlopen"_s, dlopenObj);
+    Bun::putDirectNamed(vm, osObj, "errno"_s, errnoObj);
+    Bun::putDirectNamed(vm, osObj, "signals"_s, signalsObj);
+    Bun::putDirectNamed(vm, osObj, "priority"_s, priorityObj);
     static constexpr NumericConstant kConstants2[] = {
 #ifdef E2BIG
         { "E2BIG", static_cast<double>(E2BIG) },

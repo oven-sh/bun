@@ -64,7 +64,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceServerTimingPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceServerTimingPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceServerTimingPrototype>(vm)) JSPerformanceServerTimingPrototype(vm, globalObject, structure);
+        JSPerformanceServerTimingPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceServerTimingPrototype))) JSPerformanceServerTimingPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -78,7 +78,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -125,7 +125,7 @@ const ClassInfo JSPerformanceServerTimingPrototype::s_info = { "PerformanceServe
 void JSPerformanceServerTimingPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceServerTiming::info(), JSPerformanceServerTimingPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceServerTiming::info(), JSPerformanceServerTimingPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -236,7 +236,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceServerTimingPrototypeFunction_toJSON, (JSG
 
 JSC::GCClient::IsoSubspace* JSPerformanceServerTiming::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceServerTiming, UseCustomHeapCellType::No>(vm, [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceServerTiming.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceServerTiming = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForPerformanceServerTiming.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceServerTiming = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceServerTiming, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceServerTiming, m_subspaceForPerformanceServerTiming));
 }
 
 void JSPerformanceServerTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

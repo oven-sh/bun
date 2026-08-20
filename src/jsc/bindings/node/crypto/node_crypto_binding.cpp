@@ -282,21 +282,21 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     JSObject* result = JSC::constructEmptyObject(lexicalGlobalObject);
 
     if (!modeLabel.isEmpty()) {
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "mode"_s), jsString(vm, String::fromUTF8(modeLabel)));
+        Bun::putDirectNamed(vm, result, "mode"_s, jsString(vm, String::fromUTF8(modeLabel)));
     }
 
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), jsString(vm, name.convertToASCIILowercase()));
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "nid"_s), jsNumber(cipher.getNid()));
+    Bun::putDirectNamed(vm, result, "name"_s, jsString(vm, name.convertToASCIILowercase()));
+    Bun::putDirectNamed(vm, result, "nid"_s, jsNumber(cipher.getNid()));
 
     if (!cipher.isStreamMode()) {
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "blockSize"_s), jsNumber(blockSize));
+        Bun::putDirectNamed(vm, result, "blockSize"_s, jsNumber(blockSize));
     }
 
     if (ivLength != 0) {
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "ivLength"_s), jsNumber(ivLength));
+        Bun::putDirectNamed(vm, result, "ivLength"_s, jsNumber(ivLength));
     }
 
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "keyLength"_s), jsNumber(keyLength));
+    Bun::putDirectNamed(vm, result, "keyLength"_s, jsNumber(keyLength));
 
     return JSValue::encode(result);
 }

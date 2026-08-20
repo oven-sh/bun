@@ -96,7 +96,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSURLPatternPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSURLPatternPrototype* ptr = new (NotNull, JSC::allocateCell<JSURLPatternPrototype>(vm)) JSURLPatternPrototype(vm, globalObject, structure);
+        JSURLPatternPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSURLPatternPrototype))) JSURLPatternPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -110,7 +110,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -250,7 +250,7 @@ const ClassInfo JSURLPatternPrototype::s_info = { "URLPattern"_s, &Base::s_info,
 void JSURLPatternPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSURLPattern::info(), JSURLPatternPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSURLPattern::info(), JSURLPatternPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -461,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec, (JSGlobalObject * l
 
 JSC::GCClient::IsoSubspace* JSURLPattern::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSURLPattern, UseCustomHeapCellType::No>(vm, [](auto& spaces) { return spaces.m_clientSubspaceForURLPattern.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLPattern = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForURLPattern.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForURLPattern = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSURLPattern, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForURLPattern, m_subspaceForURLPattern));
 }
 
 void JSURLPattern::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

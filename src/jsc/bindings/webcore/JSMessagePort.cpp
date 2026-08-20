@@ -80,7 +80,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSMessagePortPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSMessagePortPrototype* ptr = new (NotNull, JSC::allocateCell<JSMessagePortPrototype>(vm)) JSMessagePortPrototype(vm, globalObject, structure);
+        JSMessagePortPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSMessagePortPrototype))) JSMessagePortPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -94,7 +94,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -144,7 +144,7 @@ const ClassInfo JSMessagePortPrototype::s_info = { "MessagePort"_s, &Base::s_inf
 void JSMessagePortPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSMessagePort::info(), JSMessagePortPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSMessagePort::info(), JSMessagePortPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -410,12 +410,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef, (JSGlobalObject 
 
 JSC::GCClient::IsoSubspace* JSMessagePort::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSMessagePort, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMessagePort.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessagePort = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMessagePort.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMessagePort = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSMessagePort, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessagePort, m_subspaceForMessagePort));
 }
 
 template<typename Visitor>

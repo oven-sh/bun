@@ -558,7 +558,7 @@ public:
 
     static ImportMetaObjectPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, bool isBake = false)
     {
-        ImportMetaObjectPrototype* prototype = new (NotNull, JSC::allocateCell<ImportMetaObjectPrototype>(vm)) ImportMetaObjectPrototype(vm, structure);
+        ImportMetaObjectPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(ImportMetaObjectPrototype))) ImportMetaObjectPrototype(vm, structure);
         prototype->finishCreation(vm, globalObject, isBake);
         return prototype;
     }
@@ -579,9 +579,9 @@ public:
 
         // Use the appropriate prototype values based on whether this is a bake import meta object
         if (isBake) {
-            reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectBakePrototypeValues, *this);
+            Bun::reifyStaticPropertyTable(vm, ImportMetaObject::info(), ImportMetaObjectBakePrototypeValues, *this);
         } else {
-            reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
+            Bun::reifyStaticPropertyTable(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
         }
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
@@ -613,7 +613,7 @@ JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObje
         ImportMetaObjectPrototype::createStructure(vm, globalObject),
         isBake);
 
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), ImportMetaObject::info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), ImportMetaObject::info());
 }
 
 void ImportMetaObject::finishCreation(VM& vm)

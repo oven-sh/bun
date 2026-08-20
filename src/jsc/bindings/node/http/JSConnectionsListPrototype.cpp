@@ -25,7 +25,7 @@ static const HashTableValue JSConnectionsListPrototypeTableValues[] = {
 void JSConnectionsListPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, info(), JSConnectionsListPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), JSConnectionsListPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

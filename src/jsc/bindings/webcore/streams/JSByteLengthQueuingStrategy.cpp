@@ -33,7 +33,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSByteLengthQueuingStrategyPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSByteLengthQueuingStrategyPrototype* ptr = new (NotNull, JSC::allocateCell<JSByteLengthQueuingStrategyPrototype>(vm)) JSByteLengthQueuingStrategyPrototype(vm, structure);
+        JSByteLengthQueuingStrategyPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSByteLengthQueuingStrategyPrototype))) JSByteLengthQueuingStrategyPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -47,7 +47,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -92,12 +92,7 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSByteLengthQueuingStrategyConst
 
 template<> GCClient::IsoSubspace* JSByteLengthQueuingStrategyConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSByteLengthQueuingStrategyConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForByteLengthQueuingStrategyConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForByteLengthQueuingStrategyConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForByteLengthQueuingStrategyConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForByteLengthQueuingStrategyConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSByteLengthQueuingStrategyConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForByteLengthQueuingStrategyConstructor, m_subspaceForByteLengthQueuingStrategyConstructor));
 }
 
 template<> void JSByteLengthQueuingStrategyConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -177,7 +172,7 @@ JSC_DEFINE_HOST_FUNCTION(jsByteLengthQueuingStrategyPrototype_inspectCustom, (JS
 void JSByteLengthQueuingStrategyPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSByteLengthQueuingStrategy::info(), JSByteLengthQueuingStrategyPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSByteLengthQueuingStrategy::info(), JSByteLengthQueuingStrategyPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsByteLengthQueuingStrategyPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -207,7 +202,7 @@ JSByteLengthQueuingStrategy* JSByteLengthQueuingStrategy::create(VM& vm, Structu
 
 Structure* JSByteLengthQueuingStrategy::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSByteLengthQueuingStrategy::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -229,12 +224,7 @@ JSValue JSByteLengthQueuingStrategy::getConstructor(VM& vm, const JSGlobalObject
 
 GCClient::IsoSubspace* JSByteLengthQueuingStrategy::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSByteLengthQueuingStrategy, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForByteLengthQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForByteLengthQueuingStrategy = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForByteLengthQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForByteLengthQueuingStrategy = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSByteLengthQueuingStrategy, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForByteLengthQueuingStrategy, m_subspaceForByteLengthQueuingStrategy));
 }
 
 // Prototype accessors

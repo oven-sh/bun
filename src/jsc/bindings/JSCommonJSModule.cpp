@@ -168,9 +168,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RETURN_IF_EXCEPTION(scope, {});
         globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), exports, 0);
         globalObject->putDirect(vm, builtinNames(vm).requirePublicName(), requireFunction, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
+        Bun::putDirectNamed(vm, globalObject, "module"_s, moduleObject);
+        Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);
+        Bun::putDirectNamed(vm, globalObject, "__dirname"_s, dirname);
 
         // The 3-arg JSC::evaluate overload catches the exception into a
         // discarded NakedPtr (Completion.h), so a require() failure or any
@@ -442,7 +442,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
     ASSERT(inherits(info()));
     auto* globalObject = this->globalObject();
 
-    reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), RequireFunctionPrototypeValues, *this);
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
         globalObject,
@@ -797,7 +797,7 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure)
     {
-        JSCommonJSModulePrototype* prototype = new (NotNull, JSC::allocateCell<JSCommonJSModulePrototype>(vm)) JSCommonJSModulePrototype(vm, structure);
+        JSCommonJSModulePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCommonJSModulePrototype))) JSCommonJSModulePrototype(vm, structure);
         prototype->finishCreation(vm, globalObject);
         return prototype;
     }
@@ -807,7 +807,7 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -832,7 +832,7 @@ public:
     {
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
-        reifyStaticProperties(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
+        Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
 
         this->putDirectNativeFunction(
             vm,
@@ -867,7 +867,7 @@ JSC::Structure* JSCommonJSModule::createStructure(
 
     // Do not set the number of inline properties on this structure
     // there may be an off-by-one error in the Structure which causes `require.id` to become the require
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
 }
 
 JSCommonJSModule* JSCommonJSModule::create(
@@ -1389,7 +1389,7 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    reifyStaticProperties(vm, info(), RequireResolveFunctionPrototypeValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), RequireResolveFunctionPrototypeValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

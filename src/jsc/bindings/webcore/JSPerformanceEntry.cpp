@@ -65,7 +65,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceEntryPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceEntryPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceEntryPrototype>(vm)) JSPerformanceEntryPrototype(vm, globalObject, structure);
+        JSPerformanceEntryPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceEntryPrototype))) JSPerformanceEntryPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -79,7 +79,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -127,7 +127,7 @@ const ClassInfo JSPerformanceEntryPrototype::s_info = { "PerformanceEntry"_s, &B
 void JSPerformanceEntryPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceEntry::info(), JSPerformanceEntryPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceEntry::info(), JSPerformanceEntryPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -237,13 +237,13 @@ static inline EncodedJSValue jsPerformanceEntryPrototypeFunction_toJSONBody(JSGl
     result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto entryTypeValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.entryType());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "entryType"_s), entryTypeValue);
+    Bun::putDirectNamed(vm, result, "entryType"_s, entryTypeValue);
     auto startTimeValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.startTime());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "startTime"_s), startTimeValue);
+    Bun::putDirectNamed(vm, result, "startTime"_s, startTimeValue);
     auto durationValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.duration());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "duration"_s), durationValue);
+    Bun::putDirectNamed(vm, result, "duration"_s, durationValue);
     return JSValue::encode(result);
 }
 
@@ -254,12 +254,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_toJSON, (JSGlobalOb
 
 JSC::GCClient::IsoSubspace* JSPerformanceEntry::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceEntry, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceEntry.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceEntry = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceEntry.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceEntry = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceEntry, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceEntry, m_subspaceForPerformanceEntry));
 }
 
 void JSPerformanceEntry::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

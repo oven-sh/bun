@@ -58,7 +58,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceMarkPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceMarkPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMarkPrototype>(vm)) JSPerformanceMarkPrototype(vm, globalObject, structure);
+        JSPerformanceMarkPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceMarkPrototype))) JSPerformanceMarkPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -72,7 +72,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -145,7 +145,7 @@ const ClassInfo JSPerformanceMarkPrototype::s_info = { "PerformanceMark"_s, &Bas
 void JSPerformanceMarkPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceMark::info(), JSPerformanceMarkPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceMark::info(), JSPerformanceMarkPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -205,12 +205,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMark_detail, (JSGlobalObject * lexicalGlob
 
 JSC::GCClient::IsoSubspace* JSPerformanceMark::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceMark, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceMark.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMark = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceMark.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMark = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceMark, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceMark, m_subspaceForPerformanceMark));
 }
 
 template<typename Visitor>

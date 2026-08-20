@@ -144,9 +144,9 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
 
     globalObject->putDirect(vm, WebCore::builtinNames(vm).requirePublicName(), requireFunction, 0);
-    globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
-    globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
-    globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
+    Bun::putDirectNamed(vm, globalObject, "module"_s, moduleObject);
+    Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);
+    Bun::putDirectNamed(vm, globalObject, "__dirname"_s, dirname);
 }
 
 #pragma pop_macro("assert")

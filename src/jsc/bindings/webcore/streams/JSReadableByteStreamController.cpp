@@ -223,7 +223,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSReadableByteStreamControllerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSReadableByteStreamControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableByteStreamControllerPrototype>(vm)) JSReadableByteStreamControllerPrototype(vm, globalObject, structure);
+        JSReadableByteStreamControllerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableByteStreamControllerPrototype))) JSReadableByteStreamControllerPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -237,7 +237,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -277,7 +277,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom, 
 void JSReadableByteStreamControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSReadableByteStreamController::info(), JSReadableByteStreamControllerPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSReadableByteStreamController::info(), JSReadableByteStreamControllerPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsReadableByteStreamControllerPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -328,7 +328,7 @@ void JSReadableByteStreamController::destroy(JSCell* cell)
 
 Structure* JSReadableByteStreamController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSReadableByteStreamController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -350,12 +350,7 @@ JSValue JSReadableByteStreamController::getConstructor(VM& vm, const JSGlobalObj
 
 GCClient::IsoSubspace* JSReadableByteStreamController::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableByteStreamController, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableByteStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableByteStreamController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableByteStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableByteStreamController = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableByteStreamController, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableByteStreamController, m_subspaceForReadableByteStreamController));
 }
 
 template<typename Visitor>

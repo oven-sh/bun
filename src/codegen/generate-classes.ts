@@ -408,7 +408,7 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     Base::finishCreation(vm);
     ${
       Object.keys(protoFields).length > 0
-        ? `reifyStaticProperties(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);`
+        ? `Bun::reifyStaticPropertyTable(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);`
         : ""
     }${specialSymbols}${staticPrototypeValues}
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
@@ -427,7 +427,7 @@ class ${proto} ${final ? "final" : ""} : public JSC::JSNonFinalObject {
 
       static ${proto}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
       {
-          ${proto}* ptr = new (NotNull, JSC::allocateCell<${proto}>(vm)) ${proto}(vm, globalObject, structure);
+          ${proto}* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(${proto}))) ${proto}(vm, globalObject, structure);
           ptr->finishCreation(vm, globalObject);
           return ptr;
       }
@@ -441,7 +441,7 @@ class ${proto} ${final ? "final" : ""} : public JSC::JSNonFinalObject {
       }
       static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
       {
-          return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+          return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
       }
 
   protected:
@@ -474,7 +474,7 @@ class ${name} final : public JSC::InternalFunction {
 
       static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
       {
-          return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+          return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
       }
 
       template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -483,11 +483,7 @@ class ${name} final : public JSC::InternalFunction {
           return nullptr;
 
         return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.${clientSubspaceFor("BunClass")}Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor("BunClass")}Constructor = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.${subspaceFor("BunClass")}Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.${subspaceFor("BunClass")}Constructor = std::forward<decltype(space)>(space); });
+            vm, BUN_SUBSPACE_SLOTS(${clientSubspaceFor("BunClass")}Constructor, ${subspaceFor("BunClass")}Constructor));
       }
 
       // Must be defined for each specialization class.
@@ -520,7 +516,7 @@ ${hashTable}
 void ${name}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype)
 {
     Base::finishCreation(vm, 0, "${typeName}"_s, PropertyAdditionMode::WithoutStructureTransition);
-    ${hashTableIdentifier.length ? `reifyStaticProperties(vm, &${name}::s_info, ${hashTableIdentifier}, *this);` : ""}
+    ${hashTableIdentifier.length ? `Bun::reifyStaticPropertyTable(vm, &${name}::s_info, ${hashTableIdentifier}, *this);` : ""}
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
 }
@@ -601,12 +597,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     auto* constructor = globalObject->${className(typeName)}Constructor();
     Structure* structure = globalObject->${className(typeName)}Structure();
     if (constructor != newTarget) [[unlikely]] {
-      auto* functionGlobalObject = defaultGlobalObject(
-        // ShadowRealm functions belong to a different global object.
-        getFunctionRealm(globalObject, newTarget)
-      );
-      RETURN_IF_EXCEPTION(scope, {});
-      structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->${className(typeName)}Structure());
+      structure = structureForNewTarget(globalObject, newTarget, Zig::GlobalObject::GeneratedLazyClass${className(typeName)});
       RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -1126,17 +1117,13 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
             if constexpr (mode == JSC::SubspaceAccess::Concurrently)
                 return nullptr;
             return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
-                vm,
-                [](auto& spaces) { return spaces.${clientSubspaceFor(typeName)}.get(); },
-                [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(typeName)} = std::forward<decltype(space)>(space); },
-                [](auto& spaces) { return spaces.${subspaceFor(typeName)}.get(); },
-                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)} = std::forward<decltype(space)>(space); });
+                vm, BUN_SUBSPACE_SLOTS(${clientSubspaceFor(typeName)}, ${subspaceFor(typeName)}));
         }
 
         static void destroy(JSC::JSCell*);
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
         {
-            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(${JSType}), StructureFlags), info());
+            return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(${JSType}), StructureFlags), info());
         }
 
         static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
@@ -2393,6 +2380,20 @@ namespace WebCore {
 using namespace JSC;
 using namespace Zig;
 
+// The \`new.target !== constructor\` (subclass / Reflect.construct) path shared by
+// every generated constructor.
+static NEVER_INLINE JSC::Structure* structureForNewTarget(Zig::GlobalObject* globalObject, JSC::JSObject* newTarget, Zig::GlobalObject::GeneratedLazyClass which)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // ShadowRealm functions belong to a different global object.
+    auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->m_generatedLazyClasses[which].getInitializedOnMainThread(functionGlobalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return structure;
+}
+
 // Cached JSValue fields of a generated class, as byte offsets into the cell, so
 // visitChildren/analyzeHeap can loop over one shared body instead of expanding
 // an inlined append per field per class.
@@ -2701,12 +2702,12 @@ function writeCppSerializers() {
 
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
-    classes.map(a => [`std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`].join("\n")),
+    classes.map(a => [`GCClient::IsoSubspace* ${clientSubspaceFor(a.name)} { nullptr };`].join("\n")),
   );
 
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
-    classes.map(a => [`std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`].join("\n")),
+    classes.map(a => [`IsoSubspace* ${subspaceFor(a.name)} { nullptr };`].join("\n")),
   );
 
   await writeIfNotChanged(

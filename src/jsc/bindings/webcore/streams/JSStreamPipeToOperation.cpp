@@ -58,17 +58,12 @@ JSStreamPipeToOperation* JSStreamPipeToOperation::create(VM& vm, Structure* stru
 
 Structure* JSStreamPipeToOperation::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSStreamPipeToOperation::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStreamPipeToOperation, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStreamPipeToOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStreamPipeToOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStreamPipeToOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStreamPipeToOperation = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStreamPipeToOperation, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForStreamPipeToOperation, m_subspaceForStreamPipeToOperation));
 }
 
 DEFINE_VISIT_CHILDREN(JSStreamPipeToOperation);

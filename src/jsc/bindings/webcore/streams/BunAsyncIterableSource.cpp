@@ -52,17 +52,12 @@ JSAsyncIteratorSourceOperation* JSAsyncIteratorSourceOperation::create(VM& vm, S
 
 Structure* JSAsyncIteratorSourceOperation::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSAsyncIteratorSourceOperation::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSAsyncIteratorSourceOperation, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForAsyncIteratorSourceOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAsyncIteratorSourceOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForAsyncIteratorSourceOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForAsyncIteratorSourceOperation = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSAsyncIteratorSourceOperation, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForAsyncIteratorSourceOperation, m_subspaceForAsyncIteratorSourceOperation));
 }
 
 template<typename Visitor>

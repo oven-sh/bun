@@ -40,17 +40,12 @@ function header() {
             {                                                                                                                                                                       
                 if constexpr (mode == JSC::SubspaceAccess::Concurrently)                                                                                                            
                     return nullptr;                                                                                                                                                 
-                return WebCore::subspaceForImpl<${constructor}, WebCore::UseCustomHeapCellType::No>(                                                                    
-                    vm,                                                                                                                                                             
-                    [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkConstructor.get(); },                                                                                 
-                    [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = std::forward<decltype(space)>(space); },                                                               
-                    [](auto& spaces) { return spaces.m_subspaceForJSSinkConstructor.get(); },                                                                                       
-                    [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = std::forward<decltype(space)>(space); });                                                                    
+                return WebCore::subspaceForImpl<${constructor}, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSSinkConstructor, m_subspaceForJSSinkConstructor));                                                                    
             }                                                                                                                                                                       
                                                                                                                                                                                     
             static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)                                                          
             {                                                                                                                                                                       
-                return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());                                                 
+                return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());                                                 
             }                                                                                                                                                                       
             void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype);   
             
@@ -79,18 +74,13 @@ function header() {
             {                                                                                                                                                                       
                 if constexpr (mode == JSC::SubspaceAccess::Concurrently)                                                                                                            
                     return nullptr;                                                                                                                                                 
-                return WebCore::subspaceForImpl<${className}, WebCore::UseCustomHeapCellType::No>(                                                                                 
-                    vm,                                                                                                                                                             
-                    [](auto& spaces) { return spaces.m_clientSubspaceForJSSink.get(); },                                                                                            
-                    [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = std::forward<decltype(space)>(space); },                                                                          
-                    [](auto& spaces) { return spaces.m_subspaceForJSSink.get(); },                                                                                                  
-                    [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = std::forward<decltype(space)>(space); });                                                                               
+                return WebCore::subspaceForImpl<${className}, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSSink, m_subspaceForJSSink));                                                                               
             }                                                                                                                                                                       
                                                                                                                                                                                     
             static void destroy(JSC::JSCell*);                                                                                                                                      
             static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)                                                          
             {                                                                                                                                                                       
-                return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());                                                 
+                return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());                                                 
             }                       
             
             static JSObject* createPrototype(VM& vm, JSDOMGlobalObject& globalObject);
@@ -140,18 +130,13 @@ function header() {
                 {
                     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
                         return nullptr;
-                    return WebCore::subspaceForImpl<${controller}, WebCore::UseCustomHeapCellType::No>(
-                        vm,
-                        [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },
-                        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = std::forward<decltype(space)>(space); },
-                        [](auto& spaces) { return spaces.m_subspaceForJSSinkController.get(); },
-                        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = std::forward<decltype(space)>(space); });
+                    return WebCore::subspaceForImpl<${controller}, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSSinkController, m_subspaceForJSSinkController));
                 }
 
                 static void destroy(JSC::JSCell*);
                 static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
                 {
-                    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+                    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
                 }
                 static JSObject* createPrototype(VM& vm, JSDOMGlobalObject& globalObject);
 
@@ -553,7 +538,7 @@ public:
 
     static ${prototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        ${prototypeName}* ptr = new (NotNull, JSC::allocateCell<${prototypeName}>(vm)) ${prototypeName}(vm, globalObject, structure);
+        ${prototypeName}* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(${prototypeName}))) ${prototypeName}(vm, globalObject, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -567,7 +552,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -587,7 +572,7 @@ class ${controllerPrototypeName} final : public JSC::JSNonFinalObject {
     
         static ${controllerPrototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
         {
-            ${controllerPrototypeName}* ptr = new (NotNull, JSC::allocateCell<${controllerPrototypeName}>(vm)) ${controllerPrototypeName}(vm, globalObject, structure);
+            ${controllerPrototypeName}* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(${controllerPrototypeName}))) ${controllerPrototypeName}(vm, globalObject, structure);
             ptr->finishCreation(vm, globalObject);
             return ptr;
         }
@@ -601,7 +586,7 @@ class ${controllerPrototypeName} final : public JSC::JSNonFinalObject {
         }
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
         {
-            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+            return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         }
     
     private:
@@ -738,7 +723,7 @@ void ${constructor}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObj
 void ${prototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, ${className}::info(), ${className}PrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, ${className}::info(), ${className}PrototypeTableValues, *this);
     putDirect(vm, JSC::Identifier::fromString(vm, "sinkId"_s), JSC::jsNumber(${className}::Sink), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -746,7 +731,7 @@ void ${prototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalOb
 void ${controllerPrototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, ${controller}::info(), ${controller}PrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, ${controller}::info(), ${controller}PrototypeTableValues, *this);
     putDirect(vm, JSC::Identifier::fromString(vm, "sinkId"_s), JSC::jsNumber(${className}::Sink), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }

@@ -613,12 +613,12 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSSharedEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        JSSharedEnvMap* ptr = new (NotNull, JSC::allocateCell<JSSharedEnvMap>(vm)) JSSharedEnvMap(vm, structure);
+        JSSharedEnvMap* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSSharedEnvMap))) JSSharedEnvMap(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }

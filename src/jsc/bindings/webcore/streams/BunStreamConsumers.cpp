@@ -77,17 +77,12 @@ void JSBunStandaloneTextSink::destroy(JSCell* cell)
 
 Structure* JSBunStandaloneTextSink::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSBunStandaloneTextSink::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSBunStandaloneTextSink, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBunStandaloneTextSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunStandaloneTextSink = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBunStandaloneTextSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBunStandaloneTextSink = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSBunStandaloneTextSink, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBunStandaloneTextSink, m_subspaceForBunStandaloneTextSink));
 }
 
 DEFINE_VISIT_CHILDREN(JSBunStandaloneTextSink);
@@ -134,17 +129,12 @@ JSOneShotDirectSink* JSOneShotDirectSink::create(VM& vm, Structure* structure)
 
 Structure* JSOneShotDirectSink::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSOneShotDirectSink::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSOneShotDirectSink, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForOneShotDirectSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForOneShotDirectSink = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForOneShotDirectSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForOneShotDirectSink = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSOneShotDirectSink, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForOneShotDirectSink, m_subspaceForOneShotDirectSink));
 }
 
 DEFINE_VISIT_CHILDREN(JSOneShotDirectSink);
@@ -199,17 +189,12 @@ JSReadableStreamIntoArrayOperation* JSReadableStreamIntoArrayOperation::create(V
 
 Structure* JSReadableStreamIntoArrayOperation::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSReadableStreamIntoArrayOperation::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamIntoArrayOperation, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamIntoArrayOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamIntoArrayOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamIntoArrayOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamIntoArrayOperation = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamIntoArrayOperation, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamIntoArrayOperation, m_subspaceForReadableStreamIntoArrayOperation));
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamIntoArrayOperation);

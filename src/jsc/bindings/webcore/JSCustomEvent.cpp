@@ -128,7 +128,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSCustomEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSCustomEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSCustomEventPrototype>(vm)) JSCustomEventPrototype(vm, globalObject, structure);
+        JSCustomEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCustomEventPrototype))) JSCustomEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -142,7 +142,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -213,7 +213,7 @@ const ClassInfo JSCustomEventPrototype::s_info = { "CustomEvent"_s, &Base::s_inf
 void JSCustomEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSCustomEvent::info(), JSCustomEventPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSCustomEvent::info(), JSCustomEventPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -299,12 +299,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCustomEventPrototypeFunction_initCustomEvent, (JSGlob
 
 JSC::GCClient::IsoSubspace* JSCustomEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCustomEvent, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCustomEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCustomEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCustomEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCustomEvent = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSCustomEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCustomEvent, m_subspaceForCustomEvent));
 }
 
 template<typename Visitor>

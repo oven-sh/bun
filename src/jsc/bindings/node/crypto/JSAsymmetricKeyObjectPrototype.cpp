@@ -24,7 +24,7 @@ static const JSC::HashTableValue JSAsymmetricKeyObjectPrototypeTableValues[] = {
 void JSAsymmetricKeyObjectPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSAsymmetricKeyObjectPrototype::info(), JSAsymmetricKeyObjectPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSAsymmetricKeyObjectPrototype::info(), JSAsymmetricKeyObjectPrototypeTableValues, *this);
 
     // intentionally inherit KeyObject's toStringTag
     // https://github.com/nodejs/node/blob/95b0f9d448832eeb75586c89fab0777a1a4b0610/lib/internal/crypto/keys.js#L146

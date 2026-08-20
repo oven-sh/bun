@@ -54,7 +54,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceMeasurePrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceMeasurePrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMeasurePrototype>(vm)) JSPerformanceMeasurePrototype(vm, globalObject, structure);
+        JSPerformanceMeasurePrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceMeasurePrototype))) JSPerformanceMeasurePrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -68,7 +68,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -111,7 +111,7 @@ const ClassInfo JSPerformanceMeasurePrototype::s_info = { "PerformanceMeasure"_s
 void JSPerformanceMeasurePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceMeasure::info(), JSPerformanceMeasurePrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceMeasure::info(), JSPerformanceMeasurePrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -171,12 +171,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasure_detail, (JSGlobalObject * lexicalG
 
 JSC::GCClient::IsoSubspace* JSPerformanceMeasure::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceMeasure, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceMeasure.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMeasure = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceMeasure.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMeasure = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceMeasure, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceMeasure, m_subspaceForPerformanceMeasure));
 }
 
 template<typename Visitor>

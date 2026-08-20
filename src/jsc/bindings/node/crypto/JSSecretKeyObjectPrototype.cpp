@@ -29,7 +29,7 @@ static const JSC::HashTableValue JSSecretKeyObjectPrototypeTableValues[] = {
 void JSSecretKeyObjectPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSSecretKeyObjectPrototype::info(), JSSecretKeyObjectPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSSecretKeyObjectPrototype::info(), JSSecretKeyObjectPrototypeTableValues, *this);
 
     // intentionally inherit KeyObject's toStringTag
     // https://github.com/nodejs/node/blob/95b0f9d448832eeb75586c89fab0777a1a4b0610/lib/internal/crypto/keys.js#L146

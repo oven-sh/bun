@@ -2021,6 +2021,54 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
     return true;
 }
 
+namespace {
+
+template<typename T> struct LazyPropertyInit {
+    size_t offset;
+    void (*init)(const typename LazyProperty<JSGlobalObject, T>::Initializer&);
+};
+
+struct LazyClassStructureInit {
+    size_t offset;
+    void (*init)(LazyClassStructure::Initializer&);
+};
+
+// One `LazyProperty::callFunc` instantiation per table instead of one per
+// member: the shared initializer finds its entry by the member's offset.
+template<typename T, const auto& table>
+void initLazyProperties(GlobalObject* globalObject)
+{
+    for (auto& entry : table) {
+        auto& property = *reinterpret_cast<LazyProperty<JSGlobalObject, T>*>(reinterpret_cast<uint8_t*>(globalObject) + entry.offset);
+        property.initLater([](const typename LazyProperty<JSGlobalObject, T>::Initializer& init) {
+            size_t offset = reinterpret_cast<const uint8_t*>(&init.property) - reinterpret_cast<const uint8_t*>(static_cast<GlobalObject*>(init.owner));
+            for (auto& entry : table) {
+                if (entry.offset == offset)
+                    return entry.init(init);
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        });
+    }
+}
+
+template<const auto& table>
+void initLazyClassStructures(GlobalObject* globalObject)
+{
+    for (auto& entry : table) {
+        auto& classStructure = *reinterpret_cast<LazyClassStructure*>(reinterpret_cast<uint8_t*>(globalObject) + entry.offset);
+        classStructure.initLater([](LazyClassStructure::Initializer& init) {
+            size_t offset = reinterpret_cast<const uint8_t*>(&init.classStructure) - reinterpret_cast<const uint8_t*>(static_cast<GlobalObject*>(init.global));
+            for (auto& entry : table) {
+                if (entry.offset == offset)
+                    return entry.init(init);
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        });
+    }
+}
+
+} // namespace
+
 void GlobalObject::finishCreation(VM& vm)
 {
     // Node.js defaults to 10. Must run before Base::finishCreation() materializes
@@ -2034,208 +2082,620 @@ void GlobalObject::finishCreation(VM& vm)
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();
 
+    static const LazyClassStructureInit lazyClassStructureInits[] = {
+        { OBJECT_OFFSETOF(GlobalObject, m_JSDirentClassStructure), [](LazyClassStructure::Initializer& init) {
+                Bun::initJSDirentClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSX509CertificateClassStructure), [](LazyClassStructure::Initializer& init) {
+            setupX509CertificateClassStructure(init);
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSWebViewClassStructure), [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSWebViewClassStructure(init);
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSignClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupJSSignClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSVerifyClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupJSVerifyClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSDiffieHellmanClassStructure), [](LazyClassStructure::Initializer& init) {
+                Bun::setupDiffieHellmanClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSDiffieHellmanGroupClassStructure), [](LazyClassStructure::Initializer& init) {
+                Bun::setupDiffieHellmanGroupClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSECDHClassStructure), [](LazyClassStructure::Initializer& init) {
+                Bun::setupECDHClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSHmacClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupJSHmacClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSHashClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupJSHashClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSCipherClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupCipherClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSKeyObjectClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupKeyObjectClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSecretKeyObjectClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupSecretKeyObjectClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSPublicKeyObjectClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupPublicKeyObjectClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSPrivateKeyObjectClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupPrivateKeyObjectClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSMIMEParamsClassStructure), [](LazyClassStructure::Initializer& init) {
+                WebCore::setupJSMIMEParamsClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSMIMETypeClassStructure), [](LazyClassStructure::Initializer& init) {
+                WebCore::setupJSMIMETypeClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSConnectionsListClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupConnectionsListClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPParserClassStructure), [](LazyClassStructure::Initializer& init) {
+                setupHTTPParserClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSNodePerformanceHooksHistogramClassStructure), [](LazyClassStructure::Initializer& init) {
+                Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSStatsClassStructure), [](LazyClassStructure::Initializer& init) {
+                Bun::initJSStatsClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSStatsBigIntClassStructure), [](LazyClassStructure::Initializer& init) {
+                Bun::initJSBigIntStatsClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSStatFSClassStructure), [](LazyClassStructure::Initializer& init) {
+                Bun::initJSStatFSClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSStatFSBigIntClassStructure), [](LazyClassStructure::Initializer& init) {
+                Bun::initJSBigIntStatFSClassStructure(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_NapiClassStructure), [](LazyClassStructure::Initializer& init) {
+                init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSFileSinkClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
+                auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSArrayBufferSinkClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::ArrayBufferSink);
+                auto* structure = JSArrayBufferSink::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSArrayBufferSinkConstructor::create(init.vm, init.global, JSArrayBufferSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPResponseSinkClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPResponseSink);
+                auto* structure = JSHTTPResponseSink::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSHTTPResponseSinkConstructor::create(init.vm, init.global, JSHTTPResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSNetworkSinkClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::NetworkSink);
+                auto* structure = JSNetworkSink::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSNetworkSinkConstructor::create(init.vm, init.global, JSNetworkSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSH3ResponseSinkClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::H3ResponseSink);
+                auto* structure = JSH3ResponseSink::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSH3ResponseSinkConstructor::create(init.vm, init.global, JSH3ResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSFetchRequestBodySinkClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FetchRequestBodySink);
+                auto* structure = JSFetchRequestBodySink::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSFetchRequestBodySinkConstructor::create(init.vm, init.global, JSFetchRequestBodySinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSHTMLRewriterSinkClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTMLRewriterSink);
+                auto* structure = JSHTMLRewriterSink::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSHTMLRewriterSinkConstructor::create(init.vm, init.global, JSHTMLRewriterSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSBufferClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
+                auto* structure = WebCore::createBufferStructure(init.vm, init.global, JSValue(prototype));
+                auto* constructor = WebCore::createBufferConstructor(init.vm, init.global, prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPSResponseSinkClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPSResponseSink);
+                auto* structure = JSHTTPSResponseSink::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSHTTPSResponseSinkConstructor::create(init.vm, init.global, JSHTTPSResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSBufferListClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = JSBufferListPrototype::create(
+                    init.vm, init.global, JSBufferListPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                auto* structure = JSBufferList::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSBufferListConstructor::create(
+                    init.vm, init.global, JSBufferListConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_callSiteStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = CallSitePrototype::create(init.vm, CallSitePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()), init.global);
+                auto* structure = CallSite::createStructure(init.vm, init.global, prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSStringDecoderClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = JSStringDecoderPrototype::create(
+                    init.vm, init.global, JSStringDecoderPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                auto* structure = JSStringDecoder::createStructure(init.vm, init.global, prototype);
+                auto* constructor = JSStringDecoderConstructor::create(
+                    init.vm, init.global, JSStringDecoderConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSDatabaseSyncClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = Bun::JSDatabaseSyncPrototype::create(
+                    init.vm, init.global, Bun::JSDatabaseSyncPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                auto* structure = Bun::JSDatabaseSync::createStructure(init.vm, init.global, prototype);
+                auto* constructor = Bun::JSDatabaseSyncConstructor::create(
+                    init.vm, init.global, Bun::JSDatabaseSyncConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSStatementSyncClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = Bun::JSStatementSyncPrototype::create(
+                    init.vm, init.global, Bun::JSStatementSyncPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                auto* structure = Bun::JSStatementSync::createStructure(init.vm, init.global, prototype);
+                auto* constructor = Bun::JSStatementSyncConstructor::create(
+                    init.vm, init.global, Bun::JSStatementSyncConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSStatementSyncIteratorClassStructure), [](LazyClassStructure::Initializer& init) {
+                // Prototype chain: instance → iterator prototype → %IteratorPrototype%
+                // so for-of / spread / Iterator helpers all work out of the box.
+                auto* prototype = Bun::JSStatementSyncIteratorPrototype::create(
+                    init.vm, init.global, Bun::JSStatementSyncIteratorPrototype::createStructure(init.vm, init.global, init.global->iteratorPrototype()));
+                auto* structure = Bun::JSStatementSyncIterator::createStructure(init.vm, init.global, prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSNodeSqliteSessionClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = Bun::JSNodeSqliteSessionPrototype::create(
+                    init.vm, init.global, Bun::JSNodeSqliteSessionPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                auto* structure = Bun::JSNodeSqliteSession::createStructure(init.vm, init.global, prototype);
+                auto* constructor = Bun::JSNodeSqliteSessionConstructor::create(
+                    init.vm, init.global, Bun::JSNodeSqliteSessionConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSNodeSqliteLimitsClassStructure), [](LazyClassStructure::Initializer& init) {
+                // Node's DatabaseSyncLimits is a V8 ObjectTemplate: instances get a
+                // per-template prototype whose own [[Prototype]] is Object.prototype.
+                // Match the observable chain (limits → {} → Object.prototype).
+                auto* prototype = JSC::constructEmptyObject(init.global, init.global->objectPrototype());
+                auto* structure = Bun::JSNodeSqliteLimits::createStructure(init.vm, init.global, prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSNodeSqliteTagStoreClassStructure), [](LazyClassStructure::Initializer& init) {
+                auto* prototype = Bun::JSNodeSqliteTagStorePrototype::create(
+                    init.vm, init.global, Bun::JSNodeSqliteTagStorePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+                auto* structure = Bun::JSNodeSqliteTagStore::createStructure(init.vm, init.global, prototype);
+                auto* constructor = Bun::JSNodeSqliteTagStoreConstructor::create(
+                    init.vm, init.global, Bun::JSNodeSqliteTagStoreConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+                init.setPrototype(prototype);
+                init.setStructure(structure);
+                init.setConstructor(constructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSFFIFunctionStructure), [](LazyClassStructure::Initializer& init) {
+                init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
+            } },
+    };
+
+    static const LazyPropertyInit<Structure> lazyStructureInits[] = {
+        { OBJECT_OFFSETOF(GlobalObject, m_JSNodeHTTPServerSocketStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::createNodeHTTPServerSocketStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSS3FileStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_S3ErrorStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::createS3ErrorStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_commonJSModuleObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::createCommonJSModuleStructure(static_cast<Zig::GlobalObject*>(init.owner)));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSocketAddressDTOStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSReactElementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSMarkdownListItemMetaStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::MarkdownMeta::createListItemMetaStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSMarkdownListMetaStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::MarkdownMeta::createListMetaStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSMarkdownCellMetaStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::MarkdownMeta::createCellMetaStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSMarkdownLinkMetaStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::MarkdownMeta::createLinkMetaStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSQLStatementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(WebCore::createJSSQLStatementStructure(init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_memoryFootprintStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(
+                    createMemoryFootprintStructure(
+                        init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_moduleNamespaceObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, init.owner->nullPrototypeObjectStructure());
+                moduleNamespacePrototype->putDirectCustomAccessor(init.vm, init.vm.propertyNames->__esModule, CustomGetterSetter::create(init.vm, moduleNamespacePrototypeGetESModuleMarker, moduleNamespacePrototypeSetESModuleMarker), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor | 0);
+                init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, moduleNamespacePrototype));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSBufferSubclassStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
+                auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
+                auto* baseStructure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
+                JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
+                scope.assertNoExceptionExceptTermination();
+                init.set(subclassStructure);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSResizableOrGrowableSharedBufferSubclassStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
+                auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
+                auto* baseStructure = globalObject->resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
+                JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
+                scope.assertNoExceptionExceptTermination();
+                init.set(subclassStructure);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_utilInspectOptionsStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_jsonlParseResultStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                // { values, read, done, error } — 4 properties at fixed offsets for fast allocation
+                Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(init.owner, init.owner->objectPrototype(), 4);
+                PropertyOffset offset;
+                structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "values"_s), 0, offset);
+                RELEASE_ASSERT(offset == 0);
+                structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "read"_s), 0, offset);
+                RELEASE_ASSERT(offset == 1);
+                structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "done"_s), 0, offset);
+                RELEASE_ASSERT(offset == 2);
+                structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "error"_s), 0, offset);
+                RELEASE_ASSERT(offset == 3);
+                init.set(structure);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_pathParsedObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                // { root, dir, base, ext, name } — path.parse() result
+                Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(
+                    init.owner, init.owner->objectPrototype(), 5);
+                PropertyOffset offset;
+                structure = Structure::addPropertyTransition(init.vm, structure,
+                    Identifier::fromString(init.vm, "root"_s), 0, offset);
+                RELEASE_ASSERT(offset == 0);
+                structure = Structure::addPropertyTransition(init.vm, structure,
+                    Identifier::fromString(init.vm, "dir"_s), 0, offset);
+                RELEASE_ASSERT(offset == 1);
+                structure = Structure::addPropertyTransition(init.vm, structure,
+                    Identifier::fromString(init.vm, "base"_s), 0, offset);
+                RELEASE_ASSERT(offset == 2);
+                structure = Structure::addPropertyTransition(init.vm, structure,
+                    Identifier::fromString(init.vm, "ext"_s), 0, offset);
+                RELEASE_ASSERT(offset == 3);
+                structure = Structure::addPropertyTransition(init.vm, structure,
+                    init.vm.propertyNames->name, 0, offset);
+                RELEASE_ASSERT(offset == 4);
+                init.set(structure);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_pendingVirtualModuleResultStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSocketHandlersStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::JSSocketHandlers::createStructure(init.vm, init.owner, JSC::jsNull()));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_NapiExternalStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(
+                    Bun::NapiExternal::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_NapiPrototypeStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(
+                    Bun::NapiPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_ServerRouteListStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::createServerRouteListStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Bun::createJSBunRequestStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_NapiHandleScopeImplStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_NapiTypeTagStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_NativePromiseContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_cachedGlobalProxyStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(
+                    JSC::JSGlobalProxy::createStructure(init.vm, init.owner, JSC::jsNull()));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPResponseController), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                auto* structure = createJSSinkControllerStructure(init.vm, init.owner, WebCore::SinkID::HTTPResponseSink);
+                init.set(structure);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_importMetaObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_importMetaBakeObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner, true));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_asyncBoundFunctionStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                init.set(AsyncContextFrame::createStructure(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSCryptoKey), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+                Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
+                auto* prototype = JSCryptoKey::createPrototype(init.vm, *globalObject);
+                auto* structure = JSCryptoKey::createStructure(init.vm, init.owner, JSValue(prototype));
+                init.set(structure);
+            } },
+    };
+
+    static const LazyPropertyInit<JSObject> lazyObjectInits[] = {
+        { OBJECT_OFFSETOF(GlobalObject, m_JSAsymmetricKeyObjectPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                setupAsymmetricKeyObjectPrototype(init);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSDOMFileConstructor), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
+                init.set(fileConstructor);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_cryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                JSC::JSGlobalObject* globalObject = init.owner;
+                JSObject* crypto = JSValue::decode(CryptoObject__create(globalObject)).getObject();
+                // Node defines `subtle` on Crypto.prototype with a brand check, not on
+                // the instance; the getter above enforces the brand.
+                JSObject* prototype = crypto->getPrototypeDirect().getObject();
+                prototype->putDirectCustomAccessor(
+                    init.vm,
+                    Identifier::fromString(init.vm, "subtle"_s),
+                    JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, setterSubtleCrypto),
+                    PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor);
+
+                init.set(crypto);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_lazyTestModuleObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                JSC::JSGlobalObject* globalObject = init.owner;
+
+                JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
+                JSObject* object = result.isEmpty() ? nullptr : result.getObject();
+                if (!object) [[unlikely]] {
+                    // Creation failed and left an exception pending; cache a plain
+                    // object so the LazyProperty stays valid instead of crashing on
+                    // an empty JSValue.
+                    object = JSC::constructEmptyObject(globalObject);
+                }
+                init.set(object);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_testMatcherUtilsObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
+                init.set(result.toObject(init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_nodeErrorCache), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                auto* structure = ErrorCodeCache::createStructure(
+                    init.vm,
+                    init.owner);
+
+                init.set(ErrorCodeCache::create(init.vm, structure));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_navigatorObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                JSC::JSGlobalObject* globalObject = init.owner;
+                unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
+
+                JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+
+                obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
+                obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
+                obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+
+                obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
+                    jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+
+                init.set(obj);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                init.set(Bun::createBunObject(init.vm, init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_subtleCryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                auto& global = *static_cast<Zig::GlobalObject*>(init.owner);
+
+                if (!global.m_subtleCrypto) {
+                    global.m_subtleCrypto = &WebCore::SubtleCrypto::create(global.scriptExecutionContext()).leakRef();
+                }
+
+                init.set(toJS<IDLInterface<SubtleCrypto>>(*init.owner, global, global.m_subtleCrypto).getObject());
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSArrayBufferControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::ArrayBufferSink);
+                init.set(prototype);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSFileSinkControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::FileSink);
+                init.set(prototype);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPSResponseControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::HTTPSResponseSink);
+                init.set(prototype);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSFetchTaskletChunkedRequestControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::NetworkSink);
+                init.set(prototype);
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_performanceObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
+                init.set(toJS(init.owner, globalObject, globalObject->performance().get()).getObject());
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_processEnvObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                init.set(Bun::createEnvironmentVariablesMap(static_cast<Zig::GlobalObject*>(init.owner)).getObject());
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_requireFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                init.set(
+                    JSFunction::create(
+                        init.vm,
+                        init.owner,
+                        commonJSRequireCodeGenerator(init.vm),
+                        init.owner->globalScope(),
+                        JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_requireResolveFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                init.set(
+                    JSFunction::create(
+                        init.vm,
+                        init.owner,
+                        commonJSRequireResolveCodeGenerator(init.vm),
+                        init.owner->globalScope(),
+                        JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_processBindingBuffer), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                init.set(
+                    ProcessBindingBuffer::create(
+                        init.vm,
+                        ProcessBindingBuffer::createStructure(init.vm, init.owner)));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_processBindingConstants), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                init.set(
+                    ProcessBindingConstants::create(
+                        init.vm,
+                        ProcessBindingConstants::createStructure(init.vm, init.owner)));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_processBindingFs), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                init.set(
+                    ProcessBindingFs::create(
+                        init.vm,
+                        ProcessBindingFs::createStructure(init.vm, init.owner)));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_processBindingHTTPParser), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+                init.set(
+                    ProcessBindingHTTPParser::create(
+                        init.vm,
+                        ProcessBindingHTTPParser::createStructure(init.vm, init.owner)));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSFFICStringConstructor), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+            init.set(Bun::JSFFICStringConstructor::create(init.vm, init.owner));
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_bunStdin), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+            init.set(JSC::JSValue::decode(BunObject__createBunStdin(init.owner)).getObject());
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_bunStderr), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+            init.set(JSC::JSValue::decode(BunObject__createBunStderr(init.owner)).getObject());
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_bunStdout), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+            init.set(JSC::JSValue::decode(BunObject__createBunStdout(init.owner)).getObject());
+        } },
+    };
+
+    static const LazyPropertyInit<JSFunction> lazyFunctionInits[] = {
+        { OBJECT_OFFSETOF(GlobalObject, m_errorConstructorPrepareStackTraceInternalValue), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_performMicrotaskVariadicFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_utilInspectFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                auto scope = DECLARE_THROW_SCOPE(init.vm);
+                JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
+                RETURN_IF_EXCEPTION(scope, );
+                RELEASE_ASSERT(nodeUtilValue.isObject());
+                auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
+                RETURN_IF_EXCEPTION(scope, );
+                ASSERT(prop);
+                init.set(uncheckedDowncast<JSFunction>(prop));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_utilInspectStylizeColorFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                auto scope = DECLARE_THROW_SCOPE(init.vm);
+                JSC::MarkedArgumentBuffer args;
+                args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
+                RETURN_IF_EXCEPTION(scope, );
+
+                JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
+                RETURN_IF_EXCEPTION(scope, );
+
+                JSC::CallData callData = JSC::getCallData(getStylize);
+                NakedPtr<JSC::Exception> returnedException = nullptr;
+                auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
+                RETURN_IF_EXCEPTION(scope, );
+
+                if (returnedException) {
+                    throwException(init.owner, scope, returnedException.get());
+                }
+                RETURN_IF_EXCEPTION(scope, );
+                init.set(uncheckedDowncast<JSFunction>(result));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_utilInspectStylizeNoColorFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_wasmStreamingConsumeStreamFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                init.set(JSC::JSFunction::create(init.vm, init.owner, wasmStreamingConsumeStreamCodeGenerator(init.vm), init.owner));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_nativeMicrotaskTrampoline), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Private));
+            } },
+        { OBJECT_OFFSETOF(GlobalObject, m_ipcParseHandleFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcParseHandleCodeGenerator(init.vm), init.owner));
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_ipcSerializeFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcSerializeCodeGenerator(init.vm), init.owner));
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_ipcTagAdvancedBuffersFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcTagAdvancedBuffersCodeGenerator(init.vm), init.owner));
+        } },
+        { OBJECT_OFFSETOF(GlobalObject, m_ipcRestoreAdvancedBuffersFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcRestoreAdvancedBuffersCodeGenerator(init.vm), init.owner));
+        } },
+    };
+
     Bun::addNodeModuleConstructorProperties(vm, this);
-    m_JSNodeHTTPServerSocketStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::createNodeHTTPServerSocketStructure(init.vm, init.owner));
-        });
-
-    m_JSDirentClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::initJSDirentClassStructure(init);
-        });
-
-    m_JSX509CertificateClassStructure.initLater([](LazyClassStructure::Initializer& init) {
-        setupX509CertificateClassStructure(init);
-    });
-
-    m_JSWebViewClassStructure.initLater([](LazyClassStructure::Initializer& init) {
-        Bun::setupJSWebViewClassStructure(init);
-    });
-
-    m_JSSignClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupJSSignClassStructure(init);
-        });
-
-    m_JSVerifyClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupJSVerifyClassStructure(init);
-        });
-
-    m_JSDiffieHellmanClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::setupDiffieHellmanClassStructure(init);
-        });
-
-    m_JSDiffieHellmanGroupClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::setupDiffieHellmanGroupClassStructure(init);
-        });
-
-    m_JSECDHClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::setupECDHClassStructure(init);
-        });
-
-    m_JSHmacClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupJSHmacClassStructure(init);
-        });
-
-    m_JSHashClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupJSHashClassStructure(init);
-        });
-
-    m_JSCipherClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupCipherClassStructure(init);
-        });
-
-    m_JSKeyObjectClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupKeyObjectClassStructure(init);
-        });
-
-    m_JSSecretKeyObjectClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupSecretKeyObjectClassStructure(init);
-        });
-
-    m_JSAsymmetricKeyObjectPrototype.initLater(
-        [](const Initializer<JSObject>& init) {
-            setupAsymmetricKeyObjectPrototype(init);
-        });
-
-    m_JSPublicKeyObjectClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupPublicKeyObjectClassStructure(init);
-        });
-
-    m_JSPrivateKeyObjectClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupPrivateKeyObjectClassStructure(init);
-        });
-
-    m_JSMIMEParamsClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            WebCore::setupJSMIMEParamsClassStructure(init);
-        });
-
-    m_JSMIMETypeClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            WebCore::setupJSMIMETypeClassStructure(init);
-        });
-
-    m_JSConnectionsListClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupConnectionsListClassStructure(init);
-        });
-
-    m_JSHTTPParserClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            setupHTTPParserClassStructure(init);
-        });
-
-    m_JSNodePerformanceHooksHistogramClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
-        });
+    initLazyClassStructures<lazyClassStructureInits>(this);
+    initLazyProperties<Structure, lazyStructureInits>(this);
+    initLazyProperties<JSObject, lazyObjectInits>(this);
+    initLazyProperties<JSFunction, lazyFunctionInits>(this);
 
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
-        });
-
-    m_JSDOMFileConstructor.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
-            init.set(fileConstructor);
-        });
-
-    m_cryptoObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::JSGlobalObject* globalObject = init.owner;
-            JSObject* crypto = JSValue::decode(CryptoObject__create(globalObject)).getObject();
-            // Node defines `subtle` on Crypto.prototype with a brand check, not on
-            // the instance; the getter above enforces the brand.
-            JSObject* prototype = crypto->getPrototypeDirect().getObject();
-            prototype->putDirectCustomAccessor(
-                init.vm,
-                Identifier::fromString(init.vm, "subtle"_s),
-                JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, setterSubtleCrypto),
-                PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor);
-
-            init.set(crypto);
-        });
-
-    m_lazyTestModuleObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            JSObject* object = result.isEmpty() ? nullptr : result.getObject();
-            if (!object) [[unlikely]] {
-                // Creation failed and left an exception pending; cache a plain
-                // object so the LazyProperty stays valid instead of crashing on
-                // an empty JSValue.
-                object = JSC::constructEmptyObject(globalObject);
-            }
-            init.set(object);
-        });
-
-    m_testMatcherUtilsObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
-            init.set(result.toObject(init.owner));
-        });
-
-    m_JSS3FileStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
-        });
-
-    m_S3ErrorStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::createS3ErrorStructure(init.vm, init.owner));
-        });
-
-    m_commonJSModuleObjectStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::createCommonJSModuleStructure(static_cast<Zig::GlobalObject*>(init.owner)));
-        });
-
-    m_JSSocketAddressDTOStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
-        });
-
-    m_JSReactElementStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
-        });
-
-    m_JSMarkdownListItemMetaStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::MarkdownMeta::createListItemMetaStructure(init.vm, init.owner));
-        });
-    m_JSMarkdownListMetaStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::MarkdownMeta::createListMetaStructure(init.vm, init.owner));
-        });
-    m_JSMarkdownCellMetaStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::MarkdownMeta::createCellMetaStructure(init.vm, init.owner));
-        });
-    m_JSMarkdownLinkMetaStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::MarkdownMeta::createLinkMetaStructure(init.vm, init.owner));
-        });
-
-    m_JSSQLStatementStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(WebCore::createJSSQLStatementStructure(init.owner));
         });
 
     m_V8GlobalInternals.initLater(
@@ -2247,316 +2707,18 @@ void GlobalObject::finishCreation(VM& vm)
                     dynamicDowncast<Zig::GlobalObject>(init.owner)));
         });
 
-    m_JSStatsClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::initJSStatsClassStructure(init);
-        });
-
-    m_JSStatsBigIntClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::initJSBigIntStatsClassStructure(init);
-        });
-
-    m_JSStatFSClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::initJSStatFSClassStructure(init);
-        });
-
-    m_JSStatFSBigIntClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::initJSBigIntStatFSClassStructure(init);
-        });
-
-    m_memoryFootprintStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(
-                createMemoryFootprintStructure(
-                    init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
-        });
-
-    m_errorConstructorPrepareStackTraceInternalValue.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
-        });
-
     // Change prototype from null to object for synthetic modules.
-    m_moduleNamespaceObjectStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, init.owner->nullPrototypeObjectStructure());
-            moduleNamespacePrototype->putDirectCustomAccessor(init.vm, init.vm.propertyNames->__esModule, CustomGetterSetter::create(init.vm, moduleNamespacePrototypeGetESModuleMarker, moduleNamespacePrototypeSetESModuleMarker), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor | 0);
-            init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, moduleNamespacePrototype));
-        });
 
     m_vmModuleContextMap.initLater(
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
 
-    m_JSBufferSubclassStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
-            auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
-            auto* baseStructure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
-            JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
-            scope.assertNoExceptionExceptTermination();
-            init.set(subclassStructure);
-        });
-    m_JSResizableOrGrowableSharedBufferSubclassStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
-            auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
-            auto* baseStructure = globalObject->resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
-            JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
-            scope.assertNoExceptionExceptTermination();
-            init.set(subclassStructure);
-        });
-    m_performMicrotaskVariadicFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
-        });
-
-    m_utilInspectFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-            RETURN_IF_EXCEPTION(scope, );
-            RELEASE_ASSERT(nodeUtilValue.isObject());
-            auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
-            RETURN_IF_EXCEPTION(scope, );
-            ASSERT(prop);
-            init.set(uncheckedDowncast<JSFunction>(prop));
-        });
-
-    m_utilInspectOptionsStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));
-        });
-
-    m_nodeErrorCache.initLater(
-        [](const Initializer<JSObject>& init) {
-            auto* structure = ErrorCodeCache::createStructure(
-                init.vm,
-                init.owner);
-
-            init.set(ErrorCodeCache::create(init.vm, structure));
-        });
-
-    m_utilInspectStylizeColorFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSC::MarkedArgumentBuffer args;
-            args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
-            RETURN_IF_EXCEPTION(scope, );
-
-            JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
-            RETURN_IF_EXCEPTION(scope, );
-
-            JSC::CallData callData = JSC::getCallData(getStylize);
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-            RETURN_IF_EXCEPTION(scope, );
-
-            if (returnedException) {
-                throwException(init.owner, scope, returnedException.get());
-            }
-            RETURN_IF_EXCEPTION(scope, );
-            init.set(uncheckedDowncast<JSFunction>(result));
-        });
-
-    m_utilInspectStylizeNoColorFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
-        });
-
-    m_wasmStreamingConsumeStreamFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSC::JSFunction::create(init.vm, init.owner, wasmStreamingConsumeStreamCodeGenerator(init.vm), init.owner));
-        });
-
-    m_nativeMicrotaskTrampoline.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Private));
-        });
-
-    m_navigatorObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::JSGlobalObject* globalObject = init.owner;
-            unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
-
-            JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
-
-            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
-            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
-            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
-
-            obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
-                jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
-
-            init.set(obj);
-        });
-
-    this->m_jsonlParseResultStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            // { values, read, done, error } — 4 properties at fixed offsets for fast allocation
-            Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(init.owner, init.owner->objectPrototype(), 4);
-            PropertyOffset offset;
-            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "values"_s), 0, offset);
-            RELEASE_ASSERT(offset == 0);
-            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "read"_s), 0, offset);
-            RELEASE_ASSERT(offset == 1);
-            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "done"_s), 0, offset);
-            RELEASE_ASSERT(offset == 2);
-            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "error"_s), 0, offset);
-            RELEASE_ASSERT(offset == 3);
-            init.set(structure);
-        });
-
-    this->m_pathParsedObjectStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            // { root, dir, base, ext, name } — path.parse() result
-            Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(
-                init.owner, init.owner->objectPrototype(), 5);
-            PropertyOffset offset;
-            structure = Structure::addPropertyTransition(init.vm, structure,
-                Identifier::fromString(init.vm, "root"_s), 0, offset);
-            RELEASE_ASSERT(offset == 0);
-            structure = Structure::addPropertyTransition(init.vm, structure,
-                Identifier::fromString(init.vm, "dir"_s), 0, offset);
-            RELEASE_ASSERT(offset == 1);
-            structure = Structure::addPropertyTransition(init.vm, structure,
-                Identifier::fromString(init.vm, "base"_s), 0, offset);
-            RELEASE_ASSERT(offset == 2);
-            structure = Structure::addPropertyTransition(init.vm, structure,
-                Identifier::fromString(init.vm, "ext"_s), 0, offset);
-            RELEASE_ASSERT(offset == 3);
-            structure = Structure::addPropertyTransition(init.vm, structure,
-                init.vm.propertyNames->name, 0, offset);
-            RELEASE_ASSERT(offset == 4);
-            init.set(structure);
-        });
-
-    this->m_pendingVirtualModuleResultStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
-        });
-
-    this->m_JSSocketHandlersStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::JSSocketHandlers::createStructure(init.vm, init.owner, JSC::jsNull()));
-        });
-
-    m_bunObject.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSObject>::Initializer& init) {
-            init.set(Bun::createBunObject(init.vm, init.owner));
-        });
-
     this->initGeneratedLazyClasses();
-
-    m_NapiExternalStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(
-                Bun::NapiExternal::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
-        });
-
-    m_NapiPrototypeStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(
-                Bun::NapiPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
-        });
-
-    m_ServerRouteListStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(Bun::createServerRouteListStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
-        });
-
-    m_JSBunRequestParamsPrototype.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSObject>::Initializer& init) {
-            init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
-        });
-
-    m_JSBunRequestStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(Bun::createJSBunRequestStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
-        });
-
-    m_NapiHandleScopeImplStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-        init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
-    });
-
-    m_NapiTypeTagStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-        init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
-    });
-
-    m_NativePromiseContextStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-        init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
-    });
 
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
     });
-
-    m_cachedGlobalProxyStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(
-                JSC::JSGlobalProxy::createStructure(init.vm, init.owner, JSC::jsNull()));
-        });
-
-    m_subtleCryptoObject.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto& global = *static_cast<Zig::GlobalObject*>(init.owner);
-
-            if (!global.m_subtleCrypto) {
-                global.m_subtleCrypto = &WebCore::SubtleCrypto::create(global.scriptExecutionContext()).leakRef();
-            }
-
-            init.set(toJS<IDLInterface<SubtleCrypto>>(*init.owner, global, global.m_subtleCrypto).getObject());
-        });
-
-    m_NapiClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
-        });
-
-    m_JSArrayBufferControllerPrototype.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::ArrayBufferSink);
-            init.set(prototype);
-        });
-
-    m_JSFileSinkControllerPrototype.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::FileSink);
-            init.set(prototype);
-        });
-
-    m_JSHTTPResponseController.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            auto* structure = createJSSinkControllerStructure(init.vm, init.owner, WebCore::SinkID::HTTPResponseSink);
-            init.set(structure);
-        });
-
-    m_JSHTTPSResponseControllerPrototype.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::HTTPSResponseSink);
-            init.set(prototype);
-        });
-
-    m_JSFetchTaskletChunkedRequestControllerPrototype.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::NetworkSink);
-            init.set(prototype);
-        });
-
-    m_performanceObject.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
-            init.set(toJS(init.owner, globalObject, globalObject->performance().get()).getObject());
-        });
-
-    m_processEnvObject.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(Bun::createEnvironmentVariablesMap(static_cast<Zig::GlobalObject*>(init.owner)).getObject());
-        });
 
     m_processObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Bun::Process>::Initializer& init) {
@@ -2576,28 +2738,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(map);
         });
 
-    m_requireFunctionUnbound.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(
-                JSFunction::create(
-                    init.vm,
-                    init.owner,
-                    commonJSRequireCodeGenerator(init.vm),
-                    init.owner->globalScope(),
-                    JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
-        });
-
-    m_requireResolveFunctionUnbound.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(
-                JSFunction::create(
-                    init.vm,
-                    init.owner,
-                    commonJSRequireResolveCodeGenerator(init.vm),
-                    init.owner->globalScope(),
-                    JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
-        });
-
     m_internalModuleRegistry.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Bun::InternalModuleRegistry>::Initializer& init) {
             init.set(
@@ -2606,288 +2746,7 @@ void GlobalObject::finishCreation(VM& vm)
                     InternalModuleRegistry::createStructure(init.vm, init.owner)));
         });
 
-    m_processBindingBuffer.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(
-                ProcessBindingBuffer::create(
-                    init.vm,
-                    ProcessBindingBuffer::createStructure(init.vm, init.owner)));
-        });
-
-    m_processBindingConstants.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(
-                ProcessBindingConstants::create(
-                    init.vm,
-                    ProcessBindingConstants::createStructure(init.vm, init.owner)));
-        });
-
-    m_processBindingFs.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(
-                ProcessBindingFs::create(
-                    init.vm,
-                    ProcessBindingFs::createStructure(init.vm, init.owner)));
-        });
-
-    m_processBindingHTTPParser.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(
-                ProcessBindingHTTPParser::create(
-                    init.vm,
-                    ProcessBindingHTTPParser::createStructure(init.vm, init.owner)));
-        });
-
-    m_importMetaObjectStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
-        });
-
-    m_importMetaBakeObjectStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner, true));
-        });
-
-    m_asyncBoundFunctionStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(AsyncContextFrame::createStructure(init.vm, init.owner));
-        });
-
-    m_ipcParseHandleFunction.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
-        init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcParseHandleCodeGenerator(init.vm), init.owner));
-    });
-
-    m_ipcSerializeFunction.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
-        init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcSerializeCodeGenerator(init.vm), init.owner));
-    });
-
-    m_ipcTagAdvancedBuffersFunction.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
-        init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcTagAdvancedBuffersCodeGenerator(init.vm), init.owner));
-    });
-
-    m_ipcRestoreAdvancedBuffersFunction.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
-        init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcRestoreAdvancedBuffersCodeGenerator(init.vm), init.owner));
-    });
-
-    m_JSFileSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
-            auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSArrayBufferSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::ArrayBufferSink);
-            auto* structure = JSArrayBufferSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSArrayBufferSinkConstructor::create(init.vm, init.global, JSArrayBufferSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSHTTPResponseSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPResponseSink);
-            auto* structure = JSHTTPResponseSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSHTTPResponseSinkConstructor::create(init.vm, init.global, JSHTTPResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSNetworkSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::NetworkSink);
-            auto* structure = JSNetworkSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSNetworkSinkConstructor::create(init.vm, init.global, JSNetworkSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSH3ResponseSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::H3ResponseSink);
-            auto* structure = JSH3ResponseSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSH3ResponseSinkConstructor::create(init.vm, init.global, JSH3ResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSFetchRequestBodySinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FetchRequestBodySink);
-            auto* structure = JSFetchRequestBodySink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSFetchRequestBodySinkConstructor::create(init.vm, init.global, JSFetchRequestBodySinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSHTMLRewriterSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTMLRewriterSink);
-            auto* structure = JSHTMLRewriterSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSHTMLRewriterSinkConstructor::create(init.vm, init.global, JSHTMLRewriterSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSBufferClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
-            auto* structure = WebCore::createBufferStructure(init.vm, init.global, JSValue(prototype));
-            auto* constructor = WebCore::createBufferConstructor(init.vm, init.global, prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSCryptoKey.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
-            auto* prototype = JSCryptoKey::createPrototype(init.vm, *globalObject);
-            auto* structure = JSCryptoKey::createStructure(init.vm, init.owner, JSValue(prototype));
-            init.set(structure);
-        });
-
-    m_JSHTTPSResponseSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPSResponseSink);
-            auto* structure = JSHTTPSResponseSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSHTTPSResponseSinkConstructor::create(init.vm, init.global, JSHTTPSResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSBufferListClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = JSBufferListPrototype::create(
-                init.vm, init.global, JSBufferListPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-            auto* structure = JSBufferList::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSBufferListConstructor::create(
-                init.vm, init.global, JSBufferListConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_callSiteStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = CallSitePrototype::create(init.vm, CallSitePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()), init.global);
-            auto* structure = CallSite::createStructure(init.vm, init.global, prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-        });
-
-    m_JSStringDecoderClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = JSStringDecoderPrototype::create(
-                init.vm, init.global, JSStringDecoderPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-            auto* structure = JSStringDecoder::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSStringDecoderConstructor::create(
-                init.vm, init.global, JSStringDecoderConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSFFICStringConstructor.initLater([](const Initializer<JSObject>& init) {
-        init.set(Bun::JSFFICStringConstructor::create(init.vm, init.owner));
-    });
-
-    m_JSDatabaseSyncClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = Bun::JSDatabaseSyncPrototype::create(
-                init.vm, init.global, Bun::JSDatabaseSyncPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-            auto* structure = Bun::JSDatabaseSync::createStructure(init.vm, init.global, prototype);
-            auto* constructor = Bun::JSDatabaseSyncConstructor::create(
-                init.vm, init.global, Bun::JSDatabaseSyncConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSStatementSyncClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = Bun::JSStatementSyncPrototype::create(
-                init.vm, init.global, Bun::JSStatementSyncPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-            auto* structure = Bun::JSStatementSync::createStructure(init.vm, init.global, prototype);
-            auto* constructor = Bun::JSStatementSyncConstructor::create(
-                init.vm, init.global, Bun::JSStatementSyncConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSStatementSyncIteratorClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            // Prototype chain: instance → iterator prototype → %IteratorPrototype%
-            // so for-of / spread / Iterator helpers all work out of the box.
-            auto* prototype = Bun::JSStatementSyncIteratorPrototype::create(
-                init.vm, init.global, Bun::JSStatementSyncIteratorPrototype::createStructure(init.vm, init.global, init.global->iteratorPrototype()));
-            auto* structure = Bun::JSStatementSyncIterator::createStructure(init.vm, init.global, prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-        });
-
-    m_JSNodeSqliteSessionClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = Bun::JSNodeSqliteSessionPrototype::create(
-                init.vm, init.global, Bun::JSNodeSqliteSessionPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-            auto* structure = Bun::JSNodeSqliteSession::createStructure(init.vm, init.global, prototype);
-            auto* constructor = Bun::JSNodeSqliteSessionConstructor::create(
-                init.vm, init.global, Bun::JSNodeSqliteSessionConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSNodeSqliteLimitsClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            // Node's DatabaseSyncLimits is a V8 ObjectTemplate: instances get a
-            // per-template prototype whose own [[Prototype]] is Object.prototype.
-            // Match the observable chain (limits → {} → Object.prototype).
-            auto* prototype = JSC::constructEmptyObject(init.global, init.global->objectPrototype());
-            auto* structure = Bun::JSNodeSqliteLimits::createStructure(init.vm, init.global, prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-        });
-
-    m_JSNodeSqliteTagStoreClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = Bun::JSNodeSqliteTagStorePrototype::create(
-                init.vm, init.global, Bun::JSNodeSqliteTagStorePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-            auto* structure = Bun::JSNodeSqliteTagStore::createStructure(init.vm, init.global, prototype);
-            auto* constructor = Bun::JSNodeSqliteTagStoreConstructor::create(
-                init.vm, init.global, Bun::JSNodeSqliteTagStoreConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
-    m_JSFFIFunctionStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
-        });
-
     // Initialize LazyProperties for stdin/stderr/stdout
-    m_bunStdin.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-        init.set(JSC::JSValue::decode(BunObject__createBunStdin(init.owner)).getObject());
-    });
-    m_bunStderr.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-        init.set(JSC::JSValue::decode(BunObject__createBunStderr(init.owner)).getObject());
-    });
-    m_bunStdout.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-        init.set(JSC::JSValue::decode(BunObject__createBunStdout(init.owner)).getObject());
-    });
 
     configureNodeVM(vm, this);
 
@@ -3102,12 +2961,7 @@ JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
 
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWorkerGlobalScope.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWorkerGlobalScope.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
+    return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWorkerGlobalScope, m_subspaceForWorkerGlobalScope),
         [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
 }
 

@@ -126,17 +126,12 @@ public:
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
 
-        return WebCore::subspaceForImpl<TTYWrapObject, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForTTYWrapObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTTYWrapObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForTTYWrapObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTTYWrapObject = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<TTYWrapObject, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTTYWrapObject, m_subspaceForTTYWrapObject));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSObject* prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static void destroy(JSC::JSCell* cell)
@@ -358,7 +353,7 @@ public:
 
     static TTYWrapPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        TTYWrapPrototype* prototype = new (NotNull, JSC::allocateCell<TTYWrapPrototype>(vm)) TTYWrapPrototype(vm, structure);
+        TTYWrapPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(TTYWrapPrototype))) TTYWrapPrototype(vm, structure);
         prototype->finishCreation(vm, globalObject);
         return prototype;
     }
@@ -374,7 +369,7 @@ public:
     {
         Base::finishCreation(vm);
 
-        reifyStaticProperties(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
+        Bun::reifyStaticPropertyTable(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
 
@@ -404,7 +399,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

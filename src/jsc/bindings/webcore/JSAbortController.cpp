@@ -66,7 +66,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSAbortControllerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSAbortControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSAbortControllerPrototype>(vm)) JSAbortControllerPrototype(vm, globalObject, structure);
+        JSAbortControllerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSAbortControllerPrototype))) JSAbortControllerPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -80,7 +80,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -147,7 +147,7 @@ const ClassInfo JSAbortControllerPrototype::s_info = { "AbortController"_s, &Bas
 void JSAbortControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSAbortController::info(), JSAbortControllerPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSAbortController::info(), JSAbortControllerPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -226,12 +226,7 @@ JSC_DEFINE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_abort, (JSGlobalObje
 
 JSC::GCClient::IsoSubspace* JSAbortController::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSAbortController, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForAbortController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAbortController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForAbortController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForAbortController = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSAbortController, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForAbortController, m_subspaceForAbortController));
 }
 
 template<typename Visitor>

@@ -714,57 +714,14 @@ pub trait AtRuleParser {
     ) -> CssResult<Self::AtRule>;
 }
 
-#[derive(Default)]
-pub struct DefaultAtRuleParser;
-
-impl CustomAtRuleParser for DefaultAtRuleParser {
-    type Prelude = ();
-    type AtRule = DefaultAtRule;
-
-    fn parse_prelude(
-        _this: &mut Self,
-        name: &[u8],
-        input: &mut Parser,
-        _: &ParserOptions,
-    ) -> CssResult<()> {
-        Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _: (),
-        _: &ParserState,
-        input: &mut Parser,
-        _: &ParserOptions,
-        _: bool,
-    ) -> CssResult<DefaultAtRule> {
-        Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-    }
-
-    fn rule_without_block(
-        _this: &mut Self,
-        _: (),
-        _: &ParserState,
-        _: &ParserOptions,
-        _: bool,
-    ) -> Maybe<DefaultAtRule, ()> {
-        Err(())
-    }
-
-    fn on_import_rule(_this: &mut Self, _: &mut ImportRule, _: u32, _: u32) {}
-    fn on_layer_rule(_this: &mut Self, _: &SmallList<LayerName, 1>) {}
-    fn enclosing_layer_length(_this: &mut Self) -> u32 {
-        0
-    }
-    fn push_to_enclosing_layer(_this: &mut Self, _: LayerName) {}
-    fn reset_enclosing_layer(_this: &mut Self, _: u32) {}
-    fn bump_anon_layer_count(_this: &mut Self, _: i32) {}
-}
-
 pub type BundlerAtRule = DefaultAtRule;
 
+/// The at-rule hooks for both `StyleSheet::parse` (`track_layers_and_imports`
+/// off: every hook is a no-op) and `parse_bundler`, so the rule parsers are
+/// instantiated once.
 pub struct BundlerAtRuleParser<'a> {
     pub(crate) arena: &'a Bump,
+    pub(crate) track_layers_and_imports: bool,
     /// Raw pointer aliasing the same `Vec` that `Parser.import_records`
     /// points to. Both views are raw pointers sharing a single
     /// SharedRW provenance (see `parse_bundler`); each materialises a
@@ -818,6 +775,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         start_position: u32,
         end_position: u32,
     ) {
+        if !this.track_layers_and_imports {
+            return;
+        }
         // SAFETY: `import_records` shares raw-pointer provenance with
         // `Parser.import_records` (see field doc / `parse_bundler`). This hook
         // runs synchronously between parser accesses, so the fresh `&mut`
@@ -849,7 +809,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>) {
-        if this.anon_layer_count > 0 {
+        if !this.track_layers_and_imports || this.anon_layer_count > 0 {
             return;
         }
         this.layer_names
@@ -876,6 +836,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName) {
+        if !this.track_layers_and_imports {
+            return;
+        }
         this.enclosing_layer.v.append_slice(name.v.slice());
     }
 
@@ -888,6 +851,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn bump_anon_layer_count(this: &mut Self, amount: i32) {
+        if !this.track_layers_and_imports {
+            return;
+        }
         if amount > 0 {
             this.anon_layer_count += u32::try_from(amount).expect("int cast");
         } else {
@@ -2582,12 +2548,19 @@ mod stylesheet_impl {
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
             // Returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
             // need a custom at-rule call `parse_with` directly.
-            let mut default_at_rule_parser = DefaultAtRuleParser;
+            let mut at_rule_parser = BundlerAtRuleParser {
+                arena,
+                track_layers_and_imports: false,
+                import_records: core::ptr::null_mut(),
+                layer_names: Vec::new(),
+                anon_layer_count: 0,
+                enclosing_layer: LayerName::default(),
+            };
             StyleSheet::<DefaultAtRule>::parse_with(
                 arena,
                 code,
                 options,
-                &mut default_at_rule_parser,
+                &mut at_rule_parser,
                 import_records.map(core::ptr::NonNull::from),
                 source_index,
             )
@@ -2798,6 +2771,7 @@ mod stylesheet_impl {
             let import_records_ptr = core::ptr::NonNull::from(import_records);
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
+                track_layers_and_imports: true,
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
                 anon_layer_count: 0,

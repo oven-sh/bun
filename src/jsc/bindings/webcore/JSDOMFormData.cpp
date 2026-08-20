@@ -124,7 +124,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSDOMFormDataPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSDOMFormDataPrototype* ptr = new (NotNull, JSC::allocateCell<JSDOMFormDataPrototype>(vm)) JSDOMFormDataPrototype(vm, globalObject, structure);
+        JSDOMFormDataPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDOMFormDataPrototype))) JSDOMFormDataPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -138,7 +138,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -218,7 +218,7 @@ const ClassInfo JSDOMFormDataPrototype::s_info = { "FormData"_s, &Base::s_info, 
 void JSDOMFormDataPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSDOMFormData::info(), JSDOMFormDataPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSDOMFormData::info(), JSDOMFormDataPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -534,17 +534,12 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<DOMFormDataIterator, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForDOMFormDataIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMFormDataIterator = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForDOMFormDataIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMFormDataIterator = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<DOMFormDataIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMFormDataIterator, m_subspaceForDOMFormDataIterator));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static DOMFormDataIterator* create(JSC::VM& vm, JSC::Structure* structure, JSDOMFormData& iteratedObject, IterationKind kind)
@@ -699,12 +694,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
 
 JSC::GCClient::IsoSubspace* JSDOMFormData::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDOMFormData, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDOMFormData.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMFormData = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDOMFormData.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMFormData = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDOMFormData, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMFormData, m_subspaceForDOMFormData));
 }
 
 void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

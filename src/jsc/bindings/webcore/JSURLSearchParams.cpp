@@ -93,7 +93,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSURLSearchParamsPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSURLSearchParamsPrototype* ptr = new (NotNull, JSC::allocateCell<JSURLSearchParamsPrototype>(vm)) JSURLSearchParamsPrototype(vm, globalObject, structure);
+        JSURLSearchParamsPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSURLSearchParamsPrototype))) JSURLSearchParamsPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -107,7 +107,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -330,7 +330,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
 void JSURLSearchParamsPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSURLSearchParams::info(), JSURLSearchParamsPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSURLSearchParams::info(), JSURLSearchParamsPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
     Bun::WebStreams::installInspectCustom(vm, this, jsURLSearchParamsPrototypeFunction_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
@@ -678,17 +678,12 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<URLSearchParamsIterator, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForURLSearchParamsIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLSearchParamsIterator = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForURLSearchParamsIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForURLSearchParamsIterator = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<URLSearchParamsIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForURLSearchParamsIterator, m_subspaceForURLSearchParamsIterator));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static URLSearchParamsIterator* create(JSC::VM& vm, JSC::Structure* structure, JSURLSearchParams& iteratedObject, IterationKind kind)
@@ -760,12 +755,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_forEach, (JSC::JSGlo
 
 JSC::GCClient::IsoSubspace* JSURLSearchParams::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSURLSearchParams, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForURLSearchParams.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLSearchParams = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForURLSearchParams.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForURLSearchParams = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSURLSearchParams, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForURLSearchParams, m_subspaceForURLSearchParams));
 }
 
 void JSURLSearchParams::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

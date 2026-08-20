@@ -773,7 +773,7 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
             setterRequireFunction),
         0);
 
-    prototype->putDirect(vm, Identifier::fromString(vm, "_compile"_s), globalObject->modulePrototypeUnderscoreCompileFunction());
+    Bun::putDirectNamed(vm, prototype, "_compile"_s, globalObject->modulePrototypeUnderscoreCompileFunction());
 
     return prototype;
 }
@@ -906,19 +906,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
         directory.isNull() ? nullptr : &directoryStr, portable, &outDirectory, &outMessage);
 
     auto* result = JSC::constructEmptyObject(globalObject);
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "status"_s), JSC::jsNumber(status));
+    Bun::putDirectNamed(vm, result, "status"_s, JSC::jsNumber(status));
     if (!outMessage.isEmpty()) {
         JSValue message = outMessage.transferToJS(globalObject);
         if (scope.exception()) [[unlikely]] {
             outDirectory.deref();
             return {};
         }
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
+        Bun::putDirectNamed(vm, result, "message"_s, message);
     }
     if (!outDirectory.isEmpty()) {
         JSValue dir = outDirectory.transferToJS(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), dir);
+        Bun::putDirectNamed(vm, result, "directory"_s, dir);
     }
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
@@ -995,9 +995,7 @@ public:
         JSC::JSValue prototype)
     {
         ASSERT(globalObject);
-        return JSC::Structure::create(
-            vm, globalObject, prototype,
-            JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     template<typename CellType, JSC::SubspaceAccess>

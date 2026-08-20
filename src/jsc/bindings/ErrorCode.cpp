@@ -1736,7 +1736,7 @@ extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalG
 
     auto message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
     JSC::JSObject* options = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "cause"_s), cause);
+    Bun::putDirectNamed(vm, options, "cause"_s, cause);
 
     auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options);
     return JSC::JSValue::encode(error);
@@ -2198,9 +2198,9 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto arg2 = callFrame->argument(3);
         auto message = makeString("Hostname/IP does not match certificate's altnames: "_s, str0);
         auto err = createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_INVALID, message);
-        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), arg0);
-        err->putDirect(vm, Identifier::fromString(vm, "host"_s), arg1);
-        err->putDirect(vm, Identifier::fromString(vm, "cert"_s), arg2);
+        Bun::putDirectNamed(vm, err, "reason"_s, arg0);
+        Bun::putDirectNamed(vm, err, "host"_s, arg1);
+        Bun::putDirectNamed(vm, err, "cert"_s, arg2);
         return JSC::JSValue::encode(err);
     }
 
@@ -2263,7 +2263,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto cause = callFrame->argument(2);
         JSObject* error = createError(globalObject, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
         RETURN_IF_EXCEPTION(scope, {});
-        error->putDirect(vm, Identifier::fromString(vm, "cause"_s), cause);
+        Bun::putDirectNamed(vm, error, "cause"_s, cause);
         RETURN_IF_EXCEPTION(scope, {});
         return JSC::JSValue::encode(error);
     }
@@ -2271,8 +2271,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
 
     case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
         auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
-        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), jsString(vm, WTF::String("no cipher match"_s)));
-        err->putDirect(vm, Identifier::fromString(vm, "library"_s), jsString(vm, WTF::String("SSL routines"_s)));
+        Bun::putDirectNamed(vm, err, "reason"_s, jsString(vm, WTF::String("no cipher match"_s)));
+        Bun::putDirectNamed(vm, err, "library"_s, jsString(vm, WTF::String("SSL routines"_s)));
         return JSC::JSValue::encode(err);
     }
 

@@ -78,7 +78,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSTextEncoderPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSTextEncoderPrototype* ptr = new (NotNull, JSC::allocateCell<JSTextEncoderPrototype>(vm)) JSTextEncoderPrototype(vm, globalObject, structure);
+        JSTextEncoderPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTextEncoderPrototype))) JSTextEncoderPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -92,7 +92,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -157,7 +157,7 @@ const ClassInfo JSTextEncoderPrototype::s_info = { "TextEncoder"_s, &Base::s_inf
 void JSTextEncoderPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTextEncoder::info(), JSTextEncoderPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSTextEncoder::info(), JSTextEncoderPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -313,12 +313,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderPrototypeFunction_encodeInto, (JSGlobalObj
 
 JSC::GCClient::IsoSubspace* JSTextEncoder::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextEncoder, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoder = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoder = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTextEncoder, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextEncoder, m_subspaceForTextEncoder));
 }
 
 void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

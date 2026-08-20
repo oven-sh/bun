@@ -60,7 +60,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSDOMExceptionPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSDOMExceptionPrototype* ptr = new (NotNull, JSC::allocateCell<JSDOMExceptionPrototype>(vm)) JSDOMExceptionPrototype(vm, globalObject, structure);
+        JSDOMExceptionPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDOMExceptionPrototype))) JSDOMExceptionPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -74,7 +74,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -183,7 +183,7 @@ template<> void JSDOMExceptionDOMConstructor::initializeProperties(VM& vm, JSDOM
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSDOMException::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    reifyStaticProperties(vm, JSDOMException::info(), JSDOMExceptionConstructorTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSDOMException::info(), JSDOMExceptionConstructorTableValues, *this);
 }
 
 /* Hash table for prototype */
@@ -225,7 +225,7 @@ const ClassInfo JSDOMExceptionPrototype::s_info = { "DOMException"_s, &Base::s_i
 void JSDOMExceptionPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSDOMException::info(), JSDOMExceptionPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSDOMException::info(), JSDOMExceptionPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -316,12 +316,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMException_message, (JSGlobalObject * lexicalGlobal
 
 JSC::GCClient::IsoSubspace* JSDOMException::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDOMException.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMException = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDOMException.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMException = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMException, m_subspaceForDOMException));
 }
 
 void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

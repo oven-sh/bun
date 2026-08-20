@@ -126,13 +126,13 @@ void JSCommonJSExtensions::finishCreation(JSC::VM& vm)
         JSC::Intrinsic::NoIntrinsic,
         JSC::callHostFunctionAsConstructor);
 
-    this->putDirect(vm, JSC::Identifier::fromString(vm, ".js"_s), fnLoadJS, 0);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, ".json"_s), fnLoadJSON, 0);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, ".node"_s), fnLoadNode, 0);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, ".ts"_s), fnLoadTS, 0);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, ".cts"_s), fnLoadTS, 0);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, ".mjs"_s), fnLoadJS, 0);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, ".mts"_s), fnLoadTS, 0);
+    Bun::putDirectNamed(vm, this, ".js"_s, fnLoadJS);
+    Bun::putDirectNamed(vm, this, ".json"_s, fnLoadJSON);
+    Bun::putDirectNamed(vm, this, ".node"_s, fnLoadNode);
+    Bun::putDirectNamed(vm, this, ".ts"_s, fnLoadTS);
+    Bun::putDirectNamed(vm, this, ".cts"_s, fnLoadTS);
+    Bun::putDirectNamed(vm, this, ".mjs"_s, fnLoadJS);
+    Bun::putDirectNamed(vm, this, ".mts"_s, fnLoadTS);
 }
 
 extern "C" void NodeModuleModule__onRequireExtensionModify(

@@ -61,10 +61,10 @@ bun install
 bun environment/setup.ts 100
 cd environment/suite
 hyperfine --warmup 1 --runs 5 -N \
-  -n 'preload per file' 'bun test --isolate --config bunfig-preload.toml .' \
-  -n 'persistent environment' 'bun test --config bunfig-environment.toml .' \
-  -n 'persistent environment parallel=1' 'bun test --parallel=1 --config bunfig-environment.toml .' \
-  -n 'persistent environment parallel=3' 'bun test --parallel=3 --config bunfig-environment.toml .'
+  -n 'preload per file' 'bun --config=bunfig-preload.toml test --isolate .' \
+  -n 'persistent environment' 'bun --config=bunfig-environment.toml test .' \
+  -n 'persistent environment parallel=1' 'bun --config=bunfig-environment.toml test --parallel=1 .' \
+  -n 'persistent environment parallel=3' 'bun --config=bunfig-environment.toml test --parallel=3 .'
 ```
 
 Run the generator with 25, 100, and 400 files to compare startup cost,

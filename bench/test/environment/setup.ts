@@ -29,7 +29,8 @@ function removeDOM(target: typeof globalThis) {
 
 writeFileSync(
   root + "/preload.ts",
-  `import { JSDOM } from "jsdom";
+  `import { afterAll } from "bun:test";
+import { JSDOM } from "jsdom";
 import React from "react";
 ${install}
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });

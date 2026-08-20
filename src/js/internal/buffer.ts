@@ -11,8 +11,11 @@ function boundsError(value, length, type?) {
 
 function checkBounds(buf, offset, byteLength) {
   validateNumber(offset, "offset");
-  if (buf[offset] === undefined || buf[offset + byteLength - 1] === undefined)
-    boundsError(offset, buf.length - byteLength);
+  // Numeric bound check, not `buf[offset] === undefined`: JSC's TypedArray
+  // indexed get returns undefined for index 2**32 - 1 even when in range,
+  // which would misreport a valid last-byte offset on a kMaxLength buffer.
+  const last = buf.length - byteLength;
+  if (Math.floor(offset) !== offset || !(offset >= 0 && offset <= last)) boundsError(offset, last);
 }
 
 function checkInt(buf, value, offset, min, max, byteLength) {
@@ -39,7 +42,8 @@ function writeU_Int8(buf, value, offset, min, max) {
   if (value > max || value < min) {
     throw $ERR_OUT_OF_RANGE("value", `>= ${min} and <= ${max}`, value);
   }
-  if (buf[offset] === undefined) boundsError(offset, buf.length - 1);
+  const last = buf.length - 1;
+  if (Math.floor(offset) !== offset || !(offset >= 0 && offset <= last)) boundsError(offset, last);
 }
 
 export default {

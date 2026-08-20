@@ -530,6 +530,19 @@ export async function bunRun(
   };
 }
 
+/**
+ * Wrap `cmd` so that it runs with `RLIMIT_FSIZE` set to `blocks` ulimit blocks.
+ * A block is 512 bytes in dash and busybox and 1024 bytes in bash, so size the
+ * files in the test for either. With `0` no regular file can receive a single
+ * byte and every write to one fails with `EFBIG`. Bun ignores `SIGXFSZ`, so the
+ * command sees the error instead of being killed. POSIX only.
+ *
+ * Use it to check what a command leaves behind when a write fails.
+ */
+export function withFileSizeLimit(blocks: number, cmd: string[]): string[] {
+  return ["/bin/sh", "-c", `ulimit -f ${blocks} && exec "$@"`, "--", ...cmd];
+}
+
 export function bunTest(file: string, env?: Record<string, string>) {
   var path = require("path");
   const result = Bun.spawnSync([bunExe(), "test", path.basename(file)], {

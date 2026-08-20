@@ -2721,14 +2721,17 @@ impl TestCommand {
             }
         }
 
-        let write_snapshots_success = jest::Jest::runner()
+        let wrote_inline_snapshots = jest::Jest::runner()
             .unwrap()
             .snapshots
             .write_inline_snapshots()?;
-        jest::Jest::runner()
+        // `write_snapshot_file` reports its own failure, and the old file is still there.
+        let wrote_snapshot_file = jest::Jest::runner()
             .unwrap()
             .snapshots
-            .write_snapshot_file()?;
+            .write_snapshot_file()
+            .is_ok();
+        let write_snapshots_success = wrote_inline_snapshots && wrote_snapshot_file;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()
             && !reporter.reporters.dots

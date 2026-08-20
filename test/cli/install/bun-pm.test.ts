@@ -790,7 +790,8 @@ it("bun install treats an empty BUN_INSTALL_CACHE_DIR as unset instead of cachin
     stderr: "pipe",
     env: cacheEnv(String(side), { BUN_INSTALL_CACHE_DIR: "", BUN_INSTALL: undefined, XDG_CACHE_HOME: undefined }),
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("+ bar@0.0.2");
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 

@@ -627,7 +627,9 @@ import { pureCall } from "pure-pkg";
 /* @__PURE__ */ pureCall();
 export function add(first, second) { debugger; const sum = first + second; console.log("client-marker", sum, value); return sum; }
 globalThis.add = add;
-globalThis.expr = function namedExpr() {};`,
+globalThis.expr = function namedExpr() {};
+declare const DBG: { x(s: string): void };
+DBG.x("dbg-call-marker");`,
         "node_modules/cond-pkg/package.json": JSON.stringify({
           name: "cond-pkg",
           version: "1.0.0",
@@ -681,6 +683,8 @@ globalThis.expr = function namedExpr() {};`,
           clientSideEffects: client.includes("side-effects-marker"),
           clientPureCall: client.includes("pure-call-marker"),
           clientDebugger: client.includes("debugger"),
+          clientDbgCall: client.includes("dbg-call-marker"),
+          clientDbgKept: client.includes('"kept"'),
           // Identifier minification renames `namedExpr`; without `keepNames` the unused name is removed instead.
           clientKeptName: /function \w+\(\)\{\}/.test(client),
           // Minified output renames the parameters and drops the newlines inside the function.
@@ -700,35 +704,48 @@ globalThis.expr = function namedExpr() {};`,
         clientSideEffects: false,
         clientPureCall: false,
         clientDebugger: true,
+        clientDbgCall: true,
+        clientDbgKept: false,
         clientKeptName: false,
         clientReadable: false,
         clientConst: false,
       };
-      const [base, defineAndConditions, drop, serverMinifyOff, clientMinifyOff, clientOnly, serverOnly] =
-        await Promise.all([
-          build({}),
-          // `define` merges key by key: the app's MARK replaces the framework's, the framework's KEPT
-          // survives, and the framework's client conditions still apply.
-          build({
-            framework: {
-              server: { define: { "globalThis.MARK": '"framework"', "globalThis.KEPT": '"kept"' } },
-              client: { conditions: ["custom"] },
-            },
-            app: { server: { define: { "globalThis.MARK": '"app"' } } },
-          }),
-          build({ app: { server: { drop: ["console"] }, client: { drop: ["console", "debugger"] } } }),
-          // Whitespace and identifier minification are link-wide and follow `server`; `false` used to be ignored.
-          build({ app: { server: { minify: false } } }),
-          // Syntax minification is per graph, so only the client keeps its `const`.
-          build({ app: { client: { minify: false } } }),
-          // `ignoreDCEAnnotations` and `minify.keepNames` on one graph do not reach the other.
-          build({ app: { client: { ignoreDCEAnnotations: true, minify: { keepNames: true } } } }),
-          build({ app: { server: { ignoreDCEAnnotations: true, minify: { keepNames: true } } } }),
-        ]);
+      const [
+        base,
+        defineAndConditions,
+        drop,
+        dropOverDefine,
+        serverMinifyOff,
+        clientMinifyOff,
+        clientOnly,
+        serverOnly,
+      ] = await Promise.all([
+        build({}),
+        // `define` merges key by key: the app's MARK replaces the framework's, the framework's KEPT
+        // survives, and the framework's client conditions still apply.
+        build({
+          framework: {
+            server: { define: { "globalThis.MARK": '"framework"', "globalThis.KEPT": '"kept"' } },
+            client: { conditions: ["custom"] },
+          },
+          app: { server: { define: { "globalThis.MARK": '"app"' } } },
+        }),
+        build({ app: { server: { drop: ["console"] }, client: { drop: ["console", "debugger"] } } }),
+        // As in Bun.build, `drop` wins over a `define` of the same identifier.
+        build({ app: { client: { define: { DBG: '"kept"' }, drop: ["DBG"] } } }),
+        // Whitespace and identifier minification are link-wide and follow `server`; `false` used to be ignored.
+        build({ app: { server: { minify: false } } }),
+        // Syntax minification is per graph, so only the client keeps its `const`.
+        build({ app: { client: { minify: false } } }),
+        // `ignoreDCEAnnotations` and `minify.keepNames` on one graph do not reach the other.
+        build({ app: { client: { ignoreDCEAnnotations: true, minify: { keepNames: true } } } }),
+        build({ app: { server: { ignoreDCEAnnotations: true, minify: { keepNames: true } } } }),
+      ]);
       expect({
         base,
         defineAndConditions,
         drop,
+        dropOverDefine,
         serverMinifyOff,
         clientMinifyOff,
         clientOnly,
@@ -744,6 +761,7 @@ globalThis.expr = function namedExpr() {};`,
           clientCondition: undefined,
           clientDebugger: false,
         },
+        dropOverDefine: { ...defaults, clientDbgCall: false },
         serverMinifyOff: { ...defaults, clientReadable: true },
         // Without syntax minification the unused expression name is never removed.
         clientMinifyOff: { ...defaults, clientConst: true, clientKeptName: true },

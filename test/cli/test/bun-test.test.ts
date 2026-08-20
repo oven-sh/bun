@@ -1405,6 +1405,49 @@ describe("bun test", () => {
     expect(stderr).toContain("1 pass");
   });
 
+  // A returned matcher call is a proper tail call, which would otherwise leave the failure with no
+  // frame in the file that contains the call.
+  describe("matcher call in tail position", () => {
+    test("a failure reports the line of the matcher call", () => {
+      const stderr = runTest({
+        input: [
+          {
+            filename: "tail.test.ts",
+            contents: [
+              `import { test, expect } from "bun:test";`,
+              `test("expression-bodied callback", () => expect(1).toBe(2));`,
+              `function check(value: number) { return expect(value).toBe(2); }`,
+              `test("helper", () => { check(1); });`,
+              `test("nullish", () => globalThis.nothing ?? expect(1).toBe(2));`,
+            ].join("\n"),
+          },
+        ],
+        expectExitCode: 1,
+      });
+      expect(stderr).toMatch(/at <anonymous> \(.*tail\.test\.ts:2:\d+\)/);
+      expect(stderr).toMatch(/at check \(.*tail\.test\.ts:3:\d+\)/);
+      expect(stderr).toMatch(/at <anonymous> \(.*tail\.test\.ts:5:\d+\)/);
+      expect(stderr).toContain("3 fail");
+    });
+
+    test("the matcher's return value still reaches the runner", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          expect.extend({
+            async toFailLater() {
+              return { pass: false, message: () => "failed later" };
+            },
+          });
+          test("async matcher", () => expect(1).toFailLater());
+        `,
+        expectExitCode: 1,
+      });
+      expect(stderr).toContain("failed later");
+      expect(stderr).toContain("1 fail");
+    });
+  });
+
   test("path to a non-test.ts file will work", () => {
     const stderr = runTest({
       args: ["./index.ts"],

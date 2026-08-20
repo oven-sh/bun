@@ -2048,6 +2048,46 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // `var <tmp>;` for `keep_matcher_call_frame` (visit_stmt.rs). Like the globals above, this
+        // makes the output specific to `bun test`, so it must not be cached either.
+        if let Some(matcher_result) = p.jest.matcher_result {
+            let binding = p.b(
+                B::Identifier {
+                    r#ref: matcher_result,
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            let mut decls = G::DeclList::init_capacity(1);
+            decls.append_assume_capacity(G::Decl {
+                binding,
+                value: None,
+            });
+            let var_stmt = p.s(
+                S::Local {
+                    kind: js_ast::LocalKind::KVar,
+                    decls,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            let part_stmts = p.arena.alloc_slice_fill_with(1, |_| var_stmt);
+            let mut declared_symbols =
+                bun_ast::DeclaredSymbolList::init_capacity(1).expect("unreachable");
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_: matcher_result,
+                is_top_level: true,
+            });
+            before.push(js_ast::Part {
+                stmts: part_stmts.into(),
+                declared_symbols,
+                tag: bun_ast::PartTag::BunTest,
+                ..Default::default()
+            });
+            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+                cache.input_hash = None;
+            }
+        }
+
         if p.has_called_runtime {
             let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =
                 [0; RuntimeImports::ALL.len()];

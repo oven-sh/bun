@@ -1574,6 +1574,9 @@ pub struct Jest {
     pub(crate) xit: Ref,
     pub(crate) xtest: Ref,
     pub(crate) xdescribe: Ref,
+    /// Module-level temporary that returned matcher calls are assigned to, created by the first
+    /// such return (`P::keep_matcher_call_frame`). Not in `FIELDS`: it is declared, not imported.
+    pub(crate) matcher_result: Option<Ref>,
 }
 
 impl Jest {
@@ -1616,6 +1619,7 @@ impl Default for Jest {
             xit: Ref::NONE,
             xtest: Ref::NONE,
             xdescribe: Ref::NONE,
+            matcher_result: None,
         }
     }
 }

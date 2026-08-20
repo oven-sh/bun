@@ -287,6 +287,20 @@ run_test() {
     *fetch/fetch-http3-cold-post*|*hono/hello-world*|*wpt-h2/*|*canvas/*|*socket.io*|\
     *fetch/fetch-tcp-stress*)
       _serial=1 ;;
+    # VerdaccioRegistry tests share the registry storage dir
+    # (.verdaccio-db.json / htpasswd under test/cli/install/registry);
+    # two instances running at once race user creation ("Failed to create
+    # user") and package writes. Run them serially.
+    *cli/install/bun-add-catalog.test.ts|*cli/install/bun-add-filter.test.ts|\
+    *cli/install/bun-audit.test.ts|*cli/install/bun-dedupe.test.ts|\
+    *cli/install/bun-install-lifecycle-scripts.test.ts|\
+    *cli/install/bun-install-native-binlink.test.ts|\
+    *cli/install/bun-install-registry.test.ts|*cli/install/bun-lock.test.ts|\
+    *cli/install/bun-lockb.test.ts|*cli/install/bun-patch.test.ts|\
+    *cli/install/bun-pm-licenses.test.ts|*cli/install/bun-prune.test.ts|\
+    *cli/install/bun-publish.test.ts|*cli/install/bun-update-lockfile-sync.test.ts|\
+    *cli/install/bun-update-transitive.test.ts)
+      _serial=1 ;;
     # native-plugin 编译/加载 .node 与并发 bun 进程冲突（_Znwm symbol not
     # found：任何并发 bun test 进程存在时 .node 的 libc++ 符号解析竞争）。
     # 独占：获取 exclusive.lock 后其他 worker 分派暂停（缓解，非根治）。

@@ -3269,6 +3269,9 @@ describe("bundler", () => {
       // module that uses them keeps the plain names.
       api.expectFile("/out.js").toContain('var __dirname = "');
       api.expectFile("/out.js").toContain('__filename = "');
+      // The CJS module keeps its own declaration inside its closure. Only the suffix
+      // of the name depends on the other modules of the chunk.
+      api.expectFile("/out.js").toMatch(/var __dirname\d* = "[^"]*c", __filename\d* = "[^"]*c\.cjs";/);
     },
     run: {
       stdout: JSON.stringify({
@@ -3277,6 +3280,44 @@ describe("bundler", () => {
         b: ["/b", "/b/b.ts"],
         c: ["/c", "/c/c.cjs"],
         d: "d",
+      }),
+    },
+  });
+  // require() of an ES module wraps it in an __esm() closure and the linker hoists the
+  // injected declarations out of that closure, so they also need their own names there.
+  // On main, even a read at the top level of such a module saw the wrong value.
+  itBundled("edgecase/DirnameFilenamePerModuleEsmWrapper", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const a = require("./a/a");
+        const b = require("./b/b");
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          entry: [rel(__dirname), rel(__filename)],
+          a: [rel(a.topDir), rel(a.topFile), rel(a.dir()), rel(a.file())],
+          b: [rel(b.topDir), rel(b.topFile), rel(b.dir()), rel(b.file())],
+        }));
+      `,
+      "/a/a.ts": /* ts */ `
+        export const topDir = __dirname;
+        export const topFile = __filename;
+        ${dirnameModule}
+      `,
+      "/b/b.ts": /* ts */ `
+        export const topDir = __dirname;
+        export const topFile = __filename;
+        ${dirnameModule}
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm(");
+    },
+    run: {
+      stdout: JSON.stringify({
+        entry: ["", "/entry.ts"],
+        a: ["/a", "/a/a.ts", "/a", "/a/a.ts"],
+        b: ["/b", "/b/b.ts", "/b", "/b/b.ts"],
       }),
     },
   });
@@ -3302,6 +3343,36 @@ describe("bundler", () => {
         entry: ["", "/entry.ts"],
         a: ["/a", "/a/a.ts"],
         b: ["/b", "/b/b.ts"],
+      }),
+    },
+  });
+  // CommonJS output runs inside a function whose parameters are named exports, require,
+  // module, __filename and __dirname. A top-level class with one of these names has to be
+  // renamed, or the output is a syntax error. On main the bundler's own unbound symbols
+  // reserved the names by accident, so this guards the explicit reservation.
+  itBundled("edgecase/DirnameFilenameUserClassCJSFormat", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { __dirname as Dir, __filename as File } from "./names/names";
+        import * as a from "./a/a";
+        ${dirnameEntryPrelude}
+        console.log(JSON.stringify({
+          classes: [Dir.tag, File.tag],
+          a: [rel(a.dir()), rel(a.file())],
+        }));
+      `,
+      "/names/names.ts": /* ts */ `
+        export class __dirname { static tag = "dir class"; }
+        export class __filename { static tag = "file class"; }
+      `,
+      "/a/a.ts": dirnameModule,
+    },
+    target: "bun",
+    format: "cjs",
+    run: {
+      stdout: JSON.stringify({
+        classes: ["dir class", "file class"],
+        a: ["/a", "/a/a.ts"],
       }),
     },
   });

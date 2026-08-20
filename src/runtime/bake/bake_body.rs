@@ -509,10 +509,10 @@ impl Framework {
     pub fn react(arena: &Arena) -> crate::Result<Framework> {
         // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
-            BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/client.tsx")
-                    .as_bytes(),
-            ),
+            // Browser-side source: compressed in release builds.
+            BuiltInModule::Code(bun_zstd::embed_compressed!(
+                src "runtime/bake/bun-framework-react/client.tsx"
+            )),
             BuiltInModule::Code(
                 bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/server.tsx")
                     .as_bytes(),
@@ -589,8 +589,7 @@ impl Framework {
                 import_source: b"react-refresh/runtime/index.js",
             });
             let react_refresh_code = BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Codegen, "node-fallbacks/react-refresh.js")
-                    .as_bytes(),
+                bun_zstd::embed_compressed!(codegen "node-fallbacks/react-refresh.js"),
             );
             let _ = arena;
             fw.built_in_modules.put(
@@ -1411,10 +1410,10 @@ pub(crate) fn get_hmr_runtime(side: Side) -> HmrRuntime {
     // costs one extra copy at first call; the cost is negligible vs. keeping
     // a per-call-site `#[cfg]` pair in sync.)
     use std::sync::OnceLock;
-    fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
+    fn nul_terminate(s: &'static [u8], cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
         let buf = cell.get_or_init(|| {
             let mut v = Vec::with_capacity(s.len() + 1);
-            v.extend_from_slice(s.as_bytes());
+            v.extend_from_slice(s);
             v.push(0);
             v.into_boxed_slice()
         });
@@ -1424,13 +1423,14 @@ pub(crate) fn get_hmr_runtime(side: Side) -> HmrRuntime {
     static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
     static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
     hmr_runtime_init(match side {
+        // Shipped to the browser: compressed in release builds.
         Side::Client => nul_terminate(
-            bun_core::runtime_embed_file!(CodegenEager, "bake.client.js"),
+            bun_zstd::embed_compressed!(codegen "bake.client.js"),
             &CLIENT,
         ),
         // server runtime is loaded once, so it is pointless to make this eager.
         Side::Server => nul_terminate(
-            bun_core::runtime_embed_file!(Codegen, "bake.server.js"),
+            bun_core::runtime_embed_file!(Codegen, "bake.server.js").as_bytes(),
             &SERVER,
         ),
     })

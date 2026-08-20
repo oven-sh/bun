@@ -529,9 +529,8 @@ pub mod bv2_impl {
             static SERVER: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
             match side {
                 Side::Client => *CLIENT.get_or_init(|| {
-                    HmrRuntime::init(
-                        bun_core::runtime_embed_file!(CodegenEager, "bake.client.js").as_bytes(),
-                    )
+                    // Shipped to the browser: compressed in release builds.
+                    HmrRuntime::init(bun_zstd::embed_compressed!(codegen "bake.client.js"))
                 }),
                 // Server runtime is loaded once; non-eager.
                 Side::Server => *SERVER.get_or_init(|| {

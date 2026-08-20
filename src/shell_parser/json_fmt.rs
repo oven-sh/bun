@@ -271,6 +271,10 @@ fn write_simple_atom(w: &mut impl Write, s: &SimpleAtom<'_>) -> fmt::Result {
         SimpleAtom::QuotedEmpty => w.write_str("{\"quoted_empty\":{}")?,
         SimpleAtom::Asterisk => w.write_str("{\"asterisk\":{}")?,
         SimpleAtom::DoubleAsterisk => w.write_str("{\"double_asterisk\":{}")?,
+        SimpleAtom::GlobText(t) => {
+            w.write_str("{\"glob_text\":")?;
+            encode_json_string(w, t)?;
+        }
         SimpleAtom::BraceBegin => w.write_str("{\"brace_begin\":{}")?,
         SimpleAtom::BraceEnd => w.write_str("{\"brace_end\":{}")?,
         SimpleAtom::Comma => w.write_str("{\"comma\":{}")?,

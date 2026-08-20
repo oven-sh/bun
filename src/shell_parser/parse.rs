@@ -679,6 +679,13 @@ pub mod ast {
         QuotedEmpty,
         Asterisk,
         DoubleAsterisk,
+        /// A `?` or a whole `[...]` class written unquoted in the shell source.
+        /// Unlike `*` it does not make the word glob on its own (`curl url?a=b`
+        /// stays literal), but once a literal `*` makes the word glob it is
+        /// pattern syntax (`*.[jt]s`, `a?*`). The same bytes from quotes, escapes,
+        /// `$var`, command substitution or a JS interpolation, and a class that
+        /// contains any of those, are [`SimpleAtom::Text`] and match themselves.
+        GlobText(&'arena [u8]),
         BraceBegin,
         BraceEnd,
         Comma,
@@ -1530,6 +1537,14 @@ impl<'bump> Parser<'bump> {
                             break;
                         }
                     }
+                    Token::GlobText(txtrng) => {
+                        let _ = self.expect(TokenTag::GlobText);
+                        atoms.push(ast::SimpleAtom::GlobText(self.text(txtrng)));
+                        if next_delimits {
+                            let _ = self.r#match(TokenTag::Delimit);
+                            break;
+                        }
+                    }
                     Token::BraceBegin => {
                         has_brace_open = true;
                         let _ = self.expect(TokenTag::BraceBegin);
@@ -1971,6 +1986,7 @@ pub enum TokenTag {
     Dollar,
     Asterisk,
     DoubleAsterisk,
+    GlobText,
     Eq,
     Semicolon,
     Newline,
@@ -2013,6 +2029,8 @@ pub enum Token {
     /// `*`
     Asterisk,
     DoubleAsterisk,
+    /// `?` or a `[...]` class, see [`ast::SimpleAtom::GlobText`]
+    GlobText(TextRange),
 
     /// =
     Eq,
@@ -2086,6 +2104,7 @@ impl Token {
             Token::Dollar => b"`$`",
             Token::Asterisk => b"`*`",
             Token::DoubleAsterisk => b"`**`",
+            Token::GlobText(r) => &strpool[r.start as usize..r.end as usize],
             Token::Eq => b"`=`",
             Token::Semicolon => b"`;`",
             Token::Newline => b"`\\n`",
@@ -2444,6 +2463,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if let Some(p) = self.peek() {
                                 if p.escaped || p.char != u32::from(b'[') {
+                                    fell_through = self.eat_bracket_class()?;
                                     break 'escaped;
                                 }
                                 let state = self.make_snapshot();
@@ -2529,6 +2549,19 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 self.backtrack(&state);
                             }
                             break 'escaped;
+                        }
+                        c if c == u32::from(b'?') => {
+                            const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'?' as usize));
+                            if self.chars.state == CharState::Single
+                                || self.chars.state == CharState::Double
+                            {
+                                break 'escaped;
+                            }
+                            self.break_word(AddDelimiter::No)?;
+                            let start = self.j;
+                            self.append_char_to_str_pool(c)?;
+                            self.push_glob_text(start);
+                            fell_through = true;
                         }
                         c if c == u32::from(b'#') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'#' as usize));
@@ -2964,6 +2997,68 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     .is_some_and(|p| !p.escaped && p.char == u32::from(b'\'')))
     }
 
+    /// Called after an unquoted `[`. Lexes the rest of the `[...]` class into
+    /// one [`Token::GlobText`] and returns true if every byte of the class is
+    /// plain source text: no quote, escape, `$`, interpolation, `*`, nested `[`
+    /// or word break before the `]`. Otherwise nothing is consumed and the `[`
+    /// stays ordinary text, as does a `]` on its own.
+    fn eat_bracket_class(&mut self) -> Result<bool, LexerError> {
+        let snapshot = self.make_snapshot();
+        let mut body_len: usize = 0;
+        loop {
+            let Some(input) = self.eat() else {
+                self.backtrack(&snapshot);
+                return Ok(false);
+            };
+            if input.escaped {
+                self.backtrack(&snapshot);
+                return Ok(false);
+            }
+            if input.char == u32::from(b']') {
+                if body_len == 0 {
+                    self.backtrack(&snapshot);
+                    return Ok(false);
+                }
+                break;
+            }
+            if !Self::is_bracket_class_char(input.char) {
+                self.backtrack(&snapshot);
+                return Ok(false);
+            }
+            body_len += 1;
+        }
+
+        self.backtrack(&snapshot);
+        self.break_word(AddDelimiter::No)?;
+        let start = self.j;
+        self.append_char_to_str_pool(u32::from(b'['))?;
+        for _ in 0..=body_len {
+            let input = self.eat().expect("validated by the loop above");
+            self.append_char_to_str_pool(input.char)?;
+        }
+        self.push_glob_text(start);
+        Ok(true)
+    }
+
+    /// Bytes the lexer would otherwise treat as plain text, plus the few special
+    /// ones that are meaningful or harmless inside a class (`[0-9]`, `[?]`).
+    fn is_bracket_class_char(char: u32) -> bool {
+        match u8::try_from(char) {
+            Ok(byte) => {
+                !SPECIAL_CHARS_TABLE.is_set(byte as usize)
+                    || matches!(byte, b'0'..=b'9' | b'?' | b'=' | b'~' | b'#')
+            }
+            Err(_) => true,
+        }
+    }
+
+    /// Turns the bytes appended since `start` into a [`Token::GlobText`].
+    fn push_glob_text(&mut self, start: u32) {
+        self.tokens
+            .push(Token::GlobText(TextRange { start, end: self.j }));
+        self.word_start = self.j;
+    }
+
     fn break_word(&mut self, add_delimiter: AddDelimiter) -> Result<(), LexerError> {
         let start: u32 = self.word_start;
         let end: u32 = self.j;
@@ -2989,7 +3084,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::Comma
                 | TokenTag::BraceEnd
                 | TokenTag::CmdSubstEnd
-                | TokenTag::Asterisk => true,
+                | TokenTag::Asterisk
+                | TokenTag::GlobText => true,
 
                 TokenTag::Pipe
                 | TokenTag::DoublePipe

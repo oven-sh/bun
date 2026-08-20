@@ -224,6 +224,84 @@ describe("lex shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("glob text", () => {
+    // A `?` or a whole `[...]` written in the template is a token of its own,
+    // so expansion can tell it apart from the same bytes arriving quoted,
+    // escaped, or interpolated, which stay plain text.
+    const expected = [
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Asterisk": {} },
+      { "Text": "." },
+      { "GlobText": "[jt]" },
+      { "Text": "s" },
+      { "Delimit": {} },
+      { "Text": "x" },
+      { "GlobText": "[!0-9]" },
+      { "Asterisk": {} },
+      { "Delimit": {} },
+      { "Text": "a" },
+      { "GlobText": "?" },
+      { "Delimit": {} },
+      { "DoubleQuotedText": "[x]?" },
+      { "Delimit": {} },
+      { "Text": "[y]?" },
+      { "Delimit": {} },
+      { "Text": "[z]?" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ];
+    const result = JSON.parse(lex`echo *.[jt]s x[!0-9]* a? "[x]?" \[y\]\? ${"[z]?"}`);
+    expect(result).toEqual(expected);
+  });
+
+  test("a class is text when any of it is not template text", () => {
+    // Interpolated, quoted, escaped or expanded bytes inside the brackets, and
+    // brackets that do not close within the word, all stay plain text. The
+    // interpolated `!` has no character to escape, so the builder has to route it
+    // through a string ref because of the open `[` in front of it.
+    const expected = [
+      { "Text": "[" },
+      { "Text": "!a]" },
+      { "Delimit": {} },
+      { "Text": "[" },
+      { "DoubleQuotedText": "!" },
+      { "Text": "a]" },
+      { "Delimit": {} },
+      { "Text": "[!a]" },
+      { "Delimit": {} },
+      { "Text": "[" },
+      { "Var": "X" },
+      { "Text": "]" },
+      { "Delimit": {} },
+      { "Text": "[a" },
+      { "Delimit": {} },
+      { "Text": "b]" },
+      { "Delimit": {} },
+      { "Text": "[" },
+      { "Asterisk": {} },
+      { "Text": "]" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ];
+    const result = JSON.parse(lex`[${"!"}a] ["!"a] [\!a] [$X] [a b] [*]`);
+    expect(result).toEqual(expected);
+  });
+
+  test("glob text does not interfere with [[ ]]", () => {
+    const expected = [
+      { "DoubleBracketOpen": {} },
+      { "Text": "-f" },
+      { "Delimit": {} },
+      { "Text": "a]" },
+      { "Delimit": {} },
+      { "DoubleBracketClose": {} },
+      { "Eof": {} },
+    ];
+    const result = JSON.parse(lex`[[ -f a] ]]`);
+    expect(result).toEqual(expected);
+  });
+
   test("op_and", () => {
     const expected = [
       { "Text": "echo" },

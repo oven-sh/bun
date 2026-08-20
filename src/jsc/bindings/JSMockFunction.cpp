@@ -619,7 +619,7 @@ const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nul
 
 // The sets are weak, so a mock that has been collected is simply not visited.
 template<typename Functor>
-static void forEachMockInSet(JSC::Strong<JSC::Unknown>& mockSet, const Functor& apply)
+static void forEachMockInSet(JSC::WriteBarrier<JSC::Unknown>& mockSet, const Functor& apply)
 {
     if (!mockSet) {
         return;
@@ -783,6 +783,8 @@ template<typename Visitor> void JSMockModule::visit(Visitor& visitor)
     name.visit(visitor);
     FOR_EACH_JSMOCKMODULE_GC_MEMBER(VISIT_JSMOCKMODULE_GC_MEMBER)
 #undef VISIT_JSMOCKMODULE_GC_MEMBER
+    visitor.append(activeSpies);
+    visitor.append(activeMocks);
 }
 
 template void JSMockModule::visit(JSC::AbstractSlotVisitor&);
@@ -1570,7 +1572,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         {
             if (!globalObject->mockModule.activeSpies) {
                 ActiveSpySet* activeSpies = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-                globalObject->mockModule.activeSpies.set(vm, activeSpies);
+                globalObject->mockModule.activeSpies.set(vm, globalObject, activeSpies);
             }
             ActiveSpySet* activeSpies = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeSpies.get());
             activeSpies->add(vm, mock, mock);
@@ -1579,7 +1581,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         {
             if (!globalObject->mockModule.activeMocks) {
                 ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-                globalObject->mockModule.activeMocks.set(vm, activeMocks);
+                globalObject->mockModule.activeMocks.set(vm, globalObject, activeMocks);
             }
             ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get());
             activeMocks->add(vm, mock, mock);
@@ -1626,7 +1628,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalO
 
     if (!globalObject->mockModule.activeMocks) {
         ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-        globalObject->mockModule.activeMocks.set(vm, activeMocks);
+        globalObject->mockModule.activeMocks.set(vm, globalObject, activeMocks);
     }
 
     ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get());

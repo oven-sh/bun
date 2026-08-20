@@ -702,9 +702,18 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
 
-    // Drop the permanent root on the previous global so its module registry,
-    // require.cache, and user objects become collectable. JSC's CodeCache and
-    // Bun's RuntimeTranspilerCache are VM/process scoped and survive.
+    // The plugin registries hold Strong<> roots into the old realm; owned by the global itself,
+    // they would keep it (and everything it loaded) alive for the rest of the run.
+    oldGlobal->onLoadPlugins.clear();
+    oldGlobal->onResolvePlugins.clear();
+    // Drop the finished file's module registry and require.cache now rather than whenever the
+    // old global happens to die. JSC's CodeCache and Bun's RuntimeTranspilerCache are VM/process
+    // scoped and survive.
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        oldGlobal->clearModuleRegistry();
+        scope.assertNoExceptionExceptTermination();
+    }
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
     JSC::gcUnprotect(oldGlobal);
 
@@ -3579,16 +3588,22 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 // DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
 
-void GlobalObject::reload()
+void GlobalObject::clearModuleRegistry()
 {
-    auto& vm = this->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     {
         auto* moduleLoader = this->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread under cellLock().
         WTF::Locker locker { moduleLoader->cellLock() };
         moduleLoader->clearAll();
     }
     this->requireMap()->clear(this);
+}
+
+void GlobalObject::reload()
+{
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    this->clearModuleRegistry();
     RETURN_IF_EXCEPTION(scope, );
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
@@ -4301,14 +4316,8 @@ void GlobalObject::forbidExecution()
     // Drop the module registry and require() cache so module-level bindings become unreachable
     // for the final collection (their ExternalStringImpl deallocators must run before ~VM).
     {
-        auto* moduleLoader = this->moduleLoader();
-        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread under cellLock().
-        WTF::Locker locker { moduleLoader->cellLock() };
-        moduleLoader->clearAll();
-    }
-    {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        requireMap()->clear(this);
+        this->clearModuleRegistry();
         scope.clearException();
     }
 

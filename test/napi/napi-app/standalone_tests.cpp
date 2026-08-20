@@ -3862,6 +3862,188 @@ test_node_api_sharedarraybuffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// The three constructors that wrap addon-owned memory, behind one signature
+// (no finalizer) so the NULL-pointer tests below can drive each of them.
+struct ExternalBufferConstructor {
+  const char *name;
+  napi_status (*create)(napi_env env, void *data, size_t length,
+                        napi_value *result);
+};
+
+static const ExternalBufferConstructor external_buffer_constructor = {
+    "napi_create_external_buffer",
+    [](napi_env env, void *data, size_t length, napi_value *result) {
+      return napi_create_external_buffer(env, length, data, nullptr, nullptr,
+                                         result);
+    }};
+static const ExternalBufferConstructor external_arraybuffer_constructor = {
+    "napi_create_external_arraybuffer",
+    [](napi_env env, void *data, size_t length, napi_value *result) {
+      return napi_create_external_arraybuffer(env, data, length, nullptr,
+                                              nullptr, result);
+    }};
+static const ExternalBufferConstructor external_sharedarraybuffer_constructor =
+    {"node_api_create_external_sharedarraybuffer",
+     [](napi_env env, void *data, size_t length, napi_value *result) {
+       return node_api_create_external_sharedarraybuffer(
+           env, data, length, nullptr, nullptr, result);
+     }};
+static const ExternalBufferConstructor *const external_buffer_constructors[] = {
+    &external_buffer_constructor,
+    &external_arraybuffer_constructor,
+    &external_sharedarraybuffer_constructor,
+};
+
+// Called as test_external_buffer_null_data_nonzero_length(gc, name) through
+// checkBothFail. A NULL pointer with a non-zero length is a CHECK failure in
+// Node (node::Buffer::New, V8's SharedArrayBuffer::New), so the call must not
+// return. Bun used to return napi_ok: an empty Buffer from the buffer variant,
+// and from the other two a buffer with a NULL data pointer and byteLength 64
+// that crashed whatever later read through it.
+static napi_value
+test_external_buffer_null_data_nonzero_length(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  std::string name = info[1].As<Napi::String>().Utf8Value();
+  for (const auto *ctor : external_buffer_constructors) {
+    if (name != ctor->name)
+      continue;
+    napi_value value = nullptr;
+    napi_status status = ctor->create(env, nullptr, 64, &value);
+    printf("FAIL: %s(NULL, 64) returned status=%d\n", ctor->name, (int)status);
+    return ok(env);
+  }
+  printf("FAIL: unknown constructor %s\n", name.c_str());
+  return ok(env);
+}
+
+// `new Uint8Array(value).length`, or "throws": whether JS can actually use
+// what a constructor handed back, asked the same way of every kind of buffer.
+static std::string view_length_or_throws(napi_env env, napi_value value) {
+  napi_value source, make_view, global, length;
+  NODE_API_CALL_CUSTOM_RETURN(
+      env, "error",
+      napi_create_string_utf8(env, "(b) => new Uint8Array(b).length",
+                              NAPI_AUTO_LENGTH, &source));
+  NODE_API_CALL_CUSTOM_RETURN(env, "error",
+                              napi_run_script(env, source, &make_view));
+  NODE_API_CALL_CUSTOM_RETURN(env, "error", napi_get_global(env, &global));
+  if (napi_call_function(env, global, make_view, 1, &value, &length) !=
+      napi_ok) {
+    napi_value exc;
+    napi_get_and_clear_last_exception(env, &exc);
+    return "throws";
+  }
+  uint32_t n = 0;
+  NODE_API_CALL_CUSTOM_RETURN(env, "error",
+                              napi_get_value_uint32(env, length, &n));
+  return std::to_string(n);
+}
+
+// The NULL-pointer check must not preempt the checks Node runs before it, and
+// a NULL pointer is still accepted when the length is 0.
+static napi_value
+test_external_buffer_null_data_status_paths(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value value = nullptr;
+  napi_status status;
+
+  for (const auto *ctor : external_buffer_constructors) {
+    NODE_API_CALL(env, napi_throw_error(env, nullptr, "stashed before create"));
+    status = ctor->create(env, nullptr, 64, &value);
+    napi_value exc;
+    napi_get_and_clear_last_exception(env, &exc);
+    printf("%s(NULL, 64) with pending exception: status=%d\n", ctor->name,
+           (int)status);
+  }
+
+  // Not the arraybuffer variant: Node implements that one on top of
+  // napi_create_external_buffer with a local out-pointer, so it reaches the
+  // data CHECK without ever looking at result.
+  status =
+      napi_create_external_buffer(env, 64, nullptr, nullptr, nullptr, nullptr);
+  printf("napi_create_external_buffer(NULL, 64) with result=NULL: status=%d\n",
+         (int)status);
+  status = node_api_create_external_sharedarraybuffer(env, nullptr, 64, nullptr,
+                                                      nullptr, nullptr);
+  printf("node_api_create_external_sharedarraybuffer(NULL, 64) with "
+         "result=NULL: status=%d\n",
+         (int)status);
+
+  // Zero-length Buffers take a path of their own, covered by
+  // test_napi_create_external_buffer_empty.
+  static char dummy;
+  struct {
+    const char *label;
+    void *data;
+  } zero_length_cases[] = {{"NULL", nullptr}, {"ptr", &dummy}};
+  for (const auto *ctor : {&external_arraybuffer_constructor,
+                           &external_sharedarraybuffer_constructor}) {
+    for (const auto &c : zero_length_cases) {
+      status = ctor->create(env, c.data, 0, &value);
+      if (status != napi_ok) {
+        printf("%s(%s, 0): status=%d\n", ctor->name, c.label, (int)status);
+        continue;
+      }
+      bool detached = false;
+      NODE_API_CALL(env, napi_is_detached_arraybuffer(env, value, &detached));
+      printf("%s(%s, 0): status=0 detached=%d view=%s\n", ctor->name, c.label,
+             (int)detached, view_length_or_throws(env, value).c_str());
+    }
+  }
+
+  return ok(env);
+}
+
+// Used by test_external_sharedarraybuffer_lifetime_driver in module.js. One
+// slot per kind of pointer, handed to the constructor as the finalize hint, so
+// the callback has to arrive with the right hint to move the right slot.
+struct ZeroLengthSabFinalizer {
+  int count;
+  void *data;
+};
+static ZeroLengthSabFinalizer zero_length_sab_finalizers[2];
+static char zero_length_sab_dummy;
+
+static void *zero_length_sab_pointer(bool use_ptr) {
+  return use_ptr ? static_cast<void *>(&zero_length_sab_dummy) : nullptr;
+}
+
+// create_zero_length_external_sab(use_ptr): external SharedArrayBuffer over
+// (ptr, 0) or (NULL, 0) whose finalizer records into the slot for that kind.
+static napi_value
+create_zero_length_external_sab(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  bool use_ptr = info[0].As<Napi::Boolean>().Value();
+  ZeroLengthSabFinalizer &slot = zero_length_sab_finalizers[use_ptr];
+  slot = {0, nullptr};
+  napi_value sab;
+  NODE_API_CALL(env, node_api_create_external_sharedarraybuffer(
+                         env, zero_length_sab_pointer(use_ptr), 0,
+                         +[](void *data, void *hint) {
+                           auto *s =
+                               static_cast<ZeroLengthSabFinalizer *>(hint);
+                           s->count++;
+                           s->data = data;
+                         },
+                         &slot, &sab));
+  return sab;
+}
+
+// zero_length_external_sab_finalizer(use_ptr): "count=N" plus, once it has
+// run, whether it received the pointer the addon passed in.
+static napi_value
+zero_length_external_sab_finalizer(const Napi::CallbackInfo &info) {
+  bool use_ptr = info[0].As<Napi::Boolean>().Value();
+  const ZeroLengthSabFinalizer &slot = zero_length_sab_finalizers[use_ptr];
+  std::string report = "count=" + std::to_string(slot.count);
+  if (slot.count != 0) {
+    report += slot.data == zero_length_sab_pointer(use_ptr)
+                  ? " data=as passed in"
+                  : " data=something else";
+  }
+  return Napi::String::New(info.Env(), report);
+}
+
 static void noop_tsfn_cb(napi_env, napi_value, void *, void *) {}
 
 // Each case below returns a different napi_status in Bun than in Node.js 26
@@ -4447,6 +4629,11 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_node_api_set_prototype);
   REGISTER_FUNCTION(env, exports, test_node_api_create_object_with_properties);
   REGISTER_FUNCTION(env, exports, test_node_api_sharedarraybuffer);
+  REGISTER_FUNCTION(env, exports,
+                    test_external_buffer_null_data_nonzero_length);
+  REGISTER_FUNCTION(env, exports, test_external_buffer_null_data_status_paths);
+  REGISTER_FUNCTION(env, exports, create_zero_length_external_sab);
+  REGISTER_FUNCTION(env, exports, zero_length_external_sab_finalizer);
   REGISTER_FUNCTION(env, exports, test_napi_status_codes_node26);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_ran);

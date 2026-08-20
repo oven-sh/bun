@@ -414,6 +414,62 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("external buffer constructors given a NULL pointer", () => {
+    it.each([
+      "napi_create_external_buffer",
+      "napi_create_external_arraybuffer",
+      "node_api_create_external_sharedarraybuffer",
+    ])("%s aborts like Node when the length is not 0", async name => {
+      await checkBothFail("test_external_buffer_null_data_nonzero_length", [name]);
+    });
+
+    it("the checks Node runs first still return a status, and length 0 is still accepted", async () => {
+      const result = await checkSameOutput("test_external_buffer_null_data_status_paths", []);
+      expect(result).toMatchInlineSnapshot(`
+        "napi_create_external_buffer(NULL, 64) with pending exception: status=10
+        napi_create_external_arraybuffer(NULL, 64) with pending exception: status=10
+        node_api_create_external_sharedarraybuffer(NULL, 64) with pending exception: status=10
+        napi_create_external_buffer(NULL, 64) with result=NULL: status=1
+        node_api_create_external_sharedarraybuffer(NULL, 64) with result=NULL: status=1
+        napi_create_external_arraybuffer(NULL, 0): status=0 detached=1 view=throws
+        napi_create_external_arraybuffer(ptr, 0): status=0 detached=0 view=0
+        node_api_create_external_sharedarraybuffer(NULL, 0): status=0 detached=0 view=0
+        node_api_create_external_sharedarraybuffer(ptr, 0): status=0 detached=0 view=0"
+      `);
+    });
+
+    // finalize_cb has to outlive the object the addon got back: a structuredClone
+    // shares the contents, so nothing may run until that dies too.
+    it("node_api_create_external_sharedarraybuffer(ptr, 0) finalizes once, after the last clone", async () => {
+      const result = await checkSameOutput("test_external_sharedarraybuffer_lifetime_driver", [true, true]);
+      expect(result).toMatchInlineSnapshot(`
+        "(ptr, 0) original collected, clone alive: count=0
+        (ptr, 0) clone collected: count=1 data=as passed in
+        resolved to undefined"
+      `);
+    });
+
+    it("node_api_create_external_sharedarraybuffer(NULL, 0) does not finalize while a clone is alive", async () => {
+      const result = await checkSameOutput("test_external_sharedarraybuffer_lifetime_driver", [false, false]);
+      expect(result).toMatchInlineSnapshot(`
+        "(NULL, 0) original collected, clone alive: count=0
+        resolved to undefined"
+      `);
+    });
+
+    // Node 26 never runs the callback for a NULL pointer (V8 drops the deleter of
+    // a NULL backing store); Bun keeps to the documented contract and runs it once,
+    // with the NULL the addon passed rather than the byte standing in for it.
+    it("node_api_create_external_sharedarraybuffer(NULL, 0) finalizes once with NULL on Bun", async () => {
+      const result = await runOn(bunExe(), "test_external_sharedarraybuffer_lifetime_driver", [false, true]);
+      expect(result.replaceAll(/^\[\w+\].+$/gm, "").trim()).toMatchInlineSnapshot(`
+        "(NULL, 0) original collected, clone alive: count=0
+        (NULL, 0) clone collected: count=1 data=as passed in
+        resolved to undefined"
+      `);
+    });
+  });
+
   describe("pending-exception gate", () => {
     it("refuses and performs no side effects while a napi exception is pending", async () => {
       const result = await checkSameOutput("test_pending_exception_gate", []);
@@ -1583,6 +1639,10 @@ async function checkBothFail(test: string, args: any[] | string, envArgs: Record
           join(__dirname, "napi-app/main.js"),
           test,
           typeof args == "string" ? args : JSON.stringify(args),
+          // A plain script argument to main.js and to node. Bun's debug crash
+          // handler looks for it anywhere in argv and skips its llvm-symbolizer
+          // pass (~5s per crash); this helper only looks at how the process died.
+          "--debug-crash-handler-use-trace-string",
         ],
         env,
         stdout: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",

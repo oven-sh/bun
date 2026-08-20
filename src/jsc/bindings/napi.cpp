@@ -1728,6 +1728,12 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+// Node CHECKs this too (node::Buffer::New, V8's SharedArrayBuffer::New).
+static void checkExternalBufferData(const char* function, const void* data, size_t length)
+{
+    NAPI_RELEASE_ASSERT(data != nullptr || length == 0, "%s: data is NULL but length is %zu", function, length);
+}
+
 // SharedArrayBuffer backing stores can outlive the creating napi_env (they
 // may be posted to other agents), so Node-API specifies a finalizer with no
 // env parameter. This destructor mirrors NapiExternalBufferDestructor but
@@ -1735,14 +1741,19 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
 // NapiEnv::doFinalizer.
 class NapiNoEnvExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
-    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* hint)
+    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* hint, bool ownsPlaceholder)
         : m_cb(cb)
         , m_hint(hint)
+        , m_ownsPlaceholder(ownsPlaceholder)
     {
     }
 
     void run(void* data) override
     {
+        if (m_ownsPlaceholder) {
+            fastFree(data);
+            data = nullptr;
+        }
         if (m_armed && m_cb) {
             m_cb(data, m_hint);
         }
@@ -1753,6 +1764,7 @@ public:
 private:
     node_api_noenv_finalize m_cb;
     void* m_hint;
+    bool m_ownsPlaceholder;
     bool m_armed { false };
 };
 
@@ -1765,13 +1777,17 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
+    checkExternalBufferData("node_api_create_external_sharedarraybuffer", external_data, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint));
+    // A null data pointer is JSC's representation of "detached", which makeShared() asserts against.
+    bool usePlaceholder = external_data == nullptr;
+    const void* data = usePlaceholder ? fastMalloc(1) : external_data;
+    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint, usePlaceholder));
     auto* destructorPtr = destructor.ptr();
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(data), byte_length }, WTF::move(destructor));
     arrayBuffer->makeShared();
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
@@ -2418,6 +2434,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    checkExternalBufferData("napi_create_external_buffer", data, length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2463,6 +2480,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    checkExternalBufferData("napi_create_external_arraybuffer", external_data, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);

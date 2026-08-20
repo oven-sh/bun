@@ -540,6 +540,25 @@ fn parse_nested_block<T>(
     parser: &mut Parser,
     parsefn: impl FnOnce(&mut Parser) -> CssResult<T>,
 ) -> CssResult<T> {
+    // Everything that does not depend on `T` lives in the two out-of-line
+    // halves so the ~135 instantiations of this fn stay small.
+    let state = match nested_block_enter(parser) {
+        Ok(state) => state,
+        Err(err) => return Err(err),
+    };
+    let result = parser.parse_entirely((), |(), p| parsefn(p));
+    nested_block_exit(parser, state, result.is_err());
+    result
+}
+
+struct NestedBlockState {
+    block_type: BlockType,
+    saved_stop_before: Delimiters,
+    start_position: usize,
+}
+
+#[inline(never)]
+fn nested_block_enter(parser: &mut Parser) -> CssResult<NestedBlockState> {
     let block_type = parser.at_start_of.take().unwrap_or_else(|| {
         panic!(
             "\nA nested parser can only be created when a Function,\n\
@@ -585,17 +604,24 @@ fn parse_nested_block<T>(
     let saved_stop_before = parser.stop_before;
     parser.stop_before = closing_delimiter;
     parser.at_start_of = None;
-    let result = parser.parse_entirely((), |(), p| parsefn(p));
+    Ok(NestedBlockState {
+        block_type,
+        saved_stop_before,
+        start_position,
+    })
+}
+
+#[inline(never)]
+fn nested_block_exit(parser: &mut Parser, state: NestedBlockState, is_err: bool) {
     if let Some(block_type2) = parser.at_start_of.take() {
         consume_until_end_of_block(block_type2, &mut parser.input.tokenizer);
     }
-    parser.stop_before = saved_stop_before;
-    let found_close = consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
-    if result.is_err() && !found_close {
-        record_unclosed_block_at_eof(parser, start_position);
+    parser.stop_before = state.saved_stop_before;
+    let found_close = consume_until_end_of_block(state.block_type, &mut parser.input.tokenizer);
+    if is_err && !found_close {
+        record_unclosed_block_at_eof(parser, state.start_position);
     }
     parser.input.nesting_depth -= 1;
-    result
 }
 
 // ───────────────────────── parser-protocol traits ─────────────────────────
@@ -3615,9 +3641,15 @@ impl<'a> Parser<'a> {
         closure: C,
         parsefn: impl FnOnce(C, &mut Parser) -> CssResult<T>,
     ) -> CssResult<T> {
-        let result = parsefn(closure, self)?;
-        self.expect_exhausted()?;
-        Ok(result)
+        // Hand `result` back as-is rather than `?`-unwrapping and re-wrapping
+        // it: `T` is often large and this fn has ~160 instantiations.
+        let result = parsefn(closure, self);
+        if result.is_ok() {
+            if let Err(err) = self.expect_exhausted() {
+                return Err(err);
+            }
+        }
+        result
     }
 
     /// Check whether the input is exhausted. That is, if `.next()` would
@@ -3702,7 +3734,7 @@ impl<'a> Parser<'a> {
             // SAFETY: see `Parser.import_records` field doc.
             import_record_count: self
                 .import_records
-                .map(|ptr| u32::try_from(unsafe { (*ptr.as_ptr()).len() }).unwrap())
+                .map(|ptr| unsafe { (*ptr.as_ptr()).len() } as u32)
                 .unwrap_or(0),
         }
     }

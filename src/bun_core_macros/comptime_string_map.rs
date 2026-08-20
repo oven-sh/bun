@@ -296,6 +296,14 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let decl_keys = (0..n).map(|i| key_lit(&keys, i));
     let decl_values = values.iter();
     let decl_values_again = values.iter();
+    // Small maps are a handful of compares and should vanish into the caller;
+    // past that the compare tree is big enough that one shared copy wins and
+    // LLVM can still inline a single-caller map on its own.
+    let lookup_inline = if n < 8 {
+        quote!(#[inline])
+    } else {
+        quote!()
+    };
 
     Ok(quote! {
         #(#attrs)*
@@ -330,7 +338,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
 
             /// Declaration-order index of `key`, or `u32::MAX` for a miss.
             #[doc(hidden)]
-            #[inline]
+            #lookup_inline
             #vis fn __key_index(key: &[u8]) -> ::core::primitive::u32 {
                 match key.len() {
                     #(#eq_arms)*
@@ -406,7 +414,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
 
             /// ASCII-lowercases `key` into a stack buffer, then looks it up.
             /// Keys must be declared in lowercase for this to match.
-            #[inline]
+            #lookup_inline
             #vis fn get_ascii_case_insensitive(
                 &self,
                 key: &[u8],
@@ -419,7 +427,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
                 for (dst, src) in buf.iter_mut().zip(key.iter()) {
                     *dst = src.to_ascii_lowercase();
                 }
-                self.get_with_len_and_eql(&*buf, key.len(), |a: &[u8], b| a == b)
+                #values_name.get(Self::__key_index(buf) as usize)
             }
         }
 
@@ -479,6 +487,11 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
     });
 
     let decl_keys = (0..n).map(|i| key_lit(&keys, i));
+    let lookup_inline = if n < 8 {
+        quote!(#[inline])
+    } else {
+        quote!()
+    };
 
     Ok(quote! {
         #(#attrs)*
@@ -503,7 +516,7 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
             /// pointer-free blob.
             #vis const KEYS: &'static [&'static [u8]] = &[ #(#decl_keys),* ];
 
-            #[inline]
+            #lookup_inline
             #vis fn contains(&self, key: &[u8]) -> bool {
                 match key.len() {
                     #(#eq_arms)*

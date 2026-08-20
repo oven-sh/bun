@@ -640,12 +640,18 @@ use mimalloc::MI_MAX_ALIGN_SIZE;
 unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     #[inline]
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        mimalloc::mi_malloc_auto_align(layout.size(), layout.align()).cast()
+        non_null_or_oom(
+            mimalloc::mi_malloc_auto_align(layout.size(), layout.align()).cast(),
+            layout,
+        )
     }
 
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
-        mimalloc::mi_zalloc_auto_align(layout.size(), layout.align()).cast()
+        non_null_or_oom(
+            mimalloc::mi_zalloc_auto_align(layout.size(), layout.align()).cast(),
+            layout,
+        )
     }
 
     #[inline]
@@ -673,6 +679,18 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         }
         .cast()
     }
+}
+
+/// A failed small allocation is unrecoverable, so diverge here: for the
+/// constant-size case (`Box::new`) the caller's `handle_alloc_error(layout)`
+/// branch then folds away. Large (runtime-sized) requests still return null
+/// so `try_reserve` can surface them as errors.
+#[inline(always)]
+fn non_null_or_oom(ptr: *mut u8, layout: core::alloc::Layout) -> *mut u8 {
+    if ptr.is_null() && layout.size() <= 64 * 1024 {
+        out_of_memory();
+    }
+    ptr
 }
 
 /// Resize a mimalloc-owned buffer, taking a raw pointer for callers that

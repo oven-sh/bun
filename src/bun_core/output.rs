@@ -2429,6 +2429,13 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     // pretty_errorln! add exactly one.
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
+    err_with_body(&error_name, &body);
+}
+
+/// The type-independent tail of [`err`], so its several format sites are not
+/// re-instantiated for every `(ErrName, FmtTuple)` pair.
+#[inline(never)]
+fn err_with_body(error_name: &dyn ErrName, body: &dyn fmt::Display) {
     if let Some(e) = error_name.as_sys_err_info() {
         // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
         if let Some(label) = crate::coreutils_error_map::get(e.errno) {

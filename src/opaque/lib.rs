@@ -261,9 +261,11 @@ macro_rules! assert_ffi_discr {
 /// [`opaque_deref_nn`] instead to elide the release-mode `testq; je <panic>`.
 #[inline(always)]
 pub fn opaque_deref<'a, T>(p: *const T) -> &'a T {
-    let p = ::core::ptr::NonNull::new(p.cast_mut()).expect("opaque_deref: null FFI handle");
+    if p.is_null() {
+        null_handle();
+    }
     // SAFETY: non-null established above.
-    unsafe { opaque_deref_nn(p.as_ptr()) }
+    unsafe { opaque_deref_nn(p) }
 }
 
 /// Unchecked `*const T → &T` for a `#[repr(C)]` zero-sized, align-1 opaque FFI
@@ -304,9 +306,11 @@ pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
 /// mutable borrow of zero bytes cannot overlap any other borrow).
 #[inline(always)]
 pub fn opaque_deref_mut<'a, T>(p: *mut T) -> &'a mut T {
-    let p = ::core::ptr::NonNull::new(p).expect("opaque_deref_mut: null FFI handle");
+    if p.is_null() {
+        null_handle();
+    }
     // SAFETY: non-null established above.
-    unsafe { opaque_deref_mut_nn(p.as_ptr()) }
+    unsafe { opaque_deref_mut_nn(p) }
 }
 
 /// Unchecked `*mut T → &mut T`. See [`opaque_deref_nn`] / [`opaque_deref_mut`].
@@ -417,4 +421,13 @@ pub mod ffi {
             unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         }
     }
+}
+
+/// One shared, argument-free panic for the null checks above: thousands of
+/// call sites inline `opaque_deref`, and a `#[track_caller]` `expect` would
+/// give each its own message/location setup.
+#[cold]
+#[inline(never)]
+fn null_handle() -> ! {
+    panic!("opaque_deref: null FFI handle");
 }

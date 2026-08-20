@@ -207,7 +207,21 @@ class BunBuiltinNames {
     ~BunBuiltinNames();
 
 public:
-    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    enum class Name : uint16_t {
+#define BUN_BUILTIN_NAME_ENUM(name) k_##name,
+        BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_BUILTIN_NAME_ENUM)
+#undef BUN_BUILTIN_NAME_ENUM
+        Count_
+    };
+    static constexpr size_t count = static_cast<size_t>(Name::Count_);
+
+    // The identifiers live in two arrays (built by a loop over a string table
+    // in the .cpp) rather than one member per name; the accessors index them.
+#define BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR(name) \
+    const JSC::Identifier& name##PublicName() const { return m_publicNames[static_cast<size_t>(Name::k_##name)]; } \
+    const JSC::Identifier& name##PrivateName() const { return m_privateNames[static_cast<size_t>(Name::k_##name)]; }
+    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+#undef BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR
 
     const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
     const JSC::Identifier& inspectCustomPublicName() {
@@ -220,7 +234,8 @@ public:
 private:
     JSC::VM& m_vm;
     JSC::Identifier m_inspectCustomPublicName {};
-    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_NAMES)
+    std::array<JSC::Identifier, count> m_publicNames;
+    std::array<JSC::Identifier, count> m_privateNames;
 };
 
 } // namespace WebCore

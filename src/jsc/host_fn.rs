@@ -136,21 +136,25 @@ pub use {JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig};
 /// Map a `JsResult<JSValue>` to the raw `JSValue` a host fn must return
 /// (`.zero` when an exception is pending).
 pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSValue>) -> JSValue {
-    if Environment::ALLOW_ASSERT && Environment::IS_CANARY {
-        let value = match result {
-            Ok(v) => v,
-            Err(JsError::Thrown) => JSValue::ZERO,
-            Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-            Err(JsError::Terminated) => terminated_beneath_script(global_this),
-        };
-        debug_exception_assertion(global_this, value, "_unknown_");
-        return value;
-    }
-    match result {
+    let value = match result {
         Ok(v) => v,
-        Err(JsError::Thrown) => JSValue::ZERO,
-        Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => terminated_beneath_script(global_this),
+        Err(e) => host_call_error_value(global_this, e),
+    };
+    if Environment::ALLOW_ASSERT && Environment::IS_CANARY {
+        debug_exception_assertion(global_this, value, "_unknown_");
+    }
+    value
+}
+
+/// The `Err` arm of every host-fn trampoline, kept out of line: leaves the matching exception
+/// pending and returns what the trampoline hands back to JSC.
+#[cold]
+#[inline(never)]
+pub fn host_call_error_value(global_this: &JSGlobalObject, err: JsError) -> JSValue {
+    match err {
+        JsError::Thrown => JSValue::ZERO,
+        JsError::OutOfMemory => global_this.throw_out_of_memory_value(),
+        JsError::Terminated => terminated_beneath_script(global_this),
     }
 }
 
@@ -196,13 +200,8 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
 
 pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
     match value {
-        Err(JsError::Thrown) => false,
-        Err(JsError::OutOfMemory) => {
-            let _ = global_this.throw_out_of_memory_value();
-            false
-        }
-        Err(JsError::Terminated) => !terminated_beneath_script(global_this).is_empty(),
         Ok(()) => true,
+        Err(e) => !host_call_error_value(global_this, e).is_empty(),
     }
 }
 
@@ -667,15 +666,10 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
     let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global);
     let ptr = match f().into_host_construct_return() {
         Ok(p) => p,
-        Err(JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory_value();
+        Err(e) => {
+            let _ = host_call_error_value(global, e);
             core::ptr::null_mut()
         }
-        Err(JsError::Terminated) => {
-            let _ = terminated_beneath_script(global);
-            core::ptr::null_mut()
-        }
-        Err(JsError::Thrown) => core::ptr::null_mut(),
     };
     scope.assert_exception_presence_matches(ptr.is_null());
     ptr
@@ -698,9 +692,7 @@ pub fn to_js_host_call(
 
     let normal = match f() {
         Ok(v) => v,
-        Err(JsError::Thrown) => JSValue::ZERO,
-        Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => terminated_beneath_script(global_this),
+        Err(e) => host_call_error_value(global_this, e),
     };
     scope.assert_exception_presence_matches(normal.is_empty());
     normal

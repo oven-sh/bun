@@ -148,8 +148,12 @@ impl Error {
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         #[cfg(windows)]
         let n = Int::try_from(errno.unsigned_abs()).unwrap();
+        // errno values are small positive integers; a truncating cast matches Zig's `@intCast`.
         #[cfg(not(windows))]
-        let n = u16::try_from(errno).expect("int cast");
+        let n = {
+            debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
+            errno as u16
+        };
         Error {
             errno: n,
             syscall: syscall_tag,

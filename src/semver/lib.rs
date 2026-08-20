@@ -514,27 +514,21 @@ pub mod semver_string {
         #[inline]
         pub fn len(self) -> usize {
             match self.bytes[Self::MAX_INLINE_LEN - 1] & 128 {
-                0 => {
-                    // Edgecase: string that starts with a 0 byte will be considered empty.
-                    match self.bytes[0] {
-                        0 => 0,
-                        _ => {
-                            let mut i: usize = 0;
-                            while i < self.bytes.len() {
-                                if self.bytes[i] == 0 {
-                                    return i;
-                                }
-                                i += 1;
-                            }
-                            8
-                        }
-                    }
-                }
+                // Edgecase: string that starts with a 0 byte will be considered empty.
+                0 => self.inline_len(),
                 _ => {
                     let ptr_ = self.ptr();
                     ptr_.len as usize
                 }
             }
+        }
+
+        /// Length of an inline string: index of the first NUL byte, or 8.
+        #[inline]
+        fn inline_len(self) -> usize {
+            let bits = u64::from_le_bytes(self.bytes);
+            let zero_bytes = bits.wrapping_sub(0x0101_0101_0101_0101) & !bits & 0x8080_8080_8080_8080;
+            (zero_bytes.trailing_zeros() / 8) as usize
         }
 
         #[inline]
@@ -549,22 +543,8 @@ pub mod semver_string {
         #[inline]
         pub fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
             match self.bytes[Self::MAX_INLINE_LEN - 1] & 128 {
-                0 => {
-                    // Edgecase: string that starts with a 0 byte will be considered empty.
-                    match self.bytes[0] {
-                        0 => b"",
-                        _ => {
-                            let mut i: usize = 0;
-                            while i < self.bytes.len() {
-                                if self.bytes[i] == 0 {
-                                    return &self.bytes[0..i];
-                                }
-                                i += 1;
-                            }
-                            &self.bytes
-                        }
-                    }
-                }
+                // Edgecase: string that starts with a 0 byte will be considered empty.
+                0 => &self.bytes[..self.inline_len()],
                 _ => {
                     let ptr_ = self.ptr();
                     let (off, len) = (ptr_.off as usize, ptr_.len as usize);

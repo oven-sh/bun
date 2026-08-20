@@ -71,33 +71,58 @@ macro_rules! create_source_code_getter {
 }
 
 // PackageJSON is not const-constructible (Box<[u8]>/HashMap fields), so the
-// table is built at runtime, once, on first access.
-macro_rules! fallback_module_init {
-    ($name:literal, $code_path:literal) => {{
-        const _VERSION: &[u8] = b"0.0.0-polyfill";
-        const _INDEX_PATH: &[u8] =
-            ::const_format::concatcp!("/bun-vfs$$/node_modules/", $name, "/index.js").as_bytes();
-        const _PRETTY: &[u8] = ::const_format::concatcp!("node:", $name).as_bytes();
-        const _PKGJSON_PATH: &[u8] =
-            ::const_format::concatcp!("/bun-vfs$$/node_modules/", $name, "/package.json")
-                .as_bytes();
-        (
-            $name.as_bytes(),
-            PackageJSON {
-                name: Box::from($name.as_bytes()),
-                version: Box::from(_VERSION),
-                module_type: ModuleType::Esm,
-                // main_fields/browser_map are never read on this code path;
-                // Default::default() fills them safely.
-                source: bun_ast::Source::init_path_string(_PKGJSON_PATH, b""),
-                side_effects: SideEffects::False,
-                ..Default::default()
-            },
-            fs::Path::init_with_namespace_virtual(_INDEX_PATH, b"node", _PRETTY),
-            create_source_code_getter!($code_path),
-        )
-    }};
+// table is built at runtime, once, on first access, from these const specs.
+struct FallbackSpec {
+    name: &'static [u8],
+    index_path: &'static [u8],
+    pretty: &'static [u8],
+    pkgjson_path: &'static [u8],
+    code: fn() -> &'static str,
 }
+
+macro_rules! fallback_spec {
+    ($name:literal, $code_path:literal) => {
+        FallbackSpec {
+            name: $name.as_bytes(),
+            index_path: ::const_format::concatcp!("/bun-vfs$$/node_modules/", $name, "/index.js")
+                .as_bytes(),
+            pretty: ::const_format::concatcp!("node:", $name).as_bytes(),
+            pkgjson_path: ::const_format::concatcp!(
+                "/bun-vfs$$/node_modules/",
+                $name,
+                "/package.json"
+            )
+            .as_bytes(),
+            code: create_source_code_getter!($code_path),
+        }
+    };
+}
+
+static SPECS: [FallbackSpec; 23] = [
+    fallback_spec!("assert", "node-fallbacks/assert.js"),
+    fallback_spec!("buffer", "node-fallbacks/buffer.js"),
+    fallback_spec!("console", "node-fallbacks/console.js"),
+    fallback_spec!("constants", "node-fallbacks/constants.js"),
+    fallback_spec!("crypto", "node-fallbacks/crypto.js"),
+    fallback_spec!("domain", "node-fallbacks/domain.js"),
+    fallback_spec!("events", "node-fallbacks/events.js"),
+    fallback_spec!("http", "node-fallbacks/http.js"),
+    fallback_spec!("https", "node-fallbacks/https.js"),
+    fallback_spec!("net", "node-fallbacks/net.js"),
+    fallback_spec!("os", "node-fallbacks/os.js"),
+    fallback_spec!("path", "node-fallbacks/path.js"),
+    fallback_spec!("process", "node-fallbacks/process.js"),
+    fallback_spec!("punycode", "node-fallbacks/punycode.js"),
+    fallback_spec!("querystring", "node-fallbacks/querystring.js"),
+    fallback_spec!("stream", "node-fallbacks/stream.js"),
+    fallback_spec!("string_decoder", "node-fallbacks/string_decoder.js"),
+    fallback_spec!("sys", "node-fallbacks/sys.js"),
+    fallback_spec!("timers", "node-fallbacks/timers.js"),
+    fallback_spec!("tty", "node-fallbacks/tty.js"),
+    fallback_spec!("url", "node-fallbacks/url.js"),
+    fallback_spec!("util", "node-fallbacks/util.js"),
+    fallback_spec!("zlib", "node-fallbacks/zlib.js"),
+];
 
 type FallbackEntry = (
     &'static [u8],
@@ -118,31 +143,26 @@ static INIT: std::sync::Once = std::sync::Once::new();
 
 #[cold]
 fn init_modules() {
-    let modules: Box<[FallbackEntry]> = Box::new([
-        fallback_module_init!("assert", "node-fallbacks/assert.js"),
-        fallback_module_init!("buffer", "node-fallbacks/buffer.js"),
-        fallback_module_init!("console", "node-fallbacks/console.js"),
-        fallback_module_init!("constants", "node-fallbacks/constants.js"),
-        fallback_module_init!("crypto", "node-fallbacks/crypto.js"),
-        fallback_module_init!("domain", "node-fallbacks/domain.js"),
-        fallback_module_init!("events", "node-fallbacks/events.js"),
-        fallback_module_init!("http", "node-fallbacks/http.js"),
-        fallback_module_init!("https", "node-fallbacks/https.js"),
-        fallback_module_init!("net", "node-fallbacks/net.js"),
-        fallback_module_init!("os", "node-fallbacks/os.js"),
-        fallback_module_init!("path", "node-fallbacks/path.js"),
-        fallback_module_init!("process", "node-fallbacks/process.js"),
-        fallback_module_init!("punycode", "node-fallbacks/punycode.js"),
-        fallback_module_init!("querystring", "node-fallbacks/querystring.js"),
-        fallback_module_init!("stream", "node-fallbacks/stream.js"),
-        fallback_module_init!("string_decoder", "node-fallbacks/string_decoder.js"),
-        fallback_module_init!("sys", "node-fallbacks/sys.js"),
-        fallback_module_init!("timers", "node-fallbacks/timers.js"),
-        fallback_module_init!("tty", "node-fallbacks/tty.js"),
-        fallback_module_init!("url", "node-fallbacks/url.js"),
-        fallback_module_init!("util", "node-fallbacks/util.js"),
-        fallback_module_init!("zlib", "node-fallbacks/zlib.js"),
-    ]);
+    let modules: Box<[FallbackEntry]> = SPECS
+        .iter()
+        .map(|spec| {
+            (
+                spec.name,
+                PackageJSON {
+                    name: Box::from(spec.name),
+                    version: Box::from(b"0.0.0-polyfill".as_slice()),
+                    module_type: ModuleType::Esm,
+                    // main_fields/browser_map are never read on this code path;
+                    // Default::default() fills them safely.
+                    source: bun_ast::Source::init_path_string(spec.pkgjson_path, b""),
+                    side_effects: SideEffects::False,
+                    ..Default::default()
+                },
+                fs::Path::init_with_namespace_virtual(spec.index_path, b"node", spec.pretty),
+                spec.code,
+            )
+        })
+        .collect();
 
     let mut m = bun_collections::StringHashMap::<FallbackModule>::default();
     // SAFETY: `init_modules` runs exactly once under `Once::call_once`; no other

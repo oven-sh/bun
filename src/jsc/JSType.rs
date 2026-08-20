@@ -441,6 +441,9 @@ impl JSType {
     /// ```
     pub(crate) const Generator: JSType = JSType(75);
 
+    /// Internal generator driving an `async function` body (returns the Promise).
+    pub(crate) const AsyncFunctionGenerator: JSType = JSType(76);
+
     /// Async generator object for asynchronous iteration.
     /// ```js
     /// async function* asyncGen() {

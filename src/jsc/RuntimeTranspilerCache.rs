@@ -68,10 +68,9 @@ const CACHE_FILE_SUFFIX: &[u8] = if bun_core::env::IS_DEBUG {
 } else {
     b".pile"
 };
-/// `<input_hash as 16 hex digits><CACHE_FILE_SUFFIX>`, see `write_cache_filename`.
+/// Hex `input_hash` + suffix, as written by `write_cache_filename`.
 const CACHE_FILE_NAME_LEN: usize = size_of::<u64>() * 2 + CACHE_FILE_SUFFIX.len();
-/// Bytes `get_cache_file_path` appends after the cache directory: the
-/// separator, the file name, and the NUL.
+/// Separator + file name + NUL, appended to the directory by `get_cache_file_path`.
 const CACHE_FILE_NAME_RESERVE: usize = 1 + CACHE_FILE_NAME_LEN + 1;
 
 // When making parser changes, it gets extremely confusing.
@@ -677,10 +676,8 @@ impl RuntimeTranspilerCache {
         Ok(ZStr::from_buf(&buf[..], total))
     }
 
-    /// Writes the resolved cache directory into `buf` (NUL-terminated) and
-    /// returns its byte length. Returns 0 to mean "cache disabled", which is
-    /// also the answer when the directory (taken from the environment, so of
-    /// any length) leaves no room in a `PathBuffer` for the cache file name.
+    /// Writes the resolved cache directory into `buf` (NUL-terminated) and returns
+    /// its byte length, or 0 when the cache is disabled or the directory does not fit.
     fn really_get_cache_dir(buf: &mut PathBuffer) -> usize {
         #[cfg(bun_debug)]
         {
@@ -708,8 +705,6 @@ impl RuntimeTranspilerCache {
             &[dir, b"bun", b"@t@"]
         } else if let Some(home) = env_var::HOME.get() {
             if cfg!(target_os = "macos") {
-                // On a mac, default to ~/Library/Caches/bun/*
-                // This is different than ~/.bun/install/cache, and not configurable by the user.
                 &[home, b"Library/", b"Caches/", b"bun", b"@t@"]
             } else {
                 &[home, b".bun", b"install", b"cache", b"@t@"]
@@ -718,10 +713,7 @@ impl RuntimeTranspilerCache {
             return 0;
         };
 
-        // The inline `bun_resolver::fs::FileSystem` surface only exposes
-        // `abs_buf` (no size-checked variant), so go straight to the
-        // underlying joiner with the same `top_level_dir` + `Loose` platform
-        // that `absBufZ` used.
+        // `FileSystem::abs_buf` has no size-checked variant, so call the joiner it wraps.
         let top = FileSystem::instance().top_level_dir;
         let Some(dir) =
             path_handler::join_abs_string_buf_checked::<platform::Loose>(top, dir_buf, parts)

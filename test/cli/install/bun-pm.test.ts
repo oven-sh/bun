@@ -1,9 +1,9 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
-import { exists, lstat, mkdir, symlink, writeFile } from "fs/promises";
+import { chmod, copyFile, exists, link, lstat, mkdir, symlink, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
-import { join } from "path";
+import { basename, join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -796,11 +796,12 @@ it("bun install treats an empty BUN_INSTALL_CACHE_DIR as unset instead of cachin
   expect(exitCode).toBe(0);
 
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  const cacheEntry = (name: string) => name.includes("@@") || name.endsWith(".npm");
-  expect((await readdirSorted(package_dir)).filter(cacheEntry)).toEqual([]);
-  expect((await readdirSorted(join(String(side), "home", ".bun", "install", "cache"))).filter(cacheEntry)).not.toEqual(
-    [],
-  );
+  const isManifest = (name: string) => name.endsWith(".npm");
+  expect((await readdirSorted(package_dir)).filter(name => name.includes("@@") || isManifest(name))).toEqual([]);
+  const homeCache = await readdirSorted(join(String(side), "home", ".bun", "install", "cache"));
+  expect(homeCache).toContain("bar@0.0.2@@localhost@@@1");
+  // The manifest name hashes the registry URL, which includes the port.
+  expect(homeCache.filter(isManifest)).toHaveLength(1);
 });
 
 /**
@@ -831,9 +832,9 @@ function cacheEnv(side: string, overrides: Record<string, string | undefined> = 
   return spawnEnv;
 }
 
-async function pmCache(args: string[], cwd: string, spawnEnv: NodeJS.Dict<string>) {
+async function pmCache(args: string[], cwd: string, spawnEnv: NodeJS.Dict<string>, exe: string = bunExe()) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "pm", "cache", ...args],
+    cmd: [exe, "pm", "cache", ...args],
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -890,10 +891,9 @@ describe("bun pm cache with an empty variable", () => {
 
     expect(await pmCache([], proj, spawnEnv)).toEqual({ stdout: envCache, stderr: "", exitCode: 0 });
 
-    const result = await pmCache(["rm"], proj, spawnEnv);
+    expect(await pmCache(["rm"], proj, spawnEnv)).toEqual(cleared);
     expect(await readdirSorted(proj)).toEqual(projectEntries);
     expect(await readdirSorted(envCache)).toEqual([]);
-    expect(result).toEqual(cleared);
   });
 
   test("an empty BUN_INSTALL falls through to the next location", async () => {
@@ -970,6 +970,26 @@ describe("bun pm cache rm refuses a cache directory that holds more than the cac
     expect(result).toEqual(refused(bunInstall, `it is $BUN_INSTALL ("${bunInstall}")`));
   });
 
+  test("the directory that holds the running bun executable", async () => {
+    using side = tempDir("pm-cache-rm-exe", sideFiles);
+    using root = tempDir("pm-cache-rm-exe-project", projectFiles);
+    const proj = join(String(root), "proj");
+    // Run a second name for the binary from inside the temp tree. Without the refusal,
+    // this command deletes the directory that holds the binary, which must not be the
+    // build directory.
+    const bin = join(String(root), "bin");
+    const exe = join(bin, basename(bunExe()));
+    await mkdir(bin);
+    await link(bunExe(), exe).catch(async () => {
+      await copyFile(bunExe(), exe);
+      await chmod(exe, 0o755);
+    });
+
+    const result = await pmCache(["rm"], proj, cacheEnv(String(side), { BUN_INSTALL_CACHE_DIR: bin }), exe);
+    expect(await exists(exe)).toBeTrue();
+    expect(result).toEqual(refused(bin, `it contains the bun executable ("${exe}")`));
+  });
+
   test("a symlink to the home directory", async () => {
     using side = tempDir("pm-cache-rm-symlink-home", sideFiles);
     using root = tempDir("pm-cache-rm-symlink-home-project", projectFiles);
@@ -994,11 +1014,10 @@ describe("bun pm cache rm clears the entries and keeps the directory", () => {
     await symlink(target, link, "junction");
     expect(await readdirSorted(target)).toEqual(envCacheEntries);
 
-    const result = await pmCache(["rm"], proj, cacheEnv(String(side), { BUN_INSTALL_CACHE_DIR: link }));
+    expect(await pmCache(["rm"], proj, cacheEnv(String(side), { BUN_INSTALL_CACHE_DIR: link }))).toEqual(cleared);
     expect(await readdirSorted(target)).toEqual([]);
     expect((await lstat(link)).isSymbolicLink()).toBeTrue();
     expect(await readdirSorted(link)).toEqual([]);
-    expect(result).toEqual(cleared);
   });
 
   test("an entry that is a symlink is unlinked, not followed", async () => {
@@ -1009,10 +1028,9 @@ describe("bun pm cache rm clears the entries and keeps the directory", () => {
     const sibling = join(String(root), "sibling");
     await symlink(sibling, join(envCache, "escape@1.0.0@@@1"), "junction");
 
-    const result = await pmCache(["rm"], proj, cacheEnv(String(side)));
+    expect(await pmCache(["rm"], proj, cacheEnv(String(side)))).toEqual(cleared);
     expect(await readdirSorted(envCache)).toEqual([]);
     expect(await readdirSorted(sibling)).toEqual(["keep.txt"]);
-    expect(result).toEqual(cleared);
   });
 
   test("a cache directory that does not exist is not created", async () => {
@@ -1021,9 +1039,8 @@ describe("bun pm cache rm clears the entries and keeps the directory", () => {
     const proj = join(String(root), "proj");
     const missing = join(String(side), "does-not-exist");
 
-    const result = await pmCache(["rm"], proj, cacheEnv(String(side), { BUN_INSTALL_CACHE_DIR: missing }));
+    expect(await pmCache(["rm"], proj, cacheEnv(String(side), { BUN_INSTALL_CACHE_DIR: missing }))).toEqual(cleared);
     expect(await exists(missing)).toBeFalse();
-    expect(result).toEqual(cleared);
   });
 
   test("a cache directory named by the project's .npmrc is not the one cleared", async () => {
@@ -1037,10 +1054,9 @@ describe("bun pm cache rm clears the entries and keeps the directory", () => {
     expect(await pmCache([], proj, spawnEnv)).toEqual({ stdout: proj, stderr: "", exitCode: 0 });
 
     // ...but a file committed to the repository cannot choose what `bun pm cache rm` deletes.
-    const result = await pmCache(["rm"], proj, spawnEnv);
+    expect(await pmCache(["rm"], proj, spawnEnv)).toEqual(cleared);
     expect(await readdirSorted(proj)).toEqual([".git", ".npmrc", "package.json", "src"]);
     expect(await readdirSorted(envCache)).toEqual([]);
-    expect(result).toEqual(cleared);
   });
 });
 

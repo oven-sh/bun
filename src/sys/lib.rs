@@ -5112,6 +5112,10 @@ pub mod c {
         pub safe fn _dyld_image_count() -> u32;
         /// `intptr_t _dyld_get_image_vmaddr_slide(uint32_t image_index)`
         pub safe fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
+        /// `const char* _dyld_get_image_name(uint32_t image_index)` — the
+        /// image's install path, owned by dyld and valid while the image stays
+        /// loaded; null for an out-of-range index.
+        pub safe fn _dyld_get_image_name(image_index: u32) -> *const core::ffi::c_char;
         /// `const struct mach_header* _dyld_get_image_header(uint32_t)` — by-value
         /// index; out-of-range returns null (no precondition).
         #[link_name = "_dyld_get_image_header"]
@@ -8428,21 +8432,26 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
+        /// The object is the executable itself, not a shared object. glibc,
+        /// musl and bionic all report the main program first; what they put in
+        /// its `dlpi_name` differs, so the position is what identifies it.
+        pub is_main_program: bool,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
-    /// `PT_LOAD` segment contains `address` (matched by address, so it does not
-    /// depend on how a libc names or orders the main program).
+    /// `PT_LOAD` segment contains `address`.
     #[cfg(not(any(windows, target_os = "macos")))]
     pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {
         use core::ffi::{c_int, c_void};
 
         struct Ctx {
             address: usize,
+            visited: usize,
             result: Option<LoadedModule>,
         }
         let mut ctx = Ctx {
             address,
+            visited: 0,
             result: None,
         };
 
@@ -8458,6 +8467,8 @@ pub mod elf {
             let context = unsafe { bun_core::callback_ctx::<Ctx>(data) };
             // SAFETY: dl_iterate_phdr passes a valid info pointer.
             let info = unsafe { &*info };
+            let is_main_program = context.visited == 0;
+            context.visited += 1;
             // The base address is too high
             if context.address < info.dlpi_addr as usize {
                 return 0;
@@ -8488,6 +8499,7 @@ pub mod elf {
                     context.result = Some(LoadedModule {
                         base_address: info.dlpi_addr as usize,
                         name,
+                        is_main_program,
                     });
                     return 1; // error.Found → stop iteration
                 }

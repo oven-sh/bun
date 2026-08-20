@@ -297,6 +297,12 @@ pub mod features {
         #[unsafe(export_name = "Bun__Feature__webview_webkit")]
         57 => (webview_webkit, "webview_webkit"),
         58 => (xml_parse, "xml_parse", core = XML_PARSE),
+        /// `bun:ffi` `dlopen()` loaded a library. Together with `process_dlopen`
+        /// this tells a crash report how third-party native code got in.
+        59 => (ffi_dlopen, "ffi_dlopen"),
+        /// Set by the crash handler when the crash happened inside a native
+        /// module rather than in Bun (see `native_module_of_crash`).
+        60 => (native_module_crash, "native_module_crash"),
     }
 
     // C++ declares these as `extern "C" size_t Bun__...;` and

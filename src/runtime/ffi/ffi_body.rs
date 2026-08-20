@@ -1539,6 +1539,7 @@ impl FFI {
                 }
             }
         };
+        bun_analytics::features::ffi_dlopen.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         let mut size = symbols.values().len();
         if size >= 63 {

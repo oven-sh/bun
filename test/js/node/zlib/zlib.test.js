@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -350,6 +350,92 @@ describe("zlib.brotli", () => {
       });
       expect(compressed.toString()).toEqual(Buffer.from(compressedString3, "base64").toString());
     }
+  });
+
+  // Brotli streams only define the BROTLI_OPERATION_* flush values (0..=3).
+  // Passing a zlib-only flush constant (Z_FINISH=4, Z_BLOCK=5) to .flush() used
+  // to abort the whole process — the shared write path validated against the
+  // zlib flush range (0..=6) and brotli's set_flush trapped on anything above 3.
+  // Match Node's nodejs/node#63746 fix for nodejs/node#63701: .flush(kind)
+  // validates kind against the codec's FLUSH_BOUND before queuing the fake
+  // flush chunk, so an out-of-range kind throws ERR_OUT_OF_RANGE synchronously.
+  describe.each([
+    ["Z_FINISH", zlib.constants.Z_FINISH],
+    ["Z_BLOCK", zlib.constants.Z_BLOCK],
+  ])("brotli flush(%s) throws ERR_OUT_OF_RANGE synchronously", (_, kind) => {
+    // Run in a subprocess: a regression here either aborts the process (panic)
+    // or never settles the stream (hang) — both must show up as a failed or
+    // timed-out subprocess instead of a pass (or a dead test runner).
+    for (const factory of ["createBrotliCompress", "createBrotliDecompress"]) {
+      it(factory, async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const z = require("zlib");
+              const s = z.${factory}();
+              s.on("error", err => { throw new Error("unexpected stream error: " + err); });
+              s.write(Buffer.alloc(128, 0x61));
+              try {
+                s.flush(${kind});
+                console.log(JSON.stringify({ threw: false }));
+              } catch (err) {
+                console.log(JSON.stringify({ threw: true, code: err.code, isRangeError: err instanceof RangeError }));
+              }
+              s.destroy();
+            `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
+        expect(stderrLines).toEqual([]);
+        expect(JSON.parse(stdout)).toEqual({ threw: true, code: "ERR_OUT_OF_RANGE", isRangeError: true });
+        expect(exitCode).toBe(0);
+      });
+    }
+  });
+
+  // Valid brotli flush values are unaffected by the narrowed validation.
+  it.each([
+    ["implicit BROTLI_OPERATION_FLUSH", undefined],
+    ["BROTLI_OPERATION_FLUSH", zlib.constants.BROTLI_OPERATION_FLUSH],
+  ])("brotli flush(%s) still works and round-trips", async (_, kind) => {
+    const input = Buffer.alloc(128, 0x61);
+    const s = zlib.createBrotliCompress();
+    const chunks = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+    s.on("data", c => chunks.push(c));
+    s.on("end", resolve);
+    s.on("error", reject);
+    s.write(input);
+    if (kind === undefined) {
+      s.flush(() => s.end());
+    } else {
+      s.flush(kind, () => s.end());
+    }
+    await promise;
+    expect(zlib.brotliDecompressSync(Buffer.concat(chunks)).equals(input)).toBe(true);
+  });
+
+  // zlib streams still accept Z_FINISH (4 is within zlib's FLUSH_BOUND upper
+  // bound Z_BLOCK=5) — proves the per-codec FLUSH_BOUND validation didn't
+  // over-narrow the zlib range.
+  it("deflate flush(Z_FINISH) still works and round-trips", async () => {
+    const input = Buffer.alloc(128, 0x63);
+    const s = zlib.createDeflate();
+    const chunks = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+    s.on("data", c => chunks.push(c));
+    s.on("end", resolve);
+    s.on("error", reject);
+    s.write(input);
+    s.flush(zlib.constants.Z_FINISH, () => s.end());
+    await promise;
+    expect(zlib.inflateSync(Buffer.concat(chunks)).equals(input)).toBe(true);
   });
 });
 

@@ -1634,10 +1634,7 @@ fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
 }
 
-/// Output capacity that holds the result of joining `parts` onto `cwd`. A base
-/// that is not absolute is resolved against the working directory
-/// (`join_onto_working_dir`), so the result may also hold that directory, which
-/// fits in a `PathBuffer`.
+/// `join_abs_needed`, plus the working directory (at most a `PathBuffer`) that a non-absolute base gets prepended.
 #[inline]
 fn join_abs_result_capacity<P: PlatformT>(cwd: &[u8], parts: &[&[u8]]) -> usize {
     let needed = join_abs_needed(cwd.len(), parts);
@@ -1727,12 +1724,7 @@ pub fn join_abs_string_buf_z<'a, P: PlatformT>(
     unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
 }
 
-/// Directory that a non-absolute `join_abs*` base resolves against: the
-/// top-level directory once one has been recorded, otherwise the live working
-/// directory. Returns an empty slice when neither is available (the join then
-/// anchors the path at the root). Callers that store an environment-supplied
-/// directory for later joins resolve it against this once, so that every
-/// consumer names the same directory even if the process changes directory.
+/// What a non-absolute `join_abs*` base resolves against: the recorded top-level directory, else the cwd, else empty.
 pub fn working_dir(buf: &mut PathBuffer) -> &[u8] {
     let top_level_dir = bun_core::top_level_dir();
     if crate::is_absolute(top_level_dir) {
@@ -1744,10 +1736,7 @@ pub fn working_dir(buf: &mut PathBuffer) -> &[u8] {
     }
 }
 
-/// Joins `parts`, none of which is absolute, onto the working directory. This
-/// is the fallback for a join whose base is not absolute, such as an empty or
-/// relative `$HOME` or `$TMPDIR`: `("rel", ["x"])` resolves to `<cwd>/rel/x`.
-/// `parts` must not be empty, so the result always lands in `buf`.
+/// Fallback for a base that is not absolute. `parts` must not be empty, so the result always lands in `buf`.
 #[cold]
 #[inline(never)]
 fn join_onto_working_dir<'a, const IS_SENTINEL: bool, P: PlatformT>(
@@ -1757,8 +1746,7 @@ fn join_onto_working_dir<'a, const IS_SENTINEL: bool, P: PlatformT>(
     debug_assert!(!parts.is_empty());
     let mut cwd_buf = crate::path_buffer_pool::get();
     let cwd = working_dir(&mut cwd_buf);
-    // `/` is absolute under every platform's rule, so the nested join cannot
-    // end up back here.
+    // `/` is absolute under every platform's rule, so the nested join cannot come back here.
     let cwd: &[u8] = if P::P.is_absolute(cwd) { cwd } else { b"/" };
     let len = _join_abs_string_buf::<IS_SENTINEL, P>(cwd, &mut *buf, parts).len();
     &buf[..len]
@@ -1766,9 +1754,6 @@ fn join_onto_working_dir<'a, const IS_SENTINEL: bool, P: PlatformT>(
 
 // We always return `&[u8]`; when `IS_SENTINEL` a NUL is written
 // at `result.len()` and callers (e.g. `join_abs_string_buf_z`) re-wrap as `ZStr`.
-//
-// `_cwd` should be absolute. When it is not and no part is absolute either,
-// the result is resolved against the working directory (`join_onto_working_dir`).
 fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     _cwd: &'a [u8],
     buf: &'a mut [u8],
@@ -1857,10 +1842,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     }
 
     let Some(i) = P::P.leading_separator_index::<u8>(&temp_buf[0..out]) else {
-        // Nothing anchors the path: `cwd` is empty or relative and no part is
-        // absolute. Inventing a root here would take the first byte of the
-        // path for the separator (`("rel", ["x"])` became `/el/x`), so resolve
-        // the relative path against the working directory instead.
+        // `cwd` is empty or relative and no part is absolute; inventing a `/` here ate the first byte (`rel/x` -> `/el/x`).
         let relative: &[u8] = &temp_buf[0..out];
         return join_onto_working_dir::<IS_SENTINEL, P>(buf, &[relative]);
     };
@@ -1899,9 +1881,7 @@ fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     parts: &[&[u8]],
 ) -> &'a [u8] {
     if !crate::is_absolute_windows(cwd) {
-        // Same fallback as the POSIX arm: an empty or relative `cwd` is the
-        // first segment of a path resolved against the working directory. An
-        // absolute part still wins, as the nested join sees it too.
+        // Same fallback as the POSIX arm; an absolute part still wins inside the nested join.
         let mut all_parts: Vec<&[u8]> = Vec::with_capacity(parts.len() + 1);
         all_parts.push(cwd);
         all_parts.extend_from_slice(parts);
@@ -2696,8 +2676,7 @@ mod tests {
         assert_eq!(out, b"/work/sub");
     }
 
-    /// `/` is absolute under the POSIX rule and the Windows rule alike, so one
-    /// recorded working directory serves the tests of both arms.
+    /// `/work` is absolute under the POSIX rule and the Windows rule alike, so it serves the tests of both arms.
     fn record_working_dir() {
         bun_core::set_top_level_dir(b"/work");
     }

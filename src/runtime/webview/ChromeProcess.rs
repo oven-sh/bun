@@ -1081,8 +1081,6 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     if root.is_empty() {
         return None;
     }
-    // A relative root is resolved against the working directory rather than
-    // being taken for a path under the filesystem root.
     let top_level_dir = bun_paths::fs::FileSystem::instance().top_level_dir();
 
     #[cfg(target_os = "macos")]

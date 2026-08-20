@@ -1698,11 +1698,7 @@ pub mod fs {
             }
         }
 
-        /// A directory taken from the environment can be relative
-        /// (`TMPDIR=reltmp`). The directory handle is opened from this string
-        /// relative to the cwd, while the paths handed out for the files inside
-        /// it are joined onto this string, so it is resolved once here and both
-        /// name the same directory.
+        /// `TMPDIR=reltmp` is resolved once, so the handle opened from it and the paths joined onto it name the same directory.
         fn absolute_temp_dir(dir: Cow<'static, [u8]>) -> Cow<'static, [u8]> {
             if bun_paths::is_absolute(&dir) {
                 return dir;
@@ -1722,8 +1718,7 @@ pub mod fs {
             ONCE.get_or_init(Self::platform_temp_dir_compute)
         }
 
-        /// Non-empty `BUN_TMPDIR`, falling back to `platform_temp_dir`. Computed
-        /// once per process. Always absolute.
+        /// Non-empty `BUN_TMPDIR`, falling back to `platform_temp_dir`; computed once per process, always absolute.
         pub fn tmpdir_path() -> &'static [u8] {
             static ONCE: bun_core::Once<Cow<'static, [u8]>> = bun_core::Once::new();
             ONCE.get_or_init(|| match bun_core::env_var::BUN_TMPDIR.get_not_empty() {

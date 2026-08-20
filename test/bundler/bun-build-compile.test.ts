@@ -1022,9 +1022,10 @@ describe("embedded libraries with a relative temp directory", () => {
         [withBunTmpdir, "rel-bun-tmp"],
       ] as const) {
         await using proc = Bun.spawn({ cmd: [join(cwd, "app")], cwd, env, stdout: "pipe", stderr: "pipe" });
-        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout: stdout.trim(), exitCode, extracted: extractedLibraries(tmp).length }).toEqual({
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode, extracted: extractedLibraries(tmp).length }).toEqual({
           stdout: "42",
+          stderr: expect.not.stringContaining("error"),
           exitCode: 0,
           extracted: 1,
         });

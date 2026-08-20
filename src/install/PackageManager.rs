@@ -1923,9 +1923,7 @@ pub fn init(
         let npmrc_local = ZBox::from_bytes(b".npmrc");
 
         let mut buf = PathBuffer::uninit();
-        // A relative `$XDG_CONFIG_HOME` or `$HOME` is resolved against the
-        // directory the command was started in. The process has already
-        // changed into the workspace root (or, for `-g`, the global directory).
+        // The process has since changed into the workspace root or, for `-g`, the global directory.
         let started_in: &[u8] = ctx
             .args
             .absolute_working_dir

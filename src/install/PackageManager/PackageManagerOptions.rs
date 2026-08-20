@@ -316,14 +316,7 @@ pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
-/// The directory that holds the global `install/global` and `bin` directories:
-/// `$BUN_INSTALL`, else `$XDG_CACHE_HOME/.bun`, else `$HOME/.bun`. An empty
-/// variable is ignored.
-///
-/// A relative value is resolved against the working directory once. The global
-/// directory is opened before a global install changes into it and the global
-/// bin directory after, so resolving at each use would put them in different
-/// places.
+/// Resolved once: `-g` changes into the global directory between opening it and opening the bin directory.
 fn global_install_root() -> Option<&'static [u8]> {
     static ROOT: bun_core::Once<Option<Box<[u8]>>> = bun_core::Once::new();
     ROOT.get_or_init(|| {

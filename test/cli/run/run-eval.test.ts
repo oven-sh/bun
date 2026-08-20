@@ -175,6 +175,137 @@ describe("--print for cjs/esm", () => {
   });
 });
 
+describe.concurrent("-e builtin module globals", () => {
+  async function runEval(code: string, flag: "-e" | "-p" = "-e") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag, code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // zlib captures buffer.kMaxLength when its module first loads (same as
+  // Node). A top-level declaration named `zlib` must not make the lazy `zlib`
+  // global load node:zlib during declaration instantiation, before the
+  // kMaxLength patch has run.
+  const probes = {
+    "const zlib = require(...)": 'const zlib = require("node:zlib");',
+    "const zlib = <plain value>": "const zlib = 123;",
+    "let zlib = <plain value>": "let zlib = 123;",
+    "class zlib {}": "class zlib {}",
+    "function zlib() {}": "function zlib() {}",
+  };
+  for (const [name, decl] of Object.entries(probes)) {
+    test(`top-level ${name} does not eagerly load the module`, async () => {
+      const { stdout, stderr, exitCode } = await runEval(
+        'const b = require("node:buffer");' +
+          "b.kMaxLength = 64;" +
+          decl +
+          'try { require("node:zlib").inflateSync(Buffer.from("789c4b4c1c58000039743081", "hex")); console.log("no-throw"); }' +
+          "catch (e) { console.log(e.constructor.name); }",
+      );
+      expect(stderr).toBe("");
+      expect(stdout).toBe("RangeError\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("fetching a global's property descriptor does not load the module", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      'const d = Object.getOwnPropertyDescriptor(globalThis, "zlib");' +
+        "Object.getOwnPropertyDescriptors(globalThis);" +
+        'const b = require("node:buffer"); b.kMaxLength = 64;' +
+        'const z = require("node:zlib");' +
+        'try { z.inflateSync(Buffer.from("789c4b4c1c58000039743081", "hex")); console.log("no-throw"); }' +
+        "catch (e) { console.log(e.constructor.name); }" +
+        "console.log(typeof d.get, typeof d.set, d.enumerable, d.configurable);",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RangeError\nfunction function true true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--print gets the same lazy globals", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      'const b = require("node:buffer"); b.kMaxLength = 64;' +
+        'const zlib = require("node:zlib");' +
+        'try { zlib.inflateSync(Buffer.from("789c4b4c1c58000039743081", "hex")); console.log("no-throw"); }' +
+        "catch (e) { console.log(e.constructor.name); }",
+      "-p",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RangeError\nundefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--print resolves module globals on access", async () => {
+    const { stdout, stderr, exitCode } = await runEval("typeof zlib", "-p");
+    expect(stderr).toBe("");
+    expect(stdout).toBe("object\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the same script behaves identically with top-level await", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      "await 0;" +
+        'const b = require("node:buffer");' +
+        "b.kMaxLength = 64;" +
+        'const zlib = require("node:zlib");' +
+        'try { zlib.inflateSync(Buffer.from("789c4b4c1c58000039743081", "hex")); console.log("no-throw"); }' +
+        "catch (e) { console.log(e.constructor.name); }",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RangeError\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("module globals resolve on access", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      'console.log(typeof zlib, typeof path.join, typeof fs.readFileSync, path.basename("a/b"));',
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("object function function b\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("assignment replaces a module global", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      "zlib = 5; globalThis.util = 7; var assert = 9; console.log(zlib, util, assert, typeof require('node:zlib').inflateSync);",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("5 7 9 function\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("assignment through an inheriting object shadows on the receiver", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      "const obj = Object.create(globalThis); obj.zlib = 5;" +
+        'const r = {}; Reflect.set(globalThis, "util", 6, r);' +
+        'console.log(Object.hasOwn(obj, "zlib"), obj.zlib, typeof globalThis.zlib, Object.hasOwn(r, "util"), r.util, typeof globalThis.util);',
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true 5 object true 6 object\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("assignment honors receiver extensibility and proxy traps", async () => {
+    const { stdout, stderr, exitCode } = await runEval(
+      "const o = Object.create(globalThis); Object.preventExtensions(o);" +
+        "try { o.zlib = 5; } catch {}" +
+        'console.log("nonext", Object.hasOwn(o, "zlib"));' +
+        "let trapped = false;" +
+        "const p = new Proxy({}, { defineProperty(t, k, d) { trapped = true; return Reflect.defineProperty(t, k, d); } });" +
+        'Reflect.set(globalThis, "util", 6, p);' +
+        'console.log("proxy", trapped, Object.hasOwn(p, "util"), p.util);',
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("nonext false\nproxy true true 6\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
   test("it works", async () => {
     const { stdout } = run('console.log("hello world")');
@@ -218,6 +349,19 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
     } else {
       expect(stdout.toString("utf8")).toEqual(code + "\n");
     }
+  });
+
+  // stdin entries get the same lazy builtin-module globals as -e; a top-level
+  // `const zlib` must not load node:zlib before the kMaxLength patch runs.
+  test("top-level const naming a builtin module does not eagerly load it", async () => {
+    const { stdout } = run(
+      'const b = require("node:buffer");' +
+        "b.kMaxLength = 64;" +
+        'const zlib = require("node:zlib");' +
+        'try { zlib.inflateSync(Buffer.from("789c4b4c1c58000039743081", "hex")); console.log("no-throw"); }' +
+        "catch (e) { console.log(e.constructor.name); }",
+    );
+    expect(stdout.toString("utf8")).toEqual("RangeError\n");
   });
 }
 

@@ -2731,6 +2731,24 @@ pub mod bv2_impl {
             Ok(Some(source_index.get()))
         }
 
+        /// Entry points that no plugin claimed are looked up in the `files`
+        /// map before the disk, like `run_resolver` does for imports. Returns
+        /// whether the map had the entry point (it has been enqueued if so).
+        pub(crate) fn enqueue_entry_point_from_file_map(
+            &mut self,
+            entry_point: &[u8],
+            target: options::Target,
+        ) -> Result<bool, Error> {
+            let Some(file_map) = self.file_map else {
+                return Ok(false);
+            };
+            let Some(mut resolved) = file_map.resolve(self.arena(), b"", entry_point) else {
+                return Ok(false);
+            };
+            self.enqueue_entry_item(&mut resolved, true, target)?;
+            Ok(true)
+        }
+
         /// `heap` is not freed when `deinit`ing the BundleV2
         pub fn init(
             transpiler: &'a mut Transpiler<'a>,
@@ -2994,17 +3012,11 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                // Check FileMap first for in-memory entry points
-                if let Some(file_map) = self.file_map {
-                    if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
-                    {
-                        let _ = self.enqueue_entry_item(
-                            &mut { file_map_result },
-                            true,
-                            self.transpiler.options.target,
-                        )?;
-                        continue;
-                    }
+                if self.enqueue_entry_point_from_file_map(
+                    entry_point,
+                    self.transpiler.options.target,
+                )? {
+                    continue;
                 }
 
                 // no plugins were matched
@@ -4586,6 +4598,13 @@ pub mod bv2_impl {
                     if resolve.import_record.namespace.as_ref() == b"file" {
                         if resolve.import_record.kind == ImportKind::EntryPointBuild {
                             let target = resolve.import_record.original_target;
+                            match this.enqueue_entry_point_from_file_map(
+                                &resolve.import_record.specifier,
+                                target,
+                            ) {
+                                Ok(false) => {}
+                                Ok(true) | Err(_) => return,
+                            }
                             let Ok(resolved) = this
                                 .transpiler_for_target(target)
                                 .resolve_entry_point(&resolve.import_record.specifier)

@@ -656,6 +656,96 @@ console.log("survived", require("./late.js"));`,
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
   });
+
+  // When an override does not call the original runMain, bun adopts its return
+  // value as the entry point promise. A rejection is then the entry point
+  // failing, and it must be reported exactly once no matter when the promise
+  // rejects: before it was returned, or later while bun is waiting on it.
+  const rejectingRunMainOverrides = [
+    ["an already rejected promise", `async () => { throw new Error("run-main-boom"); }`],
+    ["a promise that rejects later", `async () => { await 0; throw new Error("run-main-boom"); }`],
+    ["a thenable that rejects", `() => ({ then(_, reject) { reject(new Error("run-main-boom")); } })`],
+  ];
+  test.each(rejectingRunMainOverrides)(
+    "Module.runMain override returning %s prints the error once",
+    async (_, runMain) => {
+      using dir = tempDir("run-main-rejection", {
+        "preload.cjs": `require("module").runMain = ${runMain};`,
+        "main.cjs": `console.log("main ran");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--require", "./preload.cjs", "./main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, errorsPrinted: stderr.split("error: run-main-boom").length - 1, exitCode }).toEqual({
+        stdout: "",
+        errorsPrinted: 1,
+        exitCode: 1,
+      });
+    },
+  );
+  const listenersThenOverride = runMain => `
+    process.on("unhandledRejection", err => console.log("unhandledRejection:", err.message));
+    process.on("uncaughtException", (err, origin) => console.log("uncaughtException:", err.message, origin));
+    require("module").runMain = ${runMain};
+  `;
+  test.each(rejectingRunMainOverrides)(
+    "Module.runMain override returning %s reports the error to process once, as the entry point failing",
+    async (_, runMain) => {
+      using dir = tempDir("run-main-rejection-listeners", {
+        "preload.cjs": listenersThenOverride(runMain),
+        "main.cjs": `console.log("main ran");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--require", "./preload.cjs", "./main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "uncaughtException: run-main-boom unhandledRejection\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+  // A worker's preload can override runMain too; the worker checks its own entry
+  // point promise the same way the main thread does.
+  test("Module.runMain override in a worker preload reports a late rejection to the worker's process once", async () => {
+    const [, lateRejection] = rejectingRunMainOverrides[1];
+    using dir = tempDir("run-main-rejection-worker", {
+      "preload.cjs": listenersThenOverride(lateRejection),
+      "body.cjs": `console.log("worker body ran");`,
+      "main.cjs": `
+        const { Worker } = require("worker_threads");
+        const path = require("path");
+        const worker = new Worker(path.join(__dirname, "body.cjs"), { preload: [path.join(__dirname, "preload.cjs")] });
+        worker.on("exit", code => { process.exitCode = code; });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "uncaughtException: run-main-boom unhandledRejection\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],

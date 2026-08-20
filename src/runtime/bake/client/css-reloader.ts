@@ -43,6 +43,24 @@ function deactivateCss(css: CSS) {
   }
 }
 
+/** Keeps a link's own stylesheet disabled while a managed sheet stands in for it, now or once it loads. */
+function muteLinkSheet(link: HTMLLinkElement) {
+  const linkSheet = link.sheet;
+  if (linkSheet) {
+    linkSheet.disabled = true;
+  } else {
+    link.addEventListener(
+      "load",
+      () => {
+        const id = registeredLinkTags.get(link);
+        const entry = id ? cssStore.get(id) : undefined;
+        if (entry?.sheet && entry.link === link && link.sheet) link.sheet.disabled = true;
+      },
+      { once: true },
+    );
+  }
+}
+
 function activateCss(css: CSS) {
   if (!css.active) {
     css.active = true;
@@ -93,8 +111,8 @@ const headObserver = new MutationObserver(list => {
         const id = registeredLinkTags.get(target);
         if (id) {
           const existing = cssStore.get(id);
-          if (existing) {
-            const disabled = target.disabled;
+          if (existing && existing.link === target) {
+            const disabled = target.hasAttribute("disabled");
             if (disabled) {
               deactivateCss(existing);
             } else {
@@ -116,14 +134,15 @@ function maybeAddCssLink(link: HTMLLinkElement) {
     }
     const existing = cssStore.get(id);
     if (existing) {
-      const { sheet } = existing;
-      if (sheet) {
-        // The HMR runtime has a managed sheet already.
-        sheet.disabled = false;
-        const linkSheet = link.sheet;
-        if (linkSheet) linkSheet.disabled = true;
-      }
+      // One live link per entry: a superseded (or re-appended) node no longer drives the sheet.
+      if (existing.link && existing.link !== link) registeredLinkTags.delete(existing.link);
       existing.link = link;
+      // A link in <head> means the framework wants this stylesheet on the page.
+      activateCss(existing);
+      if (existing.sheet) {
+        // The managed sheet carries the hot-edited rules; the link's own copy is stale. Its `sheet` may only exist once loaded.
+        muteLinkSheet(link);
+      }
     } else {
       cssStore.set(id, {
         sheet: null,
@@ -178,9 +197,7 @@ export function editCssContent(id: string, newContent: string) {
     sheet.replace(newContent);
     document.adoptedStyleSheets.push(sheet);
 
-    // Disable the link tag if it exists
-    const linkSheet = entry.link?.sheet;
-    if (linkSheet) linkSheet.disabled = true;
+    if (entry.link) muteLinkSheet(entry.link);
     return false;
   }
   sheet!.replace(newContent);

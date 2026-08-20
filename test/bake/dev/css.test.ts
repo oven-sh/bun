@@ -1688,3 +1688,40 @@ devTest("framework route stylesheets are minified and printed for browser target
     }
   },
 });
+devTest("a framework that re-adds or moves a stylesheet link keeps hot updates visible", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["styles.css"], body: `<h1>hello</h1>` }),
+    "styles.css": `h1 { color: red; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("red");
+    // One hot update so the runtime manages the sheet itself and the link's own copy is stale.
+    await dev.write("styles.css", `h1 { color: blue; }`);
+    await c.style("h1").color.expect.toBe("#00f");
+
+    // Client-side routers append a fresh link for the same stylesheet, then drop the server-rendered one.
+    await c.js`
+      const old = document.head.querySelector('link[rel="stylesheet"]');
+      document.head.appendChild(old.cloneNode());
+      old.remove();
+    `;
+    await dev.write("styles.css", `h1 { color: green; }`);
+    await c.style("h1").color.expect.toBe("green");
+
+    // The reverse order (remove, then add) and a plain move must not leave the sheet stuck either way.
+    await c.js`
+      const link = document.head.querySelector('link[rel="stylesheet"]');
+      link.remove();
+      document.head.appendChild(link);
+    `;
+    await dev.write("styles.css", `h1 { color: purple; }`);
+    await c.style("h1").color.expect.toBe("purple");
+
+    // The framework may toggle the current link's disabled attribute; only that link controls the sheet.
+    await c.js`document.head.querySelector('link[rel="stylesheet"]').setAttribute("disabled", "")`;
+    await c.style("h1").notFound();
+    await c.js`document.head.querySelector('link[rel="stylesheet"]').removeAttribute("disabled")`;
+    await c.style("h1").color.expect.toBe("purple");
+  },
+});

@@ -1,6 +1,39 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 
+test("--parallel forwards --environment to workers", async () => {
+  const fixture = `import { expect, test } from "bun:test"; test("environment", () => expect((globalThis as any).workerEnvironment).toBe(true));`;
+  using dir = tempDir("parallel-environment", {
+    "environment with spaces.ts": `
+      console.log("environment worker=" + process.env.BUN_TEST_WORKER_ID);
+      export default {
+        setup(global: typeof globalThis) {
+          (global as any).workerEnvironment = true;
+          return () => delete (global as any).workerEnvironment;
+        },
+      };
+    `,
+    "a.test.ts": fixture,
+    "b.test.ts": fixture,
+    "c.test.ts": fixture,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--environment", "./environment with spaces.ts"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "1000000" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  expect((stdout + stderr).match(/environment worker=1/g)).toHaveLength(1);
+  expect(stderr).toContain("3 pass");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
   // remaining files; otherwise one fast worker handles all three.

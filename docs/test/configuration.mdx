@@ -85,6 +85,48 @@ mock.module("./external-api", () => ({
 }));
 ```
 
+### Persistent Test Environment
+
+Use `environment` when setup imports a large module graph that every isolated
+test file needs. Bun evaluates the environment module once per test process or
+parallel worker. Bun calls `setup` with a fresh test global before each file and
+calls the returned teardown after that file finishes.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+environment = "./test-environment.ts"
+```
+
+```ts title="test-environment.ts" icon="/icons/typescript.svg"
+export default {
+  async setup(testGlobal: typeof globalThis, context: { testPath: string }) {
+    testGlobal.console.log(`setting up ${context.testPath}`);
+
+    return {
+      async teardown() {
+        // Release resources created for this file.
+      },
+    };
+  },
+};
+```
+
+You can return a teardown function instead of an object. `setup` and teardown
+can be synchronous or asynchronous.
+
+```sh terminal icon="terminal"
+bun test --environment ./test-environment.ts
+```
+
+An environment requires file isolation. The option enables isolation for a
+serial run. Each `--parallel` worker evaluates its own environment module.
+`--environment` cannot be combined with `--no-isolate`.
+
+Unlike an environment, each `preload` module evaluates inside every fresh test
+global. Use preloads for per-file test hooks and mocks. Use an environment to
+retain expensive infrastructure imports while still creating new state for
+each file.
+
 ### Path Ignore Patterns
 
 `pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents Bun from discovering matching paths and running them as tests.

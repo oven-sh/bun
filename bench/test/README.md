@@ -48,3 +48,24 @@ hyperfine --warmup 1 \
 gets a fresh global; the VM-level SourceProvider cache means the 2MB is
 transpiled and parsed once, and every subsequent file rebuilds the module
 record from cached `module_info` with zero re-parsing.
+
+## `environment/`: jsdom + React Testing Library
+
+This benchmark compares the existing per-file preload model with a persistent
+environment. Both variants create a fresh jsdom document for every file and run
+the same React Testing Library assertion.
+
+```sh
+cd bench/test
+bun install
+bun environment/setup.ts 100
+cd environment/suite
+hyperfine --warmup 1 --runs 5 -N \
+  -n 'preload per file' 'bun test --isolate --config bunfig-preload.toml .' \
+  -n 'persistent environment' 'bun test --config bunfig-environment.toml .' \
+  -n 'persistent environment parallel=1' 'bun test --parallel=1 --config bunfig-environment.toml .' \
+  -n 'persistent environment parallel=3' 'bun test --parallel=3 --config bunfig-environment.toml .'
+```
+
+Run the generator with 25, 100, and 400 files to compare startup cost,
+steady-state throughput, and RSS growth.

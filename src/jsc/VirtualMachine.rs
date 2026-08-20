@@ -368,6 +368,44 @@ pub struct VirtualMachine {
 #[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
+    pub environment: Option<TestEnvironmentState>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TestEnvironmentLifecycle {
+    #[default]
+    Uninitialized,
+    Ready,
+    InFile,
+    ShuttingDown,
+    Closed,
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestIsolationGlobalMode {
+    ReplaceTestGlobal,
+    PreserveEnvironmentHost,
+}
+
+pub struct TestEnvironmentState {
+    pub specifier: Box<[u8]>,
+    pub host_global: Option<core::ptr::NonNull<JSGlobalObject>>,
+    pub environment_export: crate::strong::Optional,
+    pub file_handle: crate::strong::Optional,
+    pub lifecycle: TestEnvironmentLifecycle,
+}
+
+impl TestEnvironmentState {
+    pub fn new(specifier: Box<[u8]>) -> Self {
+        Self {
+            specifier,
+            host_global: None,
+            environment_export: crate::strong::Optional::empty(),
+            file_handle: crate::strong::Optional::empty(),
+            lifecycle: TestEnvironmentLifecycle::Uninitialized,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -399,6 +437,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__releaseTestEnvironmentHost(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
 
@@ -1693,6 +1732,8 @@ impl VirtualMachine {
             self.event_loop_mut().deferred_tasks.run();
             self.is_inside_deferred_task_queue.set(false);
         }
+
+        self.release_test_environment_host();
 
         self.is_shutting_down = true;
 
@@ -5001,90 +5042,120 @@ impl VirtualMachine {
     /// socket-group close below. That helper lives in the higher-tier crate
     /// and cannot be called from here.
     pub fn swap_global_for_test_isolation(&mut self) {
+        self.replace_global_for_test_isolation(TestIsolationGlobalMode::ReplaceTestGlobal);
+    }
+
+    /// Creates the first test global while retaining the initial global as the
+    /// persistent test-environment host.
+    pub fn create_test_global_preserving_environment_host(&mut self) {
+        self.replace_global_for_test_isolation(TestIsolationGlobalMode::PreserveEnvironmentHost);
+    }
+
+    fn release_test_environment_host(&mut self) {
+        let Some(environment) = self.test_isolation_state.environment.as_mut() else {
+            return;
+        };
+        if environment.lifecycle == TestEnvironmentLifecycle::Closed {
+            return;
+        }
+        environment.lifecycle = TestEnvironmentLifecycle::ShuttingDown;
+        environment.file_handle.deinit();
+        environment.environment_export.deinit();
+        if let Some(host) = environment.host_global.take() {
+            Zig__GlobalObject__releaseTestEnvironmentHost(JSGlobalObject::opaque_ref(
+                host.as_ptr(),
+            ));
+        }
+        environment.lifecycle = TestEnvironmentLifecycle::Closed;
+    }
+
+    fn replace_global_for_test_isolation(&mut self, mode: TestIsolationGlobalMode) {
         debug_assert!(self.test_isolation_enabled);
 
-        // The finished file's workers, ports, channels and sockets are stopped
-        // first (no events dispatched), before its socket groups and timers are
-        // swept and before the new global exists.
-        Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
+        if mode == TestIsolationGlobalMode::ReplaceTestGlobal {
+            // The finished file's workers, ports, channels and sockets are stopped
+            // first (no events dispatched), before its socket groups and timers are
+            // swept and before the new global exists.
+            Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
 
-        if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
-            let mut buf = bun_paths::PathBuffer::uninit();
-            let z = bun_paths::resolve_path::z(&cwd, &mut buf);
-            let _ = self.set_process_cwd(z);
-        }
-
-        let _ = self.event_loop_mut().drain_microtasks();
-
-        {
-            // Groups that must survive the per-file isolation swap: this
-            // process's own inbound IPC, the spawn-IPC pool, and the
-            // test-parallel channel.
-            let (skip_spawn_ipc, skip_test_parallel_ipc): (
-                *mut uws::SocketGroup,
-                *mut uws::SocketGroup,
-            ) = match self.rare_data.as_deref_mut() {
-                Some(rare) => (
-                    core::ptr::from_mut(&mut rare.spawn_ipc_group),
-                    core::ptr::from_mut(&mut rare.test_parallel_ipc_group),
-                ),
-                None => (core::ptr::null_mut(), core::ptr::null_mut()),
-            };
-            // SAFETY: process-global usockets loop is live.
-            let loop_ = unsafe { &mut *uws::Loop::get() };
-            let mut maybe_group = loop_.internal_loop_data.head;
-            while let Some(group) = NonNull::new(maybe_group) {
-                // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
-                let next = unsafe { (*group.as_ptr()).next };
-                let g = group.as_ptr();
-                if g != skip_spawn_ipc && g != skip_test_parallel_ipc {
-                    // SAFETY: see above.
-                    unsafe { (*g).close_all() };
-                }
-                // SAFETY: `next` may have been unlinked by an on_close JS
-                // callback; restart from head if so (mirrors loop.c).
-                maybe_group = if !next.is_null() && unsafe { (*next).linked } == 0 {
-                    loop_.internal_loop_data.head
-                } else {
-                    next
-                };
+            if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
+                let mut buf = bun_paths::PathBuffer::uninit();
+                let z = bun_paths::resolve_path::z(&cwd, &mut buf);
+                let _ = self.set_process_cwd(z);
             }
-        }
-        if let Some(rare) = self.rare_data.as_deref_mut() {
-            rare.listening_sockets_for_watch_mode.lock().clear();
-            // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
-            // `BindingData::SetCallbacks`), so a holder left by the outgoing
-            // global makes the next file's call a no-op and dispatches
-            // node:quic events into the dead realm.
-            rare.node_quic_callbacks.deinit();
-        }
-        let _ = self.event_loop_mut().drain_microtasks();
 
-        let _ = self.auto_killer.kill();
-        self.auto_killer.clear();
+            let _ = self.event_loop_mut().drain_microtasks();
 
-        self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
+            {
+                // Groups that must survive the per-file isolation swap: this
+                // process's own inbound IPC, the spawn-IPC pool, and the
+                // test-parallel channel.
+                let (skip_spawn_ipc, skip_test_parallel_ipc): (
+                    *mut uws::SocketGroup,
+                    *mut uws::SocketGroup,
+                ) = match self.rare_data.as_deref_mut() {
+                    Some(rare) => (
+                        core::ptr::from_mut(&mut rare.spawn_ipc_group),
+                        core::ptr::from_mut(&mut rare.test_parallel_ipc_group),
+                    ),
+                    None => (core::ptr::null_mut(), core::ptr::null_mut()),
+                };
+                // SAFETY: process-global usockets loop is live.
+                let loop_ = unsafe { &mut *uws::Loop::get() };
+                let mut maybe_group = loop_.internal_loop_data.head;
+                while let Some(group) = NonNull::new(maybe_group) {
+                    // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
+                    let next = unsafe { (*group.as_ptr()).next };
+                    let g = group.as_ptr();
+                    if g != skip_spawn_ipc && g != skip_test_parallel_ipc {
+                        // SAFETY: see above.
+                        unsafe { (*g).close_all() };
+                    }
+                    // SAFETY: `next` may have been unlinked by an on_close JS
+                    // callback; restart from head if so (mirrors loop.c).
+                    maybe_group = if !next.is_null() && unsafe { (*next).linked } == 0 {
+                        loop_.internal_loop_data.head
+                    } else {
+                        next
+                    };
+                }
+            }
+            if let Some(rare) = self.rare_data.as_deref_mut() {
+                rare.listening_sockets_for_watch_mode.lock().clear();
+                // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
+                // `BindingData::SetCallbacks`), so a holder left by the outgoing
+                // global makes the next file's call a no-op and dispatches
+                // node:quic events into the dead realm.
+                rare.node_quic_callbacks.deinit();
+            }
+            let _ = self.event_loop_mut().drain_microtasks();
 
-        // Generation-stale JS timers would otherwise release their pins only
-        // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a
-        // Strong on its wrapper (and thereby the outgoing global's whole
-        // graph) for an hour. Every TimeoutObject / ImmediateObject /
-        // AbortSignal timeout in the heap belongs to the outgoing file (the
-        // new global doesn't exist yet), so drop them eagerly, same as
-        // `global_exit()`. Runs no user JS.
-        //
-        // The hook also runs `StatWatcherScheduler::shutdown_for_exit` first:
-        // it drains the (already-closed — the caller ran
-        // `stop_active_handles_for_test_isolation` before this swap) watcher queue and retires
-        // the per-VM scheduler singleton, which the next file's first
-        // `fs.watchFile` lazily recreates. That per-file reset is intentional
-        // — the scheduler's queue and in-flight work-pool task belong to the
-        // outgoing file, and its brief spin-wait is bounded by at most one
-        // in-flight `stat()`.
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: live per-thread VM on the JS thread; `runtime_state`
-            // stays installed for the whole test run.
-            unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+            let _ = self.auto_killer.kill();
+            self.auto_killer.clear();
+
+            self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
+
+            // Generation-stale JS timers would otherwise release their pins only
+            // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a
+            // Strong on its wrapper (and thereby the outgoing global's whole
+            // graph) for an hour. Every TimeoutObject / ImmediateObject /
+            // AbortSignal timeout in the heap belongs to the outgoing file (the
+            // new global doesn't exist yet), so drop them eagerly, same as
+            // `global_exit()`. Runs no user JS.
+            //
+            // The hook also runs `StatWatcherScheduler::shutdown_for_exit` first:
+            // it drains the (already-closed — the caller ran
+            // `stop_active_handles_for_test_isolation` before this swap) watcher queue and retires
+            // the per-VM scheduler singleton, which the next file's first
+            // `fs.watchFile` lazily recreates. That per-file reset is intentional
+            // — the scheduler's queue and in-flight work-pool task belong to the
+            // outgoing file, and its brief spin-wait is bounded by at most one
+            // in-flight `stat()`.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: live per-thread VM on the JS thread; `runtime_state`
+                // stays installed for the whole test run.
+                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+            }
         }
 
         self.overridden_main.deinit();
@@ -5111,6 +5182,7 @@ impl VirtualMachine {
         let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
             JSGlobalObject::opaque_ref(old_global),
             self.console.cast(),
+            mode,
         );
         self.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));

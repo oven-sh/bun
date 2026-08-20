@@ -55,6 +55,13 @@ Each worker gets `BUN_TEST_WORKER_ID` and `JEST_WORKER_ID` set to its 1-based in
 const dbName = `app_test_${process.env.BUN_TEST_WORKER_ID ?? "1"}`;
 ```
 
+The [`environment`](/test/configuration#persistent-test-environment) option
+creates one persistent environment host in each worker. Its module graph stays
+loaded while the worker handles multiple files. Bun still gives every file a
+fresh test global and calls environment setup and teardown around that file.
+An environment requires isolation, so `--environment` and `--no-isolate`
+cannot be combined.
+
 Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--coverage`, `--update-snapshots`, `-t`, `--retry`, `--rerun-each`, `--concurrent`, `--randomize`/`--seed`, …) are forwarded to workers. The coordinator handles `--bail` at file granularity: once the failure threshold is reached it starts no new files, but files already running finish.
 
 The coordinator merges coverage, JUnit XML and snapshot writes, so `--parallel --coverage --reporter=junit --reporter-outfile=junit.xml` produces one report.

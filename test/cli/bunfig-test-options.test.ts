@@ -2,6 +2,55 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("bunfig.toml test options", () => {
+  test("environment config enables an isolated persistent environment", async () => {
+    await using dir = tempDir("bunfig-test-environment", {
+      "environment.ts": `
+        console.log("environment evaluated");
+        export default { setup(global: typeof globalThis) { (global as any).fromEnvironment = true; } };
+      `,
+      "a.test.ts": `import { expect, test } from "bun:test"; test("a", () => expect((globalThis as any).fromEnvironment).toBe(true));`,
+      "b.test.ts": `import { expect, test } from "bun:test"; test("b", () => expect((globalThis as any).fromEnvironment).toBe(true));`,
+      "bunfig.toml": `[test]\nenvironment = "./environment.ts"`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout.match(/environment evaluated/g)).toHaveLength(1);
+    expect(stderr).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("environment config rejects an empty string", async () => {
+    await using dir = tempDir("bunfig-test-environment-empty", {
+      "a.test.ts": `import { test } from "bun:test"; test("a", () => {});`,
+      "bunfig.toml": `[test]\nenvironment = ""`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toContain("test environment cannot be an empty string");
+    expect(exitCode).toBe(1);
+  });
+
   test("randomize with seed produces consistent order", async () => {
     await using dir = tempDir("bunfig-test-randomize-seed", {
       "test.test.ts": `

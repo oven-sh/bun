@@ -331,6 +331,10 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         argv.push(lit(b"--preload\0"));
         argv.push(dupe_z(preload));
     }
+    if let Some(environment) = &opts.environment {
+        argv.push(lit(b"--environment\0"));
+        argv.push(dupe_z(environment));
+    }
     if let Some(define) = &ctx.args.define {
         debug_assert_eq!(define.keys.len(), define.values.len());
         for (key, value) in define.keys.iter().zip(define.values.iter()) {
@@ -639,6 +643,7 @@ pub(crate) fn run_as_worker(
     let vm_ref = unsafe { &mut *vm };
     vm_ref.test_isolation_enabled = ctx.test_options.isolate;
     vm_ref.auto_killer.enabled = ctx.test_options.isolate;
+    crate::test_runner::environment::configure(vm_ref, ctx.test_options.environment.as_deref());
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its
@@ -668,7 +673,23 @@ pub(crate) fn run_as_worker(
             done: false,
         },
     };
-    vm_ref.run_with_api_lock(|| wloop.begin());
+    vm_ref.run_with_api_lock(|| {
+        // Worker startup reaches this function outside JSC's API lock. Load
+        // and root the host environment only after taking the same lock used
+        // for test-file execution.
+        let vm_ref = unsafe { &mut *vm };
+        if let Err(err) = crate::test_runner::environment::initialize(vm_ref) {
+            test_command::handle_top_level_test_error_before_javascript_start(&err);
+        }
+        if vm_ref.test_isolation_state.environment.is_some() {
+            wloop
+                .reporter
+                .jest
+                .bun_test_root
+                .reset_hook_scope_for_test_isolation();
+        }
+        wloop.begin()
+    });
 
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator

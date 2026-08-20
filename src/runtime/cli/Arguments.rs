@@ -617,6 +617,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
     ),
     parse_param!(
+        "--environment <STR>              Persistent worker-level test environment module. Evaluated once per worker; setup/teardown run per file."
+    ),
+    parse_param!(
         "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
     ),
     parse_param!(
@@ -1967,8 +1970,16 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
     let no_isolate = args.flag(b"--no-isolate");
+    ctx.test_options.no_isolate = no_isolate;
     ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
     ctx.test_options.test_worker = args.flag(b"--test-worker");
+    if let Some(environment) = args.option(b"--environment") {
+        if environment.is_empty() {
+            bun_core::pretty_errorln!("<r><red>error<r>: --environment expects a module specifier");
+            Global::exit(1);
+        }
+        ctx.test_options.environment = Some(environment.into());
+    }
 
     if let Some(parallel_str) = args.option(b"--parallel") {
         let parsed: u32 = if !parallel_str.is_empty() {
@@ -1993,6 +2004,16 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
         ctx.test_options.parallel = parsed;
         ctx.test_options.isolate = !no_isolate;
+    }
+
+    if ctx.test_options.environment.is_some() {
+        if no_isolate {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --environment cannot be used with --no-isolate"
+            );
+            Global::exit(1);
+        }
+        ctx.test_options.isolate = true;
     }
 
     if let Some(delay_str) = args.option(b"--parallel-delay") {

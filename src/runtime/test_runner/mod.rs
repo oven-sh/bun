@@ -141,6 +141,7 @@ cfg_jsc! {
     #[path = "DoneCallback.rs"]   pub mod done_callback;
     #[path = "Execution.rs"]      pub mod execution;
     #[path = "jest.rs"]           pub mod jest;
+    #[path = "environment.rs"]    pub mod environment;
     #[path = "Order.rs"]          pub mod order;
     #[path = "pretty_format.rs"]  pub mod pretty_format;
     #[path = "ScopeFunctions.rs"] pub mod scope_functions;

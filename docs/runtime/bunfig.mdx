@@ -190,6 +190,22 @@ Same as the top-level `preload` field, but only applies to `bun test`.
 preload = ["./setup.ts"]
 ```
 
+### `test.environment`
+
+Load a persistent test environment module. Bun evaluates the module once per
+process or parallel worker, then calls its default export's `setup` function
+for every test file. The setup function can return a teardown function or an
+object with a `teardown` method.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+environment = "./test-environment.ts"
+```
+
+The environment enables file isolation. It cannot be combined with
+`--no-isolate`. The equivalent CLI option is
+`--environment ./test-environment.ts`.
+
 ### `test.pathIgnorePatterns`
 
 Exclude files and directories from test discovery using glob patterns. The test runner prunes matched directories during scanning, so it never traverses their contents. Use this when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.

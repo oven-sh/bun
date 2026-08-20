@@ -423,6 +423,13 @@ pub struct TestOptions {
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
     pub isolate: bool,
+    /// Tracks an explicit `--no-isolate` so configuration loaded after CLI
+    /// parsing can reject incompatible test environments.
+    pub no_isolate: bool,
+    /// Persistent worker-level environment module (`bunfig.toml` `[test]
+    /// environment` / `--environment`). Evaluated once per worker; `setup`
+    /// / `teardown` run around each test file.
+    pub environment: Option<Box<[u8]>>,
     /// `bun test --parallel[=N]`: run test files across N worker
     /// processes. 0 means not requested. Implies `isolate` in workers.
     pub parallel: u32,
@@ -505,6 +512,8 @@ impl Default for TestOptions {
             // overrides explicitly.
             max_concurrency: if bun_core::env::ENABLE_ASAN { 5 } else { 20 },
             isolate: false,
+            no_isolate: false,
+            environment: None,
             parallel: 0,
             parallel_delay_ms: None,
             test_worker: false,

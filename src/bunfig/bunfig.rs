@@ -418,6 +418,20 @@ impl<'a> Parser<'a> {
                     self.load_preload(&expr)?;
                 }
 
+                if let Some(expr) = test.get(b"environment") {
+                    self.expect_string(&expr)?;
+                    if let ExprData::EString(s) = &expr.data {
+                        if s.len() == 0 {
+                            self.add_error(
+                                expr.loc,
+                                b"test environment cannot be an empty string",
+                            )?;
+                            return Ok(());
+                        }
+                        self.ctx.test_options.environment = Some(estring_to_owned(s, self.bump));
+                    }
+                }
+
                 if let Some(expr) = test.get(b"smol") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.runtime_options.smol =

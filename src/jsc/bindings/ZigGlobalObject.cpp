@@ -644,7 +644,12 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 // Create a fresh Zig::GlobalObject on the *same* JSC::VM as `oldGlobal`, then unprotect
 // the old one so GC can reclaim its module graph. Used by `bun test --isolate` to give
 // each test file a clean global without paying for a new JSC::VM.
-extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal, void* console_client)
+enum class TestIsolationGlobalMode : uint8_t {
+    ReplaceTestGlobal,
+    PreserveEnvironmentHost,
+};
+
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal, void* console_client, TestIsolationGlobalMode mode)
 {
     JSC::VM& vm = oldGlobal->vm();
     JSC::JSLockHolder locker(vm);
@@ -664,7 +669,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // The old global's workers, ports, channels and sockets were stopped by the runtime
     // (Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation) before its sweeps and before this.
     auto* oldContext = oldGlobal->scriptExecutionContext();
-    ASSERT(oldContext->activeDOMObjectsAreStopped());
+    ASSERT(mode == TestIsolationGlobalMode::PreserveEnvironmentHost || oldContext->activeDOMObjectsAreStopped());
 
     // The new global must inherit the old one's ScriptExecutionContext identifier so that
     // `Bun.isMainThread` (identifier == 1) and cross-thread task dispatch keep working.
@@ -692,7 +697,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // function returns and the old global is collectable — and would write
     // into the dead cell via NapiHandleScope::open. Point those envs at the
     // new global and adopt the refs before unprotecting the old one.
-    globalObject->adoptNapiEnvsForTestIsolation(oldGlobal);
+    if (mode == TestIsolationGlobalMode::ReplaceTestGlobal)
+        globalObject->adoptNapiEnvsForTestIsolation(oldGlobal);
 
     // The swap replaces this thread's ScriptExecutionContext. If the thread had
     // joined a worker_threads SHARE_ENV tree, carry it over (store + the
@@ -706,9 +712,17 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // require.cache, and user objects become collectable. JSC's CodeCache and
     // Bun's RuntimeTranspilerCache are VM/process scoped and survive.
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
-    JSC::gcUnprotect(oldGlobal);
+    if (mode == TestIsolationGlobalMode::ReplaceTestGlobal)
+        JSC::gcUnprotect(oldGlobal);
 
     return globalObject;
+}
+
+extern "C" void Zig__GlobalObject__releaseTestEnvironmentHost(Zig::GlobalObject* hostGlobal)
+{
+    JSC::VM& vm = hostGlobal->vm();
+    JSC::JSLockHolder locker(vm);
+    JSC::gcUnprotect(hostGlobal);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,

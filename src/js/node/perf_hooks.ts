@@ -79,7 +79,8 @@ class PerformanceNodeTiming {
   }
 
   get startTime() {
-    return this.nodeStart;
+    // A "node" entry is the timeOrigin reference, so its startTime is always 0.
+    return 0;
   }
 
   get duration() {
@@ -107,11 +108,26 @@ if (PerformanceEntry) {
   Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
 }
 
+// Node exposes the entry accessors as own enumerable properties of the
+// nodeTiming object, not only on the prototype. Null-prototype descriptors so
+// prototype pollution before this module loads cannot inject extra keys.
+const performanceNodeTimingEntryDescriptors = {
+  __proto__: null,
+  name: { __proto__: null, get: () => "node", configurable: true, enumerable: true },
+  entryType: { __proto__: null, get: () => "node", configurable: true, enumerable: true },
+  startTime: { __proto__: null, get: () => 0, configurable: true, enumerable: true },
+  duration: { __proto__: null, get: () => performance.now(), configurable: true, enumerable: true },
+};
+
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
+  Object.defineProperties(object, performanceNodeTimingEntryDescriptors);
 
-  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
-  object.loopStart = object.idleTime = 1;
+  // Milestones are offsets in milliseconds from performance.timeOrigin, not
+  // absolute epoch timestamps. Bun does not record the individual startup
+  // milestones, so report them relative to the process start (0).
+  object.nodeStart = object.v8Start = object.environment = object.bootstrapComplete = 0;
+  object.loopStart = object.idleTime = 0;
   object.loopExit = -1;
   return object;
 }

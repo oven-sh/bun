@@ -37,6 +37,109 @@ async function runRepl(
 
 const stripAnsi = Bun.stripANSI;
 
+interface Screen {
+  /** One string per row, holding exactly the cells that were written to it. */
+  rows: string[];
+  cursor: { row: number; col: number };
+}
+
+// Replays the REPL's output on a model of a `cols` wide terminal: printable
+// characters auto-wrap, and the cursor and erase controls the line editor uses
+// are interpreted. The screen is unbounded in height, so rows never scroll off.
+function renderScreen(output: string, cols: number): Screen {
+  const rows: string[][] = [[]];
+  let row = 0;
+  let col = 0;
+  // A character written in the last column leaves the cursor on that column;
+  // the wrap happens when the next character arrives (as in xterm).
+  let pendingWrap = false;
+  const rowAt = (index: number) => {
+    while (rows.length <= index) rows.push([]);
+    return rows[index];
+  };
+
+  let i = 0;
+  while (i < output.length) {
+    const ch = output[i];
+    if (ch === "\x1b") {
+      const rest = output.slice(i, i + 24);
+      const seq = /^\x1b\[([\d;]*)([A-Za-z])/.exec(rest);
+      if (seq === null) {
+        // The final byte of this sequence has not arrived yet.
+        if (/^\x1b(\[[\d;]*)?$/.test(rest)) break;
+        throw new Error(`renderScreen: unsupported escape sequence ${JSON.stringify(rest)}`);
+      }
+      i += seq[0].length;
+      const n = seq[1] === "" ? undefined : Number(seq[1]);
+      switch (seq[2]) {
+        case "m": // colors
+          break;
+        case "A":
+          row = Math.max(0, row - (n ?? 1));
+          pendingWrap = false;
+          break;
+        case "B":
+          row += n ?? 1;
+          pendingWrap = false;
+          break;
+        case "C":
+          col = Math.min(cols - 1, col + (n ?? 1));
+          pendingWrap = false;
+          break;
+        case "D":
+          col = Math.max(0, col - (n ?? 1));
+          pendingWrap = false;
+          break;
+        case "J": // erase from the cursor to the end of the screen
+          if ((n ?? 0) !== 0) throw new Error(`renderScreen: unsupported erase ${JSON.stringify(seq[0])}`);
+          rowAt(row).length = Math.min(rowAt(row).length, col);
+          rows.length = row + 1;
+          break;
+        case "K": // erase to the end of the row (0) or the whole row (2)
+          if (n === 2) rowAt(row).length = 0;
+          else if ((n ?? 0) === 0) rowAt(row).length = Math.min(rowAt(row).length, col);
+          else throw new Error(`renderScreen: unsupported erase ${JSON.stringify(seq[0])}`);
+          break;
+        default:
+          throw new Error(`renderScreen: unsupported escape sequence ${JSON.stringify(seq[0])}`);
+      }
+      continue;
+    }
+    i++;
+    if (ch === "\r") {
+      col = 0;
+      pendingWrap = false;
+      continue;
+    }
+    if (ch === "\n") {
+      // The pty translates "\n" to "\r\n", so the column was already reset.
+      row++;
+      pendingWrap = false;
+      continue;
+    }
+    if (pendingWrap) {
+      row++;
+      col = 0;
+      pendingWrap = false;
+    }
+    const cells = rowAt(row);
+    while (cells.length < col) cells.push(" ");
+    cells[col] = ch;
+    if (col === cols - 1) pendingWrap = true;
+    else col++;
+  }
+  rowAt(row);
+  return { rows: rows.map(cells => cells.join("")), cursor: { row, col } };
+}
+
+function formatScreen({ rows, cursor }: Screen): string {
+  return rows
+    .map((text, row) =>
+      row === cursor.row ? text.slice(0, cursor.col).padEnd(cursor.col) + "|" + text.slice(cursor.col) : text,
+    )
+    .join("\n");
+}
+
 // Helper to run REPL in a PTY and interact with it
 async function withTerminalRepl(
   fn: (helpers: {
@@ -44,16 +147,19 @@ async function withTerminalRepl(
     proc: Bun.ChildProcess;
     send: (text: string) => void;
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
+    /** Resolves with the rendered screen once `ready` accepts it. */
+    waitForScreen: (ready: (screen: Screen) => boolean, timeoutMs?: number) => Promise<Screen>;
     allOutput: () => string;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined> } = {},
+  options: { env?: Record<string, string | undefined>; cols?: number } = {},
 ) {
   const received: string[] = [];
+  const cols = options.cols ?? 120;
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
 
   await using terminal = new Bun.Terminal({
-    cols: 120,
+    cols,
     rows: 40,
     data(_term, data) {
       const str = Buffer.from(data).toString();
@@ -102,16 +208,40 @@ async function withTerminalRepl(
     }
   };
 
+  // The REPL redraws within milliseconds of a keystroke; the deadline is well
+  // below the test timeout so that a failure reports the screen it got stuck on.
+  const waitForScreen = async (ready: (screen: Screen) => boolean, timeoutMs = 3000): Promise<Screen> => {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      const screen = renderScreen(received.join(""), cols);
+      if (ready(screen)) return screen;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new Error(`Timed out waiting for the screen. Last screen (| marks the cursor):\n${formatScreen(screen)}`);
+      }
+      // Wait for the next chunk of terminal data, or for the deadline.
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, remaining);
+        resolveWaiter = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      resolveWaiter = null;
+    }
+  };
+
   const allOutput = () => stripAnsi(received.join(""));
 
   await waitFor(/\u276f|> /); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, allOutput });
+  await fn({ terminal, proc, send, waitFor, waitForScreen, allOutput });
 
-  // Clean exit. Ctrl+U first discards whatever the test left on the line, so
-  // `.exit` is not appended to it (which would leave the REPL running until
-  // the kill below).
-  send("\x15.exit\n");
+  // Clean exit. Ctrl+E then Ctrl+U first discards whatever the test left on
+  // the line (Ctrl+U only deletes what is before the cursor), so `.exit` is
+  // not appended to it (which would leave the REPL running until the kill
+  // below).
+  send("\x05\x15.exit\n");
   await Promise.race([proc.exited, Bun.sleep(2000)]);
   if (!proc.killed) proc.kill();
 }
@@ -1365,6 +1495,133 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
           await waitFor(/ReferenceError|not defined/);
         },
         { env: colorEnv },
+      );
+    });
+  });
+
+  describe("input wider than the terminal", () => {
+    // Every keystroke redraws the whole input. When the input spans more than
+    // one terminal row, the redraw has to start on the prompt's row, otherwise
+    // each keystroke leaves another stale copy of the first row behind.
+    const cols = 30;
+    // "> " plus 37 characters: the first 28 characters share the prompt's row.
+    const line = "[111, 222, 333, 444, 555, 666].length";
+    const split = cols - "> ".length;
+
+    test("a wrapped line is redrawn in place and its result is printed below it", async () => {
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(line);
+          let screen = await waitForScreen(s => s.rows.at(-1) === line.slice(split));
+          expect(screen.rows.slice(top)).toEqual([`> ${line.slice(0, split)}`, line.slice(split)]);
+          await waitForScreen(s => s.cursor.row === top + 1 && s.cursor.col === line.length - split);
+
+          // Ctrl+A, then insert at the start: the cursor is on the prompt's row
+          // while the line still continues on the next one.
+          send("\x01" + "0;");
+          const edited = `0;${line}`;
+          screen = await waitForScreen(s => s.rows.at(-1) === edited.slice(split));
+          expect(screen.rows.slice(top)).toEqual([`> ${edited.slice(0, split)}`, edited.slice(split)]);
+          await waitForScreen(s => s.cursor.row === top && s.cursor.col === "> 0;".length);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "6");
+          expect(screen.rows.slice(top)).toEqual([`> ${edited.slice(0, split)}`, edited.slice(split), "6", "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("Ctrl+C is echoed after the end of a wrapped line", async () => {
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(line);
+          await waitForScreen(s => s.rows.at(-1) === line.slice(split));
+          // Ctrl+A moves the cursor up to the prompt's row, then Ctrl+C.
+          send("\x01\x03");
+          const screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === `${line.slice(split)}^C`);
+          expect(screen.rows.slice(top)).toEqual([`> ${line.slice(0, split)}`, `${line.slice(split)}^C`, "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("recalling a shorter history entry clears the rows of a longer one", async () => {
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(`${line}\n`);
+          await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "6");
+          send("7\n");
+          await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "7");
+
+          send("\x1b[A"); // Up: 7
+          await waitForScreen(s => s.rows.at(-1) === "> 7");
+          send("\x1b[A"); // Up: the wrapped line
+          let screen = await waitForScreen(s => s.rows.at(-1) === line.slice(split));
+          const history = [`> ${line.slice(0, split)}`, line.slice(split), "6", "> 7", "7"];
+          expect(screen.rows.slice(top)).toEqual([...history, `> ${line.slice(0, split)}`, line.slice(split)]);
+
+          send("\x1b[B"); // Down: back to 7, which needs one row less
+          screen = await waitForScreen(s => s.rows.at(-1) === "> 7");
+          expect(screen.rows.slice(top)).toEqual([...history, "> 7"]);
+          await waitForScreen(s => s.cursor.row === screen.rows.length - 1 && s.cursor.col === "> 7".length);
+        },
+        { cols },
+      );
+    });
+
+    test("ghost text that does not fit on the row wraps and is erased on enter", async () => {
+      // Colors enable ghost text; the prompt is then "❯ ".
+      const cols = 40;
+      // "❯ " plus 30 characters leaves room for 8 of the 14 ghost characters.
+      const input = "[1, 2, 3, 4, 5, 6].length + zz";
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "❯ ")).rows.length - 1;
+
+          // `zz` itself is skipped as a suggestion for `zz`, so the ghost is
+          // the remainder of zzLongSuffixName.
+          send("var zz = 1, zzLongSuffixName = 5\n");
+          await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "5");
+          const setup = ["❯ var zz = 1, zzLongSuffixName = 5", "5"];
+
+          send(input);
+          let screen = await waitForScreen(s => s.rows.at(-1) === "ixName");
+          expect(screen.rows.slice(top)).toEqual([...setup, `❯ ${input}LongSuff`, "ixName"]);
+          // The cursor stays in front of the ghost, on the prompt's row.
+          await waitForScreen(s => s.cursor.row === top + setup.length && s.cursor.col === `❯ ${input}`.length);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "7");
+          expect(screen.rows.slice(top)).toEqual([...setup, `❯ ${input}`, "7", "❯ "]);
+        },
+        { cols, env: { NO_COLOR: undefined, FORCE_COLOR: "1" } },
+      );
+    });
+
+    test("the cursor is positioned past column 80 on a wide terminal", async () => {
+      const cols = 120;
+      const input = Buffer.alloc(90, "q").toString();
+      await withTerminalRepl(
+        async ({ send, waitFor, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(input);
+          await waitFor(`> ${input}`);
+          send("\x1b[D"); // Left
+          await waitForScreen(s => s.cursor.row === top && s.cursor.col === `> ${input}`.length - 1);
+
+          send("Z");
+          const edited = `${input.slice(0, -1)}Zq`;
+          await waitForScreen(s => s.rows.at(-1) === `> ${edited}` && s.cursor.col === `> ${edited}`.length - 1);
+        },
+        { cols },
       );
     });
   });

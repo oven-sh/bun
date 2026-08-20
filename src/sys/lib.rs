@@ -9371,9 +9371,27 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
         ypixel: ws.ws_ypixel,
     })
 }
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
+    // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
+    let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+    // SAFETY: `info` is a valid out-pointer for the duration of the call; a
+    // handle that is not a console makes the call fail rather than misbehave.
+    let rc = unsafe { windows::kernel32::GetConsoleScreenBufferInfo(fd.native(), &raw mut info) };
+    if rc == windows::FALSE {
+        return None;
+    }
+    // `srWindow` is the visible part of the (possibly much taller) screen buffer.
+    let window = info.srWindow;
+    Some(bun_core::Winsize {
+        row: u16::try_from(i32::from(window.Bottom) - i32::from(window.Top) + 1).ok()?,
+        col: u16::try_from(i32::from(window.Right) - i32::from(window.Left) + 1).ok()?,
+        xpixel: 0,
+        ypixel: 0,
+    })
+}
+#[cfg(not(any(unix, windows)))]
 fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
-    // TODO(windows): GetConsoleScreenBufferInfo.
     None
 }
 

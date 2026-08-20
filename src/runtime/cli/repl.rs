@@ -850,6 +850,66 @@ enum InputMode {
     Editor,
 }
 
+/// A terminal cell, in rows below the row that holds the prompt.
+#[derive(Clone, Copy, Default)]
+struct ScreenPos {
+    row: usize,
+    col: usize,
+}
+
+impl ScreenPos {
+    fn next_row(self) -> ScreenPos {
+        ScreenPos {
+            row: self.row + 1,
+            col: 0,
+        }
+    }
+}
+
+/// Follows where the terminal puts text written after the prompt.
+struct Layout {
+    width: usize,
+    pos: ScreenPos,
+}
+
+impl Layout {
+    /// Lays out `text` and returns the cell its first glyph went to, or `next` for empty text.
+    fn advance(&mut self, mut text: &[u8]) -> ScreenPos {
+        let mut first: Option<ScreenPos> = None;
+        while !text.is_empty() {
+            let room = self.width.saturating_sub(self.pos.col);
+            let mut fits =
+                strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, room);
+            if fits == 0 {
+                // Like the terminal, a glyph that does not fit (a wide one) starts the next row.
+                if self.pos.col > 0 {
+                    self.pos = self.pos.next_row();
+                    continue;
+                }
+                // Wider than the whole terminal.
+                fits = text.len();
+            }
+            let (chunk, rest) = text.split_at(fits);
+            let columns = strings::visible::width::exclude_ansi_colors::utf8(chunk);
+            if columns > 0 {
+                first.get_or_insert(self.pos);
+            }
+            self.pos.col += columns;
+            text = rest;
+        }
+        first.unwrap_or_else(|| self.next())
+    }
+
+    /// The cell the next glyph goes to. A full row counts as wrapped; `refresh_line` makes that so.
+    fn next(&self) -> ScreenPos {
+        if self.pos.col >= self.width {
+            self.pos.next_row()
+        } else {
+            self.pos
+        }
+    }
+}
+
 pub(super) struct Repl<'a> {
     line_editor: LineEditor,
     history: History,
@@ -865,11 +925,10 @@ pub(super) struct Repl<'a> {
     use_colors: bool,
     /// Last width the terminal reported.
     terminal_width: u16,
-    /// Rows below the prompt's row on which `refresh_line` left the cursor.
-    cursor_row: usize,
-    /// Row (below the prompt's row) and column just past the last drawn character.
-    end_row: usize,
-    end_col: usize,
+    /// Where `refresh_line` left the terminal cursor.
+    drawn_cursor: ScreenPos,
+    /// The cell after the last character of the line (the ghost text is not counted).
+    drawn_end: ScreenPos,
     ctrl_c_pressed: bool,
 
     // Buffered stdin
@@ -909,9 +968,8 @@ impl<'a> Repl<'a> {
             is_tty: false,
             use_colors: false,
             terminal_width: 80,
-            cursor_row: 0,
-            end_row: 0,
-            end_col: 0,
+            drawn_cursor: ScreenPos::default(),
+            drawn_end: ScreenPos::default(),
             ctrl_c_pressed: false,
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
@@ -1258,11 +1316,9 @@ impl<'a> Repl<'a> {
         }
     }
 
-    /// Redraws the input, however many rows it wraps onto, and leaves the terminal
-    /// cursor on the edit cursor. Call `leave_input` before printing below the input.
+    /// Call `leave_input` before printing anything below the input this draws.
     fn refresh_line(&mut self) {
-        // Non-TTY mirrors node's terminal:false repl: input is never echoed or redrawn, since
-        // per-key redraws wedge write(2) on a full socketpair after a few hundred keystrokes.
+        // Non-TTY never redraws (like node): per-key redraws wedge write(2) on a full socketpair.
         if !self.is_tty {
             if self.line_editor.buffer.is_empty() && self.input_mode == InputMode::Normal {
                 Output::flush();
@@ -1284,8 +1340,8 @@ impl<'a> Repl<'a> {
         let line = self.line_editor.get_line();
 
         // Erase the previous drawing from the prompt's row down.
-        if self.cursor_row > 0 {
-            self.print(format_args!("{}{}A", CSI, self.cursor_row));
+        if self.drawn_cursor.row > 0 {
+            self.print(format_args!("{}{}A", CSI, self.drawn_cursor.row));
         }
         self.write(b"\r");
         self.write(Cursor::CLEAR_BELOW.as_bytes());
@@ -1300,62 +1356,76 @@ impl<'a> Repl<'a> {
             self.write(line);
         }
 
-        // Positions below are in columns, not bytes.
-        let mut end = prompt_len + strings::visible::width::exclude_ansi_colors::utf8(line);
         let ghost = self.drawn_suggestion();
         if !ghost.is_empty() {
             self.write(Color::DIM.as_bytes());
             self.write(ghost);
             self.write(Color::RESET.as_bytes());
-            end += strings::visible::width::exclude_ansi_colors::utf8(ghost);
         }
 
-        // The terminal defers the wrap after a character in the last column; force it,
-        // or the cursor is one row above where the arithmetic below puts it.
-        if end.is_multiple_of(width) {
+        let (before_cursor, after_cursor) = line.split_at(self.line_editor.cursor);
+        let mut layout = Layout {
+            width,
+            pos: ScreenPos {
+                row: 0,
+                col: prompt_len,
+            },
+        };
+        layout.advance(before_cursor);
+        let mut cursor = layout.advance(after_cursor);
+        let end = layout.next();
+        if !ghost.is_empty() {
+            // Only drawn with the cursor at the end of the line, so the cursor sits on the ghost.
+            cursor = layout.advance(ghost);
+        }
+
+        // Terminals defer the wrap after the last column; force it to match `layout`.
+        if layout.pos.col >= width {
             self.write(b"\n");
+            layout.pos = layout.pos.next_row();
         }
-        let end_row = end / width;
-        let end_col = end % width;
-
-        let cursor = prompt_len
-            + strings::visible::width::exclude_ansi_colors::utf8(&line[..self.line_editor.cursor]);
-        let cursor_row = cursor / width;
-        let cursor_col = cursor % width;
-        if end_row > cursor_row {
-            self.print(format_args!("{}{}A", CSI, end_row - cursor_row));
+        if layout.pos.row > cursor.row {
+            self.print(format_args!("{}{}A", CSI, layout.pos.row - cursor.row));
         }
         self.write(b"\r");
-        if cursor_col > 0 {
-            self.print(format_args!("{}{}C", CSI, cursor_col));
+        if cursor.col > 0 {
+            self.print(format_args!("{}{}C", CSI, cursor.col));
         }
 
-        self.cursor_row = cursor_row;
-        self.end_row = end_row;
-        self.end_col = end_col;
+        self.drawn_cursor = cursor;
+        self.drawn_end = end;
 
         Output::flush();
     }
 
-    /// Erases the ghost text and moves the terminal cursor past the drawn input,
-    /// so that whatever is printed next lands below all of its rows.
-    fn leave_input(&mut self) {
-        if !self.drawn_suggestion().is_empty() {
-            // Nothing but the ghost follows the cursor.
-            self.write(Cursor::CLEAR_BELOW.as_bytes());
-        } else if self.is_tty {
-            if self.end_row > self.cursor_row {
-                self.print(format_args!("{}{}B", CSI, self.end_row - self.cursor_row));
-            }
-            self.write(b"\r");
-            if self.end_col > 0 {
-                self.print(format_args!("{}{}C", CSI, self.end_col));
+    /// Erases the ghost, writes `echo` after the line, and moves to the start of the row below it.
+    fn leave_input(&mut self, echo: &[u8]) {
+        // False once a line that ends exactly at the right edge has left the cursor on a fresh row.
+        let mut on_input_row = true;
+        if self.is_tty {
+            if !self.drawn_suggestion().is_empty() {
+                // Nothing but the ghost follows the cursor.
+                self.write(Cursor::CLEAR_BELOW.as_bytes());
+                on_input_row = self.drawn_cursor.col > 0;
+            } else {
+                let end = self.drawn_end;
+                if end.row > self.drawn_cursor.row {
+                    self.print(format_args!("{}{}B", CSI, end.row - self.drawn_cursor.row));
+                }
+                self.write(b"\r");
+                if end.col > 0 {
+                    self.print(format_args!("{}{}C", CSI, end.col));
+                }
+                on_input_row = end.col > 0;
             }
         }
+        self.write(echo);
+        if on_input_row || !echo.is_empty() {
+            self.write(b"\n");
+        }
         self.suggestion.clear();
-        self.cursor_row = 0;
-        self.end_row = 0;
-        self.end_col = 0;
+        self.drawn_cursor = ScreenPos::default();
+        self.drawn_end = ScreenPos::default();
     }
 
     // ========================================================================
@@ -2256,8 +2326,7 @@ impl<'a> Repl<'a> {
         while self.running {
             let Some(key) = self.read_key() else {
                 // EOF
-                self.leave_input();
-                self.print(format_args!("\n"));
+                self.leave_input(b"");
                 break;
             };
 
@@ -2272,8 +2341,7 @@ impl<'a> Repl<'a> {
                 Key::CtrlD => match self.input_mode {
                     InputMode::Editor => {
                         // Finish editor mode
-                        self.leave_input();
-                        self.print(format_args!("\n"));
+                        self.leave_input(b"");
                         // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
                         if !self.editor_buffer.is_empty() {
                             let code = core::mem::take(&mut self.editor_buffer);
@@ -2298,7 +2366,7 @@ impl<'a> Repl<'a> {
                     self.write(Cursor::CLEAR_SCREEN.as_bytes());
                     self.write(Cursor::HOME.as_bytes());
                     // The input is redrawn from the top of the now empty screen.
-                    self.cursor_row = 0;
+                    self.drawn_cursor = ScreenPos::default();
                     self.refresh_line();
                 }
                 Key::CtrlA => {
@@ -2425,8 +2493,7 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_enter(&mut self) -> Result<(), crate::Error> {
-        self.leave_input();
-        self.print(format_args!("\n"));
+        self.leave_input(b"");
 
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
@@ -2531,11 +2598,13 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_ctrl_c(&mut self) {
-        self.leave_input();
+        let cancels_line =
+            self.input_mode == InputMode::Normal && !self.line_editor.buffer.is_empty();
+        self.leave_input(if cancels_line { b"^C" } else { b"" });
         match self.input_mode {
             InputMode::Editor => {
                 self.print(format_args!(
-                    "\n{}// Editor mode cancelled{}\n",
+                    "{}// Editor mode cancelled{}\n",
                     Color::DIM,
                     Color::RESET
                 ));
@@ -2543,24 +2612,21 @@ impl<'a> Repl<'a> {
                 self.editor_buffer.clear();
             }
             InputMode::Multiline => {
-                self.print(format_args!("\n"));
                 self.input_mode = InputMode::Normal;
                 self.multiline_buffer.clear();
             }
-            InputMode::Normal if !self.line_editor.buffer.is_empty() => {
-                self.print(format_args!("^C\n"));
+            InputMode::Normal if cancels_line => {
                 self.line_editor.clear();
             }
             InputMode::Normal if self.ctrl_c_pressed => {
                 // Second Ctrl+C on empty line - exit
-                self.print(format_args!("\n"));
                 self.running = false;
                 return;
             }
             InputMode::Normal => {
                 self.ctrl_c_pressed = true;
                 self.print(format_args!(
-                    "\n{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
+                    "{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
                     Color::DIM,
                     Color::RESET
                 ));
@@ -2602,8 +2668,7 @@ impl<'a> Repl<'a> {
                 let _ = self.line_editor.insert(b' ');
                 self.refresh_line();
             } else if matches.len() > 1 {
-                self.leave_input();
-                self.print(format_args!("\n"));
+                self.leave_input(b"");
                 for m in &matches {
                     self.print(format_args!(
                         "  {}{}{}\n",
@@ -2708,8 +2773,7 @@ impl<'a> Repl<'a> {
             }
         } else if len <= 50 {
             // Multiple completions - show them
-            self.leave_input();
-            self.print(format_args!("\n"));
+            self.leave_input(b"");
             let mut i: u32 = 0;
             while i < (len as u32) {
                 let item = match completions.get_index(global, i) {
@@ -2740,9 +2804,9 @@ impl<'a> Repl<'a> {
             }
             self.refresh_line();
         } else {
-            self.leave_input();
+            self.leave_input(b"");
             self.print(format_args!(
-                "\n{}{} completions{}\n",
+                "{}{} completions{}\n",
                 Color::DIM,
                 len,
                 Color::RESET

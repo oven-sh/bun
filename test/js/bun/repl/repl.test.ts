@@ -23,11 +23,11 @@ async function runRepl(
     stderr: "pipe",
     env: {
       ...bunEnv,
-      HOME: String(home),
-      USERPROFILE: String(home),
       TERM: "dumb",
       NO_COLOR: "1",
       ...env,
+      HOME: String(home),
+      USERPROFILE: String(home),
     },
   });
 
@@ -47,100 +47,134 @@ interface Screen {
   cursor: { row: number; col: number };
 }
 
-// Replays the REPL's output on a model of a `cols` wide terminal: printable
-// characters auto-wrap, and the cursor and erase controls the line editor uses
-// are interpreted. The screen is unbounded in height, so rows never scroll off.
-function renderScreen(output: string, cols: number): Screen {
-  const rows: string[][] = [[]];
-  let row = 0;
-  let col = 0;
-  // A character written in the last column leaves the cursor on that column;
-  // the wrap happens when the next character arrives (as in xterm).
-  let pendingWrap = false;
-  const rowAt = (index: number) => {
-    while (rows.length <= index) rows.push([]);
-    return rows[index];
-  };
+// A model of a `cols` wide terminal fed with the REPL's output: text auto-wraps
+// (a wide glyph that does not fit in the last cell moves to the next row whole),
+// and the cursor and erase controls the line editor uses are interpreted. The
+// screen is unbounded in height, so rows never scroll off.
+class ScreenModel {
+  private readonly rows: string[][] = [[]];
+  private row = 0;
+  private col = 0;
+  // A glyph that fills the row leaves the cursor on the last column; the wrap
+  // happens when the next glyph arrives (as in xterm).
+  private pendingWrap = false;
+  // An escape sequence cut off at the end of the previous chunk.
+  private unfinished = "";
 
-  let i = 0;
-  while (i < output.length) {
-    const ch = output[i];
-    if (ch === "\x1b") {
-      const rest = output.slice(i, i + 24);
-      const seq = /^\x1b\[([\d;]*)([A-Za-z])/.exec(rest);
-      if (seq === null) {
-        // The final byte of this sequence has not arrived yet.
-        if (/^\x1b(\[[\d;]*)?$/.test(rest)) break;
-        throw new Error(`renderScreen: unsupported escape sequence ${JSON.stringify(rest)}`);
-      }
-      i += seq[0].length;
-      const n = seq[1] === "" ? undefined : Number(seq[1]);
-      switch (seq[2]) {
-        case "m": // colors
-          break;
-        case "A":
-          row = Math.max(0, row - (n ?? 1));
-          pendingWrap = false;
-          break;
-        case "B":
-          row += n ?? 1;
-          pendingWrap = false;
-          break;
-        case "C":
-          col = Math.min(cols - 1, col + (n ?? 1));
-          pendingWrap = false;
-          break;
-        case "D":
-          col = Math.max(0, col - (n ?? 1));
-          pendingWrap = false;
-          break;
-        case "J": // erase from the cursor to the end of the screen
-          if ((n ?? 0) !== 0) throw new Error(`renderScreen: unsupported erase ${JSON.stringify(seq[0])}`);
-          rowAt(row).length = Math.min(rowAt(row).length, col);
-          rows.length = row + 1;
-          break;
-        case "K": // erase to the end of the row (0) or the whole row (2)
-          if (n === 2) rowAt(row).length = 0;
-          else if ((n ?? 0) === 0) rowAt(row).length = Math.min(rowAt(row).length, col);
-          else throw new Error(`renderScreen: unsupported erase ${JSON.stringify(seq[0])}`);
-          break;
-        default:
-          throw new Error(`renderScreen: unsupported escape sequence ${JSON.stringify(seq[0])}`);
-      }
-      continue;
-    }
-    i++;
-    if (ch === "\r") {
-      col = 0;
-      pendingWrap = false;
-      continue;
-    }
-    if (ch === "\n") {
-      // The pty translates "\n" to "\r\n", so the column was already reset.
-      row++;
-      pendingWrap = false;
-      continue;
-    }
-    if (pendingWrap) {
-      row++;
-      col = 0;
-      pendingWrap = false;
-    }
-    const cells = rowAt(row);
-    while (cells.length < col) cells.push(" ");
-    cells[col] = ch;
-    if (col === cols - 1) pendingWrap = true;
-    else col++;
+  constructor(private readonly cols: number) {}
+
+  private rowAt(index: number): string[] {
+    while (this.rows.length <= index) this.rows.push([]);
+    return this.rows[index];
   }
-  rowAt(row);
-  return { rows: rows.map(cells => cells.join("")), cursor: { row, col } };
+
+  feed(chunk: string): void {
+    const output = this.unfinished + chunk;
+    this.unfinished = "";
+    let i = 0;
+    while (i < output.length) {
+      const codePoint = output.codePointAt(i)!;
+      if (codePoint === 0x1b) {
+        const rest = output.slice(i, i + 24);
+        const seq = /^\x1b\[([\d;]*)([A-Za-z])/.exec(rest);
+        if (seq === null) {
+          if (/^\x1b(\[[\d;]*)?$/.test(rest)) {
+            this.unfinished = output.slice(i);
+            return;
+          }
+          throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(rest)}`);
+        }
+        i += seq[0].length;
+        this.control(seq[2], seq[1] === "" ? undefined : Number(seq[1]), seq[0]);
+        continue;
+      }
+      const ch = codePoint > 0xffff ? String.fromCodePoint(codePoint) : output[i];
+      i += ch.length;
+      if (ch === "\r") {
+        this.col = 0;
+        this.pendingWrap = false;
+      } else if (ch === "\n") {
+        // The pty translates "\n" to "\r\n", so the column was already reset.
+        this.row++;
+        this.pendingWrap = false;
+      } else {
+        this.put(ch, codePoint < 0x80 ? 1 : Bun.stringWidth(ch));
+      }
+    }
+  }
+
+  private control(command: string, n: number | undefined, sequence: string): void {
+    switch (command) {
+      case "m": // colors
+        return;
+      case "A":
+        this.row = Math.max(0, this.row - (n ?? 1));
+        break;
+      case "B":
+        this.row += n ?? 1;
+        break;
+      case "C":
+        this.col = Math.min(this.cols - 1, this.col + (n ?? 1));
+        break;
+      case "D":
+        this.col = Math.max(0, this.col - (n ?? 1));
+        break;
+      case "J": // erase from the cursor to the end of the screen
+        if ((n ?? 0) !== 0) throw new Error(`ScreenModel: unsupported erase ${JSON.stringify(sequence)}`);
+        this.rowAt(this.row).length = Math.min(this.rowAt(this.row).length, this.col);
+        this.rows.length = this.row + 1;
+        break;
+      case "K": // erase to the end of the row (0) or the whole row (2)
+        if (n === 2) this.rowAt(this.row).length = 0;
+        else if ((n ?? 0) === 0) this.rowAt(this.row).length = Math.min(this.rowAt(this.row).length, this.col);
+        else throw new Error(`ScreenModel: unsupported erase ${JSON.stringify(sequence)}`);
+        break;
+      default:
+        throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(sequence)}`);
+    }
+    this.pendingWrap = false;
+  }
+
+  private put(ch: string, width: number): void {
+    if (width === 0) return;
+    if (this.pendingWrap || this.col + width > this.cols) {
+      this.row++;
+      this.col = 0;
+      this.pendingWrap = false;
+    }
+    const cells = this.rowAt(this.row);
+    while (cells.length < this.col) cells.push(" ");
+    cells[this.col] = ch;
+    // The second cell of a wide glyph holds nothing of its own.
+    for (let extra = 1; extra < width; extra++) cells[this.col + extra] = "";
+    if (this.col + width >= this.cols) {
+      this.col = this.cols - 1;
+      this.pendingWrap = true;
+    } else {
+      this.col += width;
+    }
+  }
+
+  screen(): Screen {
+    this.rowAt(this.row);
+    return { rows: this.rows.map(cells => cells.join("")), cursor: { row: this.row, col: this.col } };
+  }
 }
 
 function formatScreen({ rows, cursor }: Screen): string {
   return rows
-    .map((text, row) =>
-      row === cursor.row ? text.slice(0, cursor.col).padEnd(cursor.col) + "|" + text.slice(cursor.col) : text,
-    )
+    .map((text, row) => {
+      if (row !== cursor.row) return text;
+      // Find the character that starts at the cursor's column.
+      let column = 0;
+      let index = 0;
+      while (index < text.length && column < cursor.col) {
+        const ch = String.fromCodePoint(text.codePointAt(index)!);
+        column += Bun.stringWidth(ch);
+        index += ch.length;
+      }
+      return text.slice(0, index) + " ".repeat(Math.max(0, cursor.col - column)) + "|" + text.slice(index);
+    })
     .join("\n");
 }
 
@@ -161,6 +195,8 @@ async function withTerminalRepl(
   const cols = options.cols ?? 120;
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
+  // Streaming, so that a multi-byte character split across two reads stays intact.
+  const decoder = new TextDecoder();
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
   using home = tempDir("repl-home", {});
@@ -168,7 +204,7 @@ async function withTerminalRepl(
     cols,
     rows: 40,
     data(_term, data) {
-      const str = Buffer.from(data).toString();
+      const str = decoder.decode(data, { stream: true });
       received.push(str);
       if (resolveWaiter) {
         resolveWaiter();
@@ -182,10 +218,10 @@ async function withTerminalRepl(
     terminal,
     env: {
       ...bunEnv,
-      HOME: String(home),
-      USERPROFILE: String(home),
       TERM: "xterm-256color",
       ...options.env,
+      HOME: String(home),
+      USERPROFILE: String(home),
     },
   });
 
@@ -218,10 +254,13 @@ async function withTerminalRepl(
 
   // The REPL redraws within milliseconds of a keystroke; the deadline is well
   // below the test timeout so that a failure reports the screen it got stuck on.
+  const model = new ScreenModel(cols);
+  let modelled = 0;
   const waitForScreen = async (ready: (screen: Screen) => boolean, timeoutMs = 3000): Promise<Screen> => {
     const deadline = Date.now() + timeoutMs;
     while (true) {
-      const screen = renderScreen(received.join(""), cols);
+      while (modelled < received.length) model.feed(received[modelled++]);
+      const screen = model.screen();
       if (ready(screen)) return screen;
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
@@ -1607,8 +1646,79 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
           send("\n");
           screen = await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "7");
           expect(screen.rows.slice(top)).toEqual([...setup, `❯ ${input}`, "7", "❯ "]);
+          const evaluated = [...setup, `❯ ${input}`, "7"];
+
+          // "❯ " plus 38 characters fills the row, so the whole ghost goes to the
+          // next row, and the cursor with it.
+          const filling = "[1, 2, 3, 4, 5, 6, 7, 888].length + zz";
+          send(filling);
+          screen = await waitForScreen(s => s.rows.at(-1) === "LongSuffixName");
+          expect(screen.rows.slice(top)).toEqual([...evaluated, `❯ ${filling}`, "LongSuffixName"]);
+          await waitForScreen(s => s.cursor.row === screen.rows.length - 1 && s.cursor.col === 0);
+
+          // Enter erases the ghost; the result takes the row the ghost was on.
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "9");
+          expect(screen.rows.slice(top)).toEqual([...evaluated, `❯ ${filling}`, "9", "❯ "]);
         },
         { cols, env: { NO_COLOR: undefined, FORCE_COLOR: "1" } },
+      );
+    });
+
+    test("a line that fills the row exactly leaves no blank row behind", async () => {
+      // "> " plus 28 characters is exactly 30 columns.
+      const filling = `"${Buffer.alloc(19, "a")}".length`;
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(filling);
+          // The cursor has nowhere to go on the full row, so it waits on an empty one.
+          let screen = await waitForScreen(s => s.cursor.row === top + 1 && s.cursor.col === 0);
+          expect(screen.rows.slice(top)).toEqual([`> ${filling}`, ""]);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "19");
+          expect(screen.rows.slice(top)).toEqual([`> ${filling}`, "19", "> "]);
+
+          send(filling);
+          await waitForScreen(s => s.rows.at(-1) === "" && s.rows.at(-2) === `> ${filling}`);
+          send("\x03");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "^C");
+          expect(screen.rows.slice(top)).toEqual([`> ${filling}`, "19", `> ${filling}`, "^C", "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("wide characters wrap the way the terminal wraps them", async () => {
+      // 21 columns: a 2 column glyph never fits in the last cell of a row that
+      // starts on an even column, so those rows hold one column less than the
+      // width. `> "` and nine glyphs fill the first row; the second row holds ten
+      // glyphs and a blank cell; the rest goes on the third row.
+      const cols = 21;
+      const glyphs = Array.from({ length: 25 }, () => "日");
+      const input = `"${glyphs.join("")}".length`;
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(input);
+          const third = `${glyphs.slice(19).join("")}".length`;
+          let screen = await waitForScreen(s => s.rows.at(-1) === third);
+          expect(screen.rows.slice(top)).toEqual([
+            `> "${glyphs.slice(0, 9).join("")}`,
+            glyphs.slice(9, 19).join(""),
+            third,
+          ]);
+          // Six glyphs and `".length` are 20 columns.
+          await waitForScreen(s => s.cursor.row === top + 2 && s.cursor.col === 20);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "25");
+          expect(screen.rows.slice(top + 2)).toEqual([third, "25", "> "]);
+        },
+        { cols },
       );
     });
 

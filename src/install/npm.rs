@@ -1180,14 +1180,11 @@ pub mod package_manifest {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
-                // Attempt #1.
-                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
-                    // Attempt #2: the file may already exist. Let's unlink and try again.
-                    let _ = bun_sys::unlinkat(cache_dir, outpath);
-                    bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath)?;
-                    // There is no attempt #3. This is a cache, so it's not essential.
+                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
+                    return Ok(());
                 }
-                return Ok(());
+                // Keep the entry present throughout: rename over it below instead of unlinking it.
+                bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 
             #[cfg(not(windows))]

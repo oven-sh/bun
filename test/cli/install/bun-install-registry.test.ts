@@ -871,6 +871,109 @@ describe("text lockfile", () => {
   });
 });
 
+// #39755: a transitive peer dependency on `bun` is satisfied by the running
+// runtime and must not auto-install the npm `bun` package.
+describe("peer dependency on bun", () => {
+  test("transitive peer is not auto-installed", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "peer-on-bun": "1.0.0",
+        },
+      }),
+    );
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+    expect(await exited).toBe(0);
+
+    expect(await exists(join(packageDir, "node_modules", "peer-on-bun"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "bun"))).toBeFalse();
+
+    const firstLockfile = (await file(join(packageDir, "bun.lock")).text()).replaceAll(
+      /localhost:\d+/g,
+      "localhost:1234",
+    );
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    // an install from the saved lockfile keeps the peer unbound
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    }));
+    expect(await exited).toBe(0);
+
+    expect(await exists(join(packageDir, "node_modules", "bun"))).toBeFalse();
+    expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
+      firstLockfile,
+    );
+  });
+
+  test("explicit root dependency on bun still installs", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "peer-on-bun": "1.0.0",
+          bun: "1.0.0",
+        },
+      }),
+    );
+
+    const { exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+    expect(await exited).toBe(0);
+
+    expect(await file(join(packageDir, "node_modules", "bun", "package.json")).json()).toMatchObject({
+      name: "bun",
+      version: "1.0.0",
+    });
+  });
+
+  test("root peerDependencies on bun is still auto-installed", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        peerDependencies: {
+          bun: ">=1.0.0",
+        },
+      }),
+    );
+
+    const { exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+    expect(await exited).toBe(0);
+
+    expect(await file(join(packageDir, "node_modules", "bun", "package.json")).json()).toMatchObject({
+      name: "bun",
+      version: "1.1.0",
+    });
+  });
+});
+
 test("--lockfile-only", async () => {
   await Promise.all([
     write(

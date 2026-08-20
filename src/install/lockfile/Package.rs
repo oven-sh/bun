@@ -789,9 +789,14 @@ impl Package<u64> {
 
                     let mut behavior = group.behavior;
                     if is_peer {
+                        // A peer dependency on `bun` is satisfied by the
+                        // running runtime. Treat it as optional so it is not
+                        // auto-installed; it still binds when `bun` is
+                        // installed through a real dependency edge.
                         behavior.set(
                             Behavior::OPTIONAL,
-                            (i as u32) < package_version.non_optional_peer_dependencies_start,
+                            (i as u32) < package_version.non_optional_peer_dependencies_start
+                                || key.slice(&manifest.string_buf) == b"bun",
                         );
                     }
                     if package_version_ptr.all_dependencies_bundled() {
@@ -2937,7 +2942,13 @@ impl Package<u64> {
                         )? {
                             let mut dep = dep_;
                             if group.behavior.is_peer()
-                                && optional_peer_dependencies.swap_remove(&external_name.hash)
+                                && (optional_peer_dependencies.swap_remove(&external_name.hash)
+                                    // A remote package's peer dependency on
+                                    // `bun` is satisfied by the running
+                                    // runtime; do not auto-install it.
+                                    || (!FEATURES.is_main
+                                        && !FEATURES.is_workspace
+                                        && key == b"bun"))
                             {
                                 dep.behavior.insert(Behavior::OPTIONAL);
                             }

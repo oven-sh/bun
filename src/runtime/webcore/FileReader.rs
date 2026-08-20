@@ -1020,10 +1020,9 @@ impl FileReader {
         self.reader().memory_cost() + self.buffered.get().capacity()
     }
 
-    /// Raw fd as a JS-visible number, `-1` when closed or not fd-backed.
-    /// Before `start` (a lazy subprocess pipe) the fd lives in the
-    /// `BufferedReader`, not in `self.fd`. Windows pipes have no CRT fd, so
-    /// return `-1` there like Node's `StreamBase::GetFD`.
+    /// Raw fd as a JS-visible number, `-1` when closed or not fd-backed (all
+    /// Windows pipes, like Node's `StreamBase::GetFD`). Before `start` the fd
+    /// lives in the `BufferedReader`, not `self.fd`.
     pub(crate) fn get_fd(&self) -> i32 {
         #[cfg(windows)]
         {

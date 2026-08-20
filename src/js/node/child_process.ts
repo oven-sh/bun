@@ -46,12 +46,9 @@ const kFromNode = Symbol("kFromNode");
 
 const setStdioBlocking = $newRustFunction("subprocess.rs", "setStdioBlocking", 2);
 
-// Minimal stand-in for Node's `Pipe` handle on piped child stdio streams.
-// It exposes the raw parent-end fd for synchronous fd-based IPC
-// (`fs.readSync`/`fs.writeSync` on `stream._handle.fd`, the pattern used by
-// TypeScript 7's sync API) plus `setBlocking`, which such consumers call
-// before a blocking read. The fd stays owned by the native stream; closing
-// it here would double-close.
+// Stand-in for Node's `Pipe` handle on piped child stdio: consumers read
+// `stream._handle.fd` and call `setBlocking` for synchronous fd-based IPC
+// with readSync/writeSync. The native stream owns the fd.
 class StdioPipeHandle {
   #getFd;
   constructor(getFd) {
@@ -1239,8 +1236,7 @@ class ChildProcess extends EventEmitter {
             const result = require("internal/fs/streams").writableFromFileSink(stdin);
             result.readable = false;
             result._handle = new StdioPipeHandle(() => stdin._getFd());
-            // Node's child.stdin is a net.Socket, which has ref/unref.
-            // Forward them to the FileSink (fs.WriteStream has neither).
+            // Node's child.stdin is a net.Socket: forward ref/unref to the FileSink.
             result.ref = function ref() {
               stdin.ref();
               return this;

@@ -1584,12 +1584,10 @@ pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe)
     drop(unsafe { bun_core::heap::take(this) });
 }
 
-/// `node:child_process` exposes the parent-end fd of a piped stdio stream
-/// through a Node-style `stream._handle`. Spawn sets that fd nonblocking, so
-/// `_handle.setBlocking(true)` must clear `O_NONBLOCK` for callers that block
-/// in `fs.readSync` / `fs.writeSync` for synchronous fd-based IPC. Returns
-/// whether the flag was applied. No-op `false` on Windows: pipes there have
-/// no CRT fd, like Node.
+/// `child_process` `stream._handle.setBlocking(fd, blocking)`: spawn sets the
+/// parent-end pipe fd nonblocking, so blocking `fs.readSync` IPC needs
+/// `O_NONBLOCK` cleared. Returns whether the flag was applied (`false` on
+/// Windows: no CRT fd, like Node).
 #[bun_jsc::host_fn]
 pub(crate) fn set_stdio_blocking(
     _global_this: &JSGlobalObject,

@@ -1155,6 +1155,58 @@ test.concurrent("run(): a zero-test file reports a file-level pass numbered by i
   });
 });
 
+test.concurrent("run({globPatterns}): literal entries follow node's createTestFileList", async () => {
+  // Observed on node v26.3.0: an existing literal is taken as-is and a list of
+  // only missing literals is the `Could not find` error rather than an empty
+  // successful run. A directory literal is discovered like node's; the child
+  // is `bun test <dir>`, which runs the tests inside it (node's `node <dir>`
+  // fails instead), so that arm pins discovery, not node's child failure.
+  using dir = tempDir("node-test-glob-literals", {
+    "tests/a.test.mjs": `
+      import { test } from 'node:test';
+      test('a', () => {});
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      async function runWith(globPatterns) {
+        const out = { pass: [], fail: [], success: null, error: null };
+        try {
+          const stream = run({ globPatterns, cwd: import.meta.dirname });
+          stream.on('test:pass', t => out.pass.push(t.name.split(/[\\\\/]/).pop()));
+          stream.on('test:fail', t => out.fail.push(t.name.split(/[\\\\/]/).pop()));
+          stream.on('test:summary', t => { if (t.file === undefined) out.success = t.success; });
+          for await (const _ of stream);
+        } catch (err) {
+          out.error = err.message;
+        }
+        return out;
+      }
+      console.log(JSON.stringify({
+        file: await runWith(['./tests/a.test.mjs']),
+        directory: await runWith(['./tests']),
+        missing: await runWith(['./nope.mjs']),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: {
+      file: { pass: ["a"], fail: [], success: true, error: null },
+      directory: { pass: ["a"], fail: [], success: true, error: null },
+      missing: { pass: [], fail: [], success: null, error: "Could not find './nope.mjs'" },
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("run(): causes JSON cannot encode do not drop the event line", async () => {
   using dir = tempDir("node-test-unencodable-cause", {
     "f.test.mjs": `

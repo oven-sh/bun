@@ -82,31 +82,18 @@ function hasNoGlobMagic(pattern) {
 }
 
 function createTestFileList(patterns: string[], cwd: string): string[] {
-  const { statSync } = require("node:fs");
+  const { existsSync } = require("node:fs");
   const usingDefault = patterns.length === 0;
   if (usingDefault) patterns = kDefaultPatterns;
 
   const results = new Set<string>();
   for (const pattern of patterns) {
     if (!kGlobMagic.test(pattern)) {
+      // node takes an existing literal as-is (a directory then fails as a test
+      // file; observed on v26.3.0) and drops a missing one. Same rule as
+      // discoverRunFiles in node/test.ts.
       const absolute = resolve(cwd, pattern);
-      let stat;
-      try {
-        stat = statSync(absolute);
-      } catch (err) {
-        if ((err as { code?: string })?.code === "ENOENT") continue;
-        throw err;
-      }
-      if (stat.isFile()) {
-        results.add(absolute);
-      } else if (stat.isDirectory()) {
-        for (const defaultPattern of kDefaultPatterns) {
-          for (const match of new Bun.Glob(defaultPattern).scanSync({ cwd: absolute, onlyFiles: true })) {
-            if (hasNodeModulesSegment(match)) continue;
-            results.add(resolve(absolute, match));
-          }
-        }
-      }
+      if (existsSync(absolute)) results.add(absolute);
       continue;
     }
     for (const match of new Bun.Glob(pattern).scanSync({ cwd, onlyFiles: true })) {

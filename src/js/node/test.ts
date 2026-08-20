@@ -289,7 +289,16 @@ function run(options: Record<string, unknown> = kEmptyObject) {
 
 // Bun.Glob mis-parses `test/**/*` nested inside a brace group.
 const kDefaultRunPatterns = ["**/{test,test-*,*[._-]test}.{js,mjs,cjs}", "**/test/**/*.{js,mjs,cjs}"];
+const kGlobMagic = /[*?[\]{}!]/;
+function hasNoGlobMagic(pattern: string) {
+  return !kGlobMagic.test(pattern);
+}
 
+// Mirrors node's createTestFileList (runner.js), which run() shares with the
+// CLI: a literal entry that exists is taken as-is (a directory then fails when
+// spawned, as in node), a missing literal contributes nothing, and a pattern
+// list of only missing literals is an error rather than an empty green run.
+// The eval driver (eval/node_test.ts) carries the same logic for the CLI.
 function discoverRunFiles(opts: ReturnType<typeof validateRunOptions>): string[] {
   const path = require("node:path");
   const cwd = opts.cwd as string;
@@ -300,17 +309,27 @@ function discoverRunFiles(opts: ReturnType<typeof validateRunOptions>): string[]
     }
     return files.map(resolveFromCwd);
   }
-  const patterns = (opts.globPatterns as string[] | undefined)?.length
-    ? (opts.globPatterns as string[])
-    : kDefaultRunPatterns;
+  const globPatterns = opts.globPatterns as string[] | undefined;
+  const usingDefault = !globPatterns?.length;
+  const patterns = usingDefault ? kDefaultRunPatterns : globPatterns!;
   const results = new Set<string>();
   for (const pattern of patterns) {
+    if (hasNoGlobMagic(pattern)) {
+      const absolute = path.resolve(cwd, pattern);
+      if (require("node:fs").existsSync(absolute)) results.add(absolute);
+      continue;
+    }
     for (const match of new Bun.Glob(pattern).scanSync({ cwd, onlyFiles: true })) {
       if (match.split("/").includes("node_modules") || match.split(path.sep).includes("node_modules")) {
         continue;
       }
       results.add(path.resolve(cwd, match));
     }
+  }
+  if (!usingDefault && results.size === 0 && patterns.every(hasNoGlobMagic)) {
+    // node's createTestFileList exits the process here; from run() this
+    // surfaces as the stream's error instead so the caller can handle it.
+    throw new Error(`Could not find '${patterns.join(", ")}'`);
   }
   return Array.from(results).sort();
 }

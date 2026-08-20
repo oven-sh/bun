@@ -17,9 +17,6 @@ extern "C" [[noreturn]] void Zig__GlobalObject__onCrash(const char* exceptionTyp
 // Every runtime for the Itanium C++ ABI describes a class with one non-virtual base at offset 0 with a type_info using the first vtable, and a class with any other bases with one using the second.
 extern "C" void* _ZTVN10__cxxabiv120__si_class_type_infoE[];
 extern "C" void* _ZTVN10__cxxabiv121__vmi_class_type_infoE[];
-extern "C" std::type_info _ZTISt13runtime_error;
-// libcxxrt (FreeBSD) does not declare this one in <cxxabi.h>; a C-linkage declaration outside the namespace names the same function in every runtime.
-extern "C" void __cxa_throw(void* thrownObject, std::type_info* type, void (*destructor)(void*));
 
 namespace {
 
@@ -100,20 +97,7 @@ void terminateHandler()
     Zig__GlobalObject__onCrash(demangled ? demangled : type->name(), what);
 }
 
-void destroyRuntimeError(void* object)
-{
-    static_cast<std::runtime_error*>(object)->~runtime_error();
-}
-
 } // namespace
-
-// bun is built without exception support, so nothing in it catches this: the unwinder gives up and the handler above runs, as when an addon's exception escapes into bun.
-extern "C" void Bun__throwUncaughtCxxExceptionForTesting()
-{
-    void* memory = abi::__cxa_allocate_exception(sizeof(std::runtime_error));
-    new (memory) std::runtime_error("thrown by the crash handler test");
-    __cxa_throw(memory, &_ZTISt13runtime_error, destroyRuntimeError);
-}
 
 #else
 
@@ -127,14 +111,42 @@ void terminateHandler()
 
 } // namespace
 
-extern "C" void Bun__throwUncaughtCxxExceptionForTesting()
-{
-    std::terminate();
-}
-
 #endif
 
 extern "C" void Bun__installCxxTerminateHandler()
 {
     std::set_terminate(terminateHandler);
 }
+
+#if OS(DARWIN)
+
+extern "C" std::type_info _ZTISt13runtime_error;
+// Declared here rather than taken from <cxxabi.h>, which not every runtime declares it in; C linkage makes this the same function.
+extern "C" void __cxa_throw(void* thrownObject, std::type_info* type, void (*destructor)(void*));
+
+namespace {
+
+void destroyRuntimeError(void* object)
+{
+    static_cast<std::runtime_error*>(object)->~runtime_error();
+}
+
+} // namespace
+
+// What `throw std::runtime_error(...)` compiles to. Nothing in bun can catch it, so the unwinder gives up and the handler runs, as when an addon's exception escapes into bun.
+extern "C" void Bun__throwUncaughtCxxExceptionForTesting()
+{
+    void* memory = abi::__cxa_allocate_exception(sizeof(std::runtime_error));
+    new (memory) std::runtime_error("thrown by the crash handler test");
+    __cxa_throw(memory, &_ZTISt13runtime_error, destroyRuntimeError);
+}
+
+#else
+
+// glibc release builds strip the unwind tables, so a throw from inside bun aborts in the unwinder before any handler runs; macOS, where an addon shares bun's libc++abi, is also the one platform where an addon's throw reaches this handler.
+extern "C" void Bun__throwUncaughtCxxExceptionForTesting()
+{
+    std::terminate();
+}
+
+#endif

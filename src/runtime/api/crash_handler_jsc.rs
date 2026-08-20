@@ -198,7 +198,7 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Ends in the C++ terminate handler: with a `std::runtime_error` in flight on POSIX, with nothing in flight on Windows.
+    /// Ends in the C++ terminate handler: with a `std::runtime_error` in flight on macOS, with nothing in flight elsewhere.
     #[bun_jsc::host_fn]
     fn js_uncaught_cxx_exception(
         _global: &JSGlobalObject,

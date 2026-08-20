@@ -676,42 +676,32 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             );
         } else if tag == S::SHORTHAND {
             let val = S::extract_shorthand(property);
-            self.flush_helper_physical(
-                PhysicalSlot::Top,
-                S::shorthand_top(val),
-                S::SHORTHAND_CATEGORY,
-                dest,
-                context,
-            );
-            self.flush_helper_physical(
-                PhysicalSlot::Right,
-                S::shorthand_right(val),
-                S::SHORTHAND_CATEGORY,
-                dest,
-                context,
-            );
-            self.flush_helper_physical(
-                PhysicalSlot::Bottom,
-                S::shorthand_bottom(val),
-                S::SHORTHAND_CATEGORY,
-                dest,
-                context,
-            );
-            self.flush_helper_physical(
-                PhysicalSlot::Left,
-                S::shorthand_left(val),
-                S::SHORTHAND_CATEGORY,
-                dest,
-                context,
-            );
+
+            // The buffered values are only live for a target that rejects the whole declaration.
+            if let Some(browsers) = context.targets.browsers {
+                let rejected_by_a_target = [
+                    S::shorthand_top(val),
+                    S::shorthand_right(val),
+                    S::shorthand_bottom(val),
+                    S::shorthand_left(val),
+                ]
+                .into_iter()
+                .any(|v| !v.is_compatible(&browsers));
+                if rejected_by_a_target {
+                    self.flush(dest, context);
+                }
+            }
+
             self.top = Some(S::shorthand_top(val).clone());
             self.right = Some(S::shorthand_right(val).clone());
             self.bottom = Some(S::shorthand_bottom(val).clone());
             self.left = Some(S::shorthand_left(val).clone());
+            // Dead in every writing mode; flushing would put compiled inline ones after this rule.
             self.block_start = None;
             self.block_end = None;
             self.inline_start = None;
             self.inline_end = None;
+            self.category = S::SHORTHAND_CATEGORY;
             self.has_any = true;
         } else {
             return false;

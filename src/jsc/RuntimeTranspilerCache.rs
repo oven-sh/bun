@@ -56,10 +56,8 @@ bun_core::declare_scope!(cache, visible);
 /// offsets picked by a header byte) plus a body of tagged records with
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
-/// Version 28: The header ends with a hash of the header fields, and every
-/// section hash is stored (and checked) even when the section is empty. A
-/// damaged header used to be acted on as written: a zeroed output length ran
-/// the module as an empty file.
+/// Version 28: The header ends with a hash of the header fields, and the hash
+/// of an empty section is stored and checked like any other.
 const EXPECTED_VERSION: u32 = 28;
 
 /// Source files smaller than this are not written to / read from the on-disk
@@ -183,8 +181,6 @@ impl Metadata {
         Ok(())
     }
 
-    /// Decodes the header at the start of `bytes`. No field is returned to
-    /// the caller before the version and the header hash have been checked.
     pub(crate) fn decode(bytes: &[u8]) -> crate::CrateResult<Metadata> {
         let mut reader = bun_io::FixedBufferStream::new(bytes);
         let cache_version = reader.read_int_le::<u32>()?;
@@ -247,10 +243,8 @@ impl Metadata {
         })
     }
 
-    /// `save` writes the three sections back to back right after the header,
-    /// so the header describes the file size exactly. Checking that here means
-    /// `Entry::load` never allocates for, or reads at, a length or offset the
-    /// file does not have.
+    /// `save` writes the sections back to back after the header, so a valid
+    /// header adds up to the file size exactly.
     pub(crate) fn verify_layout(&self, file_size: u64) -> crate::CrateResult<()> {
         let header_end = Self::SIZE as u64;
         let output_end = header_end.checked_add(self.output_byte_length);
@@ -417,9 +411,8 @@ impl Entry {
         Ok(())
     }
 
-    /// Reads the three sections. The caller has run `Metadata::verify_layout`
-    /// against the file size, so every length below fits the file and a short
-    /// read means the file changed underneath us.
+    /// The caller has run `Metadata::verify_layout`, so every length below
+    /// fits the file.
     pub(crate) fn load(&mut self, file: &sys::File) -> crate::CrateResult<()> {
         debug_assert!(
             self.output_code.is_empty(),
@@ -748,9 +741,8 @@ impl RuntimeTranspilerCache {
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
-        // NONBLOCK so that a FIFO left at this path cannot block the open
-        // (the fstat below then rejects it). Not on Windows, where the flag
-        // would open an overlapped handle and break the synchronous preads.
+        // NONBLOCK: a FIFO at this path must not block the open. On Windows
+        // the flag would make the handle overlapped and break the preads.
         #[cfg(unix)]
         let open_flags = sys::O::RDONLY | sys::O::NONBLOCK;
         #[cfg(not(unix))]

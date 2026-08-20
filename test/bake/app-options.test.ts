@@ -19,6 +19,11 @@ test("optional app keys treat null as absent", async () => {
         "bundlerOptions.client.sourcemap: null": { framework, bundlerOptions: { client: { sourcemap: null } } },
         "bundlerOptions.client.sourcemap: 0": { framework, bundlerOptions: { client: { sourcemap: 0 } } },
         "bundlerOptions.client.minify: null": { framework, bundlerOptions: { client: { minify: null } } },
+        // Documented keys that are not wired up yet fail loudly instead of doing nothing.
+        "bundlerOptions.client.conditions: []": { framework, bundlerOptions: { client: { conditions: [] } } },
+        "bundlerOptions.define: {}": { framework, bundlerOptions: { define: {} } },
+        "framework.bundlerOptions: {}": { framework: { ...framework, bundlerOptions: {} } },
+        "framework.staticRouters: []": { framework: { ...framework, staticRouters: [] } },
         "framework.plugins: null": { framework: { ...framework, plugins: null } },
         "serverComponents.separateSSRGraph: null": serverComponents(null),
         "serverComponents.separateSSRGraph: 0": serverComponents(0),
@@ -57,6 +62,11 @@ test("optional app keys treat null as absent", async () => {
     "bundlerOptions.client.sourcemap: 0":
       'The "sourcemap" property must be of type "inline" | "external" | "linked", got number',
     "bundlerOptions.client.minify: null": "accepted",
+    "bundlerOptions.client.conditions: []": "'bundlerOptions.client.conditions' is not supported yet",
+    "bundlerOptions.define: {}":
+      "'bundlerOptions.define' must be set under 'bundlerOptions.client', '.server' or '.ssr'",
+    "framework.bundlerOptions: {}": "'framework.bundlerOptions' is not supported yet",
+    "framework.staticRouters: []": "'framework.staticRouters' is not supported yet",
     "framework.plugins: null": "accepted",
     "serverComponents.separateSSRGraph: null": "Missing 'framework.serverComponents.separateSSRGraph'",
     "serverComponents.separateSSRGraph: 0": "'framework.serverComponents.separateSSRGraph' must be a boolean",

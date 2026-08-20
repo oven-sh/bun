@@ -154,14 +154,37 @@ impl UserOptions {
         }
 
         if let Some(js_options) = config.get_optional::<JSValue>(global, b"bundlerOptions")? {
+            // Only the per-graph objects are read; a top-level key would silently do nothing.
+            for key in [
+                "sourcemap",
+                "minify",
+                "conditions",
+                "define",
+                "loader",
+                "ignoreDCEAnnotations",
+                "drop",
+                "plugins",
+            ] {
+                if js_options
+                    .get_optional::<JSValue>(global, key.as_bytes())?
+                    .is_some()
+                {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'bundlerOptions.{key}' must be set under 'bundlerOptions.client', '.server' or '.ssr'",
+                    )));
+                }
+            }
             if let Some(server_options) = js_options.get_optional::<JSValue>(global, b"server")? {
-                bundler_options.server = BuildConfigSubset::from_js(global, server_options)?;
+                bundler_options.server =
+                    BuildConfigSubset::from_js(global, server_options, "bundlerOptions.server")?;
             }
             if let Some(client_options) = js_options.get_optional::<JSValue>(global, b"client")? {
-                bundler_options.client = BuildConfigSubset::from_js(global, client_options)?;
+                bundler_options.client =
+                    BuildConfigSubset::from_js(global, client_options, "bundlerOptions.client")?;
             }
             if let Some(ssr_options) = js_options.get_optional::<JSValue>(global, b"ssr")? {
-                bundler_options.ssr = BuildConfigSubset::from_js(global, ssr_options)?;
+                bundler_options.ssr =
+                    BuildConfigSubset::from_js(global, ssr_options, "bundlerOptions.ssr")?;
             }
         }
 
@@ -349,8 +372,31 @@ pub struct BuildConfigSubset {
 }
 
 impl BuildConfigSubset {
-    pub fn from_js(global: &JSGlobalObject, js_options: JSValue) -> JsResult<BuildConfigSubset> {
+    pub fn from_js(
+        global: &JSGlobalObject,
+        js_options: JSValue,
+        name: &str,
+    ) -> JsResult<BuildConfigSubset> {
         let mut options = BuildConfigSubset::default();
+
+        // Declared on `Bun.build`'s config but not wired into the dev server or `bun build --app` yet; say so instead of ignoring them.
+        for key in [
+            "conditions",
+            "define",
+            "loader",
+            "ignoreDCEAnnotations",
+            "drop",
+            "plugins",
+        ] {
+            if js_options
+                .get_optional::<JSValue>(global, key.as_bytes())?
+                .is_some()
+            {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{name}.{key}' is not supported yet",
+                )));
+            }
+        }
 
         'brk: {
             let Some(val) = js_options.get_optional::<JSValue>(global, b"sourcemap")? else {
@@ -746,6 +792,18 @@ impl Framework {
 
         if !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Framework must be an object")));
+        }
+
+        // Documented but never read; a silent no-op is worse than an error.
+        for key in ["bundlerOptions", "staticRouters"] {
+            if opts
+                .get_optional::<JSValue>(global, key.as_bytes())?
+                .is_some()
+            {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'framework.{key}' is not supported yet",
+                )));
+            }
         }
 
         if opts.get(global, "serverEntryPoint")?.is_some() {

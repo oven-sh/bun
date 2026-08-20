@@ -32,25 +32,24 @@ declare module "bun" {
       plugins?: BunPlugin[] | undefined;
     }
 
-    /** Bake only allows a subset of options from `Bun.build` */
-    type BuildConfigSubset = Pick<
-      BuildConfig,
-      "conditions" | "define" | "loader" | "ignoreDCEAnnotations" | "drop"
-      // - format is not allowed because it is set to an internal "hmr" format
-      // - entrypoints/outfile/outdir doesnt make sense to set
-      // - disabling sourcemap is not allowed because it makes code impossible to debug
-      // - enabling minifyIdentifiers in dev is not allowed because some generated code does not support it
-      // - publicPath is set by the user (TODO: add options.publicPath)
-      // - emitDCEAnnotations is not useful
-      // - banner and footer do not make sense in these multi-file builds
-      // - disabling external would make it exclude imported files.
-      // - plugins is specified in the framework object, and currently merge between client and server.
+    /**
+     * Bake only allows a subset of options from `Bun.build`. `sourcemap` and
+     * `minify` are wired up; `conditions`, `define`, `loader`,
+     * `ignoreDCEAnnotations` and `drop` are planned and currently throw a
+     * "not supported yet" error. Never allowed:
+     * - format: set to an internal "hmr" format
+     * - entrypoints/outfile/outdir: do not make sense to set
+     * - disabling sourcemap: makes code impossible to debug
+     * - minifyIdentifiers in dev: some generated code does not support it
+     * - publicPath: set by the user (TODO: add options.publicPath)
+     * - emitDCEAnnotations: not useful
+     * - banner and footer: do not make sense in these multi-file builds
+     * - disabling external: would exclude imported files
+     * - plugins: specified in the framework object, merged between client and server
+     */
+    type BuildConfigSubset = Pick<BuildConfig, "sourcemap" | "minify">;
 
-      // TODO: jsx customization
-      // TODO: chunk naming
-    >;
-
-    type BundlerOptions = BuildConfigSubset & {
+    type BundlerOptions = {
       /** Customize the build options of the client-side build */
       client?: BuildConfigSubset;
       /** Customize the build options of the server build */
@@ -67,9 +66,8 @@ declare module "bun" {
      */
     interface Framework {
       /**
-       * Customize the bundler options. Plugins in this array are merged
-       * with any plugins the user has.
-       * @default {}
+       * Customize the bundler options. Not supported yet: setting it throws;
+       * use the app's `bundlerOptions` for now.
        */
       bundlerOptions?: BundlerOptions | undefined;
       /**
@@ -88,7 +86,8 @@ declare module "bun" {
        *
        * Different frameworks have different opinions, some use 'static', some
        * use 'public'.
-       * @default []
+       *
+       * Not supported yet: setting it throws.
        */
       staticRouters?: Array<StaticRouter> | undefined;
       /**

@@ -24,6 +24,7 @@ export function react(): Bake.Framework {
         ignoreUnderscores: true,
       },
     ],
+    // Built in Rust (bake_body.rs Framework::react); `staticRouters` and `bundlerOptions` are not accepted from JS yet.
     staticRouters: ["public"],
     reactFastRefresh: {
       importSource: "react-refresh/runtime",

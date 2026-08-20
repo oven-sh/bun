@@ -18,6 +18,7 @@ use crate::node::PathLike;
 use crate::node::fs::{NodeFS, args as fs_args};
 use crate::test_command;
 use crate::test_runner::jest::Summary;
+use bun_collections::index_sort;
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     let needle = [b" ", name, b"=\""].concat();
@@ -147,7 +148,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     for &data in chunks {
         let mut cur: Option<usize> = None; // index into by_file; raw &mut would alias across getOrPut
         // reshaped for borrowck — store index instead of *mut FileCoverage
-        for raw in data.split(|b| *b == b'\n') {
+        for raw in strings::split(data, b"\n") {
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {
                 let name = &line[3..];
@@ -166,7 +167,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             } else if let Some(i) = cur {
                 let fc = &mut by_file.values_mut()[i];
                 if line.starts_with(b"DA:") {
-                    let mut parts = line[3..].split(|b| *b == b',');
+                    let mut parts = strings::split(&line[3..], b",");
                     let Some(ln_s) = parts.next() else { continue };
                     let Ok(ln) = strings::parse_int::<u32>(ln_s, 10) else {
                         continue;
@@ -203,7 +204,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     let mut order: Vec<usize> = (0..by_file.count()).collect();
     {
         let keys = by_file.keys();
-        order.sort_by(|&a, &b| keys[a].as_ref().cmp(keys[b].as_ref()));
+        index_sort::sort_slice_by(&mut order, |&a, &b| keys[a].as_ref().cmp(keys[b].as_ref()));
     }
 
     if opts.reporters.lcov {
@@ -238,7 +239,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 for &i in &order {
                     let fc = &by_file.values()[i];
                     let mut sorted: Vec<u32> = fc.da.keys().to_vec();
-                    sorted.sort_unstable();
+                    index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.cmp(b));
                     let _ = write!(
                         &mut w,
                         "TN:\nSF:{}\nFNF:{}\nFNH:{}\n",
@@ -347,7 +348,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             let _ = body.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>").as_ref());
 
             let mut sorted: Vec<u32> = fc.da.keys().to_vec();
-            sorted.sort_unstable();
+            index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.cmp(b));
             let mut first = true;
             let mut range_start: u32 = 0;
             let mut range_end: u32 = 0;

@@ -131,7 +131,7 @@ impl PerMessageDeflate {
     }
 
     fn can_use_libdeflate(len: usize) -> bool {
-        if feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get() {
+        if feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get() == Some(true) {
             return false;
         }
 
@@ -159,7 +159,10 @@ impl PerMessageDeflate {
             }
         }
 
-        let mut in_with_trailer: Vec<u8> = Vec::with_capacity(in_buf.len() + DEFLATE_TRAILER.len());
+        let mut in_with_trailer: Vec<u8> = Vec::new();
+        in_with_trailer
+            .try_reserve_exact(in_buf.len() + DEFLATE_TRAILER.len())
+            .map_err(|_| DecompressError::OutOfMemory)?;
         in_with_trailer.extend_from_slice(in_buf);
         in_with_trailer.extend_from_slice(&DEFLATE_TRAILER);
 
@@ -182,6 +185,9 @@ impl PerMessageDeflate {
             if rc == zlib::ReturnCode::StreamEnd {
                 saw_stream_end = true;
                 break;
+            }
+            if rc == zlib::ReturnCode::MemError {
+                return Err(DecompressError::OutOfMemory);
             }
             if rc != zlib::ReturnCode::Ok {
                 return Err(DecompressError::InflateFailed);
@@ -221,6 +227,9 @@ impl PerMessageDeflate {
                 zlib::FlushValue::SyncFlush,
             );
             remaining = &remaining[consumed..];
+            if rc == zlib::ReturnCode::MemError {
+                return Err(CompressError::OutOfMemory);
+            }
             if rc != zlib::ReturnCode::Ok {
                 return Err(CompressError::DeflateFailed);
             }

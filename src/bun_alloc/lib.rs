@@ -214,7 +214,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
-//   NullableAllocator        → prefer `Option<&Arena>` or drop the param
 //   MaxHeapAllocator         → debug-only cap (single-allocation arena)
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
@@ -226,8 +225,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //
 #[path = "MaxHeapAllocator.rs"]
 pub mod max_heap_allocator;
-#[path = "NullableAllocator.rs"]
-pub mod nullable_allocator;
 pub mod stack_fallback;
 
 /// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
@@ -244,13 +241,17 @@ pub mod default_alloc {
         }
     }
 
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
-    pub fn calloc(count: usize, size: usize) -> *mut c_void {
+    pub unsafe fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
         if cfg!(bun_asan) {
-            // SAFETY: `libc::calloc` has no input preconditions; null on failure.
-            unsafe { libc::calloc(count, size) }
+            // SAFETY: caller guarantees `ptr` is null or a live libc allocation
+            // (the default allocator under ASAN).
+            unsafe { libc::realloc(ptr, new_size) }
         } else {
-            crate::mimalloc::mi_calloc(count, size)
+            // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation.
+            unsafe { crate::mimalloc::mi_realloc(ptr, new_size) }
         }
     }
 
@@ -271,8 +272,7 @@ pub mod default_alloc {
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
-    #[cfg(any(debug_assertions, bun_asan))]
-    pub(crate) unsafe fn usable_size(ptr: *const c_void) -> usize {
+    pub unsafe fn usable_size(ptr: *const c_void) -> usize {
         if ptr.is_null() {
             return 0;
         }
@@ -356,7 +356,6 @@ pub mod default_alloc {
 }
 
 pub use max_heap_allocator::MaxHeapAllocator;
-pub use nullable_allocator::NullableAllocator;
 pub use stack_fallback::ArenaPtr;
 
 #[path = "MimallocArena.rs"]
@@ -597,13 +596,6 @@ impl Default for Mutex {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocError;
 
-impl AllocError {
-    #[inline]
-    pub const fn name(self) -> &'static str {
-        "OutOfMemory"
-    }
-}
-
 impl core::fmt::Display for AllocError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("OutOfMemory")
@@ -701,13 +693,6 @@ pub unsafe fn realloc_raw(
         return Err(AllocError);
     }
     Ok(new_ptr.cast::<u8>())
-}
-
-/// `mi_usable_size` — actual allocated size for a mimalloc-owned ptr.
-#[inline]
-pub fn usable_size(ptr: *const u8) -> usize {
-    // SAFETY: `mi_usable_size` is null-safe (returns 0).
-    unsafe { mimalloc::mi_usable_size(ptr.cast()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1458,7 +1443,7 @@ macro_rules! bss_singleton {
 
 /// Heap-allocate a fresh `T` via mimalloc and run its in-place `init_at` initializer.
 ///
-/// Shared body of the `BSSList`/`BSSStringList`/`BSSMapInner` `init()` shims.
+/// Shared body of the `BSSStringList`/`BSSMapInner` `init()` shims.
 /// The once-guard is the *caller's* responsibility; use the `bss_*!` macros
 /// for the canonical per-monomorphization singleton.
 #[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
@@ -1615,6 +1600,14 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     if p == libc::MAP_FAILED {
         crate::out_of_memory();
     }
+    // Under THP `enabled=always` the first write to each 2 MiB stretch would
+    // fault a whole huge page, turning this demand-faulted arena into ~4 MiB of
+    // RSS. Per-VMA opt-out (not `PR_SET_THP_DISABLE`, which children inherit).
+    // SAFETY: `p..p+len` is the mapping created above.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe {
+        libc::madvise(p, len, libc::MADV_NOHUGEPAGE);
+    }
     // LSan only scans data/BSS, stacks, and malloc-tracked heap for live
     // pointers. This anonymous mapping is none of those, so any `Box`/`Vec`
     // whose owning pointer lives inside a `bss_*!` singleton (e.g. the
@@ -1763,7 +1756,7 @@ const OVERFLOW_GROUP_MAX: usize = 4095;
 const OVERFLOW_GROUP_SLOTS: usize = OVERFLOW_GROUP_MAX + 1;
 type OverflowUsedSize = u16;
 
-pub struct OverflowGroup<Block> {
+struct OverflowGroup<Block> {
     // 16 million files should be good enough for anyone
     // ...right?
     pub(crate) used: OverflowUsedSize,
@@ -1820,7 +1813,7 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 // Const-generic arithmetic (deriving COUNT from another const param) requires
 // `feature(generic_const_exprs)` on stable Rust, so COUNT is pinned per instantiation site.
 
-pub struct OverflowListBlock<ValueType, const COUNT: usize> {
+struct OverflowListBlock<ValueType, const COUNT: usize> {
     pub(crate) used: u32,
     // Only `[0..used]` is initialized; writes are raw (no drop glue).
     pub items: [MaybeUninit<ValueType>; COUNT],
@@ -1879,7 +1872,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub fn len(&self) -> u32 {
+    fn len(&self) -> u32 {
         self.count
     }
 
@@ -1965,14 +1958,14 @@ const BSS_LIST_CHUNK_SIZE: usize = 256;
 
 /// The per-store overflow-block size is `count / 4`; this shared constant must
 /// be >= the largest store's, i.e. the filename store's `8192 / 4`.
-pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
+const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 /// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
 /// scalar fields cluster at the front of the singleton mapping (see the layout
 /// note on [`BSSList`]). Heap-allocated overflow blocks don't care about page
 /// locality; the constraint is on the inline-tail instance.
 #[repr(C)]
-pub struct BSSListOverflowBlock<ValueType> {
+struct BSSListOverflowBlock<ValueType> {
     pub(crate) used: AtomicU16,
     pub(crate) prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
     // Only `[0..used]` is initialized.
@@ -2017,9 +2010,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     // Rust cannot define generic statics, so the per-monomorphization storage is
     // emitted at the *declare site* via `bss_list! { name: T, N }` (see macro
     // below), which owns a `SyncUnsafeCell<MaybeUninit<Self>>` + `Once` and
-    // calls `init_at` on first access. `init()` is kept for callers that manage
-    // their own once-guard (e.g. `dir_info::hash_map_instance`); it heap-allocs
-    // a fresh instance each call.
+    // calls `init_at` on first access.
 
     /// In-place field initialization into demand-zero storage.
     ///
@@ -2045,13 +2036,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         }
     }
 
-    /// Heap-allocate and initialize a fresh instance. The once-guard is the
-    /// *caller's* responsibility — use `bss_list!` for
-    /// the canonical per-monomorphization singleton.
-    pub fn init() -> NonNull<Self> {
-        bss_heap_init(Self::init_at)
-    }
-
     // Singleton teardown belongs to the `bss_list!` singleton wrapper;
     // Drop only frees the heap-allocated head chain.
 
@@ -2063,7 +2047,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         &mut self,
     ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         self.used += 1;
-        // SAFETY: head is always non-null after init() (points at self.tail or heap block).
+        // SAFETY: head is always non-null after init_at() (points at self.tail or heap block).
         let mut head_ptr = self.head.unwrap();
         // Check capacity first, allocate the new block if
         // needed, then reserve exactly one slot. Safe under `self.mutex`.

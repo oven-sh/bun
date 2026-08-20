@@ -150,18 +150,14 @@ impl Binding {
 
     fn init(vm: *mut VirtualMachine) -> Box<Self> {
         let binding = Box::new(Self::default());
-        // R-2: init-time write before anything else can see the binding;
-        // `with_mut` here is trivially un-aliased (sole owner of the fresh `Box`).
         binding.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
         binding
     }
 
-    /// The binding for native callers outside the `node:fs` module
-    /// (`Blob.stat()` / `unlink()`, `Bun__mkdirp`); the module gets its own
-    /// from [`create_binding`]. A per-VM instance keeps the path buffer inside
-    /// `NodeFS` off the stack without an allocation per call. This one lives in
-    /// the VM's `RuntimeState` and never gets a JS wrapper, so VM teardown
-    /// frees it, not [`Self::finalize`].
+    /// The instance for native callers outside `node:fs` (`Blob.stat()`,
+    /// `File::unlink()`, `Bun__mkdirp`): one path buffer per VM, neither on the
+    /// stack nor allocated per call. `RuntimeState` owns it and frees it on VM
+    /// teardown; it never gets a JS wrapper.
     pub(crate) fn for_vm(global: &JSGlobalObject) -> &Self {
         crate::jsc_hooks::vm_node_fs_binding().get_or_init(|| Self::init(global.bun_vm_ptr()))
     }
@@ -403,8 +399,6 @@ impl Binding {
 }
 
 pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
-    // Ownership transfers to the GC wrapper, which calls `Binding::finalize`
-    // to reclaim it.
     Binding::to_js_boxed(Binding::init(global.bun_vm_ptr()), global)
 }
 

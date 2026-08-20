@@ -80,9 +80,8 @@ pub(crate) struct RuntimeState {
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
-    /// The `node:fs` binding for native callers outside the module. Lazy-init
-    /// by [`crate::node::node_fs_binding::Binding::for_vm`]; it never gets a JS
-    /// wrapper, so it is freed when this box drops in [`deinit_runtime_state`].
+    /// Lazy-init by [`crate::node::node_fs_binding::Binding::for_vm`]; freed
+    /// when this box drops in [`deinit_runtime_state`].
     pub(crate) node_fs_binding: core::cell::OnceCell<Box<crate::node::node_fs_binding::Binding>>,
     /// Synthetic `bun:main` wrapper source.
     pub(crate) entry_point: ServerEntryPoint,

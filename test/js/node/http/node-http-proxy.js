@@ -32,12 +32,15 @@ export async function run() {
     req.pipe(proxyRequest); // Use pipe instead of manual data handling
   });
 
-  proxyServer.listen(0, "localhost", async () => {
+  // 127.0.0.1 rather than "localhost": where the resolver prefers IPv6 the
+  // server binds ::1 while the client dials 127.0.0.1 and the connect is
+  // refused. exampleSite() already binds 127.0.0.1.
+  proxyServer.listen(0, "127.0.0.1", async () => {
     const address = proxyServer.address();
 
     const options = {
       protocol: "http:",
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: address.port,
       path: "/", // Change path to /
       headers: {

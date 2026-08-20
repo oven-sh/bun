@@ -1154,12 +1154,14 @@ impl TarballStream {
 
             let (name, basename) = tarball.name_and_basename();
 
+            let integrity = tarball.lockfile_integrity(|| self.hasher.final_());
             let mut result = match tarball.move_to_cache_directory(
                 &mut (*task).log,
                 self.tmpname.as_zstr(),
                 name,
                 basename,
                 self.resolved_github_dirname,
+                &integrity,
             ) {
                 Ok(r) => r,
                 Err(err) => {
@@ -1168,19 +1170,7 @@ impl TarballStream {
                     return;
                 }
             };
-
-            match tarball.resolution.tag {
-                ResolutionTag::Github
-                | ResolutionTag::RemoteTarball
-                | ResolutionTag::LocalTarball => {
-                    if tarball.integrity.tag.is_supported() {
-                        result.integrity = tarball.integrity;
-                    } else {
-                        result.integrity = self.hasher.final_();
-                    }
-                }
-                _ => {}
-            }
+            result.integrity = integrity;
 
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!(

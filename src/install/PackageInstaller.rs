@@ -1073,7 +1073,8 @@ impl<'a> PackageInstaller<'a> {
 
         // If a newly computed integrity hash is available (e.g. for a GitHub
         // tarball) and the lockfile doesn't already have one, persist it so
-        // the lockfile gets re-saved with the hash.
+        // the lockfile gets re-saved with the hash. Must happen before the
+        // callbacks below: a local tarball's cache entry is named after it.
         if data.integrity.tag.is_supported() {
             let pkg_metas = self.lockfile_mut().packages.items_meta_mut();
             if !pkg_metas[package_id as usize].integrity.tag.is_supported() {
@@ -1479,9 +1480,8 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
             resolution::Tag::LocalTarball => {
-                installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
-                    self.manager_mut(),
-                    *resolution.local_tarball(),
+                installer.cache_dir_subpath = package_manager::cached_local_tarball_folder_name(
+                    &self.metas[package_id as usize].integrity,
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());

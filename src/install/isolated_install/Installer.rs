@@ -36,7 +36,7 @@ use super::symlinker::{self, Symlinker};
 use crate::bun_fs;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
-use crate::package_manager_real::package_manager_options::Do;
+use crate::package_manager_real::package_manager_options::{Do, Enable};
 
 /// The enum lives at module level in `crate::resolution`.
 type ResolutionTag = resolution::Tag;
@@ -70,7 +70,9 @@ pub struct Installer<'a> {
     /// pool and each task derefs this field; a `&'a mut` would assert
     /// exclusivity every concurrent task violates. Mutated only for
     /// `lockfile.trusted_dependencies` (under `trusted_dependencies_mutex`,
-    /// narrowed via `addr_of_mut!`). Never null. Read via `lockfile()`.
+    /// narrowed via `addr_of_mut!`) and, on the main thread, a not-yet-started
+    /// package's `meta.integrity` (`record_extracted_integrity`, one row via
+    /// the raw column pointer). Never null. Read via `lockfile()`.
     pub lockfile: *mut Lockfile,
 
     pub(crate) summary: InstallSummary,
@@ -181,7 +183,11 @@ impl<'a> Installer<'a> {
         self.start_task(entry_id);
     }
 
-    pub(crate) fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
+    pub(crate) fn on_package_extracted(
+        &mut self,
+        task_id: crate::package_manager_task::Id,
+        data: &install::ExtractData,
+    ) {
         if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let store = self.store;
 
@@ -205,6 +211,11 @@ impl<'a> Installer<'a> {
 
                 let node_id = entry_node_ids[entry_id.get() as usize];
                 let pkg_id = node_pkg_ids[node_id.get() as usize];
+
+                if data.integrity.tag.is_supported() {
+                    self.record_extracted_integrity(pkg_id, &data.integrity);
+                }
+
                 let pkg_name = pkg_names[pkg_id as usize];
                 let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
                 let pkg_res = &pkg_resolutions[pkg_id as usize];
@@ -228,6 +239,42 @@ impl<'a> Installer<'a> {
                 self.start_task(entry_id);
             }
         }
+    }
+
+    /// Main thread, before the package's tasks start. The counterpart of the
+    /// integrity write-back in `PackageInstaller::install_enqueued_packages_after_extraction`:
+    /// a lockfile written before tarball integrity was recorded has none for the
+    /// package, so the extraction computed it. A local tarball's cache entry is
+    /// named after it (`cached_local_tarball_folder_name`), so the tasks need it
+    /// in place, and the lockfile is re-saved with it.
+    fn record_extracted_integrity(&mut self, pkg_id: PackageID, integrity: &install::Integrity) {
+        let pkgs = self.lockfile().packages.slice();
+        assert!((pkg_id as usize) < pkgs.len());
+        // SAFETY: `items_raw` carries the column's root provenance, so this
+        // field access needs no `&mut Lockfile`. Only a package's own tasks
+        // read its `integrity` (to name the cache entry), and none of this
+        // package's tasks have started: every entry of it waited on the
+        // extraction being reported. Tasks of other packages running on the
+        // pool hold `&[Meta]` over the column but only touch other bytes.
+        // `pkg_id` is in bounds per the assert above.
+        let recorded = unsafe {
+            core::ptr::addr_of_mut!(
+                (*pkgs
+                    .items_raw::<"meta", package::Meta>()
+                    .add(pkg_id as usize))
+                .integrity
+            )
+        };
+        // SAFETY: see above.
+        if unsafe { (*recorded).tag.is_supported() } {
+            return;
+        }
+        // SAFETY: see above.
+        unsafe { recorded.write(*integrity) };
+        self.manager_mut()
+            .options
+            .enable
+            .set(Enable::FORCE_SAVE_LOCKFILE, true);
     }
 
     /// Called from main thread when a tarball download or extraction fails.
@@ -1132,9 +1179,13 @@ impl Task {
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::LocalTarball => {
-                                    directories::cached_tarball_folder_name(
-                                        manager,
-                                        *pkg_res.local_tarball(),
+                                    // Recorded by the lockfile or by
+                                    // `on_package_extracted` before this task started.
+                                    debug_assert!(
+                                        pkg_metas[pkg_id as usize].integrity.tag.is_supported()
+                                    );
+                                    directories::cached_local_tarball_folder_name(
+                                        &pkg_metas[pkg_id as usize].integrity,
                                         patch_info.contents_hash(),
                                     )
                                 }

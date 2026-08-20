@@ -140,9 +140,8 @@ impl PackageManager {
                             patch_hash,
                         )
                     }
-                    ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(
-                        self,
-                        *pkg.resolution.local_tarball(),
+                    ResolutionTag::LocalTarball => directories::cached_local_tarball_folder_name(
+                        &pkg.meta.integrity,
                         patch_hash,
                     ),
                     ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(

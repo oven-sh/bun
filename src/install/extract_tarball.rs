@@ -57,28 +57,30 @@ impl ExtractTarball {
                 return Err(crate::Error::IntegrityCheckFailed);
             }
         }
-        let mut result = self.extract(log, bytes)?;
+        let integrity = self.lockfile_integrity(|| Integrity::for_bytes(bytes));
+        let mut result = self.extract(log, bytes, &integrity)?;
+        result.integrity = integrity;
+        Ok(result)
+    }
 
-        // Compute and store SHA-512 integrity hash for GitHub / URL / local tarballs
-        // so the lockfile can pin the exact tarball content. On subsequent installs
-        // the hash stored in the lockfile is forwarded via this.integrity and verified
-        // above, preventing a compromised server from silently swapping the tarball.
+    /// The integrity the lockfile records for a GitHub / URL / local tarball, so
+    /// later installs verify the same bytes (see `run`). That is the value the
+    /// lockfile already pins (verified before extraction), or else `compute` from
+    /// the bytes on the first install. A local tarball's cache entry is named
+    /// after it (`move_to_cache_directory`), which is why it is settled before
+    /// extracting. Unknown for npm packages, whose integrity comes from the
+    /// registry manifest.
+    pub(crate) fn lockfile_integrity(&self, compute: impl FnOnce() -> Integrity) -> Integrity {
         match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
                 if self.integrity.tag.is_supported() {
-                    // Re-installing with an existing lockfile: integrity was already
-                    // verified above, propagate the known value to ExtractData so that
-                    // the lockfile keeps it on re-serialisation.
-                    result.integrity = self.integrity;
+                    self.integrity
                 } else {
-                    // First install (no integrity in the lockfile yet): compute it.
-                    result.integrity = Integrity::for_bytes(bytes);
+                    compute()
                 }
             }
-            _ => {}
+            _ => Integrity::default(),
         }
-
-        Ok(result)
     }
 }
 
@@ -225,7 +227,12 @@ impl ExtractTarball {
         (name, basename)
     }
 
-    fn extract(&self, log: &mut bun_ast::Log, tgz_bytes: &[u8]) -> Result<ExtractData, Error> {
+    fn extract(
+        &self,
+        log: &mut bun_ast::Log,
+        tgz_bytes: &[u8],
+        integrity: &Integrity,
+    ) -> Result<ExtractData, Error> {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = Dir::borrow(&self.temp_dir);
@@ -439,12 +446,16 @@ impl ExtractTarball {
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        self.move_to_cache_directory(log, tmpname, name, basename, resolved, integrity)
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
     /// between the buffered and streaming extraction paths.
+    ///
+    /// `resolved` (GitHub) and `integrity` (local tarballs, see
+    /// `lockfile_integrity`) name the cache entry for the resolutions whose
+    /// entries are keyed by content rather than by the resolution string.
     pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
@@ -452,6 +463,7 @@ impl ExtractTarball {
         name: &[u8],
         basename: &[u8],
         resolved: &[u8],
+        integrity: &Integrity,
     ) -> Result<ExtractData, Error> {
         let package_manager = self.package_manager.get();
 
@@ -500,14 +512,18 @@ impl ExtractTarball {
                     )
                     .as_bytes()
                 }
-                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-                    directories::cached_tarball_folder_name_print(
-                        &mut bufs.folder_name_buf,
-                        self.url.slice(),
-                        None,
-                    )
-                    .as_bytes()
-                }
+                ResolutionTag::LocalTarball => directories::cached_local_tarball_folder_name_print(
+                    &mut bufs.folder_name_buf,
+                    integrity,
+                    None,
+                )
+                .as_bytes(),
+                ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name_print(
+                    &mut bufs.folder_name_buf,
+                    self.url.slice(),
+                    None,
+                )
+                .as_bytes(),
                 _ => unreachable!(),
             };
             if folder_name.is_empty() || (folder_name.len() == 1 && folder_name[0] == b'/') {

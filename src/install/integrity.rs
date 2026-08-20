@@ -243,13 +243,11 @@ impl Integrity {
 
 impl fmt::Display for Integrity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.tag {
-            Tag::SHA1 => f.write_str("sha1-")?,
-            Tag::SHA256 => f.write_str("sha256-")?,
-            Tag::SHA384 => f.write_str("sha384-")?,
-            Tag::SHA512 => f.write_str("sha512-")?,
-            _ => return Ok(()),
-        }
+        let Some(algorithm) = self.tag.name() else {
+            return Ok(());
+        };
+        f.write_str(algorithm)?;
+        f.write_str("-")?;
 
         let mut base64_buf = [0u8; 512];
         let bytes = self.slice();
@@ -291,6 +289,17 @@ impl Tag {
     #[inline]
     pub fn is_supported(self) -> bool {
         self.0 >= Tag::SHA1.0 && self.0 <= Tag::SHA512.0
+    }
+
+    /// The algorithm part of the SRI string (`sha512` in `sha512-...`); `None` for `UNKNOWN`.
+    pub(crate) fn name(self) -> Option<&'static str> {
+        Some(match self {
+            Tag::SHA1 => "sha1",
+            Tag::SHA256 => "sha256",
+            Tag::SHA384 => "sha384",
+            Tag::SHA512 => "sha512",
+            _ => return None,
+        })
     }
 
     pub(crate) fn parse(buf: &[u8]) -> (Tag, usize) {

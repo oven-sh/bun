@@ -41,9 +41,7 @@ struct HkdfJobCtx {
 };
 
 struct HkdfJob {
-    static HkdfJob* create(JSC::JSGlobalObject*, HkdfJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, HkdfJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 
 } // namespace Bun

@@ -18,13 +18,13 @@ use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
-// imported for `tree::Id` / `Tree` / `DependencySlice` / `package::*`, all of
+// imported for `tree::Id` / `Tree` / `package::*`, all of
 // which are the same types re-exported through `crate::lockfile`.
 use crate::lockfile::Lockfile;
 use crate::lockfile_real::package::{
     self as Package, PackageColumns, scripts::Scripts as PackageScripts,
 };
-use crate::lockfile_real::{self as lockfile, DependencySlice, Tree};
+use crate::lockfile_real::{self as lockfile, Tree};
 use crate::network_task::ForTarballError;
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
@@ -84,7 +84,6 @@ pub struct PackageInstaller<'a> {
     // so it is also `RawSlice` here.
     pub(crate) metas: bun_ptr::RawSlice<Package::Meta>,
     pub(crate) names: bun_ptr::RawSlice<String>,
-    pub(crate) pkg_dependencies: bun_ptr::RawSlice<DependencySlice>,
     pub(crate) pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
     pub(crate) bins: bun_ptr::RawSlice<Bin>,
     pub(crate) resolutions: bun_ptr::RawSlice<Resolution>,
@@ -103,10 +102,7 @@ pub struct PackageInstaller<'a> {
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
-    /// Value is the alias bytes the key hash was computed from; lookups must
-    /// compare it since truncated hashes can collide.
-    pub(crate) trusted_dependencies_from_update_requests:
-        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
+    pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
     /// uses same ids as lockfile.trees
     pub(crate) trees: Box<[TreeContext]>,
@@ -364,48 +360,6 @@ fn abs_node_modules_path(
     abs
 }
 
-enum LazyPackageDestinationDir<'a> {
-    /// Non-owning view of a directory handle the caller owns.
-    #[allow(dead_code)]
-    Dir(Fd),
-    NodeModulesPath {
-        #[allow(dead_code)]
-        node_modules: &'a NodeModulesFolder,
-        /// Non-owning view; the owning `Dir` lives on `PackageInstaller`.
-        root_node_modules_dir: Fd,
-    },
-    Owned(Dir),
-    Closed,
-}
-
-impl<'a> LazyPackageDestinationDir<'a> {
-    #[allow(dead_code)]
-    pub(crate) fn get_dir(&mut self) -> crate::Result<Fd> {
-        match self {
-            LazyPackageDestinationDir::Dir(fd) => Ok(*fd),
-            LazyPackageDestinationDir::Owned(dir) => Ok(dir.fd()),
-            LazyPackageDestinationDir::NodeModulesPath {
-                node_modules,
-                root_node_modules_dir,
-            } => {
-                let dir = node_modules.open_dir(Dir::borrow(root_node_modules_dir))?;
-                let fd = dir.fd();
-                *self = LazyPackageDestinationDir::Owned(dir);
-                Ok(fd)
-            }
-            LazyPackageDestinationDir::Closed => {
-                panic!(
-                    "LazyPackageDestinationDir is closed! This should never happen. Why did this happen?! It's not your fault. Its our fault. We're sorry."
-                )
-            }
-        }
-    }
-
-    fn close(&mut self) {
-        *self = LazyPackageDestinationDir::Closed;
-    }
-}
-
 /// A dependency alias becomes the install destination inside `node_modules`
 /// (the existing entry is renamed aside, deleted, and re-created). Reject
 /// anything that could escape `node_modules`: empty names, `.`/`..`
@@ -425,6 +379,22 @@ pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     }
 
     component_count == 1 || (component_count == 2 && alias[0] == b'@')
+}
+
+/// Formats the version label `PackageInstall` verifies and hashes patches
+/// against. npm versions fit `buf`; tarball, folder and git resolutions (and
+/// prerelease tags) repeat a user-supplied path, URL or tag of unbounded
+/// length, so a label that does not fit is formatted into `spill` instead.
+fn print_package_version<'a>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    args: core::fmt::Arguments<'_>,
+) -> &'a [u8] {
+    if let Ok(label) = bun_core::fmt::buf_print(buf, args) {
+        return label;
+    }
+    std::io::Write::write_fmt(spill, args).expect("formatting into a Vec is infallible");
+    spill
 }
 
 impl<'a> PackageInstaller<'a> {
@@ -913,7 +883,8 @@ impl<'a> PackageInstaller<'a> {
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
 
-                    const NEEDS_VERIFY: bool = false;
+                    // Re-verify: a parent reinstall may have deleted a deferred entry.
+                    const NEEDS_VERIFY: bool = true;
                     const IS_PENDING_PACKAGE_INSTALL: bool = true;
                     self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
                         // This id might be different from the id used to enqueue the task. Important
@@ -1068,7 +1039,6 @@ impl<'a> PackageInstaller<'a> {
         self.pkg_name_hashes = bun_ptr::RawSlice::new(packages.items_name_hash());
         self.bins = bun_ptr::RawSlice::new(packages.items_bin());
         self.resolutions = bun_ptr::RawSlice::new(packages.items_resolution());
-        self.pkg_dependencies = bun_ptr::RawSlice::new(packages.items_dependencies());
 
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
@@ -1314,6 +1284,7 @@ impl<'a> PackageInstaller<'a> {
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
         let mut resolution_buf = [0u8; 512];
+        let mut resolution_spill = Vec::new();
         let package_version: &[u8] = if resolution.tag == resolution::Tag::Workspace {
             'brk: {
                 if let Some(workspace_version) = self
@@ -1322,22 +1293,22 @@ impl<'a> PackageInstaller<'a> {
                     .workspace_versions
                     .get(&pkg_name_hash)
                 {
-                    break 'brk bun_core::fmt::buf_print(
+                    break 'brk print_package_version(
                         &mut resolution_buf,
+                        &mut resolution_spill,
                         format_args!("{}", workspace_version.fmt(string_buf!())),
-                    )
-                    .expect("unreachable");
+                    );
                 }
 
                 // no version
                 break 'brk b"";
             }
         } else {
-            bun_core::fmt::buf_print(
+            print_package_version(
                 &mut resolution_buf,
+                &mut resolution_spill,
                 format_args!("{}", resolution.fmt(string_buf!(), PathSep::Posix)),
             )
-            .expect("unreachable")
         };
 
         let (patch_patch, patch_contents_hash, patch_name_and_version_hash, remove_patch) = 'brk: {
@@ -1414,7 +1385,6 @@ impl<'a> PackageInstaller<'a> {
             // site stays safe.
             lockfile: self.lockfile(),
             cache_dir_subpath: ZStr::EMPTY,
-            file_count: 0,
         };
         bun_output::scoped_log!(
             PackageInstaller,
@@ -1588,7 +1558,6 @@ impl<'a> PackageInstaller<'a> {
             || !NEEDS_VERIFY
             || remove_patch
             || !installer.verify(resolution, &self.root_node_modules_folder);
-        self.summary.skipped += (!needs_install) as u32;
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()
@@ -1740,25 +1709,20 @@ impl<'a> PackageInstaller<'a> {
             // into cache, then install into node_modules
             if let Some(patch_contents_hash) = installer.patch.as_ref().map(|p| p.contents_hash) {
                 if installer.patched_package_missing_from_cache(self.manager_mut(), package_id) {
-                    let task: *mut PatchTask = PatchTask::new_apply_patch_hash(
+                    let mut task = PatchTask::new_apply_patch_hash(
                         self.manager_mut(),
                         package_id,
                         patch_contents_hash,
                         patch_name_and_version_hash.unwrap(),
                     );
-                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
-                    // we hold the only pointer until `enqueue_patch_task` takes ownership.
-                    if let patch_install::Callback::Apply(apply) = unsafe { &mut (*task).callback }
-                    {
+                    if let patch_install::Callback::Apply(apply) = &mut task.callback {
                         apply.install_context = Some(patch_install::InstallContext {
                             dependency_id,
                             tree_id: self.current_tree_id,
                             path: self.node_modules.path.clone(),
                         });
                     }
-                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
-                    // ownership transfers to the patch-task fifo here.
-                    unsafe { package_manager::enqueue_patch_task(self.manager_mut(), task) };
+                    package_manager::enqueue_patch_task(self.manager_mut(), task);
                     return;
                 }
             }
@@ -1809,9 +1773,6 @@ impl<'a> PackageInstaller<'a> {
                     return;
                 }
             };
-
-            #[cfg(not(windows))]
-            let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir.fd());
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
@@ -1929,8 +1890,7 @@ impl<'a> PackageInstaller<'a> {
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if self
                             .trusted_dependencies_from_update_requests
-                            .get(&truncated_dep_name_hash)
-                            .is_some_and(|n| **n == *alias.slice(string_buf!()))
+                            .contains(&package_id)
                         {
                             break 'brk (true, true);
                         }
@@ -1994,9 +1954,15 @@ impl<'a> PackageInstaller<'a> {
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
+                                    let (trusted_name, trusted_name_hash) =
+                                        if resolution.tag == resolution::Tag::Npm {
+                                            (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
+                                        } else {
+                                            (alias, truncated_dep_name_hash)
+                                        };
                                     self.manager_mut()
                                         .trusted_deps_to_add_to_package_json
-                                        .push(Box::<[u8]>::from(alias.slice(string_buf!())));
+                                        .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
 
                                     if self.lockfile().trusted_dependencies.is_none() {
                                         self.lockfile_mut().trusted_dependencies =
@@ -2007,8 +1973,8 @@ impl<'a> PackageInstaller<'a> {
                                         .as_mut()
                                         .unwrap()
                                         .put(
-                                            truncated_dep_name_hash,
-                                            Box::<[u8]>::from(alias.slice(string_buf!())),
+                                            trusted_name_hash,
+                                            Box::<[u8]>::from(trusted_name.slice(string_buf!())),
                                         )
                                         .unwrap_or_oom();
                                 }
@@ -2114,24 +2080,7 @@ impl<'a> PackageInstaller<'a> {
                         if !NODE_MODULES_IS_OK.load(Ordering::Relaxed) {
                             #[cfg(not(windows))]
                             {
-                                let dir = match lazy_package_dir.get_dir() {
-                                    Ok(d) => d,
-                                    Err(err) => {
-                                        Output::err(
-                                            "EACCES",
-                                            "Permission denied while installing <b>{}<r>",
-                                            (bstr::BStr::new(
-                                                self.names[package_id as usize].slice(
-                                                    self.lockfile().buffers.string_bytes.as_slice(),
-                                                ),
-                                            ),),
-                                        );
-                                        if cfg!(debug_assertions) {
-                                            Output::err(err, "Failed to stat node_modules", ());
-                                        }
-                                        Global::exit(1);
-                                    }
-                                };
+                                let dir = destination_dir.fd();
                                 let stat = match bun_sys::fstat(dir) {
                                     Ok(s) => s,
                                     Err(err) => {
@@ -2207,25 +2156,33 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
         } else {
+            // Same gate as the `needs_install` branch: a pending parent's
+            // `uninstall_before_install` would delete this verified package.
+            if !IS_PENDING_PACKAGE_INSTALL
+                && !Self::can_install_package_for_tree(
+                    &self.completed_trees,
+                    self.lockfile().buffers.trees.as_slice(),
+                    self.current_tree_id,
+                )
+            {
+                self.trees[self.current_tree_id as usize]
+                    .pending_installs
+                    .push(DependencyInstallContext {
+                        dependency_id,
+                        tree_id: self.current_tree_id,
+                        path: self.node_modules.path.clone(),
+                    });
+                return;
+            }
+
+            self.summary.skipped += 1;
+
             if self.bins[package_id as usize].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries
                     .add(dependency_id)
                     .unwrap_or_oom();
             }
-
-            // reshaped for borrowck — `LazyPackageDestinationDir` borrows
-            // `&self.node_modules`, but this else-branch never reads `destination_dir`
-            // (it only `close()`s it at the end, which is a no-op for `NodeModulesPath`).
-            // Detach via raw ptr so subsequent `&mut self` calls type-check.
-            // BACKREF — `self.node_modules` is not moved/dropped in this branch.
-            let mut destination_dir = LazyPackageDestinationDir::NodeModulesPath {
-                node_modules: node_modules_ref.get(),
-                root_node_modules_dir: self.root_node_modules_folder.fd(),
-            };
-
-            // `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
-            // No early returns in this branch, so manual calls at end are equivalent.
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;
@@ -2235,8 +2192,7 @@ impl<'a> PackageInstaller<'a> {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                 if self
                     .trusted_dependencies_from_update_requests
-                    .get(&truncated_dep_name_hash)
-                    .is_some_and(|n| **n == *alias.slice(string_buf!()))
+                    .contains(&package_id)
                 {
                     break 'brk (true, true, true);
                 }
@@ -2306,10 +2262,17 @@ impl<'a> PackageInstaller<'a> {
                         dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                         resolution,
                     ) {
+                        let (trusted_name, trusted_name_hash) =
+                            if resolution.tag == resolution::Tag::Npm {
+                                (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
+                            } else {
+                                (alias, truncated_dep_name_hash)
+                            };
+
                         if is_trusted_through_update_request {
                             self.manager_mut()
                                 .trusted_deps_to_add_to_package_json
-                                .push(Box::<[u8]>::from(alias.slice(string_buf!())));
+                                .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
                         }
 
                         if add_to_lockfile {
@@ -2321,8 +2284,8 @@ impl<'a> PackageInstaller<'a> {
                                 .as_mut()
                                 .unwrap()
                                 .put(
-                                    truncated_dep_name_hash,
-                                    Box::<[u8]>::from(alias.slice(string_buf!())),
+                                    trusted_name_hash,
+                                    Box::<[u8]>::from(trusted_name.slice(string_buf!())),
                                 )
                                 .unwrap_or_oom();
                         }
@@ -2330,13 +2293,6 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
 
-            // `destination_dir` is `LazyPackageDestinationDir::NodeModulesPath`
-            // holding `&self.node_modules`. `increment_tree_install_count` takes
-            // `&mut self` and (via `link_tree_bins`) reads `self.node_modules.path`,
-            // which would alias the borrow held by `destination_dir`. Close it first
-            // — `destination_dir` is never read in this else-branch (`get_dir()` is
-            // only used in the `needs_install` branch's EACCES handler).
-            destination_dir.close();
             self.increment_tree_install_count(
                 !IS_PENDING_PACKAGE_INSTALL,
                 self.current_tree_id,

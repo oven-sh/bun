@@ -29,6 +29,7 @@ pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 // resolver never needs); callers here use the map API directly.
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
+use bun_collections::index_sort;
 use bun_glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
@@ -286,28 +287,13 @@ impl SideEffects {
 // exposes the inherent forwarder (tsconfig_json.rs).
 // `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
 
-/// Thin extension trait that delegates to
-/// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
-/// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
-/// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
-/// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
-/// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
-/// call-sites that only need a transient borrow.
+/// Thin extension trait that delegates to `bun_paths::resolve_path`.
 trait FileSystemPackageJsonExt {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8];
-    fn normalize(&self, str: &[u8]) -> Box<[u8]>;
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
         resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
-    }
-    fn normalize(&self, str: &[u8]) -> Box<[u8]> {
-        // Collapses `.`/`..`/dup-separators only; does NOT join against cwd.
-        let out = resolve_path::resolve_path::normalize_string::<
-            true,
-            resolve_path::resolve_path::platform::Auto,
-        >(str);
-        Box::from(&*out)
     }
 }
 
@@ -624,9 +610,8 @@ impl PackageJSON {
                     // The value is an object
 
                     // Remap all files in the browser field
+                    let mut key_spill: Vec<u8> = Vec::new();
                     for prop in obj.get().properties() {
-                        let _key_str = prop.key.slice();
-
                         // Normalize the path so we can compare against it without getting
                         // confused by "./". There is no distinction between package paths and
                         // relative paths for these values because some tools (i.e. Browserify)
@@ -636,21 +621,24 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        let key: Box<[u8]> = FileSystemPackageJsonExt::normalize(r_fs, _key_str);
+                        let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
+                            true,
+                            resolve_path::platform::Auto,
+                        >(&mut key_spill, prop.key.slice());
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
                                 // If this is a string, it's a replacement package
                                 package_json
                                     .browser_map
-                                    .put(&key, Box::from(str.slice()))
+                                    .put(key, Box::from(str.slice()))
                                     .expect("unreachable");
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {
                                 if !*boolean {
                                     package_json
                                         .browser_map
-                                        .put(&key, Box::default())
+                                        .put(key, Box::default())
                                         .expect("unreachable");
                                 }
                             }
@@ -878,7 +866,7 @@ impl PackageJSON {
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
-                    if let Some(group_json) = json.get(group.field) {
+                    if let Some(group_json) = json.get(group.prop) {
                         total_dependency_count += group_json.property_count();
                     }
                 }
@@ -898,7 +886,7 @@ impl PackageJSON {
                         .expect("unreachable");
 
                     for group in dependency_groups {
-                        if let Some(group_json) = json.get(group.field) {
+                        if let Some(group_json) = json.get(group.prop) {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
@@ -1159,7 +1147,9 @@ impl<'a> Visitor<'a> {
         // Let expansionKeys be the list of keys of matchObj either ending in "/"
         // or containing only a single "*", sorted by the sorting function
         // PATTERN_KEY_COMPARE which orders in descending order of specificity.
-        expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
+        index_sort::sort_slice_by(&mut expansion_keys, |a, b| {
+            strings::glob_length_compare(&a.key, &b.key)
+        });
 
         Entry {
             data: EntryData::Map(EntryDataMap {
@@ -1320,9 +1310,6 @@ pub enum Status {
 
     /// The package or module requested does not exist.
     ModuleNotFound,
-
-    /// The user just needs to add the missing extension
-    ModuleNotFoundMissingExtension,
 
     /// The resolved path corresponds to a directory, which is not a supported target for module imports.
     UnsupportedDirectoryImport,
@@ -2073,18 +2060,11 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
-                        && strings::index_of_char(result, b'*').unwrap() as usize
-                            == result.len() - 1
-                    {
-                        Status::ExactEndsWithStar
-                    } else {
-                        Status::Exact
-                    };
+                    // Wildcard expansion: tag for `probe_wildcard_extensions` (oven-sh/bun#29679, #10001).
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),
-                        status,
+                        status: Status::ExactEndsWithStar,
                     };
                 } else {
                     let parts2 = [package_url, str, subpath];

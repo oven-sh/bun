@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -165,6 +165,41 @@ describe("web worker", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({ seen: "from-parent", parentSees: "from-worker" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("worker-env: process.env reads inside a worker reflect the worker's own environment at runtime", async () => {
+    using dir = tempDir("worker-env-runtime-reads", {
+      "worker.js": `
+        const inherited = process.env.BUN_TEST_WORKER_ENV_KEY;
+        process.env["BUN_TEST_WORKER_ENV_KEY"] = "assigned-in-worker";
+        const assigned = process.env.BUN_TEST_WORKER_ENV_KEY;
+        postMessage({ inherited, assigned, nodeEnv: process.env.NODE_ENV });
+      `,
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
+          env: { BUN_TEST_WORKER_ENV_KEY: "from-worker-option", NODE_ENV: "production" },
+        });
+        worker.onerror = e => { console.error(e.message); process.exit(1); };
+        worker.onmessage = e => {
+          console.log(JSON.stringify(e.data));
+          worker.terminate();
+        };
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, BUN_TEST_WORKER_ENV_KEY: "from-parent-process", NODE_ENV: "development" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      inherited: "from-worker-option",
+      assigned: "assigned-in-worker",
+      nodeEnv: "production",
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -335,6 +370,208 @@ describe("web worker", () => {
       expect(err.error).toBe(null);
     });
   });
+
+  describe("terminate() races and lifecycle edges", () => {
+    // A vm timeout inside a worker is a transient termination of that VM; it
+    // must not leave the worker unable to run script (parent messages dropped).
+    test("parent messages still arrive after a node:vm timeout in the worker", async () => {
+      const src = `import vm from "node:vm";
+        self.onmessage = e => postMessage("pong " + e.data);
+        try { vm.runInNewContext("for(;;){}", {}, { timeout: 20 }) } catch {}
+        postMessage("ready");`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      const got: string[] = [];
+      const done = Promise.withResolvers<void>();
+      w.onmessage = e => {
+        if (e.data === "ready") {
+          for (let i = 0; i < 3; i++) w.postMessage(i);
+          return;
+        }
+        got.push(e.data);
+        if (got.length === 3) done.resolve();
+      };
+      await done.promise;
+      expect(got).toEqual(["pong 0", "pong 1", "pong 2"]);
+      w.terminate();
+    });
+
+    // As in browsers and Node: not an error, the message is dropped.
+    test("postMessage() to a terminated worker is a no-op", async () => {
+      const w = new Worker("data:text/javascript,postMessage('up')");
+      await new Promise(r => (w.onmessage = r));
+      w.terminate();
+      await once(w, "close");
+      expect(() => w.postMessage("late")).not.toThrow();
+    });
+
+    // A data: URL is the module itself and never a path (no length limit).
+    test("a long data: URL worker", async () => {
+      const pad = "/*" + Buffer.alloc(4000, "x").toString() + "*/";
+      const w = new Worker("data:text/javascript," + encodeURIComponent(pad + "postMessage('hi')"));
+      const [msg] = await once(w, "message");
+      expect(msg.data).toBe("hi");
+      w.terminate();
+    });
+
+    // terminate() landing while the worker reports that its entry point does not
+    // resolve: the report is skipped, not turned into a panic.
+    test("terminate() while the entry point fails to resolve", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let done = 0;
+           async function one(i) {
+             const w = new Worker("/nonexistent/path-" + i + ".js");
+             const closed = new Promise(r => w.addEventListener("close", r));
+             w.onerror = () => {};
+             setTimeout(() => w.terminate(), i % 8);
+             await closed;
+             done++;
+           }
+           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
+           console.log("done", done);`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("done 96\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // A worker posting faster than the parent can deserialize must not pin the
+    // parent inside one drain: its timers and I/O still get their turn.
+    test("a message flood from a worker does not starve the parent's event loop", async () => {
+      const src = `const p = { s: Buffer.alloc(200, "x").toString(), a: [1, 2, 3], n: 0 };
+        (function burst() { for (let i = 0; i < 2000; i++) { p.n++; postMessage(p) } setImmediate(burst) })()`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      let received = 0;
+      w.onmessage = () => received++;
+      // Three timer turns while the flood is running is the property; not the timing.
+      for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
+      expect(received).toBeGreaterThan(0);
+      w.terminate();
+      await once(w, "close");
+    });
+
+    // node:vm's timeout machinery shares the VM's termination bit with
+    // terminate(); a terminate() landing mid-script is not a vm timeout.
+    test("terminate() while a node:vm script with a timeout is running", async () => {
+      const src = `import vm from "node:vm"; postMessage("busy");
+        for (;;) { try { vm.runInNewContext("for(let i=0;i<1e7;i++){}", {}, { timeout: 1000 }) } catch {} await new Promise(r => setImmediate(r)) }`;
+      const url = URL.createObjectURL(new Blob([src]));
+      for (let r = 0; r < 6; r++) {
+        const w = new Worker(url);
+        await new Promise(res => (w.onmessage = res));
+        w.terminate();
+        await once(w, "close");
+      }
+    });
+
+    // terminate() mid `import "node:*"`: the native module's export walk stops
+    // at the termination instead of clearing it and reading on.
+    test("terminate() while importing every builtin module", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { builtinModules } from "node:module";
+           const L = builtinModules.filter(m => !m.startsWith("_") && !/^(bun|detect-libc|undici|ws)/.test(m));
+           const src = "for (const b of " + JSON.stringify(L) + ") { try { await import('node:' + b) } catch {} } postMessage('done')";
+           const url = URL.createObjectURL(new Blob([src]));
+           for (let r = 0; r < 6; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+             const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => w.terminate();
+             setTimeout(() => w.terminate(), (r * 4 + i) * 15) })));
+           console.log("PASS");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("PASS\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // A preload's un-awaited import() finishing while the entry is still
+    // fetching is not "the entry started evaluating": message delivery opens
+    // only once the entry's own graph runs (and installs its handler).
+    test("preload with an un-awaited import() does not open message delivery before the entry runs", async () => {
+      using dir = tempDir("worker-preload-dynamic-import", {
+        "side.js": `globalThis.sideRan = true;`,
+        "preload.js": `import("./side.js");`,
+        // big enough that the entry graph is still transpiling when side.js evaluates
+        "big.js": Array.from(
+          { length: 4000 },
+          (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`,
+        ).join("\n"),
+        "worker.js": `import "./big.js";
+          const got = [];
+          self.onmessage = e => { got.push(e.data); if (e.data === "last") postMessage(got); };`,
+      });
+      for (let i = 0; i < 3; i++) {
+        const w = new Worker(path.join(String(dir), "worker.js"), { preload: [path.join(String(dir), "preload.js")] });
+        w.postMessage("first");
+        w.postMessage("second");
+        w.postMessage("last");
+        const [ev] = await once(w, "message");
+        expect(ev.data).toEqual(["first", "second", "last"]);
+        w.terminate();
+      }
+    });
+
+    // Everything a worker posted before it exited arrives before 'close'.
+    test("messages posted right before a natural exit are all delivered before close", async () => {
+      const K = 5000;
+      const src = `const p = Buffer.alloc(256, "x").toString(); for (let i = 0; i < ${K}; i++) postMessage({ i, p })`;
+      const url = URL.createObjectURL(new Blob([src]));
+      for (let r = 0; r < 3; r++) {
+        let got = 0;
+        const w = new Worker(url);
+        w.onmessage = () => got++;
+        await once(w, "close");
+        expect(got).toBe(K);
+      }
+    });
+
+    // process.exit() from inside nested node:vm contexts in a worker: the
+    // termination unwinds through both frames like any exception.
+    test("process.exit() from a nested node:vm context inside a worker", async () => {
+      const src = `const vm = require("node:vm"); postMessage("in");
+        vm.runInNewContext('run("exit(0)")', { run: s => vm.runInNewContext(s, { exit: process.exit.bind(process) }) })`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      const [ev] = await once(w, "close");
+      expect(ev.code).toBe(0);
+    });
+
+    // fs completions racing terminate(): whatever completes on the worker
+    // after the request must release, not build script values under it.
+    test("terminate() while fs.readFile completions keep arriving", async () => {
+      using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const src = \`import { readFile } from "node:fs";
+             let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
+             postMessage("busy")\`;
+           const url = URL.createObjectURL(new Blob([src]));
+           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+             const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
+           console.log("PASS");`,
+          path.join(String(dir), "f.bin"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("PASS\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory
@@ -355,16 +592,8 @@ describe("worker_threads", () => {
   });
 
   test("worker terminate while setting up thread", async () => {
-    // this test is inherently somewhat flaky: if we call terminate() before the worker starts
-    // running any JavaScript the code will be 0 like we expect, but if we terminate while it is
-    // running code the exit code is 1 instead (this happens in Node.js too). this means we can
-    // randomly see an exit code of 1 if the main thread happens to run slower than usual and allows
-    // the worker to run some code.
-    //
-    // to prevent it from polluting the flaky test list, we try 10 times and expect:
-    // - at least 1 time the exit code was 0
-    // - the exit code is never something other than 0 or 1
-    const codes: number[] = [];
+    // As in Node: a worker stopped by terminate() reports 1 once its thread's environment
+    // exists, 0 only if it was stopped before that. Which one depends on timing.
     for (let i = 0; i < 10; i++) {
       const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url), {
         smol: true,
@@ -372,9 +601,7 @@ describe("worker_threads", () => {
       worker.on("error", expect.unreachable);
       const code = await worker.terminate();
       expect(code === 0 || code === 1, `unexpected exit code ${code}`).toBeTrue();
-      codes.push(code);
     }
-    expect(codes.includes(0)).toBeTrue();
   });
 
   test("worker with process.exit (delay) and terminate", async () => {

@@ -1089,6 +1089,7 @@ pub type PartList<'a> = bun_alloc::ArenaVec<'a, Part>;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PartTag {
     None,
+    JsxImport,
     Runtime,
     ReactCompiler,
     DirnameFilename,
@@ -1224,10 +1225,8 @@ pub enum ToJSError {
     CannotConvertArgumentTypeToJS,
     #[strum(serialize = "Cannot convert identifier to JS. Try a statically-known value")]
     CannotConvertIdentifierToJS,
-    MacroError,
     OutOfMemory,
     JSError,
-    JSTerminated,
 }
 bun_core::impl_tag_error!(ToJSError);
 

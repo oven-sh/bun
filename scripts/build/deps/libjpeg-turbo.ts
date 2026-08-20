@@ -4,18 +4,21 @@
  *
  * DirectBuild. SIMD: arm64 uses the full Neon intrinsics path (no GAS, no
  * jsimd_neon.S — clang has the complete vld1_* set so NEON_INTRINSICS=1 is
- * the upstream default there). x64 stays C-only for now; the x86_64 path is
- * NASM .asm and needs a separate wiring step. The hand-written jconfig.h/
- * jconfigint.h below replace cmake's configure_file — the only probes that
- * matter are sizeof(size_t) and __builtin_ctzl, both known per target.
+ * the upstream default there). x64 assembles the upstream NASM SSE2/AVX2
+ * kernels; simd/x86_64/jsimd.c picks between them per call from cpuid at
+ * runtime, so the AVX2 objects are safe under the -march=nehalem floor.
+ * The hand-written jconfig.h/jconfigint.h below replace cmake's
+ * configure_file — the only probes that matter are sizeof(size_t) and
+ * __builtin_ctzl, both known per target.
  *
  * 12/16-bit sample depths and the lossless codec are compiled out
  * (turbojpeg.c gates them on `#ifdef NO_PRECISION_EXT`); Bun.Image only
  * deals in 8-bit RGB(A).
  */
 
+import { quote } from "../shell.ts";
 import type { Dependency } from "../source.ts";
-import { depBuildDir } from "../source.ts";
+import { depBuildDir, depSourceDir } from "../source.ts";
 
 const LIBJPEG_TURBO_COMMIT = "e352b02f794f701407b39af08576035ba3360d60"; // 3.1.4
 
@@ -64,13 +67,27 @@ const SIMD_ARM64 = [
   "arm/aarch64/jsimd",
 ];
 
+// simd/CMakeLists.txt SIMD_SOURCES for x86_64; the *ext-*.asm files are %include'd, not assembled.
+// prettier-ignore
+const SIMD_X64 = [
+  "x86_64/jsimdcpu", "x86_64/jfdctflt-sse",
+  "x86_64/jccolor-sse2", "x86_64/jcgray-sse2", "x86_64/jchuff-sse2",
+  "x86_64/jcphuff-sse2", "x86_64/jcsample-sse2", "x86_64/jdcolor-sse2",
+  "x86_64/jdmerge-sse2", "x86_64/jdsample-sse2", "x86_64/jfdctfst-sse2",
+  "x86_64/jfdctint-sse2", "x86_64/jidctflt-sse2", "x86_64/jidctfst-sse2",
+  "x86_64/jidctint-sse2", "x86_64/jidctred-sse2", "x86_64/jquantf-sse2",
+  "x86_64/jquanti-sse2",
+  "x86_64/jccolor-avx2", "x86_64/jcgray-avx2", "x86_64/jcsample-avx2",
+  "x86_64/jdcolor-avx2", "x86_64/jdmerge-avx2", "x86_64/jdsample-avx2",
+  "x86_64/jfdctint-avx2", "x86_64/jidctint-avx2", "x86_64/jquanti-avx2",
+];
+
 // `#cmakedefine X` → `#define X` / comment, configure_file-style. We resolve
 // the handful of probes we know per target instead of running cmake.
 const cmakedefine = (truthy: boolean): [string, string] => ["#cmakedefine", truthy ? "#define" : "// #undef"];
 
 export const libjpegTurbo: Dependency = {
   name: "libjpeg-turbo",
-  versionMacro: "LIBJPEG_TURBO",
 
   source: () => ({
     kind: "github-archive",
@@ -81,11 +98,9 @@ export const libjpegTurbo: Dependency = {
   patches: ["patches/libjpeg-turbo/8bit-only.patch", "patches/libjpeg-turbo/jbun_stubs.c"],
 
   build: cfg => {
-    const simd = cfg.arm64; // x64 NASM path TODO
-    const withSimd: [string, string] = [
-      "#cmakedefine WITH_SIMD 1",
-      simd ? "#define WITH_SIMD 1" : "/* #undef WITH_SIMD */",
-    ];
+    const withSimd: [string, string] = ["#cmakedefine WITH_SIMD 1", "#define WITH_SIMD 1"];
+    const srcDir = depSourceDir(cfg, "libjpeg-turbo");
+    const hostWin = cfg.host.os === "windows";
     return {
       kind: "direct",
       sources: [
@@ -93,7 +108,18 @@ export const libjpegTurbo: Dependency = {
         ...TURBOJPEG.map(f => `src/${f}.c`),
         "jbun_stubs.c",
         ...(cfg.arm64 ? SIMD_ARM64.map(f => `simd/${f}.c`) : []),
+        ...(cfg.x64 ? ["simd/x86_64/jsimd.c", ...SIMD_X64.map(f => `simd/${f}.asm`)] : []),
       ],
+      // Mirrors simd/CMakeLists.txt; nasm wants -I with a trailing slash.
+      nasmflags: cfg.x64
+        ? [
+            cfg.windows ? "-fwin64" : cfg.darwin ? "-fmacho64" : "-felf64",
+            cfg.windows ? "-DWIN64" : cfg.darwin ? "-DMACHO" : "-DELF",
+            "-D__x86_64__",
+            `-I${quote(srcDir + "/simd/nasm/", hostWin)}`,
+            `-I${quote(srcDir + "/simd/x86_64/", hostWin)}`,
+          ]
+        : [],
       // simd/arm is needed for the bare `#include "align.h"` / `"neon-compat.h"`
       // in the intrinsics TUs; the generated neon-compat.h lands in depBuildDir,
       // which emitDirect already puts on the include path (jconfig.h relies on
@@ -101,7 +127,12 @@ export const libjpegTurbo: Dependency = {
       includes: ["src", ...(cfg.arm64 ? ["simd/arm"] : [])],
       defines: {
         BUN_8BIT_ONLY: true,
-        ...(simd ? { NEON_INTRINSICS: true } : {}),
+        ...(cfg.arm64 ? { NEON_INTRINSICS: true } : {}),
+        // jpeg_nbits.h only defines this itself on Arm. The C Huffman encoders
+        // (jcphuff.c always, jchuff.c when SIMD is off) then use bsr instead of
+        // jpeg_nbits_table. The 64 KB table still ships on x64: jchuff-sse2.asm
+        // carries its own copy.
+        ...(cfg.arm64 ? {} : { USE_CLZ_INTRINSIC: true }),
       },
       headers: {
         "jconfig.h": {

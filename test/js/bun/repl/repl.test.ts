@@ -46,6 +46,7 @@ async function withTerminalRepl(
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
     allOutput: () => string;
   }) => Promise<void>,
+  options: { env?: Record<string, string | undefined> } = {},
 ) {
   const received: string[] = [];
   let cursor = 0;
@@ -70,6 +71,7 @@ async function withTerminalRepl(
     env: {
       ...bunEnv,
       TERM: "xterm-256color",
+      ...options.env,
     },
   });
 
@@ -106,8 +108,10 @@ async function withTerminalRepl(
 
   await fn({ terminal, proc, send, waitFor, allOutput });
 
-  // Clean exit
-  send(".exit\n");
+  // Clean exit. Ctrl+U first discards whatever the test left on the line, so
+  // `.exit` is not appended to it (which would leave the REPL running until
+  // the kill below).
+  send("\x15.exit\n");
   await Promise.race([proc.exited, Bun.sleep(2000)]);
   if (!proc.killed) proc.kill();
 }
@@ -1053,6 +1057,315 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       await waitFor(".he");
       send("\t"); // Tab — should complete to .help (only match)
       await waitFor(".help");
+    });
+  });
+
+  describe("inline suggestions", () => {
+    // Ghost text is rendered as: ESC[2m<remainder>ESC[0m after the typed text.
+    // The feature requires colors, so override bunEnv's NO_COLOR for these.
+    const DIM = "\x1b[2m";
+    const colorEnv = { NO_COLOR: undefined, FORCE_COLOR: "1" };
+
+    test("suggests global completion while typing", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // "cons" should suggest "ole" (-> console). There are longer globals
+          // like `constructor` on the prototype chain, but the REPL picks the
+          // shortest match.
+          send("cons");
+          await waitFor(`${DIM}ole`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("right arrow accepts the suggestion", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("JSO");
+          await waitFor(`${DIM}N`);
+          send("\x1b[C"); // Right arrow accepts the ghost text
+          // After acceptance the input is `JSON`; extend it and evaluate.
+          // The result "81" never appears in the echoed input, so this only
+          // matches once the expression actually evaluates, proving the ghost
+          // was accepted (otherwise `JSO.stringify` is a ReferenceError).
+          send(".stringify(9*9)\n");
+          await waitFor('"81"');
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("suggests property completion after a dot", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // Build up `console.` by accepting the global suggestion first.
+          send("cons");
+          await waitFor(`${DIM}ole`);
+          send("\x1b[C"); // accept -> "console"
+          send(".l");
+          // console.l -> "log" is the shortest property starting with "l"
+          await waitFor(`${DIM}og`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab accepts the visible suggestion", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("JSON.str");
+          await waitFor(`${DIM}ingify`, 10000);
+          send("\t"); // Tab accepts the ghost suggestion -> `JSON.stringify`
+          // Result "81" cannot occur in the echoed input, so it only matches
+          // if Tab really completed to `stringify` and the call succeeded.
+          send("(9*9)\n");
+          await waitFor('"81"');
+        },
+        { env: colorEnv },
+      );
+    }, 15000);
+
+    test("end key accepts the suggestion", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("Mat");
+          await waitFor(`${DIM}h`);
+          send("\x1b[F"); // End accepts the suggestion -> "Math"
+          // Result 63 cannot occur in the echoed input; if End didn't accept,
+          // `Mat.max(...)` would throw instead of producing it.
+          send(".max(4,7)*9\n");
+          await waitFor("63");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("suggests first property when prefix is empty after dot", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // Define an object with a single distinctive property so the
+          // suggestion is deterministic regardless of prototype ordering.
+          send("globalThis.__sgObj = Object.create(null); __sgObj.onlyProp = 1\n");
+          await waitFor("1");
+          send("__sgObj.");
+          await waitFor(`${DIM}onlyProp`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("falls back to JS keywords when no global matches", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // No global starts with "instan", but the keyword `instanceof` does.
+          send("x instan");
+          await waitFor(`${DIM}ceof`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("no global or keyword suggestion for a property of an unresolvable expression", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send('globalThis.__o = () => ({ th: "no" + "Ghost", this: "had" + "Ghost" }); "o" + "Ready"\n');
+          await waitFor("oReady");
+          // `.th` names a property of the call result, so the keyword fallback
+          // (`this`) must not kick in. Right arrow would accept such a ghost,
+          // turning the line into `__o().this`.
+          send("__o().th\x1b[C\n");
+          await waitFor("noGhost");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("suggests non-ASCII property names that are valid identifiers", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // Both keys start with "caf" and have the same byte length, and `caf→`
+          // comes first; only `cafés` can follow a `.`, so the ghost must be its
+          // remainder.
+          send(
+            'globalThis.__u = { "caf\\u2192": 1, "caf\\u00e9s": 2 }; globalThis["caf\\u00e9"] = { latte: 1 }; "u" + "Ready"\n',
+          );
+          await waitFor("uReady");
+          send("__u.caf");
+          await waitFor(`${DIM}és`);
+          // The typed prefix itself may contain non-ASCII characters.
+          send("é");
+          await waitFor(`${DIM}s`);
+          // So may the object being completed: the chain segment is looked up as
+          // UTF-8, not byte-per-character.
+          send("\x15café.");
+          await waitFor(`${DIM}latte`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("resolves chain segments inherited from Object.prototype", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // `constructor` comes from Object.prototype; it must resolve to `Object`
+          // like a real property access would, not stop at the object's own keys.
+          send('globalThis.__plain = {}; "plain" + "Ready"\n');
+          await waitFor("plainReady");
+          send("__plain.constructor.getOwnPropertyNa");
+          await waitFor(`${DIM}mes`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("resolves chains through primitive values", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // `process.version` is a string and `.length` a number; both get boxed
+          // the way a real property access would, ending on Number.prototype.
+          send("process.version.length.toF");
+          await waitFor(`${DIM}ixed`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("spread dots do not turn the word into a property access", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("[...cons");
+          await waitFor(`${DIM}ole`);
+          // Nor do they swallow the chain that follows them.
+          send("\x15[...console.l");
+          await waitFor(`${DIM}og`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("a chain starting with `this` completes against the global object", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("this.cons");
+          await waitFor(`${DIM}ole`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("no suggestions inside a string literal", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // `st` would otherwise match globals such as `structuredClone`, and the
+          // right arrow would accept that ghost, changing the evaluated string.
+          send('"st\x1b[C" + "x"\n');
+          await waitFor('"stx"');
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab inside a string literal indents instead of completing", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // `JSON.pars` has exactly one completion, which Tab would otherwise splice
+        // into the string; indenting adds two spaces, so the length is 9 + 2.
+        send('("JSON.pars\t").length\n');
+        await waitFor(/\b11\b/);
+      });
+    });
+
+    test("suggests inside a template hole but not in the template text around it", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("`${JSO");
+          await waitFor(`${DIM}N`);
+          // Back in template text after the `}`: "st" must get no ghost, or the
+          // right arrow would accept it. `${JSON}` stringifies to the 13-char
+          // "[object JSON]", plus " st", so the length is 16.
+          send("N} st\x1b[C`.length === 16\n");
+          await waitFor("true");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab on a continuation line of a template literal indents", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send("globalThis.__tpl = `\n");
+        await waitFor("...");
+        // The backtick was opened on the previous line. Without that context
+        // Tab would complete `JSON.pars` to `parse` inside the template.
+        send("JSON.pars\t`\n");
+        await waitFor(/\u276f|> /);
+        // "\n" + "JSON.pars" + two spaces.
+        send("__tpl.length\n");
+        await waitFor(/\b12\b/);
+      });
+    });
+
+    test("tab on a continuation line outside a string still completes", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send("function __cont() {\n");
+        await waitFor("...");
+        send("return JSON.pars\t\n");
+        send("}\n");
+        await waitFor(/\u276f|> /);
+        send("__cont() === JSON.parse\n");
+        await waitFor("true");
+      });
+    });
+
+    test("completion on a Proxy with a misbehaving getPrototypeOf trap does not hang", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // The trap alternates between ending the chain and pointing back at
+          // the proxy, so any completer that walks the chain itself never finishes.
+          send(
+            'globalThis.__flipN = 0; globalThis.__flip = new Proxy({}, { getPrototypeOf: () => (__flipN++ % 2 ? __flip : null) }); "flip" + "Ready"\n',
+          );
+          await waitFor("flipReady");
+          // Typing the `.` computes completions for `__flip`; Ctrl+C then
+          // discards the line and the REPL must still evaluate the next one.
+          send("__flip.\x03");
+          send('"still" + "Alive"\n');
+          await waitFor("stillAlive");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab completes properties on an object (no ghost)", async () => {
+      // Tab completion resolves `obj.prefix` chains even when ghost text is
+      // disabled (NO_COLOR), so this covers parse_completion_context + resolve.
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // Store the marker as two halves so it never appears in the echoed
+        // input; it only shows up once the completed property is evaluated.
+        send("globalThis.__tcObj = { uniqueLongName: 'tcMAR' + 'KER' }; 0\n");
+        await waitFor(/\b0\b/);
+        send("__tcObj.uni");
+        send("\t");
+        // After tab, the full property should be in the input; evaluate it.
+        send("\n");
+        await waitFor("tcMARKER");
+      });
+    });
+
+    test("suggestion is not evaluated on enter", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("globalThis.zzGhostMarker = 1\n");
+          await waitFor("1");
+          // Type a prefix that triggers a suggestion but don't accept it.
+          send("zz");
+          await waitFor(`${DIM}GhostMarker`);
+          // Hit Enter without accepting: the ghost text must not be part of
+          // the evaluated input, so `zz` alone is a ReferenceError.
+          send("\n");
+          await waitFor(/ReferenceError|not defined/);
+        },
+        { env: colorEnv },
+      );
     });
   });
 

@@ -1831,7 +1831,6 @@ function lazyMinimatch() {
           const flags = (this.#options.nocase ? "i" : "") + (uflag ? "u" : "");
           return Object.assign(new RegExp(`^${re}$`, flags), {
             _src: re,
-            _glob: glob,
           });
         }
         get options() {

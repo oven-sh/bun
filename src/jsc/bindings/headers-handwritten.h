@@ -68,8 +68,6 @@ typedef struct BunString {
     // If it's not a WTFStringImpl, this does nothing
     inline void deref();
 
-    static size_t utf8ByteLength(const WTF::String&);
-
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
     // We don't clone it if it was marked as static
@@ -335,6 +333,7 @@ typedef struct {
     uint8_t cell_type;
     bool shared;
     bool resizable;
+    bool pinned;
 } Bun__ArrayBuffer;
 
 #include "SyntheticModuleType.h"
@@ -384,11 +383,6 @@ extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
 
-// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
-// Only keep the ones still exported from native code
-extern "C" const char* Bun__versions_uws;
-extern "C" const char* Bun__versions_usockets;
-
 extern "C" const char* Bun__version_sha;
 
 extern "C" void ZigString__freeGlobal(const unsigned char* ptr, size_t len);
@@ -405,7 +399,7 @@ extern "C" JSC::EncodedJSValue Bun__encoding__constructFromUTF16(void*, const ch
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
 
 /// @note throws a JS exception and returns false if a stack overflow occurs
-template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype = false>
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
 /**

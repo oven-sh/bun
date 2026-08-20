@@ -859,11 +859,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if len < 2 {
             return;
         }
-        let mut perm: Vec<usize> = (0..len).collect();
+        let mut perm: Vec<u32> = crate::index_sort::identity(len);
         {
             let keys = &self.keys[..];
             let values = &self.values[..];
-            perm.sort_by(|&a, &b| {
+            crate::index_sort::sort_indices(&mut perm, &mut |a, b| {
+                let (a, b) = (a as usize, b as usize);
                 if less_than(keys, values, a, b) {
                     core::cmp::Ordering::Less
                 } else if less_than(keys, values, b, a) {
@@ -878,13 +879,13 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.drop_index();
         let mut visited = vec![false; len];
         for start in 0..len {
-            if visited[start] || perm[start] == start {
+            if visited[start] || perm[start] as usize == start {
                 continue;
             }
             let mut i = start;
             while !visited[i] {
                 visited[i] = true;
-                let j = perm[i];
+                let j = perm[i] as usize;
                 if j == start {
                     break;
                 }
@@ -903,7 +904,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         // SAFETY: `keys` and `values` are distinct allocations; producing one
         // `&mut` into each is sound even though both derive from `&mut self`.
         // `index < self.keys.len() == self.values.len()` — every caller
-        // (`get_or_put*`/`put_index`) passes the index just returned by
+        // (`get_or_put*`) passes the index just returned by
         // `push_entry` or `find_hash`.
         let (key_ptr, value_ptr) = unsafe {
             (
@@ -939,15 +940,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     {
         let h = adapter.hash(key);
         self.find_hash(h, |k, idx| adapter.eql(key, k, idx))
-    }
-
-    #[inline]
-    pub fn get_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> Option<&V>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        self.get_index_adapted(key, adapter)
-            .map(|i| &self.values[i])
     }
 
     #[inline]
@@ -1118,6 +1110,11 @@ pub struct OccupiedEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
+    /// Position of the entry in `keys()` / `values()` (indexmap parity).
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.idx
+    }
     #[inline]
     pub fn get(&self) -> &V {
         &self.map.values[self.idx]
@@ -1139,6 +1136,11 @@ pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
+    /// Position [`insert`](Self::insert) will append the entry at (indexmap parity).
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.map.keys.len()
+    }
     pub fn insert(self, value: V) -> &'a mut V {
         let i = self.map.push_entry(self.key, value, self.hash);
         &mut self.map.values[i]
@@ -2098,6 +2100,28 @@ mod index_tests {
         let gop = m.get_or_put(2654435761).unwrap();
         assert!(gop.found_existing);
         assert_eq!(*gop.value_ptr, 1);
+    }
+
+    #[test]
+    fn entry_index_matches_entry_position() {
+        let mut m: ArrayHashMap<u64, u64> = ArrayHashMap::new();
+        // Past INDEX_THRESHOLD so both the linear and the indexed lookup run.
+        for i in 0..32u64 {
+            let MapEntry::Vacant(v) = m.entry(i * 7) else {
+                panic!("fresh key must be vacant");
+            };
+            assert_eq!(v.index(), i as usize);
+            v.insert(i);
+            assert_eq!(m.keys()[i as usize], i * 7);
+        }
+        for i in 0..32u64 {
+            let MapEntry::Occupied(o) = m.entry(i * 7) else {
+                panic!("inserted key must be occupied");
+            };
+            assert_eq!(o.index(), i as usize);
+            assert_eq!(m.values()[i as usize], i);
+        }
+        assert!(matches!(m.entry(1), MapEntry::Vacant(v) if v.index() == 32));
     }
 
     #[test]

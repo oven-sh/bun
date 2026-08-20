@@ -52,7 +52,7 @@ JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * global
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto thisVal = callFrame->thisValue();
+    auto thisVal = callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::strict());
 
     auto name = thisVal.get(globalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
@@ -206,17 +206,26 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     }
 
     auto* structure = uncheckedDowncast<Structure>(cache->internalField(static_cast<unsigned>(code)).get());
-    auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+
+    // Convert the message and `cause` here rather than in ErrorInstance::create(JSGlobalObject*, ...),
+    // which hands back nullptr when that conversion is interrupted: every caller throws or rejects with
+    // what we return, so an object is always made. Whatever interrupted the conversion is dealt with
+    // below.
+    String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
+    JSValue cause;
+    if (options.isObject() && !scope.exception())
+        cause = asObject(options)->getIfPropertyExists(globalObject, vm.propertyNames->cause);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return created_error;
-        // TODO investigate what can throw here and whether it will throw non-objects
-        // (this is better than before where we would have returned nullptr from createError if any
-        // exception were thrown by ErrorInstance::create)
-        return uncheckedDowncast<JSObject>(thrown_exception->value());
+        // A stopped worker's TerminationException stays pending for the caller's frame to report; the
+        // (message-less) error is still made. Anything else thrown while building the message (an
+        // OOM resolving a rope, a throwing `cause` getter) becomes the error, as before.
+        if (!vm.isTerminationException(thrown_exception)) {
+            (void)scope.tryClearException();
+            if (auto* object = thrown_exception->value().getObject())
+                return object;
+        }
     }
-    return created_error;
+    return JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
 JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
@@ -240,7 +249,11 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
     auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
-    return JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
+    if (scope.exception() && !vm.hasPendingTerminationException())
+        (void)scope.tryClearException();
+    return JSC::ErrorInstance::create(vm, structure, messageString, JSValue(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
 }
 
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
@@ -1067,11 +1080,16 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 // for validateOneOf
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, WTF::ASCIILiteral reason, JSC::JSArray* oneOf)
 {
-    WTF::StringBuilder builder;
-    builder.append("The argument '"_s);
-    JSValueToStringSafe(globalObject, builder, name);
+    WTF::StringBuilder nameBuilder;
+    JSValueToStringSafe(globalObject, nameBuilder, name);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto nameString = nameBuilder.toString();
 
+    WTF::StringBuilder builder;
+    builder.append("The "_s);
+    // Node treats dotted names ('options.diff') as properties, plain names as arguments.
+    builder.append(nameString.contains('.') ? "property '"_s : "argument '"_s);
+    builder.append(nameString);
     builder.append("' "_s);
     builder.append(reason);
     unsigned length = oneOf->length();
@@ -1460,20 +1478,6 @@ JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::J
     return {};
 }
 
-JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue received, WTF::ASCIILiteral expected)
-{
-    WTF::StringBuilder builder;
-    builder.append("Invalid key object type "_s);
-    JSValueToStringSafe(globalObject, builder, received);
-    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
-
-    builder.append(". Expected "_s);
-    builder.append(expected);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
-    throwScope.release();
-    return {};
-}
-
 JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, CryptoKeyType receivedType, ASCIILiteral expected)
 {
     WTF::StringBuilder builder;
@@ -1788,6 +1792,9 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, co
 
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
+    if (!thisValue.isEmpty())
+        thisValue = thisValue.toThis(globalObject, JSC::ECMAMode::strict());
+
     if (thisValue.isEmpty() || thisValue.isUndefined()) {
         return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName));
     }

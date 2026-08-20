@@ -293,8 +293,7 @@ function buildScriptCoverageList(
 
   for (const script of rawScripts) {
     const { scriptId, sourceLength } = script;
-    // V8 does not report empty scripts. Emitting one would make the
-    // whole-script range below zero-width.
+    // V8 does not report empty scripts (the whole-script range would be zero-width).
     if (sourceLength === 0) continue;
     let { url } = script;
     // V8 coverage reports file-backed scripts with file:// URLs even when the
@@ -305,10 +304,8 @@ function buildScriptCoverageList(
     }
 
     // Outer functions before nested ones, so a stack-based sweep below sees
-    // enclosing ranges first. Zero-width entries (JSC emits them, e.g. for an
-    // `export function` declaration) are dropped: V8 never produces
-    // startOffset === endOffset, and @bcoe/v8-coverage's range-tree merge
-    // recurses forever on one.
+    // enclosing ranges first. Zero-width entries are dropped: V8 never emits
+    // startOffset === endOffset, and @bcoe/v8-coverage recurses forever on one.
     const functions = script.functions
       .filter(([start, end]) => start >= 0 && end > start)
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);

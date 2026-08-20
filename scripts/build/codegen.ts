@@ -29,6 +29,18 @@
  * eval/ dir, JSSink.lut.txt consumed within its own step). The remaining
  * #included exception is BunBuiltinNames+extras.h from bundle-functions.ts,
  * reached through the PCH.
+ *
+ * ## Inputs
+ *
+ * A step's inputs are everything whose content reaches its output, not just
+ * the script named on the command line: the modules the script (or its
+ * sources) import that take part in generating (class-definitions.ts,
+ * bindgen-lib*.ts), and whatever it reads on its own (the bun_runtime .rs
+ * tree for generate-classes, src/runtime + src/jsc for host-exports,
+ * ErrorCode.ts for bundle-modules). Ninja only re-runs a step for files
+ * listed on its edge, so a file missing here means a stale output until some
+ * listed file happens to change. helpers.ts (writeIfNotChanged, argParse)
+ * does not shape any output and is not listed.
  */
 
 import { spawnSync } from "node:child_process";
@@ -380,6 +392,11 @@ function shJoin(cfg: Config, args: string[]): string {
   return quoteArgs(args, cfg.host.os === "windows");
 }
 
+/** Forward slashes, so globbed paths can be compared against a prefix on every host. */
+function slashed(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Individual step emitters
 // ───────────────────────────────────────────────────────────────────────────
@@ -578,8 +595,35 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   o.cppHeaders.push(...cppOutputs);
 }
 
-function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
+/**
+ * Files of the bun_runtime crate that live outside src/runtime/: lib.rs mounts
+ * them with `#[path]`, so generate-classes.ts's walk of the crate reads them
+ * like any other module. test/internal/source-lints/build-codegen-script-inputs.test.ts
+ * checks this list against the `#[path]` attributes in the tree.
+ */
+const runtimeCrateFilesOutsideSrcRuntime = ["src/bun.js.rs", "src/jsc/generated_classes_list.rs"];
+
+/** Exported for test/internal/source-lints/build-codegen-script-inputs.test.ts. */
+export function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-classes.ts");
+  // Imported by the script and, for define(), by every .classes.ts it loads.
+  const classDefinitions = resolve(cfg.cwd, "src", "codegen", "class-definitions.ts");
+
+  // generated_classes.rs refers to each class's Rust type by a `crate::…` path
+  // the script resolves by walking the bun_runtime `pub mod` tree from
+  // src/runtime/lib.rs, so the crate's sources are inputs: moving a struct or
+  // adding a re-export changes the output without any .classes.ts changing.
+  // Every one of these is already an input of the cargo edge, and restat +
+  // writeIfNotChanged keep an edit that leaves the resolved paths alone from
+  // reaching cargo or the C++ compiles (same shape as emitHostExports).
+  const runtimeDir = slashed(resolve(cfg.cwd, "src", "runtime")) + "/";
+  const rsInputs = [
+    ...sources.rust.filter(p => {
+      const q = slashed(p);
+      return q.endsWith(".rs") && q.startsWith(runtimeDir);
+    }),
+    ...runtimeCrateFilesOutsideSrcRuntime.map(p => resolve(cfg.cwd, p)),
+  ];
 
   const outputs = [
     resolve(cfg.codegenDir, "ZigGeneratedClasses.h"),
@@ -598,7 +642,8 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.zigGeneratedClasses],
+    inputs: [script, classDefinitions, ...sources.zigGeneratedClasses],
+    implicitInputs: rsInputs,
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -622,7 +667,6 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // the two crates so unrelated edits (e.g. src/bundler) don't re-run the
   // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
   // produces identical output and the cargo step is pruned.
-  const slashed = (p: string) => p.replace(/\\/g, "/");
   const scrapeDirs = [slashed(`${cfg.cwd}/src/runtime/`), slashed(`${cfg.cwd}/src/jsc/`)];
   const rsInputs = sources.rust.filter(p => {
     const q = slashed(p);
@@ -856,6 +900,9 @@ export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
 export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
+  // The generator proper: bindgen.ts and every .bind.ts (`import ... from
+  // "bindgen"`, a tsconfig path for bindgen-lib.ts) import these.
+  const lib = ["bindgen-lib.ts", "bindgen-lib-internal.ts"].map(f => resolve(cfg.cwd, "src", "codegen", f));
 
   const cppOut = resolve(cfg.codegenDir, "GeneratedBindings.cpp");
   // Plus one header per .bind.ts (node_os.bind.ts → GeneratedNodeOs.h), which
@@ -870,7 +917,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs: [cppOut, ...headers],
     rule: "codegen",
-    inputs: [script, ...sources.bindgen],
+    inputs: [script, ...lib, ...sources.bindgen],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

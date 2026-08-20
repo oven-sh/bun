@@ -24,6 +24,113 @@ const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
 const { uncurryThis, SafeMap } = require("internal/primordials");
 const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 
+const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeReverse = Array.prototype.reverse;
+
+function areLinesEqual(actual, expected) {
+  return actual === expected;
+}
+
+// Myers diff (Node's internal/assert/myers_diff). Returns an array of
+// [operation, value] pairs: -1 delete, 0 no-op, 1 insert.
+function myersDiff(actual, expected) {
+  const actualLength = actual.length;
+  const expectedLength = expected.length;
+  const max = actualLength + expectedLength;
+  const v = new Int32Array(2 * max + 1);
+  const trace = [];
+
+  for (let diffLevel = 0; diffLevel <= max; diffLevel++) {
+    ArrayPrototypePush.call(trace, new Int32Array(v));
+
+    for (let diagonalIndex = -diffLevel; diagonalIndex <= diffLevel; diagonalIndex += 2) {
+      const offset = diagonalIndex + max;
+      const previousOffset = v[offset - 1];
+      const nextOffset = v[offset + 1];
+      let x =
+        diagonalIndex === -diffLevel || (diagonalIndex !== diffLevel && previousOffset < nextOffset)
+          ? nextOffset
+          : previousOffset + 1;
+      let y = x - diagonalIndex;
+
+      while (x < actualLength && y < expectedLength && areLinesEqual(actual[x], expected[y])) {
+        x++;
+        y++;
+      }
+
+      v[offset] = x;
+
+      if (x >= actualLength && y >= expectedLength) {
+        return backtrack(trace, actual, expected);
+      }
+    }
+  }
+}
+
+function backtrack(trace, actual, expected) {
+  const actualLength = actual.length;
+  const expectedLength = expected.length;
+  const max = actualLength + expectedLength;
+
+  let x = actualLength;
+  let y = expectedLength;
+  const result = [];
+
+  for (let diffLevel = trace.length - 1; diffLevel >= 0; diffLevel--) {
+    const v = trace[diffLevel];
+    const diagonalIndex = x - y;
+    const offset = diagonalIndex + max;
+
+    let prevDiagonalIndex;
+    if (
+      diagonalIndex === -diffLevel ||
+      (diagonalIndex !== diffLevel && v[offset - 1] < v[offset + 1])
+    ) {
+      prevDiagonalIndex = diagonalIndex + 1;
+    } else {
+      prevDiagonalIndex = diagonalIndex - 1;
+    }
+
+    const prevX = v[prevDiagonalIndex + max];
+    const prevY = prevX - prevDiagonalIndex;
+
+    while (x > prevX && y > prevY) {
+      ArrayPrototypePush.call(result, [0, actual[x - 1]]);
+      x--;
+      y--;
+    }
+
+    if (diffLevel > 0) {
+      if (x > prevX) {
+        ArrayPrototypePush.call(result, [1, actual[--x]]);
+      } else {
+        ArrayPrototypePush.call(result, [-1, expected[--y]]);
+      }
+    }
+  }
+
+  return result;
+}
+
+function validateDiffInput(value, name) {
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      validateString(value[i], `${name}[${i}]`);
+    }
+    return;
+  }
+  validateString(value, name);
+}
+
+function diff(actual, expected) {
+  if (actual === expected) {
+    return [];
+  }
+  validateDiffInput(actual, "actual");
+  validateDiffInput(expected, "expected");
+  return ArrayPrototypeReverse.call(myersDiff(actual, expected));
+}
+
 var cjs_exports;
 
 function isBuffer(value) {
@@ -698,6 +805,7 @@ cjs_exports = {
   debug: debuglog,
   debuglog,
   deprecate,
+  diff,
   format,
   styleText,
   formatWithOptions,

@@ -57,3 +57,7 @@ EXPORT const char *CDECL get_type(napi_env env, napi_value value) {
   }
   return names[type];
 }
+
+// Reports which js_native_api.h the file was compiled against: upstream
+// node-api-headers defaults NAPI_VERSION to 8, Bun's bundled copy to 10.
+EXPORT int CDECL default_napi_version(void) { return NAPI_VERSION; }

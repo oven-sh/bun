@@ -334,7 +334,7 @@ impl HostedGitInfo {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// RAII handle over a heap-allocated `WTF::URL` (C++). The allocation comes from
-/// `URL__fromString` (C++ `new`), so it MUST be freed via `URL__deinit` — wrapping
+/// `URL__fromString` (C++ `new`), so it MUST be freed via `JscUrl::destroy` — wrapping
 /// the pointer in `Box` is allocator-mismatch UB and never runs the C++ destructor.
 pub struct OwnedJscUrl(NonNull<JscUrl>);
 impl core::ops::Deref for OwnedJscUrl {
@@ -346,9 +346,9 @@ impl core::ops::Deref for OwnedJscUrl {
 }
 impl Drop for OwnedJscUrl {
     fn drop(&mut self) {
-        // SAFETY: pointer is the unique owner of a `new WTF::URL` from C++; `deinit`
-        // calls `URL__deinit` which `delete`s it.
-        unsafe { self.0.as_mut() }.deinit();
+        // SAFETY: `self.0` came from `JscUrl::from_utf8` (`concat_parts_to_url`) and this
+        // private newtype is its only owner, so this is the one and only destroy.
+        unsafe { JscUrl::destroy(self.0.as_ptr()) };
     }
 }
 

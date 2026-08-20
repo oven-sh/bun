@@ -580,8 +580,7 @@ var require_wasi = __commonJS({
         this.memory = void 0;
         this.view = void 0;
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
-        const bindings = this.bindings;
-        fs = bindings.fs;
+        fs = this.bindings.fs;
         this.FD_MAP = /* @__PURE__ */ new Map([
           [
             constants_1.WASI_STDIN_FILENO,
@@ -620,7 +619,7 @@ var require_wasi = __commonJS({
             },
           ],
         ]);
-        const path = bindings.path;
+        const path = this.bindings.path;
         for (const [k, v] of Object.entries(preopens)) {
           const real = fs.openSync(v, nodeFsConstants.O_RDONLY);
           const newfd = this.getUnusedFileDescriptor();
@@ -1591,22 +1590,22 @@ var require_wasi = __commonJS({
                   const ms = nsToMs(waitTimeNs);
                   sleep.$call(this, ms);
                 } else {
-                  const end = BigInt(bindings.hrtime()) + waitTimeNs;
-                  while (BigInt(bindings.hrtime()) < end) {}
+                  const end = BigInt(this.bindings.hrtime()) + waitTimeNs;
+                  while (BigInt(this.bindings.hrtime()) < end) {}
                 }
               }
             }
             return constants_1.WASI_ESUCCESS;
           },
           proc_exit: rval => {
-            bindings.exit(rval);
+            this.bindings.exit(rval);
             return constants_1.WASI_ESUCCESS;
           },
           proc_raise: sig => {
             if (!(sig in constants_1.SIGNAL_MAP)) {
               return constants_1.WASI_EINVAL;
             }
-            bindings.kill(constants_1.SIGNAL_MAP[sig]);
+            this.bindings.kill(constants_1.SIGNAL_MAP[sig]);
             return constants_1.WASI_ESUCCESS;
           },
           random_get: (bufPtr, bufLen) => {
@@ -1638,12 +1637,12 @@ var require_wasi = __commonJS({
         };
       }
       getState() {
-        return { env: this.env, FD_MAP: this.FD_MAP, bindings: bindings };
+        return { env: this.env, FD_MAP: this.FD_MAP, bindings: this.bindings };
       }
       setState(state) {
         this.env = state.env;
         this.FD_MAP = state.FD_MAP;
-        bindings = state.bindings;
+        this.bindings = state.bindings;
       }
       fstatSync(real_fd) {
         if (real_fd <= 2) {

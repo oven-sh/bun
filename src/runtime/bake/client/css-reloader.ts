@@ -69,7 +69,8 @@ const headObserver = new MutationObserver(list => {
         const id = registeredLinkTags.get(node as HTMLLinkElement);
         if (id) {
           const existingSheet = cssStore.get(id);
-          if (existingSheet) {
+          // A framework may append a fresh link for the same stylesheet before removing the old one; the entry then already follows the new link.
+          if (existingSheet && existingSheet.link === node) {
             deactivateCss(existingSheet);
           }
           registeredLinkTags.delete(node as HTMLLinkElement);

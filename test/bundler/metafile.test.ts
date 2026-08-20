@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -534,6 +534,84 @@ describe("bundler metafile", () => {
     }
   });
 
+  // Builds entry.js from inside the fixture directory, so the input keys are the
+  // fixture's relative file names.
+  async function buildMetafileInDir(dir: string): Promise<Metafile> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js", "--outdir=out", "--metafile=meta.json"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return await Bun.file(`${dir}/meta.json`).json();
+  }
+
+  test.concurrent("metafile lists a sideEffects: false module that tree shaking dropped from the output", async () => {
+    const files = {
+      "entry.js": `import { x } from "pkg";\nconsole.log("hi");\n`,
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      // `x` is unused and the package has no side effects, so nothing of this file is
+      // bundled. It is still an input, and the one entry.js's import points at.
+      "node_modules/pkg/index.js": `export const x = 1;\n`,
+    };
+    using dir = tempDir("metafile-tree-shaken-package", files);
+
+    const metafile = await buildMetafileInDir(String(dir));
+
+    expect(metafile.inputs).toEqual({
+      "entry.js": {
+        bytes: files["entry.js"].length,
+        imports: [{ path: "node_modules/pkg/index.js", kind: "import-statement", original: "pkg" }],
+        format: "esm",
+      },
+      "node_modules/pkg/index.js": {
+        bytes: files["node_modules/pkg/index.js"].length,
+        imports: [],
+        format: "esm",
+      },
+    });
+
+    // The outputs side still only lists what was bundled into each output, as in esbuild.
+    expect(Object.values(metafile.outputs).map(output => Object.keys(output.inputs))).toEqual([["entry.js"]]);
+  });
+
+  test.concurrent("metafile lists modules only reached from tree-shaken code, and what they import", async () => {
+    const files = {
+      // `unused` is dead code, so lazy.js and everything below it is bundled into
+      // nothing. No sideEffects flag is involved.
+      "entry.js": `function unused() { return require("./lazy.js"); }\nconsole.log("hi");\n`,
+      "lazy.js": `import "./effect.js";\nmodule.exports = 1;\n`,
+      "effect.js": `console.log("effect");\n`,
+    };
+    using dir = tempDir("metafile-tree-shaken-require", files);
+
+    const metafile = await buildMetafileInDir(String(dir));
+
+    expect(metafile.inputs).toEqual({
+      "entry.js": {
+        bytes: files["entry.js"].length,
+        imports: [{ path: "lazy.js", kind: "require-call", original: "./lazy.js" }],
+        format: "cjs",
+      },
+      "lazy.js": {
+        bytes: files["lazy.js"].length,
+        imports: [{ path: "effect.js", kind: "import-statement", original: "./effect.js" }],
+        format: "cjs",
+      },
+      "effect.js": {
+        bytes: files["effect.js"].length,
+        imports: [],
+        format: "esm",
+      },
+    });
+
+    expect(Object.values(metafile.outputs).map(output => Object.keys(output.inputs))).toEqual([["entry.js"]]);
+  });
+
   test("metafile import paths are deterministic across repeated builds", async () => {
     const N = 30;
     const files: Record<string, string> = { "b/shared.js": `export const s = 1;` };
@@ -800,8 +878,6 @@ describe("Bun.build metafile option variants", () => {
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe } from "harness";
-
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {
     using dir = tempDir("metafile-md-test", {
@@ -1214,6 +1290,32 @@ describe("bun build --metafile-md", () => {
 
     // helper.js is imported by main.js
     expect(content).toMatch(/\[IMPORTED_BY: .*helper\.js <- main\.js\]/);
+  });
+
+  test.concurrent("markdown lists a module that tree shaking dropped from the output", async () => {
+    using dir = tempDir("metafile-md-tree-shaken", {
+      "entry.js": `import { x } from "pkg";\nconsole.log("hi");\n`,
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      "node_modules/pkg/index.js": `export const x = 1;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js", "--metafile-md", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const content = await Bun.file(`${dir}/meta.md`).text();
+    expect(content).toContain("| Input modules | 2 |");
+    expect(content).toContain("[MODULE: node_modules/pkg/index.js]");
+    expect(content).toContain("[IMPORT: entry.js -> node_modules/pkg/index.js]");
+    expect(content).toContain("[IMPORTED_BY: node_modules/pkg/index.js <- entry.js]");
   });
 
   test("markdown includes entry point markers", async () => {

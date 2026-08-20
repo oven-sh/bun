@@ -217,17 +217,14 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     let loaders = parse_graph.input_files.items_loader();
     let import_records_list = parse_graph.ast.items_import_records();
 
-    // Iterate through all files in chunks to collect unique source indices
+    // Every reachable file is an input, not just the files that made it into a chunk:
+    // tree shaking drops whole files (a `sideEffects: false` module with no used
+    // exports, a module only reached from dead code), but the import records written
+    // below still point at them, so they must be keys of "inputs". Which files each
+    // output was built from is `outputs[].inputs`, which stays chunk-based.
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
-    // defer seen_sources.deinit() — handled by Drop
-
-    // Mark all files that appear in chunks
-    for chunk in chunks.iter() {
-        for &source_index in chunk.files_with_parts_in_chunk.keys() {
-            if (source_index as usize) < sources.len() {
-                seen_sources.set(source_index as usize);
-            }
-        }
+    for source_index in c.graph.reachable_files.slice() {
+        seen_sources.set(source_index.get() as usize);
     }
 
     // Write inputs

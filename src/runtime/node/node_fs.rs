@@ -9707,10 +9707,12 @@ fn dt_delete_file(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
             if matches!(errno, E::EPERM | E::EACCES) {
                 // No-follow stat — don't follow symlinks, to match unlinkat.
                 // `z` (a `&ZStr`, `Copy`) is still valid — `unlinkat` only borrowed it.
-                if let Ok(st) = Syscall::lstatat(parent.fd, z) {
-                    if sys::S::ISDIR(st.st_mode as u32) {
-                        return Err(E::EISDIR);
-                    }
+                match Syscall::lstatat(parent.fd, z) {
+                    Ok(st) if sys::S::ISDIR(st.st_mode as u32) => return Err(E::EISDIR),
+                    // The entry vanished between unlinkat and lstat: a
+                    // concurrent deleter won, so the real answer is ENOENT.
+                    Err(e) if e.get_errno() == E::ENOENT => return Err(E::ENOENT),
+                    _ => {}
                 }
             }
             Err(errno)

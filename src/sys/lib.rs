@@ -7033,20 +7033,15 @@ pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd
     let norm = normalize_path_windows(dir, path, &mut wbuf.0[..])?;
     openat_windows_impl(dir, norm, flags, perm)
 }
-/// Iterable directory open for the recursive delete-tree walk
+/// Iterable directory open for the recursive delete-tree walks
 /// (`O_DIRECTORY | O_RDONLY | O_NOFOLLOW` semantics), with
 /// `delete_pending_is_enoent` set: a dir whose deletion already started
 /// reports ENOENT, like an entry that vanished between readdir and open.
 #[cfg(windows)]
 pub fn openat_dir_for_delete_tree(dir: impl AsFd, path: &[u8]) -> Maybe<Fd> {
-    let dir = dir.as_fd();
-    let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wide = convert_path_u8_to_u16(&mut wbuf.0[..], path)?;
-    let mut buf2 = bun_paths::w_path_buffer_pool::get();
-    let norm = normalize_path_windows(dir, wide, &mut buf2.0[..])?;
-    open_dir_at_windows_nt_path(
+    open_dir_at_windows_a(
         dir,
-        norm,
+        path,
         WindowsOpenDirOptions {
             iterable: true,
             no_follow: true,

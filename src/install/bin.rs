@@ -1130,49 +1130,6 @@ impl<'a> Linker<'a> {
         let abs_dest_w =
             strings::convert_utf8_to_utf16_in_buffer(dest_buf.as_mut_slice(), abs_dest.as_bytes());
         let abs_dest_w_len = abs_dest_w.len();
-        let bunx_suffix = w!(".bunx\x00");
-        dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
-
-        // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
-        let abs_bunx_file =
-            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
-
-        let bunx_file = 'bunx_file: {
-            match sys::File::openat_os_path(
-                Fd::invalid(),
-                abs_bunx_file,
-                sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-                0o664,
-            ) {
-                Ok(f) => break 'bunx_file f,
-                Err(err) => {
-                    let err: crate::Error = err.into();
-                    if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || global {
-                        self.err = Some(err);
-                        return;
-                    }
-
-                    // Snapshot the length and restore via `set_length` after.
-                    let node_modules_path_save = self.node_modules_path.len();
-                    let _ = self.node_modules_path.append(b".bin");
-                    let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
-                    self.node_modules_path.set_length(node_modules_path_save);
-
-                    match sys::File::openat_os_path(
-                        Fd::invalid(),
-                        abs_bunx_file,
-                        sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-                        0o664,
-                    ) {
-                        Ok(f) => break 'bunx_file f,
-                        Err(real_err) => {
-                            self.err = Some(real_err.into());
-                            return;
-                        }
-                    }
-                }
-            }
-        };
 
         let rel_target = resolve_path::relative_buf_z(
             self.rel_buf,
@@ -1230,28 +1187,103 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        if let Err(err) = bunx_file.write_all(metadata) {
-            self.err = Some(err.into());
-            return;
-        }
-
+        // Exe first so the `:bunx` stream below has a host file.
         let exe_suffix = w!(".exe\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
         // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
         let abs_exe_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
 
-        if let Err(err) = sys::File::write_file_os_path(
+        let exe_rewritten = match sys::File::write_file_os_path(
             Fd::invalid(),
             abs_exe_file,
             crate::windows_shim::embedded_executable_data(),
         ) {
-            let err: crate::Error = err.into();
-            if err == crate::Error::Sys(bun_errno::SystemErrno::EBUSY) {
-                // exe is most likely running. bunx file has already been updated, ignore error
+            Ok(()) => true,
+            Err(err) => {
+                let err: crate::Error = err.into();
+                match err {
+                    crate::Error::Sys(bun_errno::SystemErrno::EBUSY) => false,
+                    crate::Error::Sys(bun_errno::SystemErrno::ENOENT) if !global => {
+                        let node_modules_path_save = self.node_modules_path.len();
+                        let _ = self.node_modules_path.append(b".bin");
+                        let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
+                        self.node_modules_path.set_length(node_modules_path_save);
+
+                        if let Err(real_err) = sys::File::write_file_os_path(
+                            Fd::invalid(),
+                            abs_exe_file,
+                            crate::windows_shim::embedded_executable_data(),
+                        ) {
+                            self.err = Some(real_err.into());
+                            return;
+                        }
+                        true
+                    }
+                    _ => {
+                        self.err = Some(err);
+                        return;
+                    }
+                }
+            }
+        };
+
+        // Prefer the `:bunx` alternate data stream; fall back to a `<name>.bunx`
+        // sidecar on any error (exFAT, some network shares lack named streams).
+        let ads_suffix = w!(".exe:bunx\x00");
+        dest_buf[abs_dest_w_len..abs_dest_w_len + ads_suffix.len()].copy_from_slice(ads_suffix);
+        // SAFETY: dest_buf[abs_dest_w_len + ".exe:bunx".len()] == 0 written above
+        let abs_ads_file =
+            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe:bunx".len());
+
+        let wrote_ads = match sys::File::openat_os_path(
+            Fd::invalid(),
+            abs_ads_file,
+            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+            0o664,
+        ) {
+            Ok(ads_file) => {
+                if let Err(err) = ads_file.write_all(metadata) {
+                    self.err = Some(err.into());
+                    return;
+                }
+                true
+            }
+            Err(_) => {
+                // Readers probe the stream first, so a stale one from a prior
+                // install must not survive the sidecar fallback.
+                let _ = sys::unlink_w(abs_ads_file);
+                false
+            }
+        };
+
+        let bunx_suffix = w!(".bunx\x00");
+        dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
+        // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
+        let abs_bunx_file =
+            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+
+        if wrote_ads && exe_rewritten {
+            let _ = sys::unlink_w(abs_bunx_file);
+            return;
+        }
+
+        // Sidecar write: either the fallback, or (when the exe was EBUSY) a
+        // fresh copy so a pre-ADS shim PE left on disk still finds metadata.
+        let bunx_file = match sys::File::openat_os_path(
+            Fd::invalid(),
+            abs_bunx_file,
+            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+            0o664,
+        ) {
+            Ok(f) => f,
+            Err(err) => {
+                self.err = Some(err.into());
                 return;
             }
+        };
 
-            self.err = Some(err);
+        if let Err(err) = bunx_file.write_all(metadata) {
+            self.err = Some(err.into());
             return;
         }
     }

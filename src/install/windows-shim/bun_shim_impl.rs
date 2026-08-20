@@ -7,9 +7,10 @@
 //! This also solves the 'Terminate batch job (Y/N)' problem you see when using NPM/Yarn,
 //! which is a HUGE dx win for developers.
 //!
-//! The approach implemented is a `.bunx` file which sits right next to the renamed
-//! launcher exe. We read that (see `BinLinkingShim.rs` for the creation of this file)
-//! and then we call NtCreateProcess to spawn the correct child process.
+//! The metadata (target path + parsed shebang; encoded by `BinLinkingShim.rs`)
+//! lives in a `:bunx` NTFS stream on the launcher exe, or a sibling `.bunx`
+//! file when the volume lacks named streams. We probe the stream first, fall
+//! back to the sidecar, then NtCreateProcess the decoded target.
 //!
 //! Every attempt possible to make this file as minimal as possible has been made.
 //! Which has unfortunatly made is difficult to read. To make up for this, every
@@ -583,8 +584,16 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             );
         }
     }
-    let image_path_to_copy_b_len = image_path_b_len - 2 * suffix.len();
-    // SAFETY: buf1 has room for nt_prefix + image_path; image_path_u8 is valid for the copy len.
+    // Standalone keeps `.exe` so `:bunx` can be appended for the stream probe.
+    let image_path_to_copy_b_len = if IS_STANDALONE {
+        image_path_b_len
+    } else {
+        image_path_b_len - 2 * suffix.len()
+    };
+    if NT_OBJECT_PREFIX.len() + image_path_to_copy_b_len / 2 > BUF1_LEN {
+        return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+    }
+    // SAFETY: bounds checked above; image_path_u8 is valid for the copy len.
     unsafe {
         core::ptr::copy_nonoverlapping(
             image_path_u8.as_ptr(),
@@ -597,68 +606,105 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let mut metadata_handle: HANDLE = core::ptr::null_mut();
     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     if IS_STANDALONE {
-        // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
-        // SAFETY: writing 4 u16s ("bunx") into buf1 at the computed offset, which is in bounds.
-        unsafe {
-            buf1_u8
-                .add(image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3/* "exe".len */))
-                .cast::<[u16; 4]>()
-                .write_unaligned(['b' as u16, 'u' as u16, 'n' as u16, 'x' as u16]);
+        let open_metadata = |path_len_bytes: u16,
+                             out_handle: &mut HANDLE,
+                             io: &mut IO_STATUS_BLOCK|
+         -> nt::Status {
+            let mut nt_name = UNICODE_STRING {
+                Length: path_len_bytes,
+                MaximumLength: path_len_bytes,
+                Buffer: buf1_u16,
+            };
+            if DBG {
+                debug!(
+                    "NtCreateFile({})",
+                    fmt16(unsafe { unicode_string_to_u16(&nt_name) })
+                );
+                // NtCreateFile requires the `\??\` object prefix for absolute paths.
+                debug_assert!(
+                    unsafe { unicode_string_to_u16(&nt_name) }.starts_with(&NT_OBJECT_PREFIX)
+                );
+                debug_assert!(
+                    unsafe { unicode_string_to_u16(&nt_name) }.ends_with(bun_core::w!("bunx"))
+                );
+            }
+            let mut attr = w::OBJECT_ATTRIBUTES {
+                Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,
+                RootDirectory: core::ptr::null_mut(),
+                Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+                ObjectName: &mut nt_name,
+                SecurityDescriptor: core::ptr::null_mut(),
+                SecurityQualityOfService: core::ptr::null_mut(),
+            };
+            // SAFETY: all out-pointers are valid stack locations; attr is fully initialized.
+            unsafe {
+                nt::NtCreateFile(
+                    out_handle,
+                    FILE_GENERIC_READ,
+                    &mut attr,
+                    io,
+                    core::ptr::null_mut(),
+                    w::FILE_ATTRIBUTE_NORMAL,
+                    w::FILE_SHARE_WRITE | w::FILE_SHARE_READ | w::FILE_SHARE_DELETE,
+                    w::FILE_OPEN,
+                    w::FILE_NON_DIRECTORY_FILE | w::FILE_SYNCHRONOUS_IO_NONALERT,
+                    core::ptr::null_mut(),
+                    0,
+                )
+            }
+        };
+
+        // `UNICODE_STRING.Length` is u16, so guard on the byte length; the
+        // same bound covers buf1 (`u16::MAX/2 < BUF1_LEN`).
+        let nt_len_bytes = |len_u16s: usize| -> Option<u16> {
+            if len_u16s <= BUF1_LEN {
+                u16::try_from(2 * len_u16s).ok()
+            } else {
+                None
+            }
+        };
+
+        let ads_path_len = NT_OBJECT_PREFIX.len() + image_path_b_len / 2 + 5 /* ":bunx".len */;
+        let mut rc = match nt_len_bytes(ads_path_len) {
+            Some(path_len_bytes) => {
+                // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.exe:bunx!!!!!!!!!!!!!!!!!!'
+                // SAFETY: ads_path_len <= BUF1_LEN guarantees the 5 u16s after the copied image
+                // path are within buf1.
+                unsafe {
+                    buf1_u8
+                        .add(image_path_b_len + 2 * NT_OBJECT_PREFIX.len())
+                        .cast::<[u16; 5]>()
+                        .write_unaligned([
+                            ':' as u16, 'b' as u16, 'u' as u16, 'n' as u16, 'x' as u16,
+                        ]);
+                }
+                open_metadata(path_len_bytes, &mut metadata_handle, &mut io)
+            }
+            None => NTSTATUS::OBJECT_NAME_NOT_FOUND,
+        };
+
+        if rc != NTSTATUS::SUCCESS {
+            if DBG {
+                debug!("ADS open failed ({}), trying .bunx sidecar", rc.0);
+            }
+            let sidecar_path_len =
+                NT_OBJECT_PREFIX.len() + image_path_b_len / 2 - 3 /* "exe".len */ + 4 /* "bunx".len */;
+            let Some(path_len_bytes) = nt_len_bytes(sidecar_path_len) else {
+                return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+            };
+            // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunxbunx!!!!!!!!!!!!!!!!!!'
+            //                                                       ^^^^ overwritten, trailing
+            //                                                            bytes ignored by Length
+            // SAFETY: sidecar_path_len <= BUF1_LEN guarantees the 4 u16s are within buf1.
+            unsafe {
+                buf1_u8
+                    .add(image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3/* "exe".len */))
+                    .cast::<[u16; 4]>()
+                    .write_unaligned(['b' as u16, 'u' as u16, 'n' as u16, 'x' as u16]);
+            }
+            rc = open_metadata(path_len_bytes, &mut metadata_handle, &mut io);
         }
 
-        let path_len_bytes: u16 = u16::try_from(
-            image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3 /* "exe".len */ + 4/* "bunx".len */),
-        )
-        .unwrap();
-        let mut nt_name = UNICODE_STRING {
-            Length: path_len_bytes,
-            MaximumLength: path_len_bytes,
-            Buffer: buf1_u16,
-        };
-        if DBG {
-            debug!(
-                "NtCreateFile({})",
-                fmt16(unsafe { unicode_string_to_u16(&nt_name) })
-            );
-            debug!(
-                "NtCreateFile({})",
-                fmt16(unsafe { unicode_string_to_u16(&nt_name) })
-            );
-        }
-        let mut attr = w::OBJECT_ATTRIBUTES {
-            Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-            RootDirectory: core::ptr::null_mut(),
-            Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-            ObjectName: &mut nt_name,
-            SecurityDescriptor: core::ptr::null_mut(),
-            SecurityQualityOfService: core::ptr::null_mut(),
-        };
-        // NtCreateFile will fail for absolute paths if we do not pass an OBJECT name
-        // so we need the prefix here. This is an extra sanity check.
-        if DBG {
-            debug_assert!(
-                unsafe { unicode_string_to_u16(&nt_name) }.starts_with(&NT_OBJECT_PREFIX)
-            );
-            debug_assert!(
-                unsafe { unicode_string_to_u16(&nt_name) }.ends_with(bun_core::w!(".bunx"))
-            );
-        }
-        // SAFETY: all out-pointers are valid stack locations; attr is fully initialized.
-        let rc = unsafe {
-            nt::NtCreateFile(
-                &mut metadata_handle,
-                FILE_GENERIC_READ,
-                &mut attr,
-                &mut io,
-                core::ptr::null_mut(),
-                w::FILE_ATTRIBUTE_NORMAL,
-                w::FILE_SHARE_WRITE | w::FILE_SHARE_READ | w::FILE_SHARE_DELETE,
-                w::FILE_OPEN,
-                w::FILE_NON_DIRECTORY_FILE | w::FILE_SYNCHRONOUS_IO_NONALERT,
-                core::ptr::null_mut(),
-                0,
-            )
-        };
         if rc != NTSTATUS::SUCCESS {
             if DBG {
                 debug!("error opening: {}", rc.0);

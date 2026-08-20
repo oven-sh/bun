@@ -3911,36 +3911,72 @@ impl BunXFastPath {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let direct_launch_buffer =
             unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
-        let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
 
-        bun_core::scoped_log!(
-            BUNX_FAST_PATH_LOG,
-            "Attempting to find and load bunx file: '{}'",
-            bun_core::fmt::utf16(path_to_use)
-        );
-        debug_assert!(paths::is_absolute_windows_wtf16(path_to_use));
+        debug_assert!(paths::is_absolute_windows_wtf16(
+            &direct_launch_buffer[..path_len]
+        ));
+        debug_assert!(direct_launch_buffer[..path_len].ends_with(bun_core::w!(".bunx")));
 
-        let handle = match sys::open_file_at_windows(
-            Fd::INVALID, // absolute path is given
-            path_to_use,
-            sys::NtCreateFileOptions {
-                access_mask: sys::windows::STANDARD_RIGHTS_READ
-                    | sys::windows::FILE_READ_DATA
-                    | sys::windows::FILE_READ_ATTRIBUTES
-                    | sys::windows::FILE_READ_EA
-                    | sys::windows::SYNCHRONIZE,
-                disposition: sys::windows::FILE_OPEN,
-                options: sys::windows::FILE_NON_DIRECTORY_FILE
-                    | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
-                ..Default::default()
-            },
-        ) {
-            Ok(fd) => fd.native(),
-            Err(err) => {
-                bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "Failed to open bunx file: '{}'", err);
-                return;
+        let open_opts = sys::NtCreateFileOptions {
+            access_mask: sys::windows::STANDARD_RIGHTS_READ
+                | sys::windows::FILE_READ_DATA
+                | sys::windows::FILE_READ_ATTRIBUTES
+                | sys::windows::FILE_READ_EA
+                | sys::windows::SYNCHRONIZE,
+            disposition: sys::windows::FILE_OPEN,
+            options: sys::windows::FILE_NON_DIRECTORY_FILE
+                | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
+            ..Default::default()
+        };
+
+        // Probe `<...>.exe:bunx` first, fall back to `<...>.bunx`; restore the
+        // `.bunx` tail afterwards since the launcher walks that shape.
+        let ads_suffix = bun_core::w!(".exe:bunx");
+        let ads_len = path_len - b".bunx".len() + ads_suffix.len();
+        let ads_fd = if ads_len < direct_launch_buffer.len() {
+            direct_launch_buffer[ads_len - ads_suffix.len()..ads_len].copy_from_slice(ads_suffix);
+            bun_core::scoped_log!(
+                BUNX_FAST_PATH_LOG,
+                "Attempting to find and load bunx file: '{}'",
+                bun_core::fmt::utf16(&direct_launch_buffer[..ads_len])
+            );
+            sys::open_file_at_windows(Fd::INVALID, &direct_launch_buffer[..ads_len], open_opts).ok()
+        } else {
+            None
+        };
+        let handle = match ads_fd {
+            Some(fd) => fd.native(),
+            None => {
+                let bunx_suffix = bun_core::w!(".bunx");
+                direct_launch_buffer[path_len - bunx_suffix.len()..path_len]
+                    .copy_from_slice(bunx_suffix);
+                bun_core::scoped_log!(
+                    BUNX_FAST_PATH_LOG,
+                    "ADS not found, trying sidecar: '{}'",
+                    bun_core::fmt::utf16(&direct_launch_buffer[..path_len])
+                );
+                match sys::open_file_at_windows(
+                    Fd::INVALID,
+                    &direct_launch_buffer[..path_len],
+                    open_opts,
+                ) {
+                    Ok(fd) => fd.native(),
+                    Err(err) => {
+                        bun_core::scoped_log!(
+                            BUNX_FAST_PATH_LOG,
+                            "Failed to open bunx file: '{}'",
+                            err
+                        );
+                        return;
+                    }
+                }
             }
         };
+
+        let bunx_suffix = bun_core::w!(".bunx");
+        direct_launch_buffer[path_len - bunx_suffix.len()..path_len].copy_from_slice(bunx_suffix);
+        direct_launch_buffer[path_len] = 0;
+        let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
 
         let mut i: usize = 0;
         for arg in passthrough {

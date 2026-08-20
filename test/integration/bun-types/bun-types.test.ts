@@ -33,9 +33,7 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
 const $ = Shell.cwd(BUN_REPO_ROOT);
 
 // What `bun run build` generates. beforeAll builds into a copy of the package under
-// TEMP_DIR, so none of this may change in the checkout (it used to be built in place,
-// with package.json restored afterwards, which left the tree dirty whenever beforeAll
-// was interrupted).
+// TEMP_DIR, so none of this may change in the checkout; the afterAll below checks that.
 function snapshotBunTypesCheckout() {
   return {
     "package.json": readFileSync(join(BUN_TYPES_PACKAGE_ROOT, "package.json"), "utf8"),
@@ -313,13 +311,14 @@ afterAll(async () => {
       await rm(TEMP_DIR, { recursive: true, force: true });
     }
   }
+
+  // Checked here rather than in a test: when beforeAll throws or times out the tests are
+  // skipped but afterAll still runs, and an interrupted beforeAll is exactly when building
+  // in place used to leave its residue behind.
+  expect(snapshotBunTypesCheckout()).toEqual(bunTypesCheckoutBeforeSetup);
 });
 
 describe("@types/bun integration test", () => {
-  test("building and packing bun-types leaves packages/bun-types untouched", () => {
-    expect(snapshotBunTypesCheckout()).toEqual(bunTypesCheckoutBeforeSetup);
-  });
-
   test("packed bun-types includes CLAUDE.md", async () => {
     const claude = Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "CLAUDE.md"));
     expect(await claude.exists()).toBe(true);

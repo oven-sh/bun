@@ -4470,17 +4470,6 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
 
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
 {
-    // {
-    //     inspector: true,
-    //     debug: false,
-    //     uv: true,
-    //     ipv6: true,
-    //     tls_alpn: true,
-    //     tls_sni: true,
-    //     tls_ocsp: true,
-    //     tls: true,
-    //     cached_builtins: [Getter]
-    // }
     auto* globalObject = processObject->globalObject();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* object = constructEmptyObject(globalObject);
@@ -4506,7 +4495,9 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "openssl_is_boringssl"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "quic"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
-    object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
+    // Matches Node 26 ("strip" or false; "transform" was removed in nodejs/node#61803):
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/node.js#L335-L349
+    object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("strip"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
     return object;

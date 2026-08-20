@@ -94,7 +94,7 @@ void JSDecompressionStreamPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSDecompressionStream::info(), JSDecompressionStreamPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsDecompressionStreamPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSDecompressionStreamConstructor = JSStreamConstructor<JSDecompressionStream>.
@@ -136,11 +136,7 @@ template<> void JSDecompressionStreamConstructor::finishCreation(VM& vm, JSDOMGl
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "DecompressionStream"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSDecompressionStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "DecompressionStream"_s, JSDecompressionStream::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSDecompressionStream>(vm, globalObject));
 }
 

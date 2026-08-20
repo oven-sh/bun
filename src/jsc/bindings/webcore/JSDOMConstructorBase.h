@@ -56,6 +56,9 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
     Bun::ErrorCode errorCode() const { return m_errorCode; }
 
+    // The `length` / `name` / `prototype` prologue shared by every `initializeProperties`.
+    void initializeBaseProperties(JSC::VM&, unsigned length, ASCIILiteral name, JSC::JSObject* prototype);
+
 protected:
     JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure,
         JSC::NativeFunction functionForConstruct,

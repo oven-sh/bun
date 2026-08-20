@@ -288,11 +288,7 @@ template<> JSValue JSMessageEventDOMConstructor::prototypeForStructure(JSC::VM& 
 
 template<> void JSMessageEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "MessageEvent"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSMessageEvent::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "MessageEvent"_s, JSMessageEvent::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -313,7 +309,7 @@ void JSMessageEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSMessageEvent::info(), JSMessageEventPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSMessageEvent::s_info = { "MessageEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageEvent) };

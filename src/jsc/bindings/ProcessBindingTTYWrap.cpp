@@ -370,7 +370,7 @@ public:
         Base::finishCreation(vm);
 
         Bun::reifyStaticPropertyTable(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 
     TTYWrapPrototype(JSC::VM& vm, JSC::Structure* structure)

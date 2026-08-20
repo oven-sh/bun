@@ -1390,7 +1390,7 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
     ASSERT(inherits(info()));
 
     Bun::reifyStaticPropertyTable(vm, info(), RequireResolveFunctionPrototypeValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void JSCommonJSModule::evaluate(

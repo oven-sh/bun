@@ -411,7 +411,7 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
         ? `Bun::reifyStaticPropertyTable(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);`
         : ""
     }${specialSymbols}${staticPrototypeValues}
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 `;

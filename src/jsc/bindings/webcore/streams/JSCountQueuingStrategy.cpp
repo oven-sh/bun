@@ -99,11 +99,7 @@ template<> void JSCountQueuingStrategyConstructor::finishCreation(VM& vm, JSDOMG
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "CountQueuingStrategy"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSCountQueuingStrategy::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "CountQueuingStrategy"_s, JSCountQueuingStrategy::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSCountQueuingStrategy>(vm, globalObject));
 }
 
@@ -174,7 +170,7 @@ void JSCountQueuingStrategyPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSCountQueuingStrategy::info(), JSCountQueuingStrategyPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsCountQueuingStrategyPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSCountQueuingStrategy

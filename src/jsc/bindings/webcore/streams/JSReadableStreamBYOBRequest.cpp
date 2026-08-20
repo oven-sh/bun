@@ -85,11 +85,7 @@ template<> JSValue JSReadableStreamBYOBRequestConstructor::prototypeForStructure
 
 template<> void JSReadableStreamBYOBRequestConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "ReadableStreamBYOBRequest"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSReadableStreamBYOBRequest::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "ReadableStreamBYOBRequest"_s, JSReadableStreamBYOBRequest::prototype(vm, globalObject));
 }
 
 // JSReadableStreamBYOBRequestPrototype
@@ -122,7 +118,7 @@ void JSReadableStreamBYOBRequestPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSReadableStreamBYOBRequest::info(), JSReadableStreamBYOBRequestPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamBYOBRequestPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSReadableStreamBYOBRequest

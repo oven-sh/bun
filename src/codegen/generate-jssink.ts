@@ -725,7 +725,7 @@ void ${prototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalOb
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, ${className}::info(), ${className}PrototypeTableValues, *this);
     putDirect(vm, JSC::Identifier::fromString(vm, "sinkId"_s), JSC::jsNumber(${className}::Sink), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void ${controllerPrototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -733,7 +733,7 @@ void ${controllerPrototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, ${controller}::info(), ${controller}PrototypeTableValues, *this);
     putDirect(vm, JSC::Identifier::fromString(vm, "sinkId"_s), JSC::jsNumber(${className}::Sink), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void ${className}::finishCreation(VM& vm)

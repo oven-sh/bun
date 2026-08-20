@@ -2195,7 +2195,7 @@ void JSDatabaseSyncPrototype::finishCreation(VM& vm, JSGlobalObject* globalObjec
     Bun::reifyStaticPropertyTable(vm, JSDatabaseSync::info(), JSDatabaseSyncPrototypeTableValues, *this);
     // Symbol.dispose — swallow errors if not open, matching Node.js.
     putDirectNativeFunction(vm, globalObject, vm.propertyNames->disposeSymbol, 0, jsDatabaseSyncDispose, ImplementationVisibility::Public, NoIntrinsic, 0);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // ─── DatabaseSync constructor ───────────────────────────────────────────────
@@ -2994,7 +2994,7 @@ void JSStatementSyncPrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSStatementSync::info(), JSStatementSyncPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSStatementSyncConstructor::call(JSGlobalObject* globalObject, CallFrame*)
@@ -3804,7 +3804,7 @@ void JSNodeSqliteTagStorePrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSNodeSqliteTagStore::info(), JSNodeSqliteTagStorePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSNodeSqliteTagStoreConstructor::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStoreConstructor) };

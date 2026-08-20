@@ -193,11 +193,7 @@ template<> JSValue JSCustomEventDOMConstructor::prototypeForStructure(JSC::VM& v
 
 template<> void JSCustomEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "CustomEvent"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSCustomEvent::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "CustomEvent"_s, JSCustomEvent::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -214,7 +210,7 @@ void JSCustomEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSCustomEvent::info(), JSCustomEventPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSCustomEvent::s_info = { "CustomEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCustomEvent) };

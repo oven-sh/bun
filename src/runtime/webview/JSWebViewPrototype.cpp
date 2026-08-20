@@ -99,7 +99,7 @@ private:
     {
         Base::finishCreation(vm);
         Bun::reifyStaticPropertyTable(vm, JSWebView::info(), JSWebViewPrototypeTableValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::putToStringTagWithoutTransition(vm, this, info());
 
         // close() is synchronous: writes the Close frame, rejects any pending
         // promises, erases from the routing table. `using` calls dispose;

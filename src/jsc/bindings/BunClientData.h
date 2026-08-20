@@ -132,6 +132,8 @@ JSC::Structure* createClassStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValu
 void reifyStaticPropertyTable(JSC::VM&, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>, JSC::JSObject&);
 // `JSC::allocateCell` for a fieldless `JSNonFinalObject` subclass living in `vm.plainObjectSpace()` (prototype objects).
 void* allocatePlainObjectCell(JSC::VM&, size_t);
+// `JSC_TO_STRING_TAG_WITHOUT_TRANSITION()`, out of line.
+void putToStringTagWithoutTransition(JSC::VM&, JSC::JSObject*, const JSC::ClassInfo*);
 }
 
 namespace WebCore {

@@ -92,7 +92,7 @@ void CallSitePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
     ASSERT(inherits(info()));
 
     Bun::reifyStaticPropertyTable(vm, CallSite::info(), CallSitePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // TODO: doesn't recognize thisValue as global object

@@ -37,7 +37,7 @@ void JSDiffieHellmanPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSDiffieHellmanPrototype::info(), JSDiffieHellmanPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // Implementation of prototype methods

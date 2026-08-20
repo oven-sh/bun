@@ -209,7 +209,7 @@ private:
     {
         Base::finishCreation(vm);
         Bun::reifyStaticPropertyTable(vm, JSBunRequest::info(), JSBunRequestPrototypeValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
 

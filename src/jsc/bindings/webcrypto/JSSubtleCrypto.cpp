@@ -165,11 +165,7 @@ template<> JSValue JSSubtleCryptoDOMConstructor::prototypeForStructure(JSC::VM& 
 
 template<> void JSSubtleCryptoDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "SubtleCrypto"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSSubtleCrypto::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "SubtleCrypto"_s, JSSubtleCrypto::prototype(vm, globalObject));
     putDirect(vm, JSC::Identifier::fromString(vm, "supports"_s), JSC::JSFunction::create(vm, &globalObject, 2, "supports"_s, jsSubtleCryptoConstructorFunction_supports, JSC::ImplementationVisibility::Public), static_cast<unsigned>(JSC::PropertyAttribute::Function));
 }
 
@@ -202,7 +198,7 @@ void JSSubtleCryptoPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSSubtleCrypto::info(), JSSubtleCryptoPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSSubtleCrypto::s_info = { "SubtleCrypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSubtleCrypto) };

@@ -614,7 +614,7 @@ void JSMIMEParamsPrototype::finishCreation(VM& vm)
     // Set toJSON to toString
     putDirectWithoutTransition(vm, vm.propertyNames->toJSON, getDirect(vm, vm.propertyNames->toString), PropertyAttribute::Function | 0);
 
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 //-- JSMIMEParamsConstructor Implementation --

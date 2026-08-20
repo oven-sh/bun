@@ -539,7 +539,7 @@ void JSStringDecoderPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globa
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSStringDecoder::info(), JSStringDecoderPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSStringDecoderPrototype::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderPrototype) };

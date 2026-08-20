@@ -221,11 +221,7 @@ template<> JSValue JSURLPatternDOMConstructor::prototypeForStructure(JSC::VM& vm
 
 template<> void JSURLPatternDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "URLPattern"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSURLPattern::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "URLPattern"_s, JSURLPattern::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -251,7 +247,7 @@ void JSURLPatternPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSURLPattern::info(), JSURLPatternPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSURLPattern::s_info = { "URLPattern"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLPattern) };

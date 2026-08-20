@@ -94,7 +94,7 @@ void JSCompressionStreamPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSCompressionStream::info(), JSCompressionStreamPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsCompressionStreamPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSCompressionStreamConstructor = JSStreamConstructor<JSCompressionStream>.
@@ -136,11 +136,7 @@ template<> void JSCompressionStreamConstructor::finishCreation(VM& vm, JSDOMGlob
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "CompressionStream"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSCompressionStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "CompressionStream"_s, JSCompressionStream::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSCompressionStream>(vm, globalObject));
 }
 

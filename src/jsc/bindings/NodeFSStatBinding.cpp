@@ -413,7 +413,7 @@ private:
         ASSERT(inherits(info()));
 
         Bun::reifyStaticPropertyTable(vm, this->classInfo(), JSStatsPrototypeTableValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
 
@@ -457,7 +457,7 @@ private:
         ASSERT(inherits(info()));
 
         Bun::reifyStaticPropertyTable(vm, this->classInfo(), JSBigIntStatsPrototypeTableValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
 

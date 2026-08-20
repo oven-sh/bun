@@ -142,11 +142,7 @@ template<> JSValue JSBroadcastChannelDOMConstructor::prototypeForStructure(JSC::
 
 template<> void JSBroadcastChannelDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "BroadcastChannel"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSBroadcastChannel::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "BroadcastChannel"_s, JSBroadcastChannel::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -238,7 +234,7 @@ void JSBroadcastChannelPrototype::finishCreation(VM& vm, JSGlobalObject* globalO
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSBroadcastChannel::info(), JSBroadcastChannelPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
     Bun::WebStreams::installInspectCustom(vm, this, jsBroadcastChannelPrototype_inspectCustom);
 }
 

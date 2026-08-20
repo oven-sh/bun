@@ -120,11 +120,7 @@ template<> JSValue JSMessageChannelDOMConstructor::prototypeForStructure(JSC::VM
 
 template<> void JSMessageChannelDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "MessageChannel"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSMessageChannel::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "MessageChannel"_s, JSMessageChannel::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -141,7 +137,7 @@ void JSMessageChannelPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSMessageChannel::info(), JSMessageChannelPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSMessageChannel::s_info = { "MessageChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageChannel) };

@@ -198,11 +198,7 @@ template<> JSValue JSDOMURLDOMConstructor::prototypeForStructure(JSC::VM& vm, co
 
 template<> void JSDOMURLDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "URL"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSDOMURL::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "URL"_s, JSDOMURL::prototype(vm, globalObject));
     Bun::reifyStaticPropertyTable(vm, JSDOMURL::info(), JSDOMURLConstructorTableValues, *this);
 }
 
@@ -233,7 +229,7 @@ void JSDOMURLPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSDOMURL::info(), JSDOMURLPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsDOMURLPrototypeFunction_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSDOMURL::s_info = { "URL"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMURL) };

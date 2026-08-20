@@ -622,7 +622,7 @@ void NodeVMScriptPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, NodeVMScript::info(), scriptPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSObject* NodeVMScript::createPrototype(VM& vm, JSGlobalObject* globalObject)

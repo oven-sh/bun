@@ -385,11 +385,7 @@ template<> JSValue JSWebSocketDOMConstructor::prototypeForStructure(JSC::VM& vm,
 
 template<> void JSWebSocketDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "WebSocket"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSWebSocket::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "WebSocket"_s, JSWebSocket::prototype(vm, globalObject));
     Bun::reifyStaticPropertyTable(vm, JSWebSocket::info(), JSWebSocketConstructorTableValues, *this);
 }
 
@@ -425,7 +421,7 @@ void JSWebSocketPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSWebSocket::info(), JSWebSocketPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSWebSocket::s_info = { "WebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebSocket) };

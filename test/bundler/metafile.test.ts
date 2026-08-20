@@ -1290,3 +1290,172 @@ describe("bun build --metafile-md", () => {
     expect(content).toContain("node_modules/lodash");
   });
 });
+
+describe("metafile determinism", () => {
+  // Module names are chosen so sorted order differs from discovery order:
+  // the entry is discovered first but "src/aaa.js" sorts before it.
+  const determinismProject = {
+    "src/entry.js": `
+      import { a } from "./aaa.js";
+      import { shared } from "./nested/shared.js";
+      import { z } from "./zebra.js";
+      import { m } from "./mango.js";
+      import { k } from "./kiwi.js";
+      import { p } from "./peach.js";
+      import { g } from "./grape.js";
+      import text from "./data.txt";
+      import img from "./img.png";
+      import "./styles.css";
+      console.log(a, shared, z, m, k, p, g, text, img);
+    `,
+    "src/aaa.js": `export const a = "a";`,
+    "src/zebra.js": `import { shared } from "./nested/shared.js"; export const z = "z" + shared;`,
+    "src/mango.js": `export const m = "m";`,
+    "src/kiwi.js": `export const k = "k";`,
+    "src/peach.js": `export const p = "p";`,
+    "src/grape.js": `export const g = "g";`,
+    "src/nested/shared.js": `export const shared = "s";`,
+    "src/data.txt": `hello`,
+    "src/img.png": `not-really-a-png`,
+    "src/styles.css": `.a { color: red; }`,
+  };
+
+  async function buildIn(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./src/entry.js", "--outdir=dist", "--metafile=meta.json", "--sourcemap=linked"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const outputNames = (
+      await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: `${dir}/dist`, onlyFiles: true }))
+    ).sort();
+    const outputs = new Map<string, string>();
+    for (const name of outputNames) {
+      outputs.set(name, await Bun.file(`${dir}/dist/${name}`).text());
+    }
+    return { meta: await Bun.file(`${dir}/meta.json`).text(), outputs };
+  }
+
+  // imports[].path may still hold the importing directory's resolved absolute
+  // path for some records; strip each directory's own prefix (in its
+  // JSON-escaped form) so every remaining byte must match.
+  function stripDirPrefix(meta: string, dir: string): string {
+    const escaped = (s: string) => JSON.stringify(s).slice(1, -1);
+    const slashed = dir.replaceAll("\\", "/");
+    return meta
+      .replaceAll(escaped(`${dir}/`), "")
+      .replaceAll(escaped(`${dir}\\`), "")
+      .replaceAll(escaped(dir), "")
+      .replaceAll(`${slashed}/`, "")
+      .replaceAll(slashed, "");
+  }
+
+  test.concurrent("build output is byte-identical across different project directories", async () => {
+    using dirA = tempDir("metafile-det-a", determinismProject);
+    using dirB = tempDir("metafile-det-b-much-longer-path", determinismProject);
+
+    const a = await buildIn(String(dirA));
+    const b = await buildIn(String(dirB));
+
+    // Bundles, sourcemaps, and assets must not depend on where the project lives.
+    expect([...b.outputs.keys()]).toEqual([...a.outputs.keys()]);
+    for (const [name, contents] of a.outputs) {
+      expect(b.outputs.get(name)).toBe(contents);
+    }
+
+    // The metafile must list inputs in the same order in both builds.
+    const metaA = JSON.parse(a.meta) as Metafile;
+    const metaB = JSON.parse(b.meta) as Metafile;
+    expect(Object.keys(metaB.inputs)).toEqual(Object.keys(metaA.inputs));
+    expect(Object.keys(metaB.outputs)).toEqual(Object.keys(metaA.outputs));
+
+    // Byte-identical once each directory's own absolute prefix is stripped.
+    expect(stripDirPrefix(b.meta, String(dirB))).toBe(stripDirPrefix(a.meta, String(dirA)));
+  });
+
+  test.concurrent("metafile inputs are sorted by path", async () => {
+    using dir = tempDir("metafile-sorted", determinismProject);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/src/entry.js`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const keys = Object.keys((result.metafile as Metafile).inputs);
+    expect(keys).toEqual([...keys].sort());
+  });
+
+  async function buildEntries(dir: string, entries: string[], metaName: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...entries, "--outdir=dist", `--metafile=${metaName}`],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return await Bun.file(`${dir}/${metaName}`).text();
+  }
+
+  // CSS chunks attached to JS or HTML entries are keyed and ordered by hash;
+  // that hash must be derived from file paths, not source indices, or the
+  // outputs section reshuffles between runs and directories.
+  test.concurrent("multi-entry CSS chunk order is deterministic across runs and directories", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 1; i <= 4; i++) {
+      files[`c${i}.css`] = `.c${i} { color: red; }`;
+      files[`e${i}.js`] = `import "./c${i}.css"; console.log(${i});`;
+    }
+    using dirA = tempDir("metafile-css-order-a", files);
+    using dirB = tempDir("metafile-css-order-b-much-longer", files);
+    const entries = ["e1.js", "e2.js", "e3.js", "e4.js"];
+
+    // Same directory, repeated builds: byte-identical.
+    const a1 = await buildEntries(String(dirA), entries, "m1.json");
+    const a2 = await buildEntries(String(dirA), entries, "m2.json");
+    const a3 = await buildEntries(String(dirA), entries, "m3.json");
+    expect(a2).toBe(a1);
+    expect(a3).toBe(a1);
+
+    // Different directory: same key order, identical after prefix strip.
+    const b1 = await buildEntries(String(dirB), entries, "m1.json");
+    const metaA = JSON.parse(a1) as Metafile;
+    const metaB = JSON.parse(b1) as Metafile;
+    expect(Object.keys(metaB.outputs)).toEqual(Object.keys(metaA.outputs));
+    expect(stripDirPrefix(b1, String(dirB))).toBe(stripDirPrefix(a1, String(dirA)));
+  });
+
+  test.concurrent("multi-page HTML build metafile is deterministic across runs and directories", async () => {
+    const files: Record<string, string> = {};
+    for (const page of ["alpha", "beta", "gamma"]) {
+      files[`${page}.css`] = `.${page} { color: blue; }`;
+      files[`${page}.js`] = `console.log("${page}");`;
+      files[`${page}.html`] =
+        `<!DOCTYPE html><html><head><link rel="stylesheet" href="./${page}.css"></head>` +
+        `<body><script src="./${page}.js"></script></body></html>`;
+    }
+    using dirA = tempDir("metafile-html-det-a", files);
+    using dirB = tempDir("metafile-html-det-b-much-longer", files);
+    const entries = ["alpha.html", "beta.html", "gamma.html"];
+
+    const a1 = await buildEntries(String(dirA), entries, "m1.json");
+    const a2 = await buildEntries(String(dirA), entries, "m2.json");
+    expect(a2).toBe(a1);
+
+    const b1 = await buildEntries(String(dirB), entries, "m1.json");
+    const metaA = JSON.parse(a1) as Metafile;
+    const metaB = JSON.parse(b1) as Metafile;
+    expect(Object.keys(metaB.inputs)).toEqual(Object.keys(metaA.inputs));
+    expect(Object.keys(metaB.outputs)).toEqual(Object.keys(metaA.outputs));
+    expect(stripDirPrefix(b1, String(dirB))).toBe(stripDirPrefix(a1, String(dirA)));
+  });
+});

@@ -2234,7 +2234,7 @@ impl BlobExt for Blob {
             if self.size.get() == MAX_SIZE {
                 if let Some(store) = self.store.get() {
                     return match &store.data {
-                        // The stat failed (no such file). Not cached on purpose.
+                        // The stat failed. Not cached on purpose.
                         store::Data::File(file) if file.seekable.is_none() => {
                             JSValue::js_number(0.0)
                         }
@@ -2285,7 +2285,7 @@ impl BlobExt for Blob {
                     let available = store_size - self.offset.get();
                     self.size.set(window_size(self.size.get(), available));
                 }
-                // A pipe, or a missing file: the size stays unresolved. A
+                // A pipe, or a failed stat: the size stays unresolved. A
                 // cached 0 would cap every later read of this blob.
             }
             store::DataTag::S3 => self.size.set(0),

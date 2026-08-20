@@ -114,16 +114,20 @@ export const enums = {
     "md",
     "xml",
   ],
+  // Ids are the `bun_ast::ImportKind` discriminants; labels are `ImportKind::label()`.
   ImportKind: [
-    "entry-point-run",
-    "entry-point-build",
-    "import-statement",
-    "require-call",
-    "dynamic-import",
-    "require-resolve",
-    "import-rule",
-    "url-token",
-    "internal",
+    "entry-point-run", // EntryPointRun
+    "entry-point-build", // EntryPointBuild
+    "import-statement", // Stmt
+    "require-call", // Require
+    "dynamic-import", // Dynamic
+    "require-resolve", // RequireResolve
+    "import-rule", // At
+    "import-rule", // AtConditional
+    "url-token", // Url
+    "composes", // Composes
+    "html_manifest", // HtmlManifest
+    "internal", // Internal
   ],
 };
 

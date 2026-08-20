@@ -79,8 +79,8 @@ pub enum ImportKind {
 // arms inside label()/error_label() below — zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
 // when the data is pure const).
 //
-// If these are changed, make sure to update
-// - src/js/builtins/codegen/replacements.ts
+// If the variants or the labels below change, make sure to update
+// - src/codegen/replacements.ts (`enums.ImportKind`, indexed by discriminant)
 // - packages/bun-types/bun.d.ts
 
 impl ImportKind {
@@ -94,7 +94,7 @@ impl ImportKind {
             ImportKind::Dynamic => b"dynamic-import",
             ImportKind::RequireResolve => b"require-resolve",
             ImportKind::At => b"import-rule",
-            ImportKind::AtConditional => b"",
+            ImportKind::AtConditional => b"import-rule",
             ImportKind::Url => b"url-token",
             ImportKind::Composes => b"composes",
             ImportKind::Internal => b"internal",
@@ -112,7 +112,7 @@ impl ImportKind {
             ImportKind::Dynamic => b"import()",
             ImportKind::RequireResolve => b"require.resolve()",
             ImportKind::At => b"@import",
-            ImportKind::AtConditional => b"",
+            ImportKind::AtConditional => b"@import",
             ImportKind::Url => b"url()",
             ImportKind::Internal => b"<bun internal>",
             ImportKind::Composes => b"composes",

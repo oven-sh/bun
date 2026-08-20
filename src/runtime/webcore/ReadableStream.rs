@@ -317,6 +317,13 @@ impl ReadableStream {
         use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
         use webcore::SinkHandle;
 
+        // Once the stream has been materialized, part of the body already sits in the
+        // controller's queue, which only the JS pump can reach. Wiring the native source
+        // here would deliver just the bytes that arrive after this point.
+        if self.is_native_source_consumed(global) {
+            return NativeWireResult::NotNative;
+        }
+
         if let Some(byte_stream) = self.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
                 set_source(SourceHandle::ByteStream(byte_stream));

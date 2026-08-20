@@ -1032,9 +1032,12 @@ pub(crate) fn upload_stream(
 
     // Native ByteStream fast-path: wire the source/sink handles directly so
     // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the JS
-    // `readStreamIntoSink` pump.
+    // `readStreamIntoSink` pump. Not once the stream is materialized: the bytes
+    // already moved into the controller's queue are only reachable by the pump.
     if let Some(byte_stream) = readable_stream.ptr.bytes() {
-        if byte_stream.sink.get().is_none() {
+        if byte_stream.sink.get().is_none()
+            && !readable_stream.is_native_source_consumed(global_this)
+        {
             sink.source = crate::webcore::streams::SourceHandle::ByteStream(byte_stream);
             byte_stream.sink.set(sink_handle);
             byte_stream.sink_paused.set(false);

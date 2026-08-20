@@ -732,6 +732,39 @@ test.concurrent(
   },
 );
 
+// Every subcommand below prints the flag table shared by the install family. The behavior the
+// entry describes is covered by "ignore-scripts is read from npmrc" (above) and "--ignore-scripts
+// should skip lifecycle scripts" (below): both install a trustedDependencies package.
+test.concurrent.each([
+  "install",
+  "add",
+  "update",
+  "remove",
+  "link",
+  "unlink",
+  "patch",
+  "patch-commit",
+  "outdated",
+  "publish",
+  "info",
+])("bun %s --help says --ignore-scripts also skips the scripts of trusted dependencies", async subcommand => {
+  await using proc = spawn({
+    cmd: [bunExe(), subcommand, "--help"],
+    env: baseEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const entry = stdout.split(/\r?\n/).find(line => line.includes("--ignore-scripts"));
+  expect(entry).toBeDefined();
+  expect(entry).toContain("trusted dependencies");
+  // The wording from before trustedDependencies existed.
+  expect(entry).not.toContain("dependency scripts are never run");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 // waiter thread is only a thing on Linux.
 for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
   describe.concurrent("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {

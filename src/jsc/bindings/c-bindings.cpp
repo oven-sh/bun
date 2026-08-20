@@ -285,12 +285,10 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 
 extern "C" void Bun__onPosixSignal(int signalNumber);
 
-// Set while JS has a process.on("SIGSYS") listener (BunProcess.cpp).
 static std::atomic<bool> forwardSIGSYSToJS { false };
 
-// A SECCOMP_RET_TRAP policy (Android's per-app policy) answers a blocked
-// syscall with SIGSYS instead of an errno. Make the call return ENOSYS, which
-// the callers of close_range, pidfd_open, openat2, fchmodat2, ... handle.
+// A SECCOMP_RET_TRAP policy (Android) reports a blocked syscall with SIGSYS instead of an
+// errno. Turn it into the ENOSYS return that the callers (close_range, pidfd_open, ...) handle.
 static void onSIGSYS(int sig, siginfo_t* info, void* context)
 {
     if (info->si_code == SYS_SECCOMP && context) {
@@ -322,9 +320,8 @@ static void installSIGSYSHandler()
     sigaction(SIGSYS, &sa, nullptr);
 }
 
-// process.on("SIGSYS") must not replace the handler above, so it registers
-// here instead. Returns false where the handler does not exist and the caller
-// has to install its own.
+// BunProcess.cpp routes process.on("SIGSYS") through onSIGSYS instead of replacing it.
+// Returns false on targets without onSIGSYS; the caller then installs its own handler.
 extern "C" bool Bun__forwardSIGSYSToJS(bool enabled)
 {
     forwardSIGSYSToJS.store(enabled, std::memory_order_relaxed);
@@ -390,9 +387,8 @@ extern "C" void on_before_reload_process_posix()
     }
 
     // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
-    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume/SIGSYS are left
-    // for execve to reset atomically — resetting them here races JSC's sampler/GC threads (and, for
-    // SIGSYS, any thread whose syscall a seccomp policy traps) fatally.
+    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/SIGSYS/RT/sigThreadSuspendResume are left
+    // for execve to reset atomically — resetting them here races JSC's sampler/GC threads fatally.
     struct sigaction sa {};
     sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);
@@ -1016,7 +1012,7 @@ static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
 
 // npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N])
-// and minus SIGSYS (raised for this process's own syscall; owned by installSIGSYSHandler on Linux).
+// and minus SIGSYS (synchronous; on Linux owned by installSIGSYSHandler).
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \

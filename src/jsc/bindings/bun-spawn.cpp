@@ -248,8 +248,7 @@ extern "C" ssize_t posix_spawn_bun(
 
     sigfillset(&blockall);
 #if OS(LINUX)
-    // A seccomp trap on a blocked SIGSYS kills the process instead of reaching
-    // the ENOSYS handler (installSIGSYSHandler in c-bindings.cpp).
+    // A seccomp trap on a blocked SIGSYS is fatal; see installSIGSYSHandler (c-bindings.cpp).
     sigdelset(&blockall, SIGSYS);
 #endif
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);

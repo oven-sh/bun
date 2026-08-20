@@ -64,13 +64,23 @@ impl Format {
 const CHUNK: usize = 16 * 1024;
 
 /// Room for one codec call: grows `out` by up to [`CHUNK`], clamped to `cap`.
-fn spare(out: &mut Vec<u8>, cap: usize) -> &mut [core::mem::MaybeUninit<u8>] {
+fn spare(out: &mut Vec<u8>, cap: usize) -> Result<&mut [core::mem::MaybeUninit<u8>], CodecError> {
     debug_assert!(out.len() < cap);
     let budget = cap - out.len();
-    out.reserve(budget.min(CHUNK));
+    out.try_reserve(budget.min(CHUNK))
+        .map_err(|_| CodecError::OutOfMemory)?;
     let spare = out.spare_capacity_mut();
     let len = spare.len().min(budget);
-    &mut spare[..len]
+    Ok(&mut spare[..len])
+}
+
+/// `CodecError` for a `ZSTD_isError` return value.
+fn zstd_error(rc: usize, message: &'static str) -> CodecError {
+    if zstd::ZSTD_getErrorCode(rc) == zstd::ZSTD_error_memory_allocation {
+        CodecError::OutOfMemory
+    } else {
+        CodecError::Message(message)
+    }
 }
 
 /// The rest of a chunk (or flush) whose last step stopped at the output cap.
@@ -167,6 +177,8 @@ impl Drop for CompressionStreamCoder {
 #[derive(Clone, Copy)]
 enum CodecError {
     TrailingJunk,
+    /// The output buffer or the codec's own state could not be allocated.
+    OutOfMemory,
     Message(&'static str),
     /// Brotli decoder error; `BrotliDecoderErrorString` (static C string).
     /// Surfaced as TypeError with `.code = "ERR_" + <this>` for node:zlib compat.
@@ -351,7 +363,7 @@ impl CompressionStreamCoder {
                     };
                     s.next_in = remaining.as_ptr();
                     s.avail_in = take as u32;
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     s.next_out = spare.as_mut_ptr().cast();
                     s.avail_out = spare.len().min(u32::MAX as usize) as u32;
                     let before = s.avail_out;
@@ -367,6 +379,7 @@ impl CompressionStreamCoder {
                     match rc {
                         zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
                         zlib::ReturnCode::StreamEnd => return Ok(Progress::Done),
+                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
                         _ => return Err(CodecError::Message("deflate failed")),
                     }
                     if s.avail_out != 0 && remaining.is_empty() {
@@ -410,7 +423,7 @@ impl CompressionStreamCoder {
                     };
                     s.next_in = remaining.as_ptr();
                     s.avail_in = take as u32;
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     s.next_out = spare.as_mut_ptr().cast();
                     s.avail_out = spare.len().min(u32::MAX as usize) as u32;
                     let before = s.avail_out;
@@ -447,6 +460,7 @@ impl CompressionStreamCoder {
                         zlib::ReturnCode::NeedDict => {
                             return Err(CodecError::Message("Missing dictionary"));
                         }
+                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
                         _ => return Err(CodecError::Message("inflate failed")),
                     }
                     if s.avail_out != 0 && remaining.is_empty() {
@@ -471,7 +485,7 @@ impl CompressionStreamCoder {
                             consumed: input.len() - avail_in,
                         });
                     }
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     let mut next_out: *mut u8 = spare.as_mut_ptr().cast();
                     let mut avail_out: usize = spare.len();
                     let before = avail_out;
@@ -514,7 +528,7 @@ impl CompressionStreamCoder {
                             consumed: input.len() - avail_in,
                         });
                     }
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     let mut next_out: *mut u8 = spare.as_mut_ptr().cast();
                     let mut avail_out: usize = spare.len();
                     let before = avail_out;
@@ -548,10 +562,13 @@ impl CompressionStreamCoder {
                         }
                         brotli::BrotliDecoderResult::needs_more_output => {}
                         brotli::BrotliDecoderResult::err => {
-                            // SAFETY: `p` is a live decoder; the error string is a
-                            // static C string owned by the brotli library.
+                            // SAFETY: `p` is a live decoder.
+                            let ec = brotli::BrotliDecoderGetErrorCode(unsafe { &*p.as_ptr() });
+                            if ec.is_alloc_failure() {
+                                return Err(CodecError::OutOfMemory);
+                            }
+                            // SAFETY: the error string is a static C string owned by the brotli library.
                             let code = unsafe {
-                                let ec = brotli::BrotliDecoderGetErrorCode(&*p.as_ptr());
                                 core::ffi::CStr::from_ptr(brotli::BrotliDecoderErrorString(ec))
                             };
                             return Err(CodecError::Brotli(
@@ -575,7 +592,7 @@ impl CompressionStreamCoder {
                             consumed: input_buf.pos,
                         });
                     }
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     let mut output_buf = zstd::ZSTD_outBuffer {
                         dst: spare.as_mut_ptr().cast(),
                         size: spare.len(),
@@ -595,7 +612,7 @@ impl CompressionStreamCoder {
                     // bytes.
                     unsafe { out.set_len(out.len() + output_buf.pos) };
                     if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(CodecError::Message("zstd encode failed"));
+                        return Err(zstd_error(remaining, "zstd encode failed"));
                     }
                     if input_buf.pos == input_buf.size && (!finish || remaining == 0) {
                         return Ok(Progress::Done);
@@ -642,7 +659,7 @@ impl CompressionStreamCoder {
                             consumed: input_buf.pos,
                         });
                     }
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     let mut output_buf = zstd::ZSTD_outBuffer {
                         dst: spare.as_mut_ptr().cast(),
                         size: spare.len(),
@@ -661,7 +678,7 @@ impl CompressionStreamCoder {
                     // bytes.
                     unsafe { out.set_len(out.len() + output_buf.pos) };
                     if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(CodecError::Message("zstd decode failed"));
+                        return Err(zstd_error(remaining, "zstd decode failed"));
                     }
                     if remaining == 0 {
                         self.ended = true;
@@ -823,6 +840,7 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
                 format_args!("Trailing junk found after the end of the compressed stream"),
             )
             .to_js(),
+        CodecError::OutOfMemory => global.create_out_of_memory_error(),
         CodecError::Message(msg) => global.create_type_error_instance(format_args!("{msg}")),
         CodecError::Brotli(detail) => {
             let code = format!("ERR_{detail}");

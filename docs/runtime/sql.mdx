@@ -1002,6 +1002,13 @@ try {
 } // Automatically released
 ```
 
+When every connection is busy, `reserve()` waits until one frees up. Pass an `AbortSignal` to stop waiting: the promise rejects with `signal.reason` and no connection is taken from the pool. Aborting after the promise resolved has no effect, so a connection you received must still be released.
+
+```ts
+// Give up if no connection frees up within 5 seconds
+using reserved = await sql.reserve({ signal: AbortSignal.timeout(5000) });
+```
+
 ---
 
 ## LISTEN / NOTIFY (PostgreSQL)

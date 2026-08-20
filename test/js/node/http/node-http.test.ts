@@ -27,7 +27,7 @@ import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { duplexPair, PassThrough, Writable } from "node:stream";
+import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
@@ -4152,5 +4152,57 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     await closed;
     expect(requestHandlerRan).toBe(false);
     expect(serverSide.destroyed).toBe(true);
+  }
+});
+
+// A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still
+// belongs to that server: once its handshake completes, a malformed request from it reaches 'clientError'
+// (as in Node). The connection used to go uncounted until the handshake finished, so close() considered the
+// server drained and released its wrapper — the dispatch was dropped, or under GC pressure went through freed
+// handler slots.
+test("https 'clientError' for a connection whose handshake completes after close()", async () => {
+  const events: string[] = [];
+  let server: https.Server | null = createHttpsServer(tlsCert, (req, res) => res.end("ok"));
+  server.on("clientError", (err: any, socket) => {
+    events.push("clientError " + (err.code || err.message));
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  const raw = connect(port, "127.0.0.1");
+  let client: ReturnType<typeof tlsConnect> | undefined;
+  try {
+    await once(raw, "connect");
+    // Client→server bytes flow; server→client bytes are held, so the server has answered the ClientHello and
+    // is waiting mid-handshake when close() runs.
+    let hold = true;
+    const held: Buffer[] = [];
+    const wire = new Duplex({
+      read() {},
+      write(chunk, enc, cb) {
+        raw.write(chunk, cb);
+      },
+    });
+    raw.on("data", d => (hold ? held.push(d) : wire.push(d)));
+    raw.on("close", () => wire.push(null));
+    const c = (client = tlsConnect({ socket: wire, rejectUnauthorized: false }));
+    c.on("error", () => {});
+    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000; ) await Bun.sleep(5);
+    expect(held.length).toBeGreaterThan(0);
+
+    const closed = new Promise<void>(r => server!.close(() => r()));
+    server = null;
+    Bun.gc(true);
+
+    hold = false;
+    for (const d of held) wire.push(d);
+    c.write("NOT A VALID REQUEST LINE\r\n\r\n");
+    await new Promise<void>(res => (c.on("data", () => {}), c.on("end", () => res()), c.on("close", () => res())));
+    expect(events).toEqual([expect.stringMatching(/^clientError HPE_INVALID/)]);
+    await closed;
+  } finally {
+    server?.close();
+    client?.destroy();
+    raw.destroy();
   }
 });

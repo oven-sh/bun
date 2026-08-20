@@ -558,7 +558,7 @@ pub(crate) fn js_node_test_mark_result(
     // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
     let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
     let bound = match dcb_ref {
-        Some(refdata) => refdata.phase.clone(),
+        Some(refdata) => refdata.phase,
         // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
         // drain before it stamps the DoneCallback. `get_current_state_data()`
         // can't name a sequence inside a concurrent group, but

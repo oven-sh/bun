@@ -32,12 +32,11 @@ use bun_jsc::module_loader::{
 };
 use bun_jsc::resolved_source::OwnedResolvedSource;
 use bun_jsc::virtual_machine::{
-    InitOptions, ResolveMode, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult,
-    VirtualMachine,
+    InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
 };
 use bun_jsc::{
-    AnyPromise, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
-    JSInternalPromise, JSModuleLoader, JSValue, JsResult, ResolvedSource,
+    AnyPromise, ErrorCode, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
+    JSModuleLoader, JSValue, JsResult, ResolvedSource,
 };
 
 use bun_ast::ImportKind;
@@ -768,9 +767,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             .unwrap_or(preload_slice);
 
         // node: builtin specifiers bypass the file resolver — JSModuleLoader
-        // resolves them internally. node:worker_threads is preloaded this way so
-        // its node-style worker bootstrap (stdio rebinding) runs before user code;
-        // this also means `bun --import node:*` works like Node's.
+        // resolves them internally, so `bun --import node:*` works like Node's.
         let module_name = if normalized.starts_with(b"node:") {
             bun_core::String::from_bytes(normalized)
         } else {
@@ -856,8 +853,6 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 // enabled.
                 // SAFETY: `el` is the live per-thread event loop.
                 let el = unsafe { &*vm }.event_loop();
-                // SAFETY: `el` is the live per-thread event loop.
-                unsafe { (*el).perform_gc() };
                 loop {
                     // SAFETY: `pending_internal_promise` was set just above (or
                     // swapped by HMR to another live cell); `status()` is a
@@ -881,8 +876,6 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     }
                 }
             } else {
-                // SAFETY: `el` is the live per-thread event loop.
-                unsafe { (*(*vm).event_loop()).perform_gc() };
                 // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
                 // live protected JSC heap cell.
                 let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
@@ -1024,7 +1017,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
         // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-        unsafe { (*(*vm).global).handle_rejected_promises() };
+        let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
         return;
     }
 
@@ -1112,7 +1105,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    unsafe { (*(*vm).global).handle_rejected_promises() };
+    let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
 /// `eventLoop().autoTickActive()`. Same shape as
@@ -2779,7 +2772,6 @@ fn transpile_source_code_inner(
                             is_node_override,
                             path,
                             hash,
-                            loader,
                             package_json,
                         );
                     }
@@ -2831,7 +2823,6 @@ fn transpile_source_code_inner(
                         is_node_override,
                         path,
                         hash,
-                        loader,
                         package_json,
                     );
                 }
@@ -3599,17 +3590,9 @@ fn transpile_source_code_inner(
                 // type.
                 let watcher =
                     unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                if !matches!(
-                    watcher.add_file::<true>(
-                        input_fd,
-                        path.text,
-                        hash,
-                        loader,
-                        bun_sys::Fd::INVALID,
-                        None,
-                    ),
-                    Ok(bun_watcher::FdOwnership::Watcher)
-                ) {
+                let added =
+                    watcher.add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
+                if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
                     // Not adopted (already watched, or add failed); close the
                     // fd this arm opened.
                     if input_fd.is_valid() {
@@ -3694,7 +3677,6 @@ fn maybe_watch_file(
     is_node_override: bool,
     path: &Fs::Path,
     hash: u32,
-    loader: Loader,
     package_json: Option<&'static bun_watcher::PackageJSON>,
 ) {
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3718,7 +3700,6 @@ fn maybe_watch_file(
             input_file_fd,
             path.text,
             hash,
-            loader,
             bun_sys::Fd::INVALID,
             package_json,
         ),
@@ -4947,19 +4928,15 @@ unsafe fn transpile_virtual_module(
     }
 }
 
-/// Core of `ModuleLoader.resolveEmbeddedFile`:
-/// finds an embedded file in the standalone module graph, materializes it to
-/// a real on-disk temp file with `extname`, and writes the resulting absolute
-/// path into `out_buf`. Returns the number of bytes written.
+/// Materialise an embedded file (`.node`/`.so`/`.dylib`/`.dll` from
+/// `bun build --compile`) to an on-disk path `dlopen(2)` can open. Called
+/// from `resolve_embedded_node_file_hook` (`process.dlopen()`) and
+/// `ffi_body::FFI::open` (`bun:ffi`).
 ///
-/// Called from two paths:
-///   - `resolve_embedded_node_file_hook` (`process.dlopen()` on a compiled
-///     executable; extname = `"node"`).
-///   - `bun:ffi` `dlopen()` on an embedded `with { type: "file" }` shared
-///     library (`ffi_body::FFI::open`; extname = `"so"` / `"dylib"` / `"dll"`).
-///
-/// Returns `None` when the path is empty, not present in the graph, or any
-/// filesystem step fails.
+/// The filename is a hash of the contents, so every `dlopen()` of the same
+/// embedded library — across calls, Worker VMs, and restarts — shares one
+/// file instead of leaking a copy per call (#29585). Returns `None` when the
+/// input is empty, absent from the graph, or a filesystem step fails.
 pub(crate) fn resolve_embedded_file_to_buf(
     input_path: &[u8],
     extname: &[u8],
@@ -4969,69 +4946,100 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return None;
     }
 
-    // Note: do NOT downcast the `&'static dyn StandaloneModuleGraph`
-    // stored on `vm` to `&mut Graph` — that shared-ref provenance is
-    // read-only (instant UB under Stacked Borrows). Reach the concrete graph
-    // via `Graph::get()` which hands out the `UnsafeCell` `*mut` (same path
-    // as `load_standalone_sourcemap` / `node_fs`).
-    let graph = bun_standalone_graph::Graph::get()?;
-    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-    // process-lifetime singleton; this hook runs on the JS thread and `find`
-    // is read-only over the post-init `files` table.
-    let file = (unsafe { &mut *graph }).find(input_path)?;
-    let file_name: &[u8] = file.name;
+    let file = bun_standalone_graph::Graph::get_ref()?.find_ref(input_path)?;
     let file_contents: &[u8] = file.contents.as_bytes();
 
-    let mut tmpname_buf = bun_paths::path_buffer_pool::get();
-    let tmpfilename =
-        Fs::FileSystem::tmpname(extname, &mut tmpname_buf[..], bun_wyhash::hash(file_name)).ok()?;
+    // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
+    // users on a shared `/tmp` from colliding.
+    let content_hash = bun_wyhash::hash(file_contents);
+    let uid = extract_owner_uid();
+    let mut canonical_name_buf = [0u8; 64];
+    let canonical_name = bun_core::fmt::buf_print_z(
+        &mut canonical_name_buf,
+        format_args!(
+            ".bun-{}-{:x}.{}",
+            uid,
+            content_hash,
+            bun_core::fmt::s(extname)
+        ),
+    )
+    .ok()?;
 
-    // SAFETY: `FileSystem::instance()` returns the process-global singleton
-    // pointer (initialized at startup).
+    // Reuse the canonical file from a previous run if it is still ours with
+    // the right size. `lstatat` so a planted symlink fails the ISREG check
+    // instead of being followed.
     let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
-
-    let tmpfile = bun_sys::Tmpfile::create(tmpdir_fd, tmpfilename).ok()?;
-    let tmpfile_fd = tmpfile.fd;
-    scopeguard::defer! {
-        let _ = bun_sys::close(tmpfile_fd);
+    if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
+        let size_ok = st.st_size as usize == file_contents.len();
+        #[cfg(unix)]
+        let ours = st.st_uid == uid && bun_sys::S::ISREG(st.st_mode as u32);
+        #[cfg(windows)]
+        let ours = true;
+        if size_ok && ours {
+            return write_absolute(
+                out_buf,
+                Fs::RealFS::tmpdir_path(),
+                canonical_name.as_bytes(),
+            );
+        }
     }
 
-    let mut scratch = bun_paths::path_buffer_pool::get();
-    if bun_sys::write_file_with_path_buffer(
-        &mut scratch,
-        &bun_sys::WriteFileArgs {
-            data: bun_sys::WriteFileData::Buffer {
-                buffer: file_contents,
-            },
-            encoding: bun_sys::WriteFileEncoding::Buffer,
-            dirfd: tmpdir_fd,
-            file: bun_sys::PathOrFileDescriptor::Fd(tmpfile_fd),
-            ..Default::default()
-        },
-    )
-    .is_err()
-    {
+    // Write to a unique scratch name, then atomically rename it into place.
+    let mut scratch_buf = bun_paths::path_buffer_pool::get();
+    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+
+    // 0600: the file persists, only the owning euid ever dlopens it, and the
+    // embedded bytes may come from a binary that is not world-readable.
+    let mut tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
+    let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
+
+    let write_ok = bun_sys::File::borrow(&tmpfile.fd)
+        .write_all(file_contents)
+        .is_ok();
+    if !write_ok {
+        let _ = bun_sys::unlinkat(tmpdir_fd, scratch_name);
         return None;
     }
 
-    // `join_abs_string_buf` writes into
-    // `out_buf` and returns a slice pointing into it; capture the length so
-    // the caller knows how many bytes are live.
+    // On sticky `/tmp` the rename fails EACCES/EPERM when another user owns
+    // the destination; fall back to the scratch file.
+    let rename_ok = tmpfile.finish(canonical_name).is_ok();
+
+    let final_name = if rename_ok {
+        canonical_name
+    } else {
+        scratch_name
+    };
+    write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())
+}
+
+/// Writes `{tmpdir}/{name}` into `out_buf` and returns the length.
+fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usize> {
     let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        Fs::RealFS::tmpdir_path(),
+        tmpdir,
         out_buf,
-        &[tmpfilename.as_bytes()],
+        &[name],
     );
     Some(result.len())
 }
 
-/// `LoaderHooks::resolve_embedded_node_file` body —
-/// `ModuleLoader.resolveEmbeddedFile` for the
-/// `process.dlopen()`-on-a-compiled-executable path. Delegates to
+/// euid, not uid: `open(2)` sets the new file's owner to euid, so a
+/// `getuid()` check would never match in a setuid binary.
+#[cfg(unix)]
+fn extract_owner_uid() -> u32 {
+    // SAFETY: `geteuid` takes no arguments and cannot fail.
+    unsafe { libc::geteuid() as u32 }
+}
+
+#[cfg(windows)]
+fn extract_owner_uid() -> u32 {
+    bun_sys::windows::user_unique_id()
+}
+
+/// `LoaderHooks::resolve_embedded_node_file` body: delegates to
 /// [`resolve_embedded_file_to_buf`] with `extname = "node"` and writes the
-/// resulting on-disk path back into `*in_out_str`
-/// (as an owned UTF-8 clone).
+/// on-disk path back into `*in_out_str`.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM; `in_out_str` is a valid in/out
@@ -5057,481 +5065,6 @@ unsafe fn resolve_embedded_node_file_hook(
     true
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// LoaderHooks::resolve — `VirtualMachine.resolveMaybeNeedsTrailingSlash`
-// + `_resolve`.
-//
-// This is the resolution path behind `Bun__resolveSync`,
-// `Zig__GlobalObject__resolve`, `import.meta.resolve`, and
-// `Module._findPath`. The body drives `transpiler.resolver` (a
-// `bun_resolver::Resolver` value field of `VirtualMachine`) and reaches into
-// `ServerEntryPoint` / `ObjectURLRegistry` — all forward-deps on `bun_jsc`,
-// hence §Dispatch.
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Path-separator-adjusted literal suffixes. Only the two
-/// `resolve` callers need them (the `[eval]` / `[stdin]` suffix checks), so
-/// inline the per-platform constants.
-#[cfg(windows)]
-const EVAL_SUFFIX: &[u8] = b"\\[eval]";
-#[cfg(not(windows))]
-const EVAL_SUFFIX: &[u8] = b"/[eval]";
-#[cfg(windows)]
-const STDIN_SUFFIX: &[u8] = b"\\[stdin]";
-#[cfg(not(windows))]
-const STDIN_SUFFIX: &[u8] = b"/[stdin]";
-
-/// Split off the `?query` suffix.
-#[inline]
-fn normalize_specifier_for_resolution<'a>(
-    specifier: &'a [u8],
-    query_string: &mut &'a [u8],
-) -> &'a [u8] {
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier, b'?') {
-        let i = i as usize;
-        *query_string = &specifier[i..];
-        &specifier[..i]
-    } else {
-        specifier
-    }
-}
-
-/// Strip a `file://` prefix.
-#[inline]
-fn normalize_source(source: &[u8]) -> &[u8] {
-    source.strip_prefix(b"file://".as_slice()).unwrap_or(source)
-}
-
-/// `VirtualMachine._resolve`.
-///
-/// Writes the resolved path/query into `*ret_path` / `*ret_query`. A full
-/// `Resolver::Result` would be unused by the
-/// only caller (`resolveMaybeNeedsTrailingSlash` reads `.path` /
-/// `.query_string` and clones them), so we drop it and return only the slices
-/// the caller actually consumes — avoids materialising the 1KB
-/// `Resolver::Result` on every fast-path hit.
-///
-/// # Safety
-/// `vm` is the live per-thread VM. `specifier` / `source` borrow the caller's
-/// `to_utf8()` buffers and must outlive the returned slices (which the caller
-/// immediately `clone_utf8`s).
-unsafe fn resolve<'a>(
-    vm: *mut VirtualMachine,
-    specifier: &'a [u8],
-    source: &'a [u8],
-    is_esm: bool,
-    is_a_file_path: bool,
-    ret_path: &mut &'a [u8],
-    ret_query: &mut &'a [u8],
-) -> crate::Result<()> {
-    use bun_ast::Target;
-    use bun_jsc::virtual_machine::MAIN_FILE_NAME;
-    use bun_resolve_builtins::{Alias, Cfg as AliasCfg};
-
-    // `Runtime.Runtime.Imports.alt_name` == `Runtime.Runtime.Imports.Name`
-    // == `"bun:wrap"` (see js_parser/runtime.rs:644-645); both consts are the
-    // bare specifier so a direct equality on `basename(specifier)` is correct.
-    if bun_paths::basename(specifier) == b"bun:wrap" {
-        *ret_path = b"bun:wrap";
-        return Ok(());
-    }
-
-    // `bun:main` synthetic entry. `entry_point` lives on the
-    // high-tier `RuntimeState`.
-    if specifier == MAIN_FILE_NAME {
-        let state = runtime_state();
-        // SAFETY: `state` is the per-thread `RuntimeState` box; null only when
-        // no high tier is installed (impossible — this *is* the high tier).
-        if !state.is_null() && unsafe { &*state }.entry_point.generated {
-            *ret_path = MAIN_FILE_NAME;
-            return Ok(());
-        }
-    }
-
-    // `macro:` namespace passes through.
-    if specifier.starts_with(bun_js_parser::Macro::NAMESPACE_WITH_COLON) {
-        // The caller
-        // clones `ret_path` into an owned string unconditionally, so
-        // returning the borrowed slice is sufficient and avoids a leak
-        // (PORTING.md §Forbidden (leaking)).
-        *ret_path = specifier;
-        return Ok(());
-    }
-
-    // `node_fallbacks` virtual import path.
-    if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
-        *ret_path = specifier;
-        return Ok(());
-    }
-
-    // Hardcoded builtin alias (`node:fs` etc.).
-    if let Some(alias) = Alias::get(specifier, Target::Bun, AliasCfg::default()) {
-        *ret_path = alias.path.as_bytes();
-        return Ok(());
-    }
-
-    if bun_jsc::module_loader::exposed_internal_tag(specifier).is_some() {
-        *ret_path = specifier;
-        return Ok(());
-    }
-
-    // `[eval]` / `[stdin]` virtual sources.
-    // SAFETY: `vm` is the live per-thread VM.
-    if unsafe { &*vm }.module_loader.eval_source.is_some()
-        && (specifier.ends_with(EVAL_SUFFIX) || specifier.ends_with(STDIN_SUFFIX))
-    {
-        *ret_path = specifier;
-        return Ok(());
-    }
-
-    // `blob:` URLs registered via `URL.createObjectURL`.
-    if let Some(rest) = specifier.strip_prefix(b"blob:".as_slice()) {
-        if crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(rest) {
-            *ret_path = specifier;
-            return Ok(());
-        }
-        return Err(crate::Error::ModuleNotFound);
-    }
-
-    // ── Filesystem resolver ──────────────────────────────────────────────
-    let is_special_source = source == MAIN_FILE_NAME || bun_js_parser::Macro::is_macro_path(source);
-    let mut query_string: &[u8] = b"";
-    let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
-    // `Fs.PathName.init(source).dirWithTrailingSlash()` slices
-    // `source` in place, so the `'a` lifetime is preserved.
-    let top_level_dir: &'a [u8] = Fs::FileSystem::get().top_level_dir;
-    let source_to_use: &[u8] = if !is_special_source {
-        if is_a_file_path {
-            Fs::PathName::init(source).dir_with_trailing_slash()
-        } else {
-            source
-        }
-    } else {
-        top_level_dir
-    };
-
-    // `resolve_and_auto_install` retry-on-not-found loop.
-    // SAFETY: `resolver.opts.global_cache` is a plain enum field.
-    let global_cache = unsafe { &*vm }.transpiler.resolver.opts.global_cache;
-    let kind = if is_esm {
-        ImportKind::Stmt
-    } else {
-        ImportKind::Require
-    };
-
-    // This cache-bust is disabled when the filesystem is not being used to
-    // resolve.
-    let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-    let result: bun_resolver::Result = loop {
-        // SAFETY: `vm.transpiler.resolver` is the unique per-VM resolver; this
-        // is the only `&mut` borrow live for this call (the JS thread is
-        // single-entry here).
-        match unsafe {
-            (*vm).transpiler.resolver.resolve_and_auto_install(
-                source_to_use,
-                normalized_specifier,
-                kind,
-                global_cache,
-            )
-        } {
-            ResolveResultUnion::Success(r) => break r,
-            ResolveResultUnion::Failure(e) => return Err(e.into()),
-            ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
-                if !retry_on_not_found {
-                    return Err(crate::Error::ModuleNotFound);
-                }
-                retry_on_not_found = false;
-
-                // Bust the dir cache for the candidate
-                // parent directory and retry once.
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let buster_name: &[u8] = 'name: {
-                    if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_core::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::Error::ModuleNotFound);
-                            }
-                            // Normalized without trailing slash.
-                            break 'name bun_paths::string_paths::normalize_slashes_only(
-                                &mut buf[..],
-                                dir,
-                                bun_paths::SEP,
-                            );
-                        }
-                    }
-
-                    // If the specifier is too long to join, it can't name a
-                    // real directory — skip the cache bust and fail.
-                    if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                        return Err(crate::Error::ModuleNotFound);
-                    }
-
-                    let parts: [&[u8]; 3] = [source_to_use, normalized_specifier, b".."];
-                    break 'name bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
-                    >(top_level_dir, &mut buf[..], &parts)
-                    .as_bytes();
-                };
-
-                // Only re-query if we previously had something cached.
-                // SAFETY: see above.
-                if unsafe {
-                    (*vm).transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    )
-                } {
-                    continue;
-                }
-                return Err(crate::Error::ModuleNotFound);
-            }
-        }
-    };
-
-    // SAFETY: plain bool/usize fields.
-    unsafe {
-        if !(*vm).macro_mode {
-            (*vm).has_any_macro_remappings =
-                (*vm).has_any_macro_remappings || !(*vm).transpiler.options.macro_remap.is_empty();
-        }
-    }
-
-    *ret_query = query_string;
-    let Some(result_path) = result.path_const() else {
-        return Err(crate::Error::ModuleNotFound);
-    };
-    // Note: `result_path.text` is a `&'_ [u8]` borrowed from the
-    // resolver's interned `'static` BSSStringList stores (see resolver/lib.rs
-    // §allocators) — the same store `load_preloads` reads from. Transmute the
-    // lifetime to `'a` so the caller can `clone_utf8` it; the underlying bytes
-    // outlive the program.
-    // SAFETY: `result_path.text` borrows the resolver's `'static` interned
-    // string store; detaching the borrow lifetime is sound (see Note).
-    *ret_path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
-    Ok(())
-}
-
-/// `LoaderHooks::resolve` body —
-/// `VirtualMachine.resolveMaybeNeedsTrailingSlash`.
-///
-/// # Safety
-/// `res` / `global` are valid; `query_string` is null or a valid out-param.
-/// `specifier` / `source` are passed by value (spec moves the `bun.String`s by
-/// value too) and are NOT derefed here — the caller owns them.
-unsafe fn resolve_hook(
-    res: *mut ErrorableString,
-    global: *mut JSGlobalObject,
-    specifier: bun_core::String,
-    source: bun_core::String,
-    query_string: *mut bun_core::String,
-    mode: ResolveMode,
-    is_a_file_path: bool,
-) -> bool {
-    use bun_ast::Target;
-    use bun_jsc::ResolveMessage;
-    use bun_resolve_builtins::{Alias, Cfg as AliasCfg};
-
-    // SAFETY: per fn contract.
-    let global_ref = unsafe { &*global };
-    // Note: `bun_vm_ptr()` returns the FFI `*mut VirtualMachine` directly
-    // (mutable provenance from C++); we go through a raw ptr (not `&mut`) for
-    // the resolver/log writes below to avoid aliasing (PORTING.md §Forbidden —
-    // same raw-ptr-per-field style as `load_preloads`/`transpile_source_code`).
-    // Going through `bun_vm() -> &VirtualMachine -> *mut` would be UB to write
-    // through under Stacked Borrows.
-    let vm: *mut VirtualMachine = global_ref.bun_vm_ptr();
-
-    // Overlong specifier guard. `MAX_PATH_BYTES * 1.5`, truncated:
-    // integer `* 3 / 2` is exact for the powers-of-two MAX_PATH_BYTES values.
-    const MAX_SPECIFIER_LEN: usize = bun_paths::MAX_PATH_BYTES * 3 / 2;
-    if is_a_file_path && specifier.length() > MAX_SPECIFIER_LEN {
-        let specifier_utf8 = specifier.to_utf8();
-        let source_utf8 = source.to_utf8();
-        let import_kind = mode.import_kind();
-        let printed = ResolveMessage::fmt(
-            specifier_utf8.slice(),
-            source_utf8.slice(),
-            bun_jsc::CrateError::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
-            import_kind,
-        );
-        let msg = bun_ast::Msg {
-            data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
-            ..Default::default()
-        };
-        let js_err = match ResolveMessage::create(global_ref, &msg, source_utf8.slice()) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        // SAFETY: per fn contract.
-        unsafe { *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js_err) };
-        return true;
-    }
-
-    let specifier_utf8 = specifier.to_utf8();
-    let source_utf8 = source.to_utf8();
-
-    // `plugin_runner::on_resolve_jsc`.
-    // SAFETY: `vm` is the live per-thread VM.
-    if unsafe { &*vm }.plugin_runner.is_some() {
-        use bun_bundler_jsc::PluginRunner as plugin_runner;
-        if plugin_runner::could_be_plugin(specifier_utf8.slice()) {
-            let namespace = plugin_runner::extract_namespace(specifier_utf8.slice());
-            let after_namespace = if namespace.is_empty() {
-                specifier_utf8.slice()
-            } else {
-                &specifier_utf8.slice()[namespace.len() + 1..]
-            };
-            match plugin_runner::on_resolve_jsc(
-                global_ref,
-                bun_core::String::init(namespace),
-                bun_core::String::borrow_utf8(after_namespace),
-                source,
-                bun_jsc::BunPluginTarget::Bun,
-            ) {
-                Ok(Some(resolved_path)) => {
-                    // SAFETY: per fn contract.
-                    unsafe { *res = resolved_path };
-                    return true;
-                }
-                Ok(None) => {}
-                // JS exception was thrown; caller observes it via the
-                // global's exception state, so bail without writing `res`.
-                Err(_) => return false,
-            }
-        }
-    }
-
-    // Hardcoded builtin alias fast path. For
-    // `require.resolve("fs")` (`RequireResolve && node_builtin`) Node returns
-    // the bare specifier as-is, not the canonical `node:fs`.
-    if let Some(hardcoded) = Alias::get(specifier_utf8.slice(), Target::Bun, AliasCfg::default()) {
-        let path = if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
-            specifier.dupe_ref()
-        } else {
-            bun_core::String::init(hardcoded.path.as_bytes())
-        };
-        // SAFETY: per fn contract.
-        unsafe { *res = ErrorableString::ok(path) };
-        return true;
-    }
-
-    if bun_jsc::module_loader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
-        // SAFETY: per fn contract.
-        unsafe { *res = ErrorableString::ok(specifier.dupe_ref()) };
-        return true;
-    }
-
-    // Swap `vm.log` (and resolver/linker/pm logs) to a fresh
-    // local Log so resolver diagnostics don't leak into the VM log. Note:
-    // `Resolver.log` is `NonNull<Log>` and `Linker.log` is `*mut Log` (see
-    // transpile_source_code's identical swap at jsc_hooks.rs:848-879), so the
-    // pointer write is sound; restore via scopeguard so the early-`return
-    // false` paths don't leave a dangling stack pointer.
-    let mut log = bun_ast::Log::init();
-    // `vm.log` is set unconditionally in `init` and never cleared — the
-    // `expect` is infallible.
-    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    let old_log: core::ptr::NonNull<bun_ast::Log> =
-        unsafe { &*vm }.log.expect("vm.log set in init");
-    let log_nn: core::ptr::NonNull<bun_ast::Log> = core::ptr::NonNull::from(&mut log);
-    // SAFETY: `vm` is the live per-thread VM.
-    unsafe {
-        (*vm).log = Some(log_nn);
-        (*vm).transpiler.resolver.log = log_nn;
-        (*vm).transpiler.linker.log = log_nn.as_ptr();
-        if let Some(pm) = (*vm).transpiler.resolver.package_manager {
-            (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = log_nn.as_ptr();
-        }
-    }
-    scopeguard::defer! {
-        // SAFETY: `vm` is the live per-thread VM; restoring the log pointers
-        // swapped just above so early-return paths don't leave a dangling
-        // stack pointer. The PM may have been lazily created inside
-        // `resolve` with `pm.log = resolver.log` (our stack `log`), so
-        // restore it even if it was `None` at swap time.
-        unsafe {
-            (*vm).log = Some(old_log);
-            (*vm).transpiler.resolver.log = old_log;
-            (*vm).transpiler.linker.log = old_log.as_ptr();
-            if let Some(pm) = (*vm).transpiler.resolver.package_manager {
-                (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = old_log.as_ptr();
-            }
-        }
-    }
-
-    let mut result_path: &[u8] = b"";
-    let mut result_query: &[u8] = b"";
-    // SAFETY: `vm` is the live per-thread VM; the slices borrow
-    // `specifier_utf8`/`source_utf8` which outlive this call.
-    if let Err(err) = unsafe {
-        resolve(
-            vm,
-            specifier_utf8.slice(),
-            normalize_source(source_utf8.slice()),
-            mode.is_esm(),
-            is_a_file_path,
-            &mut result_path,
-            &mut result_query,
-        )
-    } {
-        // Synthesise a `ResolveMessage` from the first
-        // `.resolve`-tagged log msg, or fall back to `ResolveMessage::fmt`.
-        let msg: bun_ast::Msg = 'brk: {
-            for m in log.msgs.iter() {
-                if let bun_ast::Metadata::Resolve(_) = &m.metadata {
-                    break 'brk m.clone();
-                }
-            }
-
-            let import_kind = mode.import_kind();
-
-            let printed = ResolveMessage::fmt(
-                specifier_utf8.slice(),
-                source_utf8.slice(),
-                to_jsc_fetch_error(&err),
-                import_kind,
-            );
-            bun_ast::Msg {
-                data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
-                metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
-                    specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
-                    import_kind,
-                    err: bun_ast::Error::ModuleNotFound,
-                }),
-                ..Default::default()
-            }
-        };
-
-        let js_err = match ResolveMessage::create(global_ref, &msg, source_utf8.slice()) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        // SAFETY: per fn contract.
-        unsafe { *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js_err) };
-        return true;
-    }
-
-    // Write `*query_string`. `result_query` borrows
-    // `specifier_utf8`, which is freed when this fn returns; clone into an
-    // owned `bun.String`.
-    if !query_string.is_null() {
-        // SAFETY: per fn contract — `query_string` is a valid out-param.
-        unsafe {
-            *query_string = if !result_query.is_empty() {
-                bun_core::String::clone_utf8(result_query)
-            } else {
-                bun_core::String::empty()
-            };
-        }
-    }
-
-    // `result.path` may borrow `specifier_utf8` (e.g. `http://`
-    // specifiers the resolver marked external without copying); clone for the
-    // same reason. Callers own the resulting ref.
-    // SAFETY: per fn contract.
-    unsafe { *res = ErrorableString::ok(bun_core::String::clone_utf8(result_path)) };
-    true
-}
-
 /// The static `LoaderHooks` instance handed to `bun_jsc`.
 #[unsafe(no_mangle)]
 static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
@@ -5541,7 +5074,6 @@ static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
     resolve_embedded_node_file: resolve_embedded_node_file_hook,
     transpile_virtual_module,
     transpile_file,
-    resolve: resolve_hook,
 };
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -21,14 +21,6 @@ use crate::{JSGlobalObject, JsError};
 // `bun_jsc::Task` / `bun_jsc::Taskable` without reaching down a tier.
 pub use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 
-/// `Task::new<T: Taskable>(ptr)` — typed constructor. Kept as a free fn for
-/// back-compat with existing call sites; equivalent to [`Task::init`].
-/// The tag comes from the [`Taskable`] impl.
-#[inline]
-pub fn new<T: Taskable>(ptr: *mut T) -> Task {
-    Task::init(ptr)
-}
-
 // ─── run_tasks dispatch ─────────────────────────────────────────────────────
 // The per-tick dispatch entry point is `bun_jsc::event_loop::tick_queue_with_
 // count` (declares `__bun_tick_queue_with_count`, defined in
@@ -36,16 +28,16 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 // `pub fn run_tasks` wrapper here had no callers and aliased the same body —
 // deleted r6 (one symbol per dispatch entry, per PORTING.md §extern-Rust-ban).
 
-/// The fold: what a dispatcher does with the exception a callback it invoked left pending — report it
-/// as uncaught, or, if what came back is the VM's termination, stand the loop down
-/// (WebCore: `isTerminationException(returned)`). When this runs as the outermost frame (a foreign
-/// trampoline: uSockets, uWS, timers, pipe I/O), the scopes beneath it skipped their microtask
-/// checkpoint over the pending exception, so it runs here once the exception is taken; beneath
-/// another dispatch or a host function that checkpoint is still the outer frame's.
+/// The fold: what a dispatcher does with the `Err` a callback it invoked came back with — report the
+/// exception as uncaught, or, if it is the VM's termination, stand down (WebCore:
+/// `isTerminationException(returned)`) — then run the microtask checkpoint the scopes beneath skipped
+/// over the pending exception. A termination that got here still pending (read through a proof-less
+/// `has_exception()`, or this fold runs beneath script) is taken now if no script is left to unwind.
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
+        crate::top_exception_scope::thrown(global);
         return Err(Stopped);
     }
     let vm = global.bun_vm();

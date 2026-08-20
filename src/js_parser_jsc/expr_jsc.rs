@@ -13,7 +13,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 #[inline]
 fn js_err(e: JsError) -> ToJSError {
     match e {
-        JsError::Thrown => ToJSError::JSError,
+        JsError::Thrown | JsError::Terminated => ToJSError::JSError,
         JsError::OutOfMemory => ToJSError::OutOfMemory,
     }
 }
@@ -23,7 +23,7 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
 }
 
 /// The inverse of [`js_err`], for host functions returning a data-format
-/// parse (JSON/XML rows never produce the identifier / macro variants).
+/// parse (JSON/XML rows never produce the conversion variants).
 pub fn to_js_error(e: ToJSError, global: &JSGlobalObject) -> JsError {
     match e {
         ToJSError::OutOfMemory => JsError::OutOfMemory,

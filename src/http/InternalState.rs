@@ -104,13 +104,6 @@ impl InternalStateFlags {
     }
 }
 
-impl Default for InternalStateFlags {
-    /// `allow_keepalive` defaults to true.
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Default for InternalState<'_> {
     fn default() -> Self {
         Self {
@@ -296,10 +289,16 @@ impl<'a> InternalState<'a> {
                     if (estimated_size as usize) > deflater.shared_buffer.len()
                         && estimated_size < 32 * 1024 * 1024
                     {
-                        self.decoded_body.list.reserve_exact(
-                            (estimated_size as usize).saturating_sub(self.decoded_body.list.len()),
-                        );
                         self.decoded_body.list.clear();
+                        // A trailer can lie; the streaming path below allocates only what is really there.
+                        if self
+                            .decoded_body
+                            .list
+                            .try_reserve_exact(estimated_size as usize)
+                            .is_err()
+                        {
+                            break 'libdeflate;
+                        }
                         let result = deflater.decompressor_mut().decompress_to_vec(
                             buffer,
                             &mut self.decoded_body.list,
@@ -337,9 +336,15 @@ impl<'a> InternalState<'a> {
                 // libdeflate decodes a single member; unconsumed input means
                 // a multi-member gzip stream. Let the zlib path handle it.
                 if result.status == bun_libdeflate::Status::Success && result.read == buffer.len() {
-                    self.decoded_body
+                    if self
+                        .decoded_body
                         .list
-                        .reserve_exact(result.written.saturating_sub(self.decoded_body.list.len()));
+                        .try_reserve_exact(result.written)
+                        .is_err()
+                    {
+                        self.compressed_body.reset();
+                        return Err(bun_alloc::AllocError.into());
+                    }
                     self.decoded_body
                         .list
                         .extend_from_slice(&deflater.shared_buffer[0..result.written]);

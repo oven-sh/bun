@@ -329,9 +329,16 @@ describe.concurrent("require.cache", () => {
   // the next import() of the path answers from a record whose registry entry is
   // gone (null loadPromise, crash in JSModuleLoader::loadModule).
   describe("delete require.cache[esm] while an import() of it is in flight", () => {
-    // Every load of entry.mjs gets its own `load` number. Only the first load
-    // imports dep.mjs, whose onLoad waits for the gate.
-    const fixture = (scenario: string) => ({
+    // Every load of entry.mjs gets its own `load` number. Only the first load,
+    // `firstLoad`, imports dep.mjs, whose onLoad waits for the gate and then runs
+    // `depLoad`. The defaults make the first load succeed.
+    const fixture = (
+      scenario: string,
+      {
+        firstLoad = `import "./dep.mjs"; export const load = 1;`,
+        depLoad = `return { loader: "js", contents: "" };`,
+      } = {},
+    ) => ({
       "entry.mjs": "",
       "dep.mjs": "",
       "main.mjs": `
@@ -345,13 +352,13 @@ describe.concurrent("require.cache", () => {
               const load = ++loads;
               return {
                 loader: "js",
-                contents: load === 1 ? 'import "./dep.mjs"; export const load = 1;' : \`export const load = \${load};\`,
+                contents: load === 1 ? ${JSON.stringify(firstLoad)} : \`export const load = \${load};\`,
               };
             });
             build.onLoad({ filter: /dep\\.mjs$/ }, async () => {
               depLoadStarted.resolve();
               await gate.promise;
-              return { loader: "js", contents: "" };
+              ${depLoad}
             });
           },
         });
@@ -402,6 +409,192 @@ describe.concurrent("require.cache", () => {
         stdout: JSON.stringify({ loads: [1, 2, 2], thirdIsSecond: true }),
         stderr: "",
         exitCode: 0,
+      });
+    });
+
+    // When the removed load fails instead, its error belongs to the removed
+    // entry: not to the path (the next import() has to load the file again),
+    // and not to a replacement load that registered the path in the meantime
+    // (the replacement has to stay importable). `onLoadCalls` counts the loads
+    // of entry.mjs the plugin served.
+    describe("and the removed load then fails", () => {
+      const settledAs = `namespace => ({ load: namespace.load }), error => error.message`;
+
+      test("the module throws while it evaluates: the next import() loads the file again", async () => {
+        using dir = tempDir(
+          "require-cache-delete-in-flight-throws",
+          fixture(
+            `
+              gate.resolve();
+              result.first = await first.then(${settledAs});
+              result.second = await import("./entry.mjs").then(${settledAs});
+              result.onLoadCalls = loads;
+            `,
+            { firstLoad: `import "./dep.mjs"; throw new Error("load 1 threw");` },
+          ),
+        );
+
+        expect(await runMain(String(dir))).toEqual({
+          stdout: JSON.stringify({ first: "load 1 threw", second: { load: 2 }, onLoadCalls: 2 }),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      test("a dependency of the module fails to load: the next import() loads the file again", async () => {
+        using dir = tempDir(
+          "require-cache-delete-in-flight-dependency-fails",
+          fixture(
+            `
+              gate.resolve();
+              result.first = await first.then(${settledAs});
+              result.second = await import("./entry.mjs").then(${settledAs});
+              result.onLoadCalls = loads;
+            `,
+            { depLoad: `throw new Error("dep.mjs of load 1 failed");` },
+          ),
+        );
+
+        expect(await runMain(String(dir))).toEqual({
+          stdout: JSON.stringify({ first: "dep.mjs of load 1 failed", second: { load: 2 }, onLoadCalls: 2 }),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      test("a replacement load finished first: the replacement stays importable", async () => {
+        using dir = tempDir(
+          "require-cache-delete-in-flight-throws-after-replacement",
+          fixture(
+            `
+              const second = await import("./entry.mjs");
+              result.second = second.load;
+              gate.resolve();
+              result.first = await first.then(${settledAs});
+              result.third = await import("./entry.mjs").then(
+                namespace => ({ load: namespace.load, isSecond: namespace === second }),
+                error => error.message,
+              );
+              result.onLoadCalls = loads;
+            `,
+            { firstLoad: `import "./dep.mjs"; throw new Error("load 1 threw");` },
+          ),
+        );
+
+        expect(await runMain(String(dir))).toEqual({
+          stdout: JSON.stringify({
+            second: 2,
+            first: "load 1 threw",
+            third: { load: 2, isSecond: true },
+            onLoadCalls: 2,
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // Here the load that fails is the fetch of entry.mjs itself. parent.mjs
+      // imports entry.mjs, which registers entry.mjs while its onLoad waits for
+      // the gate, and an import() of entry.mjs issued now joins that pending
+      // fetch. A rejected fetch must leave nothing behind under the path.
+      test("the fetch of the module is rejected: the next import() loads the file again", async () => {
+        using dir = tempDir("require-cache-delete-in-flight-fetch-rejected", {
+          "entry.mjs": "",
+          "parent.mjs": `import "./entry.mjs";`,
+          "main.mjs": `
+            const gate = Promise.withResolvers();
+            const entryLoadStarted = Promise.withResolvers();
+            let loads = 0;
+            Bun.plugin({
+              name: "gate",
+              setup(build) {
+                build.onLoad({ filter: /entry\\.mjs$/ }, async () => {
+                  const load = ++loads;
+                  if (load === 1) {
+                    entryLoadStarted.resolve();
+                    await gate.promise;
+                    throw new Error("load 1 failed to load");
+                  }
+                  return { loader: "js", contents: \`export const load = \${load};\` };
+                });
+              },
+            });
+            const entryPath = require.resolve("./entry.mjs");
+            const result = {};
+
+            const parent = import("./parent.mjs");
+            await entryLoadStarted.promise;
+            const first = import("./entry.mjs");
+            delete require.cache[entryPath];
+            gate.resolve();
+            result.parent = await parent.then(() => "fulfilled", error => error.message);
+            result.first = await first.then(${settledAs});
+            result.second = await import("./entry.mjs").then(${settledAs});
+            result.onLoadCalls = loads;
+
+            console.log(JSON.stringify(result));
+          `,
+        });
+
+        expect(await runMain(String(dir))).toEqual({
+          stdout: JSON.stringify({
+            parent: "load 1 failed to load",
+            first: "load 1 failed to load",
+            second: { load: 2 },
+            onLoadCalls: 2,
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // The same through require(): require() of a module with top-level await
+      // throws, but the module keeps evaluating in the background. Deleting it
+      // and importing it again loads the file a second time. When the first run
+      // then rejects, the second run, which succeeded, must stay importable.
+      // (Without the fix the first run's rejection is stored under the path: the
+      // replacement import() never settles when the rejection is stored first,
+      // and a later import() rejects with the first run's error otherwise.)
+      test("require() of a top-level await module that rejects later: the replacement stays importable", async () => {
+        using dir = tempDir("require-cache-delete-in-flight-require-tla", {
+          "tla.mjs": `
+            const run = (globalThis.runs = (globalThis.runs ?? 0) + 1);
+            await globalThis.gate.promise;
+            if (run === 1) throw new Error("run 1 threw");
+            export { run };
+          `,
+          "main.mjs": `
+            globalThis.gate = Promise.withResolvers();
+            const result = {};
+
+            try {
+              require("./tla.mjs");
+            } catch (error) {
+              result.require = error.message.includes("async module");
+            }
+            delete require.cache[require.resolve("./tla.mjs")];
+            const replacementPromise = import("./tla.mjs");
+            globalThis.gate.resolve();
+            const replacement = await replacementPromise;
+            result.replacement = replacement.run;
+            // Both runs continue from the gate in microtasks only. One turn of the
+            // event loop is enough for run 1 to reject and be recorded by the loader.
+            await new Promise(resolve => setImmediate(resolve));
+            result.next = await import("./tla.mjs").then(
+              namespace => ({ run: namespace.run, isReplacement: namespace === replacement }),
+              error => error.message,
+            );
+            result.runs = globalThis.runs;
+
+            console.log(JSON.stringify(result));
+          `,
+        });
+
+        expect(await runMain(String(dir))).toEqual({
+          stdout: JSON.stringify({ require: true, replacement: 2, next: { run: 2, isReplacement: true }, runs: 2 }),
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
   });

@@ -371,6 +371,51 @@ test("basic unchanging inline snapshot", () => {
   );
 });
 
+test("property matchers argument can itself be an asymmetric matcher", async () => {
+  const formattedReceived = '\n{\n  "a": 1,\n  "b": "two",\n}\n';
+  const inlineSnapshot = "`" + formattedReceived + "`";
+  using dir = tempDir("snapshot-top-level-matcher", {
+    "snap.test.ts": /*js*/ `
+      import { expect, test } from "bun:test";
+      const received = { a: 1, b: "two" };
+      test("file pass", () => {
+        expect(received).toMatchSnapshot(expect.objectContaining({ a: expect.any(Number) }));
+      });
+      test("file fail", () => {
+        expect(received).toMatchSnapshot(expect.objectContaining({ a: 2 }));
+      });
+      test("inline pass", () => {
+        expect(received).toMatchInlineSnapshot(expect.any(Object), ${inlineSnapshot});
+      });
+      test("inline fail", () => {
+        expect(received).toMatchInlineSnapshot(expect.any(Array), ${inlineSnapshot});
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./snap.test.ts"],
+    env: { ...bunEnv, CI: "false" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const output = stdout + stderr;
+
+  expect(output).toContain("(pass) file pass");
+  expect(output).toContain("(fail) file fail");
+  expect(output).toContain("(pass) inline pass");
+  expect(output).toContain("(fail) inline fail");
+  expect(output.match(/Expected propertyMatchers to match properties from received object/g)).toHaveLength(2);
+  expect(exitCode).toBe(1);
+
+  // a passing top-level matcher stores the received value as-is; a failing one stores nothing
+  expect(await Bun.file(`${dir}/__snapshots__/snap.test.ts.snap`).text()).toBe(
+    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`file pass 1`] = `" + formattedReceived + "`;\n",
+  );
+});
+
 class InlineSnapshotTester {
   tmpdir: string;
   tmpid: number;

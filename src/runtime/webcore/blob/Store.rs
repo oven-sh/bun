@@ -58,7 +58,6 @@ pub trait StoreExt {
     fn init_mmap(slice: &'static mut [u8]) -> StoreRef
     where
         Self: Sized;
-    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
 }
 
 pub trait S3Ext {
@@ -88,6 +87,9 @@ pub trait S3Ext {
 
 pub trait FileExt {
     fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
+    /// Body of a `SerializeTag::File` structured-clone record, read back by
+    /// `Blob::on_structured_clone_deserialize`.
+    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
 }
 
 pub trait BytesExt {
@@ -173,52 +175,6 @@ impl StoreExt for Store {
             is_all_ascii: None,
         }))
     }
-
-    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
-        match &self.data {
-            Data::File(file) => {
-                let pathlike_tag: PathOrFileDescriptorSerializeTag =
-                    if matches!(file.pathlike, PathOrFileDescriptor::Fd(_)) {
-                        PathOrFileDescriptorSerializeTag::Fd
-                    } else {
-                        PathOrFileDescriptorSerializeTag::Path
-                    };
-                writer.write_int_le::<u8>(pathlike_tag as u8)?;
-
-                match &file.pathlike {
-                    PathOrFileDescriptor::Fd(fd) => {
-                        // Write the raw bytes of the FD wrapper. `bun_sys::Fd` is
-                        // `#[repr(transparent)]` over an integer (`i32` posix /
-                        // `u64` windows), so its native-endian byte image is
-                        // exactly the inner field's `to_ne_bytes()`.
-                        writer.write_all(&fd.0.to_ne_bytes())?;
-                    }
-                    PathOrFileDescriptor::Path(path) => {
-                        let path_slice = path.slice();
-                        writer.write_int_le::<u32>(path_slice.len() as u32)?;
-                        writer.write_all(path_slice)?;
-                    }
-                }
-            }
-            Data::S3(s3) => {
-                let pathlike_tag = PathOrFileDescriptorSerializeTag::Path;
-                writer.write_int_le::<u8>(pathlike_tag as u8)?;
-
-                let path_slice = s3.pathlike.slice();
-                writer.write_int_le::<u32>(path_slice.len() as u32)?;
-                writer.write_all(path_slice)?;
-            }
-            Data::Bytes(bytes) => {
-                let slice = bytes.slice();
-                writer.write_int_le::<u32>(slice.len() as u32)?;
-                writer.write_all(slice)?;
-
-                writer.write_int_le::<u32>(bytes.stored_name.len() as u32)?;
-                writer.write_all(&bytes.stored_name)?;
-            }
-        }
-        Ok(())
-    }
 }
 
 impl FileExt for File {
@@ -254,6 +210,32 @@ impl FileExt for File {
                 )),
             )),
         }
+    }
+
+    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
+        let pathlike_tag: PathOrFileDescriptorSerializeTag =
+            if matches!(self.pathlike, PathOrFileDescriptor::Fd(_)) {
+                PathOrFileDescriptorSerializeTag::Fd
+            } else {
+                PathOrFileDescriptorSerializeTag::Path
+            };
+        writer.write_int_le::<u8>(pathlike_tag as u8)?;
+
+        match &self.pathlike {
+            PathOrFileDescriptor::Fd(fd) => {
+                // Write the raw bytes of the FD wrapper. `bun_sys::Fd` is
+                // `#[repr(transparent)]` over an integer (`i32` posix /
+                // `u64` windows), so its native-endian byte image is
+                // exactly the inner field's `to_ne_bytes()`.
+                writer.write_all(&fd.0.to_ne_bytes())?;
+            }
+            PathOrFileDescriptor::Path(path) => {
+                let path_slice = path.slice();
+                writer.write_int_le::<u32>(path_slice.len() as u32)?;
+                writer.write_all(path_slice)?;
+            }
+        }
+        Ok(())
     }
 }
 

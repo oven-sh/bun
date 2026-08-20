@@ -1296,6 +1296,32 @@ test.concurrent("--experimental-test-tag-filter without --test-isolation=none fa
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });
 
+test.concurrent("--test forwards runtime execArgv to each child but not its own flags", async () => {
+  // node's getRunArgs forwards process.execArgv minus the runner's flags
+  // (filterExecArgv), so --smol reaches the child while --test-reporter and
+  // --test-concurrency (a value-taking runner flag) do not.
+  using dir = tempDir("node-test-execargv-forward", {
+    "a.test.mjs": `
+      import { test } from 'node:test';
+      test('execArgv', () => { console.log('CHILD=' + JSON.stringify(process.execArgv)); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--test", "--smol", "--test-reporter=tap", "--test-concurrency=1", "a.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const child = /CHILD=(\[[^\]]*\])/.exec(stdout)?.[1];
+  expect({ child: child === undefined ? child : JSON.parse(child), stderr, exitCode }).toEqual({
+    child: ["--smol"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("run(): causes JSON cannot encode do not drop the event line", async () => {
   using dir = tempDir("node-test-unencodable-cause", {
     "f.test.mjs": `

@@ -18,25 +18,33 @@ const kBooleanFlags = new Set([
   "--experimental-test-snapshots",
 ]);
 
+function isTestRunnerFlag(name: string) {
+  return name === "--test" || name.startsWith("--test-") || name.startsWith("--experimental-test-");
+}
+
+// Splits process.execArgv into the runner's own flags and everything else.
+// Like node's filterExecArgv (runner.js), the remainder is forwarded to each
+// test child so runtime flags (--conditions, preloads, ...) apply there; the
+// runner's flags and the watchers that would keep a child alive are not.
 function parseExecArgv() {
   const single = new Map<string, string>();
   const multi = new Map<string, string[]>();
   const bools = new Set<string>();
+  const passthrough: string[] = [];
   const argv = process.execArgv;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (!arg.startsWith("--")) continue;
     const eq = arg.indexOf("=");
-    let name: string;
+    const name = eq === -1 ? arg : arg.slice(0, eq);
+    if (!isTestRunnerFlag(name)) {
+      if (name !== "--watch" && name !== "--hot") passthrough.push(arg);
+      continue;
+    }
     let value: string | undefined;
     if (eq !== -1) {
-      name = arg.slice(0, eq);
       value = arg.slice(eq + 1);
-    } else {
-      name = arg;
-      if (!kBooleanFlags.has(name) && i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
-        value = argv[++i];
-      }
+    } else if (!kBooleanFlags.has(name) && i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
+      value = argv[++i];
     }
     if (value === undefined) {
       bools.add(name);
@@ -50,7 +58,7 @@ function parseExecArgv() {
       list.push(value);
     }
   }
-  return { single, multi, bools };
+  return { single, multi, bools, passthrough };
 }
 
 const flags = parseExecArgv();
@@ -230,7 +238,7 @@ async function main() {
     files = files.filter(isThisShard);
   }
 
-  const runOptions: Record<string, unknown> = { __proto__: null, files, cwd };
+  const runOptions: Record<string, unknown> = { __proto__: null, files, cwd, execArgv: flags.passthrough };
 
   const isolation = getFlag("--test-isolation") ?? getFlag("--experimental-test-isolation");
   const concurrencyFlag = getFlag("--test-concurrency");

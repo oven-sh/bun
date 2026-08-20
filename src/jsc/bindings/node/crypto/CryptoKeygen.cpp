@@ -35,11 +35,11 @@ void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = WTF::move(key);
 }
 
-extern "C" void Bun__SecretKeyJobCtx__runFromJS(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
+extern "C" void Bun__SecretKeyJobCtx__runFromJS(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(lexicalGlobalObject, callback);
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-void SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
+JSCallbackArgs SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
@@ -47,20 +47,18 @@ void SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC::JSValu
 
     if (!m_result) {
         JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "key generation failed"_s);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     KeyObject keyObject = KeyObject::create(WTF::move(*m_result));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
+    RETURN_IF_EXCEPTION(scope, {});
 
-    Bun__EventLoop__runCallback2(lexicalGlobalObject,
-        JSValue::encode(callback),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(jsNull()),
-        JSValue::encode(secretKey));
+    return { jsNull(), secretKey };
 }
 
 extern "C" void Bun__SecretKeyJobCtx__deinit(SecretKeyJobCtx* ctx)
@@ -70,19 +68,6 @@ extern "C" void Bun__SecretKeyJobCtx__deinit(SecretKeyJobCtx* ctx)
 void SecretKeyJobCtx::deinit()
 {
     delete this;
-}
-
-extern "C" SecretKeyJob* Bun__SecretKeyJob__create(JSC::JSGlobalObject*, SecretKeyJobCtx*, EncodedJSValue callback);
-SecretKeyJob* SecretKeyJob::create(JSC::JSGlobalObject* lexicalGlobalObject, size_t length, JSC::JSValue callback)
-{
-    SecretKeyJobCtx* ctx = new SecretKeyJobCtx(length);
-    return Bun__SecretKeyJob__create(lexicalGlobalObject, ctx, JSValue::encode(callback));
-}
-
-extern "C" void Bun__SecretKeyJob__schedule(SecretKeyJob* job);
-void SecretKeyJob::schedule()
-{
-    Bun__SecretKeyJob__schedule(this);
 }
 
 extern "C" void Bun__SecretKeyJob__createAndSchedule(JSC::JSGlobalObject*, SecretKeyJobCtx*, EncodedJSValue callback);

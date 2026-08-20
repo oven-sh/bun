@@ -428,28 +428,16 @@ impl WorkerPipe {
     }
 }
 
-impl Default for WorkerPipe {
-    fn default() -> Self {
-        Self::new(core::ptr::null())
-    }
-}
-
 // `bun_io::BufferedReader` vtable parent.
 // Callbacks touch only fields disjoint from `reader` (worker backref / done
 // flag); worker/coord backrefs are valid for the pipe's lifetime.
 bun_io::impl_buffered_reader_parent! {
     TestParallelWorkerPipe for WorkerPipe;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(chunk, state);
+    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(&chunk, state);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
     // `vm.uv_loop()` is `*mut bun_io::Loop` on every target.
     loop_           = |this| (*(*(*this).worker).coord).vm.uv_loop();
     event_loop      = |this| (*(*(*this).worker).coord).event_loop_handle.as_event_loop_ctx();
-}
-
-impl Drop for WorkerPipe {
-    fn drop(&mut self) {
-        // Body intentionally empty: `BufferedReader: Drop` handles cleanup.
-    }
 }

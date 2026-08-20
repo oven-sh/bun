@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "JSCallbackArgs.h"
 #include "KeyObject.h"
 #include "CryptoUtil.h"
 
@@ -30,7 +31,7 @@ public:
     static std::optional<DhJobCtx> fromJS(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* options);
 
     void runTask(JSC::JSGlobalObject*);
-    void runFromJS(JSC::JSGlobalObject*, JSC::JSValue callback);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
     void deinit();
 
     RefPtr<KeyObjectData> m_privateKey;
@@ -40,9 +41,7 @@ public:
 };
 
 struct DhJob {
-    static DhJob* create(JSC::JSGlobalObject*, DhJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, DhJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 
 } // namespace Bun

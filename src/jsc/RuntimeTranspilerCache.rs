@@ -611,8 +611,7 @@ pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
 }
 
-/// The effective uid: it is what the kernel checks file access against, so it
-/// is what the cache path and the ownership check must be keyed on.
+/// Effective uid: the identity the kernel checks file access against.
 #[cfg(unix)]
 #[inline]
 fn current_user_id() -> u32 {

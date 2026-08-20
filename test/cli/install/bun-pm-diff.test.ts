@@ -983,6 +983,28 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js"]);
     expect(exitCode).toBe(0);
   });
+
+  // `~/x` used to be joined with $HOME as the base of an absolute join, which turned a
+  // relative $HOME into a path under the root with its first byte missing (`/el-home/a`).
+  test("~/ with a relative $HOME resolves against the cwd", async () => {
+    using dir = tempDir("pm-diff-relative-home", {
+      "rel-home/a/package.json": JSON.stringify({ name: "diffme", version: "1.0.0" }),
+      "rel-home/b/package.json": JSON.stringify({ name: "diffme", version: "1.0.1" }),
+    });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "~/a", "~/b", "--name-only"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1", HOME: "rel-home", USERPROFILE: "rel-home" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect({ stderr, exitCode, changed: stdout.split("\n").filter(l => /^[AMD] /.test(l)) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      changed: ["M package.json"],
+    });
+  });
 });
 
 // The pieces underneath the terminal view — name-free symbol matching, the alignment fallbacks, key→display map

@@ -202,15 +202,10 @@ pub struct Super;
 pub struct ImportMeta;
 
 impl ImportMeta {
-    /// Sixth parameter of Bun's CommonJS module wrapper,
-    /// `(exports, require, module, __filename, __dirname, $Bun_import_meta)`.
-    /// `evaluateCommonJSModuleOnce` (JSCommonJSModule.cpp) passes the module's
-    /// `import.meta` object for it whenever the wrapper declares more than five
-    /// parameters. The runtime transpiler declares it for CommonJS files that
-    /// use `import.meta`. The bundler declares it on the `@bun-cjs` wrapper of
-    /// a chunk that uses `import.meta` and prints every `import.meta` in the
-    /// chunk as this name, so the values describe the output file at run time,
-    /// exactly like `import.meta` in esm output.
+    /// Sixth parameter of Bun's CommonJS module wrapper. `evaluateCommonJSModuleOnce`
+    /// (JSCommonJSModule.cpp) passes the module's `import.meta` for it when the wrapper
+    /// declares more than five parameters. Declared by the runtime transpiler and by the
+    /// bundler's `@bun-cjs` wrapper.
     pub const CJS_WRAPPER_ARG: &'static [u8] = b"$Bun_import_meta";
 }
 

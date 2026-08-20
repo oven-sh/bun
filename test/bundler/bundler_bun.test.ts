@@ -138,12 +138,9 @@ error: Hello World`,
     run: { stdout: "" },
   });
 
-  // cjs output for the bun target (which --bytecode implies) receives the real
-  // import.meta of the output file as the sixth argument of the @bun-cjs
-  // wrapper. So import.meta describes the output file at run time, the same as
-  // in esm output. Before, import.meta.dir/file/path/url were inlined as the
-  // source file's paths on the build machine, and every other use of
-  // import.meta was a SyntaxError inside the wrapper.
+  // cjs output for bun (which --bytecode implies) gets the output file's import.meta
+  // as the sixth argument of the @bun-cjs wrapper, like esm output gets it natively.
+  // It used to inline the source file's paths from the build machine instead.
   const importMetaFiles = {
     "/entry.ts": /* js */ `
       import { basename, dirname } from "node:path";

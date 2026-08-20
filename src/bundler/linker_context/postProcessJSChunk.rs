@@ -36,18 +36,10 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
     }
 }
 
-/// Whether the `@bun-cjs` wrapper of `chunk` has to declare
-/// `E::ImportMeta::CJS_WRAPPER_ARG`. The printer prints every `import.meta`
-/// of a file in the chunk as that name when the build targets bun with cjs
-/// output, which is the same condition as here (both read `c.options`, so a
-/// `#!/usr/bin/env bun` hashbang that only switches the entry point's own
-/// target does not count). Every AST with an `import.meta` node carries
-/// `HAS_IMPORT_META`: the parser sets it, and the sqlite loader sets it on
-/// the AST it synthesizes (`ParseTask`).
-///
-/// The runtime module is skipped. Its one `import.meta` is the `__require`
-/// definition, and cjs output never links `__require` in
-/// (`should_call_runtime_require`).
+/// Whether the `@bun-cjs` wrapper must declare `E::ImportMeta::CJS_WRAPPER_ARG`.
+/// Must match the printer's `EImportMeta` condition, which also reads `c.options`.
+/// The runtime module's only `import.meta` is `__require`, which cjs output never
+/// links in (`should_call_runtime_require`).
 fn chunk_uses_import_meta(c: &LinkerContext, chunk: &Chunk) -> bool {
     if !c.options.target.is_bun() {
         return false;

@@ -1061,6 +1061,7 @@ pub fn compute_initial_reserved_names(
     const CJS_NAMES: [&[u8]; 3] = [
         b"exports",
         b"module",
+        // Printed by name in `@bun-cjs` output.
         js_ast::E::ImportMeta::CJS_WRAPPER_ARG,
     ];
 
@@ -1090,9 +1091,6 @@ pub fn compute_initial_reserved_names(
     // using these names in this case even if there is not a risk of a name
     // collision because there is still a risk of node incorrectly detecting
     // something in a nested scope as an top-level export.
-    //
-    // The printer emits the import.meta argument of the `@bun-cjs` wrapper by
-    // name, so no symbol in the chunk may be given that name either.
     if output_format == Format::Cjs {
         for name in CJS_NAMES {
             names.put_assume_capacity(name, 1);

@@ -1071,8 +1071,7 @@ pub mod parse_worker {
                     b"",
                 )?
                 .ok_or(AnyError::ParserError)?;
-                // Only the parser sets this when it reads `import.meta`. cjs
-                // output declares the wrapper's import.meta argument based on it.
+                // `root` uses import.meta; nothing parsed it, so record that here.
                 ast.has_import_meta = true;
                 return Ok(JSAst::init(ast));
             }
@@ -2608,11 +2607,8 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
-        // cjs output for bun keeps `import.meta` as written: the linker adds
-        // `E::ImportMeta::CJS_WRAPPER_ARG` to the `@bun-cjs` wrapper and the
-        // printer prints `import.meta` as that argument (see
-        // `post_process_js_chunk`). Both key off the build's target, so this
-        // does too, not off a per-file hashbang override.
+        // For bun, cjs output gets import.meta from the `@bun-cjs` wrapper instead
+        // (`chunk_uses_import_meta`), which reads the build target like this does.
         opts.inline_import_meta_paths = topts.framework.is_some()
             || (output_format == options::Format::Cjs && !topts.target.is_bun());
 

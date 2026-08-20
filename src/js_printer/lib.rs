@@ -2975,8 +2975,7 @@ pub(crate) mod __gated_printer {
                         self.print_symbol(self.options.hmr_ref);
                         self.print(b".importMeta");
                     } else if self.options.import_meta_ref.is_valid() {
-                        // Bun's runtime wrapping a CommonJS module that references import.meta.
-                        // The bundler never sets `import_meta_ref`.
+                        // The runtime's CommonJS wrapper (`WrapMode::BunCommonjs`).
                         //
                         // TODO: This assertion trips when using `import.meta` with `--format=cjs`
                         debug_assert!(self.options.module_type == bundle_opts::Format::Cjs);
@@ -2986,8 +2985,7 @@ pub(crate) mod __gated_printer {
                         && self.options.module_type == bundle_opts::Format::Cjs
                         && self.options.target.is_bun()
                     {
-                        // `post_process_js_chunk` declares this argument on the
-                        // `@bun-cjs` wrapper of every chunk whose files use import.meta.
+                        // Declared by the `@bun-cjs` wrapper, see `chunk_uses_import_meta`.
                         self.print(E::ImportMeta::CJS_WRAPPER_ARG);
                     } else {
                         // Most of the time, leave it in there

@@ -420,13 +420,13 @@ impl Watcher {
                 continue;
             }
 
-            #[cfg(not(windows))]
-            {
-                // on mac and linux we can just close the file descriptor
-                // we don't need to call inotify_rm_watch on linux because it gets removed when the file descriptor is closed
-                if fds[item as usize].is_valid() {
-                    let _ = bun_sys::close(fds[item as usize]);
-                }
+            // The watchlist owns the stored descriptor on every platform
+            // (`FdOwnership::Watcher`); shutdown closes the same column. Closing
+            // it is also what drops the kqueue registration. inotify and
+            // ReadDirectoryChangesW watch by path, so there is nothing else to
+            // unregister here.
+            if fds[item as usize].is_valid() {
+                let _ = bun_sys::close(fds[item as usize]);
             }
             last_item = item;
         }

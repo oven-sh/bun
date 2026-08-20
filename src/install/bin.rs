@@ -857,8 +857,7 @@ impl<'a> Linker<'a> {
         }
     }
 
-    /// The package's `bin` map chooses the names, so only an entry that was
-    /// linked to this package is removed.
+    /// The package chose the name, so only an entry linked to the package is removed.
     fn unlink_bin_or_shim(&self, abs_dest: &ZStr) {
         if !self.existing_bin_belongs_to_package(abs_dest) {
             self.log_foreign_bin("removing", abs_dest);
@@ -902,8 +901,7 @@ impl<'a> Linker<'a> {
         );
     }
 
-    /// True for a symlink into the package directory (on Windows: a shim whose
-    /// `.bunx` points into it), the only entry the linker may replace or remove.
+    /// A symlink (on Windows: a shim) that points into the package directory.
     #[cfg(not(windows))]
     fn existing_bin_belongs_to_package(&self, abs_dest: &ZStr) -> bool {
         let mut link_buf = path::path_buffer_pool::get();
@@ -937,7 +935,6 @@ impl<'a> Linker<'a> {
         self.bin_target_is_inside_package(abs_dest, bin_path.as_bytes())
     }
 
-    /// Runs before the shim files are written (they are opened with truncation).
     /// A `.exe` without a `.bunx` is a real program, `bun.exe` for example.
     #[cfg(windows)]
     fn global_shim_conflicts(&self, abs_dest: &ZStr) -> bool {
@@ -971,9 +968,7 @@ impl<'a> Linker<'a> {
         Some(ZStr::from_buf(buf, len))
     }
 
-    /// `stored_target` is the symlink target or the `.bunx` bin path. Bun writes
-    /// it relative to the bin directory (POSIX) or to that directory's parent
-    /// (Windows), so both the relative and the absolute package directory match.
+    /// Links are written relative to the bin dir (Windows shims: to its parent), hence both forms.
     fn bin_target_is_inside_package(&self, abs_dest: &ZStr, stored_target: &[u8]) -> bool {
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
         // SAFETY: `target_node_modules_path` is set at construction to either
@@ -1027,8 +1022,7 @@ impl<'a> Linker<'a> {
     }
 
     fn is_inside_dir(target: &[u8], dir: &[u8]) -> bool {
-        // Windows paths keep the casing of whatever produced them (an fd, an
-        // environment variable), and the file system does not care.
+        // On Windows the two paths can come from differently cased sources (an fd, an env var).
         let has_prefix: fn(&[u8], &[u8]) -> bool = if cfg!(windows) {
             strings::has_prefix_case_insensitive
         } else {
@@ -1104,6 +1098,10 @@ impl<'a> Linker<'a> {
         if self.err.is_some() {
             // cleanup on error just in case
             self.unlink_bin_or_shim(abs_dest);
+            // No bin was placed, so the native binlink retry must check and report again.
+            if let Some(seen) = self.seen.as_deref_mut() {
+                seen.remove(abs_dest.as_bytes());
+            }
             return;
         }
 
@@ -1273,9 +1271,7 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        // A failure below leaves a truncated `.bunx` that `unlink_bin_or_shim`
-        // cannot attribute to the package. Declared before the file handles so
-        // it runs after they are closed.
+        // A truncated `.bunx` no longer passes the ownership check. Runs after the handles close.
         let remove_pair_on_failure = scopeguard::guard((), |()| Self::remove_shim_pair(abs_dest));
 
         // `encode_into` reinterprets this byte buffer as `[u16]`.
@@ -1486,8 +1482,7 @@ impl<'a> Linker<'a> {
             }
         }
 
-        // Anything in a project's `node_modules/.bin` is stale. The global bin
-        // directory is the user's: only this package's own link may be replaced.
+        // A project's `.bin` holds only stale entries. The global bin dir holds the user's files.
         if global && !self.existing_bin_belongs_to_package(abs_dest) {
             self.fail_on_foreign_global_bin(abs_dest);
             return;

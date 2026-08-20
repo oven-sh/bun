@@ -2617,6 +2617,26 @@ describe("binaries", () => {
       expect(result.exitCode).toBe(0);
       expect(bin).toBeValidBin(linkTarget("what-bin", "what-bin.js"));
     });
+
+    test("a foreign entry is reported for a package with a native binlink as well", async () => {
+      const binDir = join(packageDir, "global-bin-dir");
+      await Promise.all([
+        write(join(binDir, binEntry("test-binlink-cmd")), "not a bin of test-native-binlink"),
+        // The installer first links the bin of the platform package, then retries with the
+        // package's own bin. The error has to survive the retry.
+        write(
+          join(packageDir, "global-install-dir", "install", "global", "package.json"),
+          JSON.stringify({ dependencies: {}, nativeDependencies: ["test-native-binlink"] }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installGlobal("test-native-binlink");
+      expect(err).toContain("Failed to link test-native-binlink: EEXIST");
+      expect(exitCode).toBe(1);
+      expect(await readFile(join(binDir, binEntry("test-binlink-cmd")), "utf8")).toBe(
+        "not a bin of test-native-binlink",
+      );
+    });
   });
 
   test("it should correctly link binaries after deleting node_modules", async () => {

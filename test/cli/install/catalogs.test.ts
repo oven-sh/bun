@@ -1725,7 +1725,9 @@ describe("version published after the manifest was cached", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      return (await proc.stdout.text()).trim();
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ err, exitCode }).toEqual({ err: "", exitCode: 0 });
+      return out.trim();
     };
 
     const first = await install(String(dir));
@@ -1915,7 +1917,9 @@ describe("version published after the manifest was cached", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect((await proc.stdout.text()).trim()).toBe("1.0.1");
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ err, exitCode }).toEqual({ err: "", exitCode: 0 });
+    expect(out.trim()).toBe("1.0.1");
   });
 
   test.concurrent("one refetch resolves one workspace and authoritatively fails the other", async () => {

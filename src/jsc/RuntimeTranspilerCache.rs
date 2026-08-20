@@ -623,24 +623,40 @@ fn current_user_id() -> u32 {
     bun_sys::windows::user_unique_id()
 }
 
+#[cfg(unix)]
+fn is_trusted_dir_stat(st: &sys::Stat) -> bool {
+    (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+        && st.st_uid == bun_sys::c::getuid()
+        && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+}
+
 /// `true` when `path` lstat's as a directory owned by the current uid with no
 /// group/other write bits, or does not exist. Any other result fails closed.
 #[cfg(unix)]
 fn is_trusted_cache_root(path: &ZStr) -> bool {
     match sys::lstat(path) {
-        Ok(st) => {
-            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-                && st.st_uid == bun_sys::c::getuid()
-                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
-        }
+        Ok(st) => is_trusted_dir_stat(&st),
         Err(e) if e.get_errno() == sys::E::ENOENT => true,
         Err(_) => false,
     }
 }
 
+/// Re-checks the directory we actually opened for writing, so a root created
+/// between `get_cache_dir`'s lstat and this open cannot receive our entries.
+#[cfg(unix)]
+fn is_trusted_opened_cache_dir(fd: Fd) -> bool {
+    sys::fstat(fd).is_ok_and(|st| is_trusted_dir_stat(&st))
+}
+
 #[cfg(not(unix))]
 #[inline(always)]
 fn is_trusted_cache_root(_path: &ZStr) -> bool {
+    true
+}
+
+#[cfg(not(unix))]
+#[inline(always)]
+fn is_trusted_opened_cache_dir(_fd: Fd) -> bool {
     true
 }
 
@@ -943,6 +959,11 @@ impl RuntimeTranspilerCache {
                 fd.close();
             }
         });
+
+        if cache_dir_fd != Fd::cwd() && !is_trusted_opened_cache_dir(cache_dir_fd) {
+            IS_DISABLED.store(true, Ordering::Relaxed);
+            return Err(crate::CrateError::CacheDisabled);
+        }
 
         Entry::save(
             cache_dir_fd,

@@ -370,6 +370,27 @@ describe("transpiler cache", () => {
       chmodSync(cache_dir, 0o755);
     }
   });
+
+  test.skipIf(!isPosix)("stops writing when the cache root turns untrusted after the initial check", async () => {
+    // The root is validated once per process when it is first resolved. The
+    // directory actually opened for each write is re-validated, so a root that
+    // becomes group/other-writable later in the same process receives no
+    // further entries.
+    const filler = "\n//" + Buffer.alloc(50 * 1024, "f").toString();
+    writeFileSync(
+      join(temp_dir, "a.js"),
+      `require("fs").chmodSync(${JSON.stringify(cache_dir)}, 0o777);
+require("./b.js");${filler}`,
+    );
+    writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "late", "late-ok"));
+    try {
+      expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("late-ok");
+      // Only a.js (written while the root was still trusted) is cached.
+      expect(readdirSync(cache_dir).length).toBe(1);
+    } finally {
+      chmodSync(cache_dir, 0o755);
+    }
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

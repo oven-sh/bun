@@ -1467,30 +1467,32 @@ unsafe extern "C" fn Zig__GlobalObject__onCrash(
     exception_type: *const c_char,
     what: *const c_char,
 ) -> ! {
-    use core::fmt::Write as _;
+    const NO_EXCEPTION: &[u8] = b"std::terminate() was called with no C++ exception in flight";
+    const PREFIX: &[u8] = b"uncaught C++ exception ";
+    const SEPARATOR: &[u8] = b": ";
+    // The message has to leave the trace string room for the frames; a longer type name or what() is cut.
+    const TYPE_LIMIT: usize = 512;
+    const WHAT_LIMIT: usize = 256;
+    const CAPACITY: usize = PREFIX.len() + TYPE_LIMIT + SEPARATOR.len() + WHAT_LIMIT;
+    const _: () = assert!(NO_EXCEPTION.len() <= CAPACITY);
+
     crate::mark_binding();
     Output::flush();
 
-    let as_bytes = |ptr: *const c_char| {
+    let as_bytes = |ptr: *const c_char, limit: usize| {
         // SAFETY: the C++ side passes null or a NUL-terminated string that outlives this call, which never returns.
-        (!ptr.is_null()).then(|| unsafe { bun_core::ffi::cstr(ptr) }.to_bytes())
+        let bytes = (!ptr.is_null()).then(|| unsafe { bun_core::ffi::cstr(ptr) }.to_bytes())?;
+        Some(&bytes[..bytes.len().min(limit)])
     };
-    let mut message = bun_core::BoundedArray::<u8, 1024>::default();
-    match (as_bytes(exception_type), as_bytes(what)) {
-        (None, _) => {
-            let _ = message
-                .append_slice(b"std::terminate() was called with no C++ exception in flight");
-        }
-        (Some(exception_type), what) => {
-            let _ = write!(
-                message,
-                "uncaught C++ exception {}",
-                bstr::BStr::new(exception_type)
-            );
-            if let Some(what) = what {
-                // Bounded so the message fits the trace string together with the frames.
-                let what = &what[..what.len().min(256)];
-                let _ = write!(message, ": {}", bstr::BStr::new(what));
+    let mut message = bun_core::BoundedArray::<u8, CAPACITY>::default();
+    match as_bytes(exception_type, TYPE_LIMIT) {
+        None => message.append_slice_assume_capacity(NO_EXCEPTION),
+        Some(exception_type) => {
+            message.append_slice_assume_capacity(PREFIX);
+            message.append_slice_assume_capacity(exception_type);
+            if let Some(what) = as_bytes(what, WHAT_LIMIT) {
+                message.append_slice_assume_capacity(SEPARATOR);
+                message.append_slice_assume_capacity(what);
             }
         }
     }

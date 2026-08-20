@@ -18,6 +18,8 @@ extern "C" [[noreturn]] void Zig__GlobalObject__onCrash(const char* exceptionTyp
 extern "C" void* _ZTVN10__cxxabiv120__si_class_type_infoE[];
 extern "C" void* _ZTVN10__cxxabiv121__vmi_class_type_infoE[];
 extern "C" std::type_info _ZTISt13runtime_error;
+// libcxxrt (FreeBSD) does not declare this one in <cxxabi.h>; a C-linkage declaration outside the namespace names the same function in every runtime.
+extern "C" void __cxa_throw(void* thrownObject, std::type_info* type, void (*destructor)(void*));
 
 namespace {
 
@@ -110,7 +112,7 @@ extern "C" void Bun__throwUncaughtCxxExceptionForTesting()
 {
     void* memory = abi::__cxa_allocate_exception(sizeof(std::runtime_error));
     new (memory) std::runtime_error("thrown by the crash handler test");
-    abi::__cxa_throw(memory, &_ZTISt13runtime_error, destroyRuntimeError);
+    __cxa_throw(memory, &_ZTISt13runtime_error, destroyRuntimeError);
 }
 
 #else

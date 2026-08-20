@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync, withFileSizeLimit } from "harness";
 import { join } from "path";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
@@ -223,5 +223,81 @@ describe("a .snap file that does not parse", () => {
     expect(stderr).toContain(`snapshots: +${COUNT} added`);
     expect(exitCode).toBe(0);
     expect(fs.readFileSync(snapPath, "utf8").match(/^exports\[/gm)).toHaveLength(COUNT);
+  });
+});
+
+// A run that does not get as far as writing the file, or whose write fails, leaves the file
+// from before the run. Until the rename at the end, nothing touches it.
+describe.concurrent("a run that cannot write its snapshots leaves the old files", () => {
+  const OLD_SNAP =
+    '// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`a 1`] = `"old a"`;\n\nexports[`b 1`] = `"old b"`;\n';
+  const TEST_FILE = `
+    import { test, expect } from "bun:test";
+    test("a", () => expect("new a").toMatchSnapshot());
+    test("b", () => expect("old b").toMatchSnapshot());
+  `;
+
+  async function runTest(dir: string, args: string[], fileSizeLimitBlocks?: number) {
+    const cmd = [bunExe(), "test", ...args, "./a.test.ts"];
+    await using proc = Bun.spawn({
+      cmd: fileSizeLimitBlocks === undefined ? cmd : withFileSizeLimit(fileSizeLimitBlocks, cmd),
+      cwd: dir,
+      env: { ...bunEnv, CI: "false" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("--update-snapshots: the process exits during a test", async () => {
+    using dir = tempDir("snap-exit-early", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a", () => {
+          expect("new a").toMatchSnapshot();
+          process.exit(0);
+        });
+      `,
+      "__snapshots__/a.test.ts.snap": OLD_SNAP,
+    });
+    expect((await runTest(String(dir), ["--update-snapshots"])).exitCode).toBe(0);
+    expect(fs.readFileSync(join(String(dir), "__snapshots__", "a.test.ts.snap"), "utf8")).toBe(OLD_SNAP);
+  });
+
+  // `withFileSizeLimit(0, ...)`: every write to a regular file fails with EFBIG.
+  test.skipIf(isWindows)("--update-snapshots: the .snap file cannot be written", async () => {
+    using dir = tempDir("snap-write-fails", {
+      "a.test.ts": TEST_FILE,
+      "__snapshots__/a.test.ts.snap": OLD_SNAP,
+    });
+    const { stderr, exitCode } = await runTest(String(dir), ["--update-snapshots"], 0);
+    expect(stderr).toContain("Failed to write snapshot file: ");
+    expect(stderr).not.toContain("returned error");
+    expect(exitCode).toBe(1);
+    expect(fs.readFileSync(join(String(dir), "__snapshots__", "a.test.ts.snap"), "utf8")).toBe(OLD_SNAP);
+    expect(fs.readdirSync(join(String(dir), "__snapshots__"))).toEqual(["a.test.ts.snap"]);
+  });
+
+  // The source is longer than the one block the limit allows, so on Linux the write stops after
+  // the first block instead of failing as a whole. Written in place, that would leave the start of
+  // the new text in front of the rest of the old one.
+  test.skipIf(isWindows)("the source of an inline snapshot cannot be written", async () => {
+    const source =
+      `
+      import { test, expect } from "bun:test";
+      test("a", () => {
+        expect("new a").toMatchInlineSnapshot();
+      });
+      // ` +
+      Buffer.alloc(3000, "x").toString() +
+      "\n";
+    using dir = tempDir("inline-snap-write-fails", { "a.test.ts": source });
+    const { stderr, exitCode } = await runTest(String(dir), [], 1);
+    expect(stderr).toContain("Failed to update inline snapshot: Write file error: EFBIG");
+    expect(exitCode).toBe(1);
+    expect(fs.readFileSync(join(String(dir), "a.test.ts"), "utf8")).toBe(source);
+    expect(fs.readdirSync(String(dir))).toEqual(["a.test.ts"]);
   });
 });

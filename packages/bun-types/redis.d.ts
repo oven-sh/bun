@@ -116,7 +116,7 @@ declare module "bun" {
      * - A simple, bulk or verbatim string becomes a string. Methods that return a Buffer, such as getBuffer, keep the bytes.
      * - An integer becomes a number.
      * - A double becomes a number.
-     * - A big number becomes a bigint. When its payload is not an integer literal it becomes a string.
+     * - A big number becomes a bigint. When its payload is not an integer literal, or has too many digits for a bigint, it becomes a string.
      * - A boolean becomes a boolean.
      * - A null, a null bulk string and a null array become null.
      * - An array becomes an array.

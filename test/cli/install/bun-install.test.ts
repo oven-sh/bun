@@ -5311,7 +5311,8 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toStartWith("bun install v1.");
       expect(normalizeBunSnapshot(stderr, String(dir))).toBe(
         ['error: Missing "name" from package.json in packages/foo/package.json', "    at <dir>/package.json"].join(
           "\n",

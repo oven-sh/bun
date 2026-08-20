@@ -162,14 +162,12 @@ WHATWG-compliant, backed by WebKit's URL parser. Returns `None` for invalid inpu
 ```rust
 use bun_jsc::URL;
 
-let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
-// caller owns the C++ object — destroy it when done:
-// unsafe { URL::destroy(url.as_ptr()) }
+let url = URL::from_utf8(href)?;                  // Option<OwnedURL>: derefs to URL, deletes the WTF::URL on drop
 
 url.protocol()   // bun_core::String
 url.pathname()   // bun_core::String
 url.host()       // bun_core::String — the hostname WITHOUT the port (opposite of JS `host`!)
-url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
+url.port()       // Option<u16> (None = unset)
 ```
 
 `URL::href_from_js`, `URL::file_url_from_string`, `URL::path_from_file_url`

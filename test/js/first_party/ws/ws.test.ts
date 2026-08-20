@@ -993,7 +993,8 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     path = "/",
     key = "dGhlIHNhbXBsZSBub25jZQ==",
     version = "13",
-  }: { path?: string; key?: string; version?: string } = {}) {
+    body = "",
+  }: { path?: string; key?: string; version?: string; body?: string } = {}) {
     return [
       `GET ${path} HTTP/1.1`,
       "Host: localhost",
@@ -1001,8 +1002,22 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       "Upgrade: websocket",
       `Sec-WebSocket-Version: ${version}`,
       ...(key ? [`Sec-WebSocket-Key: ${key}`] : []),
+      ...(body ? [`Content-Length: ${body.length}`] : []),
       "",
+      body,
+    ].join("\r\n");
+  }
+
+  // The reply the npm package writes for a rejected handshake.
+  function rejection(status: string, body = status.slice(4), headers: string[] = []) {
+    return [
+      `HTTP/1.1 ${status}`,
+      "Connection: close",
+      "Content-Type: text/html",
+      `Content-Length: ${body.length}`,
+      ...headers,
       "",
+      body,
     ].join("\r\n");
   }
 
@@ -1127,17 +1142,8 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
 
     expect(() => wss.handleUpgrade(req, socket, head, ws => connections.push(ws))).not.toThrow();
 
-    const message = "Missing or invalid Sec-WebSocket-Version header";
     expect(await upgrade.received()).toBe(
-      [
-        "HTTP/1.1 400 Bad Request",
-        "Connection: close",
-        "Content-Type: text/html",
-        `Content-Length: ${message.length}`,
-        "Sec-WebSocket-Version: 13, 8",
-        "",
-        message,
-      ].join("\r\n"),
+      rejection("400 Bad Request", "Missing or invalid Sec-WebSocket-Version header", ["Sec-WebSocket-Version: 13, 8"]),
     );
     expect(connections).toEqual([]);
     expect(socket.destroyed).toBe(true);
@@ -1152,18 +1158,44 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     wss.close();
     expect(() => wss.handleUpgrade(req, socket, head, ws => connections.push(ws))).not.toThrow();
 
-    expect(await upgrade.received()).toBe(
-      [
-        "HTTP/1.1 503 Service Unavailable",
-        "Connection: close",
-        "Content-Type: text/html",
-        "Content-Length: 19",
-        "",
-        "Service Unavailable",
-      ].join("\r\n"),
-    );
+    expect(await upgrade.received()).toBe(rejection("503 Service Unavailable"));
     expect(connections).toEqual([]);
     expect(socket.destroyed).toBe(true);
+  });
+
+  it("answers once when no WebSocketServer on the http.Server serves the path", async () => {
+    const server = createServer();
+    const chat = new WebSocketServer({ server, path: "/chat" });
+    const other = new WebSocketServer({ server, path: "/other" });
+    const connections: unknown[] = [];
+    chat.on("connection", ws => connections.push(ws));
+    other.on("connection", ws => connections.push(ws));
+
+    // Both servers reject the request inside the 'upgrade' event. The first
+    // one ends the socket, so the second one's reply fails with a socket
+    // 'error', which the error handler handleUpgrade() installed absorbs.
+    await using upgrade = await receiveUpgrade(upgradeRequest({ path: "/nope" }), server);
+
+    expect(await upgrade.received()).toBe(rejection("400 Bad Request"));
+    expect(connections).toEqual([]);
+    expect(upgrade.socket.destroyed).toBe(true);
+    chat.close();
+    other.close();
+  });
+
+  it("upgrades a live socket from a later task when the request carried a body", async () => {
+    // node:http releases a request with a body once the body has arrived,
+    // not when the 'upgrade' listener returns. The body is never read here.
+    await using upgrade = await receiveUpgrade(upgradeRequest({ body: "hello" }));
+    const { req, socket, head } = upgrade;
+    const wss = new WebSocketServer({ noServer: true });
+    const connections: unknown[] = [];
+
+    await new Promise(resolve => setImmediate(resolve));
+    expect(() => wss.handleUpgrade(req, socket, head, ws => connections.push(ws))).not.toThrow();
+
+    expect(connections).toHaveLength(1);
+    expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
   });
 
   it("leaves a connection alone that another WebSocketServer on the same http.Server took", async () => {

@@ -184,6 +184,23 @@ impl NapiEnv {
     }
 }
 
+/// Reports the exception a native addon callback left pending. Node runs these
+/// callbacks through `CallbackIntoModule`, so an uncaught throw is fatal, unlike
+/// the keep-alive fold the caller's dispatcher applies to whatever is returned
+/// here: a termination, which stays pending for that dispatcher to stand down on.
+fn report_addon_exception(global: &JSGlobalObject, proof: jsc::JsError) -> JsResult<()> {
+    let exception = global.take_exception(proof);
+    if exception.is_termination_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
+    let _ = global.bun_vm().as_mut().uncaught_exception_fatal(
+        global,
+        exception,
+        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+    );
+    Ok(())
+}
+
 // SAFETY: NapiEnv refcount is managed externally by C++ via NapiEnv__ref/NapiEnv__deref;
 // the pointee remains valid while the count is > 0.
 unsafe impl bun_ptr::ExternalSharedDescriptor for NapiEnv {
@@ -1978,7 +1995,9 @@ impl napi_async_work {
         complete(env, status as napi_status, self.data);
 
         // SAFETY: env is valid for the duration of this call.
-        unsafe { &*env }.surface_exception(global)
+        unsafe { &*env }
+            .surface_exception(global)
+            .or_else(|proof| report_addon_exception(global, proof))
     }
 }
 
@@ -2404,7 +2423,10 @@ impl Finalizer {
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
         unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
-        env_ref.surface_exception(env_ref.to_js())
+        let global = env_ref.to_js();
+        env_ref
+            .surface_exception(global)
+            .or_else(|proof| report_addon_exception(global, proof))
     }
 
     // `deinit` is handled by Drop on NapiEnvRef.
@@ -2802,7 +2824,7 @@ impl ThreadSafeFunction {
                 env_ref.surface_exception(global_object)
             }
         };
-        match called {
+        match called.or_else(|proof| report_addon_exception(global_object, proof)) {
             Ok(()) => Ok(()),
             Err(err) => bun_jsc::task::report_error_or_terminate(global_object, err),
         }

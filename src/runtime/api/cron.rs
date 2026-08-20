@@ -1811,13 +1811,34 @@ impl CronJob {
         let _ev_guard = vm.enter_event_loop_scope();
 
         this_ref.in_fire.set(true);
-        // A top-level call: what the tick throws is reported here (before the
+        // A top-level call: what the tick throws is reported here, before the
         // job is re-armed, so an `uncaughtException` handler's `stop()` is
-        // observed by `schedule_next`), and does not stop the job — as with a
-        // rejected tick.
-        let result =
-            vm.event_loop_mut()
-                .run_callback_with_result(cb, &this_ref.global, js_this, &[]);
+        // observed by `schedule_next`. Reported on the fatal path like a
+        // setTimeout tick, so an unhandled throw exits instead of leaving the
+        // job ticking; the same entry gate as `EventLoop::run_callback`.
+        let result = if this_ref.global.has_exception() {
+            JSValue::ZERO
+        } else {
+            match cb.call(&this_ref.global, js_this, &[]) {
+                Ok(v) => v,
+                Err(err) => {
+                    let err = this_ref.global.take_exception(err);
+                    if err.is_termination_exception() {
+                        this_ref.in_fire.set(false);
+                        Self::self_stop(this, vm);
+                        return;
+                    }
+                    let global_ref = vm.global();
+                    // SAFETY: single JS thread; `&mut` via the thread-local raw pointer.
+                    let _ = VirtualMachine::get().as_mut().uncaught_exception_fatal(
+                        global_ref,
+                        err,
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                    );
+                    JSValue::ZERO
+                }
+            }
+        };
         this_ref.in_fire.set(false);
 
         // terminate() may have arrived while the callback was running; bail out

@@ -1,7 +1,7 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
 const OsModule = require("node:os");
-const { kHandle } = require("internal/shared");
+const { kHandle, reportUncaughtException } = require("internal/shared");
 const {
   validateBoolean,
   validateFunction,
@@ -1505,7 +1505,11 @@ class ChildProcess extends EventEmitter {
   }
 
   #emitIpcMessage(message, _, handle) {
-    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
+    try {
+      this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
+    } catch (err) {
+      reportUncaughtException(err);
+    }
   }
 
   #send(message, handle, options, callback) {

@@ -496,3 +496,28 @@ describe("fs.watchFile", () => {
     });
   }, 30_000);
 });
+
+test("fs.watchFile listener throw is a fatal uncaught exception", async () => {
+  using dir = tempDir("watchfile-throw", { "target.txt": "0" });
+  const fixture = `
+    const fs = require("node:fs");
+    const file = ${JSON.stringify(path.join(String(dir), "target.txt"))};
+    fs.watchFile(file, { interval: 20 }, () => {
+      throw new Error("watchfile-boom");
+    });
+    // Grow the file until a poll observes a change; the fatal exit ends the process.
+    setInterval(() => fs.appendFileSync(file, "x"), 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: expect.stringContaining("watchfile-boom"),
+    exitCode: 1,
+  });
+}, 15_000);

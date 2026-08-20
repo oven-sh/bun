@@ -2143,9 +2143,6 @@ pub struct NetworkSink {
     pub(crate) upstream_error: jsc::strong::Optional,
     pub(crate) ended: bool,
     pub(crate) done: bool,
-    /// `JsSinkType::finalize` ran. On the `upload_stream` path only the pump's
-    /// controller does that, and only if collected while attached: the pump is dead.
-    pub(crate) cell_released: bool,
 }
 
 impl Default for NetworkSink {
@@ -2161,7 +2158,6 @@ impl Default for NetworkSink {
             upstream_error: jsc::strong::Optional::empty(),
             ended: false,
             done: false,
-            cell_released: false,
         }
     }
 }
@@ -2514,10 +2510,7 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
         // SAFETY: trait contract — `this` is live, and the inherent `finalize`
         // only releases the ref on the separate `MultiPartUpload`, never this
         // sink, so the `&mut` scoped to this call stays valid throughout.
-        unsafe {
-            (*this).cell_released = true;
-            (*this).finalize()
-        }
+        unsafe { (*this).finalize() }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

@@ -402,7 +402,6 @@ impl Drop for MultiPartUpload {
         // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
-        let _ = self.vm;
         self.poll_ref.with_mut(|poll_ref| {
             poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
                 bun_io::AllocatorType::Js,
@@ -758,7 +757,8 @@ impl MultiPartUpload {
         match result {
             S3CommitResult::Failure(err) => {
                 let mut options = self_.options.get();
-                if options.retry > 0 {
+                // A stopping VM refuses every request: do not walk the retries through it.
+                if options.retry > 0 && self_.vm.script_allowed() {
                     options.retry -= 1;
                     self_.options.set(options);
                     // retry commit
@@ -799,7 +799,8 @@ impl MultiPartUpload {
         match result {
             S3UploadResult::Failure(_err) => {
                 let mut options = self_.options.get();
-                if options.retry > 0 {
+                // As in `on_commit_multi_part_request`.
+                if options.retry > 0 && self_.vm.script_allowed() {
                     options.retry -= 1;
                     self_.options.set(options);
                     // retry rollback

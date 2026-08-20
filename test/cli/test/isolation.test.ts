@@ -1108,12 +1108,14 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 // - The AbortMultipartUpload that failing it sends must reach S3. It is a new
 //   request started by the swap's own sweep, so it must not be caught and
 //   aborted by that sweep (retry: 0 makes the one attempt the only one).
-// - The file's pump machinery is usually garbage by then (file a collects it
-//   on purpose), so nothing on the JS side can release the upload's native
-//   wrapper any more; failing the upload has to release it itself. On a debug
-//   build the wrapper's and the upload's own teardown log lines show both were
-//   freed exactly once: the wrapper at the swap, the upload once the rollback
-//   came back (or at the exit teardown, if it had not yet).
+// - Failing the upload cancels the stream feeding it, and the pump's own
+//   completion then releases the upload's native wrapper, on the swap's
+//   microtask drain. On a debug build the wrapper's and the upload's own
+//   teardown log lines show both were freed exactly once: the wrapper at the
+//   swap, the upload once the rollback came back (or at the exit teardown, if
+//   it had not yet). File a keeps its stream reachable: an upload whose pump
+//   was already collected by the time of the swap keeps its wrapper (there is
+//   no safe point to release it without the pump, see pump_ref_is_stranded).
 test.concurrent("--isolate: a multipart S3 upload left open is rolled back and freed", async () => {
   const testFile = (body: string) => `
     import { test } from "bun:test";
@@ -1123,12 +1125,13 @@ test.concurrent("--isolate: a multipart S3 upload left open is rolled back and f
   using dir = tempDir("isolate-s3-rollback", {
     "a.test.js": testFile(`
       const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: process.env.STAND_IN, retry: 0 });
-      s3.file("key").write(new Response(new ReadableStream({
+      globalThis.source = new ReadableStream({
         pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return new Promise(() => {}); },
-      }))).catch(() => {});
+      });
+      s3.file("key").write(new Response(globalThis.source)).catch(() => {});
       test("a: the upload gets its first part out, then waits for more", async () => {
         while (!(await seen("PUT"))) await Bun.sleep(10);
-        Bun.gc(true);
+        // The reachable stream keeps the pump alive through this.
         Bun.gc(true);
       });
     `),

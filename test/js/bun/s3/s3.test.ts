@@ -1994,6 +1994,69 @@ describe("s3 upload stream body error", () => {
     expect(received).toBe(totalBytes);
     expect(exitCode).toBe(0);
   });
+
+  // The ref a JS-pumped upload holds for its pump is released by the pump
+  // promise's .then shim, and the S3 side must leave it to that shim for as long
+  // as script runs, even when the pump looks dead: a direct stream's pump
+  // promise is settled by the pull promise the user returned, which can happen
+  // long after the stream and its controller were collected. Here S3 fails the
+  // upload while the controller is already gone; when the pull promise settles
+  // afterwards, the shim runs against the wrapper, which therefore must still
+  // be alive (ASAN reports the use after free if it is not).
+  it("releases a direct stream's pump ref through the pump, not when S3 fails", async () => {
+    const fixture = `
+      const initiate = Promise.withResolvers();
+      const initiateSeen = Promise.withResolvers();
+      const standIn = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          await req.arrayBuffer();
+          if (req.method === "POST") {
+            initiateSeen.resolve();
+            await initiate.promise;
+            return new Response("<Error><Code>AccessDenied</Code><Message>no</Message></Error>", { status: 403 });
+          }
+          return new Response(undefined, { headers: { etag: '"part"' } });
+        },
+      });
+      const client = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: standIn.url.href });
+      const pull = Promise.withResolvers();
+      // In its own function so that nothing on this frame keeps the stream reachable.
+      const written = (() =>
+        client.write("key", new Response(new ReadableStream({
+          type: "direct",
+          pull(controller) {
+            controller.write(new Uint8Array(5 * 1024 * 1024));
+            return pull.promise;
+          },
+        }))))();
+      await initiateSeen.promise;
+      for (let i = 0; i < 4; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      initiate.resolve();
+      console.log("write:", await written.then(() => "resolved", e => e.code));
+      pull.resolve();
+      // The pump promise settles, and with it the shim, before the next macrotask.
+      await new Promise(resolve => setImmediate(resolve));
+      console.log("pump settled");
+      standIn.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // The S3 client does not honor NO_PROXY; an inherited proxy would hijack the requests.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "write: AccessDenied\npump settled\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("presigned url signature", () => {

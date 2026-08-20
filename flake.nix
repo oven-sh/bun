@@ -14,9 +14,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -24,6 +25,11 @@
           config = {
             allowUnfree = true;
           };
+          overlays = [ (import self.inputs.rust-overlay) ];
+        };
+
+        rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
+          extensions = [ "rust-src" ];
         };
 
         # LLVM 21 - matching the bootstrap script (targets 21.1.8, actual version from nixpkgs-unstable)
@@ -47,7 +53,7 @@
           llvm
           lld
           pkgs.gcc
-          pkgs.rustc
+          rustToolchain
           pkgs.cargo
           pkgs.go
 
@@ -127,6 +133,8 @@
 
       in
       {
+
+
         devShells.default = (pkgs.mkShell.override {
           stdenv = pkgs.clangStdenv;
         }) {
@@ -145,6 +153,7 @@
             export CMAKE_RANLIB="$RANLIB"
             export CMAKE_SYSTEM_PROCESSOR="$(uname -m)"
             export TMPDIR="''${TMPDIR:-/tmp}"
+            export RUST_SRC_PATH="${rustToolchain}/lib/rustlib/src/rust/library"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD="${pkgs.lib.getExe' lld "ld.lld"}"
             export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"

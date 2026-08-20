@@ -160,7 +160,7 @@ test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", asyn
 // Node only sets a numeric `errno` on DNS errors when libuv reported a
 // numeric error (getaddrinfo/getnameinfo). c-ares resolver failures carry a
 // string code and leave `errno` undefined. https://github.com/oven-sh/bun/issues/37320
-test.skipIf(isWindows)("resolver query errors leave errno undefined", async () => {
+test.skipIf(isWindows)("resolver query errors leave errno undefined, lookup errors keep a number", async () => {
   const socket = dgram.createSocket("udp4");
   try {
     socket.on("message", (query, rinfo) => {
@@ -199,6 +199,9 @@ test.skipIf(isWindows)("resolver query errors leave errno undefined", async () =
       promisesResolve4: await promiseError(promisesResolver.resolve4("invalid.invalid")),
       promisesResolveAny: await promiseError(promisesResolver.resolveAny("invalid.invalid")),
       promisesReverse: await promiseError(promisesResolver.reverse("192.0.2.1")),
+      // dns.lookup() rejects a name with a NUL byte before it reaches a resolver
+      // backend, so this getaddrinfo failure does not need the network either.
+      lookup: await promiseError(dns.promises.lookup("invalid.invalid\0")),
     };
 
     // Node keeps `errno` as an own property of the error and only leaves its
@@ -236,6 +239,13 @@ test.skipIf(isWindows)("resolver query errors leave errno undefined", async () =
       promisesResolve4: query("queryA"),
       promisesResolveAny: query("queryAny"),
       promisesReverse: reverse,
+      lookup: {
+        code: "ENOTFOUND",
+        syscall: "getaddrinfo",
+        hostname: "invalid.invalid\0",
+        errno: expect.any(Number),
+        hasOwnErrno: true,
+      },
     });
   } finally {
     socket.close();

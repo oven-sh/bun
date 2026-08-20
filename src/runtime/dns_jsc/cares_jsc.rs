@@ -641,16 +641,14 @@ fn any_reply_to_js(
 
 // ── Error ──────────────────────────────────────────────────────────────────
 
-/// Node only sets a numeric `errno` on DNS errors when libuv reported a
-/// numeric code (getaddrinfo/getnameinfo); c-ares resolver failures carry a
-/// string code and leave `errno` undefined.
-fn clear_errno_for_resolver_syscall(
-    instance: JSValue,
-    global_this: &JSGlobalObject,
-    syscall: &[u8],
-) {
+/// Node only gives a DNS error a numeric `errno` when libuv reported one
+/// (`getaddrinfo`/`getnameinfo`). A c-ares resolver failure (`query*`,
+/// `getHostByAddr`) only has a string `code`, so its `errno` is undefined.
+fn errno_for_syscall(this: c_ares::Error, syscall: &[u8]) -> c_int {
     if strings::has_prefix_comptime(syscall, b"query") || strings::eql(syscall, b"getHostByAddr") {
-        instance.put(global_this, b"errno", JSValue::UNDEFINED);
+        SystemError::NO_ERRNO
+    } else {
+        this as c_int
     }
 }
 
@@ -693,7 +691,7 @@ impl ErrorDeferred {
             ))
         };
         let system_error = SystemError {
-            errno: self.errno as i32,
+            errno: errno_for_syscall(self.errno, self.syscall),
             code: bstr::String::static_(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
@@ -708,7 +706,6 @@ impl ErrorDeferred {
             b"name",
             bstr::String::static_(b"DNSException").to_js(global_this)?,
         );
-        clear_errno_for_resolver_syscall(instance, global_this, self.syscall);
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
         // hostname was `take()`n above to avoid double-deref.
@@ -780,7 +777,7 @@ pub(crate) fn error_to_js_with_syscall(
 ) -> JsResult<JSValue> {
     let code = this.code();
     let instance = SystemError {
-        errno: this as i32,
+        errno: errno_for_syscall(this, syscall),
         code: bstr::String::static_(&code[4..]),
         syscall: bstr::String::static_(syscall),
         message: bstr::String::create_format(format_args!(
@@ -796,7 +793,6 @@ pub(crate) fn error_to_js_with_syscall(
         b"name",
         bstr::String::static_(b"DNSException").to_js(global_this)?,
     );
-    clear_errno_for_resolver_syscall(instance, global_this, syscall);
     Ok(instance)
 }
 
@@ -812,7 +808,7 @@ pub(crate) fn system_error_with_syscall_and_hostname(
 ) -> SystemError {
     let code = this.code();
     SystemError {
-        errno: this as i32,
+        errno: errno_for_syscall(this, syscall),
         code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",
@@ -839,7 +835,6 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
         b"name",
         bstr::String::static_(b"DNSException").to_js(global_this)?,
     );
-    clear_errno_for_resolver_syscall(instance, global_this, syscall);
     Ok(instance)
 }
 

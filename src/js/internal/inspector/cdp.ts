@@ -334,6 +334,11 @@ class InspectorCDPAdapter {
   #profilerStartTime = 0;
   #profilerStopClientIds: (number | string)[] = [];
   #nodeRuntimeEnabled = false;
+  // JSC has one agent set and broadcasts its events to every frontend, so per-session
+  // domain enables live here: events are only surfaced to a client that enabled the domain,
+  // as V8's per-session agents do. Script/breakpoint bookkeeping still runs regardless.
+  #debuggerEnabled = false;
+  #runtimeEnabled = false;
   #notifyWhenWaitingForDisconnect = false;
   #retainingContext = false;
   #sentContextDestroyed = false;
@@ -376,7 +381,16 @@ class InspectorCDPAdapter {
     }
   }
 
+  // node:inspector forwards an in-process Session's Debugger.enable/disable to the
+  // remote-controlled backend when a server is up; the events still arrive through this
+  // adapter, so that path records the enable here instead of via #dispatchClientCommand.
+  noteDebuggerEnabled(enabled: boolean): void {
+    this.#debuggerEnabled = enabled;
+  }
+
   handleClientDisconnect(): void {
+    this.#debuggerEnabled = false;
+    this.#runtimeEnabled = false;
     this.#scripts.$clear();
     this.#scriptIdsByUrl.clear();
     this.#preParseBreakpoints.clear();
@@ -738,6 +752,9 @@ class InspectorCDPAdapter {
     switch (method) {
       // ── Runtime ──────────────────────────────────────────────────────────
       case "Runtime.enable":
+        // Set before the sends: the in-process dispatch is synchronous, so the backend's
+        // replay of buffered console messages arrives inside #sendToBackend.
+        this.#runtimeEnabled = true;
         // JSGlobalObject inspection has a single execution context; CDP clients
         // need at least one announced for the console and evaluation to work.
         this.#emitToClient("Runtime.executionContextCreated", {
@@ -758,6 +775,7 @@ class InspectorCDPAdapter {
         return;
 
       case "Runtime.disable":
+        this.#runtimeEnabled = false;
         this.#sendToBackend("Runtime.disable");
         // Runtime.enable also enabled the Console domain; mirror it here so a
         // client that disables Runtime stops receiving consoleAPICalled.
@@ -864,6 +882,9 @@ class InspectorCDPAdapter {
 
       // ── Debugger ─────────────────────────────────────────────────────────
       case "Debugger.enable":
+        // Set before the send: the synchronous in-process dispatch delivers the
+        // scriptParsed replay for already-parsed scripts inside #sendToBackend.
+        this.#debuggerEnabled = true;
         this.#sendToBackend("Debugger.enable");
         // V8's Debugger.enable implicitly arms breakpoints and `debugger;`; JSC requires explicit
         // opt-in. Answer from the last command so pausing is armed before the client runs code.
@@ -873,6 +894,10 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.disable":
+        this.#debuggerEnabled = false;
+        this.#sendToBackend(method, params, id, method);
+        return;
+
       case "Debugger.pause":
       case "Debugger.resume":
       case "Debugger.stepInto":
@@ -1190,21 +1215,23 @@ class InspectorCDPAdapter {
         });
         if (url) this.#scriptIdsByUrl.set(url, params.scriptId);
         if (cdpUrl) this.#scriptIdsByUrl.set(cdpUrl, params.scriptId);
-        const { scriptType } = params;
-        this.#emitToClient("Debugger.scriptParsed", {
-          scriptId: params.scriptId,
-          url: cdpUrl,
-          startLine: params.startLine ?? 0,
-          startColumn: params.startColumn ?? 0,
-          endLine,
-          endColumn,
-          executionContextId: EXECUTION_CONTEXT_ID,
-          hash: "",
-          isModule: scriptType === "module",
-          sourceMapURL,
-          embedderName: cdpUrl,
-          scriptLanguage: scriptType === "webassembly" ? "WebAssembly" : "JavaScript",
-        });
+        if (this.#debuggerEnabled) {
+          const { scriptType } = params;
+          this.#emitToClient("Debugger.scriptParsed", {
+            scriptId: params.scriptId,
+            url: cdpUrl,
+            startLine: params.startLine ?? 0,
+            startColumn: params.startColumn ?? 0,
+            endLine,
+            endColumn,
+            executionContextId: EXECUTION_CONTEXT_ID,
+            hash: "",
+            isModule: scriptType === "module",
+            sourceMapURL,
+            embedderName: cdpUrl,
+            scriptLanguage: scriptType === "webassembly" ? "WebAssembly" : "JavaScript",
+          });
+        }
         this.#retranslatePreParseBreakpoints(url, cdpUrl, params.scriptId);
         return;
       }
@@ -1219,6 +1246,7 @@ class InspectorCDPAdapter {
           this.#sendToBackend("Debugger.resume");
           return;
         }
+        if (!this.#debuggerEnabled) return;
         const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
           callFrameId: frame.callFrameId,
           functionName: frame.functionName ?? "",
@@ -1255,11 +1283,11 @@ class InspectorCDPAdapter {
           this.#suppressNextResumed = false;
           return;
         }
-        this.#emitToClient("Debugger.resumed", {});
+        if (this.#debuggerEnabled) this.#emitToClient("Debugger.resumed", {});
         return;
 
       case "Debugger.breakpointResolved":
-        if (this.#isStaleResetBreakpoint(params.breakpointId)) return;
+        if (!this.#debuggerEnabled || this.#isStaleResetBreakpoint(params.breakpointId)) return;
         this.#emitToClient("Debugger.breakpointResolved", {
           breakpointId: this.#toClientBreakpointId(params.breakpointId),
           location: this.#toOriginalLocation(params.location),
@@ -1267,11 +1295,14 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.globalObjectCleared":
-        this.#emitToClient("Runtime.executionContextsCleared", {});
+        if (this.#runtimeEnabled) this.#emitToClient("Runtime.executionContextsCleared", {});
         return;
 
       case "Console.messageAdded":
-        this.#translateConsoleMessage(params.message || {});
+        // In-process Sessions get consoleAPICalled from node:inspector's own console hook and
+        // never enable Runtime through this adapter, so this also keeps a remote client's
+        // Console.enable from duplicating their events.
+        if (this.#runtimeEnabled) this.#translateConsoleMessage(params.message || {});
         return;
 
       case "ScriptProfiler.trackingStart":

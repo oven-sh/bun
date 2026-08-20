@@ -1670,3 +1670,40 @@ session.post("Runtime.evaluate", { expression: "debugger; 42" }, function onDone
     exitCode: 0,
   });
 });
+
+test("Debugger events only reach the in-process Sessions that enabled the domain", async () => {
+  // All in-process Sessions share one JSC frontend, which broadcasts every
+  // event to every adapter; like Node's per-session agents, a Session that
+  // never enabled Debugger must not observe another Session's enable.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const vm = require("node:vm");
+const a = new inspector.Session();
+const b = new inspector.Session();
+a.connect();
+b.connect();
+let aParsed = 0;
+let bParsed = 0;
+a.on("Debugger.scriptParsed", () => aParsed++);
+b.on("Debugger.scriptParsed", () => bParsed++);
+// Routes to the shared backend, so A has an adapter, without enabling Debugger.
+a.post("Debugger.setAsyncCallStackDepth", { maxDepth: 4 });
+b.post("Debugger.enable");
+vm.runInThisContext("1 + 1", { filename: "probe.js" });
+console.log(JSON.stringify({ aParsed, bSawProbe: bParsed >= 1 }));
+a.disconnect();
+b.disconnect();`,
+    ],
+    env: inspectorChildEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { aParsed: 0, bSawProbe: true },
+    stderr: "",
+    exitCode: 0,
+  });
+});

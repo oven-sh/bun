@@ -4799,8 +4799,6 @@ pub mod bv2_impl {
                             drop(result.path);
                         }
                     } else {
-                        // An external import is left as is in the importer; an external
-                        // entry point has nothing to emit, so it is a build error (as in esbuild).
                         if resolve.import_record.kind == ImportKind::EntryPointBuild {
                             let log = this.log_for_resolution_failures(
                                 &resolve.import_record.source_file,

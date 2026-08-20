@@ -469,9 +469,7 @@ impl<'a> Transpiler<'a> {
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
-                    // Nothing that long names a directory whose cache could be
-                    // stale (and neither buster name below would fit
-                    // `cache_bust_buf`).
+                    // Neither buster name below would fit `cache_bust_buf`.
                     if self.fs().top_level_dir.len() + entry_point.len() + 4
                         > bun_paths::MAX_PATH_BYTES
                     {

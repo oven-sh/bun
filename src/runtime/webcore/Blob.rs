@@ -1284,17 +1284,13 @@ impl BlobExt for Blob {
             return JSValue::TRUE;
         };
 
-        // Dispatch on the tag and re-read through `data_mut` after the stat;
-        // see `resolve_size` for why no `&Data` may be live across it.
         match store.data_mut().tag() {
             // Bytes will never error
             store::DataTag::Bytes => JSValue::TRUE,
             store::DataTag::S3 => JSValue::FALSE,
             store::DataTag::File => {
-                // Stat on every call, so a file created or deleted since the
-                // last answer is seen. This refreshes only the store's stat
-                // cache. It must not resolve `self.size`: a size cached from
-                // here caps every later read and copy of this blob.
+                // Not `resolve_size()`: a size cached here would cap every
+                // later read and copy of this blob.
                 resolve_file_stat(store);
                 let mode = store.data_mut().as_file().mode;
                 // We say regular files and pipes exist.
@@ -2238,12 +2234,11 @@ impl BlobExt for Blob {
             if self.size.get() == MAX_SIZE {
                 if let Some(store) = self.store.get() {
                     return match &store.data {
-                        // The stat failed, so there is no file to size. Report
-                        // 0 without caching it: the file may be created later.
+                        // The stat failed (no such file). Not cached on purpose.
                         store::Data::File(file) if file.seekable.is_none() => {
                             JSValue::js_number(0.0)
                         }
-                        // A pipe or a tty has no end.
+                        // A pipe or a tty.
                         _ => JSValue::js_number(f64::INFINITY),
                     };
                 }
@@ -2290,9 +2285,8 @@ impl BlobExt for Blob {
                     let available = store_size - self.offset.get();
                     self.size.set(window_size(self.size.get(), available));
                 }
-                // Otherwise the size stays unresolved: a pipe has no size, and
-                // a file the stat did not find may be created later. Caching 0
-                // here would cap every later read of this blob at 0 bytes.
+                // A pipe, or a missing file: the size stays unresolved. A
+                // cached 0 would cap every later read of this blob.
             }
             store::DataTag::S3 => self.size.set(0),
         }
@@ -6121,11 +6115,8 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
     }
 }
 
-/// Stat the file behind `store` and cache `max_size`, `mode`, `seekable` and
-/// `last_modified` on it. The cache always describes the most recent stat:
-/// when the stat fails (the file does not exist, or does not exist anymore)
-/// the four fields go back to their unresolved defaults, so a later call
-/// stats again instead of answering from a file that is gone.
+/// Stat the file and cache the result on the store. A failed stat clears the
+/// cache, so the store answers like a fresh `Bun.file()` until a stat succeeds.
 fn resolve_file_stat(store: &StoreRef) {
     // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
     // `StoreRef` liveness invariant; the caller holds the only ref across

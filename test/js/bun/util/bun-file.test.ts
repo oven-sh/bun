@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, unlinkSync } from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -221,7 +221,8 @@ describe.concurrent("BunFile does not cache a failed stat", () => {
     expect(file.size).toBe(0);
     expect(await file.exists()).toBe(false);
     const error = await file.text().catch(e => e);
-    expect(["ENOTDIR", "ENOENT"]).toContain(error.code);
+    // Windows reports a path through a regular file as ENOENT.
+    expect(error.code).toBe(isWindows ? "ENOENT" : "ENOTDIR");
 
     unlinkSync(blocker);
     mkdirSync(blocker);

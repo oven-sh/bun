@@ -641,8 +641,7 @@ fn is_trusted_cache_root(path: &ZStr) -> bool {
     }
 }
 
-/// Re-checks the directory we actually opened for writing, so a root created
-/// between `get_cache_dir`'s lstat and this open cannot receive our entries.
+/// Same predicate as `is_trusted_cache_root`, on the directory we opened.
 #[cfg(unix)]
 fn is_trusted_opened_cache_dir(fd: Fd) -> bool {
     sys::fstat(fd).is_ok_and(|st| is_trusted_dir_stat(&st))

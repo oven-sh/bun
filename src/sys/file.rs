@@ -191,8 +191,7 @@ impl File {
         self.read_to_end_with_array_list(&mut v, SizeHint::ProbablySmall)?;
         Ok(v)
     }
-    /// Like [`File::read_to_end`], presized from a size the caller's own
-    /// `fstat()` reported.
+    /// [`File::read_to_end`] presized from the caller's own `fstat()`.
     fn read_to_end_sized(&self, size: u64) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();
         self.read_to_end_with_array_list(&mut v, SizeHint::Known(size))?;
@@ -200,8 +199,8 @@ impl File {
     }
     /// `File.readToEndWithArrayList(buf, hint)` — like `read_all` but takes a
     /// `SizeHint` so callers can pre-reserve. Returns total bytes appended.
-    /// `ProbablySmall` reserves 64; `UnknownSize` fstats and `Known` takes the
-    /// caller's size, and both reserve `size+16`.
+    /// `ProbablySmall` reserves 64; `UnknownSize` fstats and reserves
+    /// `size+16`, as does `Known(size)` without the fstat.
     pub fn read_to_end_with_array_list(&self, list: &mut Vec<u8>, hint: SizeHint) -> Maybe<usize> {
         match hint {
             SizeHint::ProbablySmall => {
@@ -347,23 +346,13 @@ impl File {
     }
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
-    /// Open `path` for reading if it is a regular file. Returns the file and
-    /// its size.
-    ///
-    /// The files bun reads whole are files it located itself: lockfiles,
-    /// package.json and config files, cache entries, a sidecar next to a
-    /// script. No reader of those can use anything but a regular file, and
-    /// reading anything else is harmful: a plain `O_RDONLY` open of a FIFO
-    /// blocks until a writer shows up, and `/dev/zero` never reaches EOF. So
-    /// the open does not block (on unix), and the type of the open descriptor
-    /// decides, which a swap of the path cannot race: a directory fails with
-    /// `EISDIR`, every other non-regular file with `ENODEV`, the errno
-    /// `Bun.Image` already reports for a path like that.
+    /// Open `path` for reading if it is a regular file; returns it with its size. A directory
+    /// fails with `EISDIR`, any other non-regular file with `ENODEV` (the errno `Bun.Image` used).
+    /// The files bun reads whole are files it found itself (lockfiles, package.json, config, cache
+    /// entries, sidecars): a FIFO there would block the open, and `/dev/zero` has no end.
     pub fn open_regular_at(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, u64)> {
         let dir = dir.as_fd();
-        // On Windows `O_NONBLOCK` opens an overlapped handle, which the
-        // synchronous reads cannot use; the fstat check below still rejects
-        // pipes and devices there.
+        // On Windows `O_NONBLOCK` would make the handle overlapped; the fstat still rejects there.
         #[cfg(unix)]
         let flags = O::RDONLY | O::CLOEXEC | O::NONBLOCK;
         #[cfg(not(unix))]
@@ -377,25 +366,22 @@ impl File {
         }
         Ok((file, st.st_size.max(0) as u64))
     }
-    /// Open + read + close of a regular file; see [`File::open_regular_at`].
-    /// Accepts `&[u8]`; `&ZStr` callers deref-coerce.
+    /// Open + read + close of a regular file ([`File::open_regular_at`]); `&ZStr` deref-coerces.
     pub fn read_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
         let (f, size) = Self::open_regular_at(dir, path)?;
         // `Drop` closes the fd on all paths (no leak on read failure).
         f.read_to_end_sized(size)
     }
-    /// [`File::read_from`] without the file type check: a device is read like
-    /// a file, so `--config=/dev/null` is an empty config. Only for a path the
-    /// user named.
+    /// [`File::read_from`] that reads a device too: for a path the user named (`--config=/dev/null`).
     pub fn read_from_any_file_type(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
         f.read_to_end()
     }
-    /// [`File::read_from`] that also returns the open `File`. Caller owns the
-    /// fd and must `close()` it. On read error the fd is closed before
-    /// returning (no leak).
+    /// [`File::read_from`] that returns BOTH
+    /// the open `File` handle and the bytes. Caller owns the fd and must
+    /// `close()` it. On read error the fd is closed before returning (no leak).
     pub fn read_file_from(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, Vec<u8>)> {
         let dir = dir.as_fd();
         let (f, size) = Self::open_regular_at(dir, path)?;

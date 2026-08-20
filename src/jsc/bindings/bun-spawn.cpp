@@ -247,6 +247,13 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigfillset(&blockall);
+#if OS(LINUX)
+    // A seccomp trap (SIGSYS) kills the process when the signal is blocked
+    // instead of reaching the handler from bun_initialize_process, which turns
+    // it into ENOSYS. Keep it deliverable so clone3 below and the child's setup
+    // syscalls fail with ENOSYS like they do under an errno-returning policy.
+    sigdelset(&blockall, SIGSYS);
+#endif
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
@@ -296,6 +303,13 @@ extern "C" ssize_t posix_spawn_bun(
         struct sigaction sa = { 0 };
         sa.sa_handler = SIG_DFL;
         for (int i = 0; i < NSIG; i++) {
+#if OS(LINUX)
+            // Keep the seccomp trap handler until right before execve so a
+            // blocked close_range() below falls back to the loop instead of
+            // killing the child.
+            if (i == SIGSYS)
+                continue;
+#endif
             sigaction(i, &sa, 0);
         }
 
@@ -451,6 +465,9 @@ extern "C" ssize_t posix_spawn_bun(
         // Close all fds > current_max_fd, preferring cloexec if available
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
 
+#if OS(LINUX)
+        sigaction(SIGSYS, &sa, 0);
+#endif
         if (execve(path, argv, envp) == -1) {
             return childFailed();
         }

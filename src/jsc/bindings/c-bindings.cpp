@@ -274,6 +274,54 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 {
     return syscall(__NR_close_range, start, end, flags);
 }
+
+#if CPU(X86_64) || CPU(ARM64)
+#include <ucontext.h>
+
+#ifndef SYS_SECCOMP
+#define SYS_SECCOMP 1
+#endif
+
+static struct sigaction sigsys_action_before_seccomp_shim;
+
+// A seccomp policy answers a blocked syscall either with an errno
+// (SECCOMP_RET_ERRNO, what Docker's default profile does) or with SIGSYS
+// (SECCOMP_RET_TRAP, what Android's per-app policy does). Every newer syscall
+// Bun issues (close_range, pidfd_open, openat2, copy_file_range, clone3, ...)
+// has a fallback for the errno form, so turn the signal form into it: make the
+// blocked syscall return -ENOSYS and resume. This is the documented use of
+// SECCOMP_RET_TRAP (seccomp(2)).
+static void onSeccompTrap(int sig, siginfo_t* info, void* context)
+{
+    if (info->si_code == SYS_SECCOMP && context) {
+        ucontext_t* uc = static_cast<ucontext_t*>(context);
+#if CPU(X86_64)
+        uc->uc_mcontext.gregs[REG_RAX] = -ENOSYS;
+#else
+        uc->uc_mcontext.regs[0] = static_cast<unsigned long long>(-ENOSYS);
+#endif
+        return;
+    }
+
+    // Sent with kill(2): behave as if this handler was never installed.
+    sigaction(SIGSYS, &sigsys_action_before_seccomp_shim, nullptr);
+    raise(sig);
+}
+
+static void installSeccompTrapHandler()
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = onSeccompTrap;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSYS, &sa, &sigsys_action_before_seccomp_shim);
+}
+#else
+static void installSeccompTrapHandler()
+{
+}
+#endif // CPU(X86_64) || CPU(ARM64)
 #else // OS(FREEBSD)
 // FreeBSD 12.2+ libc has close_range; 14.0+ supports CLOSE_RANGE_CLOEXEC
 // (same value 1<<2 as Linux). Passing flags through means execveZ-failure
@@ -620,6 +668,10 @@ extern "C" void bun_initialize_process()
     setvbuf(stderr, nullptr, _IONBF, 0);
 
 #if OS(LINUX)
+    // Must come before bun_close_range: close_range(2) is the first syscall a
+    // seccomp policy is likely to block.
+    installSeccompTrapHandler();
+
     // Prevent leaking inherited file descriptors on Linux
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
@@ -943,7 +995,9 @@ extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
 
-// npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N]).
+// npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N])
+// and minus SIGSYS: the kernel raises it for a syscall of this process, so there is nothing to forward, and on Linux
+// the handler installed by bun_initialize_process must stay in place while the child runs.
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \
@@ -956,7 +1010,6 @@ static struct sigaction previous_actions[NSIG];
     M(SIGXFSZ);                  \
     M(SIGUSR2);                  \
     M(SIGTRAP);                  \
-    M(SIGSYS);                   \
     M(SIGQUIT);                  \
     M(SIGIO);
 

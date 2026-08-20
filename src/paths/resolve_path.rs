@@ -1634,11 +1634,11 @@ fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
 }
 
-/// `join_abs_needed`, plus the working directory (at most a `PathBuffer`) that a non-absolute base gets prepended.
+/// `join_abs_needed`, plus the working directory (at most a `PathBuffer`) that an unanchored base gets prepended.
 #[inline]
 fn join_abs_result_capacity<P: PlatformT>(cwd: &[u8], parts: &[&[u8]]) -> usize {
     let needed = join_abs_needed(cwd.len(), parts);
-    if P::P.is_absolute(cwd) {
+    if P::P.is_absolute(cwd) && P::P.leading_separator_index::<u8>(cwd).is_some() {
         needed
     } else {
         needed + MAX_PATH_BYTES
@@ -1736,22 +1736,6 @@ pub fn working_dir(buf: &mut PathBuffer) -> &[u8] {
     }
 }
 
-/// Fallback for a base that is not absolute. `parts` must not be empty, so the result always lands in `buf`.
-#[cold]
-#[inline(never)]
-fn join_onto_working_dir<'a, const IS_SENTINEL: bool, P: PlatformT>(
-    buf: &'a mut [u8],
-    parts: &[&[u8]],
-) -> &'a [u8] {
-    debug_assert!(!parts.is_empty());
-    let mut cwd_buf = crate::path_buffer_pool::get();
-    let cwd = working_dir(&mut cwd_buf);
-    // `/` is absolute under every platform's rule, so the nested join cannot come back here.
-    let cwd: &[u8] = if P::P.is_absolute(cwd) { cwd } else { b"/" };
-    let len = _join_abs_string_buf::<IS_SENTINEL, P>(cwd, &mut *buf, parts).len();
-    &buf[..len]
-}
-
 // We always return `&[u8]`; when `IS_SENTINEL` a NUL is written
 // at `result.len()` and callers (e.g. `join_abs_string_buf_z`) re-wrap as `ZStr`.
 fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
@@ -1796,11 +1780,14 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         return &buf[0..1];
     }
 
-    let mut cwd = if cfg!(windows) && _cwd.len() >= 3 && _cwd[1] == b':' {
+    let base: &[u8] = if cfg!(windows) && _cwd.len() >= 3 && _cwd[1] == b':' {
         &_cwd[2..]
     } else {
         _cwd
     };
+    let mut cwd = base;
+    // `is_absolute` accepts what `leading_separator_index` may not anchor (`c:/x` under `Loose`), so a promoted part can still be unanchored below.
+    let mut promoted = false;
 
     {
         let mut part_i: u16 = 0;
@@ -1809,6 +1796,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         while part_i < part_len {
             if P::P.is_absolute(parts[part_i as usize]) {
                 cwd = parts[part_i as usize];
+                promoted = true;
                 parts = &parts[part_i as usize + 1..];
 
                 part_len = parts.len() as u16;
@@ -1819,18 +1807,39 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         }
     }
 
-    let mut scratch = JoinScratch::init(cwd.len(), parts);
+    // An unanchored `cwd` (empty, relative) becomes the first segment under an anchored head instead of having a `/` invented over its first byte.
+    let mut working_dir_buf: Option<crate::path_buffer_pool::Guard> = None;
+    let (head, i, segment): (&[u8], usize, &[u8]) = match P::P.leading_separator_index::<u8>(cwd) {
+        Some(i) => (cwd, i, b""),
+        None => {
+            let mut anchor = None;
+            if promoted {
+                anchor = P::P.leading_separator_index::<u8>(base).map(|i| (base, i));
+            }
+            let (anchor, i) = match anchor {
+                Some(anchor) => anchor,
+                None => {
+                    let dir = working_dir(working_dir_buf.insert(crate::path_buffer_pool::get()));
+                    match P::P.leading_separator_index::<u8>(dir) {
+                        Some(i) => (dir, i),
+                        None => (b"/" as &[u8], 0),
+                    }
+                }
+            };
+            (anchor, i, cwd)
+        }
+    };
+
+    let mut scratch = JoinScratch::init(head.len() + segment.len() + 1, parts);
     let temp_buf = scratch.buf();
 
-    temp_buf[..cwd.len()].copy_from_slice(cwd);
-    let mut out: usize = cwd.len();
+    temp_buf[..head.len()].copy_from_slice(head);
+    let mut out: usize = head.len();
 
-    for &_part in parts {
-        if _part.is_empty() {
+    for part in core::iter::once(segment).chain(parts.iter().copied()) {
+        if part.is_empty() {
             continue;
         }
-
-        let part = _part;
 
         if out > 0 && temp_buf[out - 1] != P::P.separator() {
             temp_buf[out] = P::P.separator();
@@ -1840,12 +1849,6 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         temp_buf[out..out + part.len()].copy_from_slice(part);
         out += part.len();
     }
-
-    let Some(i) = P::P.leading_separator_index::<u8>(&temp_buf[0..out]) else {
-        // `cwd` is empty or relative and no part is absolute; inventing a `/` here ate the first byte (`rel/x` -> `/el/x`).
-        let relative: &[u8] = &temp_buf[0..out];
-        return join_onto_working_dir::<IS_SENTINEL, P>(buf, &[relative]);
-    };
 
     // reshaped for borrowck — stash leading separator into a local
     // [u8; 8] (max len: NT prefix `\\?\` = 4) so we don't hold a borrow into
@@ -1881,11 +1884,19 @@ fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     parts: &[&[u8]],
 ) -> &'a [u8] {
     if !crate::is_absolute_windows(cwd) {
-        // Same fallback as the POSIX arm; an absolute part still wins inside the nested join.
+        // `cwd` becomes the first part under the working directory; that base passes the check above, so this recurses once.
+        let mut working_dir_buf = crate::path_buffer_pool::get();
+        let dir = working_dir(&mut working_dir_buf);
+        let dir: &[u8] = if crate::is_absolute_windows(dir) {
+            dir
+        } else {
+            b"\\"
+        };
         let mut all_parts: Vec<&[u8]> = Vec::with_capacity(parts.len() + 1);
         all_parts.push(cwd);
         all_parts.extend_from_slice(parts);
-        return join_onto_working_dir::<IS_SENTINEL, platform::Windows>(buf, &all_parts);
+        let len = join_abs_string_buf_windows::<IS_SENTINEL>(dir, &mut *buf, &all_parts).len();
+        return &buf[..len];
     }
 
     if parts.is_empty() {
@@ -2730,6 +2741,33 @@ mod tests {
         assert_eq!(
             join_abs_string::<platform::Posix>(b"", &[b"x", b"/abs"]),
             b"/abs"
+        );
+    }
+
+    #[test]
+    fn join_abs_loose_keeps_a_part_that_is_absolute_but_not_anchored_under_its_base() {
+        record_working_dir();
+        // `Loose` calls `c:/cache` absolute, but only an upper-case drive anchors a path.
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"/project", &[b"c:/cache", b"pkg"]),
+            b"/project/c:/cache/pkg"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"rel", &[b"c:/cache"]),
+            b"/work/c:/cache"
+        );
+        assert_eq!(
+            join_abs_string_z::<platform::Loose>(b"/project", &[b"1:\\x"]).as_bytes(),
+            b"/project/1:/x"
+        );
+        // `import(":://filesystem")` reaches the resolver's joins with this part.
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"/project", &[b":://filesystem"]),
+            b"/project/::/filesystem"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"/project", &[b"C:/cache"]),
+            b"C:/cache"
         );
     }
 

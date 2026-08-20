@@ -1,7 +1,7 @@
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { truncateSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import os from "node:os";
 import path from "path";
 describe("Memory", () => {
@@ -188,7 +188,7 @@ describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("byte sources at the 2 GiB strin
       },
     ]);
     expect(exitCode).toBe(0);
-  });
+  }, 90_000);
 
   test("Bun.file().text() at 2^31 bytes throws ERR_STRING_TOO_LONG instead of aborting", async () => {
     using dir = tempDir("blob-2gib", {});
@@ -220,5 +220,63 @@ describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("byte sources at the 2 GiB strin
       },
     ]);
     expect(exitCode).toBe(0);
-  });
+    // Reads 2 GiB through the page cache; measured right at the default 5s
+    // ceiling under load.
+  }, 90_000);
 });
+
+// An ArrayBuffer can hold at most 2^32 bytes (JSC's MAX_ARRAY_BUFFER_SIZE). The
+// file path hands the bytes it read to JSC without a copy; converting the
+// length through u32 on the way panicked at exactly 2^32, and JSC aborts when
+// it is asked to adopt more than that. The file is sparse, but each case still
+// reads a real 4 GiB into the child (about 6 seconds in a debug build, all of
+// it page faults), so it runs in a subprocess, gets a long timeout, and skips
+// on small machines like the 2 GiB cases above. On Windows the file reader
+// itself rejects files of 2^32 bytes or more with ENOMEM (read_file.rs,
+// ReadFileUV), so neither case reaches the ArrayBuffer hand-off there.
+describe.skipIf(isWindows || os.totalmem() < 10 * 1024 ** 3)(
+  "Bun.file().arrayBuffer() at the 4 GiB ArrayBuffer limit",
+  () => {
+    async function readSparseFileAsArrayBuffer(size: number) {
+      using dir = tempDir("blob-4gib", {});
+      const file = path.join(String(dir), "big.bin");
+      // 'x' followed by a hole, which reads back as NUL bytes. Nothing is written
+      // after the truncate: on NTFS that would zero-fill the whole file on disk.
+      writeFileSync(file, "x");
+      truncateSync(file, size);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const report = buf => {
+            const view = new DataView(buf);
+            return { byteLength: buf.byteLength, first: view.getUint8(0), last: view.getUint8(buf.byteLength - 1) };
+          };
+          const result = await Bun.file(${JSON.stringify(file)}).arrayBuffer().then(report, e => ({ error: { name: e.name, message: e.message } }));
+          console.log(JSON.stringify(result));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode, signalCode: proc.signalCode }));
+    }
+
+    test("a file of exactly 2^32 bytes is returned whole", async () => {
+      expect(await readSparseFileAsArrayBuffer(2 ** 32)).toEqual({
+        byteLength: 2 ** 32,
+        first: "x".charCodeAt(0),
+        last: 0,
+      });
+    }, 120_000);
+
+    test("a file of 2^32 + 1 bytes rejects with the RangeError that new ArrayBuffer() throws for that size", async () => {
+      expect(await readSparseFileAsArrayBuffer(2 ** 32 + 1)).toEqual({
+        error: { name: "RangeError", message: "Out of memory" },
+      });
+    }, 120_000);
+  },
+);

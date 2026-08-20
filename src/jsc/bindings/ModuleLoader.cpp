@@ -726,6 +726,16 @@ JSValue fetchCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
     if (builtin) {
         if (!res->success) {
+            // A file embedded in a standalone executable is served by the builtin probe.
+            // A CommonJS one is evaluated right here like any require()d CJS file (the
+            // module loader path would find `target` already in the require map and
+            // never give it its source); only ES modules go through the loader.
+            if (res->result.value.isCommonJSModule) {
+                res->success = true;
+                target->evaluate(globalObject, specifierWtfString, res->result.value);
+                RETURN_IF_EXCEPTION(scope, {});
+                RELEASE_AND_RETURN(scope, target);
+            }
             RELEASE_AND_RETURN(scope, builtin);
         }
         target->setExportsObject(builtin);

@@ -23,7 +23,9 @@
 #include <string.h>
 #include <time.h>
 #ifndef WIN32
+#include <fcntl.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
 #endif
 #ifdef __linux__
 #include <netinet/in.h>
@@ -490,11 +492,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
                     if (connect_error == 0) {
-#ifdef _WIN32
-                        connect_error = WSAECONNRESET;
-#else
-                        connect_error = ECONNRESET;
-#endif
+                        connect_error = LIBUS_ECONNRESET;
                     }
                 }
                 us_internal_socket_after_open((struct us_socket_t *) p, connect_error);
@@ -586,6 +584,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             struct us_loop_t* loop = s->group->loop;
             /* Captured before the read loop folds recv()==0 into `eof`; error events keep the error path. */
             const int hangup = (eof & LIBUS_POLL_HANGUP) && !error;
+            /* Set once recv() returns 0 below: the only proof that the peer's stream ended with a FIN. The
+             * eof hint this dispatch was called with (EPOLLHUP, kqueue's EV_EOF) also rides on a reset. */
+            int read_fin = 0;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE
@@ -667,9 +668,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 size_t repeat_recv_count = 0;
-                /* Whether this dispatch's read loop delivered any bytes; see the
-                 * hung-up drain and its error handling below. */
-                int read_any = 0;
 
                 do {
                     #ifdef _WIN32
@@ -693,16 +691,41 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         msg.msg_iovlen = 1;
                         msg.msg_name = NULL;
                         msg.msg_namelen = 0;
-                        msg.msg_controllen = CMSG_LEN(sizeof(int));
+                        /* CMSG_SPACE (the full aligned buffer), or FreeBSD truncates and drops the fd. */
+                        msg.msg_controllen = sizeof(cmsg_buf);
                         msg.msg_control = cmsg_buf;
 
+                        // Received descriptors must not leak into children we spawn.
+                        #ifdef MSG_CMSG_CLOEXEC
+                        length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags | MSG_CMSG_CLOEXEC);
+                        #else
                         length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);
+                        #endif
 
-                        // Extract file descriptor if present
+                        // Extract the file descriptor if present. One per message is the
+                        // protocol; close anything else a peer packed into the buffer.
                         if (length > 0 && msg.msg_controllen > 0) {
-                            struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
-                            if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
-                                int fd = *(int *)CMSG_DATA(cmsg_ptr);
+                            int fd = -1;
+                            for (struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg); cmsg_ptr; cmsg_ptr = CMSG_NXTHDR(&msg, cmsg_ptr)) {
+                                if (cmsg_ptr->cmsg_level != SOL_SOCKET || cmsg_ptr->cmsg_type != SCM_RIGHTS || cmsg_ptr->cmsg_len < CMSG_LEN(0)) {
+                                    continue;
+                                }
+                                unsigned char *fds = CMSG_DATA(cmsg_ptr);
+                                size_t nfds = (cmsg_ptr->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+                                for (size_t i = 0; i < nfds; i++) {
+                                    int received;
+                                    memcpy(&received, fds + i * sizeof(int), sizeof(int));
+                                    #ifndef MSG_CMSG_CLOEXEC
+                                    fcntl(received, F_SETFD, FD_CLOEXEC);
+                                    #endif
+                                    if (fd == -1) {
+                                        fd = received;
+                                    } else {
+                                        close(received);
+                                    }
+                                }
+                            }
+                            if (fd != -1) {
                                 s = us_dispatch_fd(s, fd);
                                 if (!s || us_socket_is_closed(s)) {
                                     break;
@@ -721,7 +744,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                                    : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
                         s = us_internal_socket_follow_adopted(s);
-                        read_any = 1;
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
                         // rare case: we're reading a lot of data, there's more to be read, and either:
@@ -793,21 +815,17 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         #endif
                     } else if (!length) {
                         eof = LIBUS_POLL_EOF; // lets handle EOF in the same place
+                        read_fin = 1;
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
-                        if (eof && read_any) {
-                            /* The hangup drain above already delivered this
-                             * connection's final data and then hit the error queued
-                             * behind its FIN (an RST from the peer tearing down right
-                             * after, often provoked by our own teardown writes). The
-                             * orderly EOF was announced and nothing readable remains:
-                             * report end-of-stream like a reader that stopped at the
-                             * FIN, not a read error. A hard error on the FIRST read of
-                             * a hung-up event (a pure RST: the kernel discards the
-                             * receive queue) still takes the error path below. */
-                            break;
-                        }
-                        /* Peer-initiated TCP error (RST etc.) — go straight to
+                        /* A read error closes with its errno even when the drain above
+                         * delivered data first, which is what libuv reports to node as
+                         * well: a reset behind unread data (the kernel keeps the receive
+                         * queue, so recv() returns the data and then the error) never
+                         * reached a FIN, so there is no end of stream to report. The eof
+                         * hint this event carried is the reset's own (EPOLLHUP; EV_EOF
+                         * with the error in fflags); a FIN is recv()==0 above.
+                         * Peer-initiated TCP error (RST etc.) — go straight to
                          * raw-close. us_socket_close() would route through
                          * us_internal_ssl_close() now that s->ssl is the
                          * discriminator, and that path fires
@@ -825,16 +843,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (s);
             }
 
-            /* kqueue reports EV_EOF on the same readable event as a connection's
-             * final data. If the data callback paused the socket mid-burst (stream
-             * backpressure), the read loop above stopped with bytes still queued in
-             * the kernel, and acting on the hint now would end+close the socket and
-             * discard them. Defer it: resuming re-arms the poll and the EOF is
-             * re-reported once the rest has been read. Sockets we already shut down
-             * are exempt (their peer's FIN must still close them promptly below),
-             * as are error-flagged events. */
-            if (eof && s && !error && s->flags.is_paused && !us_socket_is_shut_down(s) &&
-                !us_socket_is_closed(s) && !(hangup && s->read_eof)) {
+            /* The EOF hint (kqueue EV_EOF riding the final data's readable event,
+             * epoll's EPOLLHUP once both directions are down, AFD DISCONNECT on a
+             * shut-down socket) can arrive with the tail of the peer's stream still
+             * queued in the kernel. Acting on it while the socket is paused would
+             * end+close and discard that tail, so defer: resume() re-arms reads and
+             * the read loop drains to recv()==0, which re-derives eof with nothing
+             * left behind it. This includes sockets we already shut down (a client
+             * that end()ed before reading the reply), the case that truncated; once
+             * read_eof is set there is nothing left to drain and deferring would only
+             * lose the close. Error-flagged events keep the error path. */
+            const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
+            if (eof_deferrable && s->flags.is_paused) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
                  * the kernel until resume() re-adds the fd via us_poll_change (end() while paused keeps it parked). */
@@ -844,6 +864,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s->p.state.poll_type = us_internal_poll_type(&s->p);
                 }
 #endif
+                eof = 0;
+            } else if (eof_deferrable && !(events & LIBUS_SOCKET_READABLE) &&
+                       (us_poll_events(&s->p) & LIBUS_SOCKET_READABLE)) {
+                /* Collected while the socket was paused, but an earlier dispatch in
+                 * this batch resumed it: reads are armed again and nothing was read
+                 * here, so let the next poll re-report it together with READABLE and
+                 * the read loop drain it, instead of closing over the unread tail. */
+                eof = 0;
+            }
+            if (eof && error && !read_fin) {
+                /* An error event whose read loop did not reach a FIN (the socket is
+                 * paused, or on_data paused it mid-drain): the eof hint next to the
+                 * error flag is the reset taking both directions down (EPOLLHUP beside
+                 * EPOLLERR; EV_EOF with the error in fflags), not an end of stream, so
+                 * it must not take the end path below. That path dispatched on_end for
+                 * a reset, and a TLS socket's on_end closes with a clean code itself,
+                 * so the error close never ran. A FIN this dispatch did read still
+                 * delivers its end first; the error close follows either way. */
                 eof = 0;
             }
             if(eof && s) {
@@ -872,12 +910,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                      * writable dispatch disables writable polling again once
                      * the buffer is drained, so this does not busy-poll. */
                     us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
-#ifdef LIBUS_USE_KQUEUE
-                    /* The change above deleted the read filter; without a sentinel
-                     * the peer's later RST is never reported (the one-shot write
-                     * filter may already be consumed) and the socket strands. */
-                    us_internal_kqueue_socket_arm_read_sentinel(s);
-#endif
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
                 } else {
                     /* Half-open not allowed, or a hangup (both directions down, level-triggered):
@@ -889,8 +921,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
             }
-            /* Such as epollerr or EV_ERROR */
-            if (error && s) {
+            /* Such as epollerr or EV_ERROR. A handler above (on_data, on_end, or the
+             * close they triggered) may already have closed this socket: its fd number
+             * is free again, and a socket that handler opened can own it by now, so the
+             * SO_ERROR read below would consume that socket's error (a refused connect
+             * then reports ECONNRESET). Nothing is left to close in that case. */
+            if (error && s && !us_socket_is_closed(s)) {
                 /* Peer-initiated error event — same rationale as the recv-error
                  * branch above: bypass us_internal_ssl_close so on_handshake
                  * isn't fired for a passive close. The poll flag only says THAT
@@ -899,9 +935,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * callers would either misread as an errno or drop entirely.
                  * Values 0..2 collide with the libus CloseCode enum that JS
                  * filters out as self-initiated; SO_ERROR can't be EPERM/ENOENT
-                 * for an established TCP socket, so clamp them defensively. */
+                 * for an established TCP socket, so clamp them defensively.
+                 * The fallback must be in LIBUS_ERR's numbering (internal.h):
+                 * Windows does not reliably latch a received RST in SO_ERROR
+                 * (see us_internal_libuv_peer_reset_probe), so it is taken
+                 * there, and the CRT's ECONNRESET reached JS as ESHUTDOWN. */
                 int socket_error = us_socket_get_error(s);
-                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : ECONNRESET, NULL);
+                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : LIBUS_ECONNRESET, NULL);
                 return;
             }
             break;

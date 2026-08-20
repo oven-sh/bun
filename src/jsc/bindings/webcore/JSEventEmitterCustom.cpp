@@ -32,15 +32,6 @@ EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
     return nullptr;
 }
 
-std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
-{
-    if (auto* emitter = jsEventEmitterCastFast(vm, lexicalGlobalObject, thisValue)) {
-        return std::make_unique<JSEventEmitterWrapper>(emitter->wrapped(), asObject(thisValue));
-    }
-
-    return nullptr;
-}
-
 JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
 {
     if (!thisValue.isCell()) [[unlikely]] {

@@ -1225,10 +1225,8 @@ pub enum ToJSError {
     CannotConvertArgumentTypeToJS,
     #[strum(serialize = "Cannot convert identifier to JS. Try a statically-known value")]
     CannotConvertIdentifierToJS,
-    MacroError,
     OutOfMemory,
     JSError,
-    JSTerminated,
 }
 bun_core::impl_tag_error!(ToJSError);
 

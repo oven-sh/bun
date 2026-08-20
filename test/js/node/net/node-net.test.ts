@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -973,8 +973,13 @@ it.if(isWindows)(
       }
     }
 
+    // The pipe transport keeps one wrapper reachable regardless of how many
+    // connections were made (1 after one exchange, still 1 after hundreds), so
+    // take the baseline after a warm-up exchange: the 700 below must not add to it.
+    await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
+    gc(true);
+    const before = heapStats().objectTypeCounts.TCPSocket || 0;
     const batch = [];
-    const before = heapStats().objectTypeCounts.TLSSocket || 0;
     for (let i = 0; i < 100; i++) {
       batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
       batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
@@ -989,7 +994,9 @@ it.if(isWindows)(
       }
     }
     await Promise.all(batch);
-    expectMaxObjectTypeCount(expect, "TCPSocket", before);
+    // Awaited: left dangling, the assertion landed inside whichever later test
+    // was running and counted that test's live sockets.
+    await expectMaxObjectTypeCount(expect, "TCPSocket", before);
   },
   20_000,
 );
@@ -1102,6 +1109,264 @@ describe("Socket fd adoption", () => {
     // No explicit writable: true -> no adoption, no fstat. child_process
     // extra stdio relies on this path (connect({ fd }) attaches natively).
     expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
+  });
+});
+
+describe.concurrent("socket that already sent FIN and is paused with unread data", () => {
+  async function runFixture(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lines: stdout.trim().split("\n").sort(), stderr: stderr.trim(), exitCode };
+  }
+
+  it("delivers every buffered byte before 'end' when the data handler pauses", async () => {
+    const SIZE = 1024 * 1024;
+    const result = await runFixture(`
+      const net = require("net");
+      const SIZE = ${SIZE};
+      let received = 0;
+      const server = net.createServer({ allowHalfOpen: true }, socket => {
+        socket.resume();
+        socket.on("end", () => socket.write(Buffer.alloc(SIZE, 0x61), () => socket.end()));
+      }).listen(0, () => {
+        const conn = net.connect({ port: server.address().port, allowHalfOpen: true });
+        conn.on("connect", () => conn.end());
+        conn.on("data", buf => {
+          received += buf.length;
+          conn.pause();
+          // Let the loop poll again with the peer's FIN in place, so the EOF hint
+          // is reported while bytes are still queued in the kernel.
+          setTimeout(() => conn.resume(), 5);
+        });
+        conn.on("error", err => console.log("error", err.code || err.message));
+        conn.on("end", () => console.log("end", received));
+        conn.on("close", () => { server.close(); console.log("close", received); });
+      });
+    `);
+    expect(result).toEqual({ lines: [`close ${SIZE}`, `end ${SIZE}`], stderr: "", exitCode: 0 });
+  });
+
+  it("stays parked without spinning the loop, then delivers the tail on resume", async () => {
+    const result = await runFixture(`
+      const net = require("net");
+      const { once } = require("events");
+      let resolveClosed;
+      const serverClosed = new Promise(r => (resolveClosed = r));
+      const server = net.createServer({ allowHalfOpen: true }, socket => {
+        socket.resume();
+        socket.on("end", () => socket.write(Buffer.alloc(64 * 1024, 0x61), () => socket.end()));
+        socket.on("close", resolveClosed);
+      }).listen(0, async () => {
+        const conn = net.connect({ port: server.address().port, allowHalfOpen: true });
+        await once(conn, "connect");
+        conn.end();
+        conn.pause();
+        await serverClosed;
+        // Both FINs have been exchanged and 64 KiB sits unread in the kernel.
+        let received = 0;
+        conn.on("data", b => { received += b.length; });
+        conn.on("close", () => { server.close(); console.log("close", received); });
+        const before = process.cpuUsage();
+        setTimeout(() => {
+          const d = process.cpuUsage(before);
+          console.log("cpu", d.user + d.system);
+          conn.resume();
+        }, 1000);
+      });
+    `);
+    // A level-triggered hangup left registered would have burned the whole 1s of
+    // wall time as CPU; 500ms leaves room over the debug+ASAN idle baseline.
+    const cpuMicros = Number((result.lines.find(l => l.startsWith("cpu ")) ?? "cpu -1").slice(4));
+    expect({ ...result, cpuIdle: cpuMicros >= 0 && cpuMicros < 500_000 }).toEqual({
+      lines: ["close 65536", `cpu ${cpuMicros}`],
+      stderr: "",
+      exitCode: 0,
+      cpuIdle: true,
+    });
+  });
+});
+
+// A socket whose reads are stopped for backpressure must not hold the process
+// open: in node a handle that is not reading is inactive, so a program that
+// never consumes a reply (or a request) still exits. Each fixture leaves such a
+// socket behind with its tail unread and nothing else alive; the only way to
+// print "exit 0" is for the loop to run down on its own.
+describe.concurrent("backpressure-paused socket does not keep the process alive", () => {
+  async function expectExits(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${source}\nprocess.on("exit", code => console.log("exit", code));`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "exit 0",
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+
+  it("client that end()s and never reads the reply", () =>
+    expectExits(`
+      const net = require("net");
+      const server = net.createServer(s => {
+        s.resume();
+        s.end(Buffer.alloc(128 * 1024, 0x61));
+        s.on("close", () => server.close());
+      }).listen(0, () => {
+        net.connect(server.address().port, function () { this.end(); });
+      });
+    `));
+
+  it("client that never reads the reply and whose peer goes away", () =>
+    expectExits(`
+      const net = require("net");
+      const server = net.createServer(s => {
+        s.end(Buffer.alloc(128 * 1024, 0x61), () => { s.destroy(); server.close(); });
+      }).listen(0, () => {
+        net.connect(server.address().port);
+      });
+    `));
+
+  it("server that end()s a connection without reading the request", () =>
+    expectExits(`
+      const net = require("net");
+      const server = net.createServer(s => s.end("go away")).listen(0, () => {
+        const c = net.connect(server.address().port, () => c.end(Buffer.alloc(128 * 1024, 0x61)));
+        c.resume();
+        c.on("close", () => server.close());
+      });
+    `));
+
+  // onread mode stops reads from the callback's return value instead of push().
+  it("onread client whose callback returns false after it end()ed", () =>
+    expectExits(`
+      const net = require("net");
+      const server = net.createServer(s => {
+        s.resume();
+        s.end(Buffer.alloc(128 * 1024, 0x61));
+        s.on("close", () => server.close());
+      }).listen(0, () => {
+        net.connect(
+          { port: server.address().port, onread: { buffer: Buffer.alloc(4096), callback: () => false } },
+          function () { this.end(); },
+        );
+      });
+    `));
+
+  it("onread client whose callback returns false and whose peer goes away", () =>
+    expectExits(`
+      const net = require("net");
+      const server = net.createServer(s => {
+        s.end(Buffer.alloc(128 * 1024, 0x61), () => { s.destroy(); server.close(); });
+      }).listen(0, () => {
+        net.connect({ port: server.address().port, onread: { buffer: Buffer.alloc(4096), callback: () => false } });
+      });
+    `));
+
+  it("but a write still waiting for drain does keep it alive until it completes", async () => {
+    // Everything on the server side is unref'd, so only the client's pending
+    // write can hold the loop open long enough for the server's timer to drain
+    // it; the stream-level pause for the unread reply must not drop that hold.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("net");
+        let drained = false;
+        const server = net.createServer(s => {
+          s.unref();
+          s.pause();
+          s.write(Buffer.alloc(256 * 1024, 0x61));
+          setTimeout(() => { s.on("data", () => {}); s.resume(); }, 100).unref();
+        });
+        server.unref();
+        server.listen(0, () => {
+          const c = net.connect(server.address().port, () => {
+            c.write(Buffer.alloc(8 * 1024 * 1024, 0x62), () => { drained = true; c.destroy(); });
+          });
+        });
+        process.on("exit", code => console.log("exit", code, "drained", drained));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "exit 0 drained true",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a drain does not give up a hold the user re-took with ref() after the pause was over", async () => {
+    // unref() -> the reply stops reads for backpressure -> resume() re-arms them
+    // while still user-unref'd -> ref() -> a big write goes pending and drains.
+    // The socket is reading and explicitly ref'd at that point, so the process
+    // has to still be around to receive "final"; the listener and the server
+    // side are unref'd before the write so nothing else can keep it alive.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("net");
+        const { once } = require("events");
+        const REPLY = 256 * 1024, REQ = 8 * 1024 * 1024;
+        const server = net.createServer(s => {
+          s.unref();
+          let got = 0;
+          s.on("data", d => {
+            got += d.length;
+            if (got === REQ) setTimeout(() => s.write("final"), 50).unref();
+          });
+          s.write(Buffer.alloc(REPLY, 0x61));
+        });
+        server.listen(0, async () => {
+          const c = net.connect(server.address().port);
+          await once(c, "connect");
+          c.unref();
+          await once(c, "readable");
+          const { promise: replyDone, resolve } = Promise.withResolvers();
+          let total = 0;
+          c.on("data", d => {
+            if (d.includes("final")) {
+              console.log("got final");
+              c.destroy();
+              server.close();
+              return;
+            }
+            total += d.length;
+            if (total === REPLY) resolve();
+          });
+          c.resume();
+          await replyDone;
+          c.ref();
+          server.unref();
+          c.write(Buffer.alloc(REQ, 0x62), () => console.log("drained"));
+        });
+        process.on("exit", code => console.log("exit", code));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: ["drained", "got final", "exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

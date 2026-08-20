@@ -859,11 +859,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if len < 2 {
             return;
         }
-        let mut perm: Vec<usize> = (0..len).collect();
+        let mut perm: Vec<u32> = crate::index_sort::identity(len);
         {
             let keys = &self.keys[..];
             let values = &self.values[..];
-            perm.sort_by(|&a, &b| {
+            crate::index_sort::sort_indices(&mut perm, &mut |a, b| {
+                let (a, b) = (a as usize, b as usize);
                 if less_than(keys, values, a, b) {
                     core::cmp::Ordering::Less
                 } else if less_than(keys, values, b, a) {
@@ -878,13 +879,13 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.drop_index();
         let mut visited = vec![false; len];
         for start in 0..len {
-            if visited[start] || perm[start] == start {
+            if visited[start] || perm[start] as usize == start {
                 continue;
             }
             let mut i = start;
             while !visited[i] {
                 visited[i] = true;
-                let j = perm[i];
+                let j = perm[i] as usize;
                 if j == start {
                     break;
                 }
@@ -903,7 +904,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         // SAFETY: `keys` and `values` are distinct allocations; producing one
         // `&mut` into each is sound even though both derive from `&mut self`.
         // `index < self.keys.len() == self.values.len()` — every caller
-        // (`get_or_put*`/`put_index`) passes the index just returned by
+        // (`get_or_put*`) passes the index just returned by
         // `push_entry` or `find_hash`.
         let (key_ptr, value_ptr) = unsafe {
             (
@@ -939,15 +940,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     {
         let h = adapter.hash(key);
         self.find_hash(h, |k, idx| adapter.eql(key, k, idx))
-    }
-
-    #[inline]
-    pub fn get_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> Option<&V>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        self.get_index_adapted(key, adapter)
-            .map(|i| &self.values[i])
     }
 
     #[inline]

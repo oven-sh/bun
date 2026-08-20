@@ -1,6 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -1095,4 +1095,41 @@ test("once() wrapper releases its target after firing", async () => {
     stderr: "",
     exitCode: 0,
   });
+});
+
+// on() must be amortized O(1). A copy-on-write append pays N per add, so N
+// adds cost N^2: 12k adds took ~270ms release / ~1.6s debug+ASAN versus <2ms /
+// ~70ms for an in-place push.
+test("on() is amortized O(1), not O(N) per add", () => {
+  const fn = () => {};
+  function timeAdds(n: number) {
+    const ee = new EventEmitter();
+    ee.setMaxListeners(0);
+    const t0 = performance.now();
+    for (let i = 0; i < n; i++) ee.on("x", fn);
+    return performance.now() - t0;
+  }
+  timeAdds(2000); // warm up
+  const ms = timeAdds(12000);
+  expect(ms).toBeLessThan(isDebug || isASAN ? 500 : 100);
+});
+
+// on() during emit must not run the new listener in that same emit round
+// (matches Node). This is the invariant the in-place append relies on: emit
+// latches `length` before iterating, so the pushed slot is never visited.
+test("listener appended during emit is not called in that emit", () => {
+  const ee = new EventEmitter();
+  const calls: string[] = [];
+  ee.on("x", () => {
+    calls.push("a");
+    ee.on("x", () => calls.push("late"));
+  });
+  ee.on("x", () => calls.push("b"));
+  ee.emit("x");
+  expect(calls).toEqual(["a", "b"]);
+  expect(ee.listenerCount("x")).toBe(3);
+
+  calls.length = 0;
+  ee.emit("x");
+  expect(calls).toEqual(["a", "b", "late"]);
 });

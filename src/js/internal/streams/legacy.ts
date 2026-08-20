@@ -112,7 +112,7 @@ function prependListener(emitter, event, fn) {
   let events, existing;
   if (!(events = emitter._events) || !(existing = events[event])) emitter.on(event, fn);
   // A fresh array, not unshift(): node:events iterates stored arrays without
-  // cloning, so a stored `_events` array must never be mutated in place.
+  // cloning, so an index-shifting mutation must install a copy.
   else if (ArrayIsArray(existing)) events[event] = [fn, ...existing];
   else events[event] = [fn, existing];
 }

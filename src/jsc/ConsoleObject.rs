@@ -3120,9 +3120,6 @@ pub mod formatter {
         ) -> Option<TagResult> {
             // SAFETY: caller passes a valid `*ZigString`.
             let key = unsafe { &*key };
-            if key.eql_comptime(b"constructor") {
-                return None;
-            }
             if ctx.formatter.failed {
                 return None;
             }

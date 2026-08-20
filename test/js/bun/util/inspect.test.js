@@ -100,6 +100,77 @@ it("when prototype defines the same property, don't print the same property twic
   expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456",\n}'.trim());
 });
 
+describe("'constructor' property", () => {
+  it("prints an own enumerable constructor property like any other key", () => {
+    expect(Bun.inspect({ constructor: "K", a: 1 })).toBe('{\n  constructor: "K",\n  a: 1,\n}');
+    expect(Bun.inspect(JSON.parse('{"constructor":"_class"}'))).toBe('{\n  constructor: "_class",\n}');
+    expect(Bun.inspect({ constructor: "K", a: 1 }, { sorted: true })).toBe('{\n  a: 1,\n  constructor: "K",\n}');
+
+    // A getter takes the object off the fast (structure) enumeration path.
+    expect(Bun.inspect({ constructor: "K", get g() {} })).toBe('{\n  constructor: "K",\n  g: [Getter],\n}');
+
+    const array = [1];
+    array.constructor = "K";
+    expect(Bun.inspect(array)).toBe('[ 1, constructor: "K" ]');
+
+    class Shadowing {
+      constructor() {
+        this.constructor = "own";
+      }
+    }
+    expect(Bun.inspect(new Shadowing())).toBe('Shadowing {\n  constructor: "own",\n}');
+
+    const nullPrototype = Object.create(null);
+    nullPrototype.constructor = "K";
+    expect(Bun.inspect(nullPrototype)).toBe('[Object: null prototype] {\n  constructor: "K",\n}');
+
+    // The old-style prototype literal owns an enumerable constructor, so printing the
+    // prototype itself shows it (as node does).
+    function Old() {}
+    Old.prototype = { constructor: Old, method() {} };
+    expect(Bun.inspect(Old.prototype)).toBe("Old {\n  constructor: [Function: Old],\n  method: [Function: method],\n}");
+  });
+
+  it("hides a non-enumerable constructor", () => {
+    const obj = { a: 1 };
+    Object.defineProperty(obj, "constructor", { value: "hidden", enumerable: false });
+    expect(Bun.inspect(obj)).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(obj, { sorted: true })).toBe("{\n  a: 1,\n}");
+
+    class Foo {
+      method() {}
+    }
+    expect(Bun.inspect(Foo.prototype)).toBe("Foo {\n  method: [Function: method],\n}");
+    expect(Bun.inspect(Foo.prototype, { sorted: true })).toBe("Foo {\n  method: [Function: method],\n}");
+
+    class WithGetter {
+      get g() {}
+    }
+    expect(Bun.inspect(WithGetter.prototype)).toBe("WithGetter {\n  g: [Getter],\n}");
+  });
+
+  it("hides the constructor of the prototypes it walks", () => {
+    class Foo {
+      method() {}
+    }
+    expect(Bun.inspect(new Foo())).toBe("Foo {\n  method: [Function: method],\n}");
+
+    class WithGetter {
+      get g() {}
+    }
+    expect(Bun.inspect(new WithGetter())).toBe("WithGetter {\n  g: [Getter],\n}");
+
+    // Enumerable, but inherited: the instance is printed with its class name already.
+    function Old() {}
+    Old.prototype = { constructor: Old, method() {} };
+    expect(Bun.inspect(new Old())).toBe("Old {\n  method: [Function: method],\n}");
+
+    function OldWithGetter() {}
+    OldWithGetter.prototype = { constructor: OldWithGetter, get g() {} };
+    expect(Bun.inspect(new OldWithGetter())).toBe("OldWithGetter {\n  g: [Getter],\n}");
+  });
+});
+
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);

@@ -75,3 +75,10 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`an own enumerable 'constructor' property is part of the snapshot 1`] = `
+{
+  "a": 1,
+  "constructor": "K",
+}
+`;

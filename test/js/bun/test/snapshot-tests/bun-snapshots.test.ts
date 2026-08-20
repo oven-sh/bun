@@ -14,6 +14,32 @@ test("it will create a snapshot file if it doesn't exist", () => {
   });
 });
 
+test("an own enumerable 'constructor' property is part of the snapshot", () => {
+  expect({ constructor: "K", a: 1 }).toMatchSnapshot();
+  expect({ constructor: "K", a: 1 }).toMatchInlineSnapshot(`
+    {
+      "a": 1,
+      "constructor": "K",
+    }
+  `);
+  expect(JSON.parse('{"constructor":"_class"}')).toMatchInlineSnapshot(`
+    {
+      "constructor": "_class",
+    }
+  `);
+  expect([{ constructor: "K" }]).toMatchInlineSnapshot(`
+    [
+      {
+        "constructor": "K",
+      },
+    ]
+  `);
+
+  // The non-enumerable constructor that classes put on their prototype is still left out.
+  class Foo {}
+  expect(Foo.prototype).toMatchInlineSnapshot(`Foo {}`);
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

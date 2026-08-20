@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -586,6 +586,108 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
 
   expect(err).toMatchSnapshot();
   expect(err).not.toContain("undefined");
+});
+
+it("expect() diffs print an own enumerable 'constructor' property", async () => {
+  // The messages are printed by the fixture (rather than read off the failing test output) so the
+  // snapshot holds only the diffs. bunEnv sets NO_COLOR, so they carry no ANSI codes.
+  using dir = tempDir("diff-constructor-key", {
+    "constructor-key.test.js": /*js*/ `
+      import { expect, test } from "bun:test";
+
+      function failureMessage(fn) {
+        try {
+          fn();
+        } catch (e) {
+          return e.message;
+        }
+        throw new Error("expected the matcher to fail");
+      }
+
+      test("diffs", () => {
+        const received = JSON.parse('{"constructor":"_class","a":1}');
+        console.log(failureMessage(() => expect(received).toEqual({ constructor: "K", a: 1 })));
+        console.log(failureMessage(() => expect(received).toStrictEqual({ constructor: "K", a: 1 })));
+        console.log(failureMessage(() => expect(received).toMatchObject({ constructor: "K", a: 1 })));
+        console.log(failureMessage(() => expect({ outer: received }).toEqual({ outer: { constructor: "K", a: 1 } })));
+
+        // The non-enumerable constructor that classes put on their prototype is not compared by
+        // toEqual, so it stays out of the diff.
+        class Foo {}
+        console.log(failureMessage(() => expect(Foo.prototype).toEqual({ x: 1 })));
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "constructor-key.test.js"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    expect(received).toEqual(expected)
+
+      {
+        "a": 1,
+    -   "constructor": "K",
+    +   "constructor": "_class",
+      }
+
+    - Expected  - 1
+    + Received  + 1
+
+    expect(received).toStrictEqual(expected)
+
+      {
+        "a": 1,
+    -   "constructor": "K",
+    +   "constructor": "_class",
+      }
+
+    - Expected  - 1
+    + Received  + 1
+
+    expect(received).toMatchObject(expected)
+
+      {
+        "a": 1,
+    -   "constructor": "K",
+    +   "constructor": "_class",
+      }
+
+    - Expected  - 1
+    + Received  + 1
+
+    expect(received).toEqual(expected)
+
+      {
+        "outer": {
+          "a": 1,
+    -     "constructor": "K",
+    +     "constructor": "_class",
+        },
+      }
+
+    - Expected  - 1
+    + Received  + 1
+
+    expect(received).toEqual(expected)
+
+    - {
+    -   "x": 1,
+    - }
+    + Foo {}
+
+    - Expected  - 3
+    + Received  + 1"
+  `);
+  expect(stderr).toContain("1 pass");
+  expect(exitCode).toBe(0);
 });
 
 it("test --preload supports global lifecycle hooks", () => {

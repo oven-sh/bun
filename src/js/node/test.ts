@@ -457,11 +457,13 @@ function reportAbortedFile(
     details: { ...details, passed: false },
   });
   reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
+  // A file node's own verdict carries its ordinal (node's FileTest is a root
+  // subtest); only republished child verdicts use the running counter.
   reporter.emitMessage("test:fail", {
     __proto__: null,
     ...fileNode,
     type: undefined,
-    testNumber: ++state.verdictNumber,
+    testNumber: ordinal,
     details,
   });
   counts.tests++;
@@ -529,7 +531,7 @@ async function runOneFile(
       __proto__: null,
       ...fileNode,
       type: undefined,
-      testNumber: ++state.verdictNumber,
+      testNumber: ordinal,
       details: { __proto__: null, duration_ms: 0, type: "test", error },
     });
     addRunCounts(counts, fileCounts);
@@ -632,7 +634,7 @@ async function runOneFile(
         __proto__: null,
         ...fileNode,
         type: undefined,
-        testNumber: ++state.verdictNumber,
+        testNumber: ordinal,
         details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
       });
     } else if (reportedChildren === 0) {
@@ -644,7 +646,7 @@ async function runOneFile(
         __proto__: null,
         ...fileNode,
         type: undefined,
-        testNumber: ++state.verdictNumber,
+        testNumber: ordinal,
         details: { __proto__: null, duration_ms: fileDuration, type: "test" },
       });
     }

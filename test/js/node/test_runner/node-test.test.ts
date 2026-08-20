@@ -1095,17 +1095,28 @@ test.concurrent.each([
   });
 });
 
-test.concurrent("run(): a zero-test file reports a file-level pass like node", async () => {
+test.concurrent("run(): a zero-test file reports a file-level pass numbered by its ordinal like node", async () => {
+  // The file node's own verdict carries the file's ordinal (2), not the
+  // running child-verdict count (which is 2 after nested's two tests and would
+  // become 3); its test:complete carries the same ordinal.
   using dir = tempDir("node-test-zero-test-file", {
+    "nested.test.mjs": `
+      import { test } from 'node:test';
+      test('a', () => {});
+      test('b', () => {});
+    `,
     "empty.test.mjs": `// intentionally registers no tests`,
     "driver.mjs": `
       import { run } from 'node:test';
       import { fileURLToPath } from 'node:url';
-      const stream = run({ files: [fileURLToPath(new URL('./empty.test.mjs', import.meta.url))] });
-      const out = { events: [], perFileSummaries: 0, runCounts: null };
-      stream.on('test:pass', function onPass(t) { out.events.push(['pass', t.name.split(/[\\\\/]/).pop(), t.testNumber]); });
-      stream.on('test:fail', function onFail(t) { out.events.push(['fail', t.name.split(/[\\\\/]/).pop(), t.testNumber]); });
-      stream.on('test:summary', function onSummary(t) {
+      const files = ['./nested.test.mjs', './empty.test.mjs'].map(f => fileURLToPath(new URL(f, import.meta.url)));
+      const stream = run({ files });
+      const out = { events: [], emptyComplete: null, perFileSummaries: 0, runCounts: null };
+      const base = n => n.split(/[\\\\/]/).pop();
+      stream.on('test:pass', t => out.events.push(['pass', base(t.name), t.testNumber]));
+      stream.on('test:fail', t => out.events.push(['fail', base(t.name), t.testNumber]));
+      stream.on('test:complete', t => { if (base(t.name) === 'empty.test.mjs') out.emptyComplete = t.testNumber; });
+      stream.on('test:summary', t => {
         if (t.file !== undefined) out.perFileSummaries++;
         else out.runCounts = t.counts;
       });
@@ -1120,12 +1131,21 @@ test.concurrent("run(): a zero-test file reports a file-level pass like node", a
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Verbatim node v26.3.0 output for this fixture.
-  expect(JSON.parse(stdout.trim() || "null")).toEqual({
-    events: [["pass", "empty.test.mjs", 1]],
-    perFileSummaries: 0,
-    runCounts: { tests: 1, failed: 0, passed: 1, cancelled: 0, skipped: 0, todo: 0, topLevel: 1, suites: 0 },
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: {
+      events: [
+        ["pass", "a", 1],
+        ["pass", "b", 2],
+        ["pass", "empty.test.mjs", 2],
+      ],
+      emptyComplete: 2,
+      perFileSummaries: 1,
+      runCounts: { tests: 3, failed: 0, passed: 3, cancelled: 0, skipped: 0, todo: 0, topLevel: 3, suites: 0 },
+    },
+    stderr: "",
+    exitCode: 0,
   });
 });
 

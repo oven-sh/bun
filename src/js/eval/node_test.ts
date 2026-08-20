@@ -258,8 +258,10 @@ async function main() {
   const timeout = getFlag("--test-timeout");
   runOptions.timeout = timeout !== undefined ? Number(timeout) : Infinity;
 
-  runOptions.only = hasFlag("--test-only");
-  runOptions.forceExit = hasFlag("--test-force-exit");
+  // --test-only is rejected below before run() sees it; forceExit is validated
+  // by run() and acted on at the end of main().
+  const forceExit = hasFlag("--test-force-exit");
+  runOptions.forceExit = forceExit;
 
   if (getFlagList("--test-name-pattern").length > 0) {
     fatal(new Error("--test-name-pattern is not yet implemented in Bun's node:test CLI mode"));
@@ -341,7 +343,7 @@ async function main() {
   }
 
   if (!success) process.exitCode = 1;
-  if (hasFlag("--test-force-exit")) {
+  if (forceExit) {
     process.exit(process.exitCode ?? 0);
   }
 }

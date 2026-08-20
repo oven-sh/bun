@@ -270,6 +270,10 @@ function run(options: Record<string, unknown> = kEmptyObject) {
     return reporter;
   }
 
+  // Unsupported options fail loudly. testTagFilters and timeout are the
+  // exceptions: validated for node's error contract, applied only where
+  // implemented (tag filters under isolation 'none'), otherwise accepted and
+  // not forwarded (test-runner-tags-validation.mjs pins the no-throw shape).
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
@@ -456,7 +460,7 @@ function reportAbortedFile(
     nesting: 0,
     name: file,
     type: "test",
-    testId: ++runTestIdCounter,
+    testId: ordinal,
     parentId: 0,
     tags: [],
     line: 1,
@@ -507,12 +511,14 @@ async function runOneFile(
   const fileCounts = makeRunCounts();
 
   // Under process isolation node models the file itself as a top-level test,
-  // named by the path as it was passed in and located at 1:1.
+  // named by the path as it was passed in and located at 1:1. The file nodes
+  // are the run root's only direct children, so node's per-root testId is the
+  // ordinal; the children's ids come from the child process and restart at 1.
   const fileNode = {
     nesting: 0,
     name: file,
     type: "test",
-    testId: ++runTestIdCounter,
+    testId: ordinal,
     parentId: 0,
     tags: [],
     line: 1,
@@ -3284,8 +3290,12 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   const savedRootHooks = callerRoot.hooks;
   const savedRootReportedCount = callerRoot.reportedCount;
   const savedSink = standaloneSink;
+  // testIds are per run root in node; this run shares the caller's root, so
+  // restart the counter here and hand the caller's value back afterwards.
+  const savedTestIdCounter = runTestIdCounter;
   callerRoot.hooks = { before: [], after: [], beforeEach: [], afterEach: [] };
   callerRoot.reportedCount = 0;
+  runTestIdCounter = 0;
 
   // Callers attach listeners synchronously on the returned stream; yield first.
   await Promise.resolve();
@@ -3367,6 +3377,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     callerRoot.started = false;
     callerRoot.hooks = savedRootHooks;
     callerRoot.reportedCount = savedRootReportedCount;
+    runTestIdCounter = savedTestIdCounter;
     standaloneQueue.push(...callerEntries);
     standaloneActive = wasStandaloneActive || callerEntries.length > 0;
     standaloneScheduled = wasScheduled;

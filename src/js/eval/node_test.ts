@@ -260,7 +260,19 @@ async function main() {
     fatal(new Error("--test-only is not yet implemented in Bun's node:test CLI mode"));
   }
   const tagFilters = getFlagList("--experimental-test-tag-filter");
-  if (tagFilters.length > 0) runOptions.testTagFilters = tagFilters;
+  if (tagFilters.length > 0) {
+    // run() applies tag filters only under isolation 'none' (the child runner
+    // has no tag filter yet); fail loudly like the sibling filter flags rather
+    // than run every test.
+    if (isolation !== "none") {
+      fatal(
+        new Error(
+          "--experimental-test-tag-filter requires --test-isolation=none in Bun's node:test CLI mode",
+        ),
+      );
+    }
+    runOptions.testTagFilters = tagFilters;
+  }
 
   if (hasFlag("--experimental-test-coverage")) runOptions.coverage = true;
   if (hasFlag("--test-randomize") || getFlag("--test-random-seed") !== undefined) {

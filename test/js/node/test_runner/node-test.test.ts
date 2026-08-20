@@ -1207,6 +1207,89 @@ test.concurrent("run({globPatterns}): literal entries follow node's createTestFi
   });
 });
 
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)("run() with %s isolation restarts testId per run like node", async (_label, isolationArg) => {
+  // node keys testId on each run's root (verified on v26.3.0 under process
+  // isolation; its isolation 'none' cannot run twice in one process at all).
+  // The file node is the root's direct child, so its id is the ordinal; a
+  // child test's id restarts at 1 in every run.
+  using dir = tempDir("node-test-testid-per-run", {
+    "a.test.mjs": `
+      import { test } from 'node:test';
+      test('a1', () => {});
+      test('a2', () => {});
+    `,
+    "b.test.mjs": `
+      import { test } from 'node:test';
+      test('b1', () => {});
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      async function ids(file) {
+        const seen = [];
+        const stream = run({ files: [fileURLToPath(new URL(file, import.meta.url))]${isolationArg} });
+        stream.on('test:enqueue', t => seen.push([t.name.split(/[\\\\/]/).pop(), t.testId]));
+        for await (const _ of stream);
+        return seen;
+      }
+      console.log(JSON.stringify({ run1: await ids('./a.test.mjs'), run2: await ids('./b.test.mjs') }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout.trim() || "null");
+  // Process isolation also enqueues the file node itself; strip it so both
+  // modes compare on the per-test ids, then check the file node separately.
+  const isFile = (name: string) => name.endsWith(".test.mjs");
+  expect({
+    run1: result.run1.filter(([n]: [string]) => !isFile(n)),
+    run2: result.run2.filter(([n]: [string]) => !isFile(n)),
+    fileIds: [...result.run1, ...result.run2].filter(([n]: [string]) => isFile(n)),
+    stderr,
+    exitCode,
+  }).toEqual({
+    run1: [
+      ["a1", 1],
+      ["a2", 2],
+    ],
+    run2: [["b1", 1]],
+    fileIds: isolationArg === "" ? [["a.test.mjs", 1], ["b.test.mjs", 1]] : [],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("--experimental-test-tag-filter without --test-isolation=none fails loudly", async () => {
+  // run() only applies tag filters in-process; under the default process
+  // isolation the driver must refuse rather than silently run every test.
+  using dir = tempDir("node-test-tag-filter-isolation", {
+    "a.test.mjs": `
+      import { test } from 'node:test';
+      test('untagged', () => { throw new Error('must not run'); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--test", "--experimental-test-tag-filter=db", "a.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("--experimental-test-tag-filter requires --test-isolation=none");
+  expect(stderr).not.toContain("must not run");
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
 test.concurrent("run(): causes JSON cannot encode do not drop the event line", async () => {
   using dir = tempDir("node-test-unencodable-cause", {
     "f.test.mjs": `

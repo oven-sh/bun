@@ -3,26 +3,33 @@
 // before the callback runs; any transition away from .FIRED during the callback
 // (cancel() -> .CANCELLED, or reschedule() -> .ACTIVE via refresh/convertToInterval) left
 // the heap ref unreleased because the post-callback cleanup only checked for .FIRED.
+//
+// Usage: <clear|refresh|repeat> [batches]
+//
+// Runs `batches` batches of BATCH timers after warming up, then prints one JSON line:
+//   timers             timers created in the measured batches
+//   rssDeltaMB         RSS growth over the measured batches: 0-2 MB over 100 batches when nothing
+//                      leaks; with the leak above, ~20 MB on a release build (~100 bytes per
+//                      TimeoutObject) and ~100 MB on a debug build without ASAN
+//   liveTimeouts       Timeout wrappers still on the JS heap after a full GC
+//   protectedTimeouts  Timeout wrappers still pinned by the native side
+// setTimeout.test.js asserts the report.
 
 const mode = process.argv[2];
 if (mode !== "clear" && mode !== "refresh" && mode !== "repeat") {
-  throw new Error("usage: <clear|refresh|repeat>");
+  throw new Error("usage: <clear|refresh|repeat> [batches]");
+}
+const batches = process.argv.length > 3 ? Number(process.argv[3]) : 100;
+if (!Number.isInteger(batches) || batches < 1) {
+  throw new Error("batches must be a positive integer, got " + process.argv[3]);
 }
 
-// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
 const rss =
-  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint
     : process.memoryUsage.rss;
 
 const BATCH = 2_000;
-
-function gc() {
-  if (typeof Bun !== "undefined") Bun.gc(true);
-  else if (typeof globalThis.gc !== "undefined") globalThis.gc();
-}
 
 async function runBatch() {
   let remaining = BATCH;
@@ -58,34 +65,27 @@ async function runBatch() {
     }
   }
   await promise;
-  gc();
+  Bun.gc(true);
 }
 
-// warmup
-for (let i = 0; i < 15; i++) await runBatch();
-gc();
+for (let i = 0; i < Math.min(batches, 15); i++) await runBatch();
+Bun.gc(true);
 const initial = rss();
 
-for (let i = 0; i < 100; i++) await runBatch();
-gc();
+// These batches run from promise continuations, which matters on ASAN builds: test/leaksan.supp
+// suppresses leaks allocated synchronously from module top-level code (the first warmup batch),
+// so the measured batches are the ones LeakSanitizer reports leaked TimeoutObjects from.
+for (let i = 0; i < batches; i++) await runBatch();
+Bun.gc(true);
 const final = rss();
-const deltaMB = (final - initial) / 1024 / 1024;
-console.log("mode:", mode);
-console.log("initial RSS:", (initial / 1024 / 1024) | 0, "MB");
-console.log("final RSS:", (final / 1024 / 1024) | 0, "MB");
-console.log("delta:", deltaMB.toFixed(1), "MB");
 
-if (globalThis.Bun) {
-  const heapStats = require("bun:jsc").heapStats();
-  if (heapStats.protectedObjectTypeCounts.Timeout) {
-    throw new Error("Expected 0 protected Timeout but received " + heapStats.protectedObjectTypeCounts.Timeout);
-  }
-}
-
-// Before the fix, 100 * 2_000 leaked TimeoutObjects (~100 bytes each) ≈ 20 MB.
-// After the fix the delta is ~0 MB (noise). The ASAN threshold accounts for
-// quarantine + debug-assertions overhead (release-asan compiles with
-// debug-assertions on, which adds live code paths ASAN instruments).
-if (deltaMB > (isASAN ? 192 : 10)) {
-  throw new Error("Memory leak detected: RSS grew by " + deltaMB.toFixed(1) + " MB");
-}
+const { objectTypeCounts, protectedObjectTypeCounts } = require("bun:jsc").heapStats();
+console.log(
+  JSON.stringify({
+    mode,
+    timers: batches * BATCH,
+    rssDeltaMB: Math.round(((final - initial) / 1024 / 1024) * 10) / 10,
+    liveTimeouts: objectTypeCounts.Timeout ?? 0,
+    protectedTimeouts: protectedObjectTypeCounts.Timeout ?? 0,
+  }),
+);

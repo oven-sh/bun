@@ -132,7 +132,6 @@ pub struct ObjectShape {
 ///   `build_builtin_shapes` / `build_default_globals` to construct the static base.
 /// - **Overlay mode** (`base=Some`): holds a `&'static HashMap` base plus a small
 ///   extras HashMap. Lookups check extras first, then base. Inserts go into extras.
-///   Cloning only copies the extras map (the base pointer is shared).
 pub struct ShapeRegistry {
     base: Option<&'static HashMap<&'static str, ObjectShape>>,
     entries: HashMap<&'static str, ObjectShape>,

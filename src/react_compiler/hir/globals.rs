@@ -109,7 +109,7 @@ bun_core::comptime_string_map! {
 ///   `build_default_globals` to construct the static base.
 /// - **Overlay mode** (`base=true`): lookups check the extras HashMap first,
 ///   then fall back to the static `BASE_GLOBAL_INDEX` / `BASE.globals` table.
-///   Inserts go into extras. Cloning only copies the extras map.
+///   Inserts go into extras.
 pub struct GlobalRegistry {
     base: bool,
     entries: HashMap<Cow<'static, str>, Global>,

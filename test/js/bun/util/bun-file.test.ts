@@ -112,8 +112,8 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
 });
 
 // A BunFile stats lazily. A stat that fails (the file does not exist yet) must
-// not be cached as "empty file" on the handle, and exists() must stat every
-// time it is called.
+// not be cached as "empty file" on the handle. exists() must stat every time it
+// is called, and must not turn the size it saw into a limit on later reads.
 describe.concurrent("BunFile does not cache a failed stat", () => {
   test("exists() sees a file created after it answered false, and reads see the contents", async () => {
     await using dir = tempDir("bun-file-created-later", {});
@@ -235,12 +235,34 @@ describe.concurrent("BunFile does not cache a failed stat", () => {
     expect(file.size).toBe(11);
   });
 
-  test("exists() on a slice stats the file", async () => {
-    await using dir = tempDir("bun-file-slice-exists", { "f.txt": "hello world" });
-    const path = join(dir, "f.txt");
+  // https://github.com/oven-sh/bun/issues/23902
+  test("exists() on an existing file does not cap later reads at the size the file had then", async () => {
+    await using dir = tempDir("bun-file-exists-then-grow", { "f.txt": "asdf" });
+    const file = Bun.file(join(dir, "f.txt"));
 
-    expect(await Bun.file(path).slice(0, 5).exists()).toBe(true);
+    expect(await file.exists()).toBe(true);
+
+    const read: string[] = [];
+    for (const data of ["asdfasdf", "asdfasdfasdf", "as"]) {
+      await file.write(data);
+      read.push(await file.text());
+    }
+    expect(read).toEqual(["asdfasdf", "asdfasdfasdf", "as"]);
+  });
+
+  test("exists() on a slice stats the file and keeps the slice window", async () => {
+    await using dir = tempDir("bun-file-slice-exists", { "f.txt": "hello world", "empty.txt": "" });
+
+    expect(await Bun.file(join(dir, "f.txt")).slice(0, 5).exists()).toBe(true);
     expect(await Bun.file(join(dir, "missing.txt")).slice(0, 5).exists()).toBe(false);
+
+    // The file is empty when exists() stats it. The slice still spans 5 bytes
+    // once the file has them.
+    const emptyPath = join(dir, "empty.txt");
+    const slice = Bun.file(emptyPath).slice(0, 5);
+    expect(await slice.exists()).toBe(true);
+    await Bun.write(emptyPath, "hello world");
+    expect({ size: slice.size, text: await slice.text() }).toEqual({ size: 5, text: "hello" });
   });
 });
 

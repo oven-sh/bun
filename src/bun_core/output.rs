@@ -476,9 +476,7 @@ impl Source {
                     let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
                 }
 
-                // FORCE_COLOR and NO_COLOR override both streams. Otherwise
-                // the decision is per stream: a piped stdout must stay free of
-                // ANSI codes even when stderr is a TTY, and vice versa.
+                // FORCE_COLOR and NO_COLOR override both streams; otherwise each stream uses its own isatty result.
                 let mut enable_color: Option<bool> = None;
                 if Self::is_force_color() {
                     enable_color = Some(true);

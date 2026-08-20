@@ -486,6 +486,9 @@ describe("inline snapshots", () => {
     export function wrongFile(value) {
       expect(value).toMatchInlineSnapshot();
     }
+    export function wrongFileTailCall(value) {
+      return expect(value).toMatchInlineSnapshot();
+    }
   `;
   const tester = new InlineSnapshotTester({
     "helper.js": helper_js,
@@ -794,6 +797,145 @@ Date)
       `,
     );
   });
+  // In the tests below the matcher call is a proper tail call (test files are modules, so strict
+  // mode), and the function containing it was invoked by the test runner itself. When the matcher
+  // runs, the frame that held its location is gone and no JS frame is left below it at all.
+  describe("matcher call in tail position", () => {
+    it("expression-bodied test callback", async () => {
+      await tester.test(
+        v => /*js*/ `
+          test("tail call", () => expect("v").toMatchInlineSnapshot(${v("", bad, '`"v"`')}));
+        `,
+      );
+    });
+    it("expression-bodied test callback (toThrowErrorMatchingInlineSnapshot)", async () => {
+      await tester.test(
+        v => /*js*/ `
+          test("tail call", () => expect(() => { throw new Error("boom") }).toThrowErrorMatchingInlineSnapshot(${v("", bad, '`"boom"`')}));
+        `,
+      );
+    });
+    it("inline snapshots inside the function the matcher runs", async () => {
+      // The inner matcher must not disturb the location of the outer, tail-called one.
+      await tester.test(
+        v => /*js*/ `
+          test("nested", () => expect(() => {
+            expect("inner").toMatchInlineSnapshot(${v("", bad, '`"inner"`')});
+            throw new Error("outer");
+          }).toThrowErrorMatchingInlineSnapshot(${v("", bad, '`"outer"`')}));
+        `,
+      );
+    });
+    it("other shapes", async () => {
+      await tester.test(
+        // prettier-ignore
+        v => /*js*/ `
+          test("resolves", () => expect(Promise.resolve("r")).resolves.toMatchInlineSnapshot(${v("", bad, '`"r"`')}));
+          test("return statement", () => { return expect("s").toMatchInlineSnapshot(${v("", bad, '`"s"`')}); });
+          test("only the branch that ran", () => Date.now() ? expect("t").toMatchInlineSnapshot(${v("", bad, '`"t"`')}) : expect("never").toMatchInlineSnapshot());
+          test("last operand of a comma expression", () => (expect("c1").toMatchInlineSnapshot(${v("", bad, '`"c1"`')}), expect("c2").toMatchInlineSnapshot(${v("", bad, '`"c2"`')})));
+          test("right operand of &&", () => Date.now() && expect("and").toMatchInlineSnapshot(${v("", bad, '`"and"`')}));
+          test("right operand of ||", () => globalThis.nothing || expect("or").toMatchInlineSnapshot(${v("", bad, '`"or"`')}));
+          test("right operand of ??", () => globalThis.nothing ?? expect("nullish").toMatchInlineSnapshot(${v("", bad, '`"nullish"`')}));
+          test.each(["e"])("test.each %s", value => expect(value).toMatchInlineSnapshot(${v("", bad, '`"e"`')}));
+          test("name on its own line", () =>
+            expect("n")
+              .toMatchInlineSnapshot(${v("", bad, '`"n"`')}));
+          test("dot on the line before", () => expect("d").
+            toMatchInlineSnapshot(${v("", bad, '`"d"`')}));
+          test("optional chaining", () => expect("o")?.toMatchInlineSnapshot(${v("", bad, '`"o"`')}));
+        `,
+      );
+    });
+    it("helper function in the test file", async () => {
+      await tester.test(
+        v => /*js*/ `
+          function snap(value) {
+            return expect(value).toMatchInlineSnapshot(${v("", bad, '`"h"`')});
+          }
+          function snapThrow(fn) {
+            return expect(fn).toThrowErrorMatchingInlineSnapshot(${v("", bad, '`"thrown"`')});
+          }
+          test("helpers", () => {
+            snap("h");
+            snapThrow(() => { throw new Error("thrown") });
+          });
+        `,
+      );
+    });
+    it("helper function reached through another tail call", async () => {
+      await tester.test(
+        v => /*js*/ `
+          function inner(value) {
+            return expect(value).toMatchInlineSnapshot(${v("", bad, '`"nested"`')});
+          }
+          function outer(value) {
+            return inner(value);
+          }
+          test("nested helpers", () => {
+            outer("nested");
+          });
+        `,
+      );
+    });
+    it("helper function mixed with direct calls", async () => {
+      await tester.test(
+        v => /*js*/ `
+          function snap(value) {
+            return expect(value).toMatchInlineSnapshot(${v("", bad, '`"helper"`')});
+          }
+          test("mixed", () => {
+            expect("before").toMatchInlineSnapshot(${v("", bad, '`"before"`')});
+            snap("helper");
+            expect("after").toMatchInlineSnapshot(${v("", bad, '`"after"`')});
+          });
+        `,
+      );
+    });
+    it("matcher name also appears in the argument", async () => {
+      await tester.test(
+        v => /*js*/ `
+          function snap() {
+            return expect(".toMatchInlineSnapshot(" /* .toMatchInlineSnapshot(\`\`) */).toMatchInlineSnapshot(${v("", bad, '`".toMatchInlineSnapshot("`')});
+          }
+          test("decoy", () => {
+            snap();
+          });
+        `,
+      );
+    });
+    it("helper function called with different values", async () => {
+      // Both calls resolve to the helper's line: the tail-call twin of "should error trying to update the same line twice".
+      await tester.testError(
+        {
+          msg: "error: Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value",
+        },
+        /*js*/ `
+          function snap(value) {
+            return expect(value).toMatchInlineSnapshot();
+          }
+          test("conflict", () => {
+            snap("a");
+            snap("b");
+          });
+        `,
+      );
+    });
+    it("helper function in another file is still rejected", async () => {
+      await tester.testError(
+        {
+          msg: "Inline snapshot matchers must be called from the test file",
+        },
+        /*js*/ `
+          import {wrongFileTailCall} from "./helper";
+          test("cases", () => {
+            wrongFileTailCall("interesting");
+          });
+        `,
+      );
+      expect(readFileSync(tester.tmpdir + "/helper.js", "utf-8")).toBe(helper_js);
+    });
+  });
   it("indentation", async () => {
     await tester.test(
       // prettier-ignore
@@ -891,11 +1033,16 @@ test("error snapshots", () => {
     throw undefined; // this one doesn't work in jest because it doesn't think the function threw
   }).toThrowErrorMatchingInlineSnapshot(`undefined`);
   expect(() => {
-    expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    try {
+      expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    } catch (e) {
+      (e as Error).message = Bun.stripANSI((e as Error).message);
+      throw e;
+    }
   }).toThrowErrorMatchingInlineSnapshot(`
-"\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoThrowErrorMatchingInlineSnapshot\x1B[2m(\x1B[0m\x1B[2m)\x1B[0m
+"expect(received).toThrowErrorMatchingInlineSnapshot()
 
-\x1B[1mMatcher error\x1B[0m: Received function did not throw
+Matcher error: Received function did not throw
 "
 `);
 });

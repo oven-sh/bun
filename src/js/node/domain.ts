@@ -1,39 +1,75 @@
-// Import Events
-let EventEmitter;
+const EventEmitter = require("node:events");
 
 const ObjectDefineProperty = Object.defineProperty;
 
-// Export Domain
-var domain: any = {};
-domain.createDomain = domain.create = function () {
-  if (!EventEmitter) {
-    EventEmitter = require("node:events");
-  }
-  var d = new EventEmitter();
+// Domains entered via enter()/run() and not yet exited, innermost last.
+// process.domain mirrors the top of the stack like in node so other modules
+// can observe the currently active domain.
+const stack: any[] = [];
 
-  function emitError(e) {
-    e ||= $ERR_UNHANDLED_ERROR();
-    if (typeof e === "object") {
-      e.domainEmitter = this;
-      ObjectDefineProperty(e, "domain", {
-        __proto__: null,
-        configurable: true,
-        enumerable: false,
-        value: d,
-        writable: true,
-      });
-      e.domainThrown = false;
+const kEmitError = Symbol("kEmitError");
+
+// Like node, requiring the module defines process.domain (null until a domain
+// is entered, undefined again after the last one exits).
+let activeDomain: any = null;
+ObjectDefineProperty(process, "domain", {
+  __proto__: null,
+  enumerable: true,
+  configurable: true,
+  get() {
+    return activeDomain;
+  },
+  set(value) {
+    activeDomain = value;
+  },
+} as PropertyDescriptor);
+
+function setActive(d) {
+  domain.active = activeDomain = d;
+}
+
+class Domain extends EventEmitter {
+  members: any[];
+
+  constructor() {
+    super();
+    this.members = [];
+    const self = this;
+    // A regular function so `this` is the emitter that emitted "error".
+    this[kEmitError] = function emitError(e) {
+      e ||= $ERR_UNHANDLED_ERROR();
+      if (typeof e === "object") {
+        e.domainEmitter = this;
+        ObjectDefineProperty(e, "domain", {
+          __proto__: null,
+          configurable: true,
+          enumerable: false,
+          value: self,
+          writable: true,
+        });
+        e.domainThrown = false;
+      }
+      self.emit("error", e);
+    };
+  }
+
+  add(emitter) {
+    emitter.on("error", this[kEmitError]);
+    emitter.domain = this;
+    this.members.push(emitter);
+  }
+
+  remove(emitter) {
+    emitter.removeListener("error", this[kEmitError]);
+    emitter.domain = null;
+    const index = this.members.indexOf(emitter);
+    if (index !== -1) {
+      this.members.splice(index, 1);
     }
-    d.emit("error", e);
   }
 
-  d.add = function (emitter) {
-    emitter.on("error", emitError);
-  };
-  d.remove = function (emitter) {
-    emitter.removeListener("error", emitError);
-  };
-  d.bind = function (fn) {
+  bind(fn) {
+    const emitError = this[kEmitError];
     return function () {
       var args = Array.prototype.slice.$call(arguments);
       try {
@@ -42,8 +78,10 @@ domain.createDomain = domain.create = function () {
         emitError(err);
       }
     };
-  };
-  d.intercept = function (fn) {
+  }
+
+  intercept(fn) {
+    const emitError = this[kEmitError];
     return function (err) {
       if (err) {
         emitError(err);
@@ -56,41 +94,49 @@ domain.createDomain = domain.create = function () {
         }
       }
     };
-  };
-  d.run = function (fn, ...args) {
+  }
+
+  run(fn, ...args) {
     this.enter();
     try {
       return fn.$apply(this, args);
     } catch (err) {
-      emitError(err);
+      this[kEmitError](err);
     } finally {
       this.exit();
     }
-  };
-  d.dispose = function () {
+  }
+
+  dispose() {
     this.removeAllListeners();
     return this;
-  };
-  d.enter = function () {
+  }
+
+  enter() {
     stack.push(this);
-    domain.active = process.domain = this;
+    setActive(this);
     return this;
-  };
-  d.exit = function () {
+  }
+
+  exit() {
     const index = stack.lastIndexOf(this);
     if (index === -1) return this;
     stack.splice(index, stack.length);
-    domain.active = process.domain = stack.length ? stack[stack.length - 1] : null;
+    setActive(stack[stack.length - 1]);
     return this;
-  };
-  return d;
-};
+  }
+}
 
-// Domains entered via enter()/run() and not yet exited, innermost last.
-// process.domain mirrors the top of the stack like in node so other modules
-// can observe the currently active domain.
-const stack: any[] = [];
-domain._stack = stack;
-domain.active = null;
+function createDomain() {
+  return new Domain();
+}
+
+const domain: any = {
+  _stack: stack,
+  Domain,
+  createDomain,
+  create: createDomain,
+  active: null,
+};
 
 export default domain;

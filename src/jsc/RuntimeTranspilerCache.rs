@@ -611,10 +611,12 @@ pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
 }
 
+/// The effective uid: it is what the kernel checks file access against, so it
+/// is what the cache path and the ownership check must be keyed on.
 #[cfg(unix)]
 #[inline]
 fn current_user_id() -> u32 {
-    bun_sys::c::getuid() as u32
+    bun_sys::c::geteuid() as u32
 }
 
 #[cfg(windows)]
@@ -626,7 +628,7 @@ fn current_user_id() -> u32 {
 #[cfg(unix)]
 fn is_trusted_dir_stat(st: &sys::Stat) -> bool {
     (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-        && st.st_uid == bun_sys::c::getuid()
+        && st.st_uid == bun_sys::c::geteuid()
         && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
 }
 

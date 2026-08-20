@@ -335,10 +335,7 @@ void us_loop_pump(struct us_loop_t *loop) {
    * bun:test) supply their own keep-going predicate, so force exactly one
    * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
   loop->uv_loop->active_handles++;
-  /* As on POSIX: a tick nested inside a poll callback must leave closed sockets to the outermost loop_post. */
-  loop->data.tick_depth++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
-  loop->data.tick_depth--;
   loop->uv_loop->active_handles--;
 }
 
@@ -417,9 +414,7 @@ void us_loop_run(struct us_loop_t *loop) {
     Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
   }
 
-  loop->data.tick_depth++;
   uv_run(loop->uv_loop, UV_RUN_ONCE);
-  loop->data.tick_depth--;
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

@@ -2337,18 +2337,13 @@ mod draft {
 
     /// Each platform is encoded as a single character. It is placed right after the
     /// slash after the version, so someone just reading the trace string can tell
-    /// what platform it came from. L, M, W and F are for Linux (glibc), macOS,
-    /// Windows and FreeBSD, U is Linux built against musl and A is Android, with
-    /// capital letters indicating aarch64, lowercase indicating x86_64.
+    /// what platform it came from. L, M, W and F are Linux (glibc), macOS, Windows
+    /// and FreeBSD, U is Linux (musl) and A is Android, with capital letters
+    /// indicating aarch64, lowercase indicating x86_64. bun.report picks the debug
+    /// file by this character, so each separately linked binary needs its own.
     ///
     /// eg: 'https://bun.report/1.1.3/we04c...
     ///                               ^ this tells you it is windows x86_64
-    ///
-    /// bun.report picks the debug file by this character, so every build of a
-    /// commit that is a different binary needs its own: `bun-linux-<arch>`,
-    /// `bun-linux-<arch>-musl` and `bun-linux-<arch>-android` are three links of
-    /// the same commit. Older musl and android builds emitted 'l'/'L', which the
-    /// backend keeps decoding as the glibc build.
     ///
     /// x64 ships one nehalem build; the old baseline codes ('B','b','e','g')
     /// are no longer emitted but the backend still accepts them from old bins.

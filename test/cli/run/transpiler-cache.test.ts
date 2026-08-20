@@ -65,10 +65,15 @@ function signPileHeader(entry: Buffer): Buffer {
   return entry;
 }
 
-/** A rejected entry is unlinked and written again, which changes both of these. */
+/**
+ * A rejected entry is unlinked and written again, which gives it new
+ * timestamps (and usually a new inode). A hit only reads it.
+ */
 function fileIdentity(path: string) {
-  const { ino, mtimeMs } = statSync(path);
-  return { ino, mtimeMs };
+  const { ino, mtimeNs, ctimeNs } = statSync(path, { bigint: true });
+  expect(mtimeNs).toBeGreaterThan(0n);
+  expect(ctimeNs).toBeGreaterThan(0n);
+  return { ino, mtimeNs, ctimeNs };
 }
 
 let temp_dir: string = "";

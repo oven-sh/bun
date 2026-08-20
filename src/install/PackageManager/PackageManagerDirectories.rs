@@ -440,9 +440,8 @@ pub enum ClearCacheDirectoryError {
     },
 }
 
-/// `bun pm cache rm`. Empties the directory instead of removing it, so a symlinked or
-/// mounted cache directory keeps working. The setting says where the cache is, not
-/// that the directory holds nothing else, hence `protected_dirs`.
+/// `bun pm cache rm`. Empties the directory rather than removing it, so a symlinked or
+/// mounted cache survives. `protected_dirs`: the setting proves nothing about contents.
 pub fn clear_cache_directory(
     env: &mut DotEnvLoader,
     original_cwd: &[u8],

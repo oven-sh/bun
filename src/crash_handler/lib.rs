@@ -2420,7 +2420,7 @@ mod draft {
     struct StackLine {
         /// Offset inside the image.
         address: i32,
-        /// None -> bun's own executable; otherwise the image's basename, which bun.report shows as the frame's package.
+        /// None -> bun's own executable; otherwise the image as the loader names it (a path on POSIX, a basename on Windows).
         object: Option<Box<[u8]>>,
         // Box<[u8]> rather than a borrowed slice into caller's `name_bytes`,
         // since the only caller writes into a stack buffer and the value is consumed immediately.
@@ -2430,13 +2430,12 @@ mod draft {
         /// `None` when the loader has no name for the image.
         #[cfg(not(windows))]
         fn in_foreign_image(image_path: &[u8], image_relative_address: usize) -> Option<StackLine> {
-            let basename = bun_paths::basename_posix(image_path);
-            if basename.is_empty() {
+            if bun_paths::basename_posix(image_path).is_empty() {
                 return None;
             }
             Some(StackLine {
                 address: i32::try_from(image_relative_address).ok()?,
-                object: Some(Box::<[u8]>::from(basename)),
+                object: Some(Box::<[u8]>::from(image_path)),
             })
         }
 
@@ -2587,12 +2586,13 @@ mod draft {
             };
 
             if let Some(object) = &known.object {
+                // The report carries the basename only, which bun.report shows as the frame's package.
+                let name = bun_paths::basename_posix(object);
                 writer.write_all(VLQ::encode(1).slice())?;
-                writer.write_all(
-                    VLQ::encode(i32::try_from(object.len()).expect("int cast")).slice(),
-                )?;
+                writer
+                    .write_all(VLQ::encode(i32::try_from(name.len()).expect("int cast")).slice())?;
                 // Goes into the URL verbatim and is decoded by length: one URL-safe byte per byte.
-                for &byte in object.iter() {
+                for &byte in name.iter() {
                     writer.write_byte(match byte {
                         b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'-' => byte,
                         _ => b'_',
@@ -3293,28 +3293,39 @@ mod draft {
     fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> crate::Result<()> {
         let mut argv: Vec<Vec<u8>> = Vec::new();
         argv.push(program.as_bytes().to_vec());
-        argv.push(b"--exe".to_vec());
-        argv.push({
-            #[cfg(windows)]
-            {
-                // `to_utf8_alloc` is infallible (Vec<u8>); OOM aborts.
-                let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w());
-                let mut s = image_path[0..image_path.len() - 3].to_vec();
-                s.extend_from_slice(b"pdb");
-                s
-            }
-            #[cfg(not(windows))]
-            {
-                bun_core::self_exe_path()?.as_bytes().to_vec()
-            }
-        });
+        #[cfg(windows)]
+        {
+            argv.push(b"--exe".to_vec());
+            // `to_utf8_alloc` is infallible (Vec<u8>); OOM aborts.
+            let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w());
+            let mut pdb_path = image_path[0..image_path.len() - 3].to_vec();
+            pdb_path.extend_from_slice(b"pdb");
+            argv.push(pdb_path);
+        }
+        #[cfg(not(windows))]
+        let exe_path = bun_core::self_exe_path()?;
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
         for &addr in &trace.instruction_addresses[0..trace.index] {
             let Some(line) = StackLine::from_address(addr, &mut name_bytes) else {
                 continue;
             };
-            argv.push(format!("0x{:X}", line.address).into_bytes());
+            #[cfg(windows)]
+            {
+                // pdb-addr2line reads bun's PDB only; a frame of another DLL has nothing to be resolved against.
+                if line.object.is_some() {
+                    continue;
+                }
+                argv.push(format!("0x{:X}", line.address).into_bytes());
+            }
+            #[cfg(not(windows))]
+            {
+                // One `"<file>" <offset>` argument per frame resolves each frame against the image it is in.
+                let mut arg = b"\"".to_vec();
+                arg.extend_from_slice(line.object.as_deref().unwrap_or(exe_path.as_bytes()));
+                arg.extend_from_slice(format!("\" 0x{:X}", line.address).as_bytes());
+                argv.push(arg);
+            }
         }
 
         // PORTING.md: no std::process — routed through bun_core::spawn_sync_inherit (posix_spawn).

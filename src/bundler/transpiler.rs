@@ -458,15 +458,7 @@ impl<'a> Transpiler<'a> {
     /// retrying once on failure before reporting the error to the log.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
-            Ok(r) => Ok(r),
-            // Nothing that long names a directory whose cache could be stale
-            // (and the join below has a PathBuffer to fit `top_level_dir/entry/..` in).
-            Err(err)
-                if self.fs().top_level_dir.len() + entry_point.len() + 4
-                    > bun_paths::MAX_PATH_BYTES =>
-            {
-                Err(err)
-            }
+            Ok(r) => self.reject_disabled_entry_point(r, entry_point),
             Err(err) => {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 
@@ -477,6 +469,14 @@ impl<'a> Transpiler<'a> {
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
+                    // Nothing that long names a directory whose cache could be
+                    // stale (and neither buster name below would fit
+                    // `cache_bust_buf`).
+                    if self.fs().top_level_dir.len() + entry_point.len() + 4
+                        > bun_paths::MAX_PATH_BYTES
+                    {
+                        break 'name false;
+                    }
                     if bun_paths::is_absolute(entry_point) {
                         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             entry_point,
@@ -515,7 +515,7 @@ impl<'a> Transpiler<'a> {
                 // Only re-query if we previously had something cached.
                 if busted {
                     if let Ok(result) = self._resolve_entry_point(entry_point) {
-                        return Ok(result);
+                        return self.reject_disabled_entry_point(result, entry_point);
                     }
                     // ignore this error, we will print the original error
                 }
@@ -532,6 +532,39 @@ impl<'a> Transpiler<'a> {
                 Err(err)
             }
         }
+    }
+
+    /// A disabled module (no usable path) imports as `{}`, but an entry point has nothing to emit.
+    fn reject_disabled_entry_point(
+        &self,
+        resolved: resolver::Result,
+        entry_point: &[u8],
+    ) -> crate::Result<resolver::Result> {
+        if resolved.path_const().is_some() {
+            return Ok(resolved);
+        }
+
+        // Stubbed builtins carry the "node" namespace; anything else came from a "browser" map.
+        if resolved.path_pair.primary.namespace == b"node" {
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Cannot use Node.js builtin \"{}\" as an entry point",
+                    bstr::BStr::new(entry_point)
+                ),
+            );
+        } else {
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "\"{}\" is disabled due to \"browser\" field in package.json (entry point)",
+                    bstr::BStr::new(entry_point)
+                ),
+            );
+        }
+        Err(crate::Error::ResolveMessage)
     }
 
     /// Load env files and build `options.define`. Idempotent — a no-op once

@@ -214,6 +214,94 @@ describe("Bun.build", () => {
     }
   });
 
+  // Runs in a child because the unfixed behavior was a process abort: the
+  // disabled entry point was dropped without an error and the linker ran with
+  // zero entry points.
+  test.concurrent("an entry point disabled by the package.json browser field is a build error", async () => {
+    using dir = tempDir("build-entry-point-disabled-by-browser-field", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./entry.js": false } }),
+      "entry.js": `console.log("entry");`,
+      "build.mjs": `
+        const returned = await Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false });
+        let thrown;
+        try {
+          await Bun.build({ entrypoints: ["./entry.js"], target: "browser" });
+        } catch (e) {
+          thrown = {
+            isAggregateError: e instanceof AggregateError,
+            errors: e.errors.map(error => ({ name: error.name, level: error.level, position: error.position, message: error.message })),
+          };
+        }
+        console.log(JSON.stringify({
+          returned: {
+            success: returned.success,
+            outputs: returned.outputs.length,
+            logs: returned.logs.map(log => ({ name: log.name, level: log.level, position: log.position, message: log.message })),
+          },
+          thrown,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const message = {
+      name: "BuildMessage",
+      level: "error",
+      position: null,
+      message: '"./entry.js" is disabled due to "browser" field in package.json (entry point)',
+    };
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      returned: { success: false, outputs: 0, logs: [message] },
+      thrown: { isAggregateError: true, errors: [message] },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an entry point too long for a path buffer is reported like any other missing one", async () => {
+    // Resolving it failed without logging anything, so the build went on
+    // with the entry point silently dropped: a successful build when another
+    // entry point was given, a crash in the linker when it was the only one.
+    // Runs in a child so the crash shows up as a failed assertion.
+    using dir = tempDir("build-api-long-entrypoint", { "valid.js": "console.log(1);" });
+    const fixture = /* ts */ `
+      // Longer than the path buffer on every platform, Windows included.
+      const long = Buffer.alloc(100_000, "a").toString();
+      const report = async (entrypoints: string[]) => {
+        const { success, outputs, logs } = await Bun.build({ entrypoints, throw: false });
+        return { success, outputs: outputs.length, logs: logs.map(log => [log.name, log.message]) };
+      };
+      console.log(JSON.stringify({
+        alone: await report([long]),
+        withValidEntryPoint: await report(["./valid.js", long]),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const notFound = {
+      success: false,
+      outputs: 0,
+      logs: [["BuildMessage", `ModuleNotFound resolving "${Buffer.alloc(100_000, "a").toString()}" (entry point)`]],
+    };
+    expect(JSON.parse(stdout)).toEqual({ alone: notFound, withValidEntryPoint: notFound });
+    expect(exitCode).toBe(0);
+  });
+
   test("returns output files", async () => {
     Bun.gc(true);
     const build = await Bun.build({

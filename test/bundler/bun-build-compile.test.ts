@@ -853,8 +853,8 @@ describe("compile --outfile on another filesystem", () => {
         const st = statSync(outfile);
         expect(st.mode & 0o111).not.toBe(0);
         if (exitCode === 0) {
-          const header = readFileSync(outfile).subarray(0, 4);
-          expect(header).toEqual(Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+          const header = new Uint8Array(await Bun.file(outfile).slice(0, 4).arrayBuffer());
+          expect(header).toEqual(new Uint8Array([0x7f, 0x45, 0x4c, 0x46]));
         } else {
           // The only reason for the build to fail here is that the filesystem
           // is too small for the executable.

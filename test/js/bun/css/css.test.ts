@@ -7668,6 +7668,66 @@ describe("css tests", () => {
     );
   });
 
+  describe("font-face", () => {
+    // format() is always printed in its string form. The bare keyword form is
+    // css-fonts-4 syntax that older browsers reject (they drop the whole src
+    // entry), so it is never emitted, matching lightningcss.
+    for (const format of ["woff", "woff2", "truetype", "opentype", "embedded-opentype", "collection", "svg"]) {
+      const expected = `@font-face{src:url(test.font)format("${format}")}`;
+      minify_test(`@font-face { src: url("test.font") format(${format}) }`, expected);
+      minify_test(`@font-face { src: url("test.font") format("${format}") }`, expected);
+      minify_test(`@font-face { src: url("test.font") format('${format}') }`, expected);
+      // Known formats are matched case-insensitively and printed in their canonical spelling.
+      minify_test(`@font-face { src: url("test.font") format(${format.toUpperCase()}) }`, expected);
+    }
+
+    // Unknown formats are printed as strings too, preserving their spelling.
+    minify_test(
+      '@font-face { src: url(test.woff2) format("woff2-variations") }',
+      '@font-face{src:url(test.woff2)format("woff2-variations")}',
+    );
+    minify_test(
+      "@font-face { src: url(test.woff2) format(woff2-variations) }",
+      '@font-face{src:url(test.woff2)format("woff2-variations")}',
+    );
+
+    minify_test(
+      '@font-face { src: url("test.otf") format(opentype) tech(features-aat) }',
+      '@font-face{src:url(test.otf)format("opentype")tech(features-aat)}',
+    );
+    minify_test(
+      '@font-face { src: url("test.woff2") format("woff2") tech(variations) }',
+      '@font-face{src:url(test.woff2)format("woff2")tech(variations)}',
+    );
+    minify_test(
+      `@font-face {
+        font-family: "Test";
+        src: local("Test"), url("test.woff2") format("woff2"), url("test.woff") format(woff);
+      }`,
+      '@font-face{font-family:Test;src:local(Test),url(test.woff2)format("woff2"),url(test.woff)format("woff")}',
+    );
+    // The minified output parses back to itself.
+    minify_test(
+      '@font-face{src:url(test.woff2)format("woff2"),url(test.woff)format("woff")}',
+      '@font-face{src:url(test.woff2)format("woff2"),url(test.woff)format("woff")}',
+    );
+
+    cssTest(
+      `
+      @font-face {
+        font-family: "Test";
+        src: url("test.woff2") format(woff2), url("test.woff") format("woff"), url("test.eot") format(embedded-opentype);
+      }
+    `,
+      indoc`
+      @font-face {
+        font-family: Test;
+        src: url("test.woff2") format("woff2"), url("test.woff") format("woff"), url("test.eot") format("embedded-opentype");
+      }
+`,
+    );
+  });
+
   describe("font-palette-values", () => {
     minify_test(
       "@font-palette-values --x{font-family:Foo;base-palette:2}",

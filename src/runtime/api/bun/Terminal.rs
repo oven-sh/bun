@@ -547,6 +547,11 @@ impl Terminal {
                                 .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
                             poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                         }
+                        // Enroll in epoll_rearm_watchdog: this fd class hit a
+                        // confirmed real-device OHOS kernel epoll defect
+                        // (registration reports success, kernel never
+                        // delivers) -- see OHOS_TEST_STATUS.md 2026-08-20.
+                        r.flags.insert(PosixFlags::EPOLL_REARM_WATCH);
                     });
                 }
                 terminal.update_flags(|f| f.insert(Flags::READER_STARTED));

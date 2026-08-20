@@ -56,8 +56,7 @@ bun_core::declare_scope!(cache, visible);
 /// offsets picked by a header byte) plus a body of tagged records with
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
-/// Version 28: The header ends with a hash of the header fields, and the hash
-/// of an empty section is stored and checked like any other.
+/// Version 28: Trailing header hash. Empty sections store and check a hash too.
 const EXPECTED_VERSION: u32 = 28;
 
 /// Source files smaller than this are not written to / read from the on-disk
@@ -243,8 +242,7 @@ impl Metadata {
         })
     }
 
-    /// `save` writes the sections back to back after the header, so a valid
-    /// header adds up to the file size exactly.
+    /// `save` writes the sections back to back, so a valid header adds up to the file size.
     pub(crate) fn verify_layout(&self, file_size: u64) -> crate::CrateResult<()> {
         let header_end = Self::SIZE as u64;
         let output_end = header_end.checked_add(self.output_byte_length);
@@ -411,8 +409,7 @@ impl Entry {
         Ok(())
     }
 
-    /// The caller has run `Metadata::verify_layout`, so every length below
-    /// fits the file.
+    /// `Metadata::verify_layout` has run, so every length below fits the file.
     pub(crate) fn load(&mut self, file: &sys::File) -> crate::CrateResult<()> {
         debug_assert!(
             self.output_code.is_empty(),
@@ -741,8 +738,7 @@ impl RuntimeTranspilerCache {
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
-        // NONBLOCK: a FIFO at this path must not block the open. On Windows
-        // the flag would make the handle overlapped and break the preads.
+        // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
         #[cfg(unix)]
         let open_flags = sys::O::RDONLY | sys::O::NONBLOCK;
         #[cfg(not(unix))]

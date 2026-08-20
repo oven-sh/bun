@@ -51,10 +51,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-/// Version 26: `output_hash` / `sourcemap_hash` / `esm_record_hash` are seeded
-/// with `input_hash` instead of the fixed `SEED`, and a stored hash of 0 no
-/// longer skips verification. Entries written before this version have section
-/// hashes that will not match under the new seed.
+/// Version 26: Section hashes are seeded with `input_hash` and always verified.
 const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk
@@ -434,9 +431,6 @@ impl Entry {
             return Err(crate::CrateError::MissingData);
         }
 
-        // Section hashes are keyed on the input hash so the stored value binds
-        // each payload to the source bytes that produced this entry. The caller
-        // has already verified `metadata.input_hash` against the live source.
         let section_seed = self.metadata.input_hash;
 
         debug_assert!(

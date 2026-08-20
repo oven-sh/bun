@@ -672,15 +672,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       `;
       await using proc = spawn({
         cmd: [bunExe(), "-e", script],
-        // LSan is off in the subprocess: a `-e` script that creates eval
-        // workers reports their source Blobs at exit regardless of the addon,
-        // and this test is about the crash.
-        env: {
-          ...bunEnv,
-          ADDON: addon,
-          WORKER_SRC: workerSrc,
-          ASAN_OPTIONS: "detect_leaks=0:allow_user_segv_handler=1",
-        },
+        env: { ...bunEnv, ADDON: addon, WORKER_SRC: workerSrc },
         stdout: "pipe",
         stderr: "pipe",
       });

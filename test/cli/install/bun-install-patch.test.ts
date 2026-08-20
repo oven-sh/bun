@@ -1182,13 +1182,19 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     GIT_COMMITTER_EMAIL: "test@example.com",
   };
 
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the per-directory cache
+  // in bunfig.toml. The tests below run concurrently, and two cold installs of
+  // the same package into one cache replace each other's cache directory.
+  const install = (packageDir: string, env = bunEnv) =>
+    runBunInstall({ ...env, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") }, packageDir);
+
   const lockfileHasPatches = async (packageDir: string) =>
     (await Bun.file(join(packageDir, "bun.lock")).text()).includes("patchedDependencies");
 
   const noDepsFile = (packageDir: string, name: string) => Bun.file(join(packageDir, "node_modules", "no-deps", name));
 
   async function installUnpatched(packageDir: string, env = bunEnv) {
-    await runBunInstall(env, packageDir);
+    await install(packageDir, env);
     expect({
       noDeps: await noDepsFile(packageDir, "package.json").json(),
       patched: await noDepsFile(packageDir, "patched.txt").exists(),
@@ -1202,7 +1208,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 
   test.concurrent("apply when the declaring package is the install root", async () => {
     const { packageDir } = await registry.createTestDir({ files: patchingDep });
-    await runBunInstall(bunEnv, packageDir);
+    await install(packageDir);
     expect({
       patched: await noDepsFile(packageDir, "patched.txt").text(),
       lockfileHasPatches: await lockfileHasPatches(packageDir),
@@ -1216,7 +1222,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
         bunfigOpts: { linker },
         files: { "package.json": consumerPackageJson({}), dep: patchingDep },
       });
-      await runBunInstall(bunEnv, dir.packageDir);
+      await install(dir.packageDir);
       return dir;
     }
 

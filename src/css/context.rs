@@ -3,6 +3,7 @@ use crate::css_parser as css;
 use css::css_rules::media::MediaRule;
 
 use css::css_properties::custom::UnparsedProperty;
+use css::css_properties::text::Direction;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
 use bun_alloc::{Arena as Bump, ArenaPtr};
@@ -78,6 +79,14 @@ impl<'a> PropertyHandlerContext<'a> {
     pub(crate) fn add_logical_rule(&mut self, ltr: css::Property, rtl: css::Property) {
         self.ltr.push(ltr);
         self.rtl.push(rtl);
+    }
+
+    /// For a compiled logical value whose other direction a later physical declaration overrides.
+    pub(crate) fn add_directional_rule(&mut self, direction: Direction, property: css::Property) {
+        match direction {
+            Direction::Ltr => self.ltr.push(property),
+            Direction::Rtl => self.rtl.push(property),
+        }
     }
 
     pub(crate) fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
@@ -157,21 +166,11 @@ impl<'a> PropertyHandlerContext<'a> {
         let mut dest: Vec<css::CssRule<T>> = Vec::new();
 
         if !self.ltr.is_empty() {
-            self.get_additional_rules_helper(
-                css::selector::parser::Direction::Ltr,
-                &self.ltr,
-                style_rule,
-                &mut dest,
-            );
+            self.get_additional_rules_helper(Direction::Ltr, &self.ltr, style_rule, &mut dest);
         }
 
         if !self.rtl.is_empty() {
-            self.get_additional_rules_helper(
-                css::selector::parser::Direction::Rtl,
-                &self.rtl,
-                style_rule,
-                &mut dest,
-            );
+            self.get_additional_rules_helper(Direction::Rtl, &self.rtl, style_rule, &mut dest);
         }
 
         if !self.dark.is_empty() {
@@ -229,7 +228,7 @@ impl<'a> PropertyHandlerContext<'a> {
     // Takes the Direction value and a borrow of the decls Vec directly.
     pub(crate) fn get_additional_rules_helper<T>(
         &self,
-        dir: css::selector::parser::Direction,
+        dir: Direction,
         decls: &[css::Property],
         sty: &css::StyleRule<T>,
         dest: &mut Vec<css::CssRule<T>>,

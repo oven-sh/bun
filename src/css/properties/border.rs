@@ -3,6 +3,7 @@ use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
 use crate::css_values::color::{ColorFallbackKind, CssColor};
 use crate::css_values::length::Length;
+use crate::properties::text::Direction;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::targets::Browsers;
 use crate::{
@@ -443,6 +444,10 @@ impl BorderShorthand {
         self.width.is_some() && self.style.is_some() && self.color.is_some()
     }
 
+    fn is_empty(&self) -> bool {
+        self.width.is_none() && self.style.is_none() && self.color.is_none()
+    }
+
     /// Generic over the `P` const param so the same `BorderShorthand` data
     /// can populate any of `BorderTop`/`BorderLeft`/.../`Border`.
     fn to_border<const P: u8>(&self, arena: &Bump) -> GenericBorder<LineStyle, P> {
@@ -605,6 +610,10 @@ pub struct BorderHandler {
     border_block_end: BorderShorthand,
     border_inline_start: BorderShorthand,
     border_inline_end: BorderShorthand,
+    /// Unparsed inline declarations, held back like the parsed ones while logical borders compile.
+    unparsed_inline: Vec<UnparsedProperty>,
+    /// Sub-properties `flush_before_unparsed` wrote out while the inline values stayed buffered.
+    declared_after_inline: BorderProperty,
     category: PropertyCategory,
     border_image_handler: BorderImageHandler,
     border_radius_handler: BorderRadiusHandler,
@@ -636,6 +645,14 @@ mod border_handler_body {
     ) {
         let (a, b) = mk();
         ctx.add_logical_rule(a, b);
+    }
+    #[inline(never)]
+    fn ctx_add_directional_with(
+        ctx: &mut PropertyHandlerContext,
+        direction: Direction,
+        mk: impl FnOnce() -> Property,
+    ) {
+        ctx.add_directional_rule(direction, mk());
     }
 
     struct FlushContext<'a, 'bump, 'ctx> {
@@ -1206,6 +1223,126 @@ mod border_handler_body {
     }};
 }
 
+    /// The ltr/rtl rules override this rule, so the direction of a `declared` side is left out.
+    #[inline(never)]
+    fn flush_overridden_inline(
+        f: &mut FlushContext,
+        declared: BorderProperty,
+        inline_start: &mut BorderShorthand,
+        inline_end: &mut BorderShorthand,
+    ) {
+        macro_rules! split {
+            ($key:ident, $left_flag:ident, $Left:ident, $right_flag:ident, $Right:ident) => {{
+                let left_declared = declared.contains(BorderProperty::$left_flag);
+                let right_declared = declared.contains(BorderProperty::$right_flag);
+                if left_declared || right_declared {
+                    match (inline_start.$key.take(), inline_end.$key.take()) {
+                        (Some(start), Some(end)) if css::generic::eql(&start, &end) => {
+                            // Direction independent, so it stays in this rule.
+                            if !left_declared {
+                                fc_prop!(f, $Left, start);
+                            }
+                            if !right_declared {
+                                fc_prop!(f, $Right, end);
+                            }
+                        }
+                        (start, end) => {
+                            // One side was declared later, so at most one direction is left.
+                            if let Some(value) = start {
+                                if !left_declared {
+                                    ctx_add_directional_with(f.ctx, Direction::Ltr, || {
+                                        Property::$Left(value)
+                                    });
+                                } else if !right_declared {
+                                    ctx_add_directional_with(f.ctx, Direction::Rtl, || {
+                                        Property::$Right(value)
+                                    });
+                                }
+                            }
+                            if let Some(value) = end {
+                                if !right_declared {
+                                    ctx_add_directional_with(f.ctx, Direction::Ltr, || {
+                                        Property::$Right(value)
+                                    });
+                                } else if !left_declared {
+                                    ctx_add_directional_with(f.ctx, Direction::Rtl, || {
+                                        Property::$Left(value)
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }};
+        }
+
+        split!(
+            width,
+            LEFT_WIDTH,
+            BorderLeftWidth,
+            RIGHT_WIDTH,
+            BorderRightWidth
+        );
+        split!(
+            style,
+            LEFT_STYLE,
+            BorderLeftStyle,
+            RIGHT_STYLE,
+            BorderRightStyle
+        );
+        split!(
+            color,
+            LEFT_COLOR,
+            BorderLeftColor,
+            RIGHT_COLOR,
+            BorderRightColor
+        );
+    }
+
+    /// The physical properties an inline logical property compiles to in ltr and in rtl text.
+    fn compiled_inline_targets(property_id: PropertyIdTag) -> Option<(PropertyId, PropertyId)> {
+        use PropertyIdTag as P;
+        Some(match property_id {
+            P::BorderInlineStart => (PropertyId::BorderLeft, PropertyId::BorderRight),
+            P::BorderInlineStartWidth => {
+                (PropertyId::BorderLeftWidth, PropertyId::BorderRightWidth)
+            }
+            P::BorderInlineStartStyle => {
+                (PropertyId::BorderLeftStyle, PropertyId::BorderRightStyle)
+            }
+            P::BorderInlineStartColor => {
+                (PropertyId::BorderLeftColor, PropertyId::BorderRightColor)
+            }
+            P::BorderInlineEnd => (PropertyId::BorderRight, PropertyId::BorderLeft),
+            P::BorderInlineEndWidth => (PropertyId::BorderRightWidth, PropertyId::BorderLeftWidth),
+            P::BorderInlineEndStyle => (PropertyId::BorderRightStyle, PropertyId::BorderLeftStyle),
+            P::BorderInlineEndColor => (PropertyId::BorderRightColor, PropertyId::BorderLeftColor),
+            _ => return None,
+        })
+    }
+
+    /// Unsplittable: a direction is only left out if everything it sets there was declared later.
+    #[inline(never)]
+    fn flush_unparsed_inline(
+        unparsed: &UnparsedProperty,
+        declared: BorderProperty,
+        arena: &Bump,
+        context: &mut PropertyHandlerContext,
+    ) {
+        let Some((ltr, rtl)) = compiled_inline_targets(unparsed.property_id.tag()) else {
+            return;
+        };
+        for (direction, physical) in [(Direction::Ltr, ltr), (Direction::Rtl, rtl)] {
+            let sets = BorderProperty::try_from_property_id(physical.tag()).unwrap();
+            if !declared.contains(sets) {
+                context.add_directional_rule(
+                    direction,
+                    Property::Unparsed(unparsed.with_property_id(arena, physical)),
+                );
+            }
+        }
+    }
+
     impl BorderHandler {
         pub(crate) fn handle_property(
             &mut self,
@@ -1219,22 +1356,41 @@ mod border_handler_body {
 
             // Helper macros.
 
+            // The buffered block side that, compiled, lands on a physical side.
+            macro_rules! compiled_block_side {
+                (border_top) => {
+                    Some(&self.border_block_start)
+                };
+                (border_bottom) => {
+                    Some(&self.border_block_end)
+                };
+                ($key:ident) => {
+                    None::<&BorderShorthand>
+                };
+            }
+
             macro_rules! flush_helper {
                 ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
-                    if $category != self.category {
+                    if $category != self.category
+                        && !self.keeps_logical_buffered($category, context)
+                    {
                         self.flush(dest, context);
                     }
 
-                    if let Some(existing) = &self.$key.$prop {
-                        if !existing.eql($val)
-                            && context.targets.browsers.is_some()
-                            && !css::generic::is_compatible(
-                                $val,
-                                &context.targets.browsers.unwrap(),
-                            )
-                        {
-                            self.flush(dest, context);
-                        }
+                    // The previous value of the property stays ahead of a value some target rejects.
+                    let previous = self.$key.$prop.as_ref().or_else(|| {
+                        compiled_block_side!($key)
+                            .filter(|_| context.should_compile_logical(Feature::LogicalBorders))
+                            .and_then(|side| side.$prop.as_ref())
+                    });
+                    let needs_fallback = previous.is_some_and(|existing| {
+                        !existing.eql($val)
+                            && context.targets.browsers.as_ref().is_some_and(|browsers| {
+                                !css::generic::is_compatible($val, browsers)
+                            })
+                    });
+                    if needs_fallback {
+                        self.flush(dest, context);
                     }
                 }};
             }
@@ -1250,7 +1406,9 @@ mod border_handler_body {
 
             macro_rules! set_border_helper {
                 ($key:ident, $val:expr, $category:expr) => {{
-                    if $category != self.category {
+                    if $category != self.category
+                        && !self.keeps_logical_buffered($category, context)
+                    {
                         self.flush(dest, context);
                     }
 
@@ -1424,11 +1582,15 @@ mod border_handler_body {
 
                     // Setting the `border` property resets `border-image`
                     self.border_image_handler.reset();
+                    self.category = Physical;
                     self.has_any = true;
                 }
                 Property::Unparsed(val) => {
-                    if is_border_property(val.property_id.tag()) {
-                        self.flush(dest, context);
+                    let property_id = val.property_id.tag();
+                    if is_border_property(property_id) {
+                        let declared =
+                            BorderProperty::try_from_property_id(property_id).unwrap_or_default();
+                        self.flush_before_unparsed(declared, dest, context);
                         self.flush_unparsed(val, dest, context);
                     } else {
                         if self.border_image_handler.will_flush(property) {
@@ -1469,15 +1631,80 @@ mod border_handler_body {
             self.border_radius_handler.finalize(dest, context);
         }
 
+        /// Sound because every arm storing a physical value also records the physical category.
+        fn keeps_logical_buffered(
+            &self,
+            incoming: PropertyCategory,
+            context: &PropertyHandlerContext,
+        ) -> bool {
+            self.category == PropertyCategory::Logical
+                && incoming == PropertyCategory::Physical
+                && context.should_compile_logical(Feature::LogicalBorders)
+        }
+
+        fn buffered_physical_inline(&self) -> BorderProperty {
+            let mut declared = BorderProperty::empty();
+            macro_rules! side {
+                ($side:expr, $width:ident, $style:ident, $color:ident) => {{
+                    if $side.width.is_some() {
+                        declared |= BorderProperty::$width;
+                    }
+                    if $side.style.is_some() {
+                        declared |= BorderProperty::$style;
+                    }
+                    if $side.color.is_some() {
+                        declared |= BorderProperty::$color;
+                    }
+                }};
+            }
+            side!(self.border_left, LEFT_WIDTH, LEFT_STYLE, LEFT_COLOR);
+            side!(self.border_right, RIGHT_WIDTH, RIGHT_STYLE, RIGHT_COLOR);
+            declared
+        }
+
+        /// For an unparsed declaration setting `declared`; it then overrides like a buffered one.
+        fn flush_before_unparsed(
+            &mut self,
+            declared: BorderProperty,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
+            let keep_inline = declared
+                .intersects(BorderProperty::BORDER_LEFT | BorderProperty::BORDER_RIGHT)
+                && !(self.unparsed_inline.is_empty()
+                    && self.border_inline_start.is_empty()
+                    && self.border_inline_end.is_empty())
+                && context.should_compile_logical(Feature::LogicalBorders);
+            if !keep_inline {
+                self.flush(dest, context);
+                return;
+            }
+
+            let declared_after_inline =
+                self.declared_after_inline | declared | self.buffered_physical_inline();
+            let inline_start = core::mem::take(&mut self.border_inline_start);
+            let inline_end = core::mem::take(&mut self.border_inline_end);
+            let unparsed_inline = core::mem::take(&mut self.unparsed_inline);
+            self.flush(dest, context);
+            self.border_inline_start = inline_start;
+            self.border_inline_end = inline_end;
+            self.unparsed_inline = unparsed_inline;
+            self.declared_after_inline = declared_after_inline;
+            self.has_any = true;
+            self.category = PropertyCategory::Physical;
+        }
+
         fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+            let declared_after_inline = core::mem::take(&mut self.declared_after_inline);
             if !self.has_any {
                 return;
             }
 
             self.has_any = false;
 
+            // Logical first: the physical values came later, and `flush_logical` reads them.
+            self.flush_logical(declared_after_inline, dest, context);
             self.flush_physical(dest, context);
-            self.flush_logical(dest, context);
 
             let arena = dest.bump();
             self.border_top.reset(arena);
@@ -1541,6 +1768,7 @@ mod border_handler_body {
         #[inline(never)]
         fn flush_logical(
             &mut self,
+            declared_after_inline: BorderProperty,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
         ) {
@@ -1548,7 +1776,15 @@ mod border_handler_body {
             let logical_shorthand_supported =
                 !context.should_compile_logical(Feature::LogicalBorderShorthand);
 
+            let declared = declared_after_inline | self.buffered_physical_inline();
+
             let arena = dest.bump();
+
+            // Older than anything buffered below.
+            for unparsed in self.unparsed_inline.drain(..) {
+                flush_unparsed_inline(&unparsed, declared, arena, context);
+            }
+
             let mut flctx = FlushContext {
                 flushed_properties: &mut self.flushed_properties,
                 dest,
@@ -1557,6 +1793,17 @@ mod border_handler_body {
                 logical_supported,
                 logical_shorthand_supported,
             };
+
+            if !logical_supported
+                && declared.intersects(BorderProperty::BORDER_LEFT | BorderProperty::BORDER_RIGHT)
+            {
+                flush_overridden_inline(
+                    &mut flctx,
+                    declared,
+                    &mut self.border_inline_start,
+                    &mut self.border_inline_end,
+                );
+            }
 
             flush_category!(
                 &mut flctx,
@@ -1612,35 +1859,12 @@ mod border_handler_body {
                 }};
             }
 
-            macro_rules! logical_prop {
-                ($ltr:ident, $rtl:ident) => {{
-                    context.add_logical_rule(
-                        Property::Unparsed(unparsed.with_property_id(arena, PropertyId::$ltr)),
-                        Property::Unparsed(unparsed.with_property_id(arena, PropertyId::$rtl)),
-                    );
-                }};
-            }
-
             match unparsed.property_id.tag() {
-                PropertyIdTag::BorderInlineStart => logical_prop!(BorderLeft, BorderRight),
-                PropertyIdTag::BorderInlineStartWidth => {
-                    logical_prop!(BorderLeftWidth, BorderRightWidth)
-                }
-                PropertyIdTag::BorderInlineStartColor => {
-                    logical_prop!(BorderLeftColor, BorderRightColor)
-                }
-                PropertyIdTag::BorderInlineStartStyle => {
-                    logical_prop!(BorderLeftStyle, BorderRightStyle)
-                }
-                PropertyIdTag::BorderInlineEnd => logical_prop!(BorderRight, BorderLeft),
-                PropertyIdTag::BorderInlineEndWidth => {
-                    logical_prop!(BorderRightWidth, BorderLeftWidth)
-                }
-                PropertyIdTag::BorderInlineEndColor => {
-                    logical_prop!(BorderRightColor, BorderLeftColor)
-                }
-                PropertyIdTag::BorderInlineEndStyle => {
-                    logical_prop!(BorderRightStyle, BorderLeftStyle)
+                property_id if compiled_inline_targets(property_id).is_some() => {
+                    // The flush before this call wrote out any earlier value of the property.
+                    self.unparsed_inline.push(unparsed.deep_clone(arena));
+                    self.category = PropertyCategory::Logical;
+                    self.has_any = true;
                 }
                 PropertyIdTag::BorderBlockStart => prop!(BorderTop),
                 PropertyIdTag::BorderBlockStartWidth => prop!(BorderTopWidth),

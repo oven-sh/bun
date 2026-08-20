@@ -175,12 +175,14 @@ describe("transpiler cache", () => {
     // longer than PATH_MAX (4096 on Linux, 1024 on macOS). Joining such a value
     // into the fixed-size path buffer used to panic while loading the first
     // file large enough for the cache. 4095 is the longest value that still
-    // fits on its own; 4200 does not fit at all.
+    // fits on its own; 4200 does not fit at all. (On Windows, where the buffer
+    // is 98 KB, they fit and creating the directory fails instead.) Windows
+    // reads HOME from USERPROFILE, so both are set.
     const variants: Record<string, string | undefined>[] = [];
     for (const length of [4095, 4200]) {
       const dir = "/" + Buffer.alloc(length - 1, "h").toString();
       variants.push(
-        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined, XDG_CACHE_HOME: undefined, HOME: dir },
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined, XDG_CACHE_HOME: undefined, HOME: dir, USERPROFILE: dir },
         { BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined, XDG_CACHE_HOME: dir },
         { BUN_RUNTIME_TRANSPILER_CACHE_PATH: dir },
       );

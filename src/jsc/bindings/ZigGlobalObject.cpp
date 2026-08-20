@@ -3438,7 +3438,9 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
                     return Identifier::fromString(vm, Bun::builtinModuleKeys[index]);
             }
         }
-        if (moduleName->startsWith("file://"_s)) {
+        // `file:` with any slash count: WHATWG parsing normalizes
+        // `file:/path` and `file:path` to `file:///path`, like Node.
+        if (moduleName->startsWith("file:"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
                 keyString = url.fileSystemPath();
@@ -3590,7 +3592,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     }
 
     {
-        if (moduleName.startsWith("file://"_s)) {
+        if (moduleName.startsWith("file:"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
                 moduleName = url.fileSystemPath();

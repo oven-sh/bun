@@ -222,7 +222,7 @@ describe("node:http server timeout enforcement", () => {
 // server.setTimeout (applied per connection), req.setTimeout, res.setTimeout
 // and req.socket.setTimeout all end up in the server socket's setTimeout,
 // which has to check msecs the way net.Socket#setTimeout does.
-describe("node:http server socket setTimeout(msecs) checks", () => {
+describe.concurrent("node:http server socket setTimeout(msecs) checks", () => {
   const TIMEOUT_MAX = 2 ** 31 - 1;
 
   function thrownBy(fn: () => unknown) {
@@ -298,41 +298,47 @@ describe("node:http server socket setTimeout(msecs) checks", () => {
 
   // Node truncates a duration above 2**31 - 1 ms to that maximum and warns.
   // Passing the raw value on to setTimeout() would instead arm a 1 ms timer
-  // (with a different warning), which destroys the connection at once.
-  test.each([
-    ["server.setTimeout()", (server: http.Server) => server.setTimeout(TIMEOUT_MAX + 1), undefined],
-    ["req.setTimeout()", undefined, (req: http.IncomingMessage) => req.setTimeout(TIMEOUT_MAX + 1)],
-    [
-      "res.setTimeout()",
-      undefined,
-      (_req: http.IncomingMessage, res: http.ServerResponse) => res.setTimeout(TIMEOUT_MAX + 1),
-    ],
-    ["req.socket.setTimeout()", undefined, (req: http.IncomingMessage) => req.socket.setTimeout(TIMEOUT_MAX + 1)],
-  ])("%s truncates a duration above 2**31 - 1 ms like net.Socket#setTimeout", async (_name, configure, arm) => {
-    const warnings: { name: string; message: string }[] = [];
-    const onWarning = (warning: Error) => warnings.push({ name: warning.name, message: warning.message });
-    process.on("warning", onWarning);
-    const server = http.createServer((req, res) => {
-      arm?.(req, res);
-      res.end("ok");
-    });
-    configure?.(server);
-    const port = await listen(server);
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/`);
-      expect(await response.text()).toBe("ok");
-    } finally {
-      server.closeAllConnections();
-      server.close();
-      process.removeListener("warning", onWarning);
-    }
-    // The warning is emitted while the request is handled, so it has been
-    // delivered by the time the response has arrived.
-    expect(warnings).toEqual([
-      {
-        name: "TimeoutOverflowWarning",
-        message: `${TIMEOUT_MAX + 1} does not fit into a 32-bit signed integer.\nTimer duration was truncated to ${TIMEOUT_MAX}.`,
-      },
-    ]);
-  });
+  // (with a different warning), which destroys the connection at once. Both
+  // warnings start with the duration, so each case gets its own duration to
+  // pick its warning out of the process-wide 'warning' event.
+  type Configure = (msecs: number, server: http.Server) => unknown;
+  type Arm = (msecs: number, req: http.IncomingMessage, res: http.ServerResponse) => unknown;
+  const oversizedDurations: [string, number, Configure | undefined, Arm | undefined][] = [
+    ["server.setTimeout()", TIMEOUT_MAX + 1, (msecs, server) => server.setTimeout(msecs), undefined],
+    ["req.setTimeout()", TIMEOUT_MAX + 2, undefined, (msecs, req) => req.setTimeout(msecs)],
+    ["res.setTimeout()", TIMEOUT_MAX + 3, undefined, (msecs, _req, res) => res.setTimeout(msecs)],
+    ["req.socket.setTimeout()", TIMEOUT_MAX + 4, undefined, (msecs, req) => req.socket.setTimeout(msecs)],
+  ];
+  test.each(oversizedDurations)(
+    "%s truncates a duration above 2**31 - 1 ms like net.Socket#setTimeout",
+    async (_name, msecs, configure, arm) => {
+      const warnings: { name: string; message: string }[] = [];
+      const onWarning = (warning: Error) => {
+        if (warning.message.startsWith(`${msecs} `)) warnings.push({ name: warning.name, message: warning.message });
+      };
+      process.on("warning", onWarning);
+      const server = http.createServer((req, res) => {
+        arm?.(msecs, req, res);
+        res.end("ok");
+      });
+      configure?.(msecs, server);
+      const port = await listen(server);
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/`);
+        expect(await response.text()).toBe("ok");
+      } finally {
+        server.closeAllConnections();
+        server.close();
+        process.removeListener("warning", onWarning);
+      }
+      // The warning is emitted while the request is handled, so it has been
+      // delivered by the time the response has arrived.
+      expect(warnings).toEqual([
+        {
+          name: "TimeoutOverflowWarning",
+          message: `${msecs} does not fit into a 32-bit signed integer.\nTimer duration was truncated to ${TIMEOUT_MAX}.`,
+        },
+      ]);
+    },
+  );
 });

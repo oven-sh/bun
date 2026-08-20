@@ -156,7 +156,7 @@ const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
 const kerrorEmitted = Symbol("kerrorEmitted");
 const kUserUnrefed = Symbol("kUserUnrefed");
-// Set when pause() dropped the handle's hold on the loop, so the read paths
+// Set when readStop() dropped the handle's hold on the loop, so the read paths
 // only restore a hold they actually removed - re-refing a handle that never
 // held the loop (a wrapped duplex with no fd) would pin the process.
 const kPausedUnref = Symbol("kPausedUnref");
@@ -413,7 +413,7 @@ const SocketHandlers: SocketHandler = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      pauseForBackpressure(self, socket);
+      readStop(self, socket);
     }
   },
   drain(socket) {
@@ -562,17 +562,30 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-// push() (or an onread callback) said stop. Like node's readStop, a socket that
-// is not reading does not hold the loop (see Socket.prototype.pause); a write
-// awaiting drain still does, and unrefAfterDrain drops the hold once it completes.
-function pauseForBackpressure(self, handle) {
+// Stops kernel reads; read()/_read()/resume() start them again. Called where node
+// calls readStop: push() or an onread callback returned false, pause() in onread
+// mode, pauseOnConnect. Like node's readStop, a socket that is not reading does
+// not hold the loop; a write awaiting drain still does, and unrefAfterDrain drops
+// the hold once it completes.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
+function readStop(self, handle) {
   handle?.pause?.();
+  // A TLS socket over a generic duplex has no fd and never held the loop, so
+  // there is no hold to drop, and restoring one later would pin the process.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
   if (!self[kwriteCallback]) handle?.unref?.();
 }
 
-// Reads are flowing again: give back the hold a pause dropped. Cleared even when
+// pauseOnConnect: the handle stops before any byte leaves the kernel (a cluster
+// primary hands the fd to a worker) and the stream starts out paused.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
+function pauseOnCreate(self, handle) {
+  readStop(self, handle);
+  Duplex.prototype.pause.$call(self);
+}
+
+// Reads are flowing again: give back the hold readStop dropped. Cleared even when
 // the user unref'd, so a later ref() is not undone by unrefAfterDrain.
 function restorePausedHold(self, handle) {
   if (!self[kPausedUnref]) return;
@@ -596,7 +609,7 @@ function finishSocketEnd(self) {
   // the loop while reading or with a write in flight, so node lets the process exit even if
   // the (half-open) writable side stays open and the readable side was never consumed. Mirror
   // that: drop this handle's hold on the loop unless a write is still waiting on drain, and
-  // forget any pause()-time unref so a later read()/resume() does not pin the loop again.
+  // forget any readStop-time unref so a later read()/resume() does not pin the loop again.
   // A subsequent buffered write re-refs (see _write) so its callback can still fire.
   const socket = self._handle;
   if (socket && !self[kwriteCallback]) {
@@ -755,7 +768,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      pauseForBackpressure(self, socket);
+      readStop(self, socket);
     }
   },
   keylog(socket, line) {
@@ -980,7 +993,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     const pauseOnConnect = server && (server.pauseOnConnect ?? server[bunSocketServerOptions]?.pauseOnConnect);
     if (pauseOnConnect) {
-      self.pause();
+      pauseOnCreate(self, socket);
     }
     if (!pauseOnConnect && !self.destroyed) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L502-L524
@@ -1224,7 +1237,7 @@ function onconnection(err, clientHandle) {
   _socket._server = self;
 
   if (pauseOnConnect && !isTLS) {
-    _socket.pause();
+    pauseOnCreate(_socket, clientHandle);
   }
 
   if (typeof connectionListener === "function") {
@@ -1263,9 +1276,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     }
     if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
-    if (self.pauseOnConnect) {
-      self.pause();
-    }
     if (self[kupgraded]) {
       self.connecting = false;
       SocketHandlers2.drain!(socket);
@@ -1276,7 +1286,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) pauseForBackpressure(self, socket);
+    if (!self.push(buffer)) readStop(self, socket);
   },
   drain(socket) {
     $debug("Bun.Socket drain");
@@ -1611,7 +1621,6 @@ function Socket(options?) {
   this[ksocket] = undefined;
   this.server = undefined;
   this._server = undefined;
-  this.pauseOnConnect = false;
   this._peername = null;
   this._sockname = null;
   this._closeAfterHandlingError = false;
@@ -1719,7 +1728,7 @@ function Socket(options?) {
           if (self.destroyed) return;
           if (ret === false || self.isPaused()) {
             self[kOnreadTail] = kOnreadEmptyTail;
-            pauseForBackpressure(self, self._handle);
+            readStop(self, self._handle);
           }
           return;
         }
@@ -1750,7 +1759,7 @@ function Socket(options?) {
         if (ret === false || self.isPaused()) {
           const rest = buffer.subarray(offset);
           self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
-          pauseForBackpressure(self, self._handle);
+          readStop(self, self._handle);
           return;
         }
       }
@@ -1921,9 +1930,11 @@ Socket.prototype.connect = function connect(...args) {
         }
       });
     }
-    this.pauseOnConnect = pauseOnConnect;
     if (pauseOnConnect) {
-      this.pause();
+      // doConnect opened an fd synchronously (SocketHandlers.open ran); a dial
+      // has no handle yet, afterConnect stops it.
+      if (fd != null) pauseOnCreate(this, this._handle);
+      else Duplex.prototype.pause.$call(this);
     } else {
       process.nextTick(() => {
         // Honor pause()/resume() calls made while connecting — only start
@@ -2345,19 +2356,14 @@ Socket.prototype.resume = function resume() {
   return ret;
 };
 
+// Like node, only onread mode stops the handle here. Otherwise it keeps reading
+// into the stream's buffer until push() says stop (the data handlers), so a paused
+// socket still observes the peer's FIN and emits 'end'/'close' - an unpipe()d
+// socket is paused and never resumed.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
 Socket.prototype.pause = function pause() {
-  if (!this.destroyed) {
-    this._handle?.pause?.();
-    // libuv only counts a stream handle as active - and therefore as keeping
-    // the event loop alive - while it is reading. A paused socket lets the
-    // process exit; resume() re-refs it unless the user explicitly unref'd.
-    this._handle?.unref?.();
-    // Only remember the unref when this handle can actually hold the loop: a
-    // TLS socket wrapped over a generic duplex has no fd, so re-refing it
-    // later would newly pin the process.
-    if (!this[kupgraded] || this[kupgraded] instanceof Socket) {
-      this[kPausedUnref] = true;
-    }
+  if (this[kOnreadBuffer] !== undefined && !this.destroyed) {
+    readStop(this, this._handle);
   }
   return Duplex.prototype.pause.$call(this);
 };
@@ -3382,6 +3388,14 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
+    // Node's handle does not read until the read(0) below, which a stream paused
+    // while connecting (pause(), pauseOnConnect) skips. Ours came up reading, so
+    // stop it here; a read() requested while connecting starts it again from the
+    // 'connect' listener _read() left behind. Not a TLS socket: the engine needs
+    // the reads for the handshake (node's TLSWrap reads while paused too) and the
+    // paused stream buffers what it decrypts.
+    if (self.isPaused() && !self.encrypted) readStop(self, self._handle);
+
     self.emit("connect");
     self.emit("ready");
 
@@ -3391,6 +3405,7 @@ function afterConnect(status, handle, req, readable, writable) {
 
     // Start the first read, or get an immediate EOF.
     // this doesn't actually consume any bytes, because len=0.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1695-L1696
     if (readable && !self.isPaused()) self.read(0);
   } else {
     let details;

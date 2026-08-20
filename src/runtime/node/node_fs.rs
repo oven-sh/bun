@@ -208,11 +208,6 @@ pub use super::node_fs_constant as constants;
 pub use super::node_fs_stat_watcher as StatWatcher;
 pub use super::node_fs_watcher as Watcher;
 
-/// `Binding` is the JSC-class instance that owns the per-thread `NodeFS`
-/// (`super::node_fs_binding::Binding`). Re-exported so the async `create()`
-/// entry points keep their `&mut Binding` signature.
-pub use super::node_fs_binding::Binding;
-
 /// `jsc.JSPromise.Strong` — re-exported under its Rust crate name:
 /// `bun_jsc::js_promise::Strong` / the `JSPromiseStrong` alias.
 use bun_jsc::JSPromiseStrong;
@@ -648,7 +643,6 @@ mod _async_tasks {
 
         pub(crate) fn create(
             global_object: &JSGlobalObject,
-            binding: &Binding,
             task_args: A,
             vm: &mut VirtualMachine,
         ) -> JSValue {
@@ -694,15 +688,11 @@ mod _async_tasks {
             match F {
                 NodeFSFunctionEnum::Open => {
                     let args: &args::Open = args_as!(args::Open);
+                    let mut path_buf = paths::path_buffer_pool::get();
                     let path = if strings::eql_comptime(args.path.slice(), b"/dev/null") {
                         ZStr::from_static(b"\\\\.\\NUL\0")
                     } else {
-                        // SAFETY (R-2): single-JS-thread `JsCell` projection of the
-                        // scratch path buffer; the borrow is held only across the
-                        // libuv enqueue below (which copies `path` internally) and
-                        // never across a JS re-entry point.
-                        args.path
-                            .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
+                        args.path.slice_z(&mut *path_buf)
                     };
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
@@ -861,11 +851,8 @@ mod _async_tasks {
                 }
                 NodeFSFunctionEnum::Statfs => {
                     let args: &args::StatFS = args_as!(args::StatFS);
-                    // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
-                    // across the libuv enqueue (copies `path` internally).
-                    let path = args
-                        .path
-                        .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf });
+                    let mut path_buf = paths::path_buffer_pool::get();
+                    let path = args.path.slice_z(&mut *path_buf);
                     // SAFETY: libuv copies `path` internally before return.
                     let rc = unsafe {
                         uv::uv_fs_statfs(
@@ -1303,21 +1290,7 @@ mod _async_tasks {
         /// the functions to check .signal.aborted() for early returns.
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
-        /// The shape `run_async` / `node_fs_binding.rs` dispatch through: the
-        /// `Binding` is only read by the Windows `UVFSRequest` twin of this
-        /// function (path scratch), never by a pool task.
         pub(crate) fn create(
-            global_object: &JSGlobalObject,
-            _binding: &Binding,
-            args: A,
-            vm: &mut VirtualMachine,
-        ) -> JSValue {
-            Self::schedule(global_object, args, vm)
-        }
-
-        /// Entry point for native callers (`Blob.stat()`, `File::unlink()`),
-        /// which have no `Binding` and need none.
-        pub(crate) fn schedule(
             global_object: &JSGlobalObject,
             args: A,
             vm: &mut VirtualMachine,
@@ -1535,7 +1508,6 @@ mod _async_tasks {
         /// tracker, and this VM's loop.
         pub(crate) fn create(
             global_object: &JSGlobalObject,
-            _binding: &Binding,
             cp_args: args::Cp,
             vm: &mut VirtualMachine,
         ) -> JSValue {

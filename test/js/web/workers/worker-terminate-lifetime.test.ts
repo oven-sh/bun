@@ -202,7 +202,7 @@ test.skipIf(!isASAN)(
         let done = 0;
         const finish = () => { if (++done === 4) console.log("ok"); };
         for (let i = 0; i < 2; i++) {
-          new Worker(exits, { eval: true }).on("exit", finish);
+          new Worker(exits, { eval: true }).on("exit", code => code === 0 && finish());
           const w = new Worker(signals, { eval: true });
           w.on("message", () => w.terminate().then(finish));
         }

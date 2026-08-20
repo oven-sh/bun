@@ -1791,8 +1791,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
-            // `read_file` with an `Fd` path only touches `self.sync_error_buf`
-            // for path-variant inputs, so a fresh `NodeFS` is sufficient here.
             let mut node_fs = node::fs::NodeFS::default();
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
             let mut rf_args = node::fs::args::ReadFile::default();

@@ -233,7 +233,7 @@ impl FileExt for File {
                 };
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
                 // task is created on the JS thread that owns it.
-                Ok(node_fs::async_::Unlink::schedule(
+                Ok(node_fs::async_::Unlink::create(
                     global_this,
                     node_fs::args::Unlink {
                         path: PathLike::EncodedSlice(encoded_slice),

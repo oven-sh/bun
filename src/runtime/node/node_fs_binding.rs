@@ -66,10 +66,9 @@ where
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
 fn run_async<A: FsArgument>(
-    this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
+    create_task: fn(&JSGlobalObject, A, &mut VirtualMachine) -> JSValue,
 ) -> JsResult<JSValue> {
     // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
@@ -121,7 +120,7 @@ fn run_async<A: FsArgument>(
     // bindings below.
     // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(global, this, args, vm))
+    Ok(create_task(global, args, vm))
 }
 
 #[inline(always)]
@@ -171,7 +170,11 @@ impl Binding {
 
     /// `callAsync(.cp)` — `AsyncCpTask::create` copies its paths via
     /// `to_thread_safe()`, so the arena is dropped with `slice`.
-    pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn cp(
+        _this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -195,7 +198,7 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(global, this, cp_args, vm))
+        Ok(AsyncCpTask::create(global, cp_args, vm))
     }
 
     /// `callSync(.cp)`.
@@ -225,7 +228,7 @@ impl Binding {
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
     pub(crate) fn readdir(
-        this: &Self,
+        _this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -258,7 +261,7 @@ impl Binding {
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
         }
-        Ok(async_::Readdir::create(global, this, rd_args, vm))
+        Ok(async_::Readdir::create(global, rd_args, vm))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -324,11 +327,11 @@ macro_rules! node_fs_bindings {
                 pub const $sync: NodeFSFunction =
                     call_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>();
                 pub fn $async_(
-                    this: &Self,
+                    _this: &Self,
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(this, global, frame, async_::$F::create)
+                    run_async::<$Args>(global, frame, async_::$F::create)
                 }
             )*
         }

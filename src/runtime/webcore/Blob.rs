@@ -2181,7 +2181,7 @@ impl BlobExt for Blob {
                     PathOrFileDescriptor::Path(path_like) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        Ok(crate::node::fs::async_::Stat::schedule(
+                        Ok(crate::node::fs::async_::Stat::create(
                             global_this,
                             crate::node::fs::args::Stat {
                                 path: crate::node::types::PathLike::EncodedSlice(match path_like {
@@ -2200,7 +2200,7 @@ impl BlobExt for Blob {
                     PathOrFileDescriptor::Fd(fd) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        Ok(crate::node::fs::async_::Fstat::schedule(
+                        Ok(crate::node::fs::async_::Fstat::create(
                             global_this,
                             crate::node::fs::args::Fstat {
                                 fd: *fd,

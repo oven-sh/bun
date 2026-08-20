@@ -38,6 +38,44 @@ test("support eval in worker", async () => {
   await worker.terminate();
 });
 
+test("data: URL worker exposes its own URL via import.meta.url and can self-spawn", async () => {
+  const kid = `import { parentPort, workerData, Worker } from "node:worker_threads";
+if (workerData?.grand) {
+  parentPort.postMessage("grand-ok");
+} else {
+  let nested;
+  try {
+    const w = new Worker(new URL(import.meta.url), { workerData: { grand: true } });
+    nested = await new Promise(r => {
+      w.once("message", r);
+      w.once("error", e => r("error:" + String(e.message).slice(0, 60)));
+    });
+    await w.terminate();
+  } catch (e) {
+    nested = "ctor-throw:" + (e.code || e.name);
+  }
+  parentPort.postMessage({ url: import.meta.url, main: import.meta.main, nested });
+}`;
+  const dataUrl = "data:text/javascript," + encodeURIComponent(kid);
+  const worker = new Worker(new URL(dataUrl));
+  const result = await new Promise((resolve, reject) => {
+    worker.once("message", resolve);
+    worker.once("error", reject);
+  });
+  await worker.terminate();
+  expect(result).toEqual({ url: dataUrl, main: true, nested: "grand-ok" });
+});
+
+test("import.meta.main is true for a worker's entry module and false for its imports", async () => {
+  const worker = new Worker(new URL("./import-meta-main-fixture.mjs", import.meta.url));
+  const result = await new Promise((resolve, reject) => {
+    worker.once("message", resolve);
+    worker.once("error", reject);
+  });
+  await worker.terminate();
+  expect(result).toEqual({ entry: true, other: false });
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");

@@ -909,7 +909,7 @@ impl UpgradeCommand {
                         Some(p) => p,
                         None => {
                             let system_root = bun_core::env_var::SYSTEMROOT
-                                .get()
+                                .get_not_empty()
                                 .unwrap_or(b"C:\\Windows");
                             let hardcoded_system_powershell =
                                 bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(

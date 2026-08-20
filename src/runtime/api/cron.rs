@@ -559,7 +559,7 @@ impl CronRegisterJob {
             }
         };
 
-        let Some(home) = env_var::HOME.get() else {
+        let Some(home) = env_var::HOME.get_not_empty() else {
             self.set_err(format_args!("HOME environment variable not set"));
             return Err(());
         };
@@ -1167,7 +1167,7 @@ impl CronJobBase for CronRemoveJob {
 impl CronRemoveJob {
     #[cfg(target_os = "macos")]
     fn unlink_plist(&self) {
-        let Some(home) = env_var::HOME.get() else {
+        let Some(home) = env_var::HOME.get_not_empty() else {
             self.set_err(format_args!("HOME not set"));
             return;
         };

@@ -728,10 +728,8 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
             return;
         }
 
-        if (!codeGenerationValue.isObject()) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey), "object"_s, codeGenerationValue);
-            return;
-        }
+        V::validateObject(scope, globalObject, codeGenerationValue, WTF::makeString("options."_s, codeGenerationKey));
+        RETURN_IF_EXCEPTION(scope, );
 
         JSObject* codeGenerationObject = asObject(codeGenerationValue);
 
@@ -2013,8 +2011,8 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
                 for (unsigned i = 0; i < length; i++) {
                     JSValue extension = contextExtensionsArray->getIndex(globalObject, i);
                     RETURN_IF_EXCEPTION(scope, {});
-                    if (!extension.isObject())
-                        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions[0]"_s, "object"_s, extension);
+                    V::validateObject(scope, globalObject, extension, WTF::makeString("options.contextExtensions["_s, i, "]"_s));
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
             } else {
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);

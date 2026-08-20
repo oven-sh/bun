@@ -9847,12 +9847,19 @@ pub(crate) fn zig_delete_tree(
                         }
                     } else {
                         let top_fd = stack[top_idx].iter.iter.dir;
-                        zig_delete_tree_min_stack_size_with_kind_hint(
+                        match zig_delete_tree_min_stack_size_with_kind_hint(
                             sys::Dir::borrow(&top_fd),
                             &entry_name,
                             entry.kind,
-                        )?;
-                        break 'handle_entry;
+                        ) {
+                            Ok(()) => break 'handle_entry,
+                            // A concurrent deleter removed this entry; skip it
+                            // like the in-stack arms above. Only the top-level
+                            // caller needs FileNotFound to propagate, and that
+                            // call is not this site.
+                            Err(crate::Error::FileNotFound) => break 'handle_entry,
+                            Err(e) => return Err(e),
+                        }
                     }
                 } else {
                     let top_fd = stack[top_idx].iter.iter.dir;

@@ -5712,22 +5712,26 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
 // against a concurrent deleter must keep walking instead of bailing out. The
 // bail-out left the rest of the tree behind (and on Windows surfaced
 // EFAULT/EPERM). A real concurrent deleter is not deterministic, so LD_PRELOAD
-// a shim that plays one: for marked names it really removes the entry, then
-// reports ENOENT, which is exactly what the loser of the race observes.
+// a shim that plays one through `unlinkat` (the one libc symbol on the walk's
+// path; dir opens go through raw syscalls on Linux and cannot be interposed):
+// - a marked file is really unlinked, then reported as ENOENT: the loser of
+//   an unlink race.
+// - a marked dir is really removed, then reported as ENOTEMPTY: rmdir raced a
+//   deleter that was still emptying the dir, and the re-open that follows
+//   finds it gone. The marked dir sits 16 levels deep so the walk reaches it
+//   through the min-stack hand-off, the site that used to abort the walk.
 // glibc-only, same as the statfs shim above.
 it.skipIf(!isGlibc || !cc)("fs.rm recursive keeps walking when a concurrent deleter wins (#39708)", () => {
+  const deepChain = Array.from({ length: 15 }, (_, i) => `d${i}`).join("/");
   using dir = tempDir("rm-race-shim", {
     "shim.c": `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <stdarg.h>
 #include <string.h>
-#include <sys/types.h>
 
 static int (*next_unlinkat)(int, const char *, int);
-static int (*next_openat)(int, const char *, int, ...);
 
 int unlinkat(int dirfd, const char *path, int flags) {
   if (!next_unlinkat) next_unlinkat = dlsym(RTLD_NEXT, "unlinkat");
@@ -5739,27 +5743,21 @@ int unlinkat(int dirfd, const char *path, int flags) {
     errno = ENOENT;
     return -1;
   }
-  return next_unlinkat(dirfd, path, flags);
-}
-
-int openat(int dirfd, const char *path, int flags, ...) {
-  if (!next_openat) next_openat = dlsym(RTLD_NEXT, "openat");
-  if (!next_unlinkat) next_unlinkat = dlsym(RTLD_NEXT, "unlinkat");
-  if ((flags & O_DIRECTORY) && strstr(path, "bun-race-doomed-dir")) {
-    next_unlinkat(dirfd, path, AT_REMOVEDIR);
-    errno = ENOENT;
+  if ((flags & AT_REMOVEDIR) && strstr(path, "bun-race-doomed-ne-dir")) {
+    // rmdir raced a deleter that was still emptying the dir: the call
+    // reports ENOTEMPTY, and by the time the caller re-opens the dir to
+    // retry, the deleter has finished and the dir is gone.
+    if (next_unlinkat(dirfd, path, flags) == 0) {
+      errno = ENOTEMPTY;
+      return -1;
+    }
     return -1;
   }
-  va_list ap;
-  va_start(ap, flags);
-  mode_t mode = va_arg(ap, mode_t);
-  va_end(ap);
-  return next_openat(dirfd, path, flags, mode);
+  return next_unlinkat(dirfd, path, flags);
 }
 `,
     "bun-shim-probe-keep.txt": "probe",
     "root/bun-race-doomed-file.txt": "doomed",
-    "root/bun-race-doomed-dir/.gitkeep": "", // emptied below; shim rmdir needs it empty
     "root/keep-a.txt": "x",
     "root/keep-sub/nested.txt": "x",
     "child.js": `
@@ -5780,8 +5778,9 @@ if (fs.existsSync("root")) {
 `,
   });
 
-  // The doomed dir must be empty so the shim's rmdir of it succeeds.
-  fs.unlinkSync(path.join(String(dir), "root/bun-race-doomed-dir/.gitkeep"));
+  // 15 nested dirs fill the walk's 16-slot stack (root is slot 1), so the
+  // marked dir at the bottom is handed to the min-stack fallback.
+  fs.mkdirSync(path.join(String(dir), "root", deepChain, "bun-race-doomed-ne-dir"), { recursive: true });
 
   const soPath = path.join(String(dir), "shim.so");
   const compile = Bun.spawnSync({

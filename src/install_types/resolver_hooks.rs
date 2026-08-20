@@ -1198,6 +1198,7 @@ pub struct Features {
     pub dev_dependencies: bool,
     pub is_main: bool,
     pub is_workspace: bool,
+    pub is_folder: bool,
     pub optional_dependencies: bool,
     pub peer_dependencies: bool,
     pub trusted_dependencies: bool,
@@ -1212,6 +1213,7 @@ impl Default for Features {
             dev_dependencies: false,
             is_main: false,
             is_workspace: false,
+            is_folder: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1234,6 +1236,7 @@ impl Features {
             dev_dependencies: false,
             is_main: false,
             is_workspace: false,
+            is_folder: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1256,6 +1259,7 @@ impl Features {
 
     pub const FOLDER: Self = Self {
         dev_dependencies: true,
+        is_folder: true,
         optional_dependencies: true,
         ..Self::base()
     };

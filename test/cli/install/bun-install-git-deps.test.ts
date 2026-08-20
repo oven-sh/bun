@@ -1,13 +1,15 @@
 // Tests for installing git dependencies that live in ONE repository as
-// multiple branches (issue #35420), `git+file://` dependencies, and
+// multiple branches (issue #35420), `git+file://` dependencies,
 // tarball-URL / `github:` dependencies that appear both directly and
-// transitively (issues #10915, #8501, #11348, #28284). Everything is local:
-// a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
-// when an http URL is needed) or static tarballs.
+// transitively (issues #10915, #8501, #11348, #28284), and git / tarball
+// packages whose own package.json declares `file:` folder dependencies.
+// Everything is local: a bare repo on disk (served over git's dumb HTTP
+// protocol by Bun.serve when an http URL is needed) or static tarballs.
 import { expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { lstat, readdir, readlink } from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
+import { dirname, join, resolve } from "path";
 import { pathToFileURL } from "url";
 
 const gitEnv = {
@@ -35,6 +37,8 @@ interface BranchPackage {
   name: string;
   branch: string;
   dependencies?: Record<string, string>;
+  /** Files committed next to package.json; an `index.js` entry replaces the default one. */
+  files?: Record<string, string>;
 }
 
 // Creates `<root>/shared-repo.git`, a bare repo with one orphan branch per
@@ -47,14 +51,21 @@ async function makeSharedRepo(root: string, packages: BranchPackage[]): Promise<
   await git(work, "init", "-q");
   for (const pkg of packages) {
     await git(work, "checkout", "-q", "--orphan", pkg.branch);
-    writeFileSync(
-      join(work, "package.json"),
-      JSON.stringify({ name: pkg.name, version: "1.0.0", dependencies: pkg.dependencies }, null, 2),
-    );
-    writeFileSync(join(work, "index.js"), `module.exports = ${JSON.stringify(pkg.branch)};\n`);
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: pkg.name, version: "1.0.0", dependencies: pkg.dependencies }, null, 2),
+      "index.js": `module.exports = ${JSON.stringify(pkg.branch)};\n`,
+      ...pkg.files,
+    };
+    for (const [path, contents] of Object.entries(files)) {
+      mkdirSync(dirname(join(work, path)), { recursive: true });
+      writeFileSync(join(work, path), contents);
+    }
     await git(work, "add", "-A");
     await git(work, "commit", "-q", "-m", pkg.branch, "--no-gpg-sign");
     await git(work, "push", "-q", bare, pkg.branch);
+    // `checkout --orphan` keeps the working tree, so the next branch would
+    // otherwise inherit this one's files.
+    for (const path of Object.keys(files)) rmSync(join(work, path), { force: true });
   }
   // dumb HTTP clients read the static files this generates
   await git(bare, "update-server-info");
@@ -422,4 +433,148 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(stderr).not.toContain("error:");
   expect(await installedVersionOf(project, "@scope/pkg-b")).toBe("pkg-b");
   expect(exitCode).toBe(0);
+});
+
+// `file:` folder dependencies declared by a git or tarball package are relative
+// to that package, like a registry package's (registry/packages/file-dep). They
+// used to be resolved against the project dir, which pointed them into the cache
+// and failed the install with `sub@file:./sub failed to resolve`.
+const FILE_DEPS_NAME = "has-file-deps";
+
+// `file:` folder dependencies on a subfolder, on the package itself, and on a
+// folder that is not part of the package.
+const fileDepsManifest = {
+  name: FILE_DEPS_NAME,
+  version: "1.0.0",
+  dependencies: {
+    "sub": "file:./sub",
+    [`${FILE_DEPS_NAME}-self`]: "file:.",
+    "gone": "file:./not-in-package",
+  },
+};
+
+const fileDepsFiles = {
+  "index.js": `module.exports = require("sub");\n`,
+  "sub/package.json": JSON.stringify({ name: "sub", version: "1.0.0" }),
+  "sub/index.js": `module.exports = "sub-ok";\n`,
+};
+
+// Writes `<root>/work/package/` and packs it into `tarball`, a `.tgz` path.
+async function packTarball(root: string, tarball: string, manifest: object, files: Record<string, string>) {
+  const pkgDir = join(root, "work", "package");
+  for (const [path, contents] of Object.entries({ "package.json": JSON.stringify(manifest), ...files })) {
+    mkdirSync(dirname(join(pkgDir, path)), { recursive: true });
+    writeFileSync(join(pkgDir, path), contents);
+  }
+  mkdirSync(dirname(tarball), { recursive: true });
+  await run(root, ["tar", "-czf", tarball, "-C", join(root, "work"), "package"], "tar");
+}
+
+function writeProject(root: string, dependencies: Record<string, string>): string {
+  const project = join(root, "project");
+  mkdirSync(project, { recursive: true });
+  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "project", version: "1.0.0", dependencies }));
+  return project;
+}
+
+async function linkedJson(link: string) {
+  expect((await lstat(link)).isSymbolicLink()).toBe(true);
+  return Bun.file(resolve(dirname(link), await readlink(link))).json();
+}
+
+async function expectFileDepsInstalled(project: string) {
+  const name = FILE_DEPS_NAME;
+  const nested = join(project, "node_modules", name, "node_modules");
+  const lockfile = await Bun.file(join(project, "bun.lock")).text();
+  expect(lockfile).toContain(`"${name}/sub": ["sub@file:./sub", {}]`);
+  expect(lockfile).toContain(`"${name}/${name}-self": ["${name}-self@file:.", {}]`);
+  expect(lockfile).toContain(`"${name}/gone": ["gone@file:./not-in-package", {}]`);
+
+  // Transitive folder dependencies are not hoisted: each one is linked file by
+  // file into the declaring package's own node_modules, relative to that
+  // package. The folder missing from the package is skipped, as it is for a
+  // registry package.
+  expect((await readdir(nested)).sort()).toEqual([`${name}-self`, "sub"]);
+  expect(await linkedJson(join(nested, "sub", "package.json"))).toEqual({ name: "sub", version: "1.0.0" });
+  expect(await linkedJson(join(nested, `${name}-self`, "package.json"))).toEqual(fileDepsManifest);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(name)}))`],
+    cwd: project,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "sub-ok\n", stderr: "", exitCode: 0 });
+}
+
+for (const spec of ["file: path", "http url"] as const) {
+  test.concurrent(`installs the file: folder dependencies declared by a tarball package (${spec})`, async () => {
+    using dir = tempDir("tarball-file-deps", {});
+    const root = String(dir);
+    const tarballs = join(root, "tarballs");
+    await packTarball(root, join(tarballs, `${FILE_DEPS_NAME}.tgz`), fileDepsManifest, fileDepsFiles);
+    await using server = serveStatic(tarballs);
+    const project = writeProject(root, {
+      [FILE_DEPS_NAME]:
+        spec === "file: path"
+          ? `file:../tarballs/${FILE_DEPS_NAME}.tgz`
+          : `http://localhost:${server.port}/${FILE_DEPS_NAME}.tgz`,
+    });
+
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    await expectFileDepsInstalled(project);
+
+    // The stub rows written to bun.lock install again without re-resolving.
+    rmSync(join(project, "node_modules"), { recursive: true });
+    const frozen = await runInstall(project, join(root, "cache"), {}, "--frozen-lockfile");
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+    await expectFileDepsInstalled(project);
+  });
+}
+
+test.concurrent(
+  "installs the file: folder dependencies declared by a git dependency",
+  async () => {
+    using dir = tempDir("git-dep-file-deps", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [
+      { name: FILE_DEPS_NAME, branch: "main", dependencies: fileDepsManifest.dependencies, files: fileDepsFiles },
+    ]);
+    const project = writeProject(root, { [FILE_DEPS_NAME]: `git+${pathToFileURL(bare)}#main` });
+
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    await expectFileDepsInstalled(project);
+  },
+  30_000,
+);
+
+test.concurrent("rejects a file: folder dependency of a tarball package that points outside of it", async () => {
+  using dir = tempDir("tarball-escaping-file-dep", {
+    "outside/package.json": JSON.stringify({ name: "outside", version: "1.0.0" }),
+  });
+  const root = String(dir);
+  const tarball = join(root, "tarballs", "escaping.tgz");
+  await packTarball(
+    root,
+    tarball,
+    { name: "escaping", version: "1.0.0", dependencies: { outside: "file:../outside" } },
+    {},
+  );
+  const project = writeProject(root, { escaping: `file:../tarballs/escaping.tgz` });
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(stderr).toContain('error: Could not find package.json for "file:../outside" dependency "outside"');
+  expect(stderr).toContain("error: outside@file:../outside failed to resolve");
+  expect(await Bun.file(join(project, "node_modules", "outside", "package.json")).exists()).toBe(false);
+  expect(
+    await Bun.file(join(project, "node_modules", "escaping", "node_modules", "outside", "package.json")).exists(),
+  ).toBe(false);
+  expect(exitCode).toBe(1);
 });

@@ -685,12 +685,8 @@ impl JunitReporter {
         escape_xml(class_name, &mut self.contents)?;
         self.contents.extend_from_slice(b"\"");
 
-        let elapsed_seconds = elapsed_ms / bun::time::MS_PER_S as f64;
-        let _ = write!(
-            &mut self.contents,
-            " time=\"{}\"",
-            bun_fmt::trimmed_precision::<6>(elapsed_seconds)
-        );
+        let elapsed_seconds = elapsed_ns as f64 / bun::time::NS_PER_S as f64;
+        let _ = write!(&mut self.contents, " time=\"{}\"", elapsed_seconds);
 
         self.contents.extend_from_slice(b" file=\"");
         escape_xml(file, &mut self.contents)?;

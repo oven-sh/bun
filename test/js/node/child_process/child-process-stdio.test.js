@@ -190,6 +190,32 @@ describe("stdio _handle", () => {
     await once(child, "exit");
   });
 
+  it("child.stdin.unref releases the stdin writer keep-alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], {
+          stdio: ["pipe", "ignore", "ignore"],
+        });
+        process.on("exit", () => child.kill());
+        // Fill the pipe so the sink's writable poll stays armed, then unref
+        // everything: the process must exit on its own.
+        child.stdin.write(Buffer.alloc(1 << 20, 10));
+        child.stdin.unref();
+        child.unref();
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   // The synchronous fd-based IPC pattern used by TypeScript 7's sync API:
   // grab the raw fds from _handle, make them blocking, keep the streams
   // paused, and drive a request/response cycle with writeSync/readSync.

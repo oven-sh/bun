@@ -1030,6 +1030,11 @@ impl FileReader {
         }
         #[cfg(not(windows))]
         {
+            // `self.fd` is a cache that `on_start` fills and nothing clears,
+            // so gate on reader liveness or a closed fd leaks a stale number.
+            if self.done.get() || self.reader().is_done() {
+                return -1;
+            }
             let mut fd = self.fd.get();
             if fd == Fd::INVALID {
                 fd = self.reader().get_fd();

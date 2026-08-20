@@ -1236,13 +1236,23 @@ class ChildProcess extends EventEmitter {
             const result = require("internal/fs/streams").writableFromFileSink(stdin);
             result.readable = false;
             result._handle = new StdioPipeHandle(() => stdin._getFd());
-            // Node's child.stdin is a net.Socket: forward ref/unref to the FileSink.
+            // Node's child.stdin is a net.Socket: forward ref/unref to the
+            // FileSink, edge-triggered like a Socket. The sink starts ref'd
+            // and #spawn's eager-load loop calls ref() on every slot, so a
+            // bare counter would need two unref() calls to take effect.
+            let refed = true;
             result.ref = function ref() {
-              stdin.ref();
+              if (!refed) {
+                refed = true;
+                stdin.ref();
+              }
               return this;
             };
             result.unref = function unref() {
-              stdin.unref();
+              if (refed) {
+                refed = false;
+                stdin.unref();
+              }
               return this;
             };
             return result;
@@ -1283,9 +1293,11 @@ class ChildProcess extends EventEmitter {
             }
 
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
+            // A pipe that already drained to a buffer has a Blob source with
+            // no getFd; the handle getter maps the undefined to -1.
             const ptr = pipe.$bunNativePtr;
             if (ptr) {
-              pipe._handle = new StdioPipeHandle(() => ptr.getFd());
+              pipe._handle = new StdioPipeHandle(() => ptr.getFd?.());
             }
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
@@ -1731,7 +1743,7 @@ function streamFdOf(item): number | undefined {
 
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;
-  if (typeof handleFd === "number") return handleFd;
+  if (typeof handleFd === "number" && handleFd >= 0) return handleFd;
 
   if (item.destroyed) return undefined;
 

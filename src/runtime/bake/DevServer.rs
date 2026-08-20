@@ -6548,7 +6548,7 @@ impl DevServer {
                     .map(|(_, r)| r)
             };
             // The slow path below converts any remaining backslashes to posix.
-            if let Some(rel) = rel.filter(|r| !cfg!(windows) || !r.contains(&b'\\')) {
+            if let Some(rel) = rel.filter(|r| !cfg!(windows) || !strings::contains_char(r, b'\\')) {
                 return rel;
             }
         }

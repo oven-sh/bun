@@ -3,6 +3,7 @@
 #include "JSFFICString.h"
 
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <cmath>
 

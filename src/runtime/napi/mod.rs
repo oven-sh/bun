@@ -12,6 +12,8 @@ pub(crate) use napi_body::{
     NapiFinalizerTask, ThreadSafeFunction, fix_dead_code_elimination, napi_async_work,
 };
 
+pub(crate) mod libc_check;
+
 // ─── compiling free items ────────────────────────────────────────────────────
 
 bun_opaque::opaque_ffi! {

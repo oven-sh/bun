@@ -253,14 +253,6 @@ void JSX509Certificate::finishCreation(VM& vm)
         init.property.setMayBeNull(init.owner->vm(), init.owner, init.owner->computeRaw(init.owner->view(), init.owner->globalObject()));
     });
 
-    m_infoAccess.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
-        JSValue value = init.owner->computeInfoAccess(init.owner->view(), init.owner->globalObject(), false);
-        if (value.isString()) {
-            init.set(value.toString(init.owner->globalObject()));
-        } else {
-            init.property.setMayBeNull(init.owner->vm(), init.owner, nullptr);
-        }
-    });
     m_subjectAltName.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
         init.property.setMayBeNull(init.owner->vm(), init.owner, init.owner->computeSubjectAltName(init.owner->view(), init.owner->globalObject()));
     });
@@ -337,7 +329,6 @@ void JSX509Certificate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_fingerprint256.visit(visitor);
     thisObject->m_fingerprint512.visit(visitor);
     thisObject->m_raw.visit(visitor);
-    thisObject->m_infoAccess.visit(visitor);
     thisObject->m_subjectAltName.visit(visitor);
     thisObject->m_publicKey.visit(visitor);
     visitor.reportExtraMemoryVisited(thisObject->m_extraMemorySizeForGC);
@@ -700,10 +691,6 @@ JSUint8Array* JSX509Certificate::raw()
 {
     return m_raw.get(this);
 }
-JSString* JSX509Certificate::infoAccess()
-{
-    return m_infoAccess.get(this);
-}
 JSString* JSX509Certificate::subjectAltName()
 {
     return m_subjectAltName.get(this);
@@ -763,7 +750,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set infoAccess
-    object->putDirect(vm, Identifier::fromString(vm, "infoAccess"_s), valueOrUndefined(computeInfoAccess(view, globalObject, true)));
+    object->putDirect(vm, Identifier::fromString(vm, "infoAccess"_s), valueOrUndefined(computeInfoAccess(view, globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set modulus and exponent for RSA keys
@@ -940,7 +927,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set infoAccess
-    object->putDirect(vm, Identifier::fromString(vm, "infoAccess"_s), valueOrUndefined(computeInfoAccess(view(), globalObject, true)));
+    object->putDirect(vm, Identifier::fromString(vm, "infoAccess"_s), valueOrUndefined(computeInfoAccess(view(), globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set modulus and exponent for RSA keys
@@ -1094,7 +1081,7 @@ JSValue JSX509Certificate::computePublicKey(ncrypto::X509View view, JSGlobalObje
     return JSPublicKeyObject::create(vm, globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject), lexicalGlobalObject, WTF::move(handle));
 }
 
-JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
+JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1104,9 +1091,6 @@ JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObj
         return jsEmptyString(vm);
     }
     String info = toWTFString(bio);
-    if (!legacy) {
-        return jsString(vm, info);
-    }
 
     // InfoAccess is always an array, even when a single element is present.
     JSObject* object = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());

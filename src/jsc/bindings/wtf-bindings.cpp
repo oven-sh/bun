@@ -42,7 +42,7 @@ int uv__tcsetattr(int fd, int how, const struct termios* term)
     return 0;
 }
 
-extern "C" int uv_tty_reset_mode(void)
+extern "C" BUN_EXPORT int uv_tty_reset_mode(void)
 {
     int saved_errno;
     int err;
@@ -50,11 +50,11 @@ extern "C" int uv_tty_reset_mode(void)
     saved_errno = errno;
 
     if (atomic_exchange(&orig_termios_spinlock, 1))
-        return 16; // UV_EBUSY; /* In uv_tty_set_mode(). */
+        return -EBUSY; // UV_EBUSY, ttySetMode() is taking the snapshot
 
     err = 0;
     if (orig_termios_fd != -1)
-        err = uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios);
+        err = -uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios); // UV__ERR(errno)
 
     atomic_store(&orig_termios_spinlock, 0);
     errno = saved_errno;
@@ -116,7 +116,8 @@ extern "C" size_t Bun__ttyStateSize()
 // Port of libuv's uv_tty_set_mode(), with `state` standing in for the
 // per-handle fields of uv_tty_t. The file statics above are only the
 // uv_tty_reset_mode() snapshot, which is process-wide in libuv too.
-static int ttySetMode(int fd, int mode, BunTTYState& state)
+// `action` is the tcsetattr() action: TCSADRAIN (libuv's choice) or TCSANOW.
+static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
 {
     struct termios tmp;
     int expected;
@@ -191,8 +192,7 @@ static int ttySetMode(int fd, int mode, BunTTYState& state)
         bun_stdio_modified[fd] = 1;
     }
 
-    /* Apply changes after draining */
-    rc = uv__tcsetattr(fd, TCSADRAIN, &tmp);
+    rc = uv__tcsetattr(fd, action, &tmp);
     if (rc == 0) {
         state.mode = mode;
     }
@@ -201,20 +201,25 @@ static int ttySetMode(int fd, int mode, BunTTYState& state)
 }
 #endif
 
-extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState)
+extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
 {
 #if !OS(WINDOWS)
     // Copied in and out so callers can hand us an unaligned byte buffer: the
     // JS streams keep theirs in a Uint8Array.
     BunTTYState state;
     memcpy(&state, rawState, sizeof(state));
-    int rc = ttySetMode(fd, mode, state);
+    // TCSADRAIN matches libuv on real ttys. It must never be used on a PTY
+    // master: draining waits on the slave's write lock, and a child blocked
+    // in write() holds that lock until the master's owner (this caller)
+    // reads the master, so the two deadlock. Those callers pass drain == 0.
+    int rc = ttySetMode(fd, mode, state, drain ? TCSADRAIN : TCSANOW);
     memcpy(rawState, &state, sizeof(state));
     return rc;
 #else
     UNUSED_PARAM(fd);
     UNUSED_PARAM(mode);
     UNUSED_PARAM(rawState);
+    UNUSED_PARAM(drain);
     return 0;
 #endif
 }
@@ -292,7 +297,7 @@ static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBou
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
-    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) void* Bun__StackCheck__getMaxStack()

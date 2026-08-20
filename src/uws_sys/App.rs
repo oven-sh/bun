@@ -100,8 +100,13 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_close(Self::SSL_FLAG, self.as_raw())
     }
 
-    pub fn close_idle_connections(&mut self) {
-        c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw())
+    /// Close every HTTP connection that is idle (no request being received, no
+    /// response in flight). With `close_when_idle`, connections that are busy
+    /// right now are additionally marked to close as soon as their in-flight
+    /// work completes. Never touches WebSockets or the listen socket.
+    /// Returns the number of connections closed.
+    pub fn close_idle_connections(&mut self, close_when_idle: bool) -> usize {
+        c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw(), i32::from(close_when_idle))
     }
 
     pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
@@ -126,7 +131,7 @@ impl<const SSL: bool> App<SSL> {
         &mut self,
         require_host_header: bool,
         use_strict_method_validation: bool,
-        use_insecure_http_parser: bool,
+        lenient_http_flags: u8,
         http_allow_half_open: bool,
     ) {
         c::uws_app_set_flags(
@@ -134,7 +139,7 @@ impl<const SSL: bool> App<SSL> {
             self.as_raw(),
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         )
     }
@@ -467,7 +472,11 @@ pub mod c {
 
     unsafe extern "C" {
         pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
-        pub(crate) safe fn uws_app_close_idle(ssl: i32, app: &mut uws_app_s);
+        pub(crate) safe fn uws_app_close_idle(
+            ssl: i32,
+            app: &mut uws_app_s,
+            close_when_idle: i32,
+        ) -> usize;
         // safe: `&mut uws_app_s` is ABI-identical to a non-null `*mut`;
         // `handler`/`user_data` are stored opaquely (never dereferenced by the
         // C++ shim itself) — no preconditions on this call.
@@ -484,7 +493,7 @@ pub mod c {
             app: &mut uws_app_t,
             require_host_header: bool,
             use_strict_method_validation: bool,
-            use_insecure_http_parser: bool,
+            lenient_http_flags: u8,
             http_allow_half_open: bool,
         );
         pub(crate) safe fn uws_app_set_max_http_header_size(

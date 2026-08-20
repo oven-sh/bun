@@ -130,6 +130,7 @@ new!(pub CI_JOB_URL: string, "CI_JOB_URL", {});
 new!(pub CLAUDE_CODE_AGENT_RULE_DISABLED: boolean, "CLAUDE_CODE_AGENT_RULE_DISABLED", { default: false });
 new!(pub CLAUDECODE: boolean, "CLAUDECODE", { default: false });
 new!(pub COLORTERM: string, "COLORTERM", {});
+new!(pub COLUMNS: unsigned, "COLUMNS", {});
 new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { default: false });
 new!(pub CURSOR_TRACE_ID: boolean, "CURSOR_TRACE_ID", { default: false });
 new!(pub DO_NOT_TRACK: boolean, "DO_NOT_TRACK", { default: false });
@@ -157,11 +158,16 @@ new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
 // A string, not a boolean: node suppresses warnings only when the value is
 // exactly "1" (lib/internal/process/pre_execution.js).
 new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
+new!(pub NODE_COMPILE_CACHE: string, "NODE_COMPILE_CACHE", {});
+new!(pub NODE_COMPILE_CACHE_PORTABLE: string, "NODE_COMPILE_CACHE_PORTABLE", {});
+new!(pub NODE_DEBUG_NATIVE: string, "NODE_DEBUG_NATIVE", {});
+new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
 new!(pub NODE_OPTIONS: string, "NODE_OPTIONS", {});
+new!(pub NODE_PENDING_DEPRECATION: string, "NODE_PENDING_DEPRECATION", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
@@ -199,7 +205,13 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_ASSUME_PERFECT_INCREMENTAL, "BUN_ASSUME_PERFECT_INCREMENTAL", { default: None });
     new_feature_flag!(pub BUN_BE_BUN, "BUN_BE_BUN", {});
     new_feature_flag!(pub BUN_DEBUG_NO_DUMP, "BUN_DEBUG_NO_DUMP", {});
+    // Run the full VM teardown when the main thread exits (workers always do).
+    // The CI runner turns it on for LeakSanitizer-validated files on ASAN.
     new_feature_flag!(pub BUN_DESTRUCT_VM_ON_EXIT, "BUN_DESTRUCT_VM_ON_EXIT", {});
+    // Test suite only, builds with debug assertions: a worker VM holds every
+    // cross-thread completion until its teardown is waiting, so the "arrived
+    // during teardown" paths run deterministically (bun_jsc::vm_handle::test_gate).
+    new_feature_flag!(pub BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE, "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE", {});
 
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});
@@ -211,6 +223,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", {});
     // Force the event loop to use epoll_pwait(2) instead of epoll_pwait2(2).
     // Escape hatch for seccomp policies that block syscall 441 without
@@ -234,11 +247,14 @@ pub mod feature_flag {
     // Fall back to the scalar byte-at-a-time VLQ decode in
     // bun_sourcemap::mapping::parse (skips the Highway-dispatched path).
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP, "BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP", {});
+    // Set by the test harness so stderr assertions don't flake on slow CI filesystems.
+    new_feature_flag!(pub BUN_DISABLE_SLOW_FILESYSTEM_WARNING, "BUN_DISABLE_SLOW_FILESYSTEM_WARNING", {});
     new_feature_flag!(pub BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING, "BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING", {});
     new_feature_flag!(pub BUN_DISABLE_SOURCE_CODE_PREVIEW, "BUN_DISABLE_SOURCE_CODE_PREVIEW", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS, "BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH, "BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE, "BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE", {});
     new_feature_flag!(pub BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW, "BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE, "BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE", {});
     new_feature_flag!(pub BUN_DUMP_STATE_ON_CRASH, "BUN_DUMP_STATE_ON_CRASH", {});

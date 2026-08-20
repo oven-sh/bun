@@ -145,14 +145,8 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
 {
     auto* callee = dynamicDowncast<Function>(callFrame->jsCallee());
 
-    // V8 function calls always run in "sloppy mode," even if the JS side is in strict mode. So if
-    // `this` is null or undefined, we use globalThis instead; otherwise, we convert `this` to an
-    // object.
-    JSC::JSObject* jscThis = globalObject->globalThis();
-    if (!callFrame->thisValue().isUndefinedOrNull()) {
-        // TODO(@190n) throwscope, assert no exception
-        jscThis = callFrame->thisValue().toObject(globalObject);
-    }
+    // V8 function calls always run in "sloppy mode," even if the JS side is in strict mode.
+    JSC::JSObject* jscThis = JSC::asObject(callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy()));
 
     JSC::ArgList args(callFrame);
     return JSValue::encode(invokeCallback(globalObject, callee, jscThis, args, false));
@@ -247,7 +241,14 @@ JSC::JSValue FunctionTemplate::invokeCallback(JSC::JSGlobalObject* globalObject,
     // The FunctionCallbackInfo object is a view located at the argc slot
     const auto& info = *reinterpret_cast<const Info*>(&slot(Info::kArgcIndex));
 
-    functionTemplate->m_callback(info);
+    {
+        // Keep the return-value slot rescuable while addon code runs: handle
+        // scopes closing inside the callback must not strand the Address the
+        // inline ReturnValue::Set stored there.
+        GlobalInternals::ActiveReturnValueSlotScope returnValueScope(
+            isolate->globalInternals(), &slot(Info::kReturnValueIndex));
+        functionTemplate->m_callback(info);
+    }
 
     TaggedPointer& return_value = slot(Info::kReturnValueIndex);
     if (return_value.isEmpty()) {

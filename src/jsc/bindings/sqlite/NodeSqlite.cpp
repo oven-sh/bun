@@ -961,17 +961,17 @@ void JSDatabaseSync::finishDeferredClose()
     m_registeredCallbacks.clear();
 }
 
-// Called from ExitHandler::dispatch_on_exit, on the main thread only; entries
-// owned by another VM (a worker) are skipped by the stored-VM comparison
-// without ever touching the foreign cell.
+// Called from the exiting VM's teardown once script is forbidden and its child workers are
+// joined: closes that VM's entries; others are skipped by the stored-VM comparison without
+// touching the foreign cell.
 extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObject* globalObject)
 {
-    JSC::VM* mainVM = &globalObject->vm();
+    JSC::VM* exitingVM = &globalObject->vm();
     WTF::Vector<JSDatabaseSync*> toClose;
     {
         WTF::Locker locker { openDatabasesLock };
         for (auto& entry : openDatabases()) {
-            if (entry.value == mainVM)
+            if (entry.value == exitingVM)
                 toClose.append(entry.key);
         }
     }

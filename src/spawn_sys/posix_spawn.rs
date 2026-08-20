@@ -237,6 +237,7 @@ pub mod bun_spawn {
         pub linux_pdeathsig: i32,
         pub uid: Option<u32>,
         pub gid: Option<u32>,
+        pub cgroup_fd: i32,
     }
 
     impl Default for Attr {
@@ -253,6 +254,7 @@ pub mod bun_spawn {
                 linux_pdeathsig: 0,
                 uid: None,
                 gid: None,
+                cgroup_fd: -1,
             }
         }
     }
@@ -517,6 +519,12 @@ pub mod posix_spawn {
             return sys::Result::Ok(pid_t::try_from(pid).expect("int cast"));
         }
 
+        // Negative: the child could not be placed in `cgroup_fd`. The caller
+        // knows the cgroup's path; don't blame argv[0].
+        if rc < 0 {
+            return sys::Result::Err(sys::Error::from_code_int((-rc) as _, sys::Tag::clone3));
+        }
+
         // SAFETY: argv has at least one element (the NULL terminator)
         let arg0 = unsafe {
             let p = *argv;
@@ -653,6 +661,7 @@ pub mod posix_spawn {
                     gid: gid.unwrap_or(0),
                     set_uid: uid.is_some(),
                     set_gid: gid.is_some(),
+                    cgroup_fd: attr.map_or(-1, |a| a.cgroup_fd),
                 },
                 argv,
                 envp,

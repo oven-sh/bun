@@ -796,6 +796,156 @@ it("a write from inside 'data' does not re-enter 'data' on a TLSSocket over a du
   }).toEqual({ nestedDataEvents: 0, payloadIntact: true, tail: "got reply" });
 });
 
+describe("connect() on a TLSSocket whose previous connection is still open", () => {
+  // A socket from tls.connect(port) re-dials like a net.Socket does
+  // (test/js/node/net/socket-reconnect-live.test.ts): the old connection is
+  // dropped and the new one handshakes on the same object. TLSSocket used to
+  // hand its own native handle back to connect() as if it were a stream to
+  // wrap, which failed the net.Socket/Duplex check with a TypeError.
+
+  // Every accepted socket greets with the server's name and echoes what it reads
+  // prefixed with that name, so the client can tell which server it talks to.
+  async function listen(name: string, options: tls.TlsOptions = {}) {
+    const accepted: tls.TLSSocket[] = [];
+    const server = tls.createServer({ ...COMMON_CERT_, ...options }, socket => {
+      accepted.push(socket);
+      // The connection a re-dial abandons is reset, not ended.
+      socket.on("error", () => {});
+      socket.on("data", data => socket.write(`${name}:${data}`));
+      socket.write(name);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return {
+      server,
+      accepted,
+      port: (server.address() as AddressInfo).port,
+      async [Symbol.asyncDispose]() {
+        for (const socket of accepted) socket.destroy();
+        server.close();
+        await once(server, "close");
+      },
+    };
+  }
+
+  it("tls.connect(port) socket: re-dials with the new arguments", async () => {
+    await using a = await listen("a");
+    await using b = await listen("b");
+    const client = tls.connect({ port: a.port, host: "127.0.0.1", rejectUnauthorized: false });
+    try {
+      const [, [greetingA]] = await Promise.all([once(client, "secureConnect"), once(client, "data")]);
+
+      const connectedToB = Promise.all([once(client, "secureConnect"), once(client, "data")]);
+      let listenerCalled = false;
+      const returned = client.connect(b.port, "127.0.0.1", () => (listenerCalled = true));
+      const [, [greetingB]] = await connectedToB;
+
+      const reply = once(client, "data");
+      client.write("ping");
+      const [echo] = await reply;
+
+      expect({
+        returned: returned === client,
+        greetingA: String(greetingA),
+        greetingB: String(greetingB),
+        echo: String(echo),
+        listenerCalled,
+        accepted: [a.accepted.length, b.accepted.length],
+      }).toEqual({
+        returned: true,
+        greetingA: "a",
+        greetingB: "b",
+        echo: "b:ping",
+        listenerCalled: true,
+        accepted: [1, 1],
+      });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("tls.connect(port) socket: re-dials after end(), while the old connection is still half-open", async () => {
+    // allowHalfOpen keeps the server from answering the client's FIN, so the
+    // socket still holds its first connection when it reconnects.
+    await using a = await listen("a", { allowHalfOpen: true });
+    const client = tls.connect({ port: a.port, host: "127.0.0.1", rejectUnauthorized: false });
+    try {
+      const [, [firstGreeting]] = await Promise.all([once(client, "secureConnect"), once(client, "data")]);
+
+      const reconnected = Promise.all([once(client, "secureConnect"), once(client, "data")]);
+      // 'finish' is the moment end()'s callback runs: the FIN is out, nothing
+      // has come back yet.
+      client.end();
+      await once(client, "finish");
+      client.connect(a.port, "127.0.0.1");
+      const [, [secondGreeting]] = await reconnected;
+
+      expect({
+        greetings: [String(firstGreeting), String(secondGreeting)],
+        accepted: a.accepted.length,
+      }).toEqual({ greetings: ["a", "a"], accepted: 2 });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // A TLS session running over a transport the caller handed in has no
+  // connection of its own to re-dial. Node reports connect() on a socket that is
+  // already connected as an asynchronous EISCONN that destroys the socket.
+  const wrapped: [name: string, wrap: (raw: net.Socket, port: number) => tls.TLSSocket][] = [
+    ["tls.connect({ socket: net.Socket })", raw => tls.connect({ socket: raw, rejectUnauthorized: false })],
+    [
+      "tls.connect({ socket: Duplex })",
+      raw => tls.connect({ socket: new SocketProxy(raw), rejectUnauthorized: false }),
+    ],
+    [
+      "new TLSSocket(net.Socket).connect(port)",
+      (raw, port) => new TLSSocket(raw, { rejectUnauthorized: false }).connect(port, "127.0.0.1"),
+    ],
+  ];
+  for (const [name, wrap] of wrapped) {
+    it(`${name}: reports EISCONN instead of re-dialing`, async () => {
+      await using a = await listen("a");
+      const raw = net.connect(a.port, "127.0.0.1");
+      raw.on("error", () => {});
+      await once(raw, "connect");
+      const serverSide = once(a.server, "secureConnection");
+      const client = wrap(raw, a.port);
+      try {
+        await Promise.all([once(client, "secureConnect"), serverSide]);
+
+        const errored = once(client, "error");
+        const closed = new Promise<boolean>(resolve => client.once("close", resolve));
+        const returned = client.connect(a.port, "127.0.0.1");
+        const [error] = await errored;
+        const hadError = await closed;
+
+        expect({
+          returned: returned === client,
+          message: error.message,
+          code: error.code,
+          syscall: error.syscall,
+          address: error.address,
+          port: error.port,
+          hadError,
+          accepted: a.accepted.length,
+        }).toEqual({
+          returned: true,
+          message: `connect EISCONN 127.0.0.1:${a.port}`,
+          code: "EISCONN",
+          syscall: "connect",
+          address: "127.0.0.1",
+          port: a.port,
+          hadError: true,
+          accepted: 1,
+        });
+      } finally {
+        client.destroy();
+        raw.destroy();
+      }
+    });
+  }
+});
+
 it("a client and a server TLSSocket connected through a synchronous in-memory duplex pair talk to each other", async () => {
   // Each side's _write pushes straight into the other side, so every reply,
   // including the server's handshake flight, is fed to the engine from inside

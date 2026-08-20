@@ -9,7 +9,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellTask,
-    shell_openat,
+    shell_openat, shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -459,14 +459,19 @@ impl ShellLsTask {
         let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
             Err(e) => {
                 match e.get_errno() {
-                    E::ENOENT => {
-                        this.err = Some(this.error_with_path(&e));
-                    }
-                    E::ENOTDIR => {
-                        // Clone the path to dodge the &mut/& borrow overlap.
-                        let p = ZBox::from_bytes(this.path.as_bytes());
-                        this.add_entry(p.as_bytes(), this.cwd);
-                    }
+                    // ENOTDIR is also what the open reports when a parent
+                    // component of the path is a file (`ls file/x`). Only an
+                    // operand that exists is listed as a file.
+                    E::ENOTDIR => match shell_statat(this.cwd, this.path.as_zstr()) {
+                        Ok(_) => {
+                            // Clone the path to dodge the &mut/& borrow overlap.
+                            let p = ZBox::from_bytes(this.path.as_bytes());
+                            this.add_entry(p.as_bytes(), this.cwd);
+                        }
+                        Err(stat_err) => {
+                            this.err = Some(this.error_with_path(&stat_err));
+                        }
+                    },
                     _ => {
                         this.err = Some(this.error_with_path(&e));
                     }

@@ -2227,7 +2227,7 @@ fn shell_get_path<'a>(
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
 /// the error with the *original* `path_` (not the rewritten one). POSIX: plain
 /// `bun_sys::fstatat(dir, path_)`.
-// consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`)
+// consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`) and the `ls` builtin
 pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
     #[cfg(windows)]
     {

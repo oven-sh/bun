@@ -287,6 +287,34 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
+    // The O_DIRECTORY open also fails with ENOTDIR when a parent component of
+    // the operand is a file. Windows can report that case as ENOENT instead.
+    const notADirectory = (s: string) =>
+      isPosix
+        ? expect(s).toBe("ls: file/x: Not a directory\n")
+        : expect(s).toMatch(/^ls: file\/x: (Not a directory|No such file or directory)\n$/);
+
+    test("operand whose parent is a regular file", async () => {
+      await TestBuilder.command`ls file/x`.file("file", "").exitCode(1).stderr(notADirectory).run();
+    });
+
+    test("operand whose parent is a regular file with -l", async () => {
+      await TestBuilder.command`ls -l file/x`.file("file", "").exitCode(1).stderr(notADirectory).run();
+    });
+
+    test("operand whose parent is a regular file with -d", async () => {
+      await TestBuilder.command`ls -d file/x`.file("file", "").exitCode(1).stderr(notADirectory).run();
+    });
+
+    test("file operand next to an operand whose parent is a regular file", async () => {
+      await TestBuilder.command`ls file file/x`
+        .file("file", "")
+        .exitCode(1)
+        .stdout("file\n")
+        .stderr(notADirectory)
+        .run();
+    });
+
     test("invalid flag", async () => {
       await TestBuilder.command`ls -z`
         .exitCode(1)

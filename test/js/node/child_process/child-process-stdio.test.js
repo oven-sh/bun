@@ -193,6 +193,22 @@ describe("stdio _handle", () => {
     expect(child.stdin._handle.fd).toBe(-1);
   });
 
+  it.skipIf(isWindows)("stdin _handle.fd is -1 after end()", async () => {
+    const child = spawn(bunExe(), ["-e", "process.stdin.resume(); setTimeout(() => {}, 30_000)"], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "inherit"],
+    });
+    try {
+      expect(child.stdin._handle.fd).toBeGreaterThanOrEqual(0);
+      child.stdin.end();
+      await once(child.stdin, "finish");
+      expect(child.stdin._handle.fd).toBe(-1);
+    } finally {
+      child.kill();
+    }
+    await once(child, "exit");
+  });
+
   it("child.stdin.unref releases the stdin writer keep-alive", async () => {
     await using proc = Bun.spawn({
       cmd: [

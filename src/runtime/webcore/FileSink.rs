@@ -1337,9 +1337,14 @@ impl crate::webcore::sink::JsSinkType for FileSink {
 
 impl FileSink {
     fn get_fd(&self) -> i32 {
-        // `self.fd` is never cleared when the writer closes, so gate on
-        // `done` or a closed fd leaks a stale number.
-        if self.done.get() {
+        // `self.fd` is never cleared when the writer closes, and `end()`
+        // closes the fd without setting `done`, so gate on both or a closed
+        // fd leaks a stale number.
+        #[cfg(windows)]
+        let writer_done = self.writer.get().is_done();
+        #[cfg(not(windows))]
+        let writer_done = self.writer.get().is_done;
+        if self.done.get() || writer_done {
             return -1;
         }
         #[cfg(windows)]

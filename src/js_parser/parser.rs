@@ -359,7 +359,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -377,7 +377,11 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+                // `keep_matcher_call_frame` changes the output of a file with an explicit
+                // `bun:test` import, which stays cacheable. The `input_hash = None` bails in
+                // `_parse` only stop the write: the read has already served `Result::Cached`,
+                // so the hash has to separate the two modes.
+                self.inject_jest_globals,
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.

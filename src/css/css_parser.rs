@@ -625,12 +625,6 @@ pub trait QualifiedRuleParser {
 #[derive(Default, Clone, Copy, crate::DeepClone)]
 pub struct DefaultAtRule;
 
-impl DefaultAtRule {
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.new_error(PrinterErrorKind::fmt_error, None)
-    }
-}
-
 /// Same as `AtRuleParser` but modified to provide parser options.
 /// Also added: `on_import_rule` to handle `@import` rules.
 pub trait CustomAtRuleParser {
@@ -5232,11 +5226,6 @@ pub enum TokenKind {
 pub use crate::Token;
 
 impl Token {
-    pub fn eql(lhs: &Token, rhs: &Token) -> bool {
-        // TODO: derive PartialEq once payload lifetimes settle.
-        generic::implement_eql(lhs, rhs)
-    }
-
     /// Return whether this token represents a parse error.
     pub(crate) fn is_parse_error(&self) -> bool {
         matches!(
@@ -5481,22 +5470,16 @@ pub use bun_io::Write as WriteAll;
 // Num/Dimension data layouts hoisted at crate root (lib.rs).
 pub use crate::{Dimension, Num};
 
-// Num/Dimension eql/hash gated until generics::CssEql/CssHash blanket impls
+// Num/Dimension hash gated until generics::CssHash blanket impls
 // cover the float/slice payloads.
 
 impl Num {
-    pub fn eql(lhs: &Num, rhs: &Num) -> bool {
-        generic::implement_eql(lhs, rhs)
-    }
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
 }
 
 impl Dimension {
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        generic::implement_eql(lhs, rhs)
-    }
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }

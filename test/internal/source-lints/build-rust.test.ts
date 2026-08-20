@@ -52,6 +52,7 @@ const mockToolchain: Toolchain = {
   rustHostTriple: undefined,
   strip: "/fake/bin/strip",
   llvmStrip: "/fake/llvm/bin/llvm-strip",
+  nm: "/fake/llvm/bin/llvm-nm",
   dsymutil: "/fake/llvm/bin/dsymutil",
   bun: "/fake/bin/bun",
   jsRuntime: "/fake/bin/bun",
@@ -135,6 +136,44 @@ describe("allRustTargets", () => {
     );
     expect(freebsdX64.triple).toBe("x86_64-unknown-freebsd");
     expect(freebsdX64.args).not.toContain(cargoBuildStdArg);
+  });
+});
+
+describe("build-std feature set", () => {
+  /** The `-Zbuild-std*` args, in order: which std gets built and with which features. */
+  function buildStdArgs(cfg: Config): string[] {
+    return cargoBuildInvocation(cfg).args.filter(arg => arg.startsWith("-Zbuild-std"));
+  }
+
+  // Cargo's default is `panic-unwind,backtrace,default`. `backtrace` is std's
+  // in-process symbolizer (gimli/addr2line/object/miniz_oxide, ~200 KB on the
+  // unix targets); nothing in the binary reads it (the panic hook in
+  // bun_crash_handler captures and reports frames itself, and clippy.toml
+  // disallows std::backtrace::Backtrace), so shipped builds leave it out.
+  const release = [cargoBuildStdArg, "-Zbuild-std-features=panic-unwind,default"];
+
+  test("release builds drop std's `backtrace` feature on every shipped platform family", () => {
+    const linuxX64 = resolve({ os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" });
+    expect(buildStdArgs(linuxX64)).toEqual(release);
+    expect(buildStdArgs(withAbi(linuxX64, "musl"))).toEqual(release);
+    expect(buildStdArgs(withAbi(linuxX64, "android"))).toEqual(release);
+    expect(buildStdArgs(resolve({ os: "darwin", arch: "aarch64", mode: "rust-only" }))).toEqual(release);
+    expect(buildStdArgs(resolve({ os: "windows", arch: "x64", winsysroot: "/fake" }))).toEqual(release);
+    expect(buildStdArgs(resolve({ os: "freebsd", arch: "x64", freebsdSysroot: "/fake" }))).toEqual(release);
+    // Tier 3: builds std from source either way; release still trims it.
+    expect(buildStdArgs(resolve({ os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake" }))).toEqual(release);
+  });
+
+  test("builds that rebuild std for other reasons keep cargo's default feature set", () => {
+    const linuxX64: PartialConfig = { os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" };
+    // release-asan and debug-asan rebuild std for the instrumentation.
+    expect(buildStdArgs(resolve({ ...linuxX64, asan: true }))).toEqual([cargoBuildStdArg]);
+    expect(buildStdArgs(resolve({ ...linuxX64, buildType: "Debug", asan: true }))).toEqual([cargoBuildStdArg]);
+    // A Tier 3 debug build rebuilds std only because there is no prebuilt one.
+    const freebsdArm64: PartialConfig = { os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake", buildType: "Debug" };
+    expect(buildStdArgs(resolve(freebsdArm64))).toEqual([cargoBuildStdArg]);
+    // A plain debug build links the prebuilt std: no build-std args at all.
+    expect(buildStdArgs(resolve({ ...linuxX64, buildType: "Debug", asan: false }))).toEqual([]);
   });
 });
 

@@ -4952,7 +4952,7 @@ impl DevServer {
         log: &Log,
         bv2: &mut BundleV2,
     ) -> Result<(), AllocError> {
-        let _g = self.graph_safety_lock.guard();
+        let graph_lock = self.graph_safety_lock.guard();
 
         debug_log!(
             "handleParseTaskFailure({}, .{}, {}, {} messages)",
@@ -4962,13 +4962,31 @@ impl DevServer {
             log.msgs.len(),
         );
 
+        let mut watch_for_route_file = false;
         if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
-            // Special-case files being deleted.
+            // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
                     self.server_graph.on_file_deleted(abs_path, bv2)?
                 }
-                bake::Graph::Client => self.client_graph.on_file_deleted(abs_path, bv2)?,
+                bake::Graph::Client => {
+                    self.client_graph.on_file_deleted(abs_path, bv2)?;
+                    // The html file of a route has no importer.
+                    if let Some(file) = self
+                        .client_graph
+                        .bundled_files
+                        .get(abs_path)
+                        .filter(|file| file.html_route_bundle_index.is_some())
+                    {
+                        // `failed` is cleared by the next successful bundle.
+                        watch_for_route_file = !file.failed;
+                        self.client_graph.insert_failure(
+                            incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                            log,
+                            false,
+                        )?;
+                    }
+                }
             }
         } else {
             match graph {
@@ -4988,6 +5006,18 @@ impl DevServer {
                     false,
                 )?,
             }
+        }
+        // `track_resolution_failure` takes the graph lock itself.
+        drop(graph_lock);
+
+        if watch_for_route_file {
+            // Bundles the route again once its html file exists, like a failed import.
+            self.directory_watchers.track_resolution_failure(
+                abs_path,
+                paths::basename(abs_path),
+                bake::Graph::Client,
+                Loader::Html,
+            )?;
         }
         Ok(())
     }
@@ -5176,7 +5206,9 @@ impl DevServer {
             // This is the dev server's entry from Bun.serve's static-route
             // trampoline (`StaticRouteLike`, which otherwise never enters
             // JS): what bundling left pending is folded at this boundary.
-            Err(jsc::JsError::Thrown) => crate::dispatch::fold(Err(jsc::JsError::Thrown)),
+            Err(err @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+                crate::dispatch::fold(Err(err))
+            }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
         Ok(())

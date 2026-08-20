@@ -130,16 +130,6 @@ impl<T> RawSlice<T> {
     pub const fn new(s: &[T]) -> Self {
         RawSlice(core::ptr::from_ref(s))
     }
-    /// Wrap a raw slice pointer.
-    ///
-    /// # Safety
-    /// `p` must either be a (dangling, len 0) empty slice or point to `len`
-    /// initialized `T` that remain live and stable for the lifetime of every
-    /// `RawSlice` copied from the result.
-    #[inline]
-    pub const unsafe fn from_raw(p: *const [T]) -> Self {
-        RawSlice(p)
-    }
     #[inline]
     pub const fn as_ptr(self) -> *const [T] {
         self.0
@@ -549,6 +539,38 @@ pub mod vec {
             let (n, r) = f(spare_bytes_mut(v));
             commit_spare(v, n);
             r
+        }
+    }
+
+    /// The stack-array form of [`spare_bytes_mut`]: `N` uninitialized bytes for a producer that reports how many it wrote.
+    pub struct UninitBuf<const N: usize>(core::mem::MaybeUninit<[u8; N]>);
+
+    impl<const N: usize> UninitBuf<N> {
+        #[inline(always)]
+        pub const fn uninit() -> Self {
+            Self(core::mem::MaybeUninit::uninit())
+        }
+
+        #[inline(always)]
+        pub fn as_mut_ptr(&mut self) -> *mut u8 {
+            self.0.as_mut_ptr().cast::<u8>()
+        }
+
+        /// # Safety
+        /// Write-only view, same contract as [`spare_bytes_mut`]: only a producer may store into it, and only the prefix it reports may be read back.
+        #[inline(always)]
+        pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
+            // SAFETY: `MaybeUninit<[u8; N]>` has the layout of `[u8; N]`; the caller upholds the write-only contract.
+            unsafe { core::slice::from_raw_parts_mut(self.as_mut_ptr(), N) }
+        }
+
+        /// # Safety
+        /// A producer must have written every byte of `[0..len]` (`len <= N`).
+        #[inline(always)]
+        pub unsafe fn filled(&self, len: usize) -> &[u8] {
+            assert!(len <= N);
+            // SAFETY: `[0..len]` is inside the array (asserted above) and initialized (caller contract).
+            unsafe { core::slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) }
         }
     }
 }
@@ -962,11 +984,15 @@ pub type OOM = AllocError;
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope (a termination is just such an
-    /// exception): unwind to the native/JS boundary.
+    /// A JavaScript exception is pending in the VM's exception scope: unwind to the native/JS boundary.
+    /// (Beneath script, the VM's TerminationException is carried this way too — JSC unwinds it.)
     Thrown = 0,
     /// Allocation failure; caller must throw an `OutOfMemoryError`.
     OutOfMemory = 1,
+    /// The VM has been terminated (a worker's `terminate()` / `process.exit()`), and its
+    /// TerminationException was taken where it unwound past the outermost script frame: nothing is
+    /// pending. Stand down — no more script runs on this VM.
+    Terminated = 2,
 }
 
 bun_alloc::oom_from_alloc!(JsError);
@@ -2334,19 +2360,7 @@ pub(crate) mod debug_allocator_data {
     }
 }
 
-/// `bun.feature_flag.*` runtime env-var getters. The canonical typed
-/// accessors live in `env_var::feature_flag`; this stub provides the
-/// `.get()` accessor surface for flags not yet wired there.
-pub mod feature_flag {
-    macro_rules! flag { ($($name:ident),* $(,)?) => { $(
-        #[allow(non_camel_case_types)] pub struct $name;
-        impl $name { #[inline] pub fn get(&self) -> bool { false } }
-    )* } }
-    flag!(
-        BUN_FEATURE_FLAG_NO_LIBDEFLATE,
-        BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE
-    );
-}
+pub use env_var::feature_flag;
 /// `bun.linuxKernelVersion()`. Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,
 /// ioctl_ficlone, RWF_NONBLOCK) and cannot depend on `bun_analytics`. Parses
 /// `uname(2).release` major.minor.patch directly; the full Semver parse with
@@ -2692,8 +2706,6 @@ pub mod ffi {
     unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::WSADATA {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
     #[cfg(windows)]

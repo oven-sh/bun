@@ -18,9 +18,6 @@ namespace Bun {
 using namespace JSC;
 
 static const HashTableValue JSNodePerformanceHooksHistogramPrototypeTableValues[] = {
-    { "record"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncRecord, 1 } },
-    { "recordDelta"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncRecordDelta, 0 } },
-    { "add"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncAdd, 1 } },
     { "reset"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncReset, 0 } },
     { "percentile"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncPercentile, 1 } },
     { "percentileBigInt"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncPercentileBigInt, 1 } },
@@ -39,13 +36,26 @@ static const HashTableValue JSNodePerformanceHooksHistogramPrototypeTableValues[
     { "percentilesBigInt"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_percentilesBigInt, 0 } },
 };
 
-const ClassInfo JSNodePerformanceHooksHistogramPrototype::s_info = { "RecordableHistogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogramPrototype) };
+const ClassInfo JSNodePerformanceHooksHistogramPrototype::s_info = { "Histogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogramPrototype) };
 
 void JSNodePerformanceHooksHistogramPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSNodePerformanceHooksHistogram::info(), JSNodePerformanceHooksHistogramPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+static const HashTableValue JSNodePerformanceHooksRecordableHistogramPrototypeTableValues[] = {
+    { "record"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncRecord, 1 } },
+    { "recordDelta"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncRecordDelta, 0 } },
+    { "add"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncAdd, 1 } },
+};
+
+const ClassInfo JSNodePerformanceHooksRecordableHistogramPrototype::s_info = { "RecordableHistogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksRecordableHistogramPrototype) };
+
+void JSNodePerformanceHooksRecordableHistogramPrototype::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSNodePerformanceHooksHistogram::info(), JSNodePerformanceHooksRecordableHistogramPrototypeTableValues, *this);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -54,9 +64,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
-    if (!thisObject) [[unlikely]] {
-        WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "record"_s);
-        return {};
+    if (!thisObject || thisObject->kind() != HistogramKind::Recordable) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "RecordableHistogram"_s);
     }
 
     if (callFrame->argumentCount() < 1) {
@@ -91,9 +100,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecordDelta, (J
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
-    if (!thisObject) [[unlikely]] {
-        WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "recordDelta"_s);
-        return {};
+    if (!thisObject || thisObject->kind() != HistogramKind::Recordable) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "RecordableHistogram"_s);
     }
 
     thisObject->recordDelta(globalObject);
@@ -106,25 +114,18 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncAdd, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
-    if (!thisObject) [[unlikely]] {
-        WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "add"_s);
-        return {};
+    if (!thisObject || thisObject->kind() != HistogramKind::Recordable) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "RecordableHistogram"_s);
     }
 
-    if (callFrame->argumentCount() < 1) {
-        Bun::ERR::MISSING_ARGS(scope, globalObject, "add requires at least one argument"_s);
-        return {};
-    }
-
-    JSValue otherArg = callFrame->uncheckedArgument(0);
+    JSValue otherArg = callFrame->argument(0);
     JSNodePerformanceHooksHistogram* otherHistogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(otherArg);
-    if (!otherHistogram) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "argument"_s, "Histogram"_s, otherArg);
-        return {};
+    if (!otherHistogram || otherHistogram->kind() != HistogramKind::Recordable) [[unlikely]] {
+        return Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "other"_s, "RecordableHistogram"_s, otherArg);
     }
 
-    double dropped = thisObject->add(otherHistogram);
-    return JSValue::encode(jsNumber(dropped));
+    thisObject->add(otherHistogram);
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncReset, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -417,7 +418,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, lowest, highest, figures);
+    JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, HistogramKind::Recordable, lowest, highest, figures);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(histogram);
@@ -446,11 +447,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * glo
 
     // Create histogram with range for event loop delays (1ns to 1 hour)
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
+    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksIntervalHistogramStructure.get(zigGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(
-        vm, structure, globalObject,
+        vm, structure, globalObject, HistogramKind::Interval,
         1, // lowest: 1 nanosecond
         3600000000000LL, // highest: 1 hour in nanoseconds
         3 // figures: 3 significant digits

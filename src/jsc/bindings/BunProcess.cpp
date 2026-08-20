@@ -4248,6 +4248,25 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObje
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_CUSTOM_GETTER(processSourceMapsEnabled, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    Zig::GlobalObject* globalObj = defaultGlobalObject(globalObject);
+    return JSValue::encode(jsBoolean(globalObj->processObject()->m_sourceMapsEnabled));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessSourceMapsEnabled, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isBoolean()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "enabled"_s, "boolean"_s, value);
+    }
+    Zig::GlobalObject* globalObj = defaultGlobalObject(globalObject);
+    globalObj->processObject()->m_sourceMapsEnabled = value.toBoolean(globalObject);
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -4901,6 +4920,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   send                             constructProcessSend                                PropertyCallback
   setSourceMapsEnabled             Process_setSourceMapsEnabled                           Function 1
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
+  sourceMapsEnabled                processSourceMapsEnabled                              CustomAccessor
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback

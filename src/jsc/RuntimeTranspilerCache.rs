@@ -7,6 +7,7 @@ use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, ZStr};
+use bun_io::Write as _;
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
@@ -55,7 +56,11 @@ bun_core::declare_scope!(cache, visible);
 /// offsets picked by a header byte) plus a body of tagged records with
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
-const EXPECTED_VERSION: u32 = 27;
+/// Version 28: The header ends with a hash of the header fields, and every
+/// section hash is stored (and checked) even when the section is empty. A
+/// damaged header used to be acted on as written: a zeroed output length ran
+/// the module as an empty file.
+const EXPECTED_VERSION: u32 = 28;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -145,9 +150,13 @@ impl Default for Metadata {
 
 impl Metadata {
     // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
-    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
+    const FIELDS_SIZE: usize = 4 + 1 + 1 + 12 * 8;
+    /// The fields, then `hash()` of the encoded fields.
+    pub(crate) const SIZE: usize = Self::FIELDS_SIZE + 8;
 
-    pub(crate) fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
+    pub(crate) fn encode(&self, out: &mut [u8; Self::SIZE]) -> crate::CrateResult<()> {
+        let (fields, fields_hash) = out.split_at_mut(Self::FIELDS_SIZE);
+        let mut writer = bun_io::FixedBufferStream::new_mut(fields);
         writer.write_int_le::<u32>(self.cache_version)?;
         writer.write_int_le::<u8>(self.module_type as u8)?;
         writer.write_int_le::<u8>(self.output_encoding.0)?;
@@ -168,64 +177,99 @@ impl Metadata {
         writer.write_int_le::<u64>(self.esm_record_byte_offset)?;
         writer.write_int_le::<u64>(self.esm_record_byte_length)?;
         writer.write_int_le::<u64>(self.esm_record_hash)?;
+        debug_assert!(writer.pos == Self::FIELDS_SIZE);
+
+        fields_hash.copy_from_slice(&hash(fields).to_le_bytes());
         Ok(())
     }
 
-    /// Both call sites (`from_file_with_cache_file_path`, the debug round-trip
-    /// in `Entry::save`) drive this from a fixed buffer, so accept the concrete
-    /// `bun_io::FixedBufferStream` over a borrowed slice.
-    pub(crate) fn decode(
-        &mut self,
-        reader: &mut bun_io::FixedBufferStream<&[u8]>,
-    ) -> crate::CrateResult<()> {
-        self.cache_version = reader.read_int_le::<u32>()?;
-        if self.cache_version != EXPECTED_VERSION {
+    /// Decodes the header at the start of `bytes`. No field is returned to
+    /// the caller before the version and the header hash have been checked.
+    pub(crate) fn decode(bytes: &[u8]) -> crate::CrateResult<Metadata> {
+        let mut reader = bun_io::FixedBufferStream::new(bytes);
+        let cache_version = reader.read_int_le::<u32>()?;
+        if cache_version != EXPECTED_VERSION {
             return Err(crate::CrateError::StaleCache);
         }
 
-        // Validate the raw discriminants immediately so `ModuleType` never
-        // holds an out-of-range value.
         let module_type_raw = reader.read_int_le::<u8>()?;
         let output_encoding_raw = reader.read_int_le::<u8>()?;
 
-        self.features_hash = reader.read_int_le::<u64>()?;
+        let features_hash = reader.read_int_le::<u64>()?;
 
-        self.input_byte_length = reader.read_int_le::<u64>()?;
-        self.input_hash = reader.read_int_le::<u64>()?;
+        let input_byte_length = reader.read_int_le::<u64>()?;
+        let input_hash = reader.read_int_le::<u64>()?;
 
-        self.output_byte_offset = reader.read_int_le::<u64>()?;
-        self.output_byte_length = reader.read_int_le::<u64>()?;
-        self.output_hash = reader.read_int_le::<u64>()?;
+        let output_byte_offset = reader.read_int_le::<u64>()?;
+        let output_byte_length = reader.read_int_le::<u64>()?;
+        let output_hash = reader.read_int_le::<u64>()?;
 
-        self.sourcemap_byte_offset = reader.read_int_le::<u64>()?;
-        self.sourcemap_byte_length = reader.read_int_le::<u64>()?;
-        self.sourcemap_hash = reader.read_int_le::<u64>()?;
+        let sourcemap_byte_offset = reader.read_int_le::<u64>()?;
+        let sourcemap_byte_length = reader.read_int_le::<u64>()?;
+        let sourcemap_hash = reader.read_int_le::<u64>()?;
 
-        self.esm_record_byte_offset = reader.read_int_le::<u64>()?;
-        self.esm_record_byte_length = reader.read_int_le::<u64>()?;
-        self.esm_record_hash = reader.read_int_le::<u64>()?;
+        let esm_record_byte_offset = reader.read_int_le::<u64>()?;
+        let esm_record_byte_length = reader.read_int_le::<u64>()?;
+        let esm_record_hash = reader.read_int_le::<u64>()?;
+        debug_assert!(reader.pos == Self::FIELDS_SIZE);
 
-        self.module_type = match module_type_raw {
+        let fields_hash = reader.read_int_le::<u64>()?;
+        verify_hash(&bytes[..Self::FIELDS_SIZE], fields_hash)?;
+
+        let module_type = match module_type_raw {
             1 => ModuleType::Esm,
             2 => ModuleType::Cjs,
-            // Invalid module type
             _ => return Err(crate::CrateError::InvalidModuleType),
         };
 
-        self.output_encoding = Encoding(output_encoding_raw);
-        match self.output_encoding {
+        let output_encoding = Encoding(output_encoding_raw);
+        match output_encoding {
             Encoding::UTF8 | Encoding::UTF16 | Encoding::LATIN1 => {}
-            // Invalid encoding
             _ => return Err(crate::CrateError::UnknownEncoding),
         }
 
+        Ok(Metadata {
+            cache_version,
+            output_encoding,
+            module_type,
+            features_hash,
+            input_byte_length,
+            input_hash,
+            output_byte_offset,
+            output_byte_length,
+            output_hash,
+            sourcemap_byte_offset,
+            sourcemap_byte_length,
+            sourcemap_hash,
+            esm_record_byte_offset,
+            esm_record_byte_length,
+            esm_record_hash,
+        })
+    }
+
+    /// `save` writes the three sections back to back right after the header,
+    /// so the header describes the file size exactly. Checking that here means
+    /// `Entry::load` never allocates for, or reads at, a length or offset the
+    /// file does not have.
+    pub(crate) fn verify_layout(&self, file_size: u64) -> crate::CrateResult<()> {
+        let header_end = Self::SIZE as u64;
+        let output_end = header_end.checked_add(self.output_byte_length);
+        let sourcemap_end = output_end.and_then(|end| end.checked_add(self.sourcemap_byte_length));
+        let esm_record_end =
+            sourcemap_end.and_then(|end| end.checked_add(self.esm_record_byte_length));
+
+        let consistent = self.output_byte_offset == header_end
+            && output_end == Some(self.sourcemap_byte_offset)
+            && sourcemap_end == Some(self.esm_record_byte_offset)
+            && esm_record_end == Some(file_size)
+            && (self.output_encoding != Encoding::UTF16
+                || self.output_byte_length.is_multiple_of(2));
+        if !consistent {
+            return Err(crate::CrateError::InvalidLayout);
+        }
         Ok(())
     }
 }
-
-// Static assert that `encode()` writes exactly `Metadata::SIZE` bytes — guards
-// against the hand-summed constant drifting from the field list.
-const _: () = assert!(Metadata::SIZE == 4 + 1 + 1 + 12 * 8);
 
 #[derive(Default)]
 pub struct Entry {
@@ -270,9 +314,9 @@ impl Entry {
                 let _ = sys::unlinkat(destination_dir, tmpfilename);
             });
 
-            let mut metadata_buf = [0u8; Metadata::SIZE * 2];
-            let metadata_bytes_len: usize = {
-                let mut metadata = Metadata {
+            let mut metadata_buf = [0u8; Metadata::SIZE];
+            {
+                let metadata = Metadata {
                     input_byte_length,
                     input_hash,
                     features_hash,
@@ -294,36 +338,26 @@ impl Entry {
                     esm_record_byte_offset: (Metadata::SIZE + output_bytes.len() + sourcemap.len())
                         as u64,
                     esm_record_byte_length: esm_record.len() as u64,
+                    output_hash: hash(output_bytes),
+                    sourcemap_hash: hash(sourcemap),
+                    esm_record_hash: hash(esm_record),
                     ..Default::default()
                 };
 
-                metadata.output_hash = hash(output_bytes);
-                metadata.sourcemap_hash = hash(sourcemap);
-                if !esm_record.is_empty() {
-                    metadata.esm_record_hash = hash(esm_record);
-                }
-
-                let mut metadata_stream = bun_io::FixedBufferStream::new_mut(&mut metadata_buf[..]);
-                metadata.encode(&mut metadata_stream)?;
-                let pos = metadata_stream.pos;
+                metadata.encode(&mut metadata_buf)?;
 
                 #[cfg(debug_assertions)]
                 {
-                    let mut reader =
-                        bun_io::FixedBufferStream::new(&metadata_buf[0..Metadata::SIZE]);
-                    let mut metadata2 = Metadata::default();
-                    if let Err(err) = metadata2.decode(&mut reader) {
-                        bun_core::Output::panic(format_args!(
+                    match Metadata::decode(&metadata_buf) {
+                        Ok(metadata2) => debug_assert!(metadata == metadata2),
+                        Err(err) => bun_core::Output::panic(format_args!(
                             "Metadata did not roundtrip encode -> decode  successfully: {}",
                             err.name(),
-                        ));
+                        )),
                     }
-                    debug_assert!(metadata == metadata2);
                 }
-
-                pos
-            };
-            let metadata_bytes: &[u8] = &metadata_buf[0..metadata_bytes_len];
+            }
+            let metadata_bytes: &[u8] = &metadata_buf[..];
 
             let mut vecs_buf: [sys::PlatformIoVecConst; 4] = bun_core::ffi::zeroed();
             let mut vecs_i: usize = 0;
@@ -383,22 +417,17 @@ impl Entry {
         Ok(())
     }
 
+    /// Reads the three sections. The caller has run `Metadata::verify_layout`
+    /// against the file size, so every length below fits the file and a short
+    /// read means the file changed underneath us.
     pub(crate) fn load(&mut self, file: &sys::File) -> crate::CrateResult<()> {
-        let stat_size = file.get_end_pos()? as u64;
-        if stat_size
-            < (Metadata::SIZE as u64)
-                + self.metadata.output_byte_length
-                + self.metadata.sourcemap_byte_length
-        {
-            return Err(crate::CrateError::MissingData);
-        }
-
         debug_assert!(
             self.output_code.is_empty(),
             "this should be the default value"
         );
 
         self.output_code = if self.metadata.output_byte_length == 0 {
+            verify_hash(&[], self.metadata.output_hash)?;
             BunString::EMPTY
         } else {
             match self.metadata.output_encoding {
@@ -429,13 +458,10 @@ impl Entry {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
+                    if read_bytes != len {
                         return Err(crate::CrateError::MissingData);
                     }
-
-                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
-                        return Err(crate::CrateError::InvalidHash);
-                    }
+                    verify_hash(bytes, self.metadata.output_hash)?;
 
                     if bun_core::strings::is_all_ascii(bytes) {
                         // Fast path: ASCII ⊂ Latin-1, so `scratch` is already
@@ -457,16 +483,10 @@ impl Entry {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-
-                    if self.metadata.output_hash != 0 {
-                        if hash(latin1.latin1()) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
-                    }
-
-                    if read_bytes as u64 != self.metadata.output_byte_length {
+                    if read_bytes != len {
                         return Err(crate::CrateError::MissingData);
                     }
+                    verify_hash(bytes, self.metadata.output_hash)?;
 
                     latin1
                 }
@@ -487,13 +507,7 @@ impl Entry {
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
                     }
-
-                    if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                        if hash(utf16_bytes) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
-                    }
+                    verify_hash(chars_bytes, self.metadata.output_hash)?;
 
                     string
                 }
@@ -502,29 +516,21 @@ impl Entry {
             }
         };
 
-        if self.metadata.sourcemap_byte_length > 0 {
-            self.sourcemap = pread_box(
-                file,
-                self.metadata.sourcemap_byte_length as usize,
-                self.metadata.sourcemap_byte_offset,
-            )?;
-        }
+        let sourcemap = pread_box(
+            file,
+            self.metadata.sourcemap_byte_length as usize,
+            self.metadata.sourcemap_byte_offset,
+        )?;
+        verify_hash(&sourcemap, self.metadata.sourcemap_hash)?;
+        self.sourcemap = sourcemap;
 
-        if self.metadata.esm_record_byte_length > 0 {
-            let esm_record = pread_box(
-                file,
-                self.metadata.esm_record_byte_length as usize,
-                self.metadata.esm_record_byte_offset,
-            )?;
-
-            if self.metadata.esm_record_hash != 0 {
-                if hash(&esm_record) != self.metadata.esm_record_hash {
-                    return Err(crate::CrateError::InvalidHash);
-                }
-            }
-
-            self.esm_record = esm_record;
-        }
+        let esm_record = pread_box(
+            file,
+            self.metadata.esm_record_byte_length as usize,
+            self.metadata.esm_record_byte_offset,
+        )?;
+        verify_hash(&esm_record, self.metadata.esm_record_hash)?;
+        self.esm_record = esm_record;
 
         Ok(())
     }
@@ -544,6 +550,13 @@ pub struct RuntimeTranspilerCache {
 
 pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
+}
+
+fn verify_hash(bytes: &[u8], expected: u64) -> crate::CrateResult<()> {
+    if hash(bytes) != expected {
+        return Err(crate::CrateError::InvalidHash);
+    }
+    Ok(())
 }
 
 /// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
@@ -734,34 +747,51 @@ impl RuntimeTranspilerCache {
         feature_hash: u64,
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
-        let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
-        let cache_fd = sys::open(cache_file_path, sys::O::RDONLY, 0)?;
+        let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
+        // NONBLOCK so that a FIFO left at this path cannot block the open
+        // (the fstat below then rejects it). Not on Windows, where the flag
+        // would open an overlapped handle and break the synchronous preads.
+        #[cfg(unix)]
+        let open_flags = sys::O::RDONLY | sys::O::NONBLOCK;
+        #[cfg(not(unix))]
+        let open_flags = sys::O::RDONLY;
+        let cache_fd = sys::open(cache_file_path, open_flags, 0)?;
         let file = sys::File::from_fd(cache_fd);
         // On any error, delete the cache file.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {
             let _ = sys::unlink(p);
         });
+
+        let stat = file.stat()?;
+        if !sys::S::ISREG(stat.st_mode as _) {
+            return Err(crate::CrateError::NotARegularFile);
+        }
+        let file_size =
+            usize::try_from(stat.st_size).map_err(|_| crate::CrateError::InvalidLayout)?;
+
         let metadata_bytes = file.pread_all(&mut metadata_bytes_buf, 0)?;
         #[cfg(windows)]
         {
             file.seek_to(0)?;
         }
-        let mut reader = bun_io::FixedBufferStream::new(&metadata_bytes_buf[0..metadata_bytes]);
 
-        let mut entry = Entry::default();
-        entry.metadata.decode(&mut reader)?;
-        if entry.metadata.input_hash != input_hash
-            || entry.metadata.input_byte_length != input_stat_size
-        {
+        let metadata = Metadata::decode(&metadata_bytes_buf[..metadata_bytes])?;
+        if metadata.input_hash != input_hash || metadata.input_byte_length != input_stat_size {
             // delete the cache in this case
             return Err(crate::CrateError::InvalidInputHash);
         }
 
-        if entry.metadata.features_hash != feature_hash {
+        if metadata.features_hash != feature_hash {
             // delete the cache in this case
             return Err(crate::CrateError::MismatchedFeatureHash);
         }
 
+        metadata.verify_layout(file_size as u64)?;
+
+        let mut entry = Entry {
+            metadata,
+            ..Default::default()
+        };
         entry.load(&file)?;
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);

@@ -1220,27 +1220,24 @@ impl MatchedParams {
 
     /// Convert the matched params to a JavaScript object
     /// Returns null if there are no params
-    pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let params_array = self.params.const_slice();
 
         if params_array.is_empty() {
-            return JSValue::NULL;
+            return Ok(JSValue::NULL);
         }
 
         // Create a JavaScript object with params
         let obj = JSValue::create_empty_object(global, params_array.len());
         for param in params_array {
-            let key_str = bun_core::String::clone_utf8(param.key.slice());
-            let value_str = bun_core::String::clone_utf8(param.value.slice());
+            let key_str =
+                bun_core::OwnedString::new(bun_core::String::clone_utf8(param.key.slice()));
+            let value_str =
+                bun_core::OwnedString::new(bun_core::String::clone_utf8(param.value.slice()));
 
-            obj.put_bun_string_one_or_array(
-                global,
-                &key_str,
-                value_str.to_js(global).expect("unreachable"),
-            )
-            .expect("unreachable");
+            obj.put_bun_string_one_or_array(global, &key_str, value_str.to_js(global)?)?;
         }
-        obj
+        Ok(obj)
     }
 }
 
@@ -1882,7 +1879,9 @@ impl JSFrameworkRouter {
                         JSValue::create_empty_object(global, params_out.params.len() as usize);
                     for param in params_out.params.slice() {
                         // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        let value_str = bun_core::String::clone_utf8(param.value.slice());
+                        let value_str = bun_core::OwnedString::new(bun_core::String::clone_utf8(
+                            param.value.slice(),
+                        ));
                         params_obj.put(global, param.key.slice(), value_str.to_js(global)?);
                     }
                     params_obj

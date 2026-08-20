@@ -2639,7 +2639,7 @@ impl DevServer {
         // TODO: lazy structure caching since we are making these objects a lot
         let global = self.vm().global();
         let params_js_value = if self.router.match_slow(pathname, &mut params).is_some() {
-            params.to_js(global)
+            params.to_js(global)?
         } else {
             JSValue::NULL
         };
@@ -6677,7 +6677,7 @@ fn new_route_params_for_bundle_promise(
             route_index.get()
         )));
     }
-    let params_js_value = params.to_js(global);
+    let params_js_value = params.to_js(global)?;
 
     // SAFETY: `dev_ptr` is live; `framework_bundle` points into
     // `(*dev_ptr).route_bundles[route_bundle_index].data` and its reborrow is

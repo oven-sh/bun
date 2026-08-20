@@ -1,6 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -131,5 +131,54 @@ test("discovers from filesystem paths", () => {
         children: [],
       },
     ],
+  });
+});
+
+test("match() releases the param strings it creates", async () => {
+  using dir = tempDir("fsr-params-leak", {
+    "[a]/[b]/[c]/[d].tsx": "1",
+  });
+
+  // Each matched param value is copied into a WTF string that the JS string
+  // then refs; the copy's own ref has to be released or every match leaks all
+  // four values (4 x 256 KiB here, about 200 MiB over the measured loop).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--smol",
+      "-e",
+      /* js */ `
+        const { frameworkRouterInternals } = require("bun:internal-for-testing");
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const router = new frameworkRouterInternals.FrameworkRouter({ root: ${JSON.stringify(String(dir))}, style: "nextjs-pages" });
+        const segment = Buffer.alloc(256 * 1024, "x").toString();
+        const url = "/" + segment + "/" + segment + "/" + segment + "/" + segment;
+        const lengths = {};
+        for (const [name, value] of Object.entries(router.match(url).params)) lengths[name] = value.length;
+        console.log(JSON.stringify(lengths));
+        for (let i = 0; i < 20; i++) router.match(url);
+        Bun.gc(true);
+        const before = rss();
+        for (let i = 0; i < 200; i++) router.match(url);
+        Bun.gc(true);
+        const growthMB = (rss() - before) / 1024 / 1024;
+        if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      // Under ASAN freed allocations sit in the quarantine (default
+      // quarantine_size_mb=256) instead of leaving RSS, which would hide the
+      // difference between releasing and leaking. Ignored by non-ASAN builds.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: '{"a":262144,"b":262144,"c":262144,"d":262144}\n',
+    stderr: "",
+    exitCode: 0,
   });
 });

@@ -1,5 +1,6 @@
 #include "ProcessBindingHTTPParser.h"
 #include "ZigGlobalObject.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "llhttp/llhttp.h"
 
 namespace Bun {
@@ -9,8 +10,10 @@ using namespace JSC;
 static JSValue ProcessBindingHTTPParser_methods(VM& vm, JSObject* binding)
 {
     JSGlobalObject* globalObject = binding->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSArray* methods = constructEmptyArray(globalObject, nullptr, 35);
+    RETURN_IF_EXCEPTION(scope, {});
 
     int index = 0;
 #define FOR_EACH_METHOD(num, name, string) \
@@ -24,8 +27,10 @@ static JSValue ProcessBindingHTTPParser_methods(VM& vm, JSObject* binding)
 static JSValue ProcessBindingHTTPParser_allMethods(VM& vm, JSObject* binding)
 {
     JSGlobalObject* globalObject = binding->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSArray* methods = constructEmptyArray(globalObject, nullptr, 47);
+    RETURN_IF_EXCEPTION(scope, {});
 
     int index = 0;
 #define FOR_EACH_METHOD(num, name, string) \

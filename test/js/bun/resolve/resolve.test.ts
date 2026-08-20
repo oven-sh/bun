@@ -159,6 +159,9 @@ console.log(staticFoo, foo, resolved === ${JSON.stringify(href)});`,
   expect(stderr.toString("utf8")).toBe("");
   expect(stdout.toString("utf8")).toBe("1 1 true\n");
   expect(exitCode).toBe(0);
+
+  // Pins the Bun.resolveSync / require path, which decodes the URL in Rust.
+  expect(Bun.resolveSync(oneSlash, String(dir))).toBe(join(String(dir), "mod.mjs"));
 });
 
 it("zero-slash file: specifier parses standalone like in Node (#39780)", () => {

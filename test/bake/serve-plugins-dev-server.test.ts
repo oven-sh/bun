@@ -30,13 +30,15 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
       };
     `,
     "index.html": indexHtml,
+    "other.html": indexHtml,
     "entry.ts": `console.log("unused");`,
     "server.ts": `
       import html from "./index.html";
+      import other from "./other.html";
       const server = Bun.serve({
         port: 0,
         development: true,
-        routes: { "/": html },
+        routes: { "/": html, "/other": other },
         fetch() { return new Response("fallback"); },
       });
       // First request while plugin_state == .unknown:
@@ -46,15 +48,20 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
       // which releases the deferred request. If the DevServer is never notified the
       // request hangs indefinitely; the AbortSignal below turns that hang into a
       // concrete failure.
-      let result: string;
-      try {
-        const res = await fetch(server.url, { signal: AbortSignal.timeout(10_000) });
-        result = String(res.status);
-      } catch (e) {
-        result = (e as Error).name;
+      async function request(path) {
+        try {
+          const res = await fetch(new URL(path, server.url), { signal: AbortSignal.timeout(10_000) });
+          return res.status + " " + (await res.text());
+        } catch (e) {
+          return (e as Error).name;
+        }
       }
+      const result = await request("/");
+      // The route that was queued behind the failed load, and one that never was, must both answer instead of waiting for a bundle nothing starts.
+      const again = await request("/");
+      const otherRoute = await request("/other");
       await server.stop(true);
-      console.log(JSON.stringify({ result }));
+      console.log(JSON.stringify({ result, again, other: otherRoute }));
     `,
   });
 
@@ -72,11 +79,10 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
   expect(stderr).toContain("plugin setup failed on purpose");
 
   const line = stdout.split("\n").find(l => l.startsWith("{"));
-  expect(line).toBeDefined();
-  const { result } = JSON.parse(line!);
+  expect(line, stderr).toBeDefined();
   // With the DevServer notified, the deferred request is released promptly. If it
   // isn't, the fetch sits until the 10s abort fires and we see "TimeoutError" here.
-  expect(result).not.toBe("TimeoutError");
+  expect(JSON.parse(line!)).toEqual({ result: "500 ", again: "500 Plugin Error", other: "500 Plugin Error" });
   expect(exitCode).toBe(0);
 });
 
@@ -137,3 +143,217 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup resolves
   expect(out).toEqual({ status: 200, fromPlugin: true });
   expect(exitCode).toBe(0);
 });
+
+// stop(true) while the first request is parked on the `[serve.static]` plugin's setup(): the DevServer must survive until the load settles (it shows as a pending request) and be freed once it does.
+const pluginParkedInSetup = (afterRelease: string) => `
+  export default {
+    name: "parked-plugin",
+    async setup() {
+      globalThis.__parked();
+      await globalThis.__release;
+      ${afterRelease}
+    },
+  };
+`;
+
+// "html" parks the request as a bundled page; "framework" parks it as a saved request that owns a RequestContext.
+type ParkedRoute = "html" | "framework";
+
+const stopDuringPluginLoadServer = (route: ParkedRoute) => /* ts */ `
+  import html from "./index.html";
+
+  const parked = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  globalThis.__parked = parked.resolve;
+  globalThis.__release = release.promise;
+
+  function withTimeout(promise) {
+    let timer;
+    return Promise.race([
+      promise,
+      new Promise(resolve => { timer = setTimeout(() => resolve("timeout"), 10_000); }),
+    ]).finally(() => clearTimeout(timer));
+  }
+
+  const server = Bun.serve({
+    port: 0,
+    development: true,
+    ${
+      route === "html"
+        ? `routes: { "/": html },`
+        : `app: { framework: { fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./framework.ts" }] } },`
+    }
+    fetch() { return new Response("fallback"); },
+  });
+
+  const controller = new AbortController();
+  const request = fetch(server.url, { signal: controller.signal }).then(
+    res => String(res.status),
+    err => (typeof err.code === "string" ? err.code : err.name),
+  );
+  // setup() has been entered, so the request is deferred inside the DevServer.
+  await parked.promise;
+
+  const mode = process.argv[2];
+  if (mode === "client-abort") {
+    controller.abort();
+    await request;
+    // A round trip through the plain fetch handler lets the server process the aborted connection before stop().
+    await fetch(new URL("/probe", server.url)).then(res => res.text());
+  }
+  if (mode === "settle") {
+    // Let setup() finish first; the parked request must be answered rather than left open.
+    release.resolve();
+    await withTimeout(request);
+  }
+
+  const stopped = server.stop(true);
+  const pendingAfterStop = server.pendingRequests;
+
+  release.resolve();
+  const stop = await withTimeout(stopped.then(() => "closed"));
+
+  console.log(JSON.stringify({ request: await withTimeout(request), pendingAfterStop, stop }));
+`;
+
+async function stopDuringPluginLoad(
+  name: string,
+  plugin: string,
+  abortedBy: "client-abort" | "stop" | "settle",
+  route: ParkedRoute = "html",
+) {
+  using dir = tempDir(`serve-plugins-devserver-${name}`, {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": plugin,
+    "index.html": indexHtml,
+    "entry.ts": `console.log("entry");`,
+    "framework.ts": `export function render(req, meta) { return meta.pageModule.default(req, meta); }`,
+    "routes/index.ts": `export default () => new Response("route");`,
+    "server.ts": stopDuringPluginLoadServer(route),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts", abortedBy],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const line = stdout.split("\n").find(l => l.startsWith("{"));
+  return { out: line === undefined ? undefined : JSON.parse(line), stderr, exitCode };
+}
+
+test.concurrent("stop(true) after the client aborted a request parked on plugin setup; setup resolves", async () => {
+  const { out, stderr, exitCode } = await stopDuringPluginLoad(
+    "abort-stop-resolve",
+    pluginParkedInSetup(""),
+    "client-abort",
+  );
+  expect(out, stderr).toEqual({ request: "AbortError", pendingAfterStop: 1, stop: "closed" });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("stop(true) after the client aborted a request parked on plugin setup; setup rejects", async () => {
+  const { out, stderr, exitCode } = await stopDuringPluginLoad(
+    "abort-stop-reject",
+    pluginParkedInSetup(`throw new Error("plugin setup failed after stop");`),
+    "client-abort",
+  );
+  expect(out, stderr).toEqual({ request: "AbortError", pendingAfterStop: 1, stop: "closed" });
+  expect(stderr).toContain("plugin setup failed after stop");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("stop(true) itself aborts the request parked on plugin setup", async () => {
+  const { out, stderr, exitCode } = await stopDuringPluginLoad("stop-aborts", pluginParkedInSetup(""), "stop");
+  expect(out, stderr).toEqual({ request: "ECONNRESET", pendingAfterStop: 1, stop: "closed" });
+  expect(exitCode).toBe(0);
+});
+
+// The framework route's parked request holds a RequestContext; closing its connection must give that back so stop() can finish.
+test.concurrent("stop(true) itself aborts a framework request parked on plugin setup", async () => {
+  const { out, stderr, exitCode } = await stopDuringPluginLoad(
+    "framework-stop-aborts",
+    pluginParkedInSetup(""),
+    "stop",
+    "framework",
+  );
+  expect(out, stderr).toEqual({ request: "ECONNRESET", pendingAfterStop: 1, stop: "closed" });
+  expect(exitCode).toBe(0);
+});
+
+// A failed plugin load answers the parked framework request with a 500 instead of leaving the connection open.
+test.concurrent("a framework request parked on plugin setup is answered when setup rejects", async () => {
+  const { out, stderr, exitCode } = await stopDuringPluginLoad(
+    "framework-reject-answers",
+    pluginParkedInSetup(`throw new Error("plugin setup failed before stop");`),
+    "settle",
+    "framework",
+  );
+  expect(out, stderr).toEqual({ request: "500", pendingAfterStop: 0, stop: "closed" });
+  expect(stderr).toContain("plugin setup failed before stop");
+  expect(exitCode).toBe(0);
+});
+
+// server.ts already imported ./plugin.ts, so the first request's plugin load runs setup() synchronously inside the request frame.
+// `development: false` parks the request on the HTML route itself instead of the DevServer; the async setup() leaves the load pending after stopping.
+test.concurrent.each([
+  { development: true, setup: "sync" },
+  { development: true, setup: "async" },
+  { development: false, setup: "sync" },
+  { development: false, setup: "async" },
+])(
+  "stop(true) from a plugin setup() that runs synchronously during the first request (%j)",
+  async ({ development, setup }) => {
+    using dir = tempDir(`serve-plugins-devserver-sync-stop-${development}-${setup}`, {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+      export default {
+        name: "stop-plugin",
+        ${setup === "async" ? "async " : ""}setup() {
+          globalThis.__stopped = globalThis.__server.stop(true);
+          ${setup === "async" ? "await Bun.sleep(0);" : ""}
+        },
+      };
+    `,
+      "index.html": indexHtml,
+      "entry.ts": `console.log("entry");`,
+      "server.ts": `
+      import "./plugin.ts";
+      import html from "./index.html";
+      const server = Bun.serve({
+        port: 0,
+        development: ${development},
+        routes: { "/": html },
+        fetch() { return new Response("fallback"); },
+      });
+      globalThis.__server = server;
+      const request = await fetch(server.url).then(
+        res => String(res.status),
+        err => (typeof err.code === "string" ? err.code : err.name),
+      );
+      let timer;
+      const stop = await Promise.race([
+        globalThis.__stopped.then(() => "closed"),
+        new Promise(resolve => { timer = setTimeout(() => resolve("timeout"), 10_000); }),
+      ]);
+      clearTimeout(timer);
+      console.log(JSON.stringify({ request, stop }));
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.split("\n").find(l => l.startsWith("{"));
+    expect(line, stderr).toBeDefined();
+    expect(JSON.parse(line!)).toEqual({ request: "ECONNRESET", stop: "closed" });
+    expect(exitCode).toBe(0);
+  },
+);

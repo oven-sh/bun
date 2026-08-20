@@ -38,6 +38,6 @@ public:
 };
 
 extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global);
-extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, void* perThreadData);
+extern "C" void BakeGlobalObject__attachPerThreadData(JSC::JSGlobalObject* global, void* perThreadData);
 
 }; // namespace Kit

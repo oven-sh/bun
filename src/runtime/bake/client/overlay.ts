@@ -623,10 +623,14 @@ function renderCodeLine(location: BundlerMessageLocation, level: BundlerMessageL
       elem("div", { class: "gutter" }, [elemText("div", null, `${location.line}`)]),
       elem("div", { class: "view" }, [
         mapCodePreviewLine(syntaxHighlight(location.lineText)),
-        elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [
-          elemText("span", { class: "space" }, "_".repeat(location.column - 1)),
-          elemText("span", { class: "line" }, "_".repeat(location.length)),
-        ]),
+        ...(location.column > 0
+          ? [
+              elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [
+                elemText("span", { class: "space" }, "_".repeat(location.column - 1)),
+                elemText("span", { class: "line" }, "_".repeat(location.length)),
+              ]),
+            ]
+          : []),
       ]),
     ]),
   ];

@@ -11,13 +11,33 @@ pub struct KEventWatcher {
 
 const CHANGELIST_COUNT: usize = 128;
 
+/// `EVFILT_USER` ident that `wake` triggers so `shutdown` can unpark the thread blocked in `kevent`.
+const WAKE_IDENT: usize = 0;
+
 impl KEventWatcher {
     pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
         let fd = bun_sys::kqueue()?;
         if fd.native() == 0 {
             return Err(crate::Error::KQueueError);
         }
-        Ok(Self { fd })
+        let this = Self { fd };
+        let mut wake: libc::kevent = bun_core::ffi::zeroed();
+        wake.ident = WAKE_IDENT;
+        wake.filter = libc::EVFILT_USER;
+        wake.flags = (libc::EV_ADD | libc::EV_CLEAR) as _;
+        bun_sys::kevent(fd, &[wake], &mut [], None)?;
+        Ok(this)
+    }
+
+    pub(crate) fn wake(&self) {
+        if !self.fd.is_valid() {
+            return;
+        }
+        let mut wake: libc::kevent = bun_core::ffi::zeroed();
+        wake.ident = WAKE_IDENT;
+        wake.filter = libc::EVFILT_USER;
+        wake.fflags = libc::NOTE_TRIGGER;
+        let _ = bun_sys::kevent(self.fd, &[wake], &mut [], None);
     }
 
     pub(crate) fn stop(&mut self) {
@@ -25,6 +45,12 @@ impl KEventWatcher {
             let _ = bun_sys::close(self.fd);
             self.fd = Fd::INVALID;
         }
+    }
+}
+
+impl Drop for KEventWatcher {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -67,8 +93,14 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         count += bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts))?;
     }
 
-    let changes = &changelist[..count];
-    let watchevents = &mut this.watch_events[..count];
+    let mut changes = &changelist[..count];
+    // The wake event is only ever the last (and sole) event; `running` is already false when it arrives.
+    if let [rest @ .., last] = changes {
+        if last.filter == libc::EVFILT_USER {
+            changes = rest;
+        }
+    }
+    let watchevents = &mut this.watch_events[..changes.len()];
     let mut out_len: usize = 0;
     if let [first, rest @ ..] = changes {
         watchevents[0] = watch_event_from_kevent(first);

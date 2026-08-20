@@ -73,9 +73,7 @@ export function renderToHtml(
             signal.aborted = error;
             abort();
             if (signal.abort) signal.abort();
-            if (stream) {
-              stream.controller.close();
-            }
+            stream?.finalize();
           }
         },
       }));
@@ -97,15 +95,35 @@ export function renderToHtml(
 
 // Static builds can not stream suspense boundaries as they finish, but instead
 // produce a single HTML blob. The approach is otherwise similar to `renderToHtml`.
-export function renderToStaticHtml(rscPayload: Readable, bootstrapModules: readonly string[]): Promise<Blob> {
-  const stream = new StaticRscInjectionStream(rscPayload);
+export function renderToStaticHtml(
+  rscPayload: Readable,
+  bootstrapModules: readonly string[],
+  signal: MiniAbortSignal,
+): Promise<Blob> {
+  const stream = new StaticRscInjectionStream(rscPayload, signal);
   const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
   const Root = () => React.use(promise);
+  // Fizz reports every render error to `onError`. One thrown inside a <Suspense> boundary is recoverable: the
+  // boundary renders its fallback, retries on the client, and `onAllReady` still fires, so it is only logged.
+  const errors: unknown[] = [];
   const { pipe } = renderToPipeableStream(<Root />, {
     bootstrapModules,
+    onError: error => void errors.push(error),
+    // An error outside every boundary leaves no HTML: reject with it and stop the flight render too.
+    onShellError(error) {
+      errors.length = 0;
+      stream.destroy(signal.aborted ?? error);
+      if (!signal.aborted) {
+        signal.aborted = error as Error;
+        signal.abort?.();
+      }
+    },
     // Only begin flowing HTML once all of it is ready. This tells React
     // to not emit the flight chunks, just the entire HTML.
-    onAllReady: () => pipe(stream),
+    onAllReady() {
+      if (!signal.aborted) for (const error of errors) console.error(error);
+      pipe(stream);
+    },
   });
   return stream.result;
 }
@@ -140,11 +158,15 @@ class RscInjectionStream extends EventEmitter {
   rscChunks: Uint8Array[] = [];
   /** If all RSC chunks have been processed */
   rscHasEnded = false;
+  /** Fizz has written everything but `tail`, which is held back until the last RSC chunk is in. */
+  htmlHasEnded = false;
+  tail = "";
   /** Shared state for decoding RSC data into UTF-8 strings */
-  decoder = new TextDecoder("utf-8", { fatal: true });
+  decoder = new FlightDecoder();
 
   /** Resolved when all data is written */
   finished: Promise<void>;
+  finalized = false;
   finalize: () => void;
   reject: (err: any) => void;
 
@@ -154,17 +176,35 @@ class RscInjectionStream extends EventEmitter {
 
     const { resolve, promise, reject } = Promise.withResolvers<void>();
     this.finished = promise;
-    this.finalize = x => (controller.close(), resolve(x));
+    this.finalize = () => {
+      if (this.finalized) return;
+      this.finalized = true;
+      // The client may have disconnected while the document was held open for Flight; the sink then throws on write.
+      try {
+        if (this.tail) controller.write(this.tail);
+        controller.flush();
+        controller.close();
+      } catch {}
+      resolve();
+    };
     this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));
+    // Fizz can finish before Flight has serialized a Promise prop that SSR never read, so wait for both.
     rscPayload.on("end", () => {
       this.rscHasEnded = true;
+      // The payload ended mid UTF-8 sequence after the last write; an empty final write flushes those bytes as base64.
+      if (this.decoder.held.byteLength && this.rscChunks.length === 0) this.writeRscData(noBytes);
+      if (this.htmlHasEnded) this.finalize();
     });
     rscPayload.on("error", err => {
       this.rscHasEnded = true;
-      // Close the controller
-      controller.close();
+      // The HTML is already complete; close it off rather than fail the response.
+      if (this.htmlHasEnded) return this.finalize();
+      this.finalized = true;
+      try {
+        controller.close();
+      } catch {}
       // Reject the promise instead of resolving it
       this.reject(err);
     });
@@ -189,18 +229,15 @@ class RscInjectionStream extends EventEmitter {
       this.html = HtmlState.Boundary;
       this.drainRscChunks();
     } else if (endsWithClosingBody(data)) {
-      // The HTML is about to finish. When this happens there cannot be more RSC
-      // chunks, since if that was truly the case, the HTML wouldn't be done.
-      const { controller } = this;
-      controller.write(data.subarray(0, data.length - closingBodyTag.length));
-      this.drainRscChunks();
-      controller.write(closingBodyTag);
-      controller.flush();
-      this.finalize();
+      this.controller.write(data.subarray(0, data.length - closingBodyTag.length));
+      this.tail = closingBodyTag;
+      this.endHtml();
     } else {
       this.controller.write(data);
       this.html = HtmlState.Flowing;
     }
+    // Fizz treats a falsy return as backpressure and stalls until a 'drain' event that is never emitted.
+    return true;
   }
 
   drainRscChunks() {
@@ -216,7 +253,7 @@ class RscInjectionStream extends EventEmitter {
       controller.write(continueScriptTag);
       this.rsc = RscState.Paused;
     }
-    writeManyFlightScriptData(rscChunks, decoder, controller);
+    writeManyFlightScriptData(rscChunks, decoder, controller, this.rscHasEnded);
     if (this.rscHasEnded) {
       this.rsc = RscState.Done;
     }
@@ -236,15 +273,21 @@ class RscInjectionStream extends EventEmitter {
           "\n",
       );
 
+    if (this.finalized) return;
     if (this.html === HtmlState.Boundary) {
       const { controller, decoder } = this;
-      if (this.rsc === RscState.Waiting) {
-        controller.write(startScriptTag);
-      } else {
-        controller.write(continueScriptTag);
-        this.rsc = RscState.Paused;
+      try {
+        if (this.rsc === RscState.Waiting) {
+          controller.write(startScriptTag);
+        } else {
+          controller.write(continueScriptTag);
+          this.rsc = RscState.Paused;
+        }
+        writeSingleFlightScriptData(chunk, decoder, controller, this.rscHasEnded);
+      } catch {
+        // The client went away while the document was held open for this row.
+        this.finalize();
       }
-      writeSingleFlightScriptData(chunk, decoder, controller);
     } else {
       this.rscChunks.push(chunk);
     }
@@ -256,31 +299,72 @@ class RscInjectionStream extends EventEmitter {
 
   destroy(e) {}
 
-  end(e) {}
+  end() {
+    // `write` normally sees `</body></html>`; this only matters if Fizz's last write changes shape.
+    this.endHtml();
+  }
+
+  /** The HTML is done. RSC chunks that arrive from now on are written directly, and the last one closes the stream. */
+  endHtml() {
+    if (this.htmlHasEnded || this.finalized) return;
+    this.htmlHasEnded = true;
+    this.html = HtmlState.Boundary;
+    this.drainRscChunks();
+    if (this.rscHasEnded) this.finalize();
+    else this.controller.flush();
+  }
 }
+
+/** How long a static render waits for the RSC payload to finish after its HTML is complete. */
+const staticFlightTimeoutMs = 60_000;
 
 class StaticRscInjectionStream extends EventEmitter {
   rscPayloadChunks: Uint8Array[] = [];
   chunks: (Uint8Array | string)[] = [];
   result: Promise<Blob>;
-  finalize: (blob: Blob) => void;
+  resolve: (blob: Blob) => void;
   reject: (error: Error) => void;
+  rscHasEnded = false;
+  htmlHasEnded = false;
 
-  constructor(rscPayload: Readable) {
+  constructor(rscPayload: Readable, signal?: MiniAbortSignal) {
     super();
     const { resolve, promise, reject } = Promise.withResolvers<Blob>();
     this.result = promise;
-    this.finalize = resolve;
+    this.resolve = resolve;
     this.reject = reject;
 
     rscPayload.on("data", chunk => this.rscPayloadChunks.push(chunk));
+    // Fizz can finish before Flight has serialized a Promise prop that SSR never read, so wait for both.
+    rscPayload.on("end", () => {
+      this.rscHasEnded = true;
+      if (this.htmlHasEnded) this.finalize();
+    });
+    // A flight payload error means no HTML; reject with the original error rather than leave the result pending.
+    rscPayload.on("error", err => this.reject(signal?.aborted ?? err));
   }
 
   write(chunk) {
     this.chunks.push(chunk);
+    // Fizz treats a falsy return as backpressure and stalls until a 'drain' event that is never emitted.
+    return true;
   }
 
   end() {
+    this.htmlHasEnded = true;
+    if (this.rscHasEnded) return this.finalize();
+    const timer = setTimeout(() => {
+      this.reject(
+        new Error(
+          `The RSC payload was still pending ${staticFlightTimeoutMs / 1000}s after the page's HTML was rendered. ` +
+            "A Promise passed to a client component likely never settles.",
+        ),
+      );
+    }, staticFlightTimeoutMs);
+    this.result.finally(() => clearTimeout(timer)).catch(() => {});
+  }
+
+  finalize() {
     // Inject the finalized RSC payload into the last chunk
     const lastChunk = this.chunks[this.chunks.length - 1];
 
@@ -296,9 +380,9 @@ class StaticRscInjectionStream extends EventEmitter {
     this.chunks[this.chunks.length - 1] = lastChunk.slice(0, lastChunk.length - closingBodyTag.length);
 
     let string = startScriptTag;
-    writeManyFlightScriptData(this.rscPayloadChunks, new TextDecoder("utf-8"), { write: str => (string += str) });
+    writeManyFlightScriptData(this.rscPayloadChunks, new FlightDecoder(), { write: str => (string += str) }, true);
     this.chunks.push(string + closingBodyTag);
-    this.finalize(new Blob(this.chunks, { type: "text/html" }));
+    this.resolve(new Blob(this.chunks, { type: "text/html" }));
   }
 
   flush() {
@@ -310,20 +394,44 @@ class StaticRscInjectionStream extends EventEmitter {
   }
 }
 
+const noBytes = new Uint8Array(0);
+
+/** Flight rows split across chunks can end mid UTF-8 sequence; this tracks the bytes `TextDecoder` buffers so a base64 fallback loses none. */
+class FlightDecoder {
+  td = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  /** Trailing bytes of an incomplete sequence that `td` holds until the next chunk. */
+  held: Uint8Array = noBytes;
+
+  /** Throws on invalid UTF-8, and on an incomplete trailing sequence when `last`. */
+  text(chunk: Uint8Array, last: boolean): string {
+    const str = this.td.decode(chunk, { stream: !last });
+    const pending = this.held.byteLength + chunk.byteLength - Buffer.byteLength(str);
+    this.held = pending === 0 ? noBytes : Buffer.concat([this.held, chunk]).subarray(-pending);
+    return str;
+  }
+
+  /** The bytes `text()` has consumed but not returned, followed by `chunks`. Starts a fresh decoder. */
+  base64(chunks: Uint8Array[]): string {
+    const str = Buffer.concat([this.held, ...chunks]).toString("base64");
+    this.held = noBytes;
+    this.td = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    return str;
+  }
+}
+
 /** Assumes the opening script tag and function call have been written */
 function writeSingleFlightScriptData(
   chunk: Uint8Array,
-  decoder: TextDecoder,
+  decoder: FlightDecoder,
   controller: { write: (str: string) => void },
+  last: boolean,
 ) {
   try {
-    // `decode()` will throw on invalid UTF-8 sequences.
-    controller.write("'" + toSingleQuote(decoder.decode(chunk, { stream: true })) + "')</script>");
+    controller.write("'" + toSingleQuote(decoder.text(chunk, last)) + "')</script>");
   } catch {
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // No data should have been written yet, so a base64 fallback can be used.
-    const base64 = btoa(String.fromCodePoint(...chunk));
-    controller.write(`Uint8Array.from(atob(\"${base64}\"),m=>m.codePointAt(0))</script>`);
+    controller.write(`Uint8Array.from(atob("${decoder.base64([chunk])}"),m=>m.codePointAt(0)))</script>`);
   }
 }
 
@@ -333,31 +441,25 @@ function writeSingleFlightScriptData(
  */
 function writeManyFlightScriptData(
   chunks: Uint8Array[],
-  decoder: TextDecoder,
+  decoder: FlightDecoder,
   controller: { write: (str: string) => void },
+  last: boolean,
 ) {
-  if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller);
+  if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller, last);
 
   let i = 0;
   let decoded = "";
   try {
     // Combine all chunks into a single string if possible.
     for (; i < chunks.length; i++) {
-      // `decode()` will throw on invalid UTF-8 sequences.
-      decoded += decoder.decode(chunks[i], { stream: true });
+      decoded += decoder.text(chunks[i], last && i === chunks.length - 1);
     }
     controller.write("'" + toSingleQuote(decoded) + "')</script>");
   } catch {
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // Since this is rare, just make the rest of the chunks base64.
     if (i > 0) controller.write("'" + toSingleQuote(decoded) + "');__bun_f.push(");
-    controller.write('Uint8Array.from(atob("');
-    for (; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const base64 = btoa(String.fromCodePoint(...chunk));
-      controller.write(base64.slice(1, -1));
-    }
-    controller.write('"),m=>m.codePointAt(0))</script>');
+    controller.write(`Uint8Array.from(atob("${decoder.base64(chunks.slice(i))}"),m=>m.codePointAt(0)))</script>`);
   }
 }
 
@@ -370,6 +472,10 @@ function toSingleQuote(str: string): string {
       .replace(/\\/g, "\\\\")
       .replace(/'/g, "\\'")
       .replace(/\n/g, "\\n")
+      // LS and PS are legal in string literals since ES2019; CR and LF are not.
+      .replace(/\r/g, "\\r")
+      // The HTML tokenizer turns a NUL in script text into U+FFFD. `\0` would form an octal escape before a digit.
+      .replace(/\0/g, "\\x00")
       // Escape closing script tags and HTML comments in JS content.
       .replace(/<!--/g, "<\\!--")
       .replace(/<\/(script)/gi, "</\\$1")

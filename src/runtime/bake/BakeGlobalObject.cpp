@@ -8,6 +8,7 @@
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSSourceCode.h"
 
+// These (and BakeProdLoad below) return an owned reference: consume it with transferToWTFString().
 extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
 extern "C" BunString BakeToWindowsPath(BunString a);
 
@@ -22,35 +23,26 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     bool deferred)
 {
     UNUSED_PARAM(deferred);
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Returning nullptr with an exception pending is fine: globalFuncImportModule rejects the import() promise with it.
     WTF::String keyString = moduleNameValue->getString(global);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (keyString.startsWith("bake:/"_s)) {
-        auto& vm = JSC::getVM(global);
-        return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
-            JSC::Identifier(), WTF::move(parameters), nullptr);
+        RELEASE_AND_RETURN(scope, JSC::importModule(global, JSC::Identifier::fromString(vm, keyString), JSC::Identifier(), WTF::move(parameters), nullptr));
     }
 
     if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
-        auto& vm = JSC::getVM(global);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
         WTF::String refererString = sourceOrigin.string();
-        WTF::String keyString = moduleNameValue->getString(global);
-
-        if (!keyString) {
-            auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
-            promise->reject(vm, JSC::createError(global, "import() requires a string"_s));
-            return promise;
-        }
-
         BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
         RETURN_IF_EXCEPTION(scope, nullptr);
 
-        return JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
-            JSC::Identifier(), WTF::move(parameters), nullptr);
+        RELEASE_AND_RETURN(scope, JSC::importModule(global, JSC::Identifier::fromString(vm, result.transferToWTFString()), JSC::Identifier(), WTF::move(parameters), nullptr));
     }
 
     // TODO: make static cast instead of jscast
-    return uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false);
+    RELEASE_AND_RETURN(scope, uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false));
 }
 
 JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
@@ -63,15 +55,16 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
 
     if (auto string = dynamicDowncast<JSC::JSString>(referrer)) {
         WTF::String refererString = string->getString(global);
+        RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
         WTF::String keyString = key.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
         if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
-            BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
+            BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
             RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
-            return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+            return JSC::Identifier::fromString(vm, result.transferToWTFString());
         }
     }
 
@@ -87,7 +80,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         }
     }
 
-    return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap);
+    RELEASE_AND_RETURN(scope, Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap));
 }
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
@@ -137,7 +130,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
                     globalObject,
-                    source.toWTFString(),
+                    source.transferToWTFString(),
                     origin,
                     WTF::move(moduleKey),
                     WTF::TextPosition(),
@@ -159,11 +152,11 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
             // it, because `moduleLoaderFetch(...)` may read the path from disk
             // and so we need to give a Windows path to it.
             auto temp = BakeToWindowsPath(Bun::toString(bakePrefixRemoved));
-            bakePrefixRemoved = temp.toWTFString();
+            bakePrefixRemoved = temp.transferToWTFString();
 #endif
-            JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
+            JSString* bakePrefixRemovedString = jsString(vm, bakePrefixRemoved);
             JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
-            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, WTF::move(parameters), WTF::move(script));
+            RELEASE_AND_RETURN(scope, Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, WTF::move(parameters), WTF::move(script)));
         }
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
     }
@@ -194,9 +187,6 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
     structure->setTransitionWatchpointIsLikelyToBeFired(true);
     return structure;
 }
-
-struct BunVirtualMachine;
-extern "C" BunVirtualMachine* Bun__getVM();
 
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
@@ -231,46 +221,9 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
     return table;
 }
 
-// A lot of this function is taken from 'Zig__GlobalObject__create'
-// TODO: remove this entire method
-extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
+extern "C" void BakeGlobalObject__attachPerThreadData(JSC::JSGlobalObject* global, void* perThreadData)
 {
-    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(JSC::HeapType::Large);
-    if (!vmPtr) [[unlikely]] {
-        BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
-    }
-    // We need to unsafely ref this so it stays alive, later in
-    // `Zig__GlobalObject__destructOnExit` will call
-    // `vm.derefSuppressingSaferCPPChecking()` to free it.
-    vmPtr->refSuppressingSaferCPPChecking();
-    JSC::VM& vm = *vmPtr;
-
-    vm.heap.acquireAccess();
-    JSC::JSLockHolder locker(vm);
-    BunVirtualMachine* bunVM = Bun__getVM();
-    WebCore::JSVMClientData::create(&vm, bunVM, /* worker */ nullptr);
-
-    JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
-    Bake::GlobalObject* global = Bake::GlobalObject::create(
-        vm, structure, &Bake::GlobalObject::globalObjectMethodTable());
-    if (!global)
-        BUN_PANIC("Failed to create BakeGlobalObject");
-
-    global->m_bunVM = bunVM;
-
-    JSC::gcProtect(global);
-
-    global->setConsole(console);
-    global->isThreadLocalDefaultGlobalObject = true;
-
-    vm.heap.disableStopIfNecessaryTimer();
-
-    return global;
-}
-
-extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, void* perThreadData)
-{
-    global->m_perThreadData = perThreadData;
+    uncheckedDowncast<Bake::GlobalObject>(global)->m_perThreadData = perThreadData;
 }
 
 const JSC::ClassInfo Bake::GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr,

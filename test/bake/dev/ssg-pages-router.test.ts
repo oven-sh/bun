@@ -157,7 +157,8 @@ devTest("SSG pages router - hot reload on page changes", {
 
     // this %c%s%c is a react devtools thing and I don't know how to turn it off
     await c.expectMessage("%c%s%c updated load");
-    expect(await c.elemText("h1")).toBe("Updated Content");
+    // dev.write() resolves on the route reload frame; the framework fetches and commits the new page asynchronously.
+    await c.expectElemText("h1", "Updated Content");
   },
 });
 

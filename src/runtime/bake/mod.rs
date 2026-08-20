@@ -11,6 +11,8 @@
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
+use crate::api::js_bundler::OwnedPlugin;
+
 // ─── Submodule bodies ────────────────────────────────────────────────────────
 // `bake_body.rs` carries the Framework/UserOptions/BuildConfigSubset `from_js`
 // impls plus the `init_server_runtime`/`get_hmr_runtime` host fns.
@@ -36,7 +38,7 @@ pub mod source_provider_exports;
 
 // Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
-pub use bake_body::{PatternBuffer, UserOptions, print_warning};
+pub use bake_body::{UserOptions, print_warning};
 
 /// All bake JSC references go through this re-export of `bun_jsc`.
 pub mod jsc {
@@ -100,8 +102,6 @@ impl Default for ReactFastRefresh {
 /// `bake.Framework.FileSystemRouterType`. Full body (with `Style` enum and
 /// `from_js`) lives in the gated `bake_body.rs` draft; only the field set
 /// DevServer touches is named here.
-// Deliberately not `Clone` — `framework_router::Style` is the
-// body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`).
 pub struct FileSystemRouterType {
     pub(crate) root: Cow<'static, [u8]>,
     pub(crate) prefix: Cow<'static, [u8]>,
@@ -196,16 +196,18 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
-    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
+    /// `root` (`DevServer.root`) becomes the directory module ids are relative to.
     pub(crate) fn init_transpiler<'a>(
-        &mut self,
+        &self,
         arena: &'a bun_alloc::Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+        root: &[u8],
+        out: &mut TranspilerSlot<'a>,
+        framework_view: &'a bun_bundler::bake_types::Framework,
         bundler_options: &BuildConfigSubset,
-    ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
+    ) -> crate::Result<()> {
         use bun_options_types::schema as bun_schema;
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
@@ -236,6 +238,8 @@ impl Framework {
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
         out.options.output_dir = Box::default();
+        out.options.root_dir =
+            bun_paths::string_paths::without_trailing_slash_windows_path(root).into();
 
         out.options.react_fast_refresh = mode == Mode::Development
             && renderer == Graph::Client
@@ -266,14 +270,7 @@ impl Framework {
         out.options.minify_identifiers = mode != Mode::Development;
         out.options.minify_whitespace = mode != Mode::Development;
         out.options.css_chunking = true;
-        // The bundler crate (lower tier) carries a TYPE_ONLY
-        // projection (`bake_types::Framework`); construct it here and give it
-        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        let framework_view: *mut bun_bundler::bake_types::Framework =
-            arena.alloc(self.as_bundler_view());
-        // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
-        // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
-        out.options.framework = Some(unsafe { &*framework_view });
+        out.options.framework = Some(framework_view);
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -297,6 +294,13 @@ impl Framework {
         out.sync_resolver_opts();
 
         out.configure_linker();
+        // `configure_defines` turns these into valueless defines and `drop_debugger`, as `Bun.build` does.
+        out.options.drop = bundler_options
+            .drop
+            .keys()
+            .iter()
+            .map(|k| Box::<[u8]>::from(*k))
+            .collect();
         out.configure_defines()?;
         out.options.jsx.development = mode == Mode::Development;
 
@@ -309,7 +313,7 @@ impl Framework {
             },
         )?;
 
-        if (bundler_options.define.keys.len() + bundler_options.drop.count()) > 0 {
+        if !bundler_options.define.keys.is_empty() {
             debug_assert_eq!(
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
@@ -321,18 +325,13 @@ impl Framework {
                 .iter()
                 .zip(bundler_options.define.values.iter())
             {
+                // As in `Bun.build`, `drop` wins over a `define` of the same identifier.
+                if bundler_options.drop.keys().iter().any(|d| *d == &**k) {
+                    continue;
+                }
                 let parsed =
                     bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
                 out.options.define.insert(k, parsed)?;
-            }
-
-            for drop_item in bundler_options.drop.keys() {
-                if !drop_item.is_empty() {
-                    let parsed = bun_bundler::defines::DefineData::parse(
-                        drop_item, b"", true, true, log, arena,
-                    )?;
-                    out.options.define.insert(drop_item, parsed)?;
-                }
             }
         }
 
@@ -346,7 +345,7 @@ impl Framework {
         // Re-sync after define/naming mutations so the
         // resolver sees the final option set.
         out.sync_resolver_opts();
-        Ok(framework_view)
+        Ok(())
     }
 
     /// Resolves built-in module
@@ -378,15 +377,11 @@ impl Framework {
                 b"server components runtime",
             );
         }
-        for fsr in self.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = Cow::Owned(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
-                    top_level_dir,
-                    &fsr.root,
-                )
-                .to_vec(),
-            );
+        for (i, fsr) in self.file_system_router_types.iter_mut().enumerate() {
+            match bake_body::resolve_router_root(i, &fsr.root) {
+                Some(root) => fsr.root = Cow::Owned(root.into_vec()),
+                None => had_errors = true,
+            }
             let _ = arena;
             if let Some(entry_client) = &mut fsr.entry_client {
                 Self::resolve_helper(
@@ -463,12 +458,88 @@ impl Framework {
     }
 }
 
+/// In-place home of a `Transpiler` (configured, it points into its own fields); drops it if filled.
+pub(crate) struct TranspilerSlot<'a> {
+    transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+    initialized: bool,
+}
+
+impl<'a> TranspilerSlot<'a> {
+    pub(crate) const fn uninit() -> Self {
+        Self {
+            transpiler: core::mem::MaybeUninit::uninit(),
+            initialized: false,
+        }
+    }
+
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    fn write(
+        &mut self,
+        transpiler: bun_bundler::Transpiler<'a>,
+    ) -> &mut bun_bundler::Transpiler<'a> {
+        debug_assert!(!self.initialized);
+        let transpiler = self.transpiler.write(transpiler);
+        self.initialized = true;
+        transpiler
+    }
+
+    /// Panics if the slot is empty.
+    pub(crate) fn get(&self) -> &bun_bundler::Transpiler<'a> {
+        assert!(self.initialized, "transpiler slot is empty");
+        // SAFETY: `initialized` is set by `write` after storing and cleared by `clear` as it drops.
+        unsafe { self.transpiler.assume_init_ref() }
+    }
+
+    /// Panics if the slot is empty.
+    pub(crate) fn get_mut(&mut self) -> &mut bun_bundler::Transpiler<'a> {
+        assert!(self.initialized, "transpiler slot is empty");
+        // SAFETY: see `get`.
+        unsafe { self.transpiler.assume_init_mut() }
+    }
+
+    /// Only valid to dereference while the slot is filled.
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut bun_bundler::Transpiler<'a> {
+        self.transpiler.as_mut_ptr()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        if core::mem::take(&mut self.initialized) {
+            // SAFETY: the flag was set, so a transpiler is stored, and it is already cleared.
+            unsafe { self.transpiler.assume_init_drop() };
+        }
+    }
+}
+
+impl Drop for TranspilerSlot<'_> {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+/// The plugin cell every bundle of a `DevServer` runs against, and whether the dev server releases it.
+pub(crate) enum DevServerPlugin {
+    /// `framework.plugins` / `app.plugins`, released when the dev server drops.
+    Owned(OwnedPlugin),
+    /// The server's `[serve.static]` plugins; the cell belongs to the server's `ServePlugins`.
+    Borrowed(NonNull<jsc::Plugin>),
+}
+
+impl DevServerPlugin {
+    pub(crate) fn as_non_null(&self) -> NonNull<jsc::Plugin> {
+        match self {
+            DevServerPlugin::Owned(plugin) => plugin.as_non_null(),
+            DevServerPlugin::Borrowed(plugin) => *plugin,
+        }
+    }
+}
+
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]
 pub struct SplitBundlerOptions {
-    /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
-    /// goes through the C++ side. See LIFETIMES.tsv.
-    pub(crate) plugin: Option<NonNull<jsc::Plugin>>,
+    pub(crate) plugin: Option<DevServerPlugin>,
     pub(crate) client: BuildConfigSubset,
     pub(crate) server: BuildConfigSubset,
     pub(crate) ssr: BuildConfigSubset,
@@ -561,9 +632,7 @@ impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
 impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
     fn from(src: bake_body::SplitBundlerOptions) -> Self {
         Self {
-            // `bake_body::Plugin` and keystone `jsc::Plugin` both alias
-            // `crate::api::js_bundler::Plugin` — same nominal type, no cast.
-            plugin: src.plugin,
+            plugin: src.plugin.map(DevServerPlugin::Owned),
             client: src.client.into(),
             server: src.server.into(),
             ssr: src.ssr.into(),
@@ -571,7 +640,7 @@ impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
     }
 }
 
-/// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `from_js`)
+/// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `parse_js`)
 /// lives in `bake_body.rs`; this keystone mirror carries every field that
 /// `Framework::init_transpiler` reads so DevServer's
 /// per-graph transpilers see bunfig `[serve.static]` define/env/conditions.

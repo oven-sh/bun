@@ -8,7 +8,6 @@ use bun_js_printer::renamer;
 use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 
 use crate::analyze_transpiled_module::ModuleInfo;
-use crate::generic_path_with_pretty_initialized;
 use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
 use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
@@ -189,13 +188,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 source_ref.path.text.as_ptr(),
                 source_ref.path.pretty.as_ptr(),
             ) {
-                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-                let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
-                    &source_ref.path,
-                    c.options.target,
-                    top_level_dir,
-                    arena,
-                ));
+                let new_path =
+                    bun_core::handle_oom(c.path_with_pretty_initialized(&source_ref.path, arena));
                 source_storage = bun_ast::Source {
                     path: new_path,
                     // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its

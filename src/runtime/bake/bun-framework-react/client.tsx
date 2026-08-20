@@ -370,13 +370,24 @@ async function readCssMetadata(stream: ReadableStream<Uint8Array>) {
       location.reload();
     }
   }
-  if (header[0] > 0) {
-    const cssRaw = (await reader.read(new Uint8Array(header[0]))).value;
-    if (!cssRaw) {
-      if (import.meta.env.DEV) {
-        throw new Error("Did not read all bytes! This is a bug in bun-framework-react");
-      } else {
-        location.reload();
+  const len = header[0];
+  if (len > 0) {
+    let cssRaw = new Uint8Array(len);
+    let filled = 0;
+    // A BYOB read resolves as soon as one byte is available, so keep reading until the view is full.
+    while (filled < len) {
+      const { value, done } = await reader.read(new Uint8Array(cssRaw.buffer, filled, len - filled));
+      if (value) {
+        cssRaw = new Uint8Array(value.buffer, 0, len);
+        filled += value.byteLength;
+      }
+      if (filled < len && (done || !value)) {
+        if (import.meta.env.DEV) {
+          throw new Error("Did not read all bytes! This is a bug in bun-framework-react");
+        } else {
+          location.reload();
+          return stream;
+        }
       }
     }
     currentCssList = td.decode(cssRaw).split("\n");
@@ -424,13 +435,12 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
       let i = 0;
       let chunk;
       let len;
-      while (size > 0) {
+      while (i < size) {
         chunk = chunks.shift();
         const { byteLength } = chunk;
-        len = Math.min(byteLength, size);
+        len = Math.min(byteLength, size - i);
         buffer.set(len === byteLength ? chunk : chunk.subarray(0, len), i);
         i += len;
-        size -= len;
       }
       if (chunk.byteLength > len) {
         chunks.unshift(chunk.subarray(len));
@@ -439,13 +449,16 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
       return buffer;
     }
   };
-  const header = new Uint32Array(await readChunk(4))[0];
-  if (header === 0) {
+  const header = await readChunk(4);
+  // Little-endian u32, as written by `encodeCssHeader` in server.tsx.
+  const len = new DataView(header.buffer, header.byteOffset, 4).getUint32(0, true);
+  if (len === 0) {
     currentCssList = [];
   } else {
-    currentCssList = td.decode(await readChunk(header)).split("\n");
+    currentCssList = td.decode(await readChunk(len)).split("\n");
   }
   if (chunks.length === 0) {
+    reader.releaseLock();
     return stream;
   }
   // New readable stream that includes the remaining data

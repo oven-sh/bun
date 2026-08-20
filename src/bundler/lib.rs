@@ -324,10 +324,15 @@ bun_dispatch::link_interface! {
         fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
         fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_ast::Log;
         fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
-        fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
+        // `loader` is the loader of the failed attempt, `None` when the file never got one (it did not resolve).
+        fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], loader: Option<bun_ast::Loader>, log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
+        fn handle_client_component_boundary_failure(abs_path: &[u8]) -> Result<(), crate::Error>;
         fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
         fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
-        fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
+        // `attribute` is the import's `with { type }` loader; `default` is what the path gets without one.
+        fn is_file_cached(abs_path: &[u8], side: bake_types::Graph, attribute: Option<bun_ast::Loader>, default: bun_ast::Loader) -> Option<bake_types::CacheEntry>;
+        // The loader `side`'s graph wants `abs_path` rebundled with; `None` if it has no record of the file.
+        fn bundled_loader(abs_path: &[u8], side: bake_types::Graph) -> Option<bun_ast::Loader>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;
         fn current_bundle_start_data() -> *mut ();
         fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), crate::Error>;

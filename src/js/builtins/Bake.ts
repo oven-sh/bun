@@ -6,6 +6,12 @@ type FrameworkPrerender = Bake.ServerEntryPoint["prerender"];
 type FrameworkGetParams = Bake.ServerEntryPoint["getParams"];
 type TypeAndFlags = number;
 type FileIndex = number;
+type Params = Record<string, string | string[]>;
+/** One URL segment of a route: static text, or the name of the param that fills it. */
+interface RoutePart {
+  kind: "text" | "param" | "catchAll";
+  value: string;
+}
 
 /**
  * This layer is implemented in JavaScript to reduce Native <-> JS context switches,
@@ -19,7 +25,7 @@ export async function renderRoutesForProdStatic(
   getParams: FrameworkGetParams[],
   clientEntryUrl: string[],
   // Indexed by route index
-  patterns: string[],
+  routeParts: RoutePart[][],
   files: FileIndex[][],
   typeAndFlags: TypeAndFlags[],
   sourceRouteFiles: string[],
@@ -31,7 +37,7 @@ export async function renderRoutesForProdStatic(
     allServerFiles,
     renderStatic,
     clientEntryUrl,
-    patterns,
+    routeParts,
     files,
     typeAndFlags,
     sourceRouteFiles,
@@ -42,14 +48,44 @@ export async function renderRoutesForProdStatic(
 
   let loadedModules = new Array(allServerFiles.length);
 
+  /** The route's output directory relative to `outBase`, with each dynamic segment filled from `params`. */
+  function routePath(i: number, params: Params | null): string {
+    let path = "";
+    for (const part of routeParts[i]) {
+      if (part.kind === "text") {
+        path += "/" + part.value;
+        continue;
+      }
+      const value = params?.[part.value];
+      const route = JSON.stringify(sourceRouteFiles[i]);
+      if (value === undefined) {
+        throw new Error(`Missing param ${JSON.stringify(part.value)} for route ${route}`);
+      }
+      // An empty catch-all value renders the route's own directory.
+      if (part.kind === "catchAll" && $isJSArray(value) && value.every(v => typeof v === "string")) {
+        for (const v of value) path += "/" + v;
+      } else if (typeof value === "string" && (part.kind === "catchAll" || value.length > 0)) {
+        path += "/" + value;
+      } else {
+        const expected = part.kind === "catchAll" ? "a string or an array of strings" : "a non-empty string";
+        throw new Error(
+          `Param ${JSON.stringify(part.value)} for route ${route} must be ${expected}, got ${Bun.inspect(value)}`,
+        );
+      }
+    }
+    return path;
+  }
+
   async function doGenerateRoute(
     type: number,
     noClient: boolean,
     i: number,
     layouts: any[],
     pageModule: any,
-    params: Record<string, string | string[]> | null,
+    params: Params | null,
   ) {
+    // A missing param is reported before the page renders.
+    const dir = pathJoin(outBase, routePath(i, params));
     // Call the framework's rendering function
     const callback = renderStatic[type];
     $assert(callback != null && $isCallable(callback));
@@ -75,34 +111,7 @@ export async function renderRoutesForProdStatic(
       throw new Error(`Route ${JSON.stringify(sourceRouteFiles[i])} cannot be pre-rendered to a static page.`);
     }
 
-    await Promise.all(
-      Object.entries(files).map(([key, value]) => {
-        if (params != null) {
-          $assert(patterns[i].includes(`:`));
-          const newKey = patterns[i].replace(/:(\w+)/g, (_, p1) =>
-            typeof params[p1] === "string" ? params[p1] : params[p1].join("/"),
-          );
-          return Bun.write(pathJoin(outBase, newKey + key), value);
-        }
-        return Bun.write(pathJoin(outBase, patterns[i] + key), value);
-      }),
-    );
-  }
-
-  function callRouteGenerator(
-    type: number,
-    noClient: boolean,
-    i: number,
-    layouts: any[],
-    pageModule: any,
-    params: Record<string, string | string[]>,
-  ) {
-    for (const param of paramInformation[i]!) {
-      if (params[param] === undefined) {
-        throw new Error(`Missing param ${param} for route ${JSON.stringify(sourceRouteFiles[i])}`);
-      }
-    }
-    return doGenerateRoute(type, noClient, i, layouts, pageModule, params);
+    await Promise.all(Object.entries(files).map(([key, value]) => Bun.write(pathJoin(dir, key), value)));
   }
 
   let modulesForFiles = [];
@@ -111,7 +120,8 @@ export async function renderRoutesForProdStatic(
     if (fileList.length > 1) {
       let anyPromise = false;
       let loaded = fileList.map(
-        x => loadedModules[x] ?? ((anyPromise = true), import(allServerFiles[x]).then(x => (loadedModules[x] = x))),
+        id =>
+          loadedModules[id] ?? ((anyPromise = true), import(allServerFiles[id]).then(mod => (loadedModules[id] = mod))),
       );
       modulesForFiles.push(anyPromise ? await Promise.all(loaded) : loaded);
     } else {
@@ -120,7 +130,8 @@ export async function renderRoutesForProdStatic(
     }
   }
 
-  return Promise.all(
+  // Every failing route is reported, not only the first one to reject.
+  const settled = await Promise.allSettled(
     modulesForFiles.map(async (modules, i) => {
       const typeAndFlag = typeAndFlags[i];
       const type = typeAndFlag & 0xff;
@@ -138,23 +149,17 @@ export async function renderRoutesForProdStatic(
         let result;
         if (paramGetter[Symbol.asyncIterator] != undefined) {
           for await (const params of paramGetter) {
-            result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
-            if ($isPromise(result) && $isPromisePending(result)) {
-              await result;
-            }
+            result = doGenerateRoute(type, noClient, i, layouts, pageModule, params);
+            if ($isPromise(result)) await result;
           }
         } else if (paramGetter[Symbol.iterator] != undefined) {
           for (const params of paramGetter) {
-            result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
-            if ($isPromise(result) && $isPromisePending(result)) {
-              await result;
-            }
+            result = doGenerateRoute(type, noClient, i, layouts, pageModule, params);
+            if ($isPromise(result)) await result;
           }
         } else {
           await Promise.all(
-            paramGetter.pages.map(params => {
-              callRouteGenerator(type, noClient, i, layouts, pageModule, params);
-            }),
+            paramGetter.pages.map(params => doGenerateRoute(type, noClient, i, layouts, pageModule, params)),
           );
         }
       } else {
@@ -162,4 +167,8 @@ export async function renderRoutesForProdStatic(
       }
     }),
   );
+  const errors = settled.filter(r => r.status === "rejected").map(r => (r as PromiseRejectedResult).reason);
+  const { length: failed } = errors;
+  if (failed === 1) throw errors[0];
+  if (failed > 1) throw new AggregateError(errors, `${failed} routes failed to pre-render`);
 }

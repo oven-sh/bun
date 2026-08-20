@@ -187,6 +187,7 @@
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
 #include "JSBakeResponse.h"
+#include "../../runtime/bake/BakeGlobalObject.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -474,7 +475,7 @@ extern "C" size_t Bun__reported_memory_size;
 // executionContextId: -1 for main thread
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
-extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, bool bakeMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
@@ -529,6 +530,15 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 vm,
                 structure,
                 static_cast<ScriptExecutionContextIdentifier>(executionContextId));
+        } else if (bakeMode) {
+            auto* structure = Bake::GlobalObject::createStructure(vm);
+            if (!structure) [[unlikely]] {
+                return nullptr;
+            }
+            return Bake::GlobalObject::create(
+                vm,
+                structure,
+                &Bake::GlobalObject::globalObjectMethodTable());
         } else if (evalMode) {
             auto* structure = Zig::EvalGlobalObject::createStructure(vm);
             if (!structure) [[unlikely]] {

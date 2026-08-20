@@ -466,6 +466,47 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+async function readUntil(stream: ReadableStream<Uint8Array>, needle: string): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  try {
+    while (!output.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream closed before ${JSON.stringify(needle)} appeared. Output:\n${output}`);
+      output += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return output;
+}
+
+test("--watch reports an unresolvable relative import longer than the path buffer and keeps watching", async () => {
+  // Longer than MAX_PATH_BYTES; the watch-mode dir-cache bust used to overflow its join buffer and abort.
+  const specifier = "./" + Buffer.alloc((isWindows ? 96 : 4) * 1024 + 1024, "a").toString();
+  using dir = tempDir("build-watch-long-specifier", {
+    "entry.ts": `import "${specifier}";\nconsole.log("entry");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--watch", "entry.ts", "--outdir", "dist"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  await readUntil(proc.stderr, `error: Could not resolve: "${specifier}"`);
+  expect(proc.exitCode).toBeNull();
+
+  // The failed build left the watcher running: fixing the file triggers a rebuild.
+  await Bun.write(path.join(String(dir), "entry.ts"), `console.log("fixed");`);
+  expect(await readUntil(proc.stdout, "entry.js")).toContain("Bundled 1 module");
+  expect(await Bun.file(path.join(String(dir), "dist", "entry.js")).text()).toContain("fixed");
+});
+
 // https://github.com/oven-sh/bun/issues/9859
 describe.concurrent("--no-bundle with --outdir", () => {
   test("writes a single entry point", async () => {
@@ -908,6 +949,75 @@ describe.concurrent("modules that fail to print", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Failed to generate CSS for this file");
     expect(stderr).toContain("styles.module.css");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// Each entry point is handed to the thread pool as soon as it resolves, and
+// linking schedules the source-map tasks before it can fail. A build that fails
+// past either point tears the pool down while those tasks are still running;
+// before teardown joined them, a debug build died in `Worker::deinit_soon`
+// (SEGV on a worker slot claimed by a pool thread but not initialized yet) or
+// on a mimalloc assertion from the exiting pool thread, instead of reporting
+// the error and exiting 1. The entry point order picks which window teardown
+// lands in: a resolvable entry listed last is scheduled right before teardown,
+// a missing directory listed last keeps the main thread busy while the pool
+// thread is setting its worker up.
+describe.concurrent("bun build fails while parse or source-map tasks are in flight", () => {
+  test("entry point that does not resolve, followed by one that does", async () => {
+    using dir = tempDir("build-fail-inflight-parse", { "app.js": "console.log(1);" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./missing.js", "./app.js", "--outdir", "dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: 'error: ModuleNotFound resolving "./missing.js" (entry point)\n',
+      exitCode: 1,
+    });
+  });
+
+  test("entry point that resolves, followed by one in a directory that does not exist", async () => {
+    using dir = tempDir("build-fail-inflight-parse-nodir", { "app.js": "console.log(1);" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./app.js", "./nodir/x.js", "--outdir", "dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: 'error: ModuleNotFound resolving "./nodir/x.js" (entry point)\n',
+      exitCode: 1,
+    });
+  });
+
+  test("--sourcemap build that fails to link", async () => {
+    using dir = tempDir("build-fail-inflight-sourcemap", {
+      "entry.js": `import { nope } from "./lib.js";\nconsole.log(nope);\n`,
+      "lib.js": `export const yes = 1;\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.js", "--sourcemap", "--outdir", "dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "1 | import { nope } from "./lib.js";
+                   ^
+      error: No matching export in "lib.js" for import "nope"
+          at <dir>/entry.js:1:10"
+    `);
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });

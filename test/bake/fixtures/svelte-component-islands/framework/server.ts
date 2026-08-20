@@ -6,6 +6,7 @@ import { uneval } from "devalue";
 export function render(req: Request, meta: Bake.RouteMetadata) {
   isInsideIsland = false;
   islands = {};
+  nextIslandId = 0;
   const { body, head } = svelte.render(meta.pageModule.default, {
     props: {
       params: meta.params,

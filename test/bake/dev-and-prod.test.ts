@@ -1,6 +1,6 @@
 // Tests which apply to both dev and prod. They are run twice.
 import { writeFileSync } from "node:fs";
-import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
+import { devAndProductionTest, devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "./bake-harness";
 
 const hmrSelfAcceptingModule = (label: string) => `
   console.log(${JSON.stringify(label)});
@@ -202,6 +202,65 @@ devTest("using runtime import", {
     );
   },
 });
+// The dev server does not bundle runtime.js, so its HMR runtime's "bun:wrap" must export every helper decorators, `accessor` and `#private` lowering call.
+const standardDecoratorsSource = `
+  const applied: string[] = [];
+  function dec(_value: unknown, ctx: DecoratorContext) {
+    applied.push(ctx.kind + ":" + String(ctx.name));
+  }
+  @dec
+  class Foo {
+    @dec static s = 1;
+    @dec #p = 2;
+    @dec accessor x = 3;
+    @dec m() {}
+    @dec get g() { return this.#p; }
+    @dec #pm() { return 5; }
+    accessor y = 4;
+    has(o: object) { return #p in o; }
+    pm() { return this.#pm(); }
+  }
+  const foo = new Foo();
+  foo.x += 10;
+  foo.y += 10;
+  export const decorated = applied.sort().join(",");
+  export const values = [Foo.s, foo.x, foo.y, foo.g, foo.pm(), foo.has(foo), foo.has({})].join(",");
+`;
+const expectedDecorated = "accessor:x,class:Foo,field:#p,field:s,getter:g,method:#pm,method:m";
+const expectedValues = "1,13,14,2,5,true,false";
+devAndProductionTest("standard decorators runtime import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { decorated, values } from "./decorated";
+      console.log(decorated);
+      console.log(values);
+    `,
+    "decorated.ts": standardDecoratorsSource,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(expectedDecorated, expectedValues);
+  },
+});
+devTest("standard decorators runtime import on the server", {
+  framework: minimalFramework,
+  files: {
+    "decorated.ts": standardDecoratorsSource,
+    "routes/index.ts": `
+      import { decorated, values } from "../decorated";
+      export default function (req, meta) {
+        return new Response(decorated + "\\n" + values);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals(expectedDecorated + "\n" + expectedValues);
+  },
+});
 devTest("hmr handles rapid consecutive edits", {
   files: {
     "index.html": emptyHtmlFile({
@@ -295,8 +354,7 @@ devTest("hmr handles rapid consecutive edits", {
     // `num_subscribers(HotUpdate) == 0` / `active_viewers == 0` and the
     // hot_update is dropped server-side (DevServer.rs finalize_bundle), so
     // the sentinel never reaches the client. Re-writing on each
-    // `received-hmr-event` (which fires on socket open and on every 'u'/'e'
-    // WS frame) guarantees that at least one sentinel write lands after the
+    // `received-hmr-event` (socket open, and each applied hot update) guarantees that at least one sentinel write lands after the
     // server has a subscriber. The same-content writes are idempotent and
     // the loop terminates the moment waitForMessage resolves below.
     const sentinelContent = hmrSelfAcceptingModule("render sentinel");

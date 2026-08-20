@@ -24,19 +24,14 @@ export function react(): Bake.Framework {
         ignoreUnderscores: true,
       },
     ],
-    staticRouters: ["public"],
     reactFastRefresh: {
       importSource: "react-refresh/runtime",
     },
     serverComponents: {
       separateSSRGraph: true,
       serverRegisterClientReferenceExport: "registerClientReference",
-      serverRuntimeImportSource: "react-server-dom-webpack/server",
+      serverRuntimeImportSource: "react-server-dom-bun/server",
     },
-    bundlerOptions: {
-      ssr: {
-        conditions: ["react-server"],
-      },
-    },
+    // No `bundlerOptions`: Bun adds the "react-server" condition to the server graph whenever `serverComponents` is set.
   };
 }

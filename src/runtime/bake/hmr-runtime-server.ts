@@ -137,7 +137,15 @@ server_exports = {
             }
 
             const [routeBundleIndex, promise] = bundleNewRoute(req, newUrl);
-            if (promise) await promise;
+            if (promise) {
+              try {
+                await promise;
+              } catch (failure) {
+                // The target route does not build: the rejection is its "Build Failed" page.
+                if (failure instanceof Response) return failure;
+                throw failure;
+              }
+            }
             if (req.signal.aborted) return new Response("");
 
             const newArgs = newRouteParams(req, routeBundleIndex, newUrl);
@@ -159,7 +167,10 @@ server_exports = {
     }
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
-    replaceModules(modules);
+    // Not awaited: requests deferred on this bundle run as soon as this returns and read the manifest below.
+    replaceModules(modules).catch(err => {
+      console.error(err);
+    });
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {

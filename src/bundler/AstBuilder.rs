@@ -112,14 +112,18 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         unsafe { &mut *self.current_scope }
     }
 
-    pub(crate) fn new_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Result<Ref, OOM> {
+    fn push_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Ref {
         let inner_index: RefInt = RefInt::try_from(self.symbols.len()).unwrap();
         self.symbols.push(Symbol {
             kind,
             original_name: bun_ast::StoreStr::new(identifier),
             ..Default::default()
         });
-        let ref_ = Ref::new(inner_index, self.source_index, RefTag::Symbol);
+        Ref::new(inner_index, self.source_index, RefTag::Symbol)
+    }
+
+    pub(crate) fn new_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Result<Ref, OOM> {
+        let ref_ = self.push_symbol(kind, identifier);
         self.current_scope_mut().generated.push(ref_);
         self.declared_symbols.append(DeclaredSymbol {
             ref_,
@@ -283,11 +287,16 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         });
 
+        // Declared by the linker's namespace export part, like js_parser's `exports` symbol.
+        let exports_ref = self.push_symbol(SymbolKind::Other, b"exports");
+        // The code part must not use it, or the namespace object could never be tree shaken.
+        debug_assert!(!parts[1].symbol_uses.contains(&exports_ref));
+
         let mut top_level_symbols_to_parts = TopLevelSymbolToParts::default();
         // SAFETY: module_scope is a live arena allocation (set in init, scopes stack is empty)
         let module_scope_ref = unsafe { &*module_scope };
         let generated_len = module_scope_ref.generated.len();
-        top_level_symbols_to_parts.ensure_total_capacity(generated_len)?;
+        top_level_symbols_to_parts.ensure_total_capacity(generated_len + 1)?;
         // `ArrayHashMap` keeps keys/values in private `Vec`s and rebuilds
         // hashes on every `put_assume_capacity`, so a plain pre-reserved
         // insert loop suffices (and `re_index` is a no-op here). `Vec` is
@@ -296,6 +305,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             top_level_symbols_to_parts
                 .put_assume_capacity(ref_, bun_alloc::AstAlloc::vec_from_slice(&[1]));
         }
+        // Pulling in the exports of this module always pulls in the export part
+        top_level_symbols_to_parts.put_assume_capacity(
+            exports_ref,
+            bun_alloc::AstAlloc::vec_from_slice(&[bun_ast::NAMESPACE_EXPORT_PART_INDEX]),
+        );
         top_level_symbols_to_parts.re_index()?;
 
         // For more details on this section, look at js_parser.toAST
@@ -535,8 +549,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             parts,
             module_scope: module_scope_value,
             symbols: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.symbols), self.bump),
-            exports_ref: Ref::NONE,
-            wrapper_ref: Ref::NONE,
+            exports_ref,
+            // Doubles as the HMR API binding, as in js_parser's `to_ast`.
+            wrapper_ref: self.hmr_api_ref,
             module_ref: self.module_ref,
             import_records: bun_alloc::vec_from_iter_in(
                 core::mem::take(&mut self.import_records),

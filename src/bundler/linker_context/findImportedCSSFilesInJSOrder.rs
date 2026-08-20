@@ -25,10 +25,15 @@ use bun_collections::DynamicBitSet as BitSet;
 /// "require()" and "import()"). This is because the import order is impossible
 /// to determine since the imports happen at run-time instead of compile-time.
 /// In this case we just pick an arbitrary but consistent order.
+///
+/// `client_of_proxy` maps a client reference proxy to its `"use client"` file
+/// (`Index::INVALID` elsewhere, empty without server components): a server
+/// importer only sees the proxy, but the stylesheets are on the client file.
 pub(crate) fn find_imported_css_files_in_js_order(
     this: &LinkerContext,
     _temp: &Arena,
     entry_point: Index,
+    client_of_proxy: &[Index],
 ) -> Vec<Index> {
     let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
     let mut order: Vec<Index> = Vec::new();
@@ -79,6 +84,12 @@ pub(crate) fn find_imported_css_files_in_js_order(
                     && !visited.is_set(record.source_index.get() as usize)
                 {
                     stack.push(Frame::Enter(record.source_index));
+                    if let Some(&client) = client_of_proxy.get(record.source_index.get() as usize)
+                        && client.is_valid()
+                        && !visited.is_set(client.get() as usize)
+                    {
+                        stack.push(Frame::Enter(client));
+                    }
                 }
             }
         }

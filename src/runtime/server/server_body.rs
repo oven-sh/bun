@@ -811,7 +811,6 @@ impl AnyRoute {
 
                 let style: FrameworkRouter::Style =
                     FrameworkRouter::Style::from_js(style_js.unwrap(), global)?;
-                // Style impls Drop; `?` drops it on the error path.
 
                 // trim the /*
                 // NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`.
@@ -903,13 +902,8 @@ pub enum ServePluginsState {
         plugin: Box<JSBundler::Plugin>,
         promise: jsc::JSPromiseStrong,
         html_bundle_routes: Vec<*mut html_bundle::Route>,
-        // LIFETIMES.tsv classifies this BORROW_PARAM (`Option<&'a DevServer>`),
-        // but `ServePlugins` is a refcounted heap object handed across FFI as
-        // a raw promise-context pointer with dynamic lifetime, so a borrowed
-        // `&'a DevServer` cannot be expressed here. Back-reference invariant:
-        // the DevServer outlives the pending plugin load (see the SAFETY
-        // comments at the deref sites in `on_plugins_resolved`/`_rejected`).
-        dev_server: Option<NonNull<DevServer>>,
+        // BACKREF: `ServePlugins` is a raw promise-context pointer across FFI, so no borrow fits; the DevServer holds a server pending request until the load settles, and `Mut` because settling writes through it.
+        dev_server: Option<bun_ptr::BackRef<DevServer, bun_ptr::Mut>>,
     },
     Loaded(Box<JSBundler::Plugin>),
     /// Error information is not stored as it is already reported.
@@ -921,9 +915,10 @@ pub enum GetOrStartLoadResult<'a> {
     Ready(Option<&'a JSBundler::Plugin>),
     Pending,
     Err,
+    /// A plugin's `setup()` ran synchronously and called `server.stop(true)`; the caller's connection is closed.
+    Stopped,
 }
 
-#[derive(Clone, Copy)]
 pub enum ServePluginsCallback<'a> {
     /// Raw `*mut` because the route is stored in
     /// `ServePluginsState::Pending.html_bundle_routes` and later resolved via
@@ -931,7 +926,8 @@ pub enum ServePluginsCallback<'a> {
     /// (mutation goes through `Cell`/`JsCell`), so the `*mut` spelling is
     /// signature-only; callers pass `Route::as_ctx_ptr(&self)`.
     HtmlBundleRoute(*mut html_bundle::Route),
-    DevServer(&'a DevServer),
+    /// `&mut` because settling the load writes through the stored `BackRef<_, Mut>`.
+    DevServer(&'a mut DevServer),
 }
 
 impl ServePlugins {
@@ -980,52 +976,45 @@ impl ServePlugins {
         }
     }
 
-    pub(crate) fn get_or_start_load(
-        &mut self,
-        global: &JSGlobalObject,
-        cb: ServePluginsCallback<'_>,
-    ) -> JsResult<GetOrStartLoadResult<'_>> {
-        loop {
-            match &mut self.state {
-                ServePluginsState::Unqueued(_) => {
-                    self.load_and_resolve_plugins(global)?;
-                    // could jump to any branch if synchronously resolved
-                    continue;
-                }
-                ServePluginsState::Pending {
-                    html_bundle_routes,
-                    dev_server,
-                    ..
-                } => {
-                    match cb {
-                        ServePluginsCallback::HtmlBundleRoute(route) => {
-                            // SAFETY: caller passed a live `&mut Route` coerced to `*mut`; we
-                            // bump its intrusive refcount before storing so it outlives the
-                            // pending state. Write provenance is preserved for the later
-                            // `&mut *route` in handle_on_resolve/handle_on_reject.
-                            unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(route) };
-                            html_bundle_routes.push(route);
-                        }
-                        ServePluginsCallback::DevServer(server) => {
-                            debug_assert!(
-                                dev_server.is_none()
-                                    || dev_server.map(|p| p.as_ptr().cast_const())
-                                        == Some(std::ptr::from_ref(server))
-                            ); // one dev server per server
-                            *dev_server = Some(NonNull::from(server));
-                        }
-                    }
-                    return Ok(GetOrStartLoadResult::Pending);
-                }
-                ServePluginsState::Loaded(_) => break,
-                ServePluginsState::Err => return Ok(GetOrStartLoadResult::Err),
-            }
+    /// Starts the load if nothing started it yet. Plugin `setup()` may run, and even settle, before this returns.
+    pub(crate) fn start_load(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        if matches!(self.state, ServePluginsState::Unqueued(_)) {
+            self.load_and_resolve_plugins(global)?;
         }
-        // NOTE: split out of the loop so the `Loaded` arm's borrow of
-        // `self.state` doesn't conflict with the `Unqueued` arm's `&mut self`.
+        Ok(())
+    }
+
+    /// After [`start_load`]: the loaded plugins, or registers `cb` to be told when the pending load settles.
+    pub(crate) fn get_or_register(
+        &mut self,
+        cb: ServePluginsCallback<'_>,
+    ) -> GetOrStartLoadResult<'_> {
         match &mut self.state {
-            ServePluginsState::Loaded(plugins) => Ok(GetOrStartLoadResult::Ready(Some(plugins))),
-            _ => unreachable!(),
+            ServePluginsState::Unqueued(_) => unreachable!("start_load() leaves Unqueued"),
+            ServePluginsState::Pending {
+                html_bundle_routes,
+                dev_server,
+                ..
+            } => {
+                match cb {
+                    ServePluginsCallback::HtmlBundleRoute(route) => {
+                        // SAFETY: caller passed a live `&mut Route` coerced to `*mut`; we
+                        // bump its intrusive refcount before storing so it outlives the
+                        // pending state. Write provenance is preserved for the later
+                        // `&mut *route` in handle_on_resolve/handle_on_reject.
+                        unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(route) };
+                        html_bundle_routes.push(route);
+                    }
+                    ServePluginsCallback::DevServer(server) => {
+                        let server = bun_ptr::BackRef::new_mut(server);
+                        debug_assert!(dev_server.is_none_or(|existing| existing == server)); // one dev server per server
+                        *dev_server = Some(server);
+                    }
+                }
+                GetOrStartLoadResult::Pending
+            }
+            ServePluginsState::Loaded(plugins) => GetOrStartLoadResult::Ready(Some(plugins)),
+            ServePluginsState::Err => GetOrStartLoadResult::Err,
         }
     }
 
@@ -1155,12 +1144,15 @@ impl ServePlugins {
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load (stored as a back-reference
-            // by `get_or_start_load`; the owning Box<DevServer> is held by the
-            // server instance, which itself holds a counted ref on `self`).
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(Some(
+            let any_server = server.server;
+            // SAFETY: the DevServer holds a pending request on its server, so it is live and no other borrow exists.
+            bun_core::handle_oom(unsafe { server.get_mut() }.on_plugins_resolved(Some(
                 std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
             )));
+            // Releases the pending request from `ensure_route_is_bundled`; may free the DevServer, so it comes last.
+            if let Some(mut s) = any_server {
+                s.on_static_request_complete();
+            }
         }
     }
 
@@ -1187,8 +1179,13 @@ impl ServePlugins {
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_rejected());
+            let any_server = server.server;
+            // SAFETY: same as the `dev_server` arm of `handle_on_resolve`.
+            bun_core::handle_oom(unsafe { server.get_mut() }.on_plugins_rejected());
+            // May free the DevServer, so it comes after the last use of `server`.
+            if let Some(mut s) = any_server {
+                s.on_static_request_complete();
+            }
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
@@ -1421,6 +1418,7 @@ where
     /// - .ready if no plugin has to be loaded
     /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
     /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
+    /// - .stopped if a plugin's `setup()` stopped this server; `callback` was not stored.
     pub(crate) fn get_or_load_plugins(
         &mut self,
         callback: ServePluginsCallback<'_>,
@@ -1439,13 +1437,19 @@ where
             // `ServePlugins::init` (heap::alloc); intrusive refcount permits
             // mutation through any owner. No other `&mut ServePlugins` is live
             // on this (single-threaded) JS thread for the call's duration.
-            return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
-                Ok(r) => r,
+            let plugins = unsafe { &mut *p.as_ptr() };
+            match plugins.start_load(&global) {
+                Ok(()) => {}
                 Err(JsError::Thrown | JsError::Terminated) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            };
+            }
+            // A synchronous `setup()` in there may have called `server.stop(true)`.
+            if self.flags.contains(ServerFlags::TERMINATED) {
+                return GetOrStartLoadResult::Stopped;
+            }
+            return plugins.get_or_register(callback);
         }
         // no plugins
         GetOrStartLoadResult::Ready(None)

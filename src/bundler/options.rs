@@ -1532,6 +1532,16 @@ impl<'a> BundleOptions<'a> {
         !self.dev_server.is_null()
     }
 
+    /// Base of project-relative paths: the dev server root (`root_dir`), else the process cwd.
+    pub(crate) fn top_level_dir(&self) -> &[u8] {
+        if self.has_dev_server() {
+            debug_assert!(!self.root_dir.is_empty());
+            &self.root_dir
+        } else {
+            Fs::FileSystem::get().top_level_dir
+        }
+    }
+
     pub(crate) const DEFAULT_UNWRAP_COMMONJS_PACKAGES: &'static [&'static [u8]] = &[
         b"react",
         b"react-is",
@@ -1541,6 +1551,22 @@ impl<'a> BundleOptions<'a> {
         b"react-server",
         b"react-refresh",
     ];
+
+    /// Whether this bundle has a client graph alongside server graphs (dev server or `bun build --app`); `framework` is set on every bake transpiler, including frameworks without server components.
+    #[inline]
+    pub(crate) fn is_bake_build(&self) -> bool {
+        self.framework.is_some() || self.has_dev_server()
+    }
+
+    /// The target stylesheets are minified and printed for. Bake builds ship every stylesheet to the browser even when a server graph imports it; minify and print must agree because the `light-dark()` polyfill injects definitions at minify and rewrites references at print.
+    #[inline]
+    pub(crate) fn css_target(&self) -> Target {
+        if self.is_bake_build() {
+            Target::Browser
+        } else {
+            self.target
+        }
+    }
 
     pub(crate) fn load_defines(
         &mut self,

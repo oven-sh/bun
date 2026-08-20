@@ -217,6 +217,7 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
         sourceURL = remappedFrame.source_url.toWTFString();
+        remappedFrame.source_url.deref();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
         lineColumn.column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
     }

@@ -1,7 +1,7 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { join, parse } from "path";
 
 function replaceHash(html: string) {
   return html
@@ -777,6 +777,48 @@ test("wildcard static routes", async () => {
   }
 });
 
+test("dev server serves html routes when the cwd is the filesystem root", async () => {
+  // The dev server root is the cwd; the filesystem root is the one root that ends in a separator.
+  using dir = tempDir("bun-serve-html-fs-root", {
+    "index.html": /*html*/ `<!DOCTYPE html>
+      <html>
+        <head><script type="module" src="./app.js"></script></head>
+        <body><h1>served from the filesystem root</h1></body>
+      </html>`,
+    "app.js": /*js*/ `console.log("served from the filesystem root");`,
+    "serve.js": /*js*/ `
+      import html from "./index.html";
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const page = await fetch(server.url);
+      const pageText = await page.text();
+      const scriptSrc = pageText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1];
+      const script = await fetch(new URL(scriptSrc, server.url));
+      const scriptText = await script.text();
+      server.stop(true);
+      console.log(
+        JSON.stringify({
+          page: page.status,
+          pageHasHeading: pageText.includes("served from the filesystem root"),
+          script: script.status,
+          scriptHasApp: scriptText.includes('"served from the filesystem root"'),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "serve.js")],
+    env: bunEnv,
+    cwd: parse(process.cwd()).root,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe(JSON.stringify({ page: 200, pageHasHeading: true, script: 200, scriptHasApp: true }));
+  expect(exitCode).toBe(0);
+});
+
 test("serve html with JSX runtime in development mode", async () => {
   const dir = join(import.meta.dir, "jsx-runtime");
   const { default: html } = await import(join(dir, "index.html"));
@@ -1219,5 +1261,136 @@ describe("production headers and import.meta.env", () => {
       cases.map(([development, value]) => run(development, `[serve.static]\nsourcemap = ${value}`)),
     );
     expect(results).toEqual(cases.map(([, , expected]) => expected));
+  });
+});
+
+// server.reload() re-registers the same html file; a second route bundle used to strand requests deferred on the first.
+test("server.reload() while an html route's first bundle is still in flight", async () => {
+  using dir = tempDir("bun-serve-html-reload-during-bundle", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    // Holds the first bundle open until serve.ts has reloaded the server.
+    "plugin.ts": /*ts*/ `
+      export default {
+        name: "hold-bundle",
+        setup(build) {
+          build.onLoad({ filter: /app\\.ts$/ }, async () => {
+            globalThis.bundleStarted.resolve();
+            await globalThis.releaseBundle.promise;
+            return { loader: "ts", contents: "console.log('app');" };
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+
+      globalThis.bundleStarted = Promise.withResolvers();
+      globalThis.releaseBundle = Promise.withResolvers();
+
+      const options = { port: 0, development: true, routes: { "/": html } };
+      const server = Bun.serve(options);
+
+      // The HMR "set url" message ('n' + route pattern) is answered with 'n' + the route bundle index as a u32.
+      async function routeBundleIndex() {
+        const url = new URL("/_bun/hmr", server.url);
+        url.protocol = "ws:";
+        const ws = new WebSocket(url);
+        ws.binaryType = "arraybuffer";
+        const { promise, resolve, reject } = Promise.withResolvers();
+        ws.onerror = reject;
+        ws.onclose = () => reject(new Error("hmr socket closed before answering"));
+        ws.onmessage = ({ data }) => {
+          const view = new DataView(data);
+          if (view.getUint8(0) === "n".charCodeAt(0)) resolve(view.getUint32(1, true));
+        };
+        ws.onopen = () => ws.send(new TextEncoder().encode("n/"));
+        try {
+          return await promise;
+        } finally {
+          ws.onclose = null;
+          ws.close();
+        }
+      }
+
+      const first = fetch(server.url).then(res => res.status);
+      await globalThis.bundleStarted.promise;
+      const before = await routeBundleIndex();
+
+      server.reload(options);
+      const after = await routeBundleIndex();
+
+      globalThis.releaseBundle.resolve();
+      const second = fetch(server.url).then(res => res.status);
+
+      console.log(JSON.stringify({ first: await first, second: await second, sameRouteBundle: before === after }));
+      server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }, stderr).toStrictEqual({
+    stdout: JSON.stringify({ first: 200, second: 200, sameRouteBundle: true }),
+    exitCode: 0,
+  });
+});
+
+// A build error whose fix does not arrive as a file change (here: plugin state) is retried when server.reload() re-registers the route.
+test("server.reload() retries a cached build error", async () => {
+  using dir = tempDir("bun-serve-html-reload-retries-failure", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    "plugin.ts": /*ts*/ `
+      export default {
+        name: "external-state",
+        setup(build) {
+          build.onLoad({ filter: /app\\.ts$/ }, () => {
+            globalThis.loads++;
+            return { loader: "ts", contents: globalThis.broken ? "console.log(" : "console.log('app');" };
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+      globalThis.loads = 0;
+      globalThis.broken = true;
+      const options = { port: 0, development: true, routes: { "/": html } };
+      const server = Bun.serve(options);
+      const status = () => fetch(server.url).then(res => res.status);
+
+      const statuses = [await status(), await status(), await status()];
+      globalThis.broken = false;
+      // The failure is retried once per route and then cached until something invalidates it; a plain re-request does not.
+      const cached = await status();
+      const loadsBeforeReload = globalThis.loads;
+      server.reload(options);
+      const reloaded = await status();
+      console.log(JSON.stringify({ statuses, cached, loadsBeforeReload, reloaded, loads: globalThis.loads }));
+      server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.ts"],
+    // Debug builds skip the retry by default.
+    env: { ...bunEnv, BUN_ASSUME_PERFECT_INCREMENTAL: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }, stderr).toStrictEqual({
+    stdout: JSON.stringify({ statuses: [500, 500, 500], cached: 500, loadsBeforeReload: 2, reloaded: 200, loads: 3 }),
+    exitCode: 0,
   });
 });

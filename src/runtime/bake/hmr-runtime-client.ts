@@ -52,9 +52,7 @@ async function performRouteReload() {
       isPerformingRouteReload = false;
       return;
     } catch (err) {
-      console.error("Failed to perform Server-side reload.");
-      console.error(err);
-      console.error("The page will hard-reload now.");
+      console.error("Failed to perform Server-side reload. The page will hard-reload now.", err);
     }
   }
 

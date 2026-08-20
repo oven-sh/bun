@@ -62,6 +62,18 @@ pub enum ChunkKind {
     HmrChunk = 1,
 }
 
+impl ChunkKind {
+    /// Name under which `dump_bundle` writes the most recent chunk of this kind, or its source map.
+    pub(crate) fn dump_file_name(self, source_map: bool) -> &'static [u8] {
+        match (self, source_map) {
+            (ChunkKind::InitialResponse, false) => b"latest_chunk.js",
+            (ChunkKind::InitialResponse, true) => b"latest_chunk.js.map",
+            (ChunkKind::HmrChunk, false) => b"latest_hmr.js",
+            (ChunkKind::HmrChunk, true) => b"latest_hmr.js.map",
+        }
+    }
+}
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum TraceImportGoal {
     FindCss,
@@ -231,6 +243,8 @@ impl IncrementalResult {
 pub struct GraphTraceState {
     pub(crate) client_bits: DynamicBitSet,
     pub(crate) server_bits: DynamicBitSet,
+    /// Filled by `TraceImportGoal::FindErrors`.
+    pub(crate) failures: Vec<SerializedFailure>,
 }
 impl GraphTraceState {
     #[inline]
@@ -244,6 +258,7 @@ impl GraphTraceState {
     pub(crate) fn clear(&mut self) {
         self.server_bits.unmanaged.set_all(false);
         self.client_bits.unmanaged.set_all(false);
+        self.failures.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
@@ -261,6 +276,7 @@ impl GraphTraceState {
         self.server_bits
             .resize(0, false)
             .expect("freeing memory can not fail");
+        self.failures = Vec::new();
     }
 }
 
@@ -445,6 +461,11 @@ impl HotReloadEvent {
         // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();
 
+        // Any file change may be the fix for a build error a route already retried once, even one outside the graph.
+        for route_bundle in &mut dev.route_bundles {
+            route_bundle.rebundled_for_failures = false;
+        }
+
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
@@ -454,9 +475,9 @@ impl HotReloadEvent {
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
-                // SAFETY: server_transpiler is initialized in DevServer::init before any
-                // HotReloadEvent can fire.
-                let _ = unsafe { dev.server_transpiler.assume_init_mut() }
+                let _ = dev
+                    .server_transpiler
+                    .get_mut()
                     .resolver
                     .bust_dir_cache(changed_dir);
 
@@ -478,7 +499,9 @@ impl HotReloadEvent {
                         // `specifier` points into the dep's owned `Box<[u8]>`, which is
                         // not mutated until after `resolve` returns.
                         // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                        let resolved = dev
+                            .server_transpiler
+                            .get_mut()
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
@@ -659,11 +682,6 @@ impl HotReloadEvent {
 
         let mut entry_points = EntryPointList::default();
 
-        // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
-        // `process_file_list` mutates graph/watcher/transpiler fields of `dev`,
-        // all disjoint from `dev.watcher_atomics.events[_]` (where `first` lives).
-        unsafe { (*first).process_file_list(&mut *dev, &mut entry_points) };
-
         // SAFETY: `first` is live; `timer` was set by
         // `WatcherAtomics::watcher_acquire_event` before submission.
         let timer = unsafe { (*first).timer };
@@ -673,9 +691,7 @@ impl HotReloadEvent {
         // to avoid aliasing UB.
         let mut current: *mut HotReloadEvent = first;
         loop {
-            // SAFETY: `current` always points at a live event owned by
-            // `dev.watcher_atomics`; `&mut *dev` re-borrowed for the call only,
-            // disjoint per the note above.
+            // SAFETY: `current` is a live event in `dev.watcher_atomics`, disjoint from the fields `process_file_list` mutates.
             unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
             // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
             match unsafe {
@@ -1154,9 +1170,14 @@ bun_bundler::link_impl_DevServerHandle! {
             super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
                 .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
-        handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
+        handle_parse_task_failure(err, graph, abs_path, loader, log, bv2) => {
             (*this)
-                .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
+                .handle_parse_task_failure(&err.into(), graph, abs_path, loader, &*log, &mut *bv2)
+                .map_err(Into::into)
+        },
+        handle_client_component_boundary_failure(abs_path) => {
+            (*this)
+                .handle_client_component_boundary_failure(abs_path)
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {
@@ -1173,8 +1194,8 @@ bun_bundler::link_impl_DevServerHandle! {
                 .track_resolution_failure(import_source, specifier, renderer, loader)
                 .map_err(Into::into)
         },
-        is_file_cached(abs_path, side) => {
-            (*this).is_file_cached(abs_path, side).map(|e| {
+        is_file_cached(abs_path, side, attribute, default) => {
+            (*this).is_file_cached(abs_path, side, attribute, default).map(|e| {
                 use bun_bundler::bake_types::CacheKind;
                 bun_bundler::bake_types::CacheEntry {
                     kind: match e.kind {
@@ -1186,6 +1207,7 @@ bun_bundler::link_impl_DevServerHandle! {
                 }
             })
         },
+        bundled_loader(abs_path, side) => (*this).bundled_loader(abs_path, side),
         asset_hash(abs_path) => (*this).assets.get_hash(abs_path),
         current_bundle_start_data() => {
             (*this)
@@ -1274,11 +1296,16 @@ impl DirectoryWatchStore {
         }
 
         let mut buf = bun_paths::path_buffer_pool::get();
-        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-            &mut buf.0,
-            &[specifier],
-        );
+        let Some(joined) =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
+                &mut buf.0,
+                &[specifier],
+            )
+        else {
+            // Same outcome as the NameTooLong case in `insert`: nothing to watch.
+            return Ok(());
+        };
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
 
         // The `import_source` parameter is not a stable string. Since the
@@ -1384,19 +1411,18 @@ impl DirectoryWatchStore {
         });
 
         // Try to use an existing open directory handle
-        // SAFETY: server_transpiler is initialized by Framework::init_transpiler
-        // before DevServer accepts requests; `dev` is a valid *mut DevServer.
-        let cache_fd: Option<bun_sys::Fd> =
-            match unsafe { (*dev).server_transpiler.assume_init_mut() }
-                .resolver
-                .read_dir_info(dir_name_to_watch)
-            {
-                Ok(Some(cache)) => {
-                    let fd = cache.get_file_descriptor();
-                    if fd.is_valid() { Some(fd) } else { None }
-                }
-                Ok(None) | Err(_) => None,
-            };
+        // SAFETY: `dev` owns this store; `server_transpiler` is disjoint from `directory_watchers`.
+        let cache_fd: Option<bun_sys::Fd> = match unsafe { &mut (*dev).server_transpiler }
+            .get_mut()
+            .resolver
+            .read_dir_info(dir_name_to_watch)
+        {
+            Ok(Some(cache)) => {
+                let fd = cache.get_file_descriptor();
+                if fd.is_valid() { Some(fd) } else { None }
+            }
+            Ok(None) | Err(_) => None,
+        };
 
         let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
             if let Some(fd) = cache_fd {

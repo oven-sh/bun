@@ -101,7 +101,7 @@ export interface DevServerTest {
 
   /** Starting files */
   files?: FileObject;
-  /** Manually specify which html files to serve */
+  /** Html files to serve (default: every `*.html` in `files`); one is served at `/*`, several at the routes `bun ./a.html ./b.html` gives them. */
   htmlFiles?: string[];
   /**
    * Framework to use. Consider `minimalFramework` if possible.
@@ -228,7 +228,25 @@ export class Dev extends EventEmitter {
     this.output.on("panic", () => {
       this.panicked = true;
     });
+    this.devProcess.exited.then(() => this.emit("exit"));
     this.nodeEnv = nodeEnv;
+  }
+
+  /** Rejects `promise` when the dev server exits, so a wait it will never satisfy fails at the call instead of the test timeout. */
+  #rejectOnExit<T>(promise: Promise<T>, waitingFor: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const onExit = () => {
+        const { exitCode, signalCode } = this.devProcess;
+        const how = exitCode !== null ? `code ${exitCode}` : `signal ${signalCode}`;
+        reject(new Error(`Dev server exited with ${how} while waiting for ${waitingFor}`));
+      };
+      if (this.devProcess.exitCode !== null || this.devProcess.signalCode !== null) {
+        onExit();
+      } else {
+        this.once("exit", onExit);
+      }
+      promise.then(resolve, reject).finally(() => this.off("exit", onExit));
+    });
   }
 
   connectSocket() {
@@ -267,7 +285,7 @@ export class Dev extends EventEmitter {
   }
 
   #waitForSyncEvent(event: WatchSynchronization) {
-    return new Promise<void>((resolve, reject) => {
+    const received = new Promise<void>(resolve => {
       let dev = this;
       function handle(kind: WatchSynchronization) {
         if (kind === event) {
@@ -277,6 +295,58 @@ export class Dev extends EventEmitter {
       }
       dev.on("watch_synchronization", handle);
     });
+    return this.#rejectOnExit(received, "watch synchronization event " + WatchSynchronization[event]);
+  }
+
+  /** Runs `change` and returns, by name and in order, the watch synchronization messages the dev server published while handling it. */
+  async watchSynchronizationMessagesFor(change: () => void | Promise<void>): Promise<string[]> {
+    assert(this.batchingChanges === null, "watchSynchronizationMessagesFor cannot be used inside batchChanges");
+    const messages: WatchSynchronization[] = [];
+    const firstMessage = Promise.withResolvers<void>();
+    const batchStarted = Promise.withResolvers<void>();
+    function onEvent(kind: WatchSynchronization) {
+      if (kind === WatchSynchronization.Started) {
+        batchStarted.resolve();
+        return;
+      }
+      messages.push(kind);
+      firstMessage.resolve();
+    }
+    this.on("watch_synchronization", onEvent);
+    try {
+      await change();
+      await this.#rejectOnExit(firstMessage.promise, "the first watch synchronization message");
+      // The batch-start ack is ordered after everything published while handling `change`, so the list is complete once it arrives.
+      this.socket!.send("H");
+      await this.#rejectOnExit(batchStarted.promise, "the batch-start watch synchronization ack");
+    } finally {
+      this.off("watch_synchronization", onEvent);
+    }
+    // Leaving batch mode is answered with ResultDidNotBundle or, if `change` invalidated something, with a build.
+    const batchEnded = this.waitForHotReload(false);
+    this.socket!.send("H");
+    await batchEnded;
+    return messages.map(kind => WatchSynchronization[kind]);
+  }
+
+  /** Returns how many bundles (successful or failed) the dev server finished while `fn` ran. */
+  async countBundles(fn: () => Promise<void>): Promise<number> {
+    let count = 0;
+    const handle = (kind: WatchSynchronization) => {
+      if (
+        kind === WatchSynchronization.AnyBuildFinished ||
+        kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets
+      ) {
+        count++;
+      }
+    };
+    this.on("watch_synchronization", handle);
+    try {
+      await fn();
+    } finally {
+      this.off("watch_synchronization", handle);
+    }
+    return count;
   }
 
   async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
@@ -319,28 +389,27 @@ export class Dev extends EventEmitter {
     const b = {
       write: resetSeenFilesWithResolvers,
       [Symbol.asyncDispose]: async () => {
-        if (wantsHmrEvent && interactive) {
-          await seenFiles.promise;
-        } else if (wantsHmrEvent) {
-          await Promise.race([seenFiles.promise]);
-        }
-        // One Bun.write can surface as several watcher events (notably on
-        // Windows); let them coalesce so releasing the batch bundles once.
-        await Bun.sleep(50);
-
-        dev.off("watch_synchronization", onSeenFiles);
-
-        this.socket!.send("H");
-        await wait;
-
-        let errors = options.errors;
-        if (errors !== null) {
-          errors ??= [];
-          for (const client of this.connectedClients) {
-            await client.expectErrorOverlay(errors, options.snapshot);
+        try {
+          if (wantsHmrEvent) {
+            await this.#rejectOnExit(seenFiles.promise, "the dev server to see the changed files");
           }
+          // Let the several watcher events one Bun.write can produce (notably on Windows) coalesce.
+          await Bun.sleep(50);
+
+          dev.off("watch_synchronization", onSeenFiles);
+
+          this.socket!.send("H");
+          await this.#rejectOnExit(wait, "the hot reload");
+
+          const errors = options.errors;
+          for (const client of this.connectedClients) {
+            // `errors: null` skips the assertion but still reads the overlay, so the exit check does not report what this write showed.
+            if (errors === null) await client.readErrorOverlay();
+            else await client.expectErrorOverlay(errors ?? [], options.snapshot);
+          }
+        } finally {
+          this.batchingChanges = null;
         }
-        this.batchingChanges = null;
       },
     };
     this.batchingChanges = b;
@@ -488,8 +557,7 @@ export class Dev extends EventEmitter {
         // failure surfaces at the dev.write() call instead of timing out.
         const exitHandler = (code: number | string) => {
           cleanup();
-          const mapped = exitCodeMapStrings[code];
-          reject(new Error(`Client exited while applying hot update${mapped ? `: ${mapped}` : ` (${code})`}`));
+          reject(clientExitedWhile("applying hot update", code));
         };
         client.on("received-hmr-event", socketEventHandler);
         client.on("exit", exitHandler);
@@ -547,7 +615,7 @@ export class Dev extends EventEmitter {
       this.output.on("panic", onPanic);
       if (this.nodeEnv === "development") {
         try {
-          await client.output.waitForLine(hmrClientInitRegex);
+          await client.waitForPageLoad();
         } catch (e) {
           this.output.off("panic", onPanic);
           try {
@@ -753,6 +821,27 @@ class DevFetchPromise extends Promise<Response> {
     });
   }
 
+  /** Expects the dev error page (500) carrying exactly these exception messages. */
+  expectErrorPage(...messages: string[]) {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      try {
+        const res = await this;
+        const text = await res.text();
+        // The page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs).
+        const match = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(text);
+        if (!match) throw new Error(`Expected a dev error page, got ${res.status}: ${text}`);
+        const payload = JSON.parse(match[1]);
+        expect(payload.problems.exceptions.map((exception: any) => exception.message)).toStrictEqual(messages);
+        expect(res.status).toBe(500);
+      } catch (err) {
+        if (this.dev.panicked) {
+          throw new Error("DevServer crashed");
+        }
+        throw err;
+      }
+    });
+  }
+
   expectFile(expected: Buffer) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       const res = await this;
@@ -807,7 +896,7 @@ class StylePromise extends Promise<Record<string, string>> {
           } else {
             reject(new Error(`Selector '${this.selector}' was found: ${JSON.stringify(style)}`));
           }
-        });
+        }, reject);
       });
     });
   }
@@ -818,6 +907,11 @@ expect(node, "test will fail if this is not node").not.toBe(process.execPath);
 
 const danglingProcesses = new Set<Subprocess>();
 
+function clientExitedWhile(activity: string, code: number | string): Error {
+  const reason = exitCodeMapStrings[code];
+  return new Error(`Client exited while ${activity}${reason ? `: ${reason}` : ` (${code})`}`);
+}
+
 /**
  * Controls a subprocess that uses happy-dom as a lightweight browser. It is
  * sandboxed in a separate process because happy-dom is a terrible mess to work
@@ -827,7 +921,6 @@ export class Client extends EventEmitter {
   #proc: Subprocess;
   output: OutputLineStream;
   exited = false;
-  exitCode: string | number | null = null;
   messages: any[] = [];
   #hmrChunk: string | null = null;
   suppressInteractivePrompt: boolean = false;
@@ -859,15 +952,15 @@ export class Client extends EventEmitter {
       },
       onExit: (subprocess, exitCode, signalCode, error) => {
         danglingProcesses.delete(subprocess);
+        let code: string | number;
         if (exitCode !== null) {
-          this.exitCode = exitCode;
+          code = exitCode;
         } else if (signalCode !== null) {
-          console.log("THE SIGNAL CODE IS", signalCode);
-          this.exitCode = `${signalCode}`;
+          code = `${signalCode}`;
         } else {
-          this.exitCode = "unknown";
+          code = "unknown";
         }
-        this.emit("exit", this.exitCode, error);
+        this.emit("exit", code, error);
         this.exited = true;
         if (activeClient === this) {
           activeClient = null;
@@ -892,13 +985,30 @@ export class Client extends EventEmitter {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       await maybeWaitInteractive("hard-reload");
       if (this.exited) throw new Error("Client is not running.");
-      this.#proc.send({ type: "hard-reload" });
-
-      if (this.hmr) {
-        await this.output.waitForLine(hmrClientInitRegex);
-        await this.expectErrorOverlay(options.errors ?? []);
+      if (!this.hmr) {
+        this.#proc.send({ type: "hard-reload" });
+        return;
       }
+      const loaded = this.waitForPageLoad();
+      this.#proc.send({ type: "hard-reload" });
+      await loaded;
+      await this.expectErrorOverlay(options.errors ?? []);
     });
+  }
+
+  /** Resolves on the loading page's socket-connected ack; register it before the load starts. */
+  async waitForPageLoad(): Promise<void> {
+    const acked = Promise.withResolvers<void>();
+    const onAck = () => acked.resolve();
+    const onExit = (code: number | string) => acked.reject(clientExitedWhile("loading the page", code));
+    this.once("received-hmr-event", onAck);
+    this.once("exit", onExit);
+    try {
+      await Promise.all([this.output.waitForLine(hmrClientInitRegex), acked.promise]);
+    } finally {
+      this.off("received-hmr-event", onAck);
+      this.off("exit", onExit);
+    }
   }
 
   elemText(selector: string): Promise<string> {
@@ -910,6 +1020,30 @@ export class Client extends EventEmitter {
       `;
       if (text == null) throw new Error(`Element found but has no text content: ${selector}`);
       return text;
+    });
+  }
+
+  /** Waits until the element's innerHTML is `text`, for DOM a framework commits asynchronously. */
+  expectElemText(selector: string, text: string): Promise<void> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      await this.js`
+        const read = () => document.querySelector(${selector})?.innerHTML;
+        if (read() === ${text}) return;
+        await new Promise((resolve, reject) => {
+          const observer = new MutationObserver(() => {
+            if (read() !== ${text}) return;
+            observer.disconnect();
+            clearTimeout(timer);
+            resolve();
+          });
+          // Observe the document itself: a re-render may replace <html> rather than patch it.
+          observer.observe(document, { subtree: true, childList: true, characterData: true });
+          const timer = setTimeout(() => {
+            observer.disconnect();
+            reject(new Error("Expected " + ${selector} + " to become " + JSON.stringify(${text}) + ", last saw " + JSON.stringify(read())));
+          }, ${interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER});
+        });
+      `;
     });
   }
 
@@ -930,12 +1064,22 @@ export class Client extends EventEmitter {
       this.#proc.send({ type: "exit" });
     } catch (e) {}
     await this.#proc.exited;
-    if (this.exitCode !== null && this.exitCode !== "0") {
+    // `exited` settles before `onExit` runs, so read the status off the subprocess itself.
+    const { exitCode, signalCode } = this.#proc;
+    // Node on Windows sometimes exits with a libuv assertion after process.exit(); the fixture prints an `[E]` line before every exit code of its own.
+    const abortedInExit =
+      isWindows &&
+      (exitCode === 3 || exitCode === 9) &&
+      !this.output.lines.some(line => line.startsWith("[E]")) &&
+      this.output.lines.some(line => line.includes("UV_HANDLE_CLOSING"));
+    if (exitCode !== 0 && !abortedInExit) {
       let code;
-      if (exitCodeMapStrings[this.exitCode]) {
-        code = ": " + JSON.stringify(exitCodeMapStrings[this.exitCode]);
+      if (exitCode === null) {
+        code = ` with signal ${signalCode}`;
+      } else if (exitCodeMapStrings[exitCode]) {
+        code = ": " + JSON.stringify(exitCodeMapStrings[exitCode]);
       } else {
-        code = " with " + (typeof this.exitCode === "number" ? `code ${this.exitCode}` : `signal ${this.exitCode}`);
+        code = ` with code ${exitCode}`;
       }
       throw new Error(`Client exited${code}`);
     }
@@ -1046,59 +1190,67 @@ export class Client extends EventEmitter {
   expectErrorOverlay(errors: ErrorSpec[], caller: string | null = null) {
     return withAnnotatedStack(caller ?? snapshotCallerLocationMayFail(), async () => {
       this.suppressInteractivePrompt = true;
-      let retries = 0;
-      let hasVisibleModal = false;
-      while (retries < 5) {
-        hasVisibleModal = await this.js`document.querySelector("bun-hmr")?.style.display === "block"`;
-        if (hasVisibleModal) break;
-        await Bun.sleep(200);
-        retries++;
+      let hasVisibleModal: boolean;
+      try {
+        hasVisibleModal = await this.#hasVisibleErrorOverlay();
+        // Build errors are on the page before the ack; only runtime errors reach the overlay later.
+        for (let retries = 0; errors.length > 0 && !hasVisibleModal && retries < 5; retries++) {
+          await Bun.sleep(200);
+          hasVisibleModal = await this.#hasVisibleErrorOverlay();
+        }
+      } finally {
+        this.suppressInteractivePrompt = false;
       }
-      this.suppressInteractivePrompt = false;
-      if (errors && errors.length > 0) {
-        if (!hasVisibleModal) {
-          await maybeWaitInteractive("expectErrorOverlay");
-          throw new Error("Expected errors, but none found");
-        }
+      if (!hasVisibleModal) {
+        if (errors.length === 0) return;
+        await maybeWaitInteractive("expectErrorOverlay");
+        throw new Error("Expected errors, but none found");
+      }
+      expect(await this.readErrorOverlay()).toStrictEqual([...errors].sort());
+    });
+  }
 
-        // Create unique message ID for this evaluation
-        const messageId = Math.random().toString(36).slice(2);
+  /** The overlay's messages; the fixture fails at exit only for errors no read has seen. */
+  readErrorOverlay() {
+    return this.#request<string[]>("get-errors", "get-errors-result", [], "reading the error overlay");
+  }
 
-        // Send the evaluation request and wait for response
-        this.#proc.send({
-          type: "get-errors",
-          args: [messageId],
-        });
-
-        const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
-
+  /** Sends a request to client-fixture.mjs; rejects with the exit reason if the client exits before replying. */
+  #request<T>(type: string, resultType: string, args: unknown[], activity: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (this.exited) {
+        const { exitCode, signalCode } = this.#proc;
+        reject(clientExitedWhile(activity, exitCode ?? signalCode ?? "unknown"));
+        return;
+      }
+      const messageId = Math.random().toString(36).slice(2);
+      const resultEvent = `${resultType}-${messageId}`;
+      const onResult = (result: { value?: T; error?: string }) => {
+        this.off("exit", onExit);
         if (result.error) {
-          throw new Error(result.error);
+          reject(new Error(result.error));
+        } else {
+          resolve(result.value as T);
         }
-        const actualErrors = result.value;
-        const expectedErrors = [...errors].sort();
-        expect(actualErrors).toEqual(expectedErrors);
-      } else {
-        if (hasVisibleModal) {
-          // Create unique message ID for this evaluation
-          const messageId = Math.random().toString(36).slice(2);
-
-          // Send the evaluation request and wait for response
-          this.#proc.send({
-            type: "get-errors",
-            args: [messageId],
-          });
-
-          const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
-
-          if (result.error) {
-            throw new Error(result.error);
-          }
-          const actualErrors = result.value;
-          expect(actualErrors).toEqual([]);
-        }
+      };
+      const onExit = (code: number | string) => {
+        this.off(resultEvent, onResult);
+        reject(clientExitedWhile(activity, code));
+      };
+      this.once(resultEvent, onResult);
+      this.once("exit", onExit);
+      try {
+        this.#proc.send({ type, args: [messageId, ...args] });
+      } catch (err) {
+        this.off(resultEvent, onResult);
+        this.off("exit", onExit);
+        reject(err);
       }
     });
+  }
+
+  #hasVisibleErrorOverlay() {
+    return this.js<boolean>`document.querySelector("bun-hmr")?.style.display === "block"`;
   }
 
   getStringMessage(): Promise<string> {
@@ -1139,52 +1291,12 @@ export class Client extends EventEmitter {
     );
     return withAnnotatedStack(snapshotCallerLocationMayFail(), async () => {
       if (!this.suppressInteractivePrompt) await maybeWaitInteractive("js");
-      return new Promise((resolve, reject) => {
-        // Create unique message ID for this evaluation
-        const messageId = Math.random().toString(36).slice(2);
-
-        // Set up one-time handler for the response
-        const handler = (result: any) => {
-          if (result.error) {
-            reject(new Error(result.error));
-          } else {
-            resolve(result.value);
-          }
-        };
-
-        this.once(`js-result-${messageId}`, handler);
-
-        // Send the evaluation request
-        this.#proc.send({
-          type: "evaluate",
-          args: [messageId, code],
-        });
-      });
+      return this.#request<T>("evaluate", "js-result", [code], "evaluating JS");
     });
   }
 
   jsInteractive(code: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      // Create unique message ID for this evaluation
-      const messageId = Math.random().toString(36).slice(2);
-
-      // Set up one-time handler for the response
-      const handler = (result: any) => {
-        if (result.error) {
-          reject(new Error(result.error));
-        } else {
-          resolve(result.value);
-        }
-      };
-
-      this.once(`js-result-${messageId}`, handler);
-
-      // Send the evaluation request
-      this.#proc.send({
-        type: "evaluate",
-        args: [messageId, code, "interactive"],
-      });
-    });
+    return this.#request<string>("evaluate", "js-result", [code, "interactive"], "evaluating JS");
   }
 
   async click(selector: string) {
@@ -1230,25 +1342,12 @@ export class Client extends EventEmitter {
     return new Proxy(
       new StylePromise(
         (resolve, reject) => {
-          // Create unique message ID for this evaluation
-          const messageId = Math.random().toString(36).slice(2);
-
-          // Set up one-time handler for the response
-          const handler = (result: any) => {
-            if (result.error) {
-              reject(new Error(result.error));
-            } else {
-              resolve(result.value);
-            }
-          };
-
-          this.once(`get-style-result-${messageId}`, handler);
-
-          // Send the evaluation request
-          this.#proc.send({
-            type: "get-style",
-            args: [messageId, selector],
-          });
+          this.#request<Record<string, string>>(
+            "get-style",
+            "get-style-result",
+            [selector],
+            `reading the style of ${JSON.stringify(selector)}`,
+          ).then(resolve, reject);
         },
         selector,
         snapshotCallerLocation(),
@@ -1779,23 +1878,23 @@ class OutputLineStream extends EventEmitter {
   }
 }
 
+/** Same routes as `bun ./index.html ./docs/index.html ./docs/guide.html`: "/", "/docs", "/docs/guide". */
+function htmlFileRoute(posixRelativePath: string) {
+  const segments = posixRelativePath.replace(/\.html$/, "").split("/");
+  if (segments.at(-1) === "index") segments.pop();
+  return "/" + segments.join("/");
+}
+
+/** `htmlFiles` are relative to the directory the script is written to, in the platform's separator. */
 export function indexHtmlScript(htmlFiles: string[]) {
+  const files = htmlFiles.map(file => file.replaceAll(path.sep, "/"));
   return [
-    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, "/"))};`),
+    ...files.map((file, i) => `import html${i} from ${JSON.stringify("./" + file)};`),
     "export default {",
     "  static: {",
-    ...(htmlFiles.length === 1
+    ...(files.length === 1
       ? [`    '/*': html0,`]
-      : htmlFiles.map(
-          (file, i) =>
-            `    ${JSON.stringify(
-              "/" +
-                file
-                  .replace(/\.html$/, "")
-                  .replace("/index", "")
-                  .replace(/\/$/, ""),
-            )}: html${i},`,
-        )),
+      : files.map((file, i) => `    ${JSON.stringify(htmlFileRoute(file))}: html${i},`)),
     "  },",
     "  fetch(req) {",
     "    return new Response('Not Found', { status: 404 });",

@@ -2,14 +2,11 @@
 
 use bun_paths::strings;
 use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
 use core::ptr::NonNull;
-use std::io::Write as _;
 use std::sync::OnceLock;
 
 use bstr::BStr;
 
-use super::PatternBuffer;
 use crate::bake;
 use crate::bake::bake_body;
 use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
@@ -20,8 +17,8 @@ use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption}
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
-use bun_core::String as BunString;
-use bun_core::{Global, Output};
+use bun_core::Output;
+use bun_core::{OwnedString, String as BunString};
 use bun_dotenv as dotenv;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -75,12 +72,12 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     if ctx.args.entry_points.len() > 1 {
         bun_core::err_generic!("bun build --app only accepts one entrypoint");
-        Global::crash();
+        return Err(crate::Error::BakeBuildFailed);
     }
 
     if ctx.debug.hot_reload != HotReload::None {
         bun_core::err_generic!("Instead of using --watch, use 'bun run'");
-        Global::crash();
+        return Err(crate::Error::BakeBuildFailed);
     }
 
     let mut cwd_buf = PathBuffer::uninit();
@@ -88,7 +85,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
             Output::err(err, "Could not query current working directory", ());
-            Global::crash();
+            return Err(crate::Error::BakeBuildFailed);
         }
     };
     // Note: reshaped for borrowck — clone the cwd slice so the PathBuffer
@@ -107,16 +104,13 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         log: NonNull::new(ctx.log),
         args: ctx.args.clone(),
         smol: ctx.runtime_options.smol,
+        is_main_thread: true,
         ..Default::default()
     })?;
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
-    // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
-    // Note: pass `vm_ptr` by value into the guard so the drop closure does
-    // not borrow the local (`defer!` would capture `&vm_ptr`, which under
-    // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
-    // re-borrows on the JSError path).
+    // Only the internal-error `Err(e)` return below reaches this guard; every other path exits inside `global_exit`.
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
         // SAFETY: p is the unique live VM on this thread; its loop is alive, so
         // queued work is released here rather than by a thread teardown.
@@ -187,9 +181,10 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         }
         MacroOptions::Unspecified => {}
     }
-    if vm.transpiler.configure_defines().is_err() {
-        fail_with_build_error(vm);
-    }
+    // The errors are in `ctx.log`, which `Cli::start` prints.
+    vm.transpiler
+        .configure_defines()
+        .map_err(|_| crate::Error::BakeBuildFailed)?;
     // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
@@ -211,42 +206,40 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    match build_with_vm(ctx, &cwd, &mut pt) {
+    let result = build_with_vm(ctx, &cwd, &mut pt);
+    // SAFETY: `build_with_vm` has returned, so its reborrows through `pt.vm` are dead; the VM is live until `global_exit`.
+    let vm = unsafe { &mut *vm_ptr };
+    match result {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
-            // SAFETY: vm.global is live for VM lifetime.
-            let global = unsafe { &*(*vm_ptr).global };
-            let err_value = global.take_exception(jsc::JsError::Thrown);
-            // SAFETY: see above.
-            unsafe {
-                (*vm_ptr)
-                    .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value))
-            };
-            // SAFETY: see above.
-            let vm = unsafe { &mut *vm_ptr };
+            let err_value = vm.global().take_exception(jsc::JsError::Thrown);
+            vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
             if vm.exit_handler.exit_code == 0 {
                 vm.exit_handler.exit_code = 1;
             }
-            vm.on_exit();
-            vm.global_exit();
+        }
+        // Already reported by `build_with_vm`.
+        Err(crate::Error::BakeBuildFailed) => {
+            if vm.exit_handler.exit_code == 0 {
+                vm.exit_handler.exit_code = 1;
+            }
         }
         Err(e) => return Err(e),
     }
-    Ok(())
+    // An unhandled rejection or exception from the config or a prerender fails the build, as `bun run` would.
+    let _ = vm.global().handle_rejected_promises();
+    if vm.unhandled_error_counter > 0 && vm.exit_handler.exit_code == 0 {
+        vm.exit_handler.exit_code = 1;
+    }
+    // Success exits through the VM too: 'exit' handlers, process.exitCode, VM teardown.
+    vm.on_exit();
+    vm.global_exit()
 }
 
-/// Ported inline from `bun.bun_js.failWithBuildError` to avoid the
-/// `bun_runtime → bun (binary)` dep cycle (PORTING.md §Forbidden: dep-cycle
-/// fixes via fn-ptr hooks — move/port the code instead).
-#[cold]
-#[inline(never)]
-fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
-    // `vm.log` is the process-lifetime ctx.log set in build_command;
-    // `log_ref()` is the safe accessor encapsulating the NonNull deref.
+fn print_log(vm: &VirtualMachine) {
     if let Some(log) = vm.log_ref() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     }
-    Global::exit(1);
 }
 
 fn write_sourcemap_to_disk(
@@ -261,18 +254,39 @@ fn write_sourcemap_to_disk(
     let source_map_index = file.source_map_index;
     debug_assert!(bundled_outputs[source_map_index as usize].output_kind == OutputKind::Sourcemap);
 
-    let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-        || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-    {
-        &file.dest_path[2..]
-    } else {
-        &file.dest_path[..]
-    };
-
-    let mut key = Vec::with_capacity(6 + without_prefix.len());
-    write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
-    source_maps.put(&key, OutputFileIndex::init(source_map_index))?;
+    source_maps.put(
+        &module_key(&file.dest_path),
+        OutputFileIndex::init(source_map_index),
+    )?;
     Ok(())
+}
+
+/// `bake:` + the output path, normalised as `BakeProdResolve` normalises specifiers so both agree (`_bun/./x.js` -> `bake:/_bun/x.js`).
+fn module_key(dest_path: &[u8]) -> Vec<u8> {
+    let path = resolve_path::join_abs::<platform::Posix>(b"/", dest_path);
+    let mut key = Vec::with_capacity(5 + path.len());
+    key.extend_from_slice(b"bake:");
+    key.extend_from_slice(path);
+    key
+}
+
+struct OutputDir {
+    dir: bun_sys::Dir,
+    failed_writes: usize,
+}
+
+impl OutputDir {
+    fn write(&mut self, file: &OutputFile) {
+        if let Err(err) = file.write_to_disk(self.dir.fd()) {
+            bun_core::handle_error_return_trace(err);
+            Output::err(
+                err,
+                "Failed to write {} to output directory",
+                (bun_core::fmt::quote(&file.dest_path),),
+            );
+            self.failed_writes += 1;
+        }
+    }
 }
 
 fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
@@ -319,7 +333,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                          TODO: insert a link to `bun.com/docs`",
                         (),
                     );
-                    Global::crash();
+                    return Err(crate::Error::BakeBuildFailed);
                 }
             }
 
@@ -328,12 +342,13 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 "could not resolve application config file '{}'",
                 (BStr::new(&unresolved_config_entry_point),),
             );
-            Global::crash();
+            return Err(crate::Error::BakeBuildFailed);
         }
     };
 
-    let config_entry_point_string =
-        BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
+    let config_entry_point_string = OwnedString::new(BunString::clone_utf8(
+        config_entry_point.path_const().unwrap().text,
+    ));
 
     let Some(config_promise) =
         JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
@@ -355,10 +370,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
-            let default = BakeGetDefaultExportFromModule(
+            let default = c::bake_get_default_export_from_module(
                 global,
                 config_entry_point_string.to_js(global).map_err(js_err)?,
-            );
+            )
+            .map_err(js_err)?;
 
             if !default.is_object() {
                 return Err(js_err(global.throw_invalid_arguments(format_args!(
@@ -419,66 +435,63 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
-    // In-place init via `MaybeUninit` (`init_transpiler_with_options`
-    // keeps the out-param shape shared with the dev-server path).
-    let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
+    // Borrowed by the transpilers until their slots drop, so it is declared first.
+    let framework_view = framework.as_bundler_view();
+    let mut server_slot = bake::TranspilerSlot::uninit();
+    let mut client_slot = bake::TranspilerSlot::uninit();
+    let mut ssr_slot = bake::TranspilerSlot::uninit();
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
-    framework.init_transpiler_with_options(
+    let server_transpiler = framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
         bake_body::Mode::ProductionStatic,
         bake_body::Graph::Server,
-        &mut server_transpiler,
+        &mut server_slot,
+        &framework_view,
         &options.bundler_options.server,
         SourceMapOption::from_api(Some(options.bundler_options.server.source_map)),
         options.bundler_options.server.minify_whitespace,
         options.bundler_options.server.minify_syntax,
         options.bundler_options.server.minify_identifiers,
     )?;
-    framework.init_transpiler_with_options(
+    let client_transpiler = framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
         bake_body::Mode::ProductionStatic,
         bake_body::Graph::Client,
-        &mut client_transpiler,
+        &mut client_slot,
+        &framework_view,
         &options.bundler_options.client,
         SourceMapOption::from_api(Some(options.bundler_options.client.source_map)),
         options.bundler_options.client.minify_whitespace,
         options.bundler_options.client.minify_syntax,
         options.bundler_options.client.minify_identifiers,
     )?;
-    if separate_ssr_graph {
-        framework.init_transpiler_with_options(
+    let mut ssr_transpiler = if separate_ssr_graph {
+        Some(framework.init_transpiler_with_options(
             &options.arena,
             vm_log,
             bake_body::Mode::ProductionStatic,
             bake_body::Graph::Ssr,
-            &mut ssr_transpiler,
+            &mut ssr_slot,
+            &framework_view,
             &options.bundler_options.ssr,
             SourceMapOption::from_api(Some(options.bundler_options.ssr.source_map)),
             options.bundler_options.ssr.minify_whitespace,
             options.bundler_options.ssr.minify_syntax,
             options.bundler_options.ssr.minify_identifiers,
-        )?;
-    }
-    // SAFETY: written above by init_transpiler_with_options.
-    let server_transpiler = unsafe { server_transpiler.assume_init_mut() };
-    // SAFETY: written above by init_transpiler_with_options.
-    let client_transpiler = unsafe { client_transpiler.assume_init_mut() };
-    // `ssr_transpiler` stays `MaybeUninit` and is only `assume_init_mut()`'d
-    // inside `if separate_ssr_graph` blocks below — Rust forbids forming
-    // `&mut T` to uninitialized memory regardless of later use.
+        )?)
+    } else {
+        None
+    };
 
     if ctx.bundler_options.bake_debug_disable_minify {
         let mut targets: Vec<&mut Transpiler> =
             vec![&mut *client_transpiler, &mut *server_transpiler];
-        if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
-            targets.push(unsafe { ssr_transpiler.assume_init_mut() });
+        if let Some(ssr_transpiler) = ssr_transpiler.as_deref_mut() {
+            targets.push(ssr_transpiler);
         }
         for transpiler in targets {
             transpiler.options.minify_syntax = false;
@@ -514,10 +527,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             }
             bun_core::err_generic!("Failed to resolve all imports required by the framework");
             Output::flush();
-            let _ = server_transpiler
-                .log()
-                .print(std::ptr::from_mut(Output::error_writer()));
-            Global::crash();
+            print_log(vm);
+            return Err(crate::Error::BakeBuildFailed);
         }
     };
 
@@ -545,7 +556,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     };
 
     for fsr in &framework.file_system_router_types {
-        let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, fsr.root);
+        // `fsr.root` is absolute and fits in a `PathBuffer`: see `resolve_router_root`.
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined_root =
+            resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut buf[..], &[fsr.root]);
         let Some(entry) = server_transpiler
             .resolver
             .read_dir_info_ignore_error(joined_root)
@@ -574,9 +588,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 .iter()
                 .map(|s| Box::<[u8]>::from(*s))
                 .collect(),
-            // `Style` is `Clone` (the `JavascriptDefined` arm panics inside
-            // `clone()`).
-            style: fsr.style.clone(),
+            style: fsr.style,
             allow_layouts: fsr.allow_layouts,
             server_file: OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| OpaqueFileId::init(f.get())),
@@ -585,32 +597,31 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     }
 
     let mut router = FrameworkRouter::init_empty(cwd, router_types.into_boxed_slice())?;
+    let mut route_scan = RouteScan {
+        entry_points: &mut entry_points,
+        error_count: 0,
+    };
     router.scan_all(
         &mut server_transpiler.resolver,
-        framework_router::InsertionContext::wrap(&mut entry_points),
+        framework_router::InsertionContext::wrap(&mut route_scan),
     )?;
+    if route_scan.error_count > 0 {
+        return Err(crate::Error::BakeBuildFailed);
+    }
 
-    // `bake_body::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `react_fast_refresh` /
-    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
-    // Project once here via the shared helper so the field-shape (e.g.
-    // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
-    // (The two Framework types could only merge if `FileSystemRouterType` /
-    // `framework_router::Style` moved down to bun_bundler.)
+    // Projected again so the bundle sees the paths `resolve()` filled in.
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
         // Transpiler pointers — reborrow via raw to sidestep the
         // `&'a mut Transpiler<'a>` invariant lifetime on the bundler API.
-        // SAFETY: the three transpilers live in this stack frame and outlive
+        // SAFETY: the transpilers live in this frame's slots, which outlive
         // the bundle call; `BundleV2` does not retain them past return.
         let server_ptr: *mut Transpiler = &raw mut *server_transpiler;
         let client_ptr: *mut Transpiler = &raw mut *client_transpiler;
-        let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
-            core::ptr::from_mut(unsafe { ssr_transpiler.assume_init_mut() })
-        } else {
-            server_ptr
+        let ssr_ptr: *mut Transpiler = match ssr_transpiler {
+            Some(ssr_transpiler) => &raw mut *ssr_transpiler,
+            None => server_ptr,
         };
 
         // Construct the `AnyEventLoop` enum
@@ -618,11 +629,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Lives in this block's stack frame, outliving the bundle call.
         let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
 
-        // Propagate via `?`. Do NOT
-        // catch-and-exit here: the bake path expects this call to succeed for
-        // valid inputs, and any `BuildFailed` indicates a bug upstream
-        // (in the bundler), not a user-facing diagnostic to swallow.
-        BundleV2::generate_from_bake_production_cli(
+        match BundleV2::generate_from_bake_production_cli(
             &entry_points,
             // SAFETY: see `server_ptr` comment above.
             unsafe { &mut *server_ptr },
@@ -630,11 +637,30 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 framework: bundler_framework,
                 client_transpiler: NonNull::new(client_ptr).expect("stack-owned transpiler"),
                 ssr_transpiler: NonNull::new(ssr_ptr).expect("stack-owned transpiler"),
-                plugins: options.bundler_options.plugin,
+                plugins: options
+                    .bundler_options
+                    .plugin
+                    .as_ref()
+                    .map(|plugin| plugin.as_non_null()),
             },
             &options.arena,
             Some(NonNull::from(&mut any_loop)),
-        )?
+        ) {
+            Ok(outputs) => outputs,
+            // Out of memory stays an internal error; every other failure is reported here.
+            Err(
+                e @ (bun_bundler::Error::Alloc(_)
+                | bun_bundler::Error::Js(bun_core::JsError::OutOfMemory)),
+            ) => return Err(e.into()),
+            Err(e) => {
+                if vm.log_ref().is_some_and(bun_ast::Log::has_errors) {
+                    print_log(vm);
+                } else {
+                    Output::err(e, "Failed to bundle routes", ());
+                }
+                return Err(crate::Error::BakeBuildFailed);
+            }
+        }
     };
     if bundled_outputs_list.is_empty() {
         bun_core::prettyln!("done");
@@ -646,7 +672,21 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     Output::flush();
 
     // mkdir -p + open.
-    let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
+    let root_dir = match bun_sys::Dir::cwd().make_open_path(b"dist", Default::default()) {
+        Ok(dir) => dir,
+        Err(err) => {
+            Output::err(
+                err,
+                "could not open output directory {}",
+                (bun_core::fmt::quote(&root_dir_path),),
+            );
+            return Err(crate::Error::BakeBuildFailed);
+        }
+    };
+    let mut output_dir = OutputDir {
+        dir: root_dir,
+        failed_writes: 0,
+    };
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 
@@ -657,7 +697,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // Client files go to disk.
     // Server files get loaded in memory.
     // Populate indexes in `entry_points` to be looked up during prerendering
-    let mut module_keys: Vec<BunString> = vec![BunString::dead(); entry_points.files.count()];
+    let mut module_keys: Vec<OwnedString> = (0..entry_points.files.count())
+        .map(|_| OwnedString::new(BunString::dead()))
+        .collect();
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
@@ -703,25 +745,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             match side {
                 bun_bundler::options::Side::Client => {
                     // Client-side resources will be written to disk for usage on the client side
-                    if let Err(err) = file.write_to_disk(root_dir.fd()) {
-                        bun_core::handle_error_return_trace(err);
-                        Output::err(
-                            err,
-                            "Failed to write {} to output directory",
-                            (bun_core::fmt::quote(&file.dest_path),),
-                        );
-                    }
+                    output_dir.write(file);
                 }
                 bun_bundler::options::Side::Server => {
                     if ctx.bundler_options.bake_debug_dump_server {
-                        if let Err(err) = file.write_to_disk(root_dir.fd()) {
-                            bun_core::handle_error_return_trace(err);
-                            Output::err(
-                                err,
-                                "Failed to write {} to output directory",
-                                (bun_core::fmt::quote(&file.dest_path),),
-                            );
-                        }
+                        output_dir.write(file);
                     }
 
                     // If the file has a sourcemap, store it so we can put it on
@@ -733,34 +761,22 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
                     match file.output_kind {
                         OutputKind::EntryPoint | OutputKind::Chunk => {
-                            let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-                                || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-                            {
-                                &file.dest_path[2..]
-                            } else {
-                                &file.dest_path[..]
-                            };
+                            let key = module_key(&file.dest_path);
 
                             if let Some(entry_point_index) = file.entry_point_index {
                                 if (entry_point_index as usize) < module_keys.len() {
-                                    let mut str = BunString::create_format(format_args!(
-                                        "bake:/{}",
-                                        BStr::new(without_prefix)
-                                    ));
+                                    let mut str = BunString::clone_utf8(&key);
                                     str.to_thread_safe();
-                                    module_keys[entry_point_index as usize] = str;
+                                    module_keys[entry_point_index as usize] = OwnedString::new(str);
                                 }
                             }
 
                             log!(
-                                "  adding module map entry: output_module_map(bake:/{}) = {}\n",
-                                BStr::new(without_prefix),
+                                "  adding module map entry: output_module_map({}) = {}\n",
+                                BStr::new(&key),
                                 i
                             );
 
-                            let mut key = Vec::with_capacity(6 + without_prefix.len());
-                            write!(&mut key, "bake:/{}", BStr::new(without_prefix))
-                                .expect("infallible: in-memory write");
                             output_module_map.put(
                                 &key,
                                 OutputFileIndex::init(u32::try_from(i).expect("int cast")),
@@ -781,28 +797,47 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             }
         }
     }
-    // Write the runtime file to disk if there are any client chunks
-    {
-        let Some(runtime_file_index) = maybe_runtime_file_index else {
-            Output::panic(format_args!(
-                "Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub."
-            ));
-        };
+    // Write the runtime file to disk if there are any client chunks; there is no runtime chunk when no module uses its helpers.
+    if let Some(runtime_file_index) = maybe_runtime_file_index {
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
                 && file.src_path.text != b"bun-framework-react/client.tsx"
         });
         if any_client_chunks {
-            let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
-            if let Err(err) = runtime_file.write_to_disk(root_dir.fd()) {
-                bun_core::handle_error_return_trace(err);
-                Output::err(
-                    err,
-                    "Failed to write {} to output directory",
-                    (bun_core::fmt::quote(&runtime_file.dest_path),),
+            output_dir.write(&bundled_outputs_list[runtime_file_index as usize]);
+        }
+    }
+    if output_dir.failed_writes > 0 {
+        // Every failed write has been reported; the pages would only reference the missing files.
+        return Err(crate::Error::BakeBuildFailed);
+    }
+
+    // A route file with no server-side JavaScript chunk (a `.css` or `.html` page under `extensions: "*"`) cannot be rendered.
+    let mut non_module_routes: usize = 0;
+    for route in router.routes.iter() {
+        for file in [route.file_page, route.file_layout].into_iter().flatten() {
+            let i = file.get() as usize;
+            let is_module = !module_keys[i].is_dead()
+                && bundled_outputs_list[entry_points.files.values()[i].get() as usize]
+                    .loader
+                    .is_javascript_like();
+            if !is_module {
+                bun_core::err_generic!(
+                    "{} is not a JavaScript or TypeScript file, so it cannot be a route",
+                    bun_core::fmt::quote(resolve_path::relative(
+                        cwd,
+                        entry_points.files.keys()[i].abs_path()
+                    ))
                 );
+                non_module_routes += 1;
             }
         }
+    }
+    if non_module_routes > 0 {
+        bun_core::note!(
+            "Narrow 'fileSystemRouterTypes[n].extensions' so that only route modules match."
+        );
+        return Err(crate::Error::BakeBuildFailed);
     }
 
     *pt = PerThread::init(
@@ -825,15 +860,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
     for (i, router_type) in router.types.iter().enumerate() {
         if let Some(client_file) = router_type.client_file {
-            let str = BunString::create_format(format_args!(
+            let mut url = BunString::create_format(format_args!(
                 "{}{}",
                 BStr::new(public_path),
                 BStr::new(&pt.output_file(client_file).dest_path),
-            ))
-            .to_js(global)
-            .map_err(js_err)?;
+            ));
+            let url = jsc::bun_string_jsc::transfer_to_js(&mut url, global).map_err(js_err)?;
             client_entry_urls
-                .put_index(global, u32::try_from(i).expect("int cast"), str)
+                .put_index(global, u32::try_from(i).expect("int cast"), url)
                 .map_err(js_err)?;
         } else {
             client_entry_urls
@@ -843,17 +877,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
         let server_file = router_type.server_file;
         let server_entry_point = pt.load_bundled_module(server_file)?;
-        let server_render_func = 'brk: {
-            let Some(raw) = bake_get_on_module_namespace(global, server_entry_point, b"prerender")
-            else {
-                break 'brk None;
-            };
-            if !raw.is_callable() {
-                break 'brk None;
-            }
-            break 'brk Some(raw);
-        };
-        let Some(server_render_func) = server_render_func else {
+        let server_render_func =
+            c::bake_get_on_module_namespace(global, server_entry_point, b"prerender")
+                .map_err(js_err)?;
+        if !server_render_func.is_callable() {
             bun_core::err_generic!("Framework does not support static site generation");
             bun_core::note!(
                 "The file {} is missing the \"prerender\" export, which defines how to generate static files.",
@@ -862,35 +889,24 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     pt.input_file(server_file).abs_path()
                 ))
             );
-            Global::crash();
-        };
+            return Err(crate::Error::BakeBuildFailed);
+        }
 
         let server_param_func = if router.dynamic_routes.count() > 0 {
-            let f = 'brk: {
-                let Some(raw) =
-                    bake_get_on_module_namespace(global, server_entry_point, b"getParams")
-                else {
-                    break 'brk None;
-                };
-                if !raw.is_callable() {
-                    break 'brk None;
-                }
-                break 'brk Some(raw);
-            };
-            match f {
-                Some(f) => f,
-                None => {
-                    bun_core::err_generic!("Framework does not support static site generation");
-                    bun_core::note!(
-                        "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
-                        bun_core::fmt::quote(resolve_path::relative(
-                            cwd,
-                            pt.input_file(server_file).abs_path()
-                        ))
-                    );
-                    Global::crash();
-                }
+            let f = c::bake_get_on_module_namespace(global, server_entry_point, b"getParams")
+                .map_err(js_err)?;
+            if !f.is_callable() {
+                bun_core::err_generic!("Framework does not support static site generation");
+                bun_core::note!(
+                    "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
+                    bun_core::fmt::quote(resolve_path::relative(
+                        cwd,
+                        pt.input_file(server_file).abs_path()
+                    ))
+                );
+                return Err(crate::Error::BakeBuildFailed);
             }
+            f
         } else {
             JSValue::NULL
         };
@@ -928,20 +944,20 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         debug_assert!(output_file.dest_path[0] != b'.');
         // CSS chunks must be in contiguous order!!
         debug_assert!(output_file.loader.is_css());
+        let mut url = BunString::create_format(format_args!(
+            "{}{}",
+            BStr::new(public_path),
+            BStr::new(&output_file.dest_path),
+        ));
         css_chunk_js_strings.push(
-            BunString::create_format(format_args!(
-                "{}{}",
-                BStr::new(public_path),
-                BStr::new(&output_file.dest_path),
-            ))
-            .to_js(global)
-            .map_err(js_err)?
-            .protected(),
+            jsc::bun_string_jsc::transfer_to_js(&mut url, global)
+                .map_err(js_err)?
+                .protected(),
         );
     }
 
-    // Route URL patterns with parameter placeholders.
-    // Examples: "/", "/about", "/blog/:slug", "/products/:category/:id"
+    // Each route's URL parts, root first, as `{ kind: "text" | "param" | "catchAll", value }` (see `RoutePart` in Bake.ts).
+    // Example: pages/blog/[post-id].tsx is [{ kind: "text", value: "blog" }, { kind: "param", value: "post-id" }]
     let route_patterns =
         JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
@@ -960,8 +976,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let route_source_files =
         JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
-    // Parameter names for dynamic routes (reversed order), null for static routes.
-    // Examples: ["slug"] for /blog/[slug], ["id", "category"] for /products/[category]/[id]
+    // Parameter names for dynamic routes, root first, null for static routes.
+    // Examples: ["slug"] for /blog/[slug], ["category", "id"] for /products/[category]/[id]
     let route_param_info =
         JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
@@ -970,13 +986,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let route_style_references =
         JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
-    let mut params_buf: Vec<&[u8]> = Vec::new();
+    // `RoutePart` (kind, value) pairs, leaf first while walking up the tree; route groups add no URL part.
+    let mut parts_buf: Vec<(&'static str, &[u8])> = Vec::new();
+    let mut route_css: Vec<usize> = Vec::new();
     for (nav_index, &route_index) in navigatable_routes.iter().enumerate() {
-        // defer params_buf.clearRetainingCapacity()
-        let mut params_guard = scopeguard::guard(&mut params_buf, |b| b.clear());
-        let params_buf = &mut **params_guard;
-
-        let mut pattern = PatternBuffer::EMPTY;
+        parts_buf.clear();
+        route_css.clear();
 
         let route = router.route_ptr(route_index);
         let main_file_route_index = route.file_page.unwrap();
@@ -984,22 +999,22 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // immutably, but `pt.preload_bundled_module()` below needs `&mut pt`.
         // Fetch the output file fresh at each use site instead of binding it.
 
-        // Count how many JS+CSS files associated with this route and prepare `pattern`
+        // Count how many JS files associated with this route and collect `parts_buf`
         let mut file_count: u32 = 1;
         let mut next: Option<framework_router::RouteIndex> = Some(route_index);
         while let Some(current_index) = next {
             let current = router.route_ptr(current_index);
-            pattern.prepend_part(current.part);
             match current.part {
-                framework_router::Part::Param(name) | framework_router::Part::CatchAll(name) => {
-                    params_buf.push(name);
-                }
+                // The root route is empty text.
+                framework_router::Part::Text([]) | framework_router::Part::Group(_) => {}
+                framework_router::Part::Text(text) => parts_buf.push(("text", text)),
+                framework_router::Part::Param(name) => parts_buf.push(("param", name)),
+                framework_router::Part::CatchAll(name) => parts_buf.push(("catchAll", name)),
                 framework_router::Part::CatchAllOptional(_) => {
                     return Err(js_err(global.throw(format_args!(
                         "catch-all routes are not supported in static site generation",
                     ))));
                 }
-                framework_router::Part::Text(_) | framework_router::Part::Group(_) => {}
             }
             if current.file_layout.is_some() {
                 file_count += 1;
@@ -1007,13 +1022,17 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             next = current.parent;
         }
 
-        // Fill styles and file_list
-        let styles = JSValue::create_empty_array(global, css_chunks_count).map_err(js_err)?;
+        // Fill route_css and file_list
         let file_list = JSValue::create_empty_array(global, file_count as usize).map_err(js_err)?;
 
         next = route.parent;
         file_count = 1;
-        let mut css_file_count: u32 = 0;
+        // The page and every layout are separate entry points; all must be static.
+        let mut fully_static = pt
+            .output_file(main_file_route_index)
+            .bake_extra
+            .route
+            .is_fully_static();
         file_list
             .put_index(
                 global,
@@ -1022,21 +1041,19 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     .map_err(js_err)?,
             )
             .map_err(js_err)?;
+        // A page and its layouts can share one CSS chunk; list each chunk once, page first.
         for r#ref in pt
             .output_file(main_file_route_index)
             .referenced_css_chunks
             .iter()
         {
-            styles
-                .put_index(
-                    global,
-                    css_file_count,
-                    css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                )
-                .map_err(js_err)?;
-            css_file_count += 1;
+            let i = r#ref.get() as usize - css_chunks_first;
+            if !route_css.contains(&i) {
+                route_css.push(i);
+            }
         }
         if let Some(file) = route.file_layout {
+            fully_static &= pt.output_file(file).bake_extra.route.is_fully_static();
             file_list
                 .put_index(
                     global,
@@ -1045,14 +1062,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 )
                 .map_err(js_err)?;
             for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
-                styles
-                    .put_index(
-                        global,
-                        css_file_count,
-                        css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                    )
-                    .map_err(js_err)?;
-                css_file_count += 1;
+                let i = r#ref.get() as usize - css_chunks_first;
+                if !route_css.contains(&i) {
+                    route_css.push(i);
+                }
             }
             file_count += 1;
         }
@@ -1060,6 +1073,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         while let Some(parent_index) = next {
             let parent = router.route_ptr(parent_index);
             if let Some(file) = parent.file_layout {
+                fully_static &= pt.output_file(file).bake_extra.route.is_fully_static();
                 file_list
                     .put_index(
                         global,
@@ -1068,27 +1082,38 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     )
                     .map_err(js_err)?;
                 for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
-                    styles
-                        .put_index(
-                            global,
-                            css_file_count,
-                            css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                        )
-                        .map_err(js_err)?;
-                    css_file_count += 1;
+                    let i = r#ref.get() as usize - css_chunks_first;
+                    if !route_css.contains(&i) {
+                        route_css.push(i);
+                    }
                 }
                 file_count += 1;
             }
             next = parent.parent;
         }
+        let styles = JSValue::create_array_from_iter(global, route_css.iter(), |&i| {
+            Ok(css_chunk_js_strings[i].value())
+        })
+        .map_err(js_err)?;
 
         // Init the items
-        let pattern_string = BunString::clone_utf8(pattern.slice());
+        let route_parts =
+            JSValue::create_array_from_iter(global, parts_buf.iter().rev(), |&(kind, value)| {
+                let obj = JSValue::create_empty_object(global, 2);
+                obj.put(global, b"kind", BunString::static_str(kind).to_js(global)?);
+                obj.put(
+                    global,
+                    b"value",
+                    jsc::bun_string_jsc::create_utf8_for_js(global, value)?,
+                );
+                Ok(obj)
+            })
+            .map_err(js_err)?;
         route_patterns
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                pattern_string.to_js(global).map_err(js_err)?,
+                route_parts,
             )
             .map_err(js_err)?;
 
@@ -1116,23 +1141,20 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 global,
                 u32::try_from(nav_index).expect("int cast"),
                 JSValue::js_number_from_int32(
-                    TypeAndFlags::new(
-                        route.r#type.get(),
-                        pt.output_file(main_file_route_index)
-                            .bake_extra
-                            .route
-                            .is_fully_static(),
-                    )
-                    .bits(),
+                    TypeAndFlags::new(route.r#type.get(), fully_static).bits(),
                 ),
             )
             .map_err(js_err)?;
 
-        if !params_buf.is_empty() {
-            // reverse-index fill ≡ forward fill over `.iter().rev()`
-            // (slice iterators are ExactSize + DoubleEnded).
+        let param_names: Vec<&[u8]> = parts_buf
+            .iter()
+            .rev()
+            .filter(|(kind, _)| *kind != "text")
+            .map(|(_, name)| *name)
+            .collect();
+        if !param_names.is_empty() {
             let param_info_array =
-                JSValue::create_array_from_iter(global, params_buf.iter().rev(), |param| {
+                JSValue::create_array_from_iter(global, param_names.iter(), |param| {
                     jsc::bun_string_jsc::create_utf8_for_js(global, param)
                 })
                 .map_err(js_err)?;
@@ -1193,18 +1215,16 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             return Err(js_err(global.throw_value(err)));
         }
     }
-    vm.wait_for_tasks();
     Ok(())
 }
 
-/// unsafe function, must be run outside of the event loop
-/// quits the process on exception
+/// Must be run outside of the event loop; failures are returned as `JSError`.
 fn load_module(
     vm: *mut VirtualMachine,
     global: &JSGlobalObject,
     key: JSValue,
 ) -> crate::Result<JSValue> {
-    let promise_value = BakeLoadModuleByKey(global, key);
+    let promise_value = c::bake_load_module_by_key(global, key).map_err(js_err)?;
     let promise: *mut jsc::JSInternalPromise = match promise_value.as_any_promise().unwrap() {
         AnyPromise::Internal(p) => p,
         AnyPromise::Normal(_) => unreachable!(),
@@ -1225,44 +1245,69 @@ fn load_module(
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
-    if vm_ref.event_loop_mut().drain_microtasks().is_err() {
-        Global::crash();
-    }
+    vm_ref
+        .event_loop_mut()
+        .drain_microtasks()
+        .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
     let jsc_vm = vm_ref.as_mut().jsc_vm_mut();
     match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
-        Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
+        Unwrapped::Fulfilled(_) => c::bake_get_module_namespace(global, key).map_err(js_err),
         Unwrapped::Rejected(err) => Err(js_err(vm_ref.global().throw_value(err))),
     }
 }
 
-// extern apis:
+/// BakeSourceProvider.cpp entry points; each returns empty iff it threw (`from_js_host_call`).
+mod c {
+    use super::*;
 
-unsafe extern "C" {
-    safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
-    safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
-    safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
-}
-
-fn bake_get_on_module_namespace(
-    global: &JSGlobalObject,
-    module: JSValue,
-    property: &[u8],
-) -> Option<JSValue> {
     unsafe extern "C" {
-        // PRECONDITION: `ptr` must be readable for `len` bytes (C++ builds an
-        // `Identifier` from the slice). Cannot be `safe fn` — raw ptr+len pair
-        // carries a caller-side validity precondition.
-        #[link_name = "BakeGetOnModuleNamespace"]
-        fn f(global: *const JSGlobalObject, module: JSValue, ptr: *const u8, len: usize)
-        -> JSValue;
+        safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
+        safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
+        safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
+        /// Not `safe`: `ptr` must be readable for `len` bytes.
+        fn BakeGetOnModuleNamespace(
+            global: &JSGlobalObject,
+            module_namespace: JSValue,
+            ptr: *const u8,
+            len: usize,
+        ) -> JSValue;
     }
-    // SAFETY: `global` is a live `&JSGlobalObject`, `module` is a stack-held
-    // `JSValue`, and `property.as_ptr()`/`len()` describe a valid borrowed
-    // `&[u8]` for the call duration — discharges the ptr+len precondition above.
-    let result: JSValue = unsafe { f(global, module, property.as_ptr(), property.len()) };
-    debug_assert!(!result.is_empty());
-    Some(result)
+
+    /// Returns the promise for evaluating the module that `key` (a JSString) names.
+    pub(super) fn bake_load_module_by_key(
+        global: &JSGlobalObject,
+        key: JSValue,
+    ) -> JsResult<JSValue> {
+        jsc::from_js_host_call(global, || BakeLoadModuleByKey(global, key))
+    }
+
+    /// The promise from [`bake_load_module_by_key`] for `key` must already be fulfilled.
+    pub(super) fn bake_get_module_namespace(
+        global: &JSGlobalObject,
+        key: JSValue,
+    ) -> JsResult<JSValue> {
+        jsc::from_js_host_call(global, || BakeGetModuleNamespace(global, key))
+    }
+
+    /// The module `key` names must already be evaluated (here: the config module).
+    pub(super) fn bake_get_default_export_from_module(
+        global: &JSGlobalObject,
+        key: JSValue,
+    ) -> JsResult<JSValue> {
+        jsc::from_js_host_call(global, || BakeGetDefaultExportFromModule(global, key))
+    }
+
+    pub(super) fn bake_get_on_module_namespace(
+        global: &JSGlobalObject,
+        module_namespace: JSValue,
+        property: &[u8],
+    ) -> JsResult<JSValue> {
+        // SAFETY: `property` is borrowed for the whole call, so `ptr` is readable for `len` bytes.
+        jsc::from_js_host_call(global, || unsafe {
+            BakeGetOnModuleNamespace(global, module_namespace, property.as_ptr(), property.len())
+        })
+    }
 }
 
 // Renders all routes for static site generation by calling the JavaScript implementation.
@@ -1297,21 +1342,77 @@ unsafe extern "C" {
     ) -> *mut JSPromise;
 }
 
+/// Inverse of `resolve_disk_key`; never a `\\?\` path, since the module loader cuts specifiers at the first `?`.
 #[unsafe(no_mangle)]
 extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     {
         let _ = input;
         panic!("This code should not be called on POSIX systems.");
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
         let input_utf8 = input.to_utf8();
-        let input_slice = input_utf8.slice();
-        let mut output = bun_paths::w_path_buffer_pool::get();
-        let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
-        BunString::clone_utf16(output_slice.as_slice())
+        let mut path = key_path_to_disk_path(input_utf8.slice()).to_vec();
+        resolve_path::slashes_to_windows_in_place(&mut path);
+        BunString::clone_utf8(&path)
     }
+}
+
+/// `/C:/a/b.mjs` -> `C:/a/b.mjs`; anything else is returned as is.
+#[cfg(windows)]
+fn key_path_to_disk_path(key_path: &[u8]) -> &[u8] {
+    match key_path.strip_prefix(b"/") {
+        Some(rest) if strings::starts_with_windows_drive_letter(rest) => rest,
+        _ => key_path,
+    }
+}
+
+/// Drive or UNC path, as opposed to a bundle output path like `/_bun/abc123.js`.
+#[cfg(windows)]
+fn is_disk_path(path: &[u8]) -> bool {
+    resolve_path::windows_volume_name_len(path).0 > 0 && bun_paths::is_absolute(path)
+}
+
+/// Keys a file outside the bundle by disk path (`bake:/C:/a/b.mjs`, `bake://server/share/b.mjs`), a fixed point under re-resolution; `None` when neither side is a disk path.
+#[cfg(windows)]
+fn resolve_disk_key(
+    global: &JSGlobalObject,
+    referrer_key_path: &[u8],
+    specifier: &[u8],
+) -> Option<BunString> {
+    let referrer = key_path_to_disk_path(referrer_key_path);
+    let specifier = key_path_to_disk_path(specifier);
+    if !is_disk_path(referrer) && !is_disk_path(specifier) {
+        return None;
+    }
+
+    let dir = bun_paths::Dirname::dirname(referrer).unwrap_or(referrer);
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let Some(resolved) = resolve_path::join_abs_string_buf_checked::<platform::Windows>(
+        dir,
+        &mut buf[..],
+        &[specifier],
+    ) else {
+        let _ = global.throw(format_args!(
+            "Cannot import {}: the resolved path is too long",
+            bun_core::fmt::quote(specifier),
+        ));
+        return Some(BunString::dead());
+    };
+    let resolved_len = resolved.len();
+    let resolved = &mut buf[..resolved_len];
+    resolve_path::slashes_to_posix_in_place(resolved);
+
+    let slash = if strings::starts_with_windows_drive_letter(resolved) {
+        "/"
+    } else {
+        ""
+    };
+    Some(BunString::create_format(format_args!(
+        "bake:{slash}{}",
+        BStr::new(resolved)
+    )))
 }
 
 #[unsafe(no_mangle)]
@@ -1342,10 +1443,15 @@ extern "C" fn BakeProdResolve(
     }
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
+    let referrer_key_path = &referrer.slice()[5..];
+
+    #[cfg(windows)]
+    if let Some(key) = resolve_disk_key(global, referrer_key_path, specifier.slice()) {
+        return key;
+    }
 
     // dirname semantics: returns None for the root / no-parent.
-    let after_scheme = &referrer.slice()[5..];
-    let dir = bun_paths::Dirname::dirname(after_scheme).unwrap_or(after_scheme);
+    let dir = bun_paths::Dirname::dirname(referrer_key_path).unwrap_or(referrer_key_path);
 
     BunString::create_format(format_args!(
         "bake:{}",
@@ -1368,26 +1474,33 @@ extern "C" fn BakeProdResolve(
 pub use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
-impl framework_router::InsertionHandler for EntryPointMap {
+/// Route scan callbacks for `bun build --app`; counts the reported errors so the build can fail.
+struct RouteScan<'a> {
+    entry_points: &'a mut EntryPointMap,
+    error_count: usize,
+}
+
+impl framework_router::InsertionHandler for RouteScan<'_> {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
         _: framework_router::RouteIndex,
         _: framework_router::FileKind,
     ) -> Result<OpaqueFileId, bun_alloc::AllocError> {
-        self.get_or_put_entry_point(abs_path, bake::Side::Server)
+        self.entry_points
+            .get_or_put_entry_point(abs_path, bake::Side::Server)
             .map(|id| OpaqueFileId::init(id.get()))
             .map_err(|_| bun_alloc::AllocError)
     }
 
     fn on_router_syntax_error(
         &mut self,
-        _rel_path: &[u8],
-        _fail: framework_router::TinyLog,
+        rel_path: &[u8],
+        fail: framework_router::TinyLog,
     ) -> Result<(), bun_alloc::AllocError> {
-        // EntryPointMap does not handle this, so a malformed route pattern
-        // during a production build must crash loudly rather than be swallowed.
-        bun_core::todo_panic!("onRouterSyntaxError for EntryPointMap")
+        fail.print(rel_path);
+        self.error_count += 1;
+        Ok(())
     }
 
     fn on_router_collision_error(
@@ -1404,11 +1517,12 @@ impl framework_router::InsertionHandler for EntryPointMap {
         bun_core::pretty_errorln!(
             "  - <blue>{}<r>",
             BStr::new(resolve_path::relative(
-                &self.root,
-                self.files.keys()[other_id.get() as usize].abs_path()
+                &self.entry_points.root,
+                self.entry_points.files.keys()[other_id.get() as usize].abs_path()
             ))
         );
         Output::flush();
+        self.error_count += 1;
         Ok(())
     }
 }
@@ -1424,7 +1538,7 @@ pub struct PerThread {
     pub(crate) entry_points: EntryPointMap,
     pub(crate) bundled_outputs: Vec<OutputFile>,
     /// Indexed by entry point index (OpaqueFileId)
-    pub(crate) module_keys: Vec<BunString>,
+    pub(crate) module_keys: Vec<OwnedString>,
     /// Unordered
     pub(crate) module_map: StringArrayHashMap<OutputFileIndex>,
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
@@ -1489,7 +1603,7 @@ impl PerThread {
         vm: *mut VirtualMachine,
         entry_points: EntryPointMap,
         bundled_outputs: Vec<OutputFile>,
-        module_keys: Vec<BunString>,
+        module_keys: Vec<OwnedString>,
         module_map: StringArrayHashMap<OutputFileIndex>,
         source_maps: StringArrayHashMap<OutputFileIndex>,
     ) -> crate::Result<PerThread> {
@@ -1621,15 +1735,14 @@ extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString
     BunString::dead()
 }
 
-/// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)
+/// Packed: type (u8) | fully_static (bit 8, read as `noClient` by Bake.ts) | unused (u23)
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct TypeAndFlags(i32);
 
 impl TypeAndFlags {
-    pub(crate) const fn new(ty: u8, no_client: bool) -> Self {
-        // type: bits 0..8, no_client: bit 8, unused: bits 9..32
-        TypeAndFlags((ty as i32) | ((no_client as i32) << 8))
+    pub(crate) const fn new(ty: u8, fully_static: bool) -> Self {
+        TypeAndFlags((ty as i32) | ((fully_static as i32) << 8))
     }
 
     pub(crate) const fn bits(self) -> i32 {

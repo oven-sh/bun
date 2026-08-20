@@ -108,9 +108,9 @@ pub struct Watcher {
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
-    /// Whether `thread_main` is running. Written by the watcher thread, read
-    /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
-    /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
+    /// Whether the watcher thread owns `*self` and frees it in `thread_main`.
+    /// Set by `start()` before the spawn; cleared under `mutex` when the
+    /// thread hands ownership back (`thread_body`'s error path).
     pub(crate) watchloop_handle: bun_core::AtomicCell<bool>,
     pub(crate) cwd: &'static [u8],
     pub(crate) thread: Option<std::thread::JoinHandle<()>>,
@@ -279,38 +279,32 @@ impl Watcher {
     // Per PORTING.md, `pub fn deinit` is never the public name; renamed to
     // `shutdown` (not `close(self)` because ownership may transfer to the
     // watcher thread instead of dropping here).
-    // TODO: ownership model — needs heap::take or an Arc to make this sound.
     /// # Safety
     /// `this` must be the unique heap pointer returned from `init()`; ownership
     /// transfers here on the no-thread path (the Box is reclaimed).
     pub unsafe fn shutdown(this: *mut Self, close_descriptors: bool) {
-        let free = {
+        {
             // SAFETY: caller passes the unique heap pointer returned from init().
-            // Shared access suffices (atomics + mutex + column reads); the borrow
+            // Shared access suffices (atomics + mutex + `wake()`); the borrow
             // ends before the free below.
             let me = unsafe { &*this };
+            // Held across the branch so `thread_body`'s hand-back and its free cannot interleave with it.
+            me.mutex.lock();
             if me.watchloop_handle.load() {
-                me.mutex.lock();
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
+                me.platform.wake();
+                // The thread frees the Watcher (and its fds) any time after this unlock.
                 me.mutex.unlock();
-                false
-            } else {
-                if close_descriptors && me.running.load() {
-                    let fds = me.watchlist.items_fd();
-                    for &fd in fds {
-                        let _ = bun_sys::close(fd);
-                    }
-                }
-                true
+                return;
             }
-        };
-        if free {
-            // watchlist freed by Drop on Box
-            // SAFETY: this was heap-allocated by caller of init(); no borrow of it
-            // is live here.
-            drop(unsafe { bun_core::heap::take(this) });
+            me.mutex.unlock();
+            if close_descriptors && me.running.load() {
+                close_watchlist_fds(&me.watchlist);
+            }
         }
+        // SAFETY: heap-allocated by init(); no thread owns it and no borrow of it is live here.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn get_hash(filepath: &[u8]) -> HashType {
@@ -332,9 +326,6 @@ impl Watcher {
         // argument is still protected is UB under Stacked Borrows / Tree Borrows.
         let owner_still_alive = unsafe { (*this).thread_body() };
 
-        // Close trace file if open
-        WatcherTrace::deinit();
-
         Output::flush();
 
         if !owner_still_alive {
@@ -346,34 +337,34 @@ impl Watcher {
         Ok(())
     }
 
+    /// Returns `true` when ownership went back to the owner, whose `shutdown` then frees `self`.
     fn thread_body(&mut self) -> bool {
-        self.watchloop_handle.store(true);
         self.thread_lock.lock();
         Output::Source::configure_named_thread(zstr!("File Watcher"));
 
         log!("Watcher started");
 
-        let owner_still_alive = match self.watch_loop() {
-            Err(err) => {
-                self.watchloop_handle.store(false);
-                self.platform.stop();
-                let running = self.running.load();
-                if running {
-                    (self.on_error)(self.ctx, err);
-                }
-                running
-            }
-            Ok(()) => false,
-        };
+        let result = self.watch_loop();
 
-        // deinit and close descriptors if needed
-        if self.close_descriptors.load() {
-            let fds = self.watchlist.items_fd();
-            for &fd in fds {
-                let _ = bun_sys::close(fd);
+        // `shutdown()` wakes the platform under `mutex`; nothing below may touch it until that unlocks.
+        let guard = self.mutex.lock_guard();
+        if let Err(err) = result {
+            if self.running.load() {
+                self.platform.stop();
+                // `shutdown()` reads this under `mutex` and takes the freeing branch.
+                self.watchloop_handle.store(false);
+                (self.on_error)(self.ctx, err);
+                // The owner may free `self` once the guard unlocks; nothing touches it after.
+                drop(guard);
+                return true;
             }
         }
-        owner_still_alive
+        drop(guard);
+
+        if self.close_descriptors.load() {
+            close_watchlist_fds(&self.watchlist);
+        }
+        false
     }
 
     pub fn flush_evictions(&mut self) {
@@ -852,13 +843,13 @@ impl Watcher {
                 // Not adopted (another thread won the add race); close the
                 // fd opened above.
                 if ownership == FdOwnership::Caller && fd.is_valid() {
-                    let _ = bun_sys::close(fd);
+                    let _ = sys::close(fd);
                 }
                 true
             }
             Err(_) => {
                 if fd.is_valid() {
-                    let _ = bun_sys::close(fd);
+                    let _ = sys::close(fd);
                 }
                 false
             }
@@ -1139,5 +1130,20 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+}
+
+/// Entries only carry an fd on kqueue; inotify and Windows entries store `Fd::INVALID`.
+fn close_watchlist_fds(watchlist: &WatchList) {
+    for &fd in watchlist.items_fd() {
+        if fd != Fd::INVALID {
+            let _ = sys::close(fd);
+        }
+    }
+}
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        self.watchlist.drop_elements();
     }
 }

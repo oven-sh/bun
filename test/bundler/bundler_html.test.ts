@@ -786,6 +786,17 @@ body {
       expect(jsBundle).toContain("App loaded");
     },
   });
+  // A root-absolute src is joined onto the project root; one longer than any path buffer is a resolve error, not a crash.
+  itBundled("html/absolute-path-longer-than-a-path-buffer", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="/${"a".repeat(5000)}.js"></script></head><body></body></html>`,
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/index.html": [`Could not resolve: "/${"a".repeat(5000)}.js"`],
+    },
+  });
 
   // Test that sourcemap comments are not included in HTML and CSS files
   itBundled("html/no-sourcemap-comments", {

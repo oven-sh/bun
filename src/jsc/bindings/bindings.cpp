@@ -6727,6 +6727,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
         Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
         sourceURL = remappedFrame.source_url.toWTFString();
+        remappedFrame.source_url.deref();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
         lineColumn.column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
     }
@@ -6898,6 +6899,7 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
         Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
+        remappedFrame.source_url.deref();
 
         return remappedFrame.position.line_zero_based + 1;
     }

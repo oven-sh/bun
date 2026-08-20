@@ -2,7 +2,7 @@
 // Definitions that are commented out are planned but not implemented.
 //
 // To use, add a TypeScript reference comment mentioning this file:
-// /// <reference path="/path/to/bun/src/bake/bake.d.ts" />
+// /// <reference path="/path/to/bun/src/runtime/bake/bake.d.ts" />
 
 declare module "bun" {
   declare namespace Bake {
@@ -13,15 +13,17 @@ declare module "bun" {
        *
        * External dependencies:
        * ```
-       * bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
+       * bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental
        * ```
        */
       framework: Framework | "react";
       // Note: To contribute to 'bun-framework-react', it can be run from this file:
-      // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
+      // https://github.com/oven-sh/bun/blob/main/src/runtime/bake/bun-framework-react/index.ts
       /**
-       * A subset of the options from Bun.build can be configured. While the framework
-       * can also set these options, this property overrides and merges with them.
+       * A subset of the options from Bun.build can be configured. `framework.bundlerOptions`
+       * is applied first and this property merges over it: `conditions` and `drop` add up,
+       * while a `define` key or a `minify`/`sourcemap`/`ignoreDCEAnnotations` value set here
+       * replaces the framework's.
        *
        * @default {}
        */
@@ -32,25 +34,36 @@ declare module "bun" {
       plugins?: BunPlugin[] | undefined;
     }
 
-    /** Bake only allows a subset of options from `Bun.build` */
-    type BuildConfigSubset = Pick<
-      BuildConfig,
-      "conditions" | "define" | "loader" | "ignoreDCEAnnotations" | "drop"
-      // - format is not allowed because it is set to an internal "hmr" format
-      // - entrypoints/outfile/outdir doesnt make sense to set
-      // - disabling sourcemap is not allowed because it makes code impossible to debug
-      // - enabling minifyIdentifiers in dev is not allowed because some generated code does not support it
-      // - publicPath is set by the user (TODO: add options.publicPath)
-      // - emitDCEAnnotations is not useful
-      // - banner and footer do not make sense in these multi-file builds
-      // - disabling external would make it exclude imported files.
-      // - plugins is specified in the framework object, and currently merge between client and server.
+    /**
+     * Bake only allows a subset of options from `Bun.build`, with the same value
+     * semantics. `conditions`, `define`, `drop` and `ignoreDCEAnnotations` apply
+     * per graph in both `Bun.serve({ app })` and `bun build --app`.
+     *
+     * `sourcemap` and `minify` only apply to `bun build --app`: the development
+     * server always emits external source maps and never minifies. A production
+     * build links every graph in one pass, so only `minify.syntax` and
+     * `minify.keepNames` are per graph; `sourcemap`, `minify.whitespace` and
+     * `minify.identifiers` are read from `server` and used for every output file,
+     * and setting them under `client` or `ssr` has no effect. `.map` files are not
+     * written to `--outdir` yet: the default `"external"` keeps the server's maps
+     * in memory for error stack traces, and `"inline"` is the only value that ships
+     * client source maps.
+     *
+     * Not configurable:
+     * - loader and plugins throw "not supported yet"; plugins go on the framework or app object
+     * - format: development uses an internal "hmr" format
+     * - entrypoints/outfile/outdir: do not make sense to set
+     * - publicPath: set by the user (TODO: add options.publicPath)
+     * - emitDCEAnnotations: not useful
+     * - banner and footer: do not make sense in these multi-file builds
+     * - external: disabling it would exclude imported files
+     */
+    type BuildConfigSubset = Pick<BuildConfig, "conditions" | "define" | "drop" | "ignoreDCEAnnotations" | "minify"> & {
+      /** As in {@link BuildConfig.sourcemap}, minus the boolean shorthands. @default "external" */
+      sourcemap?: "none" | "inline" | "external" | "linked" | undefined;
+    };
 
-      // TODO: jsx customization
-      // TODO: chunk naming
-    >;
-
-    type BundlerOptions = BuildConfigSubset & {
+    type BundlerOptions = {
       /** Customize the build options of the client-side build */
       client?: BuildConfigSubset;
       /** Customize the build options of the server build */
@@ -67,8 +80,7 @@ declare module "bun" {
      */
     interface Framework {
       /**
-       * Customize the bundler options. Plugins in this array are merged
-       * with any plugins the user has.
+       * Customize the bundler options. The app's `bundlerOptions` merge over these.
        * @default {}
        */
       bundlerOptions?: BundlerOptions | undefined;
@@ -88,7 +100,8 @@ declare module "bun" {
        *
        * Different frameworks have different opinions, some use 'static', some
        * use 'public'.
-       * @default []
+       *
+       * Not supported yet: setting it throws.
        */
       staticRouters?: Array<StaticRouter> | undefined;
       /**
@@ -249,7 +262,8 @@ declare module "bun" {
        */
       root: string;
       /**
-       * The prefix to serve this directory on.
+       * The prefix to serve this directory on. Only `"/"` is supported so far;
+       * any other value is rejected.
        * @default "/"
        */
       prefix?: string | undefined;
@@ -293,7 +307,7 @@ declare module "bun" {
        *
        * Eventually, an API will be added to add custom styles.
        */
-      style: "nextjs-pages" | "nextjs-app-ui" | "nextjs-app-routes" | CustomFileSystemRouterFunction;
+      style: "nextjs-pages" | "nextjs-app-ui" | "nextjs-app-routes";
       /**
        * If true, this will track route layouts and provide them as an array during SSR.
        * @default false
@@ -326,31 +340,6 @@ declare module "bun" {
           source: string;
           /** The prefix to serve this directory on. */
           prefix: string;
-        };
-
-    /**
-     * Bun will call this function for every found file. This
-     * function classifies each file's role in the file system routing.
-     */
-    type CustomFileSystemRouterFunction = (candidatePath: string) => CustomFileSystemRouterResult;
-
-    type CustomFileSystemRouterResult =
-      /** Skip this file */
-      | undefined
-      | null
-      /**
-       * Use this file as a route. Routes may nest, where a framework
-       * can use parent routes to implement layouts.
-       */
-      | {
-          /**
-           * Route pattern can include `:param` for parameters, '*' for
-           * catch-all, and '*?' for optional catch-all. Parameters must take
-           * the full component of a path segment. Parameters cannot have
-           * constraints at this moment.
-           */
-          pattern: string;
-          type: "route" | "layout" | "extra";
         };
 
     /**
@@ -392,11 +381,11 @@ declare module "bun" {
        *          exhaustive: true,
        *      }
        *
-       * "exhaustive" tells Bun that the list is complete. If it is not, a
-       * static site cannot be generated as it would otherwise be missing
-       * routes. A non-exhaustive list can speed up build times by only
-       * specifying a few important pages (such as 10 most recent), leaving
-       * the rest to be generated on-demand at runtime.
+       * "exhaustive" is meant to tell Bun that the list is complete, so that a
+       * non-exhaustive list can prerender a few important pages (such as the 10
+       * most recent) and leave the rest to be generated on-demand at runtime. It
+       * is not read yet: `bun build --app` only produces static builds and
+       * renders exactly the pages that are listed.
        *
        * To stream results, `getParams` may return an async iterator, which
        * Bun will start rendering as more parameters are provided:
@@ -408,11 +397,12 @@ declare module "bun" {
        *     }
        */
       getParams?: (paramsMetadata: ParamsMetadata) => MaybePromise<GetParamIterator>;
-      /**
-       * When a dynamic build uses static assets, Bun can map content types in the
-       * user's `Accept` header to the different static files.
-       */
-      contentTypeToStaticFile?: Record<string, string>;
+      // /**
+      //  * When a dynamic build uses static assets, Bun can map content types in the
+      //  * user's `Accept` header to the different static files. Needs dynamic
+      //  * production builds, which do not exist yet; nothing reads this export.
+      //  */
+      // contentTypeToStaticFile?: Record<string, string>;
     }
 
     type GetParamIterator =
@@ -422,6 +412,7 @@ declare module "bun" {
 
     type GetParamsFinalOpts = void | null | {
       /**
+       * Not read yet; see {@link ServerEntryPoint.getParams}.
        * @default true
        */
       exhaustive?: boolean | undefined;

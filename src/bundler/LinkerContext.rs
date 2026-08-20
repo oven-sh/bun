@@ -382,8 +382,12 @@ impl<'a> LinkerContext<'a> {
         path: &bun_paths::fs::Path<'static>,
         arena: &Bump,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
+        generic_path_with_pretty_initialized(
+            path,
+            self.options.target,
+            self.options.top_level_dir,
+            arena,
+        )
     }
 
     pub(crate) fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
@@ -803,6 +807,9 @@ impl<'a> LinkerContext<'a> {
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
         }
+
+        // Must run before `compute_cross_chunk_dependencies` clears the `import()` records it walks.
+        StaticRouteVisitor::mark_chunks_with_transitive_use_client(self, &mut chunks)?;
 
         compute_cross_chunk_dependencies(self, &mut chunks)?;
 
@@ -1253,7 +1260,8 @@ impl From<BunError> for LinkError {
 pub struct LinkerOptions {
     pub(crate) generate_bytecode_cache: bool,
     pub(crate) output_format: Format,
-    pub(crate) ignore_dce_annotations: bool,
+    /// Keyed by the importing file's target so each bake graph keeps its own setting.
+    pub(crate) ignore_dce_annotations: enum_map::EnumMap<Target, bool>,
     pub(crate) emit_dce_annotations: bool,
     pub(crate) tree_shaking: bool,
     pub(crate) minify_whitespace: bool,
@@ -1264,6 +1272,8 @@ pub struct LinkerOptions {
     pub(crate) css_chunking: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
+    /// Target CSS chunks are printed for; copied from `BundleOptions::css_target`. Bake's `target` is the server target while stylesheets ship to the browser.
+    pub(crate) css_target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
@@ -1274,6 +1284,8 @@ pub struct LinkerOptions {
     pub(crate) mode: LinkerOptionsMode,
 
     pub(crate) public_path: &'static [u8],
+    /// `BundleOptions::top_level_dir()` at load time.
+    pub(crate) top_level_dir: &'static [u8],
 }
 
 impl LinkerOptions {
@@ -1292,7 +1304,7 @@ impl Default for LinkerOptions {
         Self {
             generate_bytecode_cache: false,
             output_format: Format::Esm,
-            ignore_dce_annotations: false,
+            ignore_dce_annotations: enum_map::EnumMap::default(),
             emit_dce_annotations: true,
             tree_shaking: true,
             minify_whitespace: false,
@@ -1303,12 +1315,14 @@ impl Default for LinkerOptions {
             css_chunking: false,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
+            css_target: Target::Browser,
             compile_mode: CompileMode::None,
             metafile: false,
             metafile_json_path: b"",
             metafile_markdown_path: b"",
             mode: LinkerOptionsMode::Bundle,
             public_path: b"",
+            top_level_dir: b"",
         }
     }
 }
@@ -1448,6 +1462,28 @@ impl SourceMapDataTask {
 }
 
 impl SourceMapData {
+    /// Joins the line-offset tasks `compute_data_for_source_map` scheduled, then frees them.
+    pub(crate) fn wait_for_line_offset_tasks(&mut self) {
+        if !self.line_offset_tasks.is_empty() {
+            self.line_offset_wait_group.wait();
+            self.line_offset_tasks = Box::default();
+        }
+    }
+
+    /// Joins the quoted-contents tasks `compute_data_for_source_map` scheduled, then frees them.
+    pub(crate) fn wait_for_quoted_contents_tasks(&mut self) {
+        if !self.quoted_contents_tasks.is_empty() {
+            self.quoted_contents_wait_group.wait();
+            self.quoted_contents_tasks = Box::default();
+        }
+    }
+
+    /// A build that stops before `generate_chunks_in_parallel` (no chunks, a link error) still has these running on the worker pool.
+    pub(crate) fn wait_for_tasks(&mut self) {
+        self.wait_for_line_offset_tasks();
+        self.wait_for_quoted_contents_tasks();
+    }
+
     /// Runs concurrently across the worker pool (one task per `source_index`).
     /// Takes [`ParentRef<LinkerContext>`](bun_ptr::ParentRef) (not `&mut`)
     /// because peer tasks on other threads hold the same pointer —
@@ -2771,6 +2807,8 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
+        let ignore_dce_annotations = self.options.ignore_dce_annotations
+            [self.graph.ast.items_target()[source_index as usize]];
         let parts = ctx.parts[source_index as usize].as_slice();
         for (part_index, part) in parts.iter().enumerate() {
             let mut can_be_removed_if_unused = part.can_be_removed_if_unused;
@@ -2825,7 +2863,7 @@ impl<'a> LinkerContext<'a> {
                     // considered to have no side effects
                     let se = ctx.side_effects[other_source_index as usize];
 
-                    if se != SideEffects::HasSideEffects && !self.options.ignore_dce_annotations {
+                    if se != SideEffects::HasSideEffects && !ignore_dce_annotations {
                         continue;
                     }
 

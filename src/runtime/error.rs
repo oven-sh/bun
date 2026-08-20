@@ -218,6 +218,9 @@ pub enum Error {
     MissingPackageJSON,
     #[error("InstallFailed")]
     InstallFailed,
+    /// `bun build --app` already reported the failure; like `InstallFailed`, the handler only exits 1.
+    #[error("BakeBuildFailed")]
+    BakeBuildFailed,
     #[error("InvalidPackageJSON")]
     InvalidPackageJSON,
     #[error("HTTPForbidden")]
@@ -679,6 +682,7 @@ impl Error {
             Self::FailedToBindPipe => "FailedToBindPipe",
             Self::MissingPackageJSON => "MissingPackageJSON",
             Self::InstallFailed => "InstallFailed",
+            Self::BakeBuildFailed => "BakeBuildFailed",
             Self::InvalidPackageJSON => "InvalidPackageJSON",
             Self::HTTPForbidden => "HTTPForbidden",
             Self::ExampleNotFound => "ExampleNotFound",

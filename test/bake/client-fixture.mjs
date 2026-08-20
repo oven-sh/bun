@@ -6,6 +6,16 @@ import assert from "node:assert/strict";
 import util from "node:util";
 import { exitCodeMap } from "./exit-code-map.mjs";
 
+// happy-dom < 20.11.2 holds a MutationObserver's callback through a bare WeakRef, so a GC silently stops every
+// observer (css-reloader's included) and tests pass or fail by heap timing. Keep those callbacks alive.
+const observerCallbacks = new Set();
+globalThis.WeakRef = class extends WeakRef {
+  constructor(target) {
+    super(target);
+    if (typeof target === "function") observerCallbacks.add(target);
+  }
+};
+
 // Prevent silent crashes from unhandled promise rejections
 process.on("unhandledRejection", reason => {
   console.error("[E] Unhandled rejection:", reason);
@@ -32,15 +42,14 @@ let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
-let isUpdating = null;
+let pageLoad = null;
+// Bumped when the current window is abandoned; acks captured by an older window are dropped.
+let windowGeneration = 0;
 let objectURLRegistry = new Map();
 let internalAPIs;
 
 function reset() {
-  if (isUpdating !== null) {
-    clearImmediate(isUpdating);
-    isUpdating = null;
-  }
+  windowGeneration++;
   for (const ws of webSockets) {
     ws.onclose = () => {};
     ws.onerror = () => {};
@@ -65,32 +74,36 @@ function reset() {
 let allowWebSocketMessages = true;
 
 function createWindow(windowUrl) {
+  // A reload discards the previous page's overlay, read or not.
+  unreadErrorReports = 0;
   window = new Window({
     url: windowUrl,
     width: 1024,
     height: 768,
   });
 
+  const generation = ++windowGeneration;
+  const ackToHarness = () => {
+    if (generation !== windowGeneration) return;
+    process.send({ type: "received-hmr-event", args: [] });
+  };
+
   // The HMR runtime reads this symbol-keyed callback off `globalThis` (which is
   // `window` inside happy-dom's script context) and passes its internal hooks.
   let hmrEventHookInstalled = false;
-  let pendingHotUpdateAcks = 0;
+  let pendingBuildAcks = 0;
   let hmrScriptQueued = false;
-  const sendHmrAck = () => {
-    if (pendingHotUpdateAcks === 0) return;
-    pendingHotUpdateAcks--;
-    process.send({ type: "received-hmr-event", args: [] });
+  const ackBuild = () => {
+    if (pendingBuildAcks === 0) return;
+    pendingBuildAcks--;
+    ackToHarness();
   };
   window[Symbol.for("bun testing api, may change at any time")] = internal => {
     window.internal = internal;
     if (typeof internal.onEvent === "function") {
       hmrEventHookInstalled = true;
-      // Ack a hot update only once the new module code has actually run. Node's
-      // Blob.arrayBuffer() resolves on a later macrotask than the WS listener's
-      // setImmediate, so acking from the WS listener would race the eval.
-      // Full reloads are not acked here; the new window acks from the
-      // `[Bun] Hot-module-reloading socket connected` handler after loadPage.
-      internal.onEvent("bun:afterUpdate", sendHmrAck);
+      // Ack a hot update only once the new module code has run; a full reload is acked by the new window.
+      internal.onEvent("bun:afterUpdate", ackBuild);
     }
   };
 
@@ -99,7 +112,23 @@ function createWindow(windowUrl) {
     if (typeof url === "string") {
       url = new URL(url, windowUrl).href;
     }
-    return await original_window_fetch(url, options);
+    // happy-dom stringifies an ArrayBuffer body created in the page's realm; hand it a Buffer instead.
+    if (options?.body && Object.prototype.toString.call(options.body) === "[object ArrayBuffer]") {
+      options = { ...options, body: Buffer.from(options.body) };
+    }
+    const promise = original_window_fetch(url, options);
+    // A runtime error reaches the overlay only after this round trip and its body are consumed; the exit handler waits for that and counts the report.
+    if (String(url).includes("/_bun/report_error")) {
+      unreadErrorReports++;
+      // Not the body: happy-dom's Response.clone() does not tee, and the runtime reads the body itself.
+      const settled = promise.then(
+        () => {},
+        () => {},
+      );
+      inflightErrorReports.add(settled);
+      settled.finally(() => inflightErrorReports.delete(settled));
+    }
+    return await promise;
   };
 
   // Provide WebSocket
@@ -110,25 +139,19 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         const data = new Uint8Array(event.data);
-        if (data[0] === "u".charCodeAt(0) && hmrEventHookInstalled) {
-          // JS updates queue a script tag and ack via bun:afterUpdate once it
-          // evals; everything else (CSS, reloads, route reloads) acks here on
-          // the next tick when no script was queued.
-          pendingHotUpdateAcks++;
+        const kind = String.fromCharCode(data[0]);
+        // One ack per build, on its last frame to this page: "u" for HMR pages ("e" precedes it), "e" for the error page.
+        if (hmrEventHookInstalled ? kind === "u" : kind === "e" || kind === "u") {
+          // JS updates ack via bun:afterUpdate once the queued script evals; everything else acks next tick.
+          pendingBuildAcks++;
           hmrScriptQueued = false;
-          isUpdating = setImmediate(() => {
-            isUpdating = null;
-            if (!hmrScriptQueued) sendHmrAck();
-          });
-        } else if (data[0] === "e".charCodeAt(0) || data[0] === "u".charCodeAt(0)) {
-          isUpdating = setImmediate(() => {
-            process.send({ type: "received-hmr-event", args: [] });
-            isUpdating = null;
+          setImmediate(() => {
+            if (!hmrScriptQueued) ackBuild();
           });
         }
         if (!allowWebSocketMessages) {
           const allowedTypes = ["n", "r"];
-          if (allowedTypes.includes(String.fromCharCode(data[0]))) {
+          if (allowedTypes.includes(kind)) {
             return;
           }
           dumpWebSocketMessage("[E] WebSocket message received while messages are not allowed", data);
@@ -191,7 +214,7 @@ function createWindow(windowUrl) {
         });
         return;
       }
-      return originalElementAppendChild.call(document.head, element);
+      return originalElementAppendChild.call(this, element);
     },
   });
 
@@ -230,9 +253,7 @@ function createWindow(windowUrl) {
 
           // If no stylesheets of any kind, just emit the event
           if (styleLinks.length === 0 && styleTags.length === 0 && adoptedSheets.length === 0) {
-            process.nextTick(() => {
-              process.send({ type: "received-hmr-event", args: [] });
-            });
+            process.nextTick(ackToHarness);
             return;
           }
 
@@ -270,9 +291,7 @@ function createWindow(windowUrl) {
             if (checkAttempts >= MAX_CHECK_ATTEMPTS && !allLoaded) {
               console.warn("[W] Reached maximum CSS load check attempts, proceeding anyway");
             }
-            process.nextTick(() => {
-              process.send({ type: "received-hmr-event", args: [] });
-            });
+            process.nextTick(ackToHarness);
           } else {
             // Wait a bit and check again
             console.info(
@@ -292,7 +311,7 @@ function createWindow(windowUrl) {
     },
     assert: (value, ...args) => {
       if (value) return;
-      console.trace(...args);
+      console.trace("[E]", ...args);
       process.exit(exitCodeMap.assertionFailed);
     },
     trace: console.trace,
@@ -366,8 +385,6 @@ async function handleReload() {
     pendingReloadTimer = null;
   }
 
-  process.send({ type: "reload", args: [] });
-
   // Destroy the old window
   reset();
   window.close();
@@ -377,11 +394,12 @@ async function handleReload() {
 
   // Reload the page content
   try {
-    await loadPage(window);
+    await (pageLoad = loadPage(window));
   } catch (error) {
-    console.error("Failed to reload page:", error);
+    console.error("[E] Failed to reload page:", error);
     process.exit(exitCodeMap.reloadFailed);
   }
+  process.send({ type: "reload", args: [] });
 }
 
 // Extract page loading logic to a reusable function
@@ -398,22 +416,22 @@ async function loadPage() {
         await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
         continue;
       }
-      console.error("Failed to fetch page after retries:", err.message);
+      console.error("[E] Failed to fetch page after retries:", err.message);
       process.exit(exitCodeMap.reloadFailed);
     }
   }
   if (response.status >= 400 && response.status <= 499) {
-    console.error("Failed to load page:", response.statusText);
+    console.error("[E] Failed to load page:", response.statusText);
     process.exit(exitCodeMap.reloadFailed);
   }
   const contentType = response.headers.get("content-type");
   if (!contentType || !contentType.match(/^text\/html;?/)) {
-    console.error("Invalid content type:", contentType);
+    console.error("[E] Invalid content type:", contentType);
     process.exit(exitCodeMap.reloadFailed);
   }
   const html = await response.text();
   if (!html.includes("<script")) {
-    console.error("missing <script>");
+    console.error("[E] missing <script>");
     process.exit(exitCodeMap.reloadFailed);
   }
   window.document.write(html);
@@ -476,6 +494,29 @@ process.on("message", async message => {
     }
   }
   if (message.type === "exit") {
+    // Exiting with a fetch in flight trips a libuv assertion on Windows (uv_async_send on a closing handle).
+    await pageLoad?.catch(() => {});
+    // Let a runtime error that is still being reported reach the overlay.
+    while (inflightErrorReports.size > 0) {
+      await Promise.allSettled([...inflightErrorReports]);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    // Build errors are broadcast to every client and asserted by the test that caused them; a runtime error only reaches the overlay, so one the harness never read is a failure happy-dom swallowed.
+    if (!expectErrors) {
+      // The overlay renders a reported error a few ticks after the response; wait briefly so the message can name it.
+      let runtimeError = overlayRuntimeError();
+      for (let i = 0; unreadErrorReports > 0 && !runtimeError && i < 50; i++) {
+        await new Promise(resolve => setImmediate(resolve));
+        runtimeError = overlayRuntimeError();
+      }
+      if (unreadErrorReports > 0 || (runtimeError && !lastReportedErrors.includes(runtimeError))) {
+        console.error(
+          "[E] A runtime error was reported that the test never checked:",
+          runtimeError ?? "(not rendered in the overlay yet)",
+        );
+        process.exit(exitCodeMap.unexpectedErrorOverlay);
+      }
+    }
     process.exit(0);
   }
   if (message.type === "get-style") {
@@ -526,45 +567,12 @@ process.on("message", async message => {
   if (message.type === "get-errors") {
     const [messageId] = message.args;
     try {
-      const overlay = window.document.querySelector("bun-hmr");
-      if (!overlay) {
-        process.send({
-          type: `get-errors-result-${messageId}`,
-          args: [{ value: [] }],
-        });
-        return;
-      }
-
-      const errors = [];
-      const buildErrors = overlay.shadowRoot.querySelectorAll(".b-msg");
-      for (const message of buildErrors) {
-        const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
-        const label = message.querySelector(".log-label").textContent;
-        const text = message.querySelector(".log-text").textContent;
-
-        const lineNumElem = message.querySelector(".gutter");
-        const spaceElem = message.querySelector(".highlight-wrap > .space");
-
-        let formatted;
-        if (lineNumElem && spaceElem) {
-          const line = lineNumElem.textContent;
-          const col = spaceElem.textContent.length + 1;
-          formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
-        } else {
-          formatted = `${fileName}: ${label}: ${text}`;
-        }
-
-        errors.push(formatted);
-      }
-      const runtimeError = overlay.shadowRoot.querySelector(".r-error");
-      if (runtimeError) {
-        // TODO: line and column of this error
-        errors.push(runtimeError.querySelector(".message-desc").textContent);
-      }
-
+      const errors = collectOverlayErrors();
+      lastReportedErrors = errors;
+      unreadErrorReports = 0;
       process.send({
         type: `get-errors-result-${messageId}`,
-        args: [{ value: errors.sort() }],
+        args: [{ value: errors }],
       });
     } catch (error) {
       console.error(error);
@@ -575,6 +583,52 @@ process.on("message", async message => {
     }
   }
 });
+/** Errors currently rendered in the `bun-hmr` overlay, formatted the way `expectErrorOverlay` compares them. */
+function collectOverlayErrors() {
+  const overlay = window.document.querySelector("bun-hmr");
+  if (!overlay) return [];
+  const errors = [];
+  const buildErrors = overlay.shadowRoot.querySelectorAll(".b-msg");
+  for (const message of buildErrors) {
+    const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
+    const label = message.querySelector(".log-label").textContent;
+    const text = message.querySelector(".log-text").textContent;
+
+    const lineNumElem = message.querySelector(".gutter");
+    const spaceElem = message.querySelector(".highlight-wrap > .space");
+
+    let formatted;
+    if (lineNumElem && spaceElem) {
+      const line = lineNumElem.textContent;
+      const col = spaceElem.textContent.length + 1;
+      formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
+    } else {
+      formatted = `${fileName}: ${label}: ${text}`;
+    }
+
+    errors.push(formatted);
+  }
+  const runtimeError = overlay.shadowRoot.querySelector(".r-error");
+  if (runtimeError) {
+    // TODO: line and column of this error
+    errors.push(runtimeError.querySelector(".message-desc").textContent);
+  }
+  return errors.sort();
+}
+
+/** The runtime error message the visible overlay shows, or null. */
+function overlayRuntimeError() {
+  const overlay = window.document.querySelector("bun-hmr");
+  return overlay?.shadowRoot.querySelector(".r-error .message-desc")?.textContent ?? null;
+}
+
+/** The last overlay contents the harness read through `get-errors`; a runtime error it never read is unexpected at exit. */
+let lastReportedErrors = [];
+/** `/_bun/report_error` requests the page has not finished; the overlay shows the error only after one settles. */
+const inflightErrorReports = new Set();
+/** Runtime errors reported to the dev server since the harness last read the overlay. */
+let unreadErrorReports = 0;
+
 process.on("disconnect", () => {
   process.exit(0);
 });
@@ -599,8 +653,8 @@ process.on("exit", () => {
 // Initial page load
 createWindow(url);
 try {
-  await loadPage(window);
+  await (pageLoad = loadPage(window));
 } catch (error) {
-  console.error("Failed initial page load:", error);
+  console.error("[E] Failed initial page load:", error);
   process.exit(exitCodeMap.reloadFailed);
 }

@@ -225,6 +225,7 @@ WTF::String formatStackTrace(
                     sb.append(':');
                     sb.append(originalLine.oneBasedInt());
                 }
+                remappedFrame.source_url.deref();
 
                 sb.append(')');
             }
@@ -388,6 +389,7 @@ WTF::String formatStackTrace(
         if (i != framesCount - 1) {
             sb.append("\n"_s);
         }
+        remappedFrame.source_url.deref();
     }
 
     return sb.toString();
@@ -509,6 +511,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
             callsite->setLineNumber(frame.position.line());
             callsite->setColumnNumber(frame.position.column());
         }
+        frame.source_url.deref();
     }
 
     JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
@@ -636,6 +639,7 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
         lineColumn.column = frame.position.column().oneBasedInt();
         remappedSourceURL = frame.source_url.toWTFString();
     }
+    frame.source_url.deref();
 }
 
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, void* bunErrorData)

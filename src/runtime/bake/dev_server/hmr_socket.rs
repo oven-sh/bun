@@ -124,32 +124,13 @@ impl HmrSocket {
                                             dev.memory_visualizer_timer.state
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the
-                                        // low-tier `VirtualMachine`; the real `timer::All`
-                                        // lives in `RuntimeState` (see jsc_hooks.rs).
-                                        let state = crate::jsc_hooks::runtime_state();
-                                        let next = bun_core::Timespec::ms_from_now(
-                                            bun_core::TimespecMockMode::ForceRealTime,
-                                            1000,
-                                        );
-                                        // SAFETY: `runtime_state()` is non-null after
-                                        // `bun_runtime::init()`; JS-thread only, sole
-                                        // `&mut` to `timer` in this scope.
-                                        unsafe {
-                                            (*state).timer.update(
-                                                &raw mut dev.memory_visualizer_timer,
-                                                &next,
-                                            );
-                                        }
+                                        dev.arm_memory_visualizer_timer();
                                     }
                                 }
                                 _ => {}
                             }
                         }
-                    } else if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
-                        // Note: this `else if` condition is identical to the `if`
-                        // above and is therefore unreachable; likely a bug
-                        // (intended: `!new && old` → unsubscribe).
+                    } else if !new_bits.contains(bit) && self.subscriptions.contains(bit) {
                         let _ = ws.unsubscribe(&field.uws_topic());
                     }
                 }
@@ -309,17 +290,8 @@ impl HmrSocket {
             }
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
-                if dev.emit_incremental_visualizer_events == 0
-                    && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
-                {
-                    // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
-                    // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
-                    let state = crate::jsc_hooks::runtime_state();
-                    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-                    // JS-thread only, sole `&mut` to `timer` in this scope.
-                    unsafe {
-                        (*state).timer.remove(&raw mut dev.memory_visualizer_timer);
-                    }
+                if dev.emit_memory_visualizer_events == 0 {
+                    dev.disarm_memory_visualizer_timer();
                 }
             }
         }

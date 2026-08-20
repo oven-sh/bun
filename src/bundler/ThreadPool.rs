@@ -544,6 +544,8 @@ pub struct WorkerData {
     // per-worker `options`/`resolver.caches`/etc. without touching the parent.
     pub(crate) transpiler: Transpiler<'static>,
     pub(crate) other_transpiler: Option<Box<Transpiler<'static>>>,
+    /// Cloned from `BundleV2.ssr_transpiler` on first SSR-graph parse when bake runs a separate SSR graph.
+    pub(crate) ssr_transpiler: Option<Box<Transpiler<'static>>>,
 }
 
 impl Worker {
@@ -612,7 +614,13 @@ impl Worker {
                 if let Some(ctx) = data.transpiler.macro_context.take() {
                     ctx.deinit();
                 }
-                if let Some(other) = data.other_transpiler.as_deref_mut() {
+                for other in [
+                    data.other_transpiler.as_deref_mut(),
+                    data.ssr_transpiler.as_deref_mut(),
+                ]
+                .into_iter()
+                .flatten()
+                {
                     if let Some(ctx) = other.macro_context.take() {
                         ctx.deinit();
                     }
@@ -705,6 +713,7 @@ impl Worker {
             log,
             transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
             other_transpiler: None,
+            ssr_transpiler: None,
         });
         // Wire self-referential `linker`/`macro_context` now that `transpiler`
         // is at its final address inside `WorkerData`.
@@ -756,6 +765,25 @@ impl Worker {
                 .expect("other_transpiler set above");
             debug_assert!(other.options.target == target);
             return other;
+        }
+        // `BundleV2.ssr_transpiler` aliases the server transpiler unless bake set up a separate SSR graph.
+        if target == Target::ServerComponentsSsr
+            && !core::ptr::eq(self.ctx.ssr_transpiler, self.ctx.transpiler())
+        {
+            if data.ssr_transpiler.is_none() {
+                // SAFETY: not aliasing the server transpiler ⇒ bake passed a live SSR transpiler that outlives every worker.
+                let ssr: &Transpiler<'_> = unsafe { &*self.ctx.ssr_transpiler };
+                // SAFETY: `self.arena` points at `self.heap` (set in `create()`), pinned for the worker's lifetime.
+                let arena_ref: &'static ThreadLocalArena =
+                    unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
+                let mut boxed = Box::new(Self::initialize_transpiler(data.log, ssr, arena_ref));
+                boxed.wire_after_move();
+                data.ssr_transpiler = Some(boxed);
+            }
+            return data
+                .ssr_transpiler
+                .as_deref_mut()
+                .expect("ssr_transpiler set above");
         }
 
         &mut data.transpiler

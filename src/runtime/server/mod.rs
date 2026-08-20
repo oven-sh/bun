@@ -402,6 +402,8 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
                 std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
                 &mut *self.request_object,
             );
+            // Owned by the `SavedRequest`; released in its `Drop`.
+            (*self.ctx).ref_();
         }
 
         SavedRequest {
@@ -949,7 +951,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // while the bundle was being built.
         // SAFETY: `this` is the live server backref for this request.
         let Some(server_js) = unsafe { &*this }.js_value_for_dispatch() else {
-            server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
+            match req {
+                SavedRequestUnion::Stack(_) => {
+                    server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp))
+                }
+                SavedRequestUnion::Saved(saved) => saved.abandon(b"503 Service Unavailable"),
+            }
             return;
         };
         let prepared: PreparedRequest<SSL, DEBUG> = match &req {
@@ -1051,7 +1058,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     unsafe { &mut *request_object },
                 );
             }
-            SavedRequestUnion::Saved(_) => {} // info already copied
+            SavedRequestUnion::Saved(_) => {} // info already copied; `req` drops here and releases the `SavedRequest`
         }
     }
 
@@ -4170,10 +4177,9 @@ pub(crate) mod http_server_agent {
 }
 
 // ─── SavedRequest ────────────────────────────────────────────────────────────
+/// A request parked until its route bundle is ready. Owns the JS `Request` strong ref and one ref on `ctx` (taken in
+/// `PreparedRequest::save`); the context's own ref still belongs to whoever answers the response.
 pub struct SavedRequest {
-    /// May be `.empty` until
-    /// `prepare_js_request_context` populates it; `deinit` must tolerate the
-    /// empty state.
     pub(crate) js_request: jsc::StrongOptional,
     pub(crate) request: *mut crate::webcore::Request,
     pub ctx: AnyRequestContext,
@@ -4181,9 +4187,22 @@ pub struct SavedRequest {
 }
 
 impl SavedRequest {
-    /// Release the JS strong ref and
-    /// drop the request-context refcount. `request`/`response` are non-owning.
-    pub(crate) fn deinit(&mut self) {
+    /// The handler will never run: answer `status` with an empty body through the context, which drops the context's own ref.
+    pub(crate) fn abandon(self, status: &[u8]) {
+        self.response.write_status(status);
+        self.response.write_header_int(b"Content-Length", 0);
+        self.ctx.end_without_body(true);
+    }
+
+    /// The response will be answered without the context (DevServer error page): drop the context's own ref and hand back the bare response.
+    pub(crate) fn into_response(self) -> uws::AnyResponse {
+        self.ctx.deref();
+        self.response
+    }
+}
+
+impl Drop for SavedRequest {
+    fn drop(&mut self) {
         self.js_request.deinit();
         self.ctx.deref();
     }

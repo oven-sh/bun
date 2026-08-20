@@ -548,10 +548,10 @@ for (const mode of ["clear", "refresh", "repeat"]) {
   }, 90_000);
 }
 
-it("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {
+it("setTimeout propagates an error thrown while emitting a timeout warning", async () => {
   // The out-of-range timeout warning queues a process.nextTick, which reads process._exiting.
-  // If that read throws, the exception must not be left pending on the VM when setTimeout
-  // returns — otherwise debug builds hit releaseAssertNoException().
+  // If that read throws, setTimeout throws it (as in Node) rather than leaving it pending on
+  // the VM or swallowing it.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -562,8 +562,13 @@ it("setTimeout does not leak a pending exception when emitting a timeout warning
           get() { throw new TypeError("boom"); },
           configurable: true,
         });
-        const t = setTimeout(() => {}, 1e100);
-        clearTimeout(t);
+        try {
+          setTimeout(() => {}, 1e100);
+          console.log("no throw");
+        } catch (e) {
+          console.log("threw " + e.message);
+        }
+        delete process._exiting;
         console.log("survived");
       `,
     ],
@@ -574,8 +579,7 @@ it("setTimeout does not leak a pending exception when emitting a timeout warning
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("boom");
-  expect(stdout.trim()).toBe("survived");
+  expect(stdout.trim()).toBe("threw boom\nsurvived");
   expect(exitCode).toBe(0);
 });
 

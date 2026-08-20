@@ -1172,15 +1172,12 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
 
             auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
 
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
-            if (returnedException) [[unlikely]] {
-                // Termination / stack exhaustion; the getter's caller must see it.
-                JSC::throwException(globalObject, scope, returnedException.get());
-                init.property.setMayBeNull(vm, init.owner, nullptr);
-                return;
-            }
+            // TopExceptionScope: this also runs as a static-table PropertyCallback (Module._cache),
+            // where a ThrowScope's simulated throw would go unchecked by reifyAllStaticProperties.
+            // An exception (termination / stack exhaustion) is left pending for the getter's caller.
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList());
+            RETURN_IF_EXCEPTION(scope, init.property.setMayBeNull(vm, init.owner, nullptr));
             JSObject* object = result.toObject(globalObject);
             RETURN_IF_EXCEPTION(scope, init.property.setMayBeNull(vm, init.owner, nullptr));
             init.set(object);

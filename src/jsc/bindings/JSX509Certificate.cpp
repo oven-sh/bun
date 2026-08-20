@@ -441,11 +441,10 @@ JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject
         return jsUndefined();
 
     if (!legacy) {
+        // An empty subject yields no BIO; node returns undefined (crypto_x509.cc GetSubject).
         auto bio = view.getSubject();
-        if (!bio) {
-            throwCryptoOperationFailed(globalObject, scope);
-            return {};
-        }
+        if (!bio)
+            return jsUndefined();
         return jsString(vm, toWTFString(bio));
     }
 
@@ -467,13 +466,10 @@ JSValue JSX509Certificate::computeIssuer(ncrypto::X509View view, JSGlobalObject*
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto bio = view.getIssuer();
-    if (!bio) {
-        throwCryptoOperationFailed(globalObject, scope);
-        return {};
-    }
-
     if (!legacy) {
+        auto bio = view.getIssuer();
+        if (!bio)
+            return jsUndefined();
         return jsString(vm, toWTFString(bio));
     }
 

@@ -133,7 +133,8 @@ pub(crate) mod js_bindings {
     #[bun_jsc::host_fn]
     fn js_segfault_at_pc(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let pc = frame.argument(0).to_number(global)?;
-        if !(pc >= 0.0 && pc <= usize::MAX as f64 && pc.fract() == 0.0) {
+        // `usize::MAX as f64` rounds up to 2^64, hence `<`.
+        if !(pc >= 0.0 && pc < usize::MAX as f64 && pc.fract() == 0.0) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "segfaultAtPc: expected a code address, got {pc}"
             )));

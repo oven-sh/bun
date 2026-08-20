@@ -14,6 +14,7 @@
 //!   - Nicknames: @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly
 
 use bun_core::strings;
+use bun_jsc::wtf::MAX_ECMASCRIPT_TIME;
 use bun_jsc::{GregorianDateTime, JSGlobalObject, JsResult};
 
 /// Time zone for `CronExpression::next`.
@@ -217,7 +218,12 @@ impl CronExpression {
                 }
             }
         }
-        Ok(if result > from_ms { Some(result) } else { None })
+        // NaN = past the Date range: surface it so next() stops, don't treat as DST-skipped.
+        Ok(if result.is_nan() || result > from_ms {
+            Some(result)
+        } else {
+            None
+        })
     }
 
     /// Compute the next time (in ms since epoch) that matches this expression
@@ -280,7 +286,7 @@ impl CronExpression {
             }
 
             if let Some(r) = self.resolve_local_match(global_object, tz, dt, from_ms, from_dt)? {
-                return Ok(Some(r));
+                return Ok((r <= MAX_ECMASCRIPT_TIME).then_some(r));
             }
             dt.minute += 1;
         }

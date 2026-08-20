@@ -39,6 +39,9 @@ describe.concurrent("Bun.cron.parse — algorithm (pinned TZ=UTC)", () => {
   });
 
   test("impossible day/month (Feb 30) returns null quickly", () => {
+    // Resolve the zone once before timing so ICU's first-open cost (debug+ASAN)
+    // isn't charged to the walk this test bounds.
+    Bun.cron.parse("* * * * *", 0, { tz: "UTC" });
     const t = performance.now();
     expect(Bun.cron.parse("0 0 30 2 *", new Date("2026-01-01T00:00:00Z"), { tz: "UTC" })).toBeNull();
     expect(performance.now() - t).toBeLessThan(50);
@@ -115,6 +118,44 @@ describe("Bun.cron.parse — invalid `from` argument", () => {
       exitCode: 0,
     });
   });
+
+  // With { tz }, the upper boundary used to crash (debug assert in
+  // JSC::ISO8601::PlainDate once the wall-clock walk crossed year 275760) or
+  // return Invalid Date. Spawn so the assert shows up as a subprocess exit.
+  test.concurrent.each(["UTC", "America/New_York", "Asia/Tokyo"])(
+    "accepts the Date range boundary with { tz: %p }",
+    async tz => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const tz = ${JSON.stringify(tz)};
+           const fmt = r => r === null ? "null" : Number.isNaN(r.getTime()) ? "invalid" : r.getTime();
+           const lo = Bun.cron.parse("* * * * *", -8.64e15, { tz });
+           const out = [
+             // Next minute is past the range → null (NaN-from-range case).
+             fmt(Bun.cron.parse("* * * * *", 8.64e15, { tz })),
+             // Next Jan 1 is in year 275761 → null (out-of-range year case).
+             fmt(Bun.cron.parse("0 0 1 1 *", 8.64e15, { tz })),
+             // One minute inside the upper boundary lands exactly on it.
+             fmt(Bun.cron.parse("* * * * *", 8.64e15 - 60_000, { tz })),
+             // Lower boundary still finds a valid in-range instant (exact value
+             // depends on the zone's LMT offset at -271821, so just check category).
+             lo instanceof Date && lo.getTime() > -8.64e15 && lo.getTime() < -8.64e15 + 86_400_000,
+           ];
+           process.stdout.write(JSON.stringify(out));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+        out: ["null", "null", 8.64e15, true],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   test("does not crash the process on 1e300", async () => {
     await using proc = Bun.spawn({

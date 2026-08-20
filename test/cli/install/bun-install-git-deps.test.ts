@@ -193,7 +193,7 @@ function installOutput(stdout: string): string[] {
 }
 
 function expectInstalled(stdout: string, resolutions: Record<string, string>) {
-  const names = Object.keys(resolutions);
+  const names = Object.keys(resolutions).sort();
   expect(installOutput(stdout)).toEqual([
     expect.stringContaining("bun install v"),
     "",

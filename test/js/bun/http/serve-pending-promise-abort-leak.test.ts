@@ -388,20 +388,23 @@ test("async server.upgrade() frees the context while the handler promise stays p
   });
 
   const ws = new WebSocket(`ws://localhost:${server.port}/`);
-  const { promise: opened, resolve: signalOpen, reject: failOpen } = Promise.withResolvers<void>();
-  ws.onopen = () => signalOpen();
-  ws.onerror = () => failOpen(new Error("websocket upgrade failed"));
-  await opened;
+  try {
+    const { promise: opened, resolve: signalOpen, reject: failOpen } = Promise.withResolvers<void>();
+    ws.onopen = () => signalOpen();
+    ws.onerror = () => failOpen(new Error("websocket upgrade failed"));
+    await opened;
 
-  await waitForPendingRequestsWithoutGC(server, 0);
+    await waitForPendingRequestsWithoutGC(server, 0);
 
-  // Resolving after the context is gone is a safe no-op: the reaction's
-  // take() returns null.
-  capturedResolve!(new Response("late"));
-  capturedResolve = undefined;
-  await Bun.sleep(0);
-  expect(server.pendingRequests).toBe(0);
-  ws.close();
+    // Resolving after the context is gone is a safe no-op: the reaction's
+    // take() returns null.
+    capturedResolve!(new Response("late"));
+    capturedResolve = undefined;
+    await Bun.sleep(0);
+    expect(server.pendingRequests).toBe(0);
+  } finally {
+    ws.close();
+  }
 });
 
 test("413 on a chunked upload frees the context while the handler promise stays parked", async () => {
@@ -425,47 +428,50 @@ test("413 on a chunked upload frees the context while the handler promise stays 
   });
 
   const socket = connect(Number(server.port), "127.0.0.1");
-  await new Promise<void>((resolve, reject) => {
-    socket.on("connect", resolve);
-    socket.on("error", reject);
-  });
-  // The server closes the connection after the 413; EPIPE/ECONNRESET while we
-  // are still writing chunks is the expected outcome.
-  socket.removeAllListeners("error");
-  socket.on("error", () => {});
-
-  let received = "";
-  const { promise: gotResponse, resolve: signalResponse } = Promise.withResolvers<void>();
-  socket.on("data", d => {
-    received += d.toString("latin1");
-    if (received.includes("\r\n\r\n")) signalResponse();
-  });
-  socket.on("close", () => signalResponse());
-
-  socket.write(
-    "POST / HTTP/1.1\r\n" + //
-      `Host: 127.0.0.1:${server.port}\r\n` +
-      "Transfer-Encoding: chunked\r\n" +
-      "\r\n",
-  );
-  await handlerEntered;
-
-  const piece = Buffer.alloc(512, "A").toString("latin1");
-  for (let sent = 0; sent < 4096 && !socket.destroyed; sent += piece.length) {
-    await new Promise<void>(resolve => {
-      if (socket.destroyed) return resolve();
-      socket.write(piece.length.toString(16) + "\r\n" + piece + "\r\n", () => resolve());
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.on("connect", resolve);
+      socket.on("error", reject);
     });
+    // The server closes the connection after the 413; EPIPE/ECONNRESET while
+    // we are still writing chunks is the expected outcome.
+    socket.removeAllListeners("error");
+    socket.on("error", () => {});
+
+    let received = "";
+    const { promise: gotResponse, resolve: signalResponse } = Promise.withResolvers<void>();
+    socket.on("data", d => {
+      received += d.toString("latin1");
+      if (received.includes("\r\n\r\n")) signalResponse();
+    });
+    socket.on("close", () => signalResponse());
+
+    socket.write(
+      "POST / HTTP/1.1\r\n" + //
+        `Host: 127.0.0.1:${server.port}\r\n` +
+        "Transfer-Encoding: chunked\r\n" +
+        "\r\n",
+    );
+    await handlerEntered;
+
+    const piece = Buffer.alloc(512, "A").toString("latin1");
+    for (let sent = 0; sent < 4096 && !socket.destroyed; sent += piece.length) {
+      await new Promise<void>(resolve => {
+        if (socket.destroyed) return resolve();
+        socket.write(piece.length.toString(16) + "\r\n" + piece + "\r\n", () => resolve());
+      });
+    }
+
+    await gotResponse;
+    // An early close resolves gotResponse too; fail on the missing response
+    // before the status-line comparison so the cause is visible.
+    expect(received).not.toBe("");
+    expect(received.split("\r\n")[0]).toBe("HTTP/1.1 413 Payload Too Large");
+
+    // The context is torn down by the 413, not by GC collecting the promise.
+    await waitForPendingRequestsWithoutGC(server, 0);
+    capturedResolve = undefined;
+  } finally {
+    socket.destroy();
   }
-
-  await gotResponse;
-  // An early close resolves gotResponse too; fail on the missing response
-  // before the status-line comparison so the cause is visible.
-  expect(received).not.toBe("");
-  expect(received.split("\r\n")[0]).toBe("HTTP/1.1 413 Payload Too Large");
-
-  // The context is torn down by the 413, not by GC collecting the promise.
-  await waitForPendingRequestsWithoutGC(server, 0);
-  capturedResolve = undefined;
-  socket.destroy();
 });

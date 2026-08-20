@@ -1679,7 +1679,10 @@ describe("version published after the manifest was cached", () => {
       cwd,
       stdout: "pipe",
       stderr: "pipe",
-      env: bunEnv,
+      // The environment's cache dir takes precedence over bunfig. These
+      // concurrent tests need a manifest cache of their own per project: they
+      // reuse one package name across different registries and version sets.
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { out, err, exitCode };

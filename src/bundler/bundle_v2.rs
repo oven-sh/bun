@@ -2642,10 +2642,9 @@ pub mod bv2_impl {
             let result = &mut *resolve;
             // borrowck: clone the active path out so we don't hold a `&mut`
             // into `result` across the `&mut self` calls below.
-            let mut path: Fs::Path<'static> = match result.path() {
-                Some(p) => *p,
-                None => return Ok(None),
-            };
+            let mut path: Fs::Path<'static> = *result
+                .path()
+                .expect("resolve_entry_point rejects disabled results and FileMap results have a path");
 
             path.assert_file_path_is_absolute();
             // borrowck: get-then-put instead of a single get-or-put.

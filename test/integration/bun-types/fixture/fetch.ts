@@ -332,3 +332,31 @@ if (typeof process !== "undefined") {
   // @ts-expect-error - Proxy must be string or object, not array
   fetch("https://example.com", { proxy: ["http://proxy.example.com"] });
 }
+
+{
+  // TLS context options shared with Bun.serve / Bun.listen / Bun.connect
+  fetch("https://example.com", { tls: { ca: "intermediate", allowPartialTrustChain: true } });
+  fetch("https://example.com", { tls: { sessionTimeout: 300 } });
+  fetch("https://example.com", { tls: { sigalgs: "rsa_pss_rsae_sha256:ecdsa_secp256r1_sha256" } });
+  fetch("https://example.com", { tls: { ecdhCurve: "X25519:P-256" } });
+}
+
+{
+  // @ts-expect-error - allowPartialTrustChain is a boolean
+  fetch("https://example.com", { tls: { allowPartialTrustChain: "yes" } });
+}
+
+{
+  // @ts-expect-error - sessionTimeout is a number of seconds
+  fetch("https://example.com", { tls: { sessionTimeout: "300" } });
+}
+
+{
+  // @ts-expect-error - sigalgs is a colon-separated string, not an array
+  fetch("https://example.com", { tls: { sigalgs: ["rsa_pss_rsae_sha256"] } });
+}
+
+{
+  // @ts-expect-error - ecdhCurve is a colon-separated string, not an array
+  fetch("https://example.com", { tls: { ecdhCurve: ["X25519", "P-256"] } });
+}

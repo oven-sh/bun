@@ -115,6 +115,48 @@ Bun.listen({
       console.log("asdf");
     },
   },
+  hostname: "adsf",
+  port: 324,
+  tls: {
+    cert: "asdf",
+    key: Bun.file("adsf"),
+    ca: Buffer.from("asdf"),
+    requestCert: true,
+    allowPartialTrustChain: true,
+    sessionTimeout: 300,
+    sigalgs: "rsa_pss_rsae_sha256:ecdsa_secp256r1_sha256",
+    ecdhCurve: "X25519:P-256",
+  },
+});
+
+await Bun.connect({
+  data: { arg: "asdf" },
+  socket: {
+    data(socket) {
+      socket.data.arg.toLowerCase();
+    },
+  },
+  hostname: "adsf",
+  port: 324,
+  tls: {
+    ca: Bun.file("asdf"),
+    allowPartialTrustChain: true,
+    sessionTimeout: 300,
+    sigalgs: "rsa_pss_rsae_sha256",
+    ecdhCurve: "auto",
+  },
+});
+
+Bun.listen({
+  data: { arg: "asdf" },
+  socket: {
+    data(socket) {
+      socket.data.arg.toLowerCase();
+    },
+    open() {
+      console.log("asdf");
+    },
+  },
   unix: "asdf",
 });
 

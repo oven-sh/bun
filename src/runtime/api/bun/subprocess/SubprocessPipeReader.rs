@@ -32,7 +32,7 @@ pub enum State {
 #[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
 pub struct PipeReader {
     pub(crate) reader: IOReader,
-    // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
+    // Backref to owning Subprocess; cleared in detach()/finish().
     // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;
     // the Subprocess owns this PipeReader (via `Readable::Pipe`) and is guaranteed
     // live whenever `process.is_some()` — see `on_close_io`/`finalize` ordering.
@@ -136,47 +136,64 @@ impl PipeReader {
         }
     }
 
-    pub(crate) fn read_all(&mut self) {
-        if matches!(self.state, State::Pending) {
-            // SAFETY: `self.reader` is live; `read` is the raw
-            // re-entrancy-safe entry (its dispatch runs user JS).
-            unsafe { IOReader::read(&raw mut self.reader) };
+    /// EOF or an error inside the read reaches [`Self::finish`], so `*this`
+    /// may be freed on return.
+    ///
+    /// # Safety
+    /// `this` is a live, started `PipeReader` with no `&`/`&mut` to it live.
+    pub(crate) unsafe fn read_all(this: *mut Self) {
+        // SAFETY: caller contract; no borrow of `*this` is held across `read`.
+        unsafe {
+            if matches!((*this).state, State::Pending) {
+                IOReader::read(&raw mut (*this).reader);
+            }
         }
     }
 
-    pub(crate) fn start(
-        &mut self,
+    /// Takes the ref [`Self::finish`] releases. A pipe that cannot be
+    /// registered is finished synchronously, so `*this` may be freed on return.
+    ///
+    /// # Safety
+    /// `this` is a live `PipeReader` from `create()` with no `&`/`&mut` to it live.
+    pub(crate) unsafe fn start(
+        this: *mut Self,
         process: NonNull<Subprocess<'static>>,
         event_loop: NonNull<EventLoop>,
         lazy: bool,
     ) {
-        self.r#ref();
-        self.process = Some(ParentRef::from(process));
-        self.event_loop = event_loop.into();
-        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        // SAFETY: caller contract; each borrow ends at its `;`.
+        unsafe {
+            (*this).r#ref();
+            (*this).process = Some(ParentRef::from(process));
+            (*this).event_loop = event_loop.into();
+            (*this).event_loop_handle =
+                bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        }
         #[cfg(windows)]
         {
             if lazy {
                 // Leave IS_PAUSED set (the init default) so uv_read_start is
                 // deferred until JS first pulls; the kernel pipe buffer then
                 // provides backpressure and the child blocks.
-                let reader_ptr = core::ptr::from_mut(&mut self.reader).cast::<core::ffi::c_void>();
-                if let Some(source) = self.reader.source.as_mut() {
-                    source.set_data(reader_ptr);
+                // SAFETY: caller contract.
+                unsafe {
+                    let reader = &raw mut (*this).reader;
+                    if let Some(source) = (*reader).source.as_mut() {
+                        source.set_data(reader.cast::<core::ffi::c_void>());
+                    }
+                    (*reader)
+                        .flags
+                        .remove(bun_io::pipe_reader::WindowsFlags::IS_DONE);
                 }
-                self.reader
-                    .flags
-                    .remove(bun_io::pipe_reader::WindowsFlags::IS_DONE);
                 return;
             }
-            // Hold one more ref so `self` survives the on_reader_error() teardown
-            // below long enough to return; matches the POSIX keepalive.
-            //
-            // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
-            // derefs on Drop. The deref may free `*self`, but no borrow of `self`
-            // outlives the guard's drop on return.
-            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
-            if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
+            // A failed start releases every other ref below; the guard's drop
+            // on return is then the last one.
+            // SAFETY: caller contract.
+            let _keepalive = unsafe { ScopedRef::new(this) };
+            // SAFETY: caller contract; the `reader` borrow ends with the call.
+            let started = unsafe { (*this).reader.start_with_current_pipe() };
+            if let bun_sys::Result::Err(err) = started {
                 // Route through the same teardown as a read-callback error
                 // (matches POSIX's register_poll failure path): state=Err,
                 // detach from the Subprocess via on_close_io, release the
@@ -184,7 +201,9 @@ impl PipeReader {
                 // Returning Err would have the caller throw after try_kill
                 // without unwinding this pipe or the never-started sibling,
                 // and on_process_exit's later drain then double-derefs them.
-                self.on_reader_error(err);
+                //
+                // SAFETY: `_keepalive` keeps `*this` live; no borrow of it is live.
+                unsafe { Self::on_reader_error(this, err) };
             }
         }
 
@@ -193,35 +212,39 @@ impl PipeReader {
             if lazy {
                 // Defer poll registration until JS first pulls so the kernel
                 // pipe buffer provides backpressure and the child blocks.
-                self.reader.flags.insert(PosixFlags::IS_PAUSED);
+                //
+                // SAFETY: caller contract; the borrow ends at the `;`.
+                unsafe { (*this).reader.flags.insert(PosixFlags::IS_PAUSED) };
             }
-            // PosixBufferedReader.start() always returns Ok(()); if poll
-            // registration fails it synchronously invokes onReaderError() first,
-            // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
-            // just took above. Hold one more ref so `this` survives long enough to
-            // check state after start() returns.
-            //
-            // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
-            // derefs on Drop. The deref may free `*self`, but no borrow of `self`
-            // outlives the guard's drop on return.
-            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
+            // PosixBufferedReader::start() always returns Ok(()); a failed poll
+            // registration dispatches on_reader_error synchronously instead,
+            // releasing every other ref. The guard keeps `*this` alive for the
+            // state check below; its drop on return is then the last release.
+            // SAFETY: caller contract.
+            let _keepalive = unsafe { ScopedRef::new(this) };
 
-            let _ = self.reader.start(self.stdio_result.unwrap(), true);
+            // SAFETY: caller contract.
+            let fd = unsafe { (*this).stdio_result.unwrap() };
+            // SAFETY: caller contract; only `reader` is borrowed, for the call.
+            let _ = unsafe { (*this).reader.start(fd, true) };
 
             #[cfg(unix)]
             {
-                if matches!(self.state, State::Err(_)) {
-                    // onReaderError already ran; `_keepalive`'s Drop on return
-                    // will drop the last ref and deinit() closes the handle.
-                    return;
+                // SAFETY: `_keepalive` keeps `*this` live.
+                unsafe {
+                    if matches!((*this).state, State::Err(_)) {
+                        // on_reader_error already ran; `_keepalive`'s drop
+                        // releases the last ref and deinit() closes the handle.
+                        return;
+                    }
+                    if let Some(poll) = (*this).reader.handle.get_poll() {
+                        poll.set_flag(FilePollFlag::Socket);
+                        poll.set_flag(FilePollFlag::Nonblocking);
+                    }
+                    (*this).reader.flags.insert(
+                        PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE,
+                    );
                 }
-                if let Some(poll) = self.reader.handle.get_poll() {
-                    poll.set_flag(FilePollFlag::Socket);
-                    poll.set_flag(FilePollFlag::Nonblocking);
-                }
-                self.reader
-                    .flags
-                    .insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
             }
         }
     }
@@ -231,28 +254,54 @@ impl PipeReader {
         self.to_readable_stream(global_object)
     }
 
-    fn on_reader_done(&mut self) {
-        let owned = self.to_owned_slice();
-        self.state = State::Done(owned);
-        if let Some(process) = self.process.take() {
-            // `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(process.get());
-            process.on_close_io(kind);
-        }
-        // SAFETY: last use of `self`; caller holds only a raw parent pointer,
-        // so freeing here does not invalidate any live `&mut`.
-        unsafe { PipeReader::deref(self) };
+    /// # Safety
+    /// See [`Self::finish`].
+    unsafe fn on_reader_done(this: *mut Self) {
+        // SAFETY: caller contract; the `&mut` lasts for this call only.
+        let owned = unsafe { (*this).to_owned_slice() };
+        // SAFETY: caller contract.
+        unsafe { Self::finish(this, State::Done(owned)) };
     }
 
-    fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
+    /// # Safety
+    /// See [`Self::finish`].
+    unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
+        // SAFETY: caller contract.
+        unsafe { Self::finish(this, State::Err(err)) };
+    }
+
+    /// Records the terminal `state`, has the Subprocess drop its `Readable::Pipe`
+    /// ref, then releases the `start()` ref, which is normally the last one.
+    /// Raw `this`, not `&mut self`: `on_close_io` reaches back into `*this`
+    /// through the Readable's pointer, and the release frees `*this`; neither
+    /// may happen while a receiver borrow of it is live.
+    ///
+    /// # Safety
+    /// `this` is a live `PipeReader` still holding its `start()` ref, with no
+    /// `&`/`&mut` to it live. `*this` may be freed on return.
+    unsafe fn finish(this: *mut Self, state: State) {
+        // SAFETY: caller contract; the guard releases after the borrows below end.
+        let _start_ref = unsafe { ScopedRef::adopt(this) };
+        // SAFETY: caller contract.
+        let process = unsafe {
+            (*this).state = state;
+            (*this).process.take()
+        };
+        if let Some(process) = process {
+            process.on_close_io(Self::kind(this, process.get()));
+        }
+    }
+
+    /// Address comparison only; never forms a reference to `*this`.
+    fn kind(this: *const Self, process: &Subprocess<'_>) -> StdioKind {
         if let Readable::Pipe(pipe) = process.stdout.get() {
-            if core::ptr::eq(pipe.data.as_ptr(), self) {
+            if core::ptr::eq(pipe.data.as_ptr(), this) {
                 return StdioKind::Stdout;
             }
         }
 
         if let Readable::Pipe(pipe) = process.stderr.get() {
-            if core::ptr::eq(pipe.data.as_ptr(), self) {
+            if core::ptr::eq(pipe.data.as_ptr(), this) {
                 return StdioKind::Stderr;
             }
         }
@@ -340,18 +389,6 @@ impl PipeReader {
         }
     }
 
-    fn on_reader_error(&mut self, err: bun_sys::Error) {
-        // A previous `State::Done` buffer is freed by Drop of the replaced Vec.
-        self.state = State::Err(err);
-        if let Some(process) = self.process.take() {
-            // `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(process.get());
-            process.on_close_io(kind);
-        }
-        // SAFETY: last use of `self`; see `on_reader_done`.
-        unsafe { PipeReader::deref(self) };
-    }
-
     pub(crate) fn close(&mut self) {
         match self.state {
             State::Pending => {
@@ -404,13 +441,13 @@ impl PipeReader {
 
 // BufferedReader vtable parent: `onReaderDone`/`onReaderError`/`loop`/
 // `eventLoop` (no `onReadChunk`).
-// `on_reader_done`/`on_reader_error` are tail-position (the reader is finished
-// with `self`), so `&mut *this` autoref is OK.
+// `on_reader_done`/`on_reader_error` usually free `*this` (see `finish`), so
+// they get the raw pointer rather than a `&mut *this` autoref.
 bun_io::impl_buffered_reader_parent! {
     SubprocessPipeReader for PipeReader;
     has_on_read_chunk = false;
-    on_reader_done  = |this| (*this).on_reader_done();
-    on_reader_error = |this, err| (*this).on_reader_error(err);
+    on_reader_done  = |this| PipeReader::on_reader_done(this);
+    on_reader_error = |this, err| PipeReader::on_reader_error(this, err);
     loop_           = |this| (*this).loop_().cast();
     event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }

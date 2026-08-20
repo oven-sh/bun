@@ -271,7 +271,7 @@ test.if(isPosix)("the uploaded trace string names the image of a frame outside b
       GITHUB_ACTIONS: undefined,
       CI: undefined,
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "ignore", "pipe"],
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 

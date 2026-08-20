@@ -530,6 +530,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
     /// When we delete an edge, connect its `prev_dependency` to its
     /// `next_dependency` (and vice versa). Does NOT touch the import list.
+    /// Drops every edge where `index` is the importer.
+    fn disconnect_imports(&mut self, index: FileIndex<SIDE>) {
+        let mut it = self.edge_lists[index.get() as usize].first_import.take();
+        while let Some(edge_index) = it {
+            let dep = self.edges[edge_index.get() as usize];
+            it = dep.next_import;
+            debug_assert_eq!(dep.dependency.get(), index.get());
+            self.disconnect_edge_from_dependency_list(edge_index);
+            self.free_edge(edge_index);
+        }
+    }
+
     fn disconnect_edge_from_dependency_list(&mut self, edge_index: EdgeIndex) {
         let edge = self.edges[edge_index.get() as usize];
         if let Some(prev) = edge.prev_dependency {
@@ -1505,6 +1517,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => {
                 if found_existing {
                     let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
+                    // A failed stylesheet is no longer a root; its @import edges would lead a route trace into orphaned children, and the fixed root re-attaches them.
+                    if matches!(existing.content, Content::CssRoot(_)) {
+                        self.disconnect_imports(FileIndex::init(idx as u32));
+                    }
                     let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
                     self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
                     existing.failed = true;
@@ -1595,15 +1611,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             return Ok(());
         };
 
-        // Disconnect all imports.
-        let mut it = self.edge_lists[index.get() as usize].first_import.take();
-        while let Some(edge_index) = it {
-            let dep = self.edges[edge_index.get() as usize];
-            it = dep.next_import;
-            debug_assert_eq!(dep.dependency.get(), index.get());
-            self.disconnect_edge_from_dependency_list(edge_index);
-            self.free_edge(edge_index);
-        }
+        self.disconnect_imports(index);
 
         // Rebuild all dependencies.
         let target = match SIDE {

@@ -443,6 +443,19 @@ devTest("bundling errors in stylesheets and recovering from them", {
         color: red;
       }
     `,
+    // a root with an @import that breaks: another route request while it is broken must not walk its stale @import edge, and the fix re-links the child
+    "importer.html": emptyHtmlFile({ styles: ["importer.css"], body: `<h1>hello world</h1>` }),
+    "importer.css": `
+      @import "./imported-child.css";
+      body {
+        color: red;
+      }
+    `,
+    "imported-child.css": `
+      h1 {
+        color: green;
+      }
+    `,
     // css file with initial syntax error gets recovered
     "initial.html": emptyHtmlFile({ styles: ["initial.css"], body: `hello world` }),
     "initial.css": `
@@ -517,6 +530,44 @@ devTest("bundling errors in stylesheets and recovering from them", {
         }
         "
       `);
+    }
+
+    // a broken root with an @import: a request while broken traces the route (previously an assert on the orphaned child), and the fix brings both rules back
+    {
+      {
+        await using c = await dev.client("/importer");
+        await c.style("body").color.expect.toBe("red");
+        await dev.write(
+          "importer.css",
+          `
+            @import "./imported-child.css";
+            body {
+              color: red;
+              background-color
+            }
+          `,
+          {
+            errors: ["importer.css:5:1: error: Unexpected end of input"],
+          },
+        );
+        await c.style("body").color.expect.toBe("red");
+      }
+      await expectBuildFailed(dev, "/importer");
+      await dev.write(
+        "importer.css",
+        `
+          @import "./imported-child.css";
+          body {
+            color: blue;
+          }
+        `,
+      );
+      const css = await servedCss(dev, "/importer");
+      expect(css).toContain("color: #00f");
+      expect(css).toContain("color: green");
+      await using c = await dev.client("/importer");
+      await c.style("body").color.expect.toBe("#00f");
+      await c.style("h1").color.expect.toBe("green");
     }
 
     // css file with syntax error does not kill old styles

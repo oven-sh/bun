@@ -6,9 +6,10 @@ import { once } from "node:events";
 
 // https://github.com/oven-sh/bun/issues/39553
 // Node validates rrtype case-sensitively: 'a' is invalid, only 'A' works.
-// These tests are in their own file because none of them needs network access:
-// the validation throws before any DNS query is issued, and the dispatch tests
-// at the end talk to a socket on 127.0.0.1.
+// These tests are in their own file because they do not depend on a working
+// resolver: an invalid rrtype throws before any query is issued, the dispatch
+// tests at the end talk to a socket on 127.0.0.1, and the module-level
+// positive checks discard their query's result.
 describe.each([
   ["dns.resolve", rrtype => dns.resolve("localhost", rrtype, () => {})],
   ["dns.Resolver#resolve", rrtype => new dns.Resolver().resolve("localhost", rrtype, () => {})],
@@ -28,16 +29,21 @@ describe.each([
       );
     },
   );
+});
 
+// Only the module-level entry points, which share the default resolver and so
+// cannot be pointed at a local socket. The Resolver surfaces are covered for
+// every rrtype by the QTYPE dispatch tests below, with a cancel.
+describe.each([
+  ["dns.resolve", rrtype => dns.resolve("localhost", rrtype, () => {})],
+  ["dns.promises.resolve", rrtype => dns_promises.resolve("localhost", rrtype).catch(() => {})],
+])("%s", (_, fn) => {
   it.each(["A", "AAAA", "ANY", "CAA", "CNAME", "MX", "NAPTR", "NS", "PTR", "SOA", "SRV", "TXT"])(
     "with rrtype %p does not throw synchronously",
     rrtype => {
       // The query itself may fail depending on the environment's resolver.
       // Only the synchronous validation is under test here.
-      const result = fn(rrtype);
-      if (result instanceof Promise) {
-        result.catch(() => {});
-      }
+      fn(rrtype);
     },
   );
 });

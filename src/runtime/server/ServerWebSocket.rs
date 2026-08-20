@@ -548,7 +548,12 @@ impl ServerWebSocket {
                     if js_this.is_empty_or_undefined_or_null() {
                         return Ok(());
                     }
-                    ws.pause();
+                    // The handler can close (or terminate) the socket synchronously
+                    // before returning its pending promise; `pause()` would then
+                    // reach into a uWS socket that is already gone.
+                    if !self.is_closed() {
+                        ws.pause();
+                    }
                     result.then_with_value(
                         global_object,
                         js_this,

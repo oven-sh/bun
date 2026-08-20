@@ -1888,3 +1888,60 @@ describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leak
     });
   }
 });
+
+describe("KeyObject subclass constructors", () => {
+  // Node names the concrete classes PublicKeyObject / PrivateKeyObject /
+  // SecretKeyObject, and the name leaks into ERR_INVALID_ARG_TYPE messages
+  // ("Received an instance of PublicKeyObject").
+  test("constructor.name matches Node", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const secretKey = createSecretKey(randomBytes(16));
+
+    expect(publicKey.constructor.name).toBe("PublicKeyObject");
+    expect(privateKey.constructor.name).toBe("PrivateKeyObject");
+    expect(secretKey.constructor.name).toBe("SecretKeyObject");
+
+    expect(publicKey).toBeInstanceOf(KeyObject);
+    expect(privateKey).toBeInstanceOf(KeyObject);
+    expect(secretKey).toBeInstanceOf(KeyObject);
+  });
+
+  test("statics inherit from KeyObject like Node's class chain", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const secretKey = createSecretKey(randomBytes(16));
+
+    expect(publicKey.constructor.from).toBe(KeyObject.from);
+    expect(privateKey.constructor.from).toBe(KeyObject.from);
+    expect(secretKey.constructor.from).toBe(KeyObject.from);
+    expect(KeyObject.isPrototypeOf(publicKey.constructor)).toBe(true);
+    expect(KeyObject.isPrototypeOf(privateKey.constructor)).toBe(true);
+    expect(Object.getPrototypeOf(secretKey.constructor)).toBe(KeyObject);
+
+    // class SecretKeyObject { constructor(handle) } etc.
+    expect(publicKey.constructor.length).toBe(1);
+    expect(privateKey.constructor.length).toBe(1);
+    expect(secretKey.constructor.length).toBe(1);
+    expect(KeyObject.length).toBe(2);
+  });
+
+  test("subclass name appears in ERR_INVALID_ARG_TYPE messages", () => {
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    expect(() => createSecretKey(publicKey as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining("Received an instance of PublicKeyObject"),
+      }),
+    );
+  });
+
+  test("constructing a subclass directly validates handle like Node", () => {
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const PublicKeyObject = publicKey.constructor as any;
+    expect(() => new PublicKeyObject()).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "handle" argument must be of type object. Received undefined',
+      }),
+    );
+  });
+});

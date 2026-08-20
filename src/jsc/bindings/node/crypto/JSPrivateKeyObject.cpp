@@ -1,6 +1,6 @@
 #include "JSPrivateKeyObject.h"
 #include "JSPrivateKeyObjectPrototype.h"
-#include "JSKeyObjectConstructor.h"
+#include "JSPrivateKeyObjectConstructor.h"
 #include "DOMIsoSubspaces.h"
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
@@ -8,7 +8,6 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/ObjectPrototype.h>
 
 namespace Bun {
@@ -28,8 +27,9 @@ void setupPrivateKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& i
     auto* prototypeStructure = JSPrivateKeyObjectPrototype::createStructure(init.vm, init.global, asymmetricKeyObjectPrototype);
     auto* prototype = JSPrivateKeyObjectPrototype::create(init.vm, init.global, prototypeStructure);
 
-    auto* constructorStructure = JSKeyObjectConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
-    auto* constructor = JSKeyObjectConstructor::create(init.vm, init.global, constructorStructure, prototype);
+    // Parented on KeyObject so statics (KeyObject.from) inherit, as in Node.
+    auto* constructorStructure = JSPrivateKeyObjectConstructor::createStructure(init.vm, init.global, globalObject->KeyObject());
+    auto* constructor = JSPrivateKeyObjectConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSPrivateKeyObject::createStructure(init.vm, init.global, prototype);
     init.setPrototype(prototype);

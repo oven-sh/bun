@@ -375,8 +375,7 @@ pub struct CacheDir {
     pub path: Vec<u8>,
 }
 
-/// A variable that is set but empty (`ENV BUN_INSTALL_CACHE_DIR=$UNSET_ARG`) counts as
-/// unset. `abs(&[b""])` would be the project directory.
+/// An empty variable counts as unset: `abs(&[b""])` is the project directory.
 pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
     if let Some(dir) = env
         .get(b"BUN_INSTALL_CACHE_DIR")
@@ -425,10 +424,10 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 // ───────────────────────────── bun pm cache rm ────────────────────────────────
 
 pub enum ClearCacheDirectoryError {
-    /// The cache directory setting resolves to a filesystem root.
-    FilesystemRoot { cache_dir: Box<[u8]> },
-    /// The cache directory is (`is_same_dir`) or contains a directory that holds
-    /// more than the install cache. `what` names that directory for the user.
+    FilesystemRoot {
+        cache_dir: Box<[u8]>,
+    },
+    /// `cache_dir` is (`is_same_dir`) or contains `protected`, which `what` names.
     Protected {
         cache_dir: Box<[u8]>,
         what: &'static str,
@@ -441,14 +440,9 @@ pub enum ClearCacheDirectoryError {
     },
 }
 
-/// `bun pm cache rm`: removes the entries of the cache directory that the process
-/// environment names. The directory itself stays, so a cache directory that is a
-/// symlink or a mount point keeps working.
-///
-/// The setting only says where the cache is, not that the directory holds nothing
-/// else. A directory that is, or contains, something bun knows is not a cache is
-/// left alone: the home directory, the running executable, `$BUN_INSTALL`, the
-/// project, or the directory the command was run from.
+/// `bun pm cache rm`. Empties the directory instead of removing it, so a symlinked or
+/// mounted cache directory keeps working. The setting says where the cache is, not
+/// that the directory holds nothing else, hence `protected_dirs`.
 pub fn clear_cache_directory(
     env: &mut DotEnvLoader,
     original_cwd: &[u8],
@@ -465,8 +459,7 @@ pub fn clear_cache_directory(
         }
     };
 
-    // Compare the directory that was actually opened, not the setting: a setting
-    // that is a symlink to `$HOME` must be caught as `$HOME`.
+    // The opened directory, not the setting: a symlink to `$HOME` must compare as `$HOME`.
     let mut cache_dir_buf = path::path_buffer_pool::get();
     let cache_dir: &[u8] = match dir.get_fd_path(&mut cache_dir_buf) {
         Ok(real) => real,
@@ -524,25 +517,19 @@ pub fn clear_cache_directory(
         err,
     };
 
-    // Read every name before removing anything: readdir may skip entries when the
-    // directory changes under it, and unlike `delete_tree` there is no rmdir here
-    // whose ENOTEMPTY would catch that.
+    // Collect first: readdir may skip entries while the directory is being emptied.
     let mut entries: Vec<Box<[u8]>> = Vec::new();
     let mut iter = sys::iterate_dir(dir.fd());
     while let Some(entry) = iter.next().map_err(io)? {
         entries.push(Box::from(entry.name.slice_u8()));
     }
     for entry in &entries {
-        // `delete_tree` unlinks a symlink instead of following it, so an entry
-        // that points outside the cache only loses the link.
         dir.delete_tree(entry).map_err(io)?;
     }
     Ok(())
 }
 
-/// The path the OS reports for the directory at `path`, so that it compares equal
-/// to a cache directory that reaches it through a symlink. `path` itself when it
-/// is not a directory that can be opened.
+/// The real path of the directory at `path`, or `path` itself when it cannot be opened.
 fn canonical_dir_path<'a>(path: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
     match Dir::open(path) {
         Ok(dir) => match dir.get_fd_path(buf) {

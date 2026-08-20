@@ -443,8 +443,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             {
                 let mut had_err = false;
 
-                // Not `pm.env`: a .env, bunfig.toml, or .npmrc committed to the project
-                // must not choose what a destructive command deletes.
+                // Not `pm.env`: a committed .env or .npmrc must not pick what gets deleted.
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 match clear_cache_directory(&mut process_env, &cwd) {

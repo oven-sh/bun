@@ -343,6 +343,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // This tests the fix for napi_reference_unref underflow protection
       await checkSameOutput("test_ref_unref_underflow", []);
     });
+    it("napi_create_reference accepts primitives when the module declares NAPI_VERSION >= 10", async () => {
+      // Node.js keys the primitive-reference gate on the module's declared
+      // Node-API version: >= 10 may reference any napi_valuetype, < 10 only
+      // object/function/symbol. A value that cannot be held weakly is released
+      // once the count reaches zero (heldAtZero=0) and a later ref stays at 0;
+      // weakly held values survive (the test still holds them) and ref again to
+      // 1. checkSameOutput asserts parity with Node for both addon builds.
+      const result = await checkSameOutput("test_create_reference_primitive_by_version", []);
+      const notWeakable = ["undefined", "null", "boolean", "number", "string", "bigint"];
+      const weakable = ["symbol", "registered symbol", "object", "function"];
+      // napi_ok = 0, napi_invalid_arg = 1
+      expect(result.split(/\r?\n/)).toEqual([
+        ...notWeakable.map(name => `declared=10 header=10 ${name}: status=0 roundTrip=1 heldAtZero=0 reref=0`),
+        ...weakable.map(name => `declared=10 header=10 ${name}: status=0 roundTrip=1 heldAtZero=1 reref=1`),
+        ...notWeakable.map(name => `declared=8 header=8 ${name}: status=1`),
+        ...weakable.map(name => `declared=8 header=8 ${name}: status=0 roundTrip=1 heldAtZero=1 reref=1`),
+      ]);
+    });
   });
 
   describe("napi_get_version / node_api_create_external_string_*", () => {

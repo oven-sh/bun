@@ -863,12 +863,11 @@ pub(super) struct Repl<'a> {
     running: bool,
     is_tty: bool,
     use_colors: bool,
-    /// Last width reported by the terminal; the fallback when it cannot be queried.
+    /// Last width the terminal reported.
     terminal_width: u16,
-    /// Where `refresh_line` last left the terminal cursor, in rows below the
-    /// row that holds the prompt, and the row and column just past the last
-    /// character it drew. `leave_input` resets them once the input is done.
+    /// Rows below the prompt's row on which `refresh_line` left the cursor.
     cursor_row: usize,
+    /// Row (below the prompt's row) and column just past the last drawn character.
     end_row: usize,
     end_col: usize,
     ctrl_c_pressed: bool,
@@ -1259,15 +1258,11 @@ impl<'a> Repl<'a> {
         }
     }
 
-    /// Redraws the prompt, the line and the ghost text. The input may occupy
-    /// several terminal rows, so the redraw starts from the row that holds the
-    /// prompt and ends by moving the terminal cursor to the row and column of
-    /// the edit cursor. Anything printed below the input (results, completion
-    /// lists) has to go through `leave_input` first.
+    /// Redraws the input, however many rows it wraps onto, and leaves the terminal
+    /// cursor on the edit cursor. Call `leave_input` before printing below the input.
     fn refresh_line(&mut self) {
-        // Non-TTY mirrors node's terminal:false repl: input is never echoed/redrawn — per-key
-        // redraws fill a socketpair's send buffer and wedge write(2) after a few hundred
-        // keystrokes. Print the prompt once when a fresh line begins, like node.
+        // Non-TTY mirrors node's terminal:false repl: input is never echoed or redrawn, since
+        // per-key redraws wedge write(2) on a full socketpair after a few hundred keystrokes.
         if !self.is_tty {
             if self.line_editor.buffer.is_empty() && self.input_mode == InputMode::Normal {
                 Output::flush();
@@ -1280,7 +1275,7 @@ impl<'a> Repl<'a> {
         // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
         Output::flush();
 
-        // Queried on every redraw so a resized terminal is picked up by the next keystroke.
+        // Every redraw, so that a resize is picked up.
         self.update_terminal_width();
         let width = usize::from(self.terminal_width);
 
@@ -1288,8 +1283,7 @@ impl<'a> Repl<'a> {
         let prompt_len = self.get_prompt_length();
         let line = self.line_editor.get_line();
 
-        // Back up to the prompt's row and erase the previous drawing, including
-        // any rows it wrapped onto.
+        // Erase the previous drawing from the prompt's row down.
         if self.cursor_row > 0 {
             self.print(format_args!("{}{}A", CSI, self.cursor_row));
         }
@@ -1306,8 +1300,7 @@ impl<'a> Repl<'a> {
             self.write(line);
         }
 
-        // Widths are display columns: multi-byte UTF-8 and wide (e.g. CJK)
-        // characters advance the column by their width, not their byte count.
+        // Positions below are in columns, not bytes.
         let mut end = prompt_len + strings::visible::width::exclude_ansi_colors::utf8(line);
         let ghost = self.drawn_suggestion();
         if !ghost.is_empty() {
@@ -1317,9 +1310,8 @@ impl<'a> Repl<'a> {
             end += strings::visible::width::exclude_ansi_colors::utf8(ghost);
         }
 
-        // A character in the last column leaves the terminal cursor on that
-        // column instead of wrapping, so the row arithmetic below would be off
-        // by one row; force the wrap.
+        // The terminal defers the wrap after a character in the last column; force it,
+        // or the cursor is one row above where the arithmetic below puts it.
         if end.is_multiple_of(width) {
             self.write(b"\n");
         }
@@ -1345,12 +1337,11 @@ impl<'a> Repl<'a> {
         Output::flush();
     }
 
-    /// Erases the ghost text and moves the terminal cursor to the end of the
-    /// drawn input, so that output printed next starts below the whole input
-    /// rather than in the middle of a wrapped line.
+    /// Erases the ghost text and moves the terminal cursor past the drawn input,
+    /// so that whatever is printed next lands below all of its rows.
     fn leave_input(&mut self) {
         if !self.drawn_suggestion().is_empty() {
-            // The cursor is at the end of the line, so the ghost is all that follows it.
+            // Nothing but the ghost follows the cursor.
             self.write(Cursor::CLEAR_BELOW.as_bytes());
         } else if self.is_tty {
             if self.end_row > self.cursor_row {

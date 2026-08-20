@@ -180,18 +180,6 @@ impl AtomicSync {
 }
 
 pub struct ThreadPool {
-    /// When `true` (default), each worker calls
-    /// [`Output::Source::configure_named_thread`] on startup, which initializes
-    /// the WTF `StackBounds` thread-local via `Bun__StackCheck__initialize`.
-    /// Pools whose tasks never recurse through `StackCheck` (e.g. the package
-    /// manager's network/extract pool, the HTTP client) should clear this so
-    /// their workers use the `_no_js` variant and avoid faulting in the
-    /// otherwise-cold WTF/JSC `.text` pages on paths like `bun install`.
-    ///
-    /// Left as a public field (not in [`Config`]) so existing
-    /// `Config { max_threads, stack_size }` literals keep compiling; callers
-    /// flip it after [`ThreadPool::init`].
-    pub(crate) needs_stack_bounds: bool,
     pub(crate) stack_size: u32,
     pub(crate) max_threads: u32,
     sync: AtomicSync,
@@ -223,7 +211,6 @@ impl ThreadPool {
     /// Statically initialize the thread pool using the configuration.
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
-            needs_stack_bounds: true,
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
             sync: AtomicSync::new(Sync::zero()),
@@ -1180,17 +1167,8 @@ impl Thread {
                     bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
                 }
             };
-            // Pools whose tasks never consult `StackCheck` (install, HTTP) opt
-            // out via `needs_stack_bounds = false` so we don't pull in
-            // `Bun__StackCheck__initialize` → `WTF::StackBounds` and fault the
-            // JSC `.text` pages on the `bun install` cold path. Bundler/parser
-            // pools leave it `true` (the parser's recursion guard reads the
-            // WTF stack-end this initializes).
-            if thread_pool.get().needs_stack_bounds {
-                Output::Source::configure_named_thread(named);
-            } else {
-                Output::Source::configure_named_thread_no_js(named);
-            }
+            // Also initializes `StackCheck` for this thread; parsers run by tasks rely on it.
+            Output::Source::configure_named_thread(named);
         }
 
         let mut self_ = Thread {

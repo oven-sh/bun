@@ -266,8 +266,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     installer
                         .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
                 }
-                store_installer::Result::Err(err) => {
-                    let err = err.clone();
+                store_installer::Result::Err(_) => {
+                    // Move the error out: `on_task_fail` takes `&mut installer`, which owns `task`.
+                    let store_installer::Result::Err(err) =
+                        core::mem::replace(&mut task.result, store_installer::Result::None)
+                    else {
+                        unreachable!()
+                    };
                     installer.on_task_fail(task.entry_id, &err);
                 }
                 store_installer::Result::Blocked => {

@@ -1311,11 +1311,11 @@ impl<'a> PackageInstaller<'a> {
             )
         };
 
-        let (patch_patch, patch_contents_hash, patch_name_and_version_hash, remove_patch) = 'brk: {
+        let (patch_contents_hash, patch_name_and_version_hash, remove_patch) = 'brk: {
             if self.manager().lockfile.patched_dependencies.count() == 0
                 && self.manager().patched_dependencies_to_remove.count() == 0
             {
-                break 'brk (None, None, None, false);
+                break 'brk (None, None, false);
             }
             let mut name_and_version: Vec<u8> = Vec::new();
             use std::io::Write;
@@ -1339,17 +1339,28 @@ impl<'a> PackageInstaller<'a> {
                     .patched_dependencies_to_remove
                     .contains(&name_and_version_hash);
                 if to_remove {
-                    break 'brk (None, None, Some(name_and_version_hash), true);
+                    break 'brk (None, Some(name_and_version_hash), true);
                 }
-                break 'brk (None, None, None, false);
+                break 'brk (None, None, false);
             };
-            debug_assert!(!patchdep.patchfile_hash_is_null);
-            // if (!patchdep.patchfile_hash_is_null) {
-            //     this.manager.enqueuePatchTask(PatchTask.newCalcPatchHash(this, package_id, name_and_version_hash, dependency_id, url: string))
-            // }
+            let Some(patch_contents_hash) = patchdep.patchfile_hash() else {
+                if log_level != Options::LogLevel::Silent {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: failed to patch package <b>{}<r>: the hash of patch file {} was not calculated before install, this is a bug in Bun",
+                        bstr::BStr::new(&name_and_version),
+                        bun_core::fmt::quote(patchdep.path.slice(string_buf!())),
+                    );
+                }
+                self.summary.fail += 1;
+                self.increment_tree_install_count(
+                    !IS_PENDING_PACKAGE_INSTALL,
+                    self.current_tree_id,
+                    log_level,
+                );
+                return;
+            };
             break 'brk (
-                Some(patchdep.path.slice(string_buf!())),
-                Some(patchdep.patchfile_hash().unwrap()),
+                Some(patch_contents_hash),
                 Some(name_and_version_hash),
                 false,
             );
@@ -1375,9 +1386,8 @@ impl<'a> PackageInstaller<'a> {
             // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             package_name: pkg_name,
-            patch: patch_patch.map(|_| package_install::Patch {
-                contents_hash: patch_contents_hash.unwrap(),
-            }),
+            patch: patch_contents_hash
+                .map(|contents_hash| package_install::Patch { contents_hash }),
             package_version,
             node_modules: node_modules_ref.get(),
             // BACKREF accessor — `self.lockfile` is `*mut Lockfile` (never null,

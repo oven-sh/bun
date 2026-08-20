@@ -893,6 +893,27 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  // An ESM-imported .node file is embedded and loaded through the runtime's
+  // `__require`, which the bundle has to define (it used to throw
+  // `ReferenceError: __require is not defined`). The addon is a fake, so the
+  // load itself fails with ERR_DLOPEN_FAILED once `__require` resolves.
+  itBundled("compile/EmbeddedNapiAddonEsmImport", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import addon from "./addon.node";
+        console.log(addon);
+      `,
+      "/addon.node": "not a real addon",
+    },
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toContain("ERR_DLOPEN_FAILED");
+        expect(stderr).not.toContain("__require is not defined");
+      },
+    },
+  });
   itBundled("compile/sqlite-file", {
     compile: true,
     files: {

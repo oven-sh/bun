@@ -521,6 +521,97 @@ describe("bundler", async () => {
     }
   });
 
+  // The napi loader turns a .node file into `require(<copied asset>)`. In every
+  // output format except cjs that call is printed through the runtime's
+  // `__require`, which has to be pulled into the bundle no matter whether the
+  // addon was require()d or ESM-imported. The addon here is a fake, so loading
+  // it fails with ERR_DLOPEN_FAILED; the unfixed output never got that far and
+  // threw `ReferenceError: __require is not defined` instead.
+  describe("napi loader", () => {
+    for (const target of ["bun", "node"] as const) {
+      itBundled(`${target}/loader-napi-esm-import-defines-require`, {
+        target,
+        outdir: "/out",
+        files: {
+          "/entry.js": /* js */ `
+            import addon from "./addon.node";
+            console.log(addon);
+          `,
+          "/addon.node": "not a real addon",
+          "/run.js": /* js */ `
+            try {
+              await import("./out/entry.js");
+              console.log("loaded");
+            } catch (e) {
+              console.log(e.name, e.code);
+            }
+          `,
+        },
+        onAfterBundle(api) {
+          const output = api.readFile("/out/entry.js");
+          expect(output).toMatch(/var addon_default = __require\("\.\/addon-[a-z0-9]+\.node"\);/);
+          expect(output).toContain("var __require = ");
+        },
+        run: { file: "/run.js", stdout: "Error ERR_DLOPEN_FAILED" },
+      });
+    }
+
+    // With code splitting the addon lands in its own chunk, so `__require`
+    // additionally has to be imported from the chunk that defines it.
+    itBundled("bun/loader-napi-dynamic-import-splitting-imports-require", {
+      target: "bun",
+      splitting: true,
+      outdir: "/out",
+      files: {
+        "/entry.js": /* js */ `
+          try {
+            await import("./addon.node");
+            console.log("loaded");
+          } catch (e) {
+            console.log(e.name, e.code);
+          }
+        `,
+        "/addon.node": "not a real addon",
+      },
+      onAfterBundle(api) {
+        const addonChunk = readdirSync(api.outdir).find(x => x.startsWith("addon-") && x.endsWith(".js"))!;
+        const output = api.readFile(join("/out", addonChunk));
+        expect(output).toMatch(/var addon_default = __require\("\.\/addon-[a-z0-9]+\.node"\);/);
+        expect(output).toMatch(/import\s*\{\s*__require\s*\}\s*from/);
+      },
+      run: { stdout: "Error ERR_DLOPEN_FAILED" },
+    });
+
+    // cjs output calls the wrapper's own `require`, so nothing is imported
+    // from the runtime.
+    itBundled("bun/loader-napi-esm-import-cjs-output-uses-require", {
+      target: "bun",
+      format: "cjs",
+      outdir: "/out",
+      files: {
+        "/entry.js": /* js */ `
+          import addon from "./addon.node";
+          console.log(addon);
+        `,
+        "/addon.node": "not a real addon",
+        "/run.js": /* js */ `
+          try {
+            await import("./out/entry.js");
+            console.log("loaded");
+          } catch (e) {
+            console.log(e.name, e.code);
+          }
+        `,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out/entry.js");
+        expect(output).toMatch(/var addon_default = require\("\.\/addon-[a-z0-9]+\.node"\);/);
+        expect(output).not.toContain("__require");
+      },
+      run: { file: "/run.js", stdout: "Error ERR_DLOPEN_FAILED" },
+    });
+  });
+
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
   // printer when bundled with the dev server's module format.
   // https://github.com/oven-sh/bun/issues/31943

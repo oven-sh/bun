@@ -845,20 +845,13 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
+        let mut name_str = ZigString::init(b"");
         if !value.js_type().is_function() {
-            let mut writer = WrappedWriter::new(self.writer);
-            let mut name_str = ZigString::init(b"");
-
             value.get_name_property(global_this, &mut name_str)?;
-            if name_str.len > 0 && !name_str.eql_comptime(b"Object") {
-                writer.print(format_args!("{} ", name_str));
-            } else {
+            if name_str.len == 0 || name_str.eql_comptime(b"Object") {
                 value
                     .get_prototype(global_this)?
                     .get_name_property(global_this, &mut name_str)?;
-                if name_str.len > 0 && !name_str.eql_comptime(b"Object") {
-                    writer.print(format_args!("{} ", name_str));
-                }
             }
         }
 
@@ -868,10 +861,14 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if self.formatter.indent == 0 {
             let _ = self.writer.write_all(b"\n");
         }
-        let mut classname = ZigString::EMPTY;
-        value.get_class_name(global_this, &mut classname)?;
-        if classname.len > 0 && !classname.eql_comptime(b"Object") {
-            let _ = self.writer.write_fmt(format_args!("{} ", classname));
+        if name_str.len > 0 && !name_str.eql_comptime(b"Object") {
+            let _ = self.writer.write_fmt(format_args!("{} ", name_str));
+        } else {
+            let mut classname = ZigString::EMPTY;
+            value.get_class_name(global_this, &mut classname)?;
+            if classname.len > 0 && !classname.eql_comptime(b"Object") {
+                let _ = self.writer.write_fmt(format_args!("{} ", classname));
+            }
         }
 
         let _ = self.writer.write_all(b"{\n");
@@ -1582,6 +1579,20 @@ impl<'a> Formatter<'a> {
                         return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
                             writer.ctx, value, JSType::Event,
                         );
+                    } else if bun_jsc::FetchHeaders::cast_(value, self.global_this.vm()).is_some() {
+                        if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
+                            self.add_for_new_line(b"Headers ".len());
+                            writer.write_all(
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>Headers<r> ")
+                                    .as_bytes(),
+                            );
+
+                            return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
+                                writer.ctx,
+                                to_json_function.call(self.global_this, value, &[])?,
+                                JSType::Object,
+                            );
+                        }
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()

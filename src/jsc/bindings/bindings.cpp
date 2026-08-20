@@ -5778,6 +5778,32 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             (void)scope.tryClearException();
             return;
         }
+
+        // DOM wrappers (URL, Event, ...) hold state only in prototype accessors; walk the
+        // chain like forEachProperty so they don't render as `{}`.
+        if (object->type() == JSC::JSType(JSDOMWrapperType) || object->type() == JSC::JSType(JSEventType)) {
+            size_t prototypeCount = 1;
+            JSObject* iterating = object->getPrototype(globalObject).getObject();
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                return;
+            }
+            while (iterating && prototypeCount++ < 5
+                && !(iterating == globalObject->objectPrototype()
+                    || iterating == globalObject->functionPrototype()
+                    || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject))) {
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                    return;
+                }
+                iterating = iterating->getPrototype(globalObject).getObject();
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                    return;
+                }
+            }
+        }
     }
 
     auto vector = properties.data()->propertyNameVector();

@@ -1211,6 +1211,139 @@ it("https.request reports an impossible version window as a TLS error, not a cer
   expect(body).toBe("ok");
 });
 
+// A handshake that fails with a TLS protocol error goes through node's onerror
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L480-L488):
+// the socket is destroyed with the error, but its handle is released only after
+// 'error' has been emitted, so the listener can still read the peer's address,
+// and 'close' then reports hadError. Bun used to release the handle before
+// 'error' fired. A certificate verification failure is not routed that way in
+// node (onConnectSecure destroys outright), so the handle is gone by the time
+// its 'error' fires; that case pins the boundary of the deferred teardown.
+describe("a handshake protocol failure keeps the socket inspectable inside 'error'", () => {
+  // Everything the 'error' listener can observe, followed by the 'close' that
+  // has to come after it. Resolves on 'close'; a handshake that unexpectedly
+  // completes shows up in the recorded events instead of hanging the test.
+  function observe(socket: TLSSocket & { _hadError?: boolean }) {
+    const events: unknown[] = [];
+    const { promise, resolve } = Promise.withResolvers<unknown[]>();
+    socket.on("secureConnect", () => events.push("secureConnect"));
+    socket.on("error", (error: Error & { code?: string }) => {
+      events.push({
+        error: error.code,
+        destroyed: socket.destroyed,
+        // Set by node's onerror (and read by its onConnectEnd and by
+        // _http_outgoing's onFinish); node's onConnectSecure leaves it alone.
+        _hadError: socket._hadError,
+        remoteAddress: socket.remoteAddress,
+        remotePort: socket.remotePort,
+      });
+    });
+    socket.on("close", hadError => {
+      events.push({ close: hadError });
+      resolve(events);
+    });
+    return promise;
+  }
+
+  // Answers whatever the client sends (its ClientHello) with plaintext, which
+  // the client's TLS engine rejects as WRONG_VERSION_NUMBER.
+  async function listenPlaintext() {
+    const peers: net.Socket[] = [];
+    const server = net.createServer(peer => {
+      peers.push(peer);
+      peer.on("error", () => {});
+      peer.on("data", () => peer.write("HTTP/1.1 400 Bad Request\r\n\r\n"));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return {
+      port: (server.address() as AddressInfo).port,
+      async [Symbol.asyncDispose]() {
+        for (const peer of peers) peer.destroy();
+        await server[Symbol.asyncDispose]();
+      },
+    };
+  }
+
+  async function listenTLS(options: tls.TlsOptions) {
+    const server = tls.createServer({ ...COMMON_CERT_, ...options }, socket => socket.on("error", () => {}));
+    server.on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return server;
+  }
+
+  it("tls.connect() against a peer that does not speak TLS", async () => {
+    await using peer = await listenPlaintext();
+    const events = await observe(tlsConnect({ host: "127.0.0.1", port: peer.port, servername: "localhost" }));
+    expect(events).toEqual([
+      {
+        error: "ERR_SSL_WRONG_VERSION_NUMBER",
+        destroyed: true,
+        _hadError: true,
+        remoteAddress: "127.0.0.1",
+        remotePort: peer.port,
+      },
+      { close: true },
+    ]);
+  });
+
+  it("tls.connect({ socket }) upgrading a connected socket to a peer that does not speak TLS", async () => {
+    await using peer = await listenPlaintext();
+    const plain = net.connect({ host: "127.0.0.1", port: peer.port });
+    plain.on("error", () => {});
+    try {
+      await once(plain, "connect");
+      const events = await observe(tlsConnect({ socket: plain, servername: "localhost" }));
+      expect(events).toEqual([
+        {
+          error: "ERR_SSL_WRONG_VERSION_NUMBER",
+          destroyed: true,
+          _hadError: true,
+          remoteAddress: "127.0.0.1",
+          remotePort: peer.port,
+        },
+        { close: true },
+      ]);
+    } finally {
+      plain.destroy();
+    }
+  });
+
+  it("a fatal alert sent by a TLS peer", async () => {
+    await using server = await listenTLS({ minVersion: "TLSv1.3" });
+    const { port } = server.address() as AddressInfo;
+    const events = await observe(
+      tlsConnect({ host: "127.0.0.1", port, servername: "localhost", ca: COMMON_CERT_.cert, maxVersion: "TLSv1.2" }),
+    );
+    expect(events).toEqual([
+      {
+        error: "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+        destroyed: true,
+        _hadError: true,
+        remoteAddress: "127.0.0.1",
+        remotePort: port,
+      },
+      { close: true },
+    ]);
+  });
+
+  it("a certificate verification failure is destroyed outright, as in node", async () => {
+    await using server = await listenTLS({});
+    const { port } = server.address() as AddressInfo;
+    // No `ca`, so the self-signed server certificate is rejected.
+    const events = await observe(tlsConnect({ host: "127.0.0.1", port, servername: "localhost" }));
+    expect(events).toEqual([
+      {
+        error: "DEPTH_ZERO_SELF_SIGNED_CERT",
+        destroyed: true,
+        _hadError: false,
+        remoteAddress: undefined,
+        remotePort: undefined,
+      },
+      { close: true },
+    ]);
+  });
+});
+
 describe("rejectUnauthorized only treats a literal `false` as opting out", () => {
   // Node applies `options.rejectUnauthorized !== false`, so other falsy
   // values must keep peer verification enabled.

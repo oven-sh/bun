@@ -59,7 +59,7 @@ using namespace WebCore;
 
 DEFINE_NATIVE_MODULE(NodeConstants)
 {
-    INIT_NATIVE_MODULE(0);
+    INIT_NATIVE_MODULE(NodeConstants, 0);
 
 #ifdef RTLD_LAZY
     put(Identifier::fromString(vm, "RTLD_LAZY"_s), jsNumber(RTLD_LAZY));

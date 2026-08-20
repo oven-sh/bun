@@ -328,7 +328,7 @@ impl SignalCode {
         #[cfg(not(unix))]
         {
             // Windows numbering: CRT <signal.h> plus libuv's synthetic SIGHUP/SIGQUIT/SIGKILL/
-            // SIGWINCH (src/jsc/bindings/libuv/uv/win.h). The enum discriminants are Linux numbers
+            // SIGWINCH (vendor/libuv/include/uv/win.h). The enum discriminants are Linux numbers
             // and must not leak here (SIGABRT is 22 on Windows, not 6).
             use SignalCode as S;
             match self {
@@ -364,7 +364,7 @@ pub mod features {
         SHELL, SPAWN, STANDALONE_EXECUTABLE, STANDALONE_SHELL, TODO_PANIC, TRANSPILER_CACHE,
         TSCONFIG, TSCONFIG_PATHS, VIRTUAL_MODULES, WORKERS_SPAWNED, WORKERS_TERMINATED,
         NAPI_MODULE_REGISTER, EXITED, YAML_PARSE, YARN_MIGRATION, PNPM_MIGRATION,
-        VALKEY,
+        VALKEY, XML_PARSE,
     }
     /// dotenv crate calls `bun_core::analytics::Features::dotenv_inc()`.
     #[inline]
@@ -385,6 +385,12 @@ pub mod features {
     #[inline]
     pub fn yaml_parse_inc() {
         YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+    /// Bumped by the `Bun.XML` API and `.xml` imports (not by internal users
+    /// of the parser, such as the S3 client).
+    #[inline]
+    pub fn xml_parse_inc() {
+        XML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
     /// install/yarn crate calls `bun_core::analytics::Features::yarn_migration_inc(1)`.
     #[inline]
@@ -619,7 +625,7 @@ pub fn set_thread_name(name: &ZStr) {
 // Safe `extern "C" fn()` — every registrant (C++ `Bun__atexit` lambdas, Rust
 // `extern "C"` thunks in fs_events / ParentDeathWatchdog) takes no args and has
 // no memory-safety preconditions, so the call site needs no `unsafe` block.
-pub type ExitFn = extern "C" fn();
+type ExitFn = extern "C" fn();
 
 // Registration can happen from any thread (FFI `Bun__atexit`), so this is
 // guarded with a Mutex.

@@ -1,7 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("ModuleNotFound")]
     ModuleNotFound,
     #[error("InvalidDataURL")]
@@ -92,7 +90,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::JSTerminated => "JSTerminated",
             Self::ModuleNotFound => "ModuleNotFound",
             Self::InvalidDataURL => "InvalidDataURL",
             Self::InvalidURL => "InvalidURL",

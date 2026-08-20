@@ -97,7 +97,6 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
-use bun_core::strings;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
@@ -116,8 +115,8 @@ use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
     execute_simple_s3_request,
 };
-
-type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
+use crate::webcore::s3::xml_response;
+use bun_collections::index_sort;
 
 declare_scope!(S3MultiPartUpload, hidden);
 
@@ -155,7 +154,7 @@ pub struct MultiPartUpload {
 
     pub(crate) state: Cell<State>,
 
-    pub callback: fn(S3UploadResult, *mut c_void) -> JsTerminatedResult<()>,
+    pub callback: fn(S3UploadResult, *mut c_void) -> bun_jsc::JsResult<()>,
     pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64)>,
     pub(crate) callback_context: Cell<*mut c_void>,
 }
@@ -255,7 +254,7 @@ impl UploadPart {
         unsafe { &*self.data.get() }
     }
 
-    fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
+    fn on_part_response(result: S3PartResult, this: *mut c_void) -> bun_jsc::JsResult<()> {
         // SAFETY: callback context — `this` is the queue slot passed in `perform()`; the
         // ref this part holds on `ctx` keeps the queue alive until the tail `deref_` below.
         let this = unsafe { &*this.cast::<Self>() };
@@ -315,7 +314,7 @@ impl UploadPart {
         }
     }
 
-    fn perform(&self) -> JsTerminatedResult<()> {
+    fn perform(&self) -> bun_jsc::JsResult<()> {
         let ctx = self.ctx.get();
         let mut params_buffer = [0u8; 2048];
         let written = {
@@ -346,7 +345,7 @@ impl UploadPart {
         )
     }
 
-    fn start(&self) -> JsTerminatedResult<()> {
+    fn start(&self) -> bun_jsc::JsResult<()> {
         let ctx = self.ctx.get();
         if self.state.get() != PartState::Pending || ctx.state.get() != State::MultipartCompleted {
             return Ok(());
@@ -395,7 +394,7 @@ impl MultiPartUpload {
     pub(crate) fn single_send_upload_response(
         result: S3UploadResult,
         this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
         // `adopt` consumes the ref `process_buffered` (or the retry path)
         // took for this request.
@@ -519,7 +518,7 @@ impl MultiPartUpload {
     }
 
     /// Drain the parts, this is responsible for starting the parts and processing the buffered data
-    fn drain_enqueued_parts(&self, flushed: u64) -> JsTerminatedResult<()> {
+    fn drain_enqueued_parts(&self, flushed: u64) -> bun_jsc::JsResult<()> {
         let state = self.state.get();
         if state == State::Finished || state == State::SinglefileStarted {
             return Ok(());
@@ -558,7 +557,7 @@ impl MultiPartUpload {
         Ok(())
     }
 
-    pub(crate) fn fail(&self, err: S3Error) -> JsTerminatedResult<()> {
+    pub(crate) fn fail(&self, err: S3Error) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "fail {}:{}",
@@ -589,7 +588,7 @@ impl MultiPartUpload {
         Ok(())
     }
 
-    fn done(&self) -> JsTerminatedResult<()> {
+    fn done(&self) -> bun_jsc::JsResult<()> {
         let state = self.state.get();
         if state == State::MultipartCompleted && self.is_queue_empty() {
             // we are a multipart upload so we need to send the etags and commit
@@ -601,7 +600,7 @@ impl MultiPartUpload {
                 );
                 self.multipart_etags.with_mut(|etags| {
                     // sort the etags
-                    etags.sort_by_key(|a| a.number);
+                    index_sort::sort_slice_by(etags, |a, b| a.number.cmp(&b.number));
                     for tag in etags.drain(..) {
                         write!(
                             list,
@@ -634,7 +633,7 @@ impl MultiPartUpload {
     pub(crate) fn start_multi_part_request_result(
         result: S3DownloadResult,
         this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
         // `adopt` consumes the prior +1 on Drop.
         // SAFETY: callback context — a ref was taken before the request was queued.
@@ -658,24 +657,27 @@ impl MultiPartUpload {
             S3DownloadResult::Success(response) => {
                 // response.body is bun.MutableString — `list` is a Vec<u8>
                 let slice = response.body.list.as_slice();
-                // PERF: upload_id is duped out of the body instead of slicing into it
-                if let Some(start) = strings::index_of(slice, b"<UploadId>") {
-                    let value_start = start + b"<UploadId>".len();
-                    if let Some(end) = strings::index_of(slice, b"</UploadId>") {
-                        if end >= value_start {
-                            self_
-                                .upload_id
-                                .set(Box::<[u8]>::from(&slice[value_start..end]));
-                        }
-                    }
+                // <InitiateMultipartUploadResult><Bucket/><Key/><UploadId/></…>
+                let upload_id = xml_response::parse(slice, |root| {
+                    (root.name == b"InitiateMultipartUploadResult")
+                        .then(|| root.child_text(b"UploadId"))
+                        .flatten()
+                })
+                .flatten()
+                // It goes into query strings as is: printable, and nothing
+                // that would end or split a query value.
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= Self::MAX_UPLOAD_ID_LEN
+                        && id
+                            .iter()
+                            .all(|&b| b.is_ascii_graphic() && !matches!(b, b'&' | b'#' | b'?'))
+                });
+                let valid = upload_id.is_some();
+                if let Some(upload_id) = upload_id {
+                    self_.upload_id.set(upload_id);
                 }
-                let upload_id = self_.upload_id.get();
-                if upload_id.is_empty()
-                    || upload_id.len() > Self::MAX_UPLOAD_ID_LEN
-                    || upload_id
-                        .iter()
-                        .any(|b| !b.is_ascii() || b.is_ascii_control())
-                {
+                if !valid {
                     // Unknown type of response error from AWS
                     scoped_log!(
                         S3MultiPartUpload,
@@ -692,7 +694,7 @@ impl MultiPartUpload {
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} success id: {}",
                     BStr::new(&self_.path),
-                    BStr::new(upload_id)
+                    BStr::new(self_.upload_id.get())
                 );
                 self_.state.set(State::MultipartCompleted);
                 // start draining the parts
@@ -710,7 +712,7 @@ impl MultiPartUpload {
     pub(crate) fn on_commit_multi_part_request(
         result: S3CommitResult,
         this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live; the request owns the final-step ref,
         // released as the tail statement below.
@@ -752,7 +754,7 @@ impl MultiPartUpload {
     pub(crate) fn on_rollback_multi_part_request(
         result: S3UploadResult,
         this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live; the request owns the final-step ref,
         // released as the tail statement below.
@@ -782,7 +784,7 @@ impl MultiPartUpload {
         }
     }
 
-    fn commit_multi_part_request(&self) -> JsTerminatedResult<()> {
+    fn commit_multi_part_request(&self) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "commitMultiPartRequest {}",
@@ -812,7 +814,7 @@ impl MultiPartUpload {
         )
     }
 
-    fn rollback_multi_part_request(&self) -> JsTerminatedResult<()> {
+    fn rollback_multi_part_request(&self) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "rollbackMultiPartRequest {}",
@@ -847,7 +849,7 @@ impl MultiPartUpload {
         chunk: &[u8],
         allocated_size: usize,
         needs_clone: bool,
-    ) -> JsTerminatedResult<bool> {
+    ) -> bun_jsc::JsResult<bool> {
         let Some(part) = self.get_create_part(chunk, allocated_size, needs_clone) else {
             return Ok(false);
         };
@@ -881,7 +883,7 @@ impl MultiPartUpload {
         Ok(true)
     }
 
-    fn process_multi_part(&self, part_size: usize) -> JsTerminatedResult<()> {
+    fn process_multi_part(&self, part_size: usize) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "processMultiPart {} {}",

@@ -8,6 +8,7 @@ const isBuffer = Buffer.isBuffer;
 const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const SafeSet = Set;
 
 /** Returns null when `value` holds no Buffers, else the [value, buffers] envelope. */
@@ -16,25 +17,26 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
   let visited: Set<object> | null = null;
   const stack = [value];
   while (stack.length !== 0) {
-    const current = stack.pop();
+    const current = stack[stack.length - 1];
+    stack.length--;
     if (current === null || typeof current !== "object") continue;
     visited ??= new SafeSet();
     if (visited.$has(current)) continue;
     visited.$add(current);
     if ($isTypedArrayView(current)) {
-      if (isBuffer(current)) (buffers ??= []).push(current);
+      if (isBuffer(current)) $arrayPush((buffers ??= []), current);
       // Other ArrayBuffer views round-trip with their type already.
       continue;
     }
     if ($isMap(current)) {
-      for (const { 0: key, 1: entry } of current) {
-        stack.push(key);
-        stack.push(entry);
-      }
+      current.$forEach((entry, key) => {
+        $arrayPush(stack, key);
+        $arrayPush(stack, entry);
+      });
       continue;
     }
     if ($isSet(current)) {
-      for (const entry of current) stack.push(entry);
+      current.$forEach(entry => $arrayPush(stack, entry));
       continue;
     }
     // Objects, arrays and errors: the serializer walks own enumerable
@@ -42,7 +44,7 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
     const keys = ObjectKeys(current);
     for (let i = 0; i < keys.length; i++) {
       const desc = ObjectGetOwnPropertyDescriptor(current, keys[i]);
-      if (desc && "value" in desc) stack.push(desc.value);
+      if (desc && ObjectPrototypeHasOwnProperty.$call(desc, "value")) $arrayPush(stack, desc.value);
     }
   }
   return buffers === null ? null : [value, buffers];

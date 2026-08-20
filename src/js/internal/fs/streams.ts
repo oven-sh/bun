@@ -228,12 +228,6 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
   }
   const fastPath = this[kWriteStreamFastPath];
   if (this.open !== streamNoop) {
-    // if (fastPath) {
-    //   // disable fast path in this case
-    //   $assert(this[kWriteStreamFastPath] === true, "fastPath is not true");
-    //   this[kWriteStreamFastPath] = undefined;
-    // }
-
     // Backwards compat for monkey patching open().
     const orgEmit: any = this.emit;
     this.emit = function (...args) {
@@ -517,7 +511,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten;
-    pos += bytesWritten;
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {

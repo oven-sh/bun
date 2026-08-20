@@ -722,6 +722,22 @@ describe("toHaveReturned", () => {
 
     fn(3);
   });
+
+  test("throws instead of crashing when mock.results contains non-objects", () => {
+    for (const garbage of [undefined, null, 42, "s"]) {
+      const fn = jest.fn(() => 1);
+      fn();
+      (fn.mock.results as unknown[]).push(garbage);
+      expect(() => jestExpect(fn).toHaveReturned()).toThrow("Expected value must be a mock function with returns");
+    }
+  });
+
+  test("throws instead of crashing when mock.results has holes", () => {
+    const fn = jest.fn(() => 1);
+    fn();
+    fn.mock.results.length = 5;
+    expect(() => jestExpect(fn).toHaveReturned()).toThrow("Expected value must be a mock function with returns");
+  });
 });
 
 describe("toHaveReturnedTimes", () => {
@@ -876,6 +892,13 @@ describe("toHaveReturnedTimes", () => {
     });
 
     fn(3);
+  });
+
+  test("throws instead of crashing when mock.results contains non-objects", () => {
+    const fn = jest.fn(() => 1);
+    fn();
+    (fn.mock.results as unknown[]).push(undefined);
+    expect(() => jestExpect(fn).toHaveReturnedTimes(1)).toThrow("Expected value must be a mock function with returns");
   });
 });
 

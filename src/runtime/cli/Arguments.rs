@@ -254,6 +254,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB"
     ),
     parse_param!(
+        "--insecure-http-parser            Use an insecure HTTP parser that accepts invalid HTTP headers"
+    ),
+    parse_param!(
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
     ),
     parse_param!(
@@ -268,7 +271,16 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
     ),
-    parse_param!("--pending-deprecation             Emit pending deprecation warnings."),
+    parse_param!("--no-warnings                     Silence all process warnings"),
+    parse_param!("--trace-warnings                  Show stack traces on process warnings"),
+    parse_param!("--trace-deprecation               Show stack traces on deprecations"),
+    parse_param!("--pending-deprecation             Emit pending deprecation warnings"),
+    parse_param!(
+        "--redirect-warnings <STR>         Write process warnings to the given file instead of printing to stderr"
+    ),
+    parse_param!(
+        "--disable-warning <STR>...        Silence specific process warnings by code or type"
+    ),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
         "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
@@ -477,7 +489,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react"
         ),
         parse_param!(
-            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all)."
+            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '\\<empty\\>' for opaque specifiers. Default is '*' (allow all)."
         ),
         parse_param!(
             "--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time."
@@ -560,7 +572,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!("-u, --update-snapshots           Update snapshot files"),
     parse_param!(
-        "--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs"
+        "--rerun-each <NUMBER>            Re-run each test file \\<NUMBER\\> times, helps catch certain bugs"
     ),
     parse_param!(
         "--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }"
@@ -583,7 +595,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
     ),
     parse_param!(
-        "--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."
+        "--bail <NUMBER>?                 Exit the test suite after \\<NUMBER\\> failures. If you do not specify a number, it defaults to 1."
     ),
     parse_param!(
         "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
@@ -707,12 +719,21 @@ static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
 static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessNoWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
 pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 /// Node parity: `--cpu-prof-name` supports a `${pid}` placeholder.
 fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
-    if !name.windows(6).any(|w| w == b"${pid}") {
+    if !bun_core::strings::contains(name, b"${pid}") {
         return name.into();
     }
     let pid = std::process::id().to_string();
@@ -819,12 +840,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            let len = bun_sys::getcwd(&mut *outbuf)?;
-            &outbuf[..len]
+            bun_core::getcwd(&mut outbuf)?.as_bytes()
         };
-        let out = resolve_path::join_abs::<platform::Loose>(base, cwd_arg);
-        // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
-        // slice into a threadlocal buffer, so dupe-Z once and reuse for both
+        let mut spill = Vec::new();
+        let out =
+            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
+        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
         // the `chdir` arg and the stored `absolute_working_dir`.
         let out_z = bun_core::ZBox::from_bytes(out);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
@@ -854,8 +875,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // Everything else (install/test/build/...) must not silently act on
         // whatever project happens to live above the executable.
         let mut temp = PathBuffer::uninit();
-        let len = bun_sys::getcwd(&mut *temp)?;
-        Box::<[u8]>::from(&temp[..len])
+        Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
@@ -950,17 +970,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         });
     }
 
-    opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {
-        Some(
-            resolve_path::join_abs_string::<platform::Auto>(
-                ctx.args.absolute_working_dir.as_deref().unwrap(),
-                &[ts],
-            )
-            .into(),
-        )
-    } else {
-        None
-    };
+    opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
+        let mut spill = Vec::new();
+        Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
+            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            &mut spill,
+            &[ts],
+        ))
+    });
 
     opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.
@@ -1144,6 +1161,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 }
             };
             bun_http::set_max_http_header_size(if size == 0 { 1024 * 1024 * 1024 } else { size });
+        }
+
+        if args.flag(b"--insecure-http-parser") {
+            bun_http::set_insecure_http_parser(true);
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {
@@ -1410,10 +1431,29 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--throw-deprecation") {
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+        if args.flag(b"--no-warnings") {
+            Bun__Node__ProcessNoWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-warnings") {
+            Bun__Node__ProcessTraceWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-deprecation") {
+            Bun__Node__ProcessTraceDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
         if args.flag(b"--pending-deprecation")
             || env_var::NODE_PENDING_DEPRECATION.get() == Some(b"1" as &[u8])
         {
             Bun__Node__ProcessPendingDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(path) = args.option(b"--redirect-warnings") {
+            let _ = cli::Bun__Node__RedirectWarnings.set(path.into());
+        }
+        {
+            let disabled = args.options(b"--disable-warning");
+            if !disabled.is_empty() {
+                let _ = cli::Bun__Node__DisabledWarnings
+                    .set(disabled.iter().map(|e| Box::from(*e)).collect());
+            }
         }
         if let Some(title) = args.option(b"--title") {
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`
@@ -1562,8 +1602,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.debug.run_in_bun = true;
         }
     }
-
-    opts.resolve = Some(api::ResolveMode::Lazy);
 
     if jsx_factory.is_some()
         || jsx_fragment.is_some()
@@ -2084,9 +2122,9 @@ fn parse_build_command_options(
 
     if let Some(packages) = args.option(b"--packages") {
         if packages == b"bundle" {
-            opts.packages = Some(api::Packages::Bundle);
+            opts.packages = Some(api::PackagesMode::Bundle);
         } else if packages == b"external" {
-            opts.packages = Some(api::Packages::External);
+            opts.packages = Some(api::PackagesMode::External);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid packages setting: \"{}\"",
@@ -2571,15 +2609,15 @@ fn parse_build_command_options(
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
             // In the future, Bun is going to make this default to .linked
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else if setting == b"inline" {
-            opts.source_map = Some(api::SourceMap::Inline);
+            opts.source_map = Some(api::SourceMapMode::Inline);
         } else if setting == b"none" {
-            opts.source_map = Some(api::SourceMap::None);
+            opts.source_map = Some(api::SourceMapMode::None);
         } else if setting == b"external" {
-            opts.source_map = Some(api::SourceMap::External);
+            opts.source_map = Some(api::SourceMapMode::External);
         } else if setting == b"linked" {
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid sourcemap setting: \"{}\"",

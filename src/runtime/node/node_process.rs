@@ -36,6 +36,21 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
     ZigString::from_utf8(out.as_bytes()).to_js(global_object)
 }
 
+/// A worker's `argv`/`execArgv` strings live in its parent-thread
+/// `WorkerOptions`; the worker thread gets its own copy (thread-affine
+/// refcounts), and an empty one is spelled as `BunString::empty()`.
+pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::OwnedString {
+    // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
+    let imp = unsafe { &*wtf };
+    bun_core::OwnedString::new(if imp.length() == 0 {
+        bun_core::String::empty()
+    } else if imp.is_8bit() {
+        bun_core::String::clone_latin1(imp.latin1_slice())
+    } else {
+        bun_core::String::clone_utf16(imp.utf16_slice())
+    })
+}
+
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
 pub(crate) extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
@@ -82,6 +97,41 @@ extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
+/// `--redirect-warnings=<path>` value, if set. Returns false when unset.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::String) -> bool {
+    let Some(path) = crate::cli::Bun__Node__RedirectWarnings.get() else {
+        return false;
+    };
+    // SAFETY: out is a valid out-param provided by the C++ caller.
+    unsafe { *out = bun_core::String::clone_utf8(path) };
+    true
+}
+
+/// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided buffers; returns
+/// the count. `bufs`/`lens` may be null when `cap == 0` to query the count. Entries
+/// borrow the CLI-owned Vec (never mutated after argument parsing).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
+    bufs: *mut *const u8,
+    lens: *mut usize,
+    cap: usize,
+) -> usize {
+    let Some(disabled) = crate::cli::Bun__Node__DisabledWarnings.get() else {
+        return 0;
+    };
+    let n = disabled.len().min(cap);
+    for (i, entry) in disabled.iter().take(n).enumerate() {
+        // SAFETY: caller provides `cap`-sized arrays; entries live for the
+        // process (write-once at CLI parse, never freed).
+        unsafe {
+            *bufs.add(i) = entry.as_ptr();
+            *lens.add(i) = entry.len();
+        }
+    }
+    disabled.len()
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
     if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
@@ -110,20 +160,6 @@ static Bun__version: CStrPtr = CStrPtr(
 #[unsafe(no_mangle)]
 static Bun__version_with_sha: CStrPtr = CStrPtr(
     const_format::concatcp!("v", Global::package_json_version_with_sha, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
-// Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
-// The C++ code in BunProcess.cpp uses the generated header directly
-#[unsafe(no_mangle)]
-static Bun__versions_uws: CStrPtr = CStrPtr(
-    const_format::concatcp!(Environment::GIT_SHA, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
-#[unsafe(no_mangle)]
-static Bun__versions_usockets: CStrPtr = CStrPtr(
-    const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
@@ -166,7 +202,13 @@ mod _impl {
     #[unsafe(export_name = "Bun__Process__getTitle")]
     extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
-        let str_ = guard.as_deref().unwrap_or(b"bun");
+        // Node's default process.title is argv[0] as invoked
+        // (uv_setup_args/uv_get_process_title semantics), not a fixed name.
+        let argv = bun_core::argv();
+        let str_ = guard
+            .as_deref()
+            .or_else(|| argv.get(0).map(|z| z.as_bytes()))
+            .unwrap_or(b"bun");
         // SAFETY: title is a valid out-param provided by C++ caller
         unsafe {
             *title = BunString::clone_utf8(str_);
@@ -206,7 +248,7 @@ mod _impl {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
                 return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    BunString::init(wtf).to_js(global_object)
+                    super::worker_option_string(wtf).to_js(global_object)
                 });
             }
         }
@@ -238,10 +280,7 @@ mod _impl {
                 }
 
                 if !compile_exec_argv.is_empty() {
-                    for token in compile_exec_argv
-                        .split(|b| matches!(*b, b' ' | b'\t' | b'\n' | b'\r'))
-                        .filter(|s: &&[u8]| !s.is_empty())
-                    {
+                    for token in strings::tokenize_any(compile_exec_argv, b" \t\n\r") {
                         args.push(BunString::clone_utf8(token));
                     }
                 }
@@ -382,10 +421,14 @@ mod _impl {
             }
         }
 
+        let mut worker_args: Vec<bun_core::OwnedString> = Vec::new();
         if let Some(worker) = worker {
-            for &arg in worker.argv() {
-                args_list.push(BunString::init(arg));
-            }
+            worker_args = worker
+                .argv()
+                .iter()
+                .map(|&arg| super::worker_option_string(arg))
+                .collect();
+            args_list.extend(worker_args.iter().map(|s| **s));
         } else {
             for arg in &vm.argv {
                 let str_ = BunString::borrow_utf8(arg);
@@ -394,7 +437,9 @@ mod _impl {
             }
         }
 
-        bun_string_jsc::to_js_array(global_object, &args_list).unwrap_or(JSValue::ZERO)
+        let array = bun_string_jsc::to_js_array(global_object, &args_list);
+        drop(worker_args);
+        bun_jsc::HostReturn::or_pending_exception(array)
     }
 
     // ───────────────────────────── eval ─────────────────────────────

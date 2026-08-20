@@ -26,39 +26,12 @@
 
 #pragma once
 
-#include "HTTPHeaderMap.h"
-#include <wtf/Box.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/text/WTFString.h>
 
-#if PLATFORM(COCOA)
-OBJC_CLASS NSURLConnection;
-OBJC_CLASS NSURLSessionTaskMetrics;
-#endif
-
 namespace WebCore {
 
-class ResourceHandle;
-
-enum class NetworkLoadPriority : uint8_t {
-    Low,
-    Medium,
-    High,
-    Unknown,
-};
-
-enum class PrivacyStance : uint8_t {
-    Unknown,
-    NotEligible,
-    Proxied,
-    Failed,
-    Direct,
-    FailedUnreachable,
-};
-
 constexpr MonotonicTime reusedTLSConnectionSentinel { MonotonicTime::fromRawSeconds(-1) };
-
-struct AdditionalNetworkLoadMetricsForWebInspector;
 
 class NetworkLoadMetrics {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NetworkLoadMetrics);
@@ -67,14 +40,6 @@ public:
     WEBCORE_EXPORT NetworkLoadMetrics();
 
     bool isComplete() const { return complete; }
-    bool isCellular() const { return cellular; }
-    bool isExpensive() const { return expensive; }
-    bool isConstrained() const { return constrained; }
-    bool isMultipath() const { return multipath; }
-    bool reusedConnection() const { return isReusedConnection; }
-    bool doesFailTAOCheck() const { return failsTAOCheck; }
-    bool crossOriginRedirect() const { return hasCrossOriginRedirect; }
-    void markComplete() { complete = true; }
 
     // https://www.w3.org/TR/resource-timing-2/#attribute-descriptions
     MonotonicTime redirectStart;
@@ -95,49 +60,10 @@ public:
     uint16_t redirectCount { 0 };
 
     bool complete : 1 { false };
-    bool cellular : 1 { false };
-    bool expensive : 1 { false };
-    bool constrained : 1 { false };
-    bool multipath : 1 { false };
-    bool isReusedConnection : 1 { false };
     bool failsTAOCheck : 1 { false };
-    bool hasCrossOriginRedirect : 1 { false };
-
-    PrivacyStance privacyStance { PrivacyStance::Unknown };
 
     uint64_t responseBodyBytesReceived { std::numeric_limits<uint64_t>::max() };
     uint64_t responseBodyDecodedSize { std::numeric_limits<uint64_t>::max() };
-
-    RefPtr<AdditionalNetworkLoadMetricsForWebInspector> additionalNetworkLoadMetricsForWebInspector;
 };
-
-struct AdditionalNetworkLoadMetricsForWebInspector : public RefCounted<AdditionalNetworkLoadMetricsForWebInspector> {
-
-    static Ref<AdditionalNetworkLoadMetricsForWebInspector> create() { return adoptRef(*new AdditionalNetworkLoadMetricsForWebInspector()); }
-
-    NetworkLoadPriority priority { NetworkLoadPriority::Unknown };
-
-    String remoteAddress;
-    String connectionIdentifier;
-
-    String tlsProtocol;
-    String tlsCipher;
-
-    HTTPHeaderMap requestHeaders;
-
-    uint64_t requestHeaderBytesSent { std::numeric_limits<uint64_t>::max() };
-    uint64_t responseHeaderBytesReceived { std::numeric_limits<uint64_t>::max() };
-    uint64_t requestBodyBytesSent { std::numeric_limits<uint64_t>::max() };
-
-    bool isProxyConnection { false };
-
-private:
-    AdditionalNetworkLoadMetricsForWebInspector() {}
-};
-
-#if PLATFORM(COCOA)
-Box<NetworkLoadMetrics> copyTimingData(NSURLConnection*, const ResourceHandle&);
-WEBCORE_EXPORT Box<NetworkLoadMetrics> copyTimingData(NSURLSessionTaskMetrics* incompleteMetrics, const NetworkLoadMetrics&);
-#endif
 
 } // namespace WebCore

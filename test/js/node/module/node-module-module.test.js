@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath, tempDir } from "harness";
+import fs from "fs";
+import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
-    expect(builtinModules).toHaveLength(77);
+    // "bun:wrap" is no longer listed: it is internal transpiler plumbing,
+    // not a requireable public module.
+    expect(builtinModules).toHaveLength(76);
   });
 
   test("isBuiltin() works", () => {
@@ -24,6 +27,60 @@ describe.concurrent("node-module-module", () => {
 
   test("module.globalPaths exists", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
+  });
+
+  test("Module.prototype is not enumerable", async () => {
+    const Module = require("module");
+    const { value, ...descriptor } = Object.getOwnPropertyDescriptor(Module, "prototype");
+    expect(descriptor).toEqual({ writable: true, enumerable: false, configurable: false });
+    expect(value).toBe(Module.prototype);
+    expect(Object.keys(Module)).not.toContain("prototype");
+    // and so, as in Node, it is not a named export of the ES module either
+    const ns = await import("node:module");
+    expect(Object.keys(ns)).not.toContain("prototype");
+    expect(ns.default.prototype).toBe(Module.prototype);
+  });
+
+  // jest-runtime builds the `Module` it hands to tests this way. Assigning a class's `prototype` throws, so this
+  // needs `prototype` to be non-enumerable; and the copy goes through the inherited `wrapper` / `_resolveFilename`
+  // / `runMain` setters with their current values, which must not count as overriding them (an overridden wrapper
+  // re-wraps every CommonJS module from source and bypasses the --isolate SourceProvider cache).
+  test("Module's enumerable statics can be copied onto a subclass without overriding the CJS wrapper", async () => {
+    using dir = tempDir("module-statics-copy", {
+      "dep.cjs": `module.exports = "dep";`,
+      "dep2.cjs": `module.exports = "dep2";`,
+      "copy.test.js": `
+        const { test, expect } = require("bun:test");
+        const { isolatedModuleCacheSourceType } = require("bun:internal-for-testing");
+        const Module = require("node:module");
+        test("copy statics", () => {
+          class Sub extends Module.Module {}
+          for (const [key, value] of Object.entries(Module.Module)) Sub[key] = value;
+          expect(Sub.prototype).toBeInstanceOf(Module);
+          expect(Sub._extensions).toBe(Module._extensions);
+          expect(Sub.wrapper[0]).toBe(Module.wrapper[0]);
+
+          expect(require("./dep.cjs")).toBe("dep");
+          expect(isolatedModuleCacheSourceType(require.resolve("./dep.cjs"))).toBe("Program");
+
+          // A real override still takes effect (and such modules are not cached).
+          Module.wrapper = ["(function(exports,require,module,__filename,__dirname){module.wrapped = true;", "})"];
+          expect(require("./dep2.cjs")).toBe("dep2");
+          expect(require.cache[require.resolve("./dep2.cjs")].wrapped).toBe(true);
+          expect(isolatedModuleCacheSourceType(require.resolve("./dep2.cjs"))).toBe(null);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./copy.test.js"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
   });
 
   test("module.enableCompileCache validates its argument", () => {
@@ -134,6 +191,182 @@ console.log("survived", require("./late.js"));`,
       expect(files.length).toBe(2);
     },
   );
+
+  test.skipIf(!isWindows)("enableCompileCache default dir prefers TEMP over TMP like os.tmpdir", async () => {
+    using dir = tempDir("compile-cache-tmporder", {});
+    const temp = path.join(String(dir), "from-temp");
+    const tmp = path.join(String(dir), "from-tmp");
+    fs.mkdirSync(temp);
+    fs.mkdirSync(tmp);
+    const env = { ...bunEnv, TEMP: temp, TMP: tmp };
+    delete env.NODE_COMPILE_CACHE;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = require("module").enableCompileCache();
+        console.log(JSON.stringify(r.directory));`,
+      ],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toStartWith(path.join(temp, "node-compile-cache"));
+    expect(exitCode).toBe(0);
+  });
+
+  test("compile cache entries are keyed by sha256 and accepted on re-run", async () => {
+    using dir = tempDir("compile-cache-sha", {
+      "main.js": `console.log(require("./dep.js"));`,
+      "dep.js": "module.exports = 7;",
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    const env = { ...bunEnv, NODE_COMPILE_CACHE: cacheDir, NODE_DEBUG_NATIVE: "COMPILE_CACHE" };
+    {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], env, cwd: String(dir), stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("7");
+      expect(exitCode).toBe(0);
+    }
+    // Entry names are the first 8 bytes of SHA256(type byte || path) in hex.
+    const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
+    expect(files.length).toBe(2);
+    for (const f of files) {
+      expect(path.basename(f)).toMatch(/^[0-9a-f]{16}$/);
+    }
+    {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], env, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("7");
+      // The second run accepts both entries from disk and rewrites nothing.
+      expect(stderr).toContain("was accepted");
+      expect(stderr).not.toContain("writing cache");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test.skipIf(isWindows)("compile cache entries are created 0600 like Node", async () => {
+    // Entries hold the module's post-transpile source, and the default cache
+    // location is a world-readable tmpdir; Node creates entry files 0600.
+    using dir = tempDir("compile-cache-mode", {
+      "main.js": `process.umask(0o022); console.log(require("./dep.js"));`,
+      "dep.js": "module.exports = 7;",
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("7");
+    expect(stderr).toBe("");
+    const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
+    expect(files.length).toBe(2);
+    const modes = files.map(f => (fs.statSync(path.join(cacheDir, f)).mode & 0o777).toString(8));
+    expect(modes).toEqual(["600", "600"]);
+    expect(exitCode).toBe(0);
+  });
+
+  const compileCacheEnv = { ...bunEnv };
+  delete compileCacheEnv.NODE_COMPILE_CACHE;
+  delete compileCacheEnv.NODE_COMPILE_CACHE_PORTABLE;
+  delete compileCacheEnv.NODE_DISABLE_COMPILE_CACHE;
+
+  let compileCacheTagPromise;
+  function compileCacheTag() {
+    return (compileCacheTagPromise ??= (async () => {
+      using dir = tempDir("compile-cache-tag", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const m = require("module");
+           m.enableCompileCache({ directory: ${JSON.stringify(String(dir))} });
+           process.stdout.write(require("path").basename(m.getCompileCacheDir()));`,
+        ],
+        env: compileCacheEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout, stderr).toMatch(/^v/);
+      expect(exitCode).toBe(0);
+      return stdout;
+    })());
+  }
+
+  test.skipIf(isWindows)(
+    "enableCompileCache only uses a cache directory owned by the current user and not writable by others",
+    async () => {
+      using dir = tempDir("compile-cache-owner", {});
+      const base = path.join(String(dir), "cc");
+      const leaf = path.join(base, await compileCacheTag());
+      fs.mkdirSync(leaf, { recursive: true });
+      fs.chmodSync(leaf, 0o777);
+      const code = `
+        const fs = require("fs");
+        const Module = require("module");
+        const first = Module.enableCompileCache({ directory: ${JSON.stringify(base)} });
+        fs.chmodSync(${JSON.stringify(leaf)}, 0o755);
+        const second = Module.enableCompileCache({ directory: ${JSON.stringify(base)} });
+        process.stdout.write(JSON.stringify({ first, second, dir: Module.getCompileCacheDir() }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: compileCacheEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout, stderr).toStartWith("{");
+      const { FAILED, ENABLED } = Module.constants.compileCacheStatus;
+      expect(JSON.parse(stdout)).toEqual({
+        first: {
+          status: FAILED,
+          message:
+            "Cannot use cache directory: it must be owned by the current user and not be group- or world-writable",
+        },
+        second: { status: ENABLED, directory: base },
+        dir: leaf,
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.skipIf(isWindows)("enableCompileCache does not follow a symlink at the cache directory leaf", async () => {
+    using dir = tempDir("compile-cache-symlink-leaf", {});
+    const base = path.join(String(dir), "cc");
+    const target = path.join(String(dir), "elsewhere");
+    fs.mkdirSync(base, { recursive: true });
+    fs.mkdirSync(target, { recursive: true });
+    fs.chmodSync(target, 0o755);
+    const leaf = path.join(base, await compileCacheTag());
+    fs.symlinkSync(target, leaf);
+    const code = `
+      const Module = require("module");
+      const result = Module.enableCompileCache({ directory: ${JSON.stringify(base)} });
+      process.stdout.write(JSON.stringify({ result, dir: String(Module.getCompileCacheDir()) }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: compileCacheEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout, stderr).toStartWith("{");
+    const { FAILED } = Module.constants.compileCacheStatus;
+    expect(JSON.parse(stdout)).toEqual({
+      result: {
+        status: FAILED,
+        message: expect.stringMatching(/^Cannot create cache directory: (ENOTDIR|ELOOP)$/),
+      },
+      dir: "undefined",
+    });
+    expect(fs.readdirSync(target)).toEqual([]);
+    expect(fs.lstatSync(leaf).isSymbolicLink()).toBe(true);
+    expect(exitCode).toBe(0);
+  });
 
   test("native module functions are not constructors", () => {
     // Constructing these used to crash instead of throwing.

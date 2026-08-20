@@ -88,6 +88,8 @@ namespace ERR {
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message);
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value);
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value);
+// Renders Node's multi-type list ("must be one of type number or string").
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, std::span<const WTF::ASCIILiteral> expected_types, JSC::JSValue val_actual_value);
 JSC::EncodedJSValue INVALID_ARG_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value);
 JSC::EncodedJSValue INVALID_ARG_TYPE_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, WTF::ASCIILiteral expected_type, WTF::ASCIILiteral expected_instance_types, JSC::JSValue val_actual_value);
 JSC::EncodedJSValue INVALID_ARG_TYPE_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, WTF::ASCIILiteral expected_instance_types, JSC::JSValue val_actual_value);
@@ -109,7 +111,7 @@ JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope&, JSC::JSGlobalObject*, JSV
 JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& statemsg);
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name);
-JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal, bool triedUppercase = false);
+JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal);
 JSC::EncodedJSValue MISSING_ARGS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message);
 JSC::EncodedJSValue SOCKET_BAD_PORT(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue port, bool allowZero);
 JSC::EncodedJSValue UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
@@ -125,7 +127,6 @@ JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_KEY_TYPE(JSC::ThrowScope&, JSC::JSGlo
 JSC::EncodedJSValue CRYPTO_INVALID_JWK(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue CRYPTO_INVALID_JWK(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message);
 JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
-JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue received, WTF::ASCIILiteral expected);
 JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, CryptoKeyType receivedType, WTF::ASCIILiteral expected);
 JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& receivedKeyEncoding, const WTF::String& expectedOperation);
 JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);

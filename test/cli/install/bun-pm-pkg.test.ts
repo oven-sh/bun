@@ -217,13 +217,31 @@ describe.concurrent("bun pm pkg", () => {
       });
     });
 
+    // Root creates files in any directory, so root cannot run this one.
+    it.skipIf(isWindows || isRoot)("writes a package.json whose directory refuses new files", async () => {
+      using dir = makeTestDir();
+      chmodSync(String(dir), 0o555);
+      try {
+        const { code } = await runPmPkg(["set", "description=Updated"], dir);
+        expect(code).toBe(0);
+        expect((await readPkg(dir)).description).toBe("Updated");
+      } finally {
+        chmodSync(String(dir), 0o755);
+      }
+    });
+
     it.skipIf(!isRoot)("keeps the owner of package.json", async () => {
       using dir = makeTestDir();
       const packageJson = join(String(dir), "package.json");
       chownSync(packageJson, 1, 1);
       const { code } = await runPmPkg(["set", "description=Updated"], dir);
       expect(code).toBe(0);
-      expect(statSync(packageJson)).toMatchObject({ uid: 1, gid: 1 });
+      const { uid, gid } = statSync(packageJson);
+      expect({ uid, gid, description: (await readPkg(dir)).description }).toEqual({
+        uid: 1,
+        gid: 1,
+        description: "Updated",
+      });
     });
 
     it("should set multiple properties", async () => {

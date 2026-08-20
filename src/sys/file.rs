@@ -419,31 +419,44 @@ impl File {
         let tmp_path = ZStr::from_slice_with_nul(&tmp_path);
 
         let cwd = Fd::cwd();
-        let Ok(mut tmpfile) = Tmpfile::create_with_mode(cwd, tmp_path, create_mode) else {
-            return Self::write_file_in_place(target, data, mode);
+        let mut tmpfile = match Tmpfile::create_with_mode(cwd, tmp_path, create_mode) {
+            Ok(tmpfile) => tmpfile,
+            // The directory refuses new files from this user. The file itself opened above.
+            Err(err) if matches!(err.get_errno(), E::EACCES | E::EPERM) => {
+                return Self::write_file_in_place(target, data, mode);
+            }
+            Err(err) => return Err(err),
         };
         // Closes the descriptor on every path below. `Tmpfile` does not own it.
         let file = File::from_fd(tmpfile.fd);
-        let written = file.write_all(data);
-        let renamed = written.is_ok() && {
-            #[cfg(unix)]
-            if let Some(st) = &existing {
-                // The new inode belongs to this process, and the create applied the umask.
-                let _ = fchown(file.handle, st.st_uid, st.st_gid);
-                let _ = fchmod(file.handle, st.st_mode as Mode & 0o7777);
-            }
-            tmpfile.finish(target).is_ok()
-        };
-        drop(file);
-        if renamed {
-            return Ok(());
+        if let Err(err) = file.write_all(data) {
+            // Disk full, and the like: the old file is intact, and writing in place would empty it.
+            drop(file);
+            let _ = unlinkat(cwd, tmp_path);
+            return Err(err);
         }
+        #[cfg(unix)]
+        if let Some(st) = &existing {
+            // The new inode belongs to this process, and the create applied the umask.
+            let _ = fchown(file.handle, st.st_uid, st.st_gid);
+            let _ = fchmod(file.handle, st.st_mode as Mode & 0o7777);
+        }
+        let renamed = tmpfile.finish(target);
+        drop(file);
+        let Err(err) = renamed else {
+            return Ok(());
+        };
         let _ = unlinkat(cwd, tmp_path);
-        // Writing in place truncates the old file first, so a write that failed is not retried.
-        written?;
-        Self::write_file_in_place(target, data, mode)
+        // A volume without rename over a file, a file another program holds open, a sticky dir.
+        if matches!(
+            err.get_errno(),
+            E::EACCES | E::EPERM | E::EINVAL | E::ENOTSUP | E::EBUSY | E::ETXTBSY
+        ) {
+            return Self::write_file_in_place(target, data, mode);
+        }
+        Err(err)
     }
-    /// Where the directory takes no temporary file, or no rename over the target: as before.
+    /// The write every caller did before: for a directory or a volume that refuses the mechanism.
     fn write_file_in_place(target: &ZStr, data: &[u8], mode: Mode) -> Maybe<()> {
         crate::syslog!(
             "write_file_atomically({}) writes in place",

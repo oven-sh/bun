@@ -45,10 +45,10 @@ test.skipIf(isWindows)("writes the .snap file of a test file with the longest po
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
   expect(stderr).toContain("snapshots: +1 added");
-  expect(exitCode).toBe(0);
   expect(fs.existsSync(join(String(dir), "__snapshots__", name + ".snap"))).toBe(true);
+  expect(exitCode).toBe(0);
 });
 
 // The runs below share one project directory on purpose: several `bun test` processes of the

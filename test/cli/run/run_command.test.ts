@@ -163,10 +163,14 @@ for (const shell of ["bun", "system"] as const) {
     const text = Bun.stripANSI(output);
     expect(text).toContain("ready");
     expect(text).not.toContain("NOPE");
-    if (isWindows) {
-      expect(exitCode).toBe(0xc000013a); // STATUS_CONTROL_C_EXIT
-    } else {
+    if (!isWindows) {
       expect(proc.signalCode).toBe("SIGINT");
+    } else if (shell === "bun") {
+      // `bun run` exits with STATUS_CONTROL_C_EXIT (0xC000013A); Bun.spawn reports
+      // the low byte of a Windows exit code.
+      expect(exitCode).toBe(0x3a);
     }
+    // (--shell=system on Windows: cmd.exe abandons the rest of the line on Ctrl+C
+    // but exits 0 itself, and that is all `bun run` can report.)
   });
 }

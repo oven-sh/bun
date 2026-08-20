@@ -83,7 +83,14 @@ int main(int argc, char** argv)
     if (strcmp(argv[1], "none") != 0) {
         for (char* tok = strtok(argv[1], ","); tok != NULL; tok = strtok(NULL, ",")) {
             if (count == MAX_TRAPPED) return 2;
-            trapped[count++] = (uint32_t)strtoul(tok, NULL, 10);
+            // A token that does not parse must not silently become syscall 0 (read).
+            char* end = NULL;
+            unsigned long nr = strtoul(tok, &end, 10);
+            if (end == tok || *end != '\0' || nr > UINT32_MAX) {
+                fprintf(stderr, "seccomp-trap: bad syscall number '%s'\n", tok);
+                return 2;
+            }
+            trapped[count++] = (uint32_t)nr;
         }
     }
 

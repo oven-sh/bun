@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir, tempDirWithFiles } from "harness";
 import { readlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -21,11 +21,15 @@ const SYS_fchmodat2 = 452;
 describe.skipIf(!isLinux)("seccomp SECCOMP_RET_TRAP policies", () => {
   const helper = isLinux ? buildHelper() : null;
 
-  async function runTrapped(trapped: number[] | "none", cmd: string[], cwd?: string) {
+  async function runTrapped(
+    trapped: number[] | "none",
+    cmd: string[],
+    options: { cwd?: string; env?: Record<string, string> } = {},
+  ) {
     await using proc = Bun.spawn({
       cmd: [helper!, trapped === "none" ? "none" : trapped.join(","), ...cmd],
-      env: bunEnv,
-      cwd,
+      env: { ...bunEnv, ...options.env },
+      cwd: options.cwd,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -58,6 +62,45 @@ describe.skipIf(!isLinux)("seccomp SECCOMP_RET_TRAP policies", () => {
       signalCode: null,
     });
   });
+
+  test.concurrent.skipIf(!helper)(
+    "spawned children exec when close_range is trapped and the caller blocks SIGSYS",
+    async () => {
+      // The child takes over the caller's signal mask only after close_range(2):
+      // a trap on a blocked SIGSYS kills the process instead of reaching the
+      // handler. The fixture blocks SIGSYS on the spawning thread first.
+      using dir = tempDir("seccomp-trap-blocked", {
+        "fixture.js": `
+          import { dlopen, FFIType, ptr } from "bun:ffi";
+          const libc = dlopen(process.env.LIBC_PATH, {
+            sigprocmask: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+          });
+          // Large enough for every libc's sigset_t; SIGSYS (31) is bit 30 of the first word.
+          const set = new BigUint64Array(16);
+          set[0] = 1n << 30n;
+          const SIG_BLOCK = 0;
+          if (libc.symbols.sigprocmask(SIG_BLOCK, ptr(set), null) !== 0) throw new Error("sigprocmask failed");
+          const r = Bun.spawnSync(["echo", "hi"]);
+          console.log(JSON.stringify({ stdout: r.stdout.toString(), exitCode: r.exitCode, signalCode: r.signalCode ?? null }));
+        `,
+      });
+      const result = await runTrapped([SYS_close_range], [bunExe(), "fixture.js"], {
+        cwd: String(dir),
+        env: { LIBC_PATH: libcPathForDlopen() },
+      });
+      // bun:ffi under ASAN may print a warning about dlopen; nothing else is allowed on stderr.
+      result.stderr = result.stderr
+        .split("\n")
+        .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
+        .join("\n");
+      expect(result).toEqual({
+        stdout: JSON.stringify({ stdout: "hi\n", exitCode: 0, signalCode: null }) + "\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
 
   test.concurrent.skipIf(!helper)("Bun.spawn falls back to the waiter thread when pidfd_open is trapped", async () => {
     const result = await runTrapped(
@@ -98,8 +141,13 @@ describe.skipIf(!isLinux)("seccomp SECCOMP_RET_TRAP policies", () => {
     const target = join(String(dir), "dep/bin/cli.js");
     expect(statSync(target).mode & 0o111).toBe(0);
 
-    const result = await runTrapped([SYS_openat2, SYS_fchmodat2], [bunExe(), "install"], String(dir));
-    expect({ exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+    const result = await runTrapped([SYS_openat2, SYS_fchmodat2], [bunExe(), "install"], { cwd: String(dir) });
+    expect(result).toEqual({
+      stdout: expect.stringContaining(" installed"),
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+      signalCode: null,
+    });
     expect(readlinkSync(join(String(dir), "node_modules/.bin/depbin"))).toBe("../dep/bin/cli.js");
     expect(statSync(target).mode & 0o100).toBe(0o100);
   });
@@ -111,11 +159,9 @@ describe.skipIf(!isLinux)("seccomp SECCOMP_RET_TRAP policies", () => {
     using dir = tempDir("seccomp-trap-run", {
       "package.json": JSON.stringify({ name: "app", scripts: { hello: "echo hello-from-script" } }),
     });
-    const result = await runTrapped(
-      [SYS_pidfd_open],
-      [bunExe(), "run", "--no-orphans", "--silent", "hello"],
-      String(dir),
-    );
+    const result = await runTrapped([SYS_pidfd_open], [bunExe(), "run", "--no-orphans", "--silent", "hello"], {
+      cwd: String(dir),
+    });
     expect(result).toEqual({ stdout: "hello-from-script\n", stderr: "", exitCode: 0, signalCode: null });
   });
 

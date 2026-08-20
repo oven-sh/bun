@@ -458,13 +458,15 @@ extern "C" ssize_t posix_spawn_bun(
         }
 #endif
 
-        sigprocmask(SIG_SETMASK, &childmask, 0);
         if (!envp)
             envp = environ;
 
         // Close all fds > current_max_fd, preferring cloexec if available
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
 
+        // The caller's mask goes back last (execve keeps it): a caller that
+        // blocks SIGSYS must not make a trapped close_range() above fatal.
+        sigprocmask(SIG_SETMASK, &childmask, 0);
 #if OS(LINUX)
         sigaction(SIGSYS, &sa, 0);
 #endif

@@ -310,6 +310,13 @@ static void onSeccompTrap(int sig, siginfo_t* info, void* context)
 
 static void installSeccompTrapHandler()
 {
+    // A second install would save this handler as the previous action and make
+    // the kill(2) path above re-enter itself forever.
+    static bool installed = false;
+    if (installed)
+        return;
+    installed = true;
+
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = onSeccompTrap;

@@ -1301,10 +1301,15 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
 /** Names a stream by its side and its id on the session: "ServerHttp2Stream#5". */
 const label = (stream: http2.Http2Stream) => `${stream.constructor.name}#${stream.id}`;
 
+/** What the write callback of a queued frame is listed as: the writable's onwrite, bound to the stream. */
+const QUEUED_WRITE_CALLBACK = "function bound onwrite";
+
 /**
  * One entry per handle native code holds on an Http2Stream (as `label` names it) or on a function
- * ("function bound onwrite"), sorted. `instanceof` is the guard because the list also holds JSC's own
- * protected cells, which are not all objects.
+ * (QUEUED_WRITE_CALLBACK), sorted. The list also holds JSC's own protected cells, which are not
+ * objects, and a property read on one of those aborts a debug build. Duplex and Function use the
+ * default instanceof, which checks for an object before it touches the value (Writable's own
+ * Symbol.hasInstance reads a property, so it is not a substitute), and that check has to come first.
  */
 function rootedHandles(): string[] {
   const entries: string[] = [];
@@ -1734,40 +1739,40 @@ describe("stream release after a queued END_STREAM", () => {
 
   /**
    * Tears the case's session down and checks that the streams it still held (the stalled ones) go
-   * with it, which on the server side happens once its socket has closed. So a case that leaves a
-   * stream behind fails on its own, and no case starts with another case's streams around.
+   * with it (the stalled streams and the callback of the stalled frame), which on the server side
+   * happens once its socket has closed. So a case that leaves something behind fails on its own, and
+   * no case starts with another case's streams around.
    */
-  async function closeAll(client: http2.ClientHttp2Session, server: http2.Http2Server): Promise<void> {
+  async function closeAll(
+    client: http2.ClientHttp2Session,
+    server: http2.Http2Server,
+    beforeTheCase: string[],
+  ): Promise<void> {
     client.destroy();
     await new Promise(resolve => server.close(resolve));
-    const streamsLeft = () => rootedHandles().filter(entry => entry.includes("Http2Stream#"));
-    let left = streamsLeft();
-    for (let i = 0; i < 50 && left.length > 0; i++) {
-      await new Promise(resolve => setImmediate(resolve));
-      left = streamsLeft();
-    }
-    expect(left).toEqual([]);
+    expect(await rootedBeyond(beforeTheCase)).toEqual([]);
   }
 
   /**
    * Sends one request and resolves once the client stream has closed, reporting how many response
    * body bytes arrived, how many frames the client session still had queued when the response
-   * headers came in, and whether the client stream was rooted at that point.
+   * headers came in, and which of the client stream and a queued frame's callback were rooted then.
    */
   function roundTrip(client: http2.ClientHttp2Session, headers: http2.OutgoingHttpHeaders, body?: Buffer) {
     const { promise, resolve, reject } = Promise.withResolvers<{
       received: number;
       queuedAtResponse: number;
-      rootedAtResponse: boolean;
+      rootedAtResponse: { stream: boolean; callback: boolean };
     }>();
     const req = client.request(headers);
     let received = 0;
     let queuedAtResponse = -1;
-    let rootedAtResponse = false;
+    let rootedAtResponse = { stream: false, callback: false };
     req.on("error", reject);
     req.on("response", () => {
       queuedAtResponse = client.state.outboundQueueSize!;
-      rootedAtResponse = rootedHandles().includes(label(req));
+      const rooted = rootedHandles();
+      rootedAtResponse = { stream: rooted.includes(label(req)), callback: rooted.includes(QUEUED_WRITE_CALLBACK) };
     });
     req.on("data", (chunk: Buffer) => {
       received += chunk.length;
@@ -1780,30 +1785,35 @@ describe("stream release after a queued END_STREAM", () => {
   test("server streams whose response outgrew the client's window are released", async () => {
     const rootedWhileOpen: boolean[] = [];
     const queuedAfterEnd: number[] = [];
+    const callbackRootedAfterEnd: boolean[] = [];
     const server = http2.createServer();
     server.on("stream", stream => {
       rootedWhileOpen.push(rootedHandles().includes(label(stream)));
       stream.respond({ ":status": 200 });
       stream.end(BODY);
       queuedAfterEnd.push(stream.session!.state.outboundQueueSize!);
+      callbackRootedAfterEnd.push(rootedHandles().includes(QUEUED_WRITE_CALLBACK));
     });
+    const baseline = rootedHandles();
     const client = http2.connect(await listen(server), { settings: { initialWindowSize: WINDOW } });
     try {
-      const baseline = rootedHandles();
       const received: number[] = [];
       for (let i = 0; i < STREAMS; i++) {
         received.push((await roundTrip(client, { ":path": "/" })).received);
       }
       // The premise: each server stream was rooted while it was open, each response left part of
-      // its body queued, and the queue then delivered it.
-      expect({ rootedWhileOpen, tailQueued: queuedAfterEnd.map(n => n > 0), received }).toEqual({
-        rootedWhileOpen: Array(STREAMS).fill(true),
-        tailQueued: Array(STREAMS).fill(true),
-        received: Array(STREAMS).fill(BODY.length),
-      });
+      // its body queued, with the callback of the queued tail rooted, and the queue then delivered it.
+      expect({ rootedWhileOpen, tailQueued: queuedAfterEnd.map(n => n > 0), callbackRootedAfterEnd, received }).toEqual(
+        {
+          rootedWhileOpen: Array(STREAMS).fill(true),
+          tailQueued: Array(STREAMS).fill(true),
+          callbackRootedAfterEnd: Array(STREAMS).fill(true),
+          received: Array(STREAMS).fill(BODY.length),
+        },
+      );
       expect(await rootedBeyond(baseline)).toEqual([]);
     } finally {
-      await closeAll(client, server);
+      await closeAll(client, server, baseline);
     }
   });
 
@@ -1821,26 +1831,31 @@ describe("stream release after a queued END_STREAM", () => {
     rootedWhileOpen: boolean[],
     stalledFinished: () => boolean,
   ): Promise<string[]> {
+    const beforeTheCase = rootedHandles();
     const client = http2.connect(await listen(server));
     try {
       const stalled = client.request({ ":path": "/stalled" });
       let stalledError: Error | null = null;
       stalled.on("error", err => (stalledError = err));
       await once(stalled, "response");
+      // What stalling rooted: the stalled stream on both sides and the callback of its queued tail.
+      const rootedByStalling = rootedBeyondNow(beforeTheCase);
       const baseline = rootedHandles();
       for (let i = 0; i < STREAMS; i++) {
         await roundTrip(client, { ":path": "/" });
       }
       const left = await rootedBeyond(baseline);
-      // The premise: every request's server stream was rooted while it was open, and the stalled
-      // stream is still open (not errored or reset into releasing the queue) with its response still
-      // queued, as it was while the other requests were answered.
+      // The premise: every request's server stream was rooted while it was open, the stalled
+      // response's tail was queued with its callback rooted, and the stalled stream is still open
+      // (not errored or reset into releasing the queue), as it was while the other requests were
+      // answered.
       expect(rootedWhileOpen).toEqual(Array(STREAMS).fill(true));
+      expect(rootedByStalling).toContain(QUEUED_WRITE_CALLBACK);
       expect(stalledError).toBeNull();
       expect(stalledFinished()).toBe(false);
       return left;
     } finally {
-      await closeAll(client, server);
+      await closeAll(client, server, beforeTheCase);
     }
   }
 
@@ -1913,29 +1928,29 @@ describe("stream release after a queued END_STREAM", () => {
       stream.respond({ ":status": 200 });
       stream.end();
     });
+    const baseline = rootedHandles();
     const client = http2.connect(await listen(server));
     try {
       // The server's window applies to requests opened after its SETTINGS frame has been received.
       await once(client, "remoteSettings");
-      const baseline = rootedHandles();
-      const responses: { queuedAtResponse: number; rootedAtResponse: boolean }[] = [];
+      const responses: Awaited<ReturnType<typeof roundTrip>>[] = [];
       for (let i = 0; i < STREAMS; i++) {
         responses.push(await roundTrip(client, { ":method": "POST", ":path": "/" }, BODY));
       }
-      // The premise: each response arrived while the request's tail was still queued and its client
-      // stream still rooted, and the queue then delivered that tail.
+      // The premise: each response arrived while the request's tail was still queued, with the
+      // client stream and the tail's callback still rooted, and the queue then delivered that tail.
       expect({
         tailQueued: responses.map(r => r.queuedAtResponse > 0),
         rootedAtResponse: responses.map(r => r.rootedAtResponse),
         uploaded: await Promise.all(uploaded),
       }).toEqual({
         tailQueued: Array(STREAMS).fill(true),
-        rootedAtResponse: Array(STREAMS).fill(true),
+        rootedAtResponse: Array(STREAMS).fill({ stream: true, callback: true }),
         uploaded: Array(STREAMS).fill(BODY.length),
       });
       expect(await rootedBeyond(baseline)).toEqual([]);
     } finally {
-      await closeAll(client, server);
+      await closeAll(client, server, baseline);
     }
   });
 });

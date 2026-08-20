@@ -171,6 +171,10 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
+    /**
+     * Expect a file in the temp directory to have the given contents. Like
+     * `stdout()`, a string `expected` has `$TEMP_DIR` replaced with the temp directory.
+     */
     fileEquals(filename: string, expected: string | (() => string | Promise<string>)): this {
       this.getTempDir();
       this.file_equals[filename] = expected;
@@ -228,7 +232,8 @@ export function createTestBuilder(path: string) {
       } else if (typeof this.expected_exit_code === "function") this.expected_exit_code(exitCode);
 
       for (const [filename, expected_raw] of Object.entries(this.file_equals)) {
-        const expected = typeof expected_raw === "string" ? expected_raw : await expected_raw();
+        const expected =
+          typeof expected_raw === "string" ? expected_raw.replaceAll("$TEMP_DIR", tempdir) : await expected_raw();
         const actual = await Bun.file(join(this.tempdir!, filename)).text();
         expect(actual).toEqual(expected);
       }
@@ -256,7 +261,7 @@ export function createTestBuilder(path: string) {
           if (stdout === undefined || stderr === undefined || exitCode === undefined) {
             throw err_;
           }
-          this.doChecks(stdout, stderr, exitCode);
+          await this.doChecks(stdout, stderr, exitCode);
           return;
         }
         if (this.expected_error === true) return undefined;

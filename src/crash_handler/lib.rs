@@ -2866,7 +2866,9 @@ mod draft {
             let end = cmd_line.len() - 1;
             let cmd_line_slice = &mut cmd_line.slice()[0..end];
             // Rust has no [:0] sentinel slices — pass the raw pointer instead.
-            // SAFETY: all pointer args are either null or point to stack-local buffers/structs valid for the duration of the call; cmd_line is NUL-terminated above
+            // SAFETY: all pointer args are either null or point to stack-local
+            // buffers/structs valid for the duration of the call; cmd_line and
+            // `sysdir` (zero-initialized, length-checked above) are NUL-terminated.
             let spawn_result = unsafe {
                 windows::kernel32::CreateProcessW(
                     core::ptr::null(),
@@ -2876,7 +2878,8 @@ mod draft {
                     1, // true
                     0,
                     core::ptr::null_mut(),
-                    core::ptr::null(),
+                    // lpCurrentDirectory: the child outlives us and would pin our cwd.
+                    sysdir.as_ptr(),
                     &mut startup_info,
                     &mut process,
                 )
@@ -2938,6 +2941,11 @@ mod draft {
                         unsafe {
                             libc::close(i);
                         }
+                    }
+                    // `curl` is absolute (`which()` was given an absolute cwd).
+                    // SAFETY: chdir is async-signal-safe; the path is a static C string.
+                    unsafe {
+                        libc::chdir(c"/".as_ptr());
                     }
                     // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
                     // process environment block

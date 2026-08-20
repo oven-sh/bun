@@ -83,8 +83,7 @@ class Domain extends EventEmitter {
   bind(fn) {
     const self = this;
     const emitError = this[kEmitError];
-    // Like node, the bound function runs inside the domain, keeps its `this`
-    // and arguments, and returns the result.
+    // Like node: runs inside the domain, keeps this and args, returns the result.
     return function () {
       self.enter();
       try {

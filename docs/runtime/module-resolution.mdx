@@ -3,7 +3,7 @@ title: "Module Resolution"
 description: "How Bun resolves modules and handles imports in JavaScript and TypeScript"
 ---
 
-The JavaScript ecosystem is in a years-long transition from CommonJS modules to native ES modules (ESM), and different runtimes and build tools have historically disagreed on how import specifiers map to files on disk. Bun aims to provide a consistent and predictable module resolution system that works without configuration.
+The JavaScript ecosystem is in a years-long transition from CommonJS modules to native ES modules (ESM). Different runtimes and build tools have historically disagreed on how import specifiers map to files on disk. Bun aims to provide a consistent and predictable module resolution system that works without configuration.
 
 ## Syntax
 
@@ -55,7 +55,7 @@ Here `./hello` is a relative path with no extension. **Extensioned imports are o
 
 <Note>
   The exact order varies by context: `require()` tries CommonJS extensions (`.cts`, `.cjs`) before ESM ones (`.mts`,
-  `.mjs`), and imports inside `node_modules` try JavaScript extensions before TypeScript ones. The list above shows the
+  `.mjs`). Imports inside `node_modules` try JavaScript extensions before TypeScript ones. The list above shows the
   order for a local ESM `import`.
 </Note>
 
@@ -66,7 +66,7 @@ import { hello } from "./hello";
 import { hello } from "./hello.ts"; // this works
 ```
 
-There's one additional rule for TypeScript compatibility: if you import `from "*.js"` or `from "*.jsx"`, Bun also checks for a matching `*.ts` or `*.tsx` file, and outside `node_modules` `from "*.mjs"` also matches `*.mts`. This follows the TypeScript compiler's [file extension substitution](https://www.typescriptlang.org/docs/handbook/modules/reference.html#file-extension-substitution), which lets source files reference each other by their compiled output paths. Note that unlike TypeScript, Bun doesn't rewrite `.cjs` to `.cts`.
+There's one additional rule for TypeScript compatibility. If you import `from "*.js"` or `from "*.jsx"`, Bun also checks for a matching `*.ts` or `*.tsx` file. Outside `node_modules`, `from "*.mjs"` also matches `*.mts`. This rule follows the TypeScript compiler's [file extension substitution](https://www.typescriptlang.org/docs/handbook/modules/reference.html#file-extension-substitution), which lets source files reference each other by their compiled output paths. Unlike TypeScript, Bun doesn't rewrite `.cjs` to `.cts`.
 
 ```ts index.ts icon="/icons/typescript.svg"
 import { hello } from "./hello";
@@ -136,7 +136,7 @@ The biggest difference between CommonJS and ES modules is that CommonJS modules 
 - ES modules are always in [strict mode](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode), while CommonJS modules are not.
 - Browsers do not have native support for CommonJS modules, but they do have native support for ES modules through `<script type="module">`.
 - CommonJS modules are not statically analyzable, while ES modules only allow static imports and exports.
-- Static `import` statements run synchronously, just like CommonJS `require`. ES modules can also be loaded on the fly with the asynchronous `import()` function, called a "dynamic import".
+- Static `import` statements run synchronously, just like CommonJS `require`. You can also load ES modules on the fly with the asynchronous `import()` function, called a "dynamic import".
 
 </Accordion>
 
@@ -179,29 +179,6 @@ import { stuff } from "foo";
 
 The full algorithm is specified in the [Node.js documentation](https://nodejs.org/api/modules.html). Briefly: if you import `from "foo"`, Bun scans up the file system for a `node_modules` directory containing the package `foo`.
 
-### NODE_PATH
-
-Bun supports `NODE_PATH` for additional module resolution directories:
-
-```bash
-NODE_PATH=./packages bun run src/index.js
-```
-
-```ts
-// packages/foo/index.js
-export const hello = "world";
-
-// src/index.js
-import { hello } from "foo";
-```
-
-Multiple paths use the platform's delimiter (`:` on Unix, `;` on Windows):
-
-```bash
-NODE_PATH=./packages:./lib bun run src/index.js  # Unix/macOS
-NODE_PATH=./packages;./lib bun run src/index.js  # Windows
-```
-
 Once it finds the `foo` package, Bun reads its `package.json` to determine the package's entrypoint. Bun first reads the `exports` field and checks for the following conditions.
 
 ```json package.json icon="file-json"
@@ -231,7 +208,7 @@ Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-
 }
 ```
 
-Subpath imports and conditional imports work in conjunction with each other.
+Subpath exports and conditional exports work together.
 
 ```json package.json icon="file-json"
 {
@@ -245,7 +222,7 @@ Subpath imports and conditional imports work in conjunction with each other.
 }
 ```
 
-As in Node.js, specifying any subpath in the `"exports"` map prevents other subpaths from being importable; you can only import files that are explicitly exported. Given the preceding `package.json`:
+As in Node.js, specifying any subpath in the `"exports"` map prevents other subpaths from being importable. You can only import files that are explicitly exported. Given the preceding `package.json`:
 
 ```ts index.ts icon="/icons/typescript.svg"
 import stuff from "foo"; // this works
@@ -266,6 +243,29 @@ If `exports` is not defined, Bun falls back to the legacy top-level entrypoint f
   "module": "./index.js",
   "main": "./index.js"
 }
+```
+
+### NODE_PATH
+
+Bun supports `NODE_PATH` for additional module resolution directories:
+
+```bash
+NODE_PATH=./packages bun run src/index.js
+```
+
+```ts
+// packages/foo/index.js
+export const hello = "world";
+
+// src/index.js
+import { hello } from "foo";
+```
+
+Multiple paths use the platform's delimiter (`:` on Unix, `;` on Windows):
+
+```bash
+NODE_PATH=./packages:./lib bun run src/index.js  # Unix/macOS
+NODE_PATH="./packages;./lib" bun run src/index.js  # Windows
 ```
 
 ### Custom conditions
@@ -330,9 +330,9 @@ Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript 
 })(module, exports, require);
 ```
 
-`module`, `exports`, and `require` are very much like the `module`, `exports`, and `require` in Node.js. These are assigned through a [`with scope`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/with) in C++. An internal `Map` stores the `exports` object to handle cyclical `require` calls before the module is fully loaded.
+`module`, `exports`, and `require` are very much like the `module`, `exports`, and `require` in Node.js. Bun assigns these through a [`with scope`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/with) in C++. An internal `Map` stores the `exports` object to handle cyclical `require` calls before the module is fully loaded.
 
-Once the CommonJS module is successfully evaluated, a Synthetic Module Record is created with the `default` ES Module [export set to `module.exports`](https://github.com/oven-sh/bun/blob/9b6913e1a674ceb7f670f917fc355bb8758c6c72/src/bun.js/bindings/CommonJSModuleRecord.cpp#L212-L213) and keys of the `module.exports` object are re-exported as named exports (if the `module.exports` object is an object).
+Once the CommonJS module is successfully evaluated, Bun creates a Synthetic Module Record with the `default` ES Module [export set to `module.exports`](https://github.com/oven-sh/bun/blob/9b6913e1a674ceb7f670f917fc355bb8758c6c72/src/bun.js/bindings/CommonJSModuleRecord.cpp#L212-L213). If `module.exports` is an object, Bun also re-exports its keys as named exports.
 
 Bun's bundler works differently: it wraps the CommonJS module in a `require_${moduleName}` function which returns the `module.exports` object.
 
@@ -366,6 +366,6 @@ import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/inde
 | `import.meta.file`     | The name of the current file, e.g. `index.tsx`                                                                                                                                                                                                                                                                                |
 | `import.meta.path`     | Absolute path to the current file, e.g. `/path/to/project/index.ts`. Equivalent to `__filename` in CommonJS modules (and Node.js)                                                                                                                                                                                             |
 | `import.meta.filename` | An alias to `import.meta.path`, for Node.js compatibility                                                                                                                                                                                                                                                                     |
-| `import.meta.main`     | Indicates whether the current file is the entrypoint to the current `bun` process: `true` if it's executed directly by `bun run`, `false` if it's imported                                                                                                                                                                    |
-| `import.meta.resolve`  | Resolve a module specifier (e.g. `"zod"` or `"./file.tsx"`) to a url. Equivalent to [`import.meta.resolve` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#resolve). Example: `import.meta.resolve("zod")` returns `"file:///path/to/project/node_modules/zod/index.ts"` |
+| `import.meta.main`     | Indicates whether the current file is the entrypoint to the current `bun` process: `true` if `bun run` executes it directly, `false` if it's imported                                                                                                                                                                         |
+| `import.meta.resolve`  | Resolve a module specifier (e.g. `"zod"` or `"./file.tsx"`) to a url. Equivalent to [`import.meta.resolve` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#resolve). Example: `import.meta.resolve("zod")` returns `"file:///path/to/project/node_modules/zod/index.js"` |
 | `import.meta.url`      | A `string` url to the current file, e.g. `file:///path/to/project/index.ts`. Equivalent to [`import.meta.url` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#url)                                                                                                       |

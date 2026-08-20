@@ -79,9 +79,18 @@ const patterns = {
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
    * `rust-toolchain.toml` is included so a nightly bump invalidates the
    * staticlib (cargo's own fingerprinting then forces a full rebuild).
+   * `.html` under `src/runtime/` is embedded with `include_bytes!` (e.g. the
+   * dev error page template), so edits to it must re-run cargo too.
    */
   rust: {
-    paths: ["src/**/*.rs", "src/**/Cargo.toml", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"],
+    paths: [
+      "src/**/*.rs",
+      "src/**/Cargo.toml",
+      "src/runtime/**/*.html",
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+    ],
   },
   /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, usockets) */
   cxx: {
@@ -93,7 +102,6 @@ const patterns = {
       "src/jsc/bindings/webcore/streams/*.cpp",
       "src/jsc/bindings/sqlite/*.cpp",
       "src/jsc/bindings/webcrypto/*.cpp",
-      "src/jsc/bindings/webcrypto/*/*.cpp",
       "src/jsc/bindings/node/*.cpp",
       "src/jsc/bindings/node/crypto/*.cpp",
       "src/jsc/bindings/node/http/*.cpp",
@@ -112,11 +120,9 @@ const patterns = {
     paths: [
       "packages/bun-usockets/src/*.c",
       "packages/bun-usockets/src/eventing/*.c",
-      "packages/bun-usockets/src/internal/*.c",
       "packages/bun-usockets/src/crypto/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
-      "src/*.c",
       "src/jsc/bindings/node/http/llhttp/*.c",
     ],
   },

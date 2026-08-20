@@ -35,8 +35,6 @@ pub mod posix_spawn {
         pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
         pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
     }
-    pub use bun_spawn as BunSpawn;
-    pub use bun_spawn_sys::posix_spawn::posix_spawn as PosixSpawn;
 }
 
 /// `Process` / `Poller` / `WaiterThread` / `spawn_process` / `sync` /
@@ -110,11 +108,6 @@ link_impl_ProcessExit! {
             unreachable!("SyncWindows exit handler is Windows-only"),
     }
 }
-/// Compat re-export: the `process::spawn_sys` shim module was dissolved into
-/// `bun_sys` (LAYERING — moved down so non-spawn callers don't depend on
-/// `bun_spawn`). Downstream `runtime/api/bun/*` still spells the old path.
-pub use bun_sys as spawn_sys;
-
 #[cfg(unix)]
 pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
 #[cfg(unix)]
@@ -241,7 +234,6 @@ pub mod subprocess {
 pub enum Term {
     Exited(u32),
     Signal(u32),
-    Stopped(u32),
     Unknown(u32),
 }
 
@@ -335,11 +327,11 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
             break 'argv0;
         };
         // Only PATH-search bare names (no separator present).
-        if first.contains(&b'/') {
+        if bun_core::strings::contains_char(first, b'/') {
             break 'argv0;
         }
         #[cfg(windows)]
-        if first.iter().any(|&b| b == b'\\') {
+        if bun_core::strings::contains_char(first, b'\\') {
             break 'argv0;
         }
         let path = opts

@@ -560,6 +560,9 @@ private:
     {
     }
 };
+template<> struct DOMStructureSlotOf<DOMFormDataIterator> {
+    static constexpr DOMStructureSlot value = DOMStructureSlot::DOMFormDataIterator;
+};
 
 using DOMFormDataIteratorPrototype = JSDOMIteratorPrototype<JSDOMFormData, DOMFormDataIteratorTraits>;
 JSC_ANNOTATE_HOST_FUNCTION(DOMFormDataIteratorPrototypeNext, DOMFormDataIteratorPrototype::next);
@@ -711,21 +714,6 @@ void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSDOMFormDataOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSDOMFormDataOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsDOMFormData = static_cast<JSDOMFormData*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsDOMFormData->wrapped(), jsDOMFormData);
 }
 
 #if ENABLE(BINDING_INTEGRITY)

@@ -9,7 +9,7 @@ use bun_io::max_buf::MaxBuf;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::ScopedRef;
 use bun_ptr::{IntrusiveRc, ParentRef, RefCount};
 use bun_sys;
@@ -124,7 +124,7 @@ impl PipeReader {
             // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
             // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
             if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
-                this.reader.source = Some(bun_io::Source::Pipe(pipe));
+                this.reader.set_source(bun_io::Source::Pipe(pipe));
             }
         }
 
@@ -324,26 +324,19 @@ impl PipeReader {
                 ReadableStream::cancel(
                     &ReadableStream::from_js(empty, global_object)?.unwrap(),
                     global_object,
-                );
+                )?;
                 Ok(empty)
             }
         }
     }
 
-    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
-                // `state.done` is now empty via `take()`.
-                // `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
-                // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
-                // boxed slice so JS becomes the owner — same pattern as
-                // `MarkedArrayBuffer::from_string`.
-                let slice: &'static mut [u8] = Box::leak(bytes.into_boxed_slice());
-                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
-                    .to_node_buffer(global_this)
+                JSValue::create_buffer_from_box(global_this, bytes.into_boxed_slice())
             }
-            _ => JSValue::UNDEFINED,
+            _ => Ok(JSValue::UNDEFINED),
         }
     }
 

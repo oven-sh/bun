@@ -109,6 +109,10 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
 
         int64_t ts = static_cast<int64_t>(
             trace.timestamp.secondsSinceEpoch().microseconds());
+        // Traces taken before this session started belong to an earlier,
+        // overlapping session (see CpuProfiler::Start); drop them.
+        if (ts < startTime)
+            continue;
         if (ts < lastTimestamp)
             ts = lastTimestamp;
         lastTimestamp = ts;
@@ -461,10 +465,14 @@ void CpuProfiler::SetSamplingInterval(int us)
 
 CpuProfilingResult CpuProfiler::Start(Local<String>, CpuProfilingMode, bool record_samples, unsigned)
 {
-    // JSC::SamplingProfiler is a single VM-global consumer; Stop() drains all
-    // traces via releaseStackTraces(), so overlapping sessions would lose samples.
-    if (!toImpl(this)->m_sessions.isEmpty())
-        return CpuProfilingResult { 0, CpuProfilingStatus::kAlreadyStarted };
+    // Overlapping sessions are allowed. JSC::SamplingProfiler is a single
+    // VM-global consumer and Stop() drains all traces via releaseStackTraces(),
+    // so a session that overlaps a Stop() of another session loses the samples
+    // taken before that Stop(). In practice the only overlapping caller is
+    // @datadog/pprof's restart path, which calls Start(new) immediately followed
+    // by Stop(old), so the window is microseconds. Refusing the overlap is
+    // worse: pprof ignores kAlreadyStarted, later calls Stop(0), gets nullptr,
+    // and dereferences it.
     uint32_t id = toImpl(this)->start(record_samples);
     return CpuProfilingResult { id, CpuProfilingStatus::kStarted };
 }

@@ -1,16 +1,19 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
+import { dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
 import {
   gcTick as _gcTick,
   bunEnv,
   bunExe,
   getMaxFD,
+  isAndroid,
   isBroken,
   isDebug,
-  isMacOS,
+  isLinux,
   isPosix,
   isWindows,
   shellExe,
+  tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
@@ -606,8 +609,10 @@ for (let [gcTick, label] of [
   });
 }
 
-// This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
+// The waiter thread is the Linux fallback for kernels/sandboxes without pidfd;
+// kqueue platforms (macOS, FreeBSD) always have EVFILT_PROC and its non-Linux
+// loop has no wakeup for processes appended after it starts.
+it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux && !isAndroid))(
   "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
   async () => {
     const result = spawnSync({
@@ -1311,6 +1316,84 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
   expect(exitCode).toBe(0);
 });
 
+// Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a
+// dup() of the descriptor. On Windows that duplicate used to be created
+// inheritable, and libuv spawns with bInheritHandles=TRUE, so every child
+// started while one was open got a copy and kept the file open after the
+// parent closed it. POSIX dup() uses F_DUPFD_CLOEXEC; the Windows side must match.
+it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited by children", async () => {
+  const N = 64;
+  // Bigger than the stream's high-water mark, so each reader parks on its
+  // duplicate instead of reading to EOF and closing it.
+  using dir = tempDir("spawn-dup-inherit", { "data.bin": Buffer.alloc(1024 * 1024) });
+
+  const k32 = dlopen("kernel32.dll", {
+    GetCurrentProcess: { args: [], returns: "ptr" },
+    GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+  });
+  const ownHandleCount = () => {
+    const out = new Uint32Array(1);
+    if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+      throw new Error("GetProcessHandleCount failed");
+    }
+    return out[0];
+  };
+
+  // The child reports how many handles it was started with.
+  const spawnHandleCounter = () =>
+    spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen } from "bun:ffi";
+        const k32 = dlopen("kernel32.dll", {
+          GetCurrentProcess: { args: [], returns: "ptr" },
+          GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+        });
+        const out = new Uint32Array(1);
+        if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+          throw new Error("GetProcessHandleCount failed");
+        }
+        console.log(out[0]);
+        `,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  const reportedHandleCount = async (proc: ReturnType<typeof spawnHandleCounter>) => {
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return Number(stdout.trim());
+  };
+
+  const fds = Array.from({ length: N }, () => openSync(join(String(dir), "data.bin"), "r"));
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  try {
+    // Plain descriptors are already non-inheritable; this child is the baseline.
+    await using control = spawnHandleCounter();
+
+    const before = ownHandleCount();
+    for (const fd of fds) readers.push(Bun.file(fd).stream().getReader());
+    // getReader() starts the stream, which dup()s the descriptor: the
+    // duplicates exist in this process while the next child is created.
+    expect(ownHandleCount() - before).toBeGreaterThanOrEqual(N);
+    await using withDuplicates = spawnHandleCounter();
+
+    const [controlCount, withDuplicatesCount] = await Promise.all([
+      reportedHandleCount(control),
+      reportedHandleCount(withDuplicates),
+    ]);
+    // An inheritable dup() hands every one of the N duplicates to the child,
+    // so the difference used to be exactly N.
+    expect(withDuplicatesCount - controlCount).toBeLessThan(N / 2);
+  } finally {
+    await Promise.all(readers.map(reader => reader.cancel()));
+    for (const fd of fds) closeSync(fd);
+  }
+});
+
 it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path length", async () => {
   const fixture = `
     try {
@@ -1535,4 +1618,26 @@ describe("uid/gid", () => {
     }
     expect(thrown?.code).toBe("EPERM");
   });
+});
+
+// The allocator opts its own mappings out of THP; it must not use
+// prctl(PR_SET_THP_DISABLE), which children inherit across execve. Gate on our
+// parent so an environment (or older bun) that disabled THP itself skips.
+function thpEnabled(status: string) {
+  return status.match(/^THP_enabled:\s*(\d)/m)?.[1];
+}
+function parentThp() {
+  if (!isLinux) return undefined;
+  try {
+    return thpEnabled(readFileSync(`/proc/${process.ppid}/status`, "utf8"));
+  } catch {
+    return undefined; // hidepid mount: cannot tell, skip
+  }
+}
+it.if(parentThp() === "1")("spawned children keep the system THP policy", async () => {
+  await using proc = spawn({ cmd: ["cat", "/proc/self/status"], stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(thpEnabled(stdout)).toBe("1");
+  expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
+  expect(exitCode).toBe(0);
 });

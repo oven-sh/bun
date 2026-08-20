@@ -1,7 +1,6 @@
 // posix types live in `crate::posix` (moved from bun_sys).
 pub use crate::posix::E;
 pub use crate::posix::S;
-pub use crate::posix::mode_t as Mode;
 
 #[repr(u16)]
 #[derive(

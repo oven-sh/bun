@@ -299,7 +299,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // Check here so the error is at configure time with a clear hint.
   // rust-only/link-only don't run LUT codegen — skip the check so split-CI
   // steps don't require perl on the rust cross-compile box.
-  if (cfg.mode === "full" || cfg.mode === "cpp-only") {
+  if (cfg.mode === "full" || cfg.mode === "cpp-only" || cfg.mode === "archive-link") {
     if (findSystemTool("perl") === undefined) {
       throw new BuildError("perl not found in PATH", {
         hint: "LUT codegen (create-hash-table.ts) needs perl. Install it: apt install perl / brew install perl",
@@ -330,6 +330,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
     const targets = [defaultTarget, "check"];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
+    for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
     n.default(targets);
   }
 

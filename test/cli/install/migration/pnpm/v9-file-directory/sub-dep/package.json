@@ -1,0 +1,7 @@
+{
+  "name": "sub-dep",
+  "version": "1.0.0",
+  "dependencies": {
+    "nested-child": "file:./child"
+  }
+}

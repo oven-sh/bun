@@ -299,6 +299,115 @@ describe("WebSocketServer", () => {
     new WebSocket("ws://localhost:" + wss.address().port);
     await promise;
   });
+
+  describe("binaryType", () => {
+    type Received = { event: string; shape: string; bytes: number[]; isBinary?: boolean };
+
+    function shapeOf(data: unknown): string {
+      if (Buffer.isBuffer(data)) return "Buffer";
+      if (data instanceof ArrayBuffer) return "ArrayBuffer";
+      if (data instanceof Blob) return "Blob";
+      return Object.prototype.toString.call(data);
+    }
+
+    async function describeReceived(event: string, data: unknown, isBinary?: boolean): Promise<Received> {
+      const bytes = Array.from(new Uint8Array(data instanceof Blob ? await data.bytes() : (data as Uint8Array)));
+      const received: Received = { event, shape: shapeOf(data), bytes };
+      if (isBinary !== undefined) received.isBinary = isBinary;
+      return received;
+    }
+
+    // Collects what the server socket emits for the frames `sendFrames` puts on the wire.
+    // Resolves once `messageCount` 'message' events arrived. The frames arrive in order,
+    // so every ping/pong sent before the last message has been emitted by then.
+    async function receiveOnServer(
+      onConnection: (ws: WebSocket) => void,
+      sendFrames: (client: WebSocket) => void,
+      messageCount: number,
+    ): Promise<Received[]> {
+      const wss = new WebSocketServer({ port: 0 });
+      const { promise, resolve, reject } = Promise.withResolvers<Promise<Received>[]>();
+      const received: Promise<Received>[] = [];
+      let messages = 0;
+
+      wss.on("connection", ws => {
+        ws.on("error", reject);
+        onConnection(ws);
+        ws.on("ping", data => received.push(describeReceived("ping", data)));
+        ws.on("pong", data => received.push(describeReceived("pong", data)));
+        ws.on("message", (data, isBinary) => {
+          received.push(describeReceived("message", data, isBinary));
+          if (++messages === messageCount) resolve(received);
+        });
+      });
+
+      const client = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+      client.on("error", reject);
+      client.on("open", () => sendFrames(client));
+      try {
+        return await Promise.all(await promise);
+      } finally {
+        client.terminate();
+        wss.close();
+      }
+    }
+
+    // Like npm ws, binaryType applies to binary data frames only: ping and pong
+    // payloads are always a Buffer.
+    const serverBinaryTypes = [
+      { binaryType: "nodebuffer", shape: "Buffer" },
+      { binaryType: "arraybuffer", shape: "ArrayBuffer" },
+      { binaryType: "blob", shape: "Blob" },
+    ] as const;
+
+    it.each(serverBinaryTypes)("$binaryType: binary frames arrive as $shape", async ({ binaryType, shape }) => {
+      const received = await receiveOnServer(
+        ws => {
+          // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
+          ws.binaryType = binaryType as WebSocket["binaryType"];
+        },
+        client => {
+          client.ping(Buffer.from([4]));
+          client.pong(Buffer.from([5]));
+          client.send(Buffer.from([1, 2, 3]));
+          client.send(Buffer.alloc(0));
+        },
+        2,
+      );
+
+      expect(received).toEqual([
+        { event: "ping", shape: "Buffer", bytes: [4] },
+        { event: "pong", shape: "Buffer", bytes: [5] },
+        { event: "message", shape, bytes: [1, 2, 3], isBinary: true },
+        { event: "message", shape, bytes: [], isBinary: true },
+      ]);
+    });
+
+    it("defaults to nodebuffer and applies a new value to the next message", async () => {
+      const binaryTypesSeen: string[] = [];
+      const received = await receiveOnServer(
+        ws => {
+          binaryTypesSeen.push(ws.binaryType);
+          ws.binaryType = "arraybuffer";
+          binaryTypesSeen.push(ws.binaryType);
+          ws.once("message", () => {
+            ws.binaryType = "nodebuffer";
+          });
+        },
+        client => {
+          client.send(Buffer.from([1]));
+          client.send(Buffer.from([2]));
+        },
+        2,
+      );
+
+      expect(binaryTypesSeen).toEqual(["nodebuffer", "arraybuffer"]);
+      expect(received).toEqual([
+        { event: "message", shape: "ArrayBuffer", bytes: [1], isBinary: true },
+        { event: "message", shape: "Buffer", bytes: [2], isBinary: true },
+      ]);
+    });
+  });
 });
 
 describe("Server", () => {

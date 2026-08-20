@@ -1035,7 +1035,8 @@ class BunWebSocketMocked extends EventEmitter {
       isBinary = true;
       if (this.#binaryType !== "nodebuffer") {
         if (this.#binaryType === "arraybuffer") {
-          message = new Uint8Array(message);
+          // ServerWebSocket creates this Buffer over its own ArrayBuffer, so .buffer holds exactly the message.
+          message = message.buffer;
         } else if (this.#binaryType === "blob") {
           message = new Blob([message]);
         }

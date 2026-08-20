@@ -120,7 +120,6 @@ private:
 };
 }
 
-
 namespace JSC {
 struct HashTableValue;
 }
@@ -334,11 +333,11 @@ struct SubspaceSlots {
     size_t serverOffset;
 };
 
-#define BUN_SUBSPACE_SLOTS(clientMember, serverMember)                             \
-    ::WebCore::SubspaceSlots                                                        \
-    {                                                                               \
-        OBJECT_OFFSETOF(::WebCore::ExtendedDOMClientIsoSubspaces, clientMember),    \
-            OBJECT_OFFSETOF(::WebCore::ExtendedDOMIsoSubspaces, serverMember)       \
+#define BUN_SUBSPACE_SLOTS(clientMember, serverMember)                           \
+    ::WebCore::SubspaceSlots                                                     \
+    {                                                                            \
+        OBJECT_OFFSETOF(::WebCore::ExtendedDOMClientIsoSubspaces, clientMember), \
+            OBJECT_OFFSETOF(::WebCore::ExtendedDOMIsoSubspaces, serverMember)    \
     }
 
 // The type-independent part of `subspaceForImpl` (creating the server and
@@ -347,7 +346,9 @@ struct SubspaceSlots {
 struct SubspaceForInit {
     unsigned cellSize;
     uint8_t numberOfLowerTierPreciseCells;
-    enum class CellType : uint8_t { Cell, Destructible, Custom } cellType;
+    enum class CellType : uint8_t { Cell,
+        Destructible,
+        Custom } cellType;
     bool hasOutputConstraints;
 };
 
@@ -357,9 +358,9 @@ template<typename T, UseCustomHeapCellType useCustomHeapCellType>
 inline constexpr SubspaceForInit subspaceForInit {
     sizeof(T),
     T::numberOfLowerTierPreciseCells,
-    useCustomHeapCellType == UseCustomHeapCellType::Yes ? SubspaceForInit::CellType::Custom
-        : std::is_base_of_v<JSC::JSDestructibleObject, T>         ? SubspaceForInit::CellType::Destructible
-                                                                 : SubspaceForInit::CellType::Cell,
+    useCustomHeapCellType == UseCustomHeapCellType::Yes   ? SubspaceForInit::CellType::Custom
+        : std::is_base_of_v<JSC::JSDestructibleObject, T> ? SubspaceForInit::CellType::Destructible
+                                                          : SubspaceForInit::CellType::Cell,
     static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
 };
 

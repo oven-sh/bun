@@ -176,7 +176,6 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     clientData->builtinFunctions().exportNames();
 }
 
-
 JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForInit& init, SubspaceSlots slots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&))
 {
     auto& clientData = *downcast<JSVMClientData>(vm.clientData);

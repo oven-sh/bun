@@ -134,9 +134,9 @@ JSFunction* JSStreamsRuntime::countQueuingStrategySizeFunction(const Zig::Global
     return m_countQueuingStrategySizeFunction.getInitializedOnMainThread(m_globalObject);
 }
 
-#define WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR(memberName, ClassName)                                                                    \
-    Structure* JSStreamsRuntime::memberName(const Zig::GlobalObject*)                                                                   \
-    {                                                                                                                                   \
+#define WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR(memberName, ClassName)                                                                \
+    Structure* JSStreamsRuntime::memberName(const Zig::GlobalObject*)                                                               \
+    {                                                                                                                               \
         return m_internalStructures[static_cast<size_t>(InternalStructure::memberName)].getInitializedOnMainThread(m_globalObject); \
     }
 FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR)

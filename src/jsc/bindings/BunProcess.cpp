@@ -153,7 +153,6 @@ NEVER_INLINE void putDirectNamed(JSC::VM& vm, JSC::JSObject* object, ASCIILitera
     object->putDirect(vm, JSC::Identifier::fromString(vm, name), value, 0);
 }
 
-
 using namespace JSC;
 
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator

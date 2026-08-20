@@ -2006,9 +2006,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
-
-
-
     case Bun::ErrorCode::ERR_MISSING_ARGS: {
         switch (callFrame->argumentCount()) {
         case 0: {
@@ -2128,10 +2125,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, error, Message::ERR_OUT_OF_RANGE(scope, globalObject, arg0, arg1, arg2)));
     }
 
-
-
-
-
     case Bun::ErrorCode::ERR_UNHANDLED_ERROR: {
         auto arg0 = callFrame->argument(1);
 
@@ -2171,7 +2164,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
-
     case ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS: {
         auto arg0 = callFrame->argument(1);
         if (!arg0.isUndefined()) {
@@ -2189,8 +2181,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
     }
 
-
-
     case Bun::ErrorCode::ERR_TLS_CERT_ALTNAME_INVALID: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);
@@ -2204,15 +2194,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         Bun::putDirectNamed(vm, err, "cert"_s, arg2);
         return JSC::JSValue::encode(err);
     }
-
-
-
-
-
-
-
-
-
 
     case Bun::ErrorCode::ERR_INVALID_URL: {
         auto arg0 = callFrame->argument(1);
@@ -2242,21 +2223,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_CHAR, builder.toString()));
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     case Bun::ErrorCode::ERR_VM_MODULE_LINK_FAILURE: {
         auto arg0 = callFrame->argument(1);
         auto message = arg0.toWTFString(globalObject);
@@ -2268,7 +2234,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         RETURN_IF_EXCEPTION(scope, {});
         return JSC::JSValue::encode(error);
     }
-
 
     case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
         auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);

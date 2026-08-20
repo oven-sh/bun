@@ -329,7 +329,7 @@ public:
 #define WEB_STREAMS_STRUCTURE_INDEX_ENTRY(memberName, ClassName) memberName,
     enum class InternalStructure : uint8_t {
         FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_STRUCTURE_INDEX_ENTRY)
-        Count
+            Count
     };
 #undef WEB_STREAMS_STRUCTURE_INDEX_ENTRY
 

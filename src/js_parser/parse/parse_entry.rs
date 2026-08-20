@@ -1136,10 +1136,7 @@ impl<'a> Parser<'a> {
         //    var __filename = "foo/bar/baz.js"
         //
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
-            // Each bundled module declares its own `var __dirname`, so the refs become
-            // renamable once visiting (which needs them unbound for `define`) is done.
-            // Unused refs too: an unbound symbol reserves its name for the whole chunk.
-            // Direct eval pins names, so such a module keeps the unbound refs.
+            // Every bundled module declares these below, so after visiting they can be renamed.
             if p.options.bundle && !p.module_scope().contains_direct_eval {
                 for ref_ in [p.dirname_ref, p.filename_ref] {
                     p.symbols.as_mut_slice()[ref_.inner_index() as usize].kind =

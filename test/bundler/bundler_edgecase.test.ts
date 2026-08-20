@@ -3245,12 +3245,14 @@ describe("bundler", () => {
         import * as a from "./a/a";
         import * as b from "./b/b";
         import c from "./c/c.cjs";
+        import { d } from "./d/d";
         ${dirnameEntryPrelude}
         console.log(JSON.stringify({
           entry: [rel(__dirname), rel(__filename)],
           a: [rel(a.dir()), rel(a.file())],
           b: [rel(b.dir()), rel(b.file())],
           c: [rel(c.dir()), rel(c.file())],
+          d: d(),
         }));
       `,
       "/a/a.ts": dirnameModule,
@@ -3258,6 +3260,15 @@ describe("bundler", () => {
       "/c/c.cjs": /* js */ `
         module.exports = { dir: () => __dirname, file: () => __filename };
       `,
+      "/d/d.ts": /* ts */ `
+        export function d() { return "d"; }
+      `,
+    },
+    onAfterBundle(api) {
+      // A module that does not use the names (d.ts) must not reserve them: the first
+      // module that uses them keeps the plain names.
+      api.expectFile("/out.js").toContain('var __dirname = "');
+      api.expectFile("/out.js").toContain('__filename = "');
     },
     run: {
       stdout: JSON.stringify({
@@ -3265,6 +3276,7 @@ describe("bundler", () => {
         a: ["/a", "/a/a.ts"],
         b: ["/b", "/b/b.ts"],
         c: ["/c", "/c/c.cjs"],
+        d: "d",
       }),
     },
   });

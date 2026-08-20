@@ -41,7 +41,9 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
 /// of a file in the chunk as that name when the build targets bun with cjs
 /// output, which is the same condition as here (both read `c.options`, so a
 /// `#!/usr/bin/env bun` hashbang that only switches the entry point's own
-/// target does not count).
+/// target does not count). Every AST with an `import.meta` node carries
+/// `HAS_IMPORT_META`: the parser sets it, and the sqlite loader sets it on
+/// the AST it synthesizes (`ParseTask`).
 ///
 /// The runtime module is skipped. Its one `import.meta` is the `__require`
 /// definition, and cjs output never links `__require` in

@@ -1061,18 +1061,20 @@ pub mod parse_worker {
                     Loc { start: 0 },
                 );
 
-                return Ok(JSAst::init(
-                    js_parser::new_lazy_export_ast(
-                        bump,
-                        &mut topts.define,
-                        opts,
-                        log,
-                        root,
-                        source,
-                        b"",
-                    )?
-                    .ok_or(AnyError::ParserError)?,
-                ));
+                let mut ast = js_parser::new_lazy_export_ast(
+                    bump,
+                    &mut topts.define,
+                    opts,
+                    log,
+                    root,
+                    source,
+                    b"",
+                )?
+                .ok_or(AnyError::ParserError)?;
+                // Only the parser sets this when it reads `import.meta`. cjs
+                // output declares the wrapper's import.meta argument based on it.
+                ast.has_import_meta = true;
+                return Ok(JSAst::init(ast));
             }
             Loader::Napi => {
                 // (dap-eval-cb "source.contents.ptr")

@@ -228,6 +228,32 @@ error: Hello World`,
     },
     run: { stdout: "no import.meta here" },
   });
+  // The sqlite loader builds its module as `import.meta.require(...)` without
+  // parsing anything, so it is the one import.meta the parser does not see.
+  itBundled("bun/ImportMetaFormatCjsEmbeddedSqlite", {
+    target: "bun",
+    format: "cjs",
+    outfile: "",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello from cjs!')");
+        return db.serialize();
+      })(),
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toStartWith(
+        "// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname, $Bun_import_meta) {",
+      );
+    },
+    run: { stdout: "Hello from cjs!" },
+  });
   // `bun build --compile --bytecode` is the documented production command.
   itBundled("bun/ImportMetaCompileBytecode", {
     compile: true,

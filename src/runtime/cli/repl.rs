@@ -910,6 +910,41 @@ impl Layout {
     }
 }
 
+/// What `refresh_line` last drew on the terminal. The REPL has one only when it is on a terminal.
+#[derive(Clone, Copy)]
+struct Drawing {
+    /// Last width the terminal reported.
+    width: u16,
+    /// Where the terminal cursor was left.
+    cursor: ScreenPos,
+    /// The cell after the last character of the line (the ghost text is not counted).
+    end: ScreenPos,
+}
+
+impl Drawing {
+    fn new() -> Drawing {
+        Drawing {
+            width: 80,
+            cursor: ScreenPos::default(),
+            end: ScreenPos::default(),
+        }
+    }
+
+    fn update_width(&mut self) {
+        if let Some(size) = bun_core::output::File::from(Fd::stdout()).winsize() {
+            if size.col > 0 {
+                self.width = size.col;
+            }
+        }
+    }
+
+    /// The input is gone from the screen; the next redraw starts where the cursor is.
+    fn erased(&mut self) {
+        self.cursor = ScreenPos::default();
+        self.end = ScreenPos::default();
+    }
+}
+
 pub(super) struct Repl<'a> {
     line_editor: LineEditor,
     history: History,
@@ -921,14 +956,9 @@ pub(super) struct Repl<'a> {
     // State
     input_mode: InputMode,
     running: bool,
-    is_tty: bool,
     use_colors: bool,
-    /// Last width the terminal reported.
-    terminal_width: u16,
-    /// Where `refresh_line` left the terminal cursor.
-    drawn_cursor: ScreenPos,
-    /// The cell after the last character of the line (the ghost text is not counted).
-    drawn_end: ScreenPos,
+    /// `None` when stdin or stdout is not a terminal; the input is then never redrawn.
+    drawing: Option<Drawing>,
     ctrl_c_pressed: bool,
 
     // Buffered stdin
@@ -965,11 +995,8 @@ impl<'a> Repl<'a> {
             suggestion: Vec::new(),
             input_mode: InputMode::Normal,
             running: false,
-            is_tty: false,
             use_colors: false,
-            terminal_width: 80,
-            drawn_cursor: ScreenPos::default(),
-            drawn_end: ScreenPos::default(),
+            drawing: None,
             ctrl_c_pressed: false,
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
@@ -1002,12 +1029,11 @@ impl<'a> Repl<'a> {
     // ========================================================================
 
     fn setup_terminal(&mut self) {
-        self.is_tty = Output::is_stdout_tty() && Output::is_stdin_tty();
-
-        if !self.is_tty {
+        if !(Output::is_stdout_tty() && Output::is_stdin_tty()) {
             self.use_colors = false;
             return;
         }
+        self.drawing = Some(Drawing::new());
 
         // Check for NO_COLOR
         self.use_colors = !env_var::NO_COLOR.get().unwrap_or(false);
@@ -1308,40 +1334,32 @@ impl<'a> Repl<'a> {
         }
     }
 
-    fn update_terminal_width(&mut self) {
-        if let Some(size) = bun_core::output::File::from(Fd::stdout()).winsize() {
-            if size.col > 0 {
-                self.terminal_width = size.col;
-            }
-        }
-    }
-
     /// Call `leave_input` before printing anything below the input this draws.
     fn refresh_line(&mut self) {
         // Non-TTY never redraws (like node): per-key redraws wedge write(2) on a full socketpair.
-        if !self.is_tty {
+        let Some(mut drawing) = self.drawing else {
             if self.line_editor.buffer.is_empty() && self.input_mode == InputMode::Normal {
                 Output::flush();
                 self.write(self.get_prompt());
                 Output::flush();
             }
             return;
-        }
+        };
 
         // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
         Output::flush();
 
         // Every redraw, so that a resize is picked up.
-        self.update_terminal_width();
-        let width = usize::from(self.terminal_width);
+        drawing.update_width();
+        let width = usize::from(drawing.width);
 
         let prompt = self.get_prompt();
         let prompt_len = self.get_prompt_length();
         let line = self.line_editor.get_line();
 
         // Erase the previous drawing from the prompt's row down.
-        if self.drawn_cursor.row > 0 {
-            self.print(format_args!("{}{}A", CSI, self.drawn_cursor.row));
+        if drawing.cursor.row > 0 {
+            self.print(format_args!("{}{}A", CSI, drawing.cursor.row));
         }
         self.write(b"\r");
         self.write(Cursor::CLEAR_BELOW.as_bytes());
@@ -1392,8 +1410,9 @@ impl<'a> Repl<'a> {
             self.print(format_args!("{}{}C", CSI, cursor.col));
         }
 
-        self.drawn_cursor = cursor;
-        self.drawn_end = end;
+        drawing.cursor = cursor;
+        drawing.end = end;
+        self.drawing = Some(drawing);
 
         Output::flush();
     }
@@ -1402,15 +1421,14 @@ impl<'a> Repl<'a> {
     fn leave_input(&mut self, echo: &[u8]) {
         // False once a line that ends exactly at the right edge has left the cursor on a fresh row.
         let mut on_input_row = true;
-        if self.is_tty {
+        if let Some(Drawing { cursor, end, .. }) = self.drawing {
             if !self.drawn_suggestion().is_empty() {
                 // Nothing but the ghost follows the cursor.
                 self.write(Cursor::CLEAR_BELOW.as_bytes());
-                on_input_row = self.drawn_cursor.col > 0;
+                on_input_row = cursor.col > 0;
             } else {
-                let end = self.drawn_end;
-                if end.row > self.drawn_cursor.row {
-                    self.print(format_args!("{}{}B", CSI, end.row - self.drawn_cursor.row));
+                if end.row > cursor.row {
+                    self.print(format_args!("{}{}B", CSI, end.row - cursor.row));
                 }
                 self.write(b"\r");
                 if end.col > 0 {
@@ -1424,8 +1442,9 @@ impl<'a> Repl<'a> {
             self.write(b"\n");
         }
         self.suggestion.clear();
-        self.drawn_cursor = ScreenPos::default();
-        self.drawn_end = ScreenPos::default();
+        if let Some(drawing) = &mut self.drawing {
+            drawing.erased();
+        }
     }
 
     // ========================================================================
@@ -1460,7 +1479,7 @@ impl<'a> Repl<'a> {
     fn update_suggestion(&mut self) {
         self.suggestion.clear();
 
-        if !self.is_tty || !self.use_colors {
+        if self.drawing.is_none() || !self.use_colors {
             return;
         }
         if self.input_mode != InputMode::Normal {
@@ -2365,8 +2384,9 @@ impl<'a> Repl<'a> {
                 Key::CtrlL => {
                     self.write(Cursor::CLEAR_SCREEN.as_bytes());
                     self.write(Cursor::HOME.as_bytes());
-                    // The input is redrawn from the top of the now empty screen.
-                    self.drawn_cursor = ScreenPos::default();
+                    if let Some(drawing) = &mut self.drawing {
+                        drawing.erased();
+                    }
                     self.refresh_line();
                 }
                 Key::CtrlA => {

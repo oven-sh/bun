@@ -131,6 +131,85 @@ describe("Bun.deepEquals strict mode", () => {
   });
 });
 
+describe.each([true, false])("Bun.deepEquals(a, b, strict: %p) and array index accessors", strict => {
+  const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
+
+  function withIndexGetter(get: () => unknown, enumerable = true) {
+    const array: unknown[] = [1, 2];
+    Object.defineProperty(array, 1, { get, enumerable, configurable: true });
+    return array;
+  }
+
+  it("compares an enumerable index getter by the value it returns", () => {
+    const got = withIndexGetter(() => "got");
+    const gotToo = withIndexGetter(() => "got");
+    const other = withIndexGetter(() => "other");
+    expect(deepEquals(got, [1, "got"])).toBe(true);
+    expect(deepEquals([1, "got"], got)).toBe(true);
+    expect(deepEquals(got, gotToo)).toBe(true);
+    expect(deepEquals(got, [1, 2])).toBe(false);
+    expect(deepEquals(got, other)).toBe(false);
+    expect(deepEquals(got, [1, ,])).toBe(false);
+  });
+
+  it("runs each side's getter once", () => {
+    const calls = { left: 0, right: 0 };
+    const left = withIndexGetter(() => (calls.left++, "got"));
+    const right = withIndexGetter(() => (calls.right++, "got"));
+    expect(deepEquals(left, right)).toBe(true);
+    expect(calls).toEqual({ left: 1, right: 1 });
+  });
+
+  it("propagates a throwing getter", () => {
+    const throwing = withIndexGetter(() => {
+      throw new Error("index getter threw");
+    });
+    expect(() => deepEquals(throwing, [1, 2])).toThrow("index getter threw");
+    expect(() => deepEquals([1, 2], throwing)).toThrow("index getter threw");
+  });
+
+  // Strict mode rejects on length first. Loose mode walks the longer array's extra indexes
+  // and tolerates undefined there, as it does for ["asdf"] vs ["asdf", undefined] above.
+  it("reads a getter past the end of the shorter array", () => {
+    let calls = 0;
+    const longer = withIndexGetter(() => (calls++, "got"));
+    expect(deepEquals([1], longer)).toBe(false);
+    expect(calls).toBe(strict ? 0 : 1);
+
+    const returnsUndefined = withIndexGetter(() => undefined);
+    const hidden = withIndexGetter(() => 2, false);
+    expect(deepEquals([1], returnsUndefined)).toBe(!strict);
+    expect(deepEquals([1], hidden)).toBe(!strict);
+
+    const throwing = withIndexGetter(() => {
+      throw new Error("index getter threw");
+    });
+    if (strict) {
+      expect(deepEquals([1], throwing)).toBe(false);
+    } else {
+      expect(() => deepEquals([1], throwing)).toThrow("index getter threw");
+    }
+  });
+
+  it("ignores non-enumerable indexes, accessor or data", () => {
+    const hiddenGetter = withIndexGetter(() => 2, false);
+    expect(deepEquals(hiddenGetter, [1, 2])).toBe(false);
+    expect(deepEquals(hiddenGetter, [1, ,])).toBe(true);
+
+    const hiddenData: unknown[] = [1, 2];
+    Object.defineProperty(hiddenData, 1, { enumerable: false });
+    expect(deepEquals(hiddenData, [1, 2])).toBe(false);
+    expect(deepEquals([1, 2], hiddenData)).toBe(false);
+    expect(deepEquals(hiddenData, [1, ,])).toBe(true);
+    expect(deepEquals([1, ,], hiddenData)).toBe(true);
+  });
+
+  it("still reads the elements of a frozen array", () => {
+    expect(deepEquals(Object.freeze([1, { a: 2 }]), [1, { a: 2 }])).toBe(true);
+    expect(deepEquals(Object.freeze([1, 2]), [1, 3])).toBe(false);
+  });
+});
+
 // The object fast path used to recurse into nested values while walking the
 // structure's PropertyTable; a getter on a nested object that added or removed
 // properties on the parent rehashed that table and freed the vector being

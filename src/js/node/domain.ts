@@ -38,7 +38,10 @@ class Domain extends EventEmitter {
     const self = this;
     // A regular function so `this` is the emitter that emitted "error".
     this[kEmitError] = function emitError(e) {
-      e ??= $ERR_UNHANDLED_ERROR();
+      // Like node, every falsy value becomes ERR_UNHANDLED_ERROR (see
+      // test-event-emitter-no-error-provided-to-error-event.js). Truthy
+      // non-objects pass through as-is.
+      e ||= $ERR_UNHANDLED_ERROR();
       if (typeof e === "object") {
         e.domainEmitter = this;
         ObjectDefineProperty(e, "domain", {

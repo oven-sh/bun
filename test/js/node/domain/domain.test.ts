@@ -1,10 +1,17 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import domain from "node:domain";
 import { EventEmitter } from "node:events";
 import http from "node:http";
 
 describe("node:domain", () => {
+  afterEach(() => {
+    // A failed assertion between enter() and exit() must not poison later tests.
+    while (domain._stack.length) {
+      domain._stack[domain._stack.length - 1].exit();
+    }
+  });
+
   it("exports the Domain class", () => {
     expect(typeof domain.Domain).toBe("function");
     const d = domain.create();
@@ -168,16 +175,31 @@ describe("node:domain", () => {
     expect(ee.listenerCount("error")).toBe(0);
   });
 
-  it("run preserves falsy thrown values", () => {
-    const d = domain.create();
-    let seen: unknown = "unset";
-    d.on("error", (e: unknown) => {
-      seen = e;
-    });
-    d.run(() => {
-      throw 0;
-    });
-    expect(seen).toBe(0);
+  it("falsy emitter errors become ERR_UNHANDLED_ERROR, truthy ones pass through", () => {
+    // Matches node: test-event-emitter-no-error-provided-to-error-event.js.
+    for (const arg of [false, null, undefined, 0, ""]) {
+      const d = domain.create();
+      const ee = new EventEmitter();
+      d.add(ee);
+      let seen: any;
+      d.on("error", (e: any) => {
+        seen = e;
+      });
+      ee.emit("error", arg);
+      expect(seen).toBeInstanceOf(Error);
+      expect(seen.code).toBe("ERR_UNHANDLED_ERROR");
+    }
+    for (const arg of [42, "fortytwo", true]) {
+      const d = domain.create();
+      const ee = new EventEmitter();
+      d.add(ee);
+      let seen: unknown;
+      d.on("error", (e: unknown) => {
+        seen = e;
+      });
+      ee.emit("error", arg);
+      expect(seen).toBe(arg);
+    }
   });
 
   it("add defines emitter.domain as non-enumerable like node", () => {

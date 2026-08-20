@@ -641,3 +641,71 @@ test("only imports the function", () => {
   expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
   expect(exitCode).toBe(0);
 });
+
+test("modules whose source URL is not a file path are left out of the report", () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = false
+`,
+    "helper.ts": `
+export function helper() {
+  return "helper";
+}
+`,
+    "sources.test.ts": `
+import { test, expect } from "bun:test";
+import { helper } from "./helper";
+
+// Longer than the path buffer on every platform (the largest one, on Windows, is 96 KiB).
+const padding = Buffer.alloc(128 * 1024, "x").toString();
+const dataUrl = "data:text/javascript," + encodeURIComponent("export default 'data'; //" + padding);
+
+Bun.plugin({
+  name: "virtual",
+  setup(build) {
+    build.module("virtual-module", () => ({ contents: "export default 'virtual';", loader: "js" }));
+  },
+});
+
+test("imports modules that are not files", async () => {
+  expect((await import(dataUrl)).default).toBe("data");
+  expect((await import("virtual-module")).default).toBe("virtual");
+  expect(helper()).toBe("helper");
+});
+`,
+  });
+
+  const result = Bun.spawnSync(
+    [bunExe(), "test", "--coverage", "--coverage-reporter", "text", "--coverage-reporter", "lcov"],
+    {
+      cwd: dir,
+      env: {
+        ...bunEnv,
+      },
+      stdio: [null, null, "pipe"],
+    },
+  );
+
+  const stderr = normalizeBunSnapshot(result.stderr.toString("utf-8"), dir);
+  expect(stderr).toMatchInlineSnapshot(`
+    "sources.test.ts:
+    (pass) imports modules that are not files
+    -----------------|---------|---------|-------------------
+    File             | % Funcs | % Lines | Uncovered Line #s
+    -----------------|---------|---------|-------------------
+    All files        |  100.00 |  100.00 |
+     helper.ts       |  100.00 |  100.00 | 
+     sources.test.ts |  100.00 |  100.00 | 
+    -----------------|---------|---------|-------------------
+
+     1 pass
+     0 fail
+     3 expect() calls
+    Ran 1 test across 1 file."
+  `);
+
+  const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  expect(lcov.split("\n").filter(line => line.startsWith("SF:"))).toEqual(["SF:helper.ts", "SF:sources.test.ts"]);
+  expect(result.exitCode).toBe(0);
+});

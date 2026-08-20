@@ -2050,6 +2050,13 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::Strin
     // so we skip the ascii check
     let slice: &[u8] = zig_slice.slice();
 
+    // The report lists files relative to the project root. A `data:` or `blob:`
+    // URL or a plugin's virtual module id is not a file, and it can be longer
+    // than the path buffers `resolve_path::relative` writes into.
+    if !bun_path::is_absolute(slice) {
+        return false;
+    }
+
     // always ignore node_modules.
     if strings::contains(slice, b"/node_modules/") || strings::contains(slice, b"\\node_modules\\")
     {

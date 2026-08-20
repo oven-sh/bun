@@ -13,9 +13,8 @@ use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 #[inline]
 fn js_err(e: JsError) -> ToJSError {
     match e {
-        JsError::Thrown => ToJSError::JSError,
+        JsError::Thrown | JsError::Terminated => ToJSError::JSError,
         JsError::OutOfMemory => ToJSError::OutOfMemory,
-        JsError::Terminated => ToJSError::JSTerminated,
     }
 }
 
@@ -24,12 +23,11 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
 }
 
 /// The inverse of [`js_err`], for host functions returning a data-format
-/// parse (JSON/XML rows never produce the identifier / macro variants).
+/// parse (JSON/XML rows never produce the conversion variants).
 pub fn to_js_error(e: ToJSError, global: &JSGlobalObject) -> JsError {
     match e {
         ToJSError::OutOfMemory => JsError::OutOfMemory,
         ToJSError::JSError => JsError::Thrown,
-        ToJSError::JSTerminated => JsError::Terminated,
         _ => global.throw(format_args!("Cannot convert value to JS")),
     }
 }
@@ -72,7 +70,12 @@ fn data_to_js_with_check(
         ExprData::EObject(e) => object_to_js(e, global, stack_check),
         ExprData::EObjectJSON(e) => object_json_to_js(e, global),
         ExprData::EArrayJSON(e) => array_json_to_js(e, global),
-        ExprData::EString(e) => string_to_js(e, global),
+        ExprData::EString(e) => {
+            if let Some(kind) = e.toml_datetime {
+                return toml_datetime_to_js(global, e.slice8(), kind).map_err(js_err);
+            }
+            string_to_js(e, global)
+        }
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
         ExprData::EBoolean(boolean) | ExprData::EBranchBoolean(boolean) => Ok(if boolean.value {
@@ -178,7 +181,12 @@ extern "C" fn Bun__JSONRows__wtf8ToJS(
 ) -> JSValue {
     // SAFETY: the C++ caller passes a live tape string.
     let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
-    utf8_bytes_to_js(bytes, global).unwrap_or(JSValue::ZERO)
+    match utf8_bytes_to_js(bytes, global) {
+        Ok(value) => value,
+        // Only the string's to_js can fail here (JSError): the
+        // exception is pending and the caller RETURN_IF_EXCEPTIONs on empty.
+        Err(_) => JSValue::ZERO,
+    }
 }
 
 /// The whole document under `root` in one call into C++ (keys and short
@@ -210,6 +218,25 @@ fn array_json_to_js(this: &E::ArrayJSON, global: &JSGlobalObject) -> Result<JSVa
         core::ptr::from_ref(this).cast_mut(),
     ));
     json_rows_to_js(root, this.tape(), global)
+}
+
+/// A TOML date/time literal as the Temporal object of its kind. `text` must
+/// be ASCII that `Temporal.*.from` accepts verbatim.
+pub fn toml_datetime_to_js(
+    global: &JSGlobalObject,
+    text: &[u8],
+    kind: E::TomlDateTimeKind,
+) -> bun_jsc::JsResult<JSValue> {
+    debug_assert!(text.is_ascii());
+    // SAFETY: `text` is a live slice for the duration of the call.
+    unsafe {
+        bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(
+            global,
+            text.as_ptr(),
+            text.len(),
+            kind as u8,
+        )
+    }
 }
 
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {

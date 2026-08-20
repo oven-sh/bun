@@ -33,16 +33,22 @@ exports[`pnpm comprehensive migration tests large single package with many depen
       "optionalDependencies": {
         "fsevents": "^2.3.3",
       },
+      "peerDependencies": {
+        "react-native": ">=0.72.0",
+      },
+      "optionalPeers": [
+        "react-native",
+      ],
     },
   },
   "packages": {
-    "@emotion/react": ["@emotion/react@11.11.3", "", { "peerDependencies": { "react": "18.2.0" } }, ""],
+    "@emotion/react": ["@emotion/react@11.11.3", "", { "peerDependencies": { "react": ">=16.8.0" } }, ""],
 
-    "@emotion/styled": ["@emotion/styled@11.11.0", "", { "peerDependencies": { "@emotion/react": "11.11.3", "react": "18.2.0" } }, ""],
+    "@emotion/styled": ["@emotion/styled@11.11.0", "", { "peerDependencies": { "@emotion/react": "^11.0.0", "react": ">=16.8.0" } }, ""],
 
     "@experimental/super-long-scoped-package-name-with-many-words": ["@experimental/super-long-scoped-package-name-with-many-words@0.0.0-experimental-abcdef123456-20250812-build.9876543210", "", {}, "sha512-experimentalAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
 
-    "@tanstack/react-query": ["@tanstack/react-query@5.17.9", "", { "peerDependencies": { "react": "18.2.0" } }, "sha512-tanstackAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+    "@tanstack/react-query": ["@tanstack/react-query@5.17.9", "", { "peerDependencies": { "react": ">=18.0.0" } }, "sha512-tanstackAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
 
     "@types/node": ["@types/node@20.10.8", "", {}, ""],
 
@@ -70,13 +76,13 @@ exports[`pnpm comprehensive migration tests large single package with many depen
 
     "negotiator": ["negotiator@0.6.3", "", {}, ""],
 
-    "next": ["next@14.0.4", "", { "peerDependencies": { "react": "18.2.0", "react-dom": "18.2.0" }, "bin": { "next": "dist/bin/next" } }, "sha512-nextAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+    "next": ["next@14.0.4", "", { "peerDependencies": { "react": "^18.2.0", "react-dom": "^18.2.0" }, "bin": { "next": "dist/bin/next" } }, "sha512-nextAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
 
     "prettier": ["prettier@3.1.1", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-prettierAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
 
     "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, ""],
 
-    "react-dom": ["react-dom@18.2.0", "", { "dependencies": { "scheduler": "0.23.0" }, "peerDependencies": { "react": "18.2.0" } }, ""],
+    "react-dom": ["react-dom@18.2.0", "", { "dependencies": { "scheduler": "0.23.0" }, "peerDependencies": { "react": "^18.2.0" } }, ""],
 
     "scheduler": ["scheduler@0.23.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, ""],
 
@@ -194,7 +200,7 @@ exports[`pnpm comprehensive migration tests complex monorepo with cross-dependen
 
     "@company/web": ["@company/web@workspace:apps/web"],
 
-    "@radix-ui/react-dialog": ["@radix-ui/react-dialog@1.0.5", "", { "peerDependencies": { "react": "18.2.0", "react-dom": "18.2.0" } }, ""],
+    "@radix-ui/react-dialog": ["@radix-ui/react-dialog@1.0.5", "", { "peerDependencies": { "react": "^16.8 || ^17.0 || ^18.0", "react-dom": "^16.8 || ^17.0 || ^18.0" } }, ""],
 
     "@types/cors": ["@types/cors@2.8.17", "", {}, ""],
 
@@ -224,7 +230,7 @@ exports[`pnpm comprehensive migration tests complex monorepo with cross-dependen
 
     "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" }, "bin": { "loose-envify": "cli.js" } }, ""],
 
-    "next": ["next@14.0.4", "", { "peerDependencies": { "react": "18.2.0", "react-dom": "18.2.0" }, "bin": { "next": "dist/bin/next" } }, "sha512-nextAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+    "next": ["next@14.0.4", "", { "peerDependencies": { "react": "^18.2.0", "react-dom": "^18.2.0" }, "bin": { "next": "dist/bin/next" } }, "sha512-nextAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
 
     "nodemon": ["nodemon@3.0.2", "", { "bin": { "nodemon": "bin/nodemon.js" } }, ""],
 
@@ -232,7 +238,7 @@ exports[`pnpm comprehensive migration tests complex monorepo with cross-dependen
 
     "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, ""],
 
-    "react-dom": ["react-dom@18.2.0", "", { "dependencies": { "scheduler": "0.23.0" }, "peerDependencies": { "react": "18.2.0" } }, ""],
+    "react-dom": ["react-dom@18.2.0", "", { "dependencies": { "scheduler": "0.23.0" }, "peerDependencies": { "react": "^18.2.0" } }, ""],
 
     "scheduler": ["scheduler@0.23.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, ""],
 
@@ -248,7 +254,7 @@ exports[`pnpm comprehensive migration tests complex monorepo with cross-dependen
 
 exports[`pnpm comprehensive migration tests pnpm with patches and overrides: patches-overrides 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 3,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -264,7 +270,9 @@ exports[`pnpm comprehensive migration tests pnpm with patches and overrides: pat
   },
   "overrides": {
     "mime-types": "2.1.33",
-    "negotiator@>0.6.0": "0.6.2",
+    "negotiator@>0.6.0": {
+      ".": "0.6.2",
+    },
   },
   "packages": {
     "accepts": ["accepts@1.3.8", "", { "dependencies": { "mime-types": "2.1.33", "negotiator": "0.6.2" } }, "sha512-acceptsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
@@ -307,9 +315,9 @@ exports[`pnpm comprehensive migration tests pnpm with peer dependencies and auto
   "packages": {
     "@angular/animations": ["@angular/animations@17.0.8", "", { "dependencies": { "tslib": "2.6.2" }, "peerDependencies": { "@angular/core": "17.0.8" } }, ""],
 
-    "@angular/common": ["@angular/common@17.0.8", "", { "dependencies": { "tslib": "2.6.2" }, "peerDependencies": { "@angular/core": "17.0.8", "rxjs": "7.8.1" } }, ""],
+    "@angular/common": ["@angular/common@17.0.8", "", { "dependencies": { "tslib": "2.6.2" }, "peerDependencies": { "@angular/core": "17.0.8", "rxjs": "^6.5.3 || ^7.4.0" } }, ""],
 
-    "@angular/core": ["@angular/core@17.0.8", "", { "dependencies": { "tslib": "2.6.2" }, "peerDependencies": { "rxjs": "7.8.1", "zone.js": "0.14.2" } }, ""],
+    "@angular/core": ["@angular/core@17.0.8", "", { "dependencies": { "tslib": "2.6.2" }, "peerDependencies": { "rxjs": "^6.5.3 || ^7.4.0", "zone.js": "~0.14.0" } }, ""],
 
     "rxjs": ["rxjs@7.8.1", "", { "dependencies": { "tslib": "2.6.2" } }, "sha512-rxjsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
 

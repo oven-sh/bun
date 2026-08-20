@@ -46,8 +46,6 @@ ALWAYS_INLINE Event::Event(EventInterface eventInterface, MonotonicTime createTi
     , m_propagationStopped { false }
     , m_immediatePropagationStopped { false }
     , m_wasCanceled { false }
-    , m_defaultHandled { false }
-    , m_isDefaultEventHandlerIgnored { false }
     , m_isTrusted { isTrusted == IsTrusted::Yes }
     , m_isExecutingPassiveEventListener { false }
     , m_currentTargetIsInShadowTree { false }
@@ -144,11 +142,6 @@ DOMHighResTimeStamp Event::timeStampForBindings(ScriptExecutionContext& context)
 {
     // TODO:
     return 0.0;
-}
-
-void Event::resetBeforeDispatch()
-{
-    m_defaultHandled = false;
 }
 
 void Event::resetAfterDispatch()

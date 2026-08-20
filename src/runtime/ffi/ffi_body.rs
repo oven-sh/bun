@@ -318,15 +318,16 @@ impl Source {
 mod stdarg {
     use super::*;
 
+    // Defined in c-bindings.cpp; `ap` is a `va_list`.
     unsafe extern "C" {
-        pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
-        pub(super) fn ffi_vprintf(_: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ap: *mut c_void) -> c_int;
+        pub(super) fn ffi_vprintf(_: *const c_char, ap: *mut c_void) -> c_int;
         pub(super) fn ffi_fprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
         pub(super) fn ffi_printf(_: *const c_char, ...) -> c_int;
         pub(super) fn ffi_fscanf(_: *mut c_void, _: *const c_char, ...) -> c_int;
         pub(super) fn ffi_scanf(_: *const c_char, ...) -> c_int;
         pub(super) fn ffi_sscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
-        pub(super) fn ffi_vsscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vsscanf(_: *const c_char, _: *const c_char, ap: *mut c_void) -> c_int;
         pub(super) fn ffi_fopen(_: *const c_char, _: *const c_char) -> *mut c_void;
         pub(super) fn ffi_fclose(_: *mut c_void) -> c_int;
         pub(super) fn ffi_fgetc(_: *mut c_void) -> c_int;
@@ -1183,23 +1184,21 @@ impl FFI {
                     } else {
                         compile_c.source.first().as_bytes()
                     };
-                    writeln!(
+                    let _ = writeln!(
                         &mut combined,
                         "{} errors while compiling {}",
                         compile_c.deferred_errors.len(),
                         BStr::new(file_for_err)
-                    )
-                    .ok();
+                    );
 
                     for deferred_error in compile_c.deferred_errors.iter() {
-                        writeln!(&mut combined, "{}", BStr::new(deferred_error)).ok();
+                        let _ = writeln!(&mut combined, "{}", BStr::new(deferred_error));
                     }
 
                     return Err(global_this.throw(format_args!("{}", BStr::new(&combined))));
                 }
                 crate::Error::JSError => return Err(JsError::Thrown),
                 crate::Error::Alloc(_) => return Err(JsError::OutOfMemory),
-                crate::Error::JSTerminated => return Err(JsError::Terminated),
                 other => {
                     return Err(global_this.throw(format_args!("compile failed: {}", other.name())));
                 }
@@ -1218,7 +1217,7 @@ impl FFI {
         for function in compile_c.symbols.map.values_mut() {
             // Clone the name before `compile(&mut self)` so the
             // immutable borrow of `function.base_name` doesn't overlap.
-            let function_name = function.base_name.clone().unwrap();
+            let function_name = function.base_name.clone();
 
             if let Err(err) = function.compile(napi_env) {
                 if !global_this.has_exception() {
@@ -1270,13 +1269,16 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub fn close_jsc_callback(_global_this: &JSGlobalObject, callback: JSValue) -> JSValue {
+    pub fn close_jsc_callback(
+        _global_this: &JSGlobalObject,
+        callback: JSValue,
+    ) -> JsResult<JSValue> {
         unsafe extern "C" {
             fn Bun__JSCFFICallbackClose(callback: JSValue);
         }
         // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
         unsafe { Bun__JSCFFICallbackClose(callback) };
-        JSValue::UNDEFINED
+        Ok(JSValue::UNDEFINED)
     }
 
     pub fn callback(
@@ -1296,11 +1298,7 @@ impl FFI {
         let mut function = Function::default();
         let func = &mut function;
 
-        if let Some(val) = generate_symbol_for_function(global_this, interface, func)
-            .unwrap_or_else(|_| {
-                Some(ZigString::init(b"Out of memory").to_error_instance(global_this))
-            })
-        {
+        if let Some(val) = generate_symbol_for_function(global_this, interface, func)? {
             return Ok(val);
         }
 
@@ -1312,7 +1310,6 @@ impl FFI {
         }
 
         // TODO: WeakRefHandle that automatically frees it?
-        func.base_name = Some(ZBox::from_bytes(b""));
         js_callback.ensure_still_alive();
 
         let arg_types: Vec<u8> = func.arg_types.iter().map(|t| *t as u8).collect();
@@ -1332,11 +1329,14 @@ impl FFI {
             )
         };
         if cb.is_empty() {
-            return Ok(if global_this.has_exception() {
-                global_this.take_error(JsError::Thrown)
-            } else {
+            // An exception left by the constructor (OOM, or a termination
+            // request landing in it) is the caller's, not a value.
+            if global_this.has_exception() {
+                return Err(JsError::Thrown);
+            }
+            return Ok(
                 ZigString::init(b"Failed to create FFI callback").to_error_instance(global_this)
-            });
+            );
         }
         Ok(cb)
     }
@@ -1363,24 +1363,22 @@ impl FFI {
         self.functions.with_mut(|f| f.clear_retaining_capacity());
     }
 
-    pub fn print_callback(global: &JSGlobalObject, object: JSValue) -> JSValue {
+    pub fn print_callback(global: &JSGlobalObject, object: JSValue) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         if object.is_empty_or_undefined_or_null() || !object.is_object() {
-            return global.to_invalid_arguments(format_args!("Expected an object"));
+            return Ok(global.to_invalid_arguments(format_args!("Expected an object")));
         }
 
         let mut function = Function::default();
-        if let Some(val) = generate_symbol_for_function(global, object, &mut function)
-            .unwrap_or_else(|_| Some(ZigString::init(b"Out of memory").to_error_instance(global)))
-        {
-            return val;
+        if let Some(val) = generate_symbol_for_function(global, object, &mut function)? {
+            return Ok(val);
         }
 
         let _ = function;
         let text: &[u8] =
             b"// bun:ffi callbacks are compiled by JavaScriptCore (no C source is generated)\n";
-        jsc::bun_string_jsc::create_utf8_for_js(global, text).unwrap_or(JSValue::ZERO)
+        jsc::bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     pub fn print(
@@ -1390,7 +1388,7 @@ impl FFI {
     ) -> JsResult<JSValue> {
         if let Some(is_callback) = is_callback_val {
             if is_callback.to_boolean() {
-                return Ok(Self::print_callback(global, object));
+                return Self::print_callback(global, object);
             }
         }
 
@@ -1404,9 +1402,7 @@ impl FFI {
         let mut symbols = StringArrayHashMap::<Function>::default();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
         let obj = unsafe { &*obj };
-        if let Some(val) =
-            generate_symbols(global, &mut symbols, obj).unwrap_or(Some(JSValue::ZERO))
-        {
+        if let Some(val) = generate_symbols(global, &mut symbols, obj)? {
             // an error while validating symbols
             // keys/arg_types freed by Drop
             return Ok(val);
@@ -1449,16 +1445,16 @@ impl FFI {
         global: &JSGlobalObject,
         name_str: ZigString,
         object_value: JSValue,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
         let vm = jsc::VirtualMachineRef::get();
         let name_slice = name_str.to_slice();
 
         if object_value.is_empty_or_undefined_or_null() {
-            return invalid_options_arg(global);
+            return Ok(invalid_options_arg(global));
         }
         let Some(object) = object_value.get_object() else {
-            return invalid_options_arg(global);
+            return Ok(invalid_options_arg(global));
         };
 
         let mut filepath_buf = bun_paths::path_buffer_pool::get();
@@ -1498,19 +1494,17 @@ impl FFI {
         };
 
         if name.is_empty() {
-            return global.to_invalid_arguments(format_args!("Invalid library name"));
+            return Ok(global.to_invalid_arguments(format_args!("Invalid library name")));
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
-            .unwrap_or(Some(JSValue::ZERO))
-        {
+        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
             // an error while validating symbols
-            return val;
+            return Ok(val);
         }
         if symbols.len() == 0 {
-            return global.to_invalid_arguments(format_args!("Expected at least one symbol"));
+            return Ok(global.to_invalid_arguments(format_args!("Expected at least one symbol")));
         }
 
         let dylib: bun_sys::DynLib = 'brk: {
@@ -1527,20 +1521,19 @@ impl FFI {
                             let dlerror_msg = get_dl_error();
 
                             let mut msg = Vec::new();
-                            write!(
+                            let _ = write!(
                                 &mut msg,
                                 "Failed to open library \"{}\": {}",
                                 BStr::new(name),
                                 BStr::new(&dlerror_msg)
-                            )
-                            .ok();
+                            );
                             let system_error = SystemError {
                                 code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED").into(),
                                 message: bun_core::String::clone_utf8(&msg).into(),
                                 syscall: bun_core::String::clone_utf8(b"dlopen").into(),
                                 ..Default::default()
                             };
-                            return system_error.to_error_instance(global);
+                            return Ok(system_error.to_error_instance(global));
                         }
                     }
                 }
@@ -1560,7 +1553,7 @@ impl FFI {
         let _js_object_guard = js_object.protected();
 
         for function in symbols.values_mut() {
-            let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            let function_name = ZBox::from_bytes(function.base_name.as_bytes());
             // Reshaped for borrowck — clone base_name to drop &function borrow
 
             // optional if the user passed "ptr"
@@ -1574,7 +1567,7 @@ impl FFI {
                     dylib.close();
                     // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                     unsafe { &*lib_ptr }.do_close();
-                    return ret;
+                    return Ok(ret);
                 };
 
                 function.symbol_from_dynamic_library = Some(resolved_symbol);
@@ -1584,7 +1577,7 @@ impl FFI {
                 dylib.close();
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                 unsafe { &*lib_ptr }.do_close();
-                return err;
+                return Ok(err);
             }
             let target = function
                 .symbol_from_dynamic_library
@@ -1592,14 +1585,15 @@ impl FFI {
             let str = ZigString::init(function_name.as_bytes());
             let cb = create_jsc_ffi_function(global, &str, function, target, js_object);
             if cb.is_empty() {
+                // An exception the constructor left pending is the caller's.
                 let ret = if global.has_exception() {
-                    global.take_error(JsError::Thrown)
+                    Err(JsError::Thrown)
                 } else {
-                    global.to_invalid_arguments(format_args!(
+                    Ok(global.to_invalid_arguments(format_args!(
                         "Failed to create FFI function for symbol \"{}\" in \"{}\"",
                         BStr::new(function_name.as_bytes()),
                         BStr::new(name)
-                    ))
+                    )))
                 };
                 dylib.close();
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
@@ -1614,7 +1608,7 @@ impl FFI {
         lib_ref.functions.set(symbols);
         lib_ref.dylib.set(Some(dylib));
         symbols_value_set_cached(js_object, global, obj);
-        js_object
+        Ok(js_object)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1623,26 +1617,27 @@ impl FFI {
         JSValue::UNDEFINED
     }
 
-    pub(crate) fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JSValue {
+    pub(crate) fn link_symbols(
+        global: &JSGlobalObject,
+        object_value: JSValue,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         if object_value.is_empty_or_undefined_or_null() {
-            return invalid_options_arg(global);
+            return Ok(invalid_options_arg(global));
         }
         let Some(object) = object_value.get_object() else {
-            return invalid_options_arg(global);
+            return Ok(invalid_options_arg(global));
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
-            .unwrap_or(Some(JSValue::ZERO))
-        {
+        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
             // an error while validating symbols
-            return val;
+            return Ok(val);
         }
         if symbols.len() == 0 {
-            return global.to_invalid_arguments(format_args!("Expected at least one symbol"));
+            return Ok(global.to_invalid_arguments(format_args!("Expected at least one symbol")));
         }
 
         let obj = JSValue::create_empty_object(global, symbols.len());
@@ -1655,7 +1650,7 @@ impl FFI {
         let _js_object_guard = js_object.protected();
 
         for function in symbols.values_mut() {
-            let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            let function_name = ZBox::from_bytes(function.base_name.as_bytes());
 
             if function.symbol_from_dynamic_library.is_none() {
                 let ret = global.to_invalid_arguments(format_args!(
@@ -1664,25 +1659,26 @@ impl FFI {
                 ));
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                 unsafe { &*lib_ptr }.do_close();
-                return ret;
+                return Ok(ret);
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                 unsafe { &*lib_ptr }.do_close();
-                return err;
+                return Ok(err);
             }
             let target = function.symbol_from_dynamic_library.expect("checked above");
             let name = ZigString::init(function_name.as_bytes());
             let cb = create_jsc_ffi_function(global, &name, function, target, js_object);
             if cb.is_empty() {
+                // An exception the constructor left pending is the caller's.
                 let err = if global.has_exception() {
-                    global.take_error(JsError::Thrown)
+                    Err(JsError::Thrown)
                 } else {
-                    global.to_invalid_arguments(format_args!(
+                    Ok(global.to_invalid_arguments(format_args!(
                         "Failed to create FFI function for symbol \"{}\"",
                         BStr::new(function_name.as_bytes())
-                    ))
+                    )))
                 };
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                 unsafe { &*lib_ptr }.do_close();
@@ -1694,7 +1690,7 @@ impl FFI {
         // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
         unsafe { &*lib_ptr }.functions.set(symbols);
         symbols_value_set_cached(js_object, global, obj);
-        js_object
+        Ok(js_object)
     }
 
     pub fn create_cfunction(
@@ -1856,7 +1852,6 @@ pub(super) fn generate_symbol_for_function(
     }
 
     *function = Function::default();
-    function.base_name = None;
     function.arg_types = abi_types;
     function.return_type = return_type;
     function.threadsafe = threadsafe;
@@ -1915,7 +1910,7 @@ pub(super) fn generate_symbols(
         }
         let base_name = prop.to_owned_slice_z();
         let key = base_name.as_bytes().to_vec().into_boxed_slice();
-        function.base_name = Some(base_name);
+        function.base_name = base_name;
 
         symbols.insert(&key, function);
     }
@@ -1927,7 +1922,7 @@ pub(super) fn generate_symbols(
 
 pub struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
-    pub base_name: Option<ZBox>,
+    pub base_name: ZBox,
     pub state: Option<NonNull<TCC::State>>,
 
     pub return_type: ABIType,
@@ -1941,7 +1936,7 @@ impl Default for Function {
     fn default() -> Self {
         Self {
             symbol_from_dynamic_library: None,
-            base_name: None,
+            base_name: ZBox::default(),
             state: None,
             return_type: ABIType::Void,
             arg_types: Vec::new(),
@@ -2079,10 +2074,7 @@ impl Function {
         // `symbol_from_dynamic_library` is a dlsym'd address; valid for the
         // loaded library's lifetime, which outlives the TCC state.
         if state
-            .add_symbol(
-                self.base_name.as_ref().unwrap(),
-                self.symbol_from_dynamic_library.unwrap(),
-            )
+            .add_symbol(&self.base_name, self.symbol_from_dynamic_library.unwrap())
             .is_err()
         {
             debug_assert!(matches!(self.step, Step::Failed { .. }));
@@ -2133,7 +2125,7 @@ impl Function {
         writer.write_all(b"/* --- The Function To Call */\n")?;
         self.return_type.typename(writer)?;
         writer.write_all(b" ")?;
-        writer.write_all(self.base_name.as_ref().unwrap().as_bytes())?;
+        writer.write_all(self.base_name.as_bytes())?;
         writer.write_all(b"(")?;
         let mut first = true;
         for (i, arg) in self.arg_types.iter().enumerate() {
@@ -2141,7 +2133,7 @@ impl Function {
                 writer.write_all(b", ")?;
             }
             first = false;
-            arg.param_typename(writer)?;
+            arg.typename(writer)?;
             write!(writer, " arg{}", i)?;
         }
         writer.write_all(
@@ -2207,11 +2199,7 @@ impl Function {
             self.return_type.typename(writer)?;
             writer.write_all(b" return_value = ")?;
         }
-        write!(
-            writer,
-            "{}(",
-            BStr::new(self.base_name.as_ref().unwrap().as_bytes())
-        )?;
+        write!(writer, "{}(", BStr::new(self.base_name.as_bytes()))?;
         first = true;
         arg_buf[0..3].copy_from_slice(b"arg");
         for (i, arg) in self.arg_types.iter().enumerate() {
@@ -2362,44 +2350,54 @@ impl CompilerRT {
             return;
         };
 
-        #[cfg(windows)]
+        // Prefer the reusable per-user directory; if it cannot be safely
+        // populated, fall back to a freshly created, randomly named one.
+        #[cfg(unix)]
+        if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
+            && Self::populate_compiler_rt_dir(&bun_cc)
         {
-            let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
-            else {
+            return;
+        }
+        for _ in 0..8 {
+            let Some(name) = Self::fresh_compiler_rt_dir_name() else {
                 return;
             };
-            Self::populate_compiler_rt_dir(&bun_cc);
+            match bun_sys::mkdirat(tmpdir.fd(), name.as_zstr(), 0o700) {
+                Ok(()) => {}
+                Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
+                Err(_) => return,
+            }
+            let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+            let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
+                return;
+            };
+            let _ = Self::populate_compiler_rt_dir(&dir);
+            return;
         }
+    }
 
-        // Prefer the per-user directory; if it (or any candidate) cannot be
-        // safely populated -- wrong owner/mode, or an entry inside it is a
-        // pre-planted symlink -- abandon it and mint a fresh private one.
+    /// Random name for a freshly created header directory. The Windows shape
+    /// keeps the leading characters and the extension random, so a generated
+    /// short (8.3) alias of the directory is random as well.
+    fn fresh_compiler_rt_dir_name() -> Option<ZBox> {
         #[cfg(unix)]
         {
-            if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
-                && Self::populate_compiler_rt_dir(&bun_cc)
-            {
-                return;
-            }
-            for _ in 0..8 {
-                let mut name_buf = PathBuffer::uninit();
-                let Ok(name) =
-                    Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-                else {
-                    return;
-                };
-                match bun_sys::mkdirat(tmpdir.fd(), name, 0o700) {
-                    Ok(()) => {}
-                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
-                    Err(_) => return,
-                }
-                let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
-                let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
-                    return;
-                };
-                let _ = Self::populate_compiler_rt_dir(&dir);
-                return;
-            }
+            let mut name_buf = PathBuffer::uninit();
+            let name = Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
+                .ok()?;
+            Some(ZBox::from_bytes(name.as_bytes()))
+        }
+        #[cfg(windows)]
+        {
+            let mut name = Vec::new();
+            write!(
+                &mut name,
+                "{}-bun-cc.{}",
+                bun_fmt::truncated_hash32(bun_core::fast_random()),
+                bun_fmt::truncated_hash32(bun_core::fast_random()),
+            )
+            .ok()?;
+            Some(ZBox::from_vec(name))
         }
     }
 
@@ -2408,11 +2406,16 @@ impl CompilerRT {
     /// a pre-planted symlinked entry refused by the no-follow write.
     fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> bool {
         for (name, source) in CompilerRtSources::SOURCES {
-            let wrote = Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source);
-            // On Unix a refused write means the entry is a planted symlink, so
-            // this directory is abandoned for a fresh one. On Windows the
-            // directory is already per-user; keep staging the rest best-effort.
-            if cfg!(unix) && !wrote {
+            if !Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source) {
+                return false;
+            }
+        }
+        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
+        else {
+            return false;
+        };
+        for (name, source) in CompilerRtSources::NODE_HEADERS {
+            if !Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source) {
                 return false;
             }
         }
@@ -2422,18 +2425,13 @@ impl CompilerRT {
             return false;
         };
         // `ZBox::from_bytes` panics on OOM.
-        let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
-
-        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
-        else {
-            return true;
+        let path = ZBox::from_bytes(&*path);
+        let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) else {
+            return false;
         };
-        for (name, source) in CompilerRtSources::NODE_HEADERS {
-            Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source);
-        }
-        if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) {
-            let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
-        }
+        let node_path = ZBox::from_bytes(&*node_path);
+        let _ = COMPILER_RT_DIR.set(path);
+        let _ = COMPILER_RT_NODE_DIR.set(node_path);
         true
     }
 

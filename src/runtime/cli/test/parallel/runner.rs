@@ -23,6 +23,7 @@ use super::worker::{Worker, WorkerPipe};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
+use bun_collections::index_sort;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 
 /// All workers are busy for at least this long before another is spawned.
@@ -92,7 +93,9 @@ pub(crate) fn run_as_coordinator(
     // explicitly opts out of locality (the caller already shuffled).
     let mut sorted: Vec<Interned> = files.to_vec();
     if !ctx.test_options.randomize {
-        sorted.sort_by(|a, b| bun_core::order(a.as_bytes(), b.as_bytes()));
+        index_sort::sort_slice_by(&mut sorted, |a, b| {
+            bun_core::order(a.as_bytes(), b.as_bytes())
+        });
     }
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits
@@ -185,7 +188,7 @@ pub(crate) fn run_as_coordinator(
         live_workers: 0,
         crashed_files: Vec::new(),
         aborted: None,
-        bailed: false,
+        stop_reason: None,
         last_printed_dot: false,
         #[cfg(windows)]
         windows_job: Coordinator::create_windows_kill_on_close_job(),
@@ -571,7 +574,7 @@ impl<'a> WorkerLoop<'a> {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             if vm.test_isolation_enabled {
-                crate::jsc_hooks::close_isolation_handles(vm);
+                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                 vm.swap_global_for_test_isolation();
                 self.reporter
                     .jest
@@ -682,10 +685,13 @@ pub(crate) fn run_as_worker(
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;
-    vm_ref.is_shutting_down = true;
+    vm_ref.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
     vm_ref.run_with_api_lock(|| {
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
-        unsafe { (*vm).global_exit() }
+        unsafe {
+            (*vm).on_exit();
+            (*vm).global_exit()
+        }
     });
     {
         Global::exit(0);

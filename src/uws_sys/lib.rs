@@ -139,7 +139,6 @@ pub struct Opcode(pub i32);
 impl Opcode {
     pub const Text: Opcode = Opcode(1);
     pub const Binary: Opcode = Opcode(2);
-    pub const Close: Opcode = Opcode(8);
     pub const Ping: Opcode = Opcode(9);
     pub const Pong: Opcode = Opcode(10);
     // Upper-case aliases for callers that use the screaming-snake names
@@ -170,6 +169,28 @@ bun_core::opaque_extern!(
     pub UpgradedDuplex, pub WindowsNamedPipe,
 );
 
+pub mod socket_transfer {
+    use super::LIBUS_SOCKET_DESCRIPTOR;
+    use core::ffi::{c_char, c_int, c_uint, c_void};
+    unsafe extern "C" {
+        pub safe fn bsd_socket_export_size() -> c_int;
+        pub fn bsd_socket_export(
+            fd: LIBUS_SOCKET_DESCRIPTOR,
+            target_pid: c_uint,
+            info_out: *mut c_void,
+        ) -> c_int;
+        pub fn bsd_socket_import(info: *mut c_void, err: *mut c_int) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
+        pub fn bsd_create_bound_socket(
+            host: *const c_char,
+            port: c_int,
+            options: c_int,
+            out_port: *mut c_int,
+            error: *mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
+    }
+}
+
 // ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
 // The full `UpgradedDuplex` lives in `bun_runtime::socket` (T6); `socket.rs`
 // here dispatches to it from the low-tier `InternalSocket` enum. To avoid an
@@ -199,6 +220,7 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__shutdown(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__abandon_js_side(this: &mut UpgradedDuplex);
 }
 impl UpgradedDuplex {
     #[inline]
@@ -255,6 +277,10 @@ impl UpgradedDuplex {
     #[inline]
     pub(crate) fn close(&mut self) {
         UpgradedDuplex__close(self)
+    }
+    #[inline]
+    pub(crate) fn abandon_js_side(&mut self) {
+        UpgradedDuplex__abandon_js_side(self)
     }
 }
 
@@ -444,7 +470,6 @@ pub mod fault_inject {
 }
 pub use socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
-    SocketTcp, SocketTls,
 };
 
 // ───────────────────────────── re-exports ────────────────────────────────────
@@ -456,8 +481,7 @@ pub use loop_::{Loop, NOW_NS_UNKNOWN, PosixLoop};
 pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;
-#[cfg(not(windows))]
-pub type WindowsLoop = loop_::PosixLoop; // unified on non-Windows
+
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::ListenSocket;

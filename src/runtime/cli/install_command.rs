@@ -25,7 +25,7 @@ impl InstallCommand {
     /// touches this code, and demand-paging it in pollutes the startup window).
     #[cold]
     #[inline(never)]
-    fn handle_error(e: Error) -> Result<(), Error> {
+    pub(crate) fn handle_error(e: Error) -> Result<(), Error> {
         if matches!(
             e,
             crate::Error::InstallFailed

@@ -473,15 +473,22 @@ if (isDockerEnabled()) {
         (NULL, NULL)
     `;
 
-          // Query the data
+          // Query the data. The bound parameter makes Bind request binary
+          // results (a parameterless statement is prepared and executed in one
+          // round trip and gets text), which is what routes `time` through the
+          // binary decoder this test is about; the float4 sentinel proves the
+          // rows really arrived in binary (text "0.1" would decode to 0.1).
           const result = await db`
       SELECT
         id,
         regular_time,
-        time_with_tz
+        time_with_tz,
+        0.1::real AS fmt
       FROM bun_time_test
+      WHERE id >= ${0}
       ORDER BY id
     `;
+          expect(result[0].fmt).toBe(Math.fround(0.1));
 
           // Verify that time values are returned as strings, not binary data
           expect(result[0].regular_time).toBe("09:00:00");

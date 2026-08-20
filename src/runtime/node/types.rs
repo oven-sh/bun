@@ -954,6 +954,22 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
+/// `pin()` blocks `transfer()` but not `ArrayBuffer.prototype.resize`, which
+/// decommits tail pages: a later `slice_z` (after an option getter) or a
+/// work-pool read faults. Copy resizable non-shared paths; growable SABs only
+/// grow in place so stay borrowed.
+fn snapshot_resizable_path_buffer(buffer: &mut Buffer) {
+    if !(buffer.buffer.resizable && !buffer.buffer.shared) {
+        return;
+    }
+    let copy = bun_core::handle_oom(Buffer::from_string(buffer.slice()));
+    if buffer.pinned {
+        buffer.pinned = false;
+        buffer.buffer.unpin();
+    }
+    *buffer = copy;
+}
+
 impl PathLikeExt for PathLike {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
@@ -1190,8 +1206,13 @@ impl PathLikeExt for PathLike {
                     }
                     return Err(err);
                 }
+                snapshot_resizable_path_buffer(&mut buffer);
 
-                arguments.protect_eat();
+                if buffer.owns_buffer {
+                    arguments.eat();
+                } else {
+                    arguments.protect_eat();
+                }
                 Ok(Some(Self::Buffer(buffer)))
             }
 
@@ -1207,8 +1228,13 @@ impl PathLikeExt for PathLike {
                     }
                     return Err(err);
                 }
+                snapshot_resizable_path_buffer(&mut buffer);
 
-                arguments.protect_eat();
+                if buffer.owns_buffer {
+                    arguments.eat();
+                } else {
+                    arguments.protect_eat();
+                }
                 Ok(Some(Self::Buffer(buffer)))
             }
 

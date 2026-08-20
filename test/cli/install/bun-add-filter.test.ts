@@ -1,50 +1,13 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { readdirSync } from "fs";
-import { chmod, copyFile, exists, mkdir, rm } from "fs/promises";
+import { chmod, exists, mkdir, rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
-import { dirname, join } from "path";
+import { join } from "path";
 
 const registry = new VerdaccioRegistry();
 
-// The registry packages the cases below add or depend on. One install in beforeAll downloads them, and every test
-// dir starts from a copy of that cache (see `createDir`), so the cases still share no cache but only the few
-// packages outside this list, and the error cases that ask for one, reach the registry. Under ASAN the registry is
-// a single-threaded child of the same build, and that is what the concurrent cases used to queue up behind.
-const WARM = {
-  name: "warm",
-  dependencies: {
-    "no-deps": "2.0.0",
-    "no-deps-1": "npm:no-deps@1.0.0",
-    "a-dep": "1.0.1",
-    "a-dep-10": "npm:a-dep@1.0.10",
-    "is-number": "1.0.0",
-  },
-};
-
-// The files of the warm cache (the manifests and the extracted packages) and their directories, relative to its
-// root. The per-name index entries bun also leaves in a cache are links; installing does not read them, so they are
-// skipped and a copy is plain files and directories on every platform.
-let warmCache: { root: string; dirs: string[]; files: string[] };
-
-function listFiles(root: string, rel = "."): string[] {
-  return readdirSync(join(root, rel), { withFileTypes: true }).flatMap(entry => {
-    const path = join(rel, entry.name);
-    return entry.isDirectory() ? listFiles(root, path) : entry.isFile() ? [path] : [];
-  });
-}
-
 beforeAll(async () => {
   await registry.start();
-  const { packageDir } = await registry.createTestDir({
-    files: { "package.json": JSON.stringify(WARM) },
-    bunfigOpts: { linker: "hoisted" },
-  });
-  await installOk(packageDir, "hoisted");
-  const root = join(packageDir, ".bun-cache");
-  const files = listFiles(root);
-  expect(files).not.toBeEmpty();
-  warmCache = { root, files, dirs: [...new Set(files.map(path => dirname(path)))] };
 });
 
 afterAll(() => {
@@ -67,28 +30,20 @@ type Workspace = "root" | "api" | "web" | "pkg-a" | "pkg-b";
 
 type Linker = "hoisted" | "isolated";
 
-/** A test dir with `files` and its own copy of the warm cache at the path `envFor` points bun at. */
-async function createDir(files: Record<string, string> = {}, linker: Linker = "hoisted") {
-  const { packageDir } = await registry.createTestDir({ files, bunfigOpts: { linker } });
-  const cache = join(packageDir, ".bun-cache");
-  await Promise.all(warmCache.dirs.map(dir => mkdir(join(cache, dir), { recursive: true })));
-  await Promise.all(warmCache.files.map(path => copyFile(join(warmCache.root, path), join(cache, path))));
-  return packageDir;
-}
-
 // A string value is written verbatim, so a test can detect a rewrite that would otherwise be byte-identical.
-function makeMonorepo(extra: Partial<Record<Workspace, object | string>> = {}, linker: Linker = "hoisted") {
+async function makeMonorepo(extra: Partial<Record<Workspace, object | string>> = {}, linker: Linker = "hoisted") {
   const text = (value: object | string) => (typeof value === "string" ? value : JSON.stringify(value, null, 2));
-  return createDir(
-    {
+  const { packageDir } = await registry.createTestDir({
+    files: {
       "package.json": text(extra.root ?? ROOT),
       "packages/api/package.json": text(extra.api ?? API),
       "packages/web/package.json": text(extra.web ?? WEB),
       "packages/pkg-a/package.json": text(extra["pkg-a"] ?? PKG_A),
       "packages/pkg-b/package.json": text(extra["pkg-b"] ?? PKG_B),
     },
-    linker,
-  );
+    bunfigOpts: { linker },
+  });
+  return packageDir;
 }
 
 // CI exports BUN_INSTALL_CACHE_DIR (one per test file), which overrides the per-test-dir bunfig `cache`; concurrent cases racing on one cache fail on Windows.
@@ -96,8 +51,8 @@ function envFor(dir: string) {
   return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
 }
 
-// Whether these two lines show up depends on what the cache already holds, so stderr comes back without them and
-// callers compare the rest exactly: `Saved lockfile` when bun.lock was written, nothing when it was not.
+// These two lines, and the count in the second one, only say what a run had to download, so stderr comes back without
+// them and callers compare the rest exactly: `Saved lockfile` when bun.lock was written, nothing when it was not.
 const PROGRESS_LINES = /^(?:Resolving dependencies|Resolved, downloaded and extracted \[\d+\])\n/gm;
 
 // `--linker` is passed explicitly: an `install-strategy` in the user's ~/.npmrc overrides the bunfig linker.
@@ -1752,7 +1707,7 @@ test.concurrent("bun install <pkg> -F targets the workspace", async () => {
 
 // The root is only skipped by '*' when there are workspaces to select instead.
 test.concurrent("--filter outside a workspace: the lone package is the only candidate", async () => {
-  const packageDir = await createDir({ "package.json": JSON.stringify({ name: "solo" }) });
+  const { packageDir } = await registry.createTestDir({ files: { "package.json": JSON.stringify({ name: "solo" }) } });
 
   {
     const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "*"], packageDir);

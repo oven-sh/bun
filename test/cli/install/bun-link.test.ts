@@ -559,6 +559,32 @@ describe("global bin dir", () => {
     expect(bin).toBeValidBin(linkTarget("moved-bin", "dist", "cli.js"));
   });
 
+  it.skipIf(!isWindows)("bun link removes a shim it could not finish writing", async () => {
+    using bunInstall = tempDir("link-global", {});
+    using pkg = tempDir("link-pkg", pkgFiles("half-shim", { "half-shim": "cli.js" }));
+    const binDir = join(String(bunInstall), "bin");
+    // The launcher is not valid UTF-8, so encoding the .bunx sidecar fails after the file was created.
+    await writeFile(
+      join(String(pkg), "cli.js"),
+      Buffer.concat([Buffer.from("#!/usr/bin/env n"), Buffer.from([0x80, 0x80]), Buffer.from("\n")]),
+    );
+
+    let result = await run("link", String(pkg), String(bunInstall));
+    expect(result.err).toContain("InvalidBinContent");
+    expect(result.exitCode).toBe(1);
+    expect(await Promise.all([exists(join(binDir, "half-shim.bunx")), exists(join(binDir, "half-shim.exe"))])).toEqual([
+      false,
+      false,
+    ]);
+
+    // Nothing is left behind that the next link would have to treat as foreign.
+    await writeFile(join(String(pkg), "cli.js"), "#!/usr/bin/env node\n");
+    result = await run("link", String(pkg), String(bunInstall));
+    expect(result.err).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(join(binDir, "half-shim")).toBeValidBin(linkTarget("half-shim", "cli.js"));
+  });
+
   it("bun unlink removes its own bins and nothing else", async () => {
     using bunInstall = tempDir("link-global", { "elsewhere.txt": "" });
     using pkg = tempDir("link-pkg", pkgFiles("own-bin", { "own-bin": "cli.js" }));

@@ -870,26 +870,29 @@ impl<'a> Linker<'a> {
 
         #[cfg(windows)]
         {
-            let mut dest_buf = WPathBuffer::uninit();
-            let abs_dest_w = strings::convert_utf8_to_utf16_in_buffer(
-                dest_buf.as_mut_slice(),
-                abs_dest.as_bytes(),
-            );
-            let abs_dest_w_len = abs_dest_w.len();
-            let bunx_suffix = w!(".bunx\x00");
-            dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()]
-                .copy_from_slice(bunx_suffix);
-            // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
-            let abs_bunx_file =
-                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
-            let _ = sys::unlink_w(abs_bunx_file);
-            let exe_suffix = w!(".exe\x00");
-            dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
-            // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
-            let abs_exe_file =
-                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
-            let _ = sys::unlink_w(abs_exe_file);
+            Self::remove_shim_pair(abs_dest);
         }
+    }
+
+    /// Removes `<abs_dest>.bunx` and `<abs_dest>.exe` without looking at them.
+    /// Callers must already know that the pair is this package's.
+    #[cfg(windows)]
+    fn remove_shim_pair(abs_dest: &ZStr) {
+        let mut dest_buf = WPathBuffer::uninit();
+        let abs_dest_w =
+            strings::convert_utf8_to_utf16_in_buffer(dest_buf.as_mut_slice(), abs_dest.as_bytes());
+        let abs_dest_w_len = abs_dest_w.len();
+        let bunx_suffix = w!(".bunx\x00");
+        dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
+        // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
+        let abs_bunx_file =
+            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+        let _ = sys::unlink_w(abs_bunx_file);
+        let exe_suffix = w!(".exe\x00");
+        dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
+        // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
+        let abs_exe_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
+        let _ = sys::unlink_w(abs_exe_file);
     }
 
     /// Something that is not this package's bin occupies a name this package
@@ -1277,6 +1280,13 @@ impl<'a> Linker<'a> {
             return;
         }
 
+        // From here on the pair at the destination is this package's: its old
+        // shim, or the one being written. A failure below leaves a truncated
+        // `.bunx` that `unlink_bin_or_shim` could no longer attribute to the
+        // package, so remove the pair here instead. Declared before the file
+        // handles below, so it runs after they are closed.
+        let remove_pair_on_failure = scopeguard::guard((), |()| Self::remove_shim_pair(abs_dest));
+
         // `encode_into` reinterprets this byte buffer as `[u16]`.
         // Constructing a `&mut [u16]` from a pointer that is not 2-aligned is
         // *immediate language UB* — the reference validity invariant requires
@@ -1411,14 +1421,14 @@ impl<'a> Linker<'a> {
             crate::windows_shim::embedded_executable_data(),
         ) {
             let err: crate::Error = err.into();
-            if err == crate::Error::Sys(bun_errno::SystemErrno::EBUSY) {
-                // exe is most likely running. bunx file has already been updated, ignore error
+            if err != crate::Error::Sys(bun_errno::SystemErrno::EBUSY) {
+                self.err = Some(err);
                 return;
             }
-
-            self.err = Some(err);
-            return;
+            // exe is most likely running. bunx file has already been updated, ignore error
         }
+
+        scopeguard::ScopeGuard::into_inner(remove_pair_on_failure);
     }
 
     #[cfg(not(windows))]

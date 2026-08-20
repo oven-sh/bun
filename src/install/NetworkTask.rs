@@ -125,6 +125,14 @@ pub struct DedupeMapEntry {
     /// later `enqueue_*_for_download` can observe the failure instead of
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
+    /// Manifest tasks only: a full (200) manifest body was parsed this run, so
+    /// the in-memory manifest is current and a missing version is
+    /// authoritative. Stays false when the registry answered 304.
+    pub(crate) manifest_fetched: bool,
+    /// Manifest tasks only: an unconditional refetch was already forced after
+    /// a cached manifest lacked a requested version
+    /// (`refetch_manifest_for_missing_version`).
+    pub(crate) manifest_refetch_forced: bool,
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.

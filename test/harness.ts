@@ -1101,10 +1101,15 @@ export function dockerExe(): string | null {
   return which("docker") || which("podman") || null;
 }
 
+// OpenHarmony never ships docker; treat it as permanently docker-less so the
+// CI docker-required throw below doesn't fire on OHOS runners.
+const isOhos =
+  Bun.env.BUN_OHOS === "1" ||
+  (isLinux && process.arch === "arm64" && fs.existsSync("/system/lib/ld-musl-aarch64.so.1"));
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
-    if (isCI && isLinux) {
+    if (isCI && isLinux && !isOhos) {
       throw new Error("A functional `docker` is required in CI for some tests.");
     }
     return false;
@@ -1119,7 +1124,7 @@ export function isDockerEnabled(): boolean {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
-    if (isCI && isLinux) {
+    if (isCI && isLinux && !isOhos) {
       throw new Error("A functional `docker` is required in CI for some tests.");
     }
     return false;

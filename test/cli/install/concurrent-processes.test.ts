@@ -149,9 +149,9 @@ describe("package manager processes that share a project", () => {
       const postinstall = `${bunExe()} hold.js`;
       const { packageDir, packageJson } = await registry.createTestDir({
         files: {
-          // Holds only the process started with HOLD in its environment; `bun install` and `bun
-          // add` below run it too. The test writes "release"; the deadline only bounds the
-          // damage if it never does.
+          // Holds only the process started with HOLD in its environment; the `bun add` and the
+          // `bun install` below run it too. The test writes "release"; the deadline only bounds
+          // the damage if it never does.
           "hold.js": `
             const fs = require("fs");
             if (!process.env.HOLD) process.exit(0);
@@ -174,8 +174,9 @@ describe("package manager processes that share a project", () => {
         editedPackageJson = join(cwd, "package.json");
         await write(editedPackageJson, JSON.stringify({ name: "app", dependencies }));
       }
-      await installed(packageDir);
 
+      // Also the first install of the project. It holds in the postinstall script once it has
+      // placed the packages, and writes package.json after that.
       const removeArgs = ["remove", "a-dep"];
       await using remove = spawn({
         cmd: [bunExe(), ...removeArgs],

@@ -2265,8 +2265,6 @@ pub fn init(
 
         if subcommand.always_edits_project() && !manager.options.dry_run {
             manager.lock_project();
-            // The workspace walk above read package.json files before the lock was held.
-            manager.workspace_package_json_cache.map.clear();
         }
     }
 

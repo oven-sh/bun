@@ -123,6 +123,8 @@ pub fn lock_project(this: &mut PackageManager) {
         return;
     }
 
+    // The process this one may have waited for has rewritten the package.json files read so far.
+    this.workspace_package_json_cache.map.clear();
     bun_core::handle_oom(
         this.env_mut()
             .map

@@ -320,3 +320,66 @@ test("client abort while a direct stream pull() is parked frees the context and 
   await waitForPendingRequestsWithoutGC(server, 0);
   pumpHold = undefined;
 });
+
+test("413 on a chunked upload frees the context while the handler promise stays parked", async () => {
+  // The 413 path ends the request through end_without_body, and uWS markDone()
+  // clears onAborted, so on_abort can never run for this request. The held
+  // resolve keeps the promise alive forever, so only the end path itself can
+  // release the context.
+  let capturedResolve: ((r: Response) => void) | undefined;
+  const { promise: handlerEntered, resolve: signalHandler } = Promise.withResolvers<void>();
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    maxRequestBodySize: 1024,
+    fetch() {
+      signalHandler();
+      return new Promise<Response>(resolve => {
+        capturedResolve = resolve;
+      });
+    },
+  });
+
+  const socket = connect(Number(server.port), "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    socket.on("connect", resolve);
+    socket.on("error", reject);
+  });
+  // The server closes the connection after the 413; EPIPE/ECONNRESET while we
+  // are still writing chunks is the expected outcome.
+  socket.removeAllListeners("error");
+  socket.on("error", () => {});
+
+  let received = "";
+  const { promise: gotResponse, resolve: signalResponse } = Promise.withResolvers<void>();
+  socket.on("data", d => {
+    received += d.toString("latin1");
+    if (received.includes("\r\n\r\n")) signalResponse();
+  });
+  socket.on("close", () => signalResponse());
+
+  socket.write(
+    "POST / HTTP/1.1\r\n" + //
+      `Host: 127.0.0.1:${server.port}\r\n` +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n",
+  );
+  await handlerEntered;
+
+  const piece = Buffer.alloc(512, "A").toString("latin1");
+  for (let sent = 0; sent < 4096 && !socket.destroyed; sent += piece.length) {
+    await new Promise<void>(resolve => {
+      if (socket.destroyed) return resolve();
+      socket.write(piece.length.toString(16) + "\r\n" + piece + "\r\n", () => resolve());
+    });
+  }
+
+  await gotResponse;
+  expect(received.split("\r\n")[0]).toBe("HTTP/1.1 413 Payload Too Large");
+
+  // The context is torn down by the 413, not by GC collecting the promise.
+  await waitForPendingRequestsWithoutGC(server, 0);
+  capturedResolve = undefined;
+  socket.destroy();
+});

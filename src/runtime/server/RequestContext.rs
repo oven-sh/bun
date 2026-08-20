@@ -944,6 +944,19 @@ where
         self.promise_cell.set(JSValue::ZERO);
     }
 
+    /// Once the response is detached or ended, the promise this context
+    /// subscribed to can no longer do anything for the request. Reclaim the
+    /// cell's claim so the context is torn down now instead of when GC
+    /// collects the promise; the settle reactions then see a null `take()`
+    /// and no-op. A no-op when no claim is outstanding (the common case on
+    /// paths reached from a settle reaction, which already cleared the field).
+    fn reclaim_promise_cell(&self) {
+        let cell = self.promise_cell.replace(JSValue::ZERO);
+        if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
+            self.deref();
+        }
+    }
+
     pub(crate) fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
@@ -1166,6 +1179,7 @@ where
         ctx_log!("end");
         if let Some(resp) = self.resp.get() {
             self.detach_response();
+            self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.end(data, close_connection);
             // end_request_streaming_and_drain() must run after the last
@@ -1180,6 +1194,7 @@ where
         ctx_log!("endStream");
         if let Some(resp) = self.resp.get() {
             self.detach_response();
+            self.reclaim_promise_cell();
             // This will send a terminating 0\r\n\r\n chunk to the client
             // We only want to do that if they're still expecting a body
             // We cannot call this function if the Content-Length header was previously set
@@ -1221,6 +1236,7 @@ where
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);
             self.request_body_buf.set(Vec::new());
+            self.reclaim_promise_cell();
             self.end_request_streaming_and_drain();
             self.deref();
         }
@@ -1230,6 +1246,10 @@ where
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp.get() {
             self.detach_response();
+            // uWS markDone() clears onAborted on end, so on_abort can never
+            // run for this request; this is the last chance to reclaim an
+            // outstanding claim (e.g. a 413 while the handler promise parks).
+            self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
             // This end can run uncorked (e.g. render_production_error from a
@@ -1249,6 +1269,7 @@ where
     pub(crate) fn force_close(&self) {
         if let Some(resp) = self.resp.get() {
             self.detach_response();
+            self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.force_close();
             // end_request_streaming_and_drain() must run after the last
@@ -1377,16 +1398,6 @@ where
         }
 
         this.detach_response();
-
-        // The response is gone, so the promise this context subscribed to can
-        // no longer do anything for the request. Reclaim the cell's ref so the
-        // context is torn down now instead of when GC collects the promise;
-        // the settle reactions then see a null `take()` and no-op.
-        let cell = this.promise_cell.replace(JSValue::ZERO);
-        if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
-            this.deref();
-        }
-
         let any_js_calls = core::cell::Cell::new(false);
         let server = this.server();
         let vm = server.vm();
@@ -1431,6 +1442,7 @@ where
                         .cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
                 );
             }
+            this.reclaim_promise_cell();
             return;
         }
 
@@ -1460,6 +1472,12 @@ where
                 }
             }
         }
+
+        // Reclaim only after the block above: the claim's ref must still
+        // count in `is_dead_request`, so a parked request-body read goes
+        // through `end_request_streaming` and rejects instead of being
+        // silently dropped by `finalize_without_deinit`.
+        this.reclaim_promise_cell();
     }
 
     // This function may be called multiple times

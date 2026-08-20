@@ -261,11 +261,9 @@ macro_rules! assert_ffi_discr {
 /// [`opaque_deref_nn`] instead to elide the release-mode `testq; je <panic>`.
 #[inline(always)]
 pub fn opaque_deref<'a, T>(p: *const T) -> &'a T {
-    if p.is_null() {
-        null_handle();
-    }
+    let p = ::core::ptr::NonNull::new(p.cast_mut()).unwrap_or_else(|| null_handle());
     // SAFETY: non-null established above.
-    unsafe { opaque_deref_nn(p) }
+    unsafe { opaque_deref_nn(p.as_ptr()) }
 }
 
 /// Unchecked `*const T → &T` for a `#[repr(C)]` zero-sized, align-1 opaque FFI
@@ -306,11 +304,9 @@ pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
 /// mutable borrow of zero bytes cannot overlap any other borrow).
 #[inline(always)]
 pub fn opaque_deref_mut<'a, T>(p: *mut T) -> &'a mut T {
-    if p.is_null() {
-        null_handle();
-    }
+    let p = ::core::ptr::NonNull::new(p).unwrap_or_else(|| null_handle());
     // SAFETY: non-null established above.
-    unsafe { opaque_deref_mut_nn(p) }
+    unsafe { opaque_deref_mut_nn(p.as_ptr()) }
 }
 
 /// Unchecked `*mut T → &mut T`. See [`opaque_deref_nn`] / [`opaque_deref_mut`].

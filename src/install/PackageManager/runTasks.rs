@@ -318,14 +318,17 @@ fn run_tasks_erased(
                             let resolution =
                                 &manager.lockfile.packages.items_resolution()[pkg_id as usize];
 
+                            // Downloaded, so already known to need an install.
+                            let needs_verify = false;
+                            let is_pending_package_install = false;
                             installer.install_package_with_name_and_resolution(
                                 ctx.dependency_id,
                                 pkg_id,
                                 log_level,
                                 apply.pkgname,
                                 resolution,
-                                false,
-                                false,
+                                needs_verify,
+                                is_pending_package_install,
                             );
                         }
                     }

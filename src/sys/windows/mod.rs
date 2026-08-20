@@ -97,16 +97,30 @@ pub mod kernel32 {
     }
 }
 
-/// The Windows directory without a trailing separator, written into `buf`.
-/// `None` if the call fails or `buf` is too small.
+/// The Windows directory (`C:\Windows`) without a trailing separator, written
+/// into `buf`. `None` if the call fails or `buf` is too small.
 pub fn system_windows_directory_w(buf: &mut [u16]) -> Option<&[u16]> {
-    let Ok(capacity) = u32::try_from(buf.len()) else {
-        return None;
-    };
     // SAFETY: `buf` is valid for `capacity` u16 writes.
-    let len = unsafe { kernel32::GetSystemWindowsDirectoryW(buf.as_mut_ptr(), capacity) } as usize;
-    // Returns the required size (including the NUL) when the buffer is too
-    // small, and the length written (excluding the NUL) otherwise.
+    well_known_directory_w(buf, |ptr, capacity| unsafe {
+        kernel32::GetSystemWindowsDirectoryW(ptr, capacity)
+    })
+}
+
+/// The system directory (`C:\Windows\System32`) without a trailing separator,
+/// written into `buf`. `None` if the call fails or `buf` is too small.
+pub fn system_directory_w(buf: &mut [u16]) -> Option<&[u16]> {
+    // SAFETY: `buf` is valid for `capacity` u16 writes.
+    well_known_directory_w(buf, |ptr, capacity| unsafe {
+        kernel32::GetSystemDirectoryW(ptr, capacity)
+    })
+}
+
+/// Shared shape of `GetSystemDirectoryW` and friends: they return the length
+/// written without the NUL, or the size needed including the NUL when the
+/// buffer is too small.
+fn well_known_directory_w(buf: &mut [u16], get: impl FnOnce(LPWSTR, u32) -> u32) -> Option<&[u16]> {
+    let capacity = u32::try_from(buf.len()).ok()?;
+    let len = get(buf.as_mut_ptr(), capacity) as usize;
     if len == 0 || len >= buf.len() {
         return None;
     }

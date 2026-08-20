@@ -759,23 +759,28 @@ describe("crash inside a native module", () => {
     if (isPosix) expect(objects.slice(1)).toContain("bun");
   }
 
-  async function crashWith(script: string) {
+  // `realFault`: the process dies from the re-raised signal like any crashed
+  // process, so on the --coredump-upload lanes it would leave a core file
+  // behind, which the runner reports as a failure. The test hooks suppress
+  // core dumps themselves.
+  async function crashWith(script: string, { realFault = false } = {}) {
+    const bun = [
+      bunExe(),
+      "-e",
+      `const { dlopen } = require("bun:ffi");
+       const { crash_handler } = require("bun:internal-for-testing");
+       const lib = dlopen(${JSON.stringify(fixture)}, {
+         crash_in_native_module: { args: [], returns: "void" },
+         address_in_system_library: { args: [], returns: "ptr" },
+       });
+       ${script}
+       console.log("SHOULD NOT REACH");`,
+      // Debug builds otherwise symbolize the trace instead of printing the
+      // report a release build prints.
+      "--debug-crash-handler-use-trace-string",
+    ];
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { dlopen } = require("bun:ffi");
-         const { crash_handler } = require("bun:internal-for-testing");
-         const lib = dlopen(${JSON.stringify(fixture)}, {
-           crash_in_native_module: { args: [], returns: "void" },
-           address_in_system_library: { args: [], returns: "ptr" },
-         });
-         ${script}
-         console.log("SHOULD NOT REACH");`,
-        // Debug builds otherwise symbolize the trace instead of printing the
-        // report a release build prints.
-        "--debug-crash-handler-use-trace-string",
-      ],
+      cmd: realFault && isPosix ? ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...bun] : bun,
       env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -822,7 +827,9 @@ describe("crash inside a native module", () => {
   // and the fault pc it records is inside the library. ASAN builds do not
   // install Bun's fault handlers, so there the fault never reaches the report.
   test.skipIf(!fixture || isASAN).concurrent("a real fault inside the module is attributed to it", async () => {
-    const { stderr, features, objects } = await crashWith("lib.symbols.crash_in_native_module();");
+    const { stderr, features, objects } = await crashWith("lib.symbols.crash_in_native_module();", {
+      realFault: true,
+    });
 
     expect(stderr).toContain(`oh no: Bun has crashed inside the native module "${fixtureName}".`);
     expect(objects[0]).toBe(fixtureName);

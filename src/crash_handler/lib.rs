@@ -2519,11 +2519,6 @@ mod draft {
                     });
                 }
 
-                let mut windows_directory = [0u16; bun_sys::windows::MAX_PATH];
-                let is_system =
-                    bun_sys::windows::system_windows_directory_w(&mut windows_directory)
-                        .is_some_and(|directory| is_inside_directory_w(name, directory));
-
                 // Only the basename is converted: `name_bytes` is sized for a
                 // path component, not for a whole path of non-ASCII characters.
                 let basename = bun_paths::basename_windows(name);
@@ -2531,7 +2526,7 @@ mod draft {
                     address,
                     object: Object::named(
                         strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
-                        is_system,
+                        is_system_image_windows(name),
                     )?,
                 });
             }
@@ -2690,14 +2685,26 @@ mod draft {
         if !strings::contains_char(path, b'/') {
             return true;
         }
-        // Also matches /lib64, /usr/lib64, /usr/lib/x86_64-linux-gnu and
-        // FreeBSD's /libexec/ld-elf.so.1. /usr/local/lib is deliberately not
-        // here: that is where user-installed libraries go.
-        if path.starts_with(b"/lib") || path.starts_with(b"/usr/lib") {
-            return true;
-        }
-        #[cfg(target_os = "android")]
-        if path.starts_with(b"/system/") || path.starts_with(b"/apex/") {
+        // /usr/local/lib is deliberately not here: that is where
+        // user-installed libraries go.
+        const SYSTEM_LIBRARY_DIRS: &[&[u8]] = &[
+            b"/lib/",
+            b"/lib32/",
+            b"/lib64/",
+            b"/libx32/",
+            // FreeBSD's ld-elf.so.1
+            b"/libexec/",
+            b"/usr/lib/",
+            b"/usr/lib32/",
+            b"/usr/lib64/",
+            b"/usr/libx32/",
+            b"/usr/libexec/",
+            #[cfg(target_os = "android")]
+            b"/system/",
+            #[cfg(target_os = "android")]
+            b"/apex/",
+        ];
+        if SYSTEM_LIBRARY_DIRS.iter().any(|dir| path.starts_with(dir)) {
             return true;
         }
         // Nix and Guix keep libc in a store path instead, so also recognize
@@ -2718,6 +2725,31 @@ mod draft {
         LIBC_FAMILY
             .iter()
             .any(|prefix| basename.starts_with(prefix))
+    }
+
+    /// DLLs that ship with Windows load from the system directory
+    /// (`C:\Windows\System32`, which also holds `DriverStore` and the api-set
+    /// DLLs) or from `WinSxS`. The rest of the Windows directory does not
+    /// count: `C:\Windows\Temp` is the temp directory of a service, which is
+    /// where a standalone executable extracts its embedded addons to.
+    #[cfg(windows)]
+    fn is_system_image_windows(path: &[u16]) -> bool {
+        let mut directory = [0u16; bun_sys::windows::MAX_PATH];
+        if bun_sys::windows::system_directory_w(&mut directory)
+            .is_some_and(|system32| is_inside_directory_w(path, system32))
+        {
+            return true;
+        }
+        let Some(windows) = bun_sys::windows::system_windows_directory_w(&mut directory) else {
+            return false;
+        };
+        let windows_len = windows.len();
+        let winsxs = bun_core::w!("\\WinSxS");
+        let Some(tail) = directory.get_mut(windows_len..windows_len + winsxs.len()) else {
+            return false;
+        };
+        tail.copy_from_slice(winsxs);
+        is_inside_directory_w(path, &directory[..windows_len + winsxs.len()])
     }
 
     /// `path` names something inside `directory` (which has no trailing

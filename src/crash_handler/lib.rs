@@ -793,7 +793,7 @@ mod draft {
             Output::disable_scoped_debug_writer();
         }
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = TraceStringBuf::default();
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
@@ -1777,7 +1777,7 @@ mod draft {
         let reason =
             CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = TraceStringBuf::default();
         {
             let _panic_guard = PANIC_MUTEX.lock();
             let writer = &mut stderr_writer();
@@ -2599,7 +2599,11 @@ mod draft {
         action: TraceStringAction,
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    /// Trace strings are built in a stack buffer of this size; the panic message is cut to fit.
+    const TRACE_STRING_MAX_LEN: usize = 1024;
+    type TraceStringBuf = BoundedArray<u8, TRACE_STRING_MAX_LEN>;
+
+    #[derive(Clone, Copy)]
     enum TraceStringAction {
         /// Open a pre-filled GitHub issue with the expanded trace
         OpenIssue,
@@ -2609,13 +2613,19 @@ mod draft {
 
     impl<'a> fmt::Display for TraceString<'a> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-            // encode_trace_string takes a byte writer; bridge fmt::Formatter via adapter
-            let _ = encode_trace_string(self, &mut FmtAdapter::new(writer));
-            Ok(())
+            let mut buf = TraceStringBuf::default();
+            // Whatever was encoded before an error is still worth printing.
+            let _ = encode_trace_string(self, &mut buf);
+            FmtAdapter::new(writer)
+                .write_all(buf.const_slice())
+                .map_err(|_| fmt::Error)
         }
     }
 
-    fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> crate::Result<()> {
+    fn encode_trace_string(
+        opts: &TraceString<'_>,
+        writer: &mut TraceStringBuf,
+    ) -> crate::Result<()> {
         writer.write_all(report_base_url())?;
         writer.write_all(b"/")?;
         writer.write_all(Environment::VERSION_STRING.as_bytes())?;
@@ -2638,50 +2648,16 @@ mod draft {
 
         writer.write_all(VLQ::ZERO.slice())?;
 
+        let suffix: &[u8] = match opts.action {
+            TraceStringAction::OpenIssue => b"",
+            TraceStringAction::ViewTrace => b"/view",
+        };
+
         // The following switch must be kept in sync with `bun.report`'s decoder implementation.
         match opts.reason {
             CrashReason::Panic(message) => {
                 writer.write_byte(b'0')?;
-
-                let mut compressed_bytes: [u8; 2048] = [0; 2048];
-                let mut len: bun_zlib::uLong = compressed_bytes.len() as bun_zlib::uLong;
-                // SAFETY: buffers and lengths are valid
-                let ret = unsafe {
-                    bun_zlib::compress2(
-                        compressed_bytes.as_mut_ptr(),
-                        &raw mut len,
-                        message.as_ptr(),
-                        u32::try_from(message.len()).expect("int cast") as bun_zlib::uLong,
-                        9,
-                    )
-                };
-                // Match on the raw zlib return code so this stays ABI-correct
-                // regardless of whether the platform `compress2` binding returns
-                // `c_int` (posix) or the `ReturnCode` enum (win32).
-                let compressed = match ret as i32 {
-                    r if r == bun_zlib::ReturnCode::Ok as i32 => {
-                        &compressed_bytes[0..usize::try_from(len).expect("int cast")]
-                    }
-                    // Insufficient memory.
-                    r if r == bun_zlib::ReturnCode::MemError as i32 => {
-                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
-                    }
-                    // The buffer dest was not large enough to hold the compressed data.
-                    r if r == bun_zlib::ReturnCode::BufError as i32 => {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-                    }
-                    // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
-                    // This is technically possible but impossible because we pass 9.
-                    _ => return Err(crate::Error::Unexpected),
-                };
-
-                let mut b64_bytes: [u8; 2048] = [0; 2048];
-                if bun_base64::encode_len(compressed) > b64_bytes.len() {
-                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-                }
-                let b64_len = bun_base64::encode(&mut b64_bytes, compressed);
-
-                writer.write_all(strings::trim_right(&b64_bytes[0..b64_len], b"="))?;
+                write_panic_message(writer, message, suffix.len())?;
             }
 
             CrashReason::Unreachable => writer.write_byte(b'1')?,
@@ -2720,10 +2696,90 @@ mod draft {
             }
         }
 
-        if opts.action == TraceStringAction::ViewTrace {
-            writer.write_all(b"/view")?;
-        }
+        writer.write_all(suffix)?;
         Ok(())
+    }
+
+    /// Largest zlib stream whose unpadded base64 form fits a trace string.
+    const MAX_COMPRESSED_MESSAGE_LEN: usize = TRACE_STRING_MAX_LEN * 3 / 4;
+
+    /// Appends base64(zlib(p)), p the longest message prefix that fits with `reserved` bytes spare.
+    fn write_panic_message(
+        writer: &mut TraceStringBuf,
+        message: &[u8],
+        reserved: usize,
+    ) -> crate::Result<()> {
+        let b64_budget = (TRACE_STRING_MAX_LEN - writer.len()).saturating_sub(reserved);
+        // Unpadded base64 takes ceil(4n / 3) bytes for n input bytes.
+        let max_compressed_len = (b64_budget * 3 / 4).min(MAX_COMPRESSED_MESSAGE_LEN);
+        let mut compressed: [u8; MAX_COMPRESSED_MESSAGE_LEN] = [0; MAX_COMPRESSED_MESSAGE_LEN];
+        let dest = &mut compressed[..max_compressed_len];
+
+        // Bisect on the prefix length; the whole message is tried first since it normally fits.
+        let mut fits = 0;
+        let mut too_long = message.len() + 1;
+        let mut len = message.len();
+        let compressed_len = loop {
+            match compress_message(dest, utf8_prefix(message, len))? {
+                Some(compressed_len) => {
+                    fits = len;
+                    if too_long - fits == 1 {
+                        break compressed_len;
+                    }
+                }
+                None => {
+                    too_long = len;
+                    if too_long == fits {
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
+                    }
+                }
+            }
+            len = fits + (too_long - fits) / 2;
+        };
+
+        const B64_LEN: usize = bun_base64::encode_len_from_size(MAX_COMPRESSED_MESSAGE_LEN);
+        let mut b64: [u8; B64_LEN] = [0; B64_LEN];
+        let b64_len = bun_base64::encode(&mut b64, &dest[..compressed_len]);
+        writer.write_all(strings::trim_right(&b64[..b64_len], b"="))?;
+        Ok(())
+    }
+
+    /// Length of the zlib stream of `message` written into `dest`, or `None` if it does not fit.
+    fn compress_message(dest: &mut [u8], message: &[u8]) -> crate::Result<Option<usize>> {
+        // `uLong` is 32-bit on Windows; a message zlib cannot even take does not fit either.
+        let Ok(source_len) = bun_zlib::uLong::try_from(message.len()) else {
+            return Ok(None);
+        };
+        let mut dest_len = dest.len() as bun_zlib::uLong;
+        // SAFETY: both pointers are valid for the lengths passed with them, and zlib writes at
+        // most `dest_len` bytes.
+        let ret = unsafe {
+            bun_zlib::compress2(
+                dest.as_mut_ptr(),
+                &raw mut dest_len,
+                message.as_ptr(),
+                source_len,
+                9,
+            )
+        };
+        // The `compress2` binding returns `c_int` on posix and `ReturnCode` on win32.
+        match ret as i32 {
+            r if r == bun_zlib::ReturnCode::Ok as i32 => Ok(Some(dest_len as usize)),
+            r if r == bun_zlib::ReturnCode::BufError as i32 => Ok(None),
+            r if r == bun_zlib::ReturnCode::MemError as i32 => {
+                Err(crate::Error::Alloc(bun_alloc::AllocError))
+            }
+            // Only reachable with an invalid level, and 9 is valid.
+            _ => Err(crate::Error::Unexpected),
+        }
+    }
+
+    /// `message[..len]` backed up off UTF-8 continuation bytes; the whole message comes back as-is.
+    fn utf8_prefix(message: &[u8], mut len: usize) -> &[u8] {
+        while len < message.len() && len > 0 && message[len] & 0xC0 == 0x80 {
+            len -= 1;
+        }
+        &message[..len]
     }
 
     pub fn write_u64_as_two_vlqs(writer: &mut impl Write, addr: usize) -> crate::Result<()> {

@@ -1,7 +1,9 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
+import { inflateSync } from "node:zlib";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -497,6 +499,125 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     expect(stderr).not.toContain(server.url.toString());
     expect(proc.signalCode).toBe("SIGABRT");
     expect(sent).toBe(false);
+  });
+});
+
+// The trace string is built in a 1024-byte buffer (TRACE_STRING_MAX_LEN in
+// src/crash_handler/lib.rs). A panic message whose compressed form did not fit
+// in what the header and frames left of it used to be dropped altogether,
+// leaving a '0' (panic) reason with no payload, which bun.report rejects.
+// Now the longest prefix of the message that fits is encoded instead.
+describe.concurrent("trace string panic message", () => {
+  const TRACE_STRING_MAX_LEN = 1024;
+
+  // TRACE_STRING_MAX_LEN bytes off a hash chain: deterministic, and with 8 bits
+  // of entropy per byte nothing made of them deflates below that many bytes,
+  // while the message payload of a trace string holds at most 3/4 as many.
+  // So these messages cannot fit whatever the buffer size or the header length.
+  const entropy = (() => {
+    const chunks: Buffer[] = [];
+    let digest = Buffer.from("trace string panic message");
+    for (let bytes = 0; bytes < TRACE_STRING_MAX_LEN; bytes += digest.length) {
+      digest = createHash("sha512").update(digest).digest();
+      chunks.push(digest);
+    }
+    return Buffer.concat(chunks).subarray(0, TRACE_STRING_MAX_LEN);
+  })();
+
+  async function panicTraceString(message: string): Promise<string> {
+    // The message goes through a file rather than argv so that the report's
+    // "Args:" line stays short.
+    using dir = tempDir("crash-panic-message", {
+      "crash.js": `require("bun:internal-for-testing").crash_handler.panic(${JSON.stringify(message)});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "crash.js"), "--debug-crash-handler-use-trace-string"],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).not.toBe(0);
+
+    // The trace string is printed on a line of its own. noReportEnv sets
+    // BUN_CRASH_REPORT_URL to "", so it has no base and starts at the version.
+    const trace = stderr.match(/^\s*(\S*\/\d+\.\d+\.\d+\/\S+)\s*$/m);
+    expect(trace, `no trace string in:\n${stdout}${stderr}`).not.toBeNull();
+    return trace![1];
+  }
+
+  const VLQ_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function readVLQ(s: string, i: number): [value: number, next: number] {
+    let raw = 0;
+    let shift = 0;
+    for (;;) {
+      const digit = VLQ_ALPHABET.indexOf(s[i++]);
+      expect(digit).toBeGreaterThanOrEqual(0);
+      raw |= (digit & 31) << shift;
+      shift += 5;
+      if (!(digit & 32)) break;
+    }
+    raw >>>= 0;
+    return [raw & 1 ? -(raw >>> 1) : raw >>> 1, i];
+  }
+
+  // Layout after `{base}/{version}/`, mirroring encode_trace_string and
+  // bun.report's parser: platform char, command char, format char, 7-char sha,
+  // two feature VLQs, the frames, a VLQ 0, the reason char, then its payload.
+  // A frame is `_` (unknown), a VLQ address, or VLQ 1 + VLQ name length + name
+  // + VLQ address for a frame in another module. A panic's payload is the
+  // zlib stream of the message in base64 without the padding.
+  function panicMessageIn(trace: string): string {
+    const payload = trace.match(/\/\d+\.\d+\.\d+\/(.*)$/)![1];
+    let i = 1 + 1 + 1 + 7;
+    [, i] = readVLQ(payload, i);
+    [, i] = readVLQ(payload, i);
+    for (;;) {
+      if (payload[i] === "_") {
+        i++;
+        continue;
+      }
+      let address: number;
+      [address, i] = readVLQ(payload, i);
+      if (address === 0) break;
+      if (address === 1) {
+        let nameLength: number;
+        [nameLength, i] = readVLQ(payload, i);
+        i += nameLength;
+        [, i] = readVLQ(payload, i);
+      }
+    }
+    expect(payload[i]).toBe("0");
+    const compressed = payload.slice(i + 1);
+    expect(compressed, "panic reason has no payload: the message was dropped").not.toBe("");
+    // fatal: a cut that split a multi-byte character fails here as a decoding
+    // error rather than as a U+FFFD mismatch in the caller's comparison.
+    return new TextDecoder("utf-8", { fatal: true }).decode(inflateSync(Buffer.from(compressed, "base64")));
+  }
+
+  test.each([
+    ["a short message", "crash_handler.panic() called from the trace string test"],
+    ["an empty message", ""],
+  ])("%s is encoded whole", async (_, message) => {
+    const trace = await panicTraceString(message);
+    expect(trace.length).toBeLessThanOrEqual(TRACE_STRING_MAX_LEN);
+    expect(panicMessageIn(trace)).toBe(message);
+  });
+
+  test.each([
+    // Two one-byte characters per entropy byte.
+    ["ASCII", entropy.toString("hex")],
+    // One three-byte character per entropy byte, so a cut at an arbitrary byte offset would split one.
+    ["multi-byte", Array.from(entropy, byte => String.fromCharCode(0x4e00 + byte)).join("")],
+  ])("a message too long to fit is cut to the longest prefix that fits (%s)", async (_, message) => {
+    const trace = await panicTraceString(message);
+    const decoded = panicMessageIn(trace);
+    expect(decoded.length).toBeGreaterThan(0);
+    expect(decoded.length).toBeLessThan(message.length);
+    expect(decoded).toBe(message.slice(0, decoded.length));
+    // Longest prefix that fits: the buffer ends up full to within deflate's
+    // per-character granularity, not cut at some shorter convenient point.
+    expect(trace.length).toBeGreaterThan(TRACE_STRING_MAX_LEN - 64);
+    expect(trace.length).toBeLessThanOrEqual(TRACE_STRING_MAX_LEN);
   });
 });
 

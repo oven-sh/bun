@@ -10,7 +10,6 @@
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertBoolean.h"
-#include "JSDOMConvertDate.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertRecord.h"

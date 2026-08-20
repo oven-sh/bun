@@ -1721,6 +1721,77 @@ impl JSValkeyClient {
         NotSubscriber
     );
 
+    // Bitmap commands
+    cmd_strings_varargs!(bitop, b"bitop", "BITOP", NotSubscriber);
+    cmd_strings_varargs!(bitpos, b"bitpos", "BITPOS", NotSubscriber);
+    cmd_strings_varargs!(bitfield, b"bitfield", "BITFIELD", NotSubscriber);
+
+    // HyperLogLog commands
+    cmd_strings_varargs!(pfcount, b"pfcount", "PFCOUNT", NotSubscriber);
+    cmd_strings_varargs!(pfmerge, b"pfmerge", "PFMERGE", NotSubscriber);
+
+    // Geo commands
+    cmd_strings_varargs!(geoadd, b"geoadd", "GEOADD", NotSubscriber);
+    cmd_strings_varargs!(geodist, b"geodist", "GEODIST", NotSubscriber);
+    cmd_strings_varargs!(geohash, b"geohash", "GEOHASH", NotSubscriber);
+    cmd_strings_varargs!(geopos, b"geopos", "GEOPOS", NotSubscriber);
+    cmd_strings_varargs!(geosearch, b"geosearch", "GEOSEARCH", NotSubscriber);
+    cmd_strings_varargs!(
+        geosearchstore,
+        b"geosearchstore",
+        "GEOSEARCHSTORE",
+        NotSubscriber
+    );
+
+    // Scripting commands
+    cmd_strings_varargs!(eval, b"eval", "EVAL", NotSubscriber);
+    cmd_strings_varargs!(evalsha, b"evalsha", "EVALSHA", NotSubscriber);
+    cmd_strings_varargs!(fcall, b"fcall", "FCALL", NotSubscriber);
+    cmd_strings_varargs!(function, b"function", "FUNCTION", NotSubscriber);
+
+    // Server / connection commands
+    cmd_noargs!(dbsize, b"dbsize", "DBSIZE", NotSubscriber);
+    cmd_strings_varargs!(flushdb, b"flushdb", "FLUSHDB", NotSubscriber);
+    cmd_strings_varargs!(flushall, b"flushall", "FLUSHALL", NotSubscriber);
+    cmd_strings_varargs!(info, b"info", "INFO", NotSubscriber);
+    cmd_noargs!(time, b"time", "TIME", NotSubscriber);
+    cmd_key!(echo, b"echo", "ECHO", "message", NotSubscriber);
+    cmd_noargs!(lastsave, b"lastsave", "LASTSAVE", NotSubscriber);
+    cmd_strings_varargs!(js_client, b"client", "CLIENT", DontCare);
+    cmd_strings_varargs!(config, b"config", "CONFIG", NotSubscriber);
+    cmd_strings_varargs!(debug, b"debug", "DEBUG", NotSubscriber);
+    cmd_strings_varargs!(command, b"command", "COMMAND", NotSubscriber);
+
+    // Generic key commands
+    cmd_strings_varargs!(object, b"object", "OBJECT", NotSubscriber);
+    cmd_strings_varargs!(sort, b"sort", "SORT", NotSubscriber);
+    cmd_key_value!(
+        wait,
+        b"wait",
+        "WAIT",
+        "numreplicas",
+        "timeout",
+        NotSubscriber
+    );
+    cmd_strings_varargs!(lcs, b"lcs", "LCS", NotSubscriber);
+
+    // Stream commands
+    cmd_strings_varargs!(xadd, b"xadd", "XADD", NotSubscriber);
+    cmd_key!(xlen, b"xlen", "XLEN", "key", NotSubscriber);
+    cmd_strings_varargs!(xrange, b"xrange", "XRANGE", NotSubscriber);
+    cmd_strings_varargs!(xrevrange, b"xrevrange", "XREVRANGE", NotSubscriber);
+    cmd_strings_varargs!(xread, b"xread", "XREAD", NotSubscriber);
+    cmd_strings_varargs!(xreadgroup, b"xreadgroup", "XREADGROUP", NotSubscriber);
+    cmd_strings_varargs!(xdel, b"xdel", "XDEL", NotSubscriber);
+    cmd_strings_varargs!(xtrim, b"xtrim", "XTRIM", NotSubscriber);
+    cmd_strings_varargs!(xack, b"xack", "XACK", NotSubscriber);
+    cmd_strings_varargs!(xclaim, b"xclaim", "XCLAIM", NotSubscriber);
+    cmd_strings_varargs!(xautoclaim, b"xautoclaim", "XAUTOCLAIM", NotSubscriber);
+    cmd_strings_varargs!(xpending, b"xpending", "XPENDING", NotSubscriber);
+    cmd_strings_varargs!(xinfo, b"xinfo", "XINFO", NotSubscriber);
+    cmd_strings_varargs!(xgroup, b"xgroup", "XGROUP", NotSubscriber);
+    cmd_strings_varargs!(xsetid, b"xsetid", "XSETID", NotSubscriber);
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn publish(
         this: &Self,
@@ -1774,6 +1845,27 @@ impl JSValkeyClient {
         if !handler_callback.is_callable() {
             return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
         }
+        if !channel_or_many.is_string() && !channel_or_many.is_array() {
+            return Err(global.throw_invalid_argument_type(
+                "subscribe",
+                "channel",
+                "string or array",
+            ));
+        }
+
+        // The walk below stores each listener as it goes. A client that would
+        // reject the SUBSCRIBE outright must not keep the listeners either: a
+        // listener with no subscription behind it pins the event loop and the
+        // client, and cannot be removed with unsubscribe(). The dial comes
+        // after the argument checks, as for every other command, and before
+        // the state check, as in `send()`, so a fresh client with the offline
+        // queue off is rejected the way get() is: connecting, not never
+        // connected.
+        this.ensure_dialing();
+        if let Some(message) = this.client.get().send_rejection() {
+            let error = valkey::ValkeyClient::send_rejection_error(global, message);
+            return Ok(JSPromise::rejected_promise(global, error).to_js());
+        }
 
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
@@ -1803,7 +1895,7 @@ impl JSValkeyClient {
                 // handler.
                 this.upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
-        } else if channel_or_many.is_string() {
+        } else {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
@@ -1811,12 +1903,6 @@ impl JSValkeyClient {
             redis_channels.push(channel);
 
             this.upsert_receive_handler(global, channel_or_many, handler_callback)?;
-        } else {
-            return Err(global.throw_invalid_argument_type(
-                "subscribe",
-                "channel",
-                "string or array",
-            ));
         }
 
         let command = Command {

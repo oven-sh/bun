@@ -1,4 +1,3 @@
-use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_valkey::valkey_protocol as protocol;
 
@@ -22,27 +21,11 @@ pub struct Command<'a> {
     pub(crate) meta: Meta,
 }
 
-impl<'a> Default for Command<'a> {
-    fn default() -> Self {
-        Self {
-            command: b"",
-            args: Args::default(),
-            meta: Meta::default(),
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub enum Args<'a> {
     Slices(&'a [Slice]),
     Args(&'a [BlobOrStringOrBuffer]),
     Raw(&'a [&'a [u8]]),
-}
-
-impl<'a> Default for Args<'a> {
-    fn default() -> Self {
-        Args::Raw(&[])
-    }
 }
 
 impl<'a> Args<'a> {
@@ -114,7 +97,7 @@ pub struct Entry {
 // Inherent associated
 // types are unstable on stable Rust, so expose as a sibling module alias instead.
 pub mod entry {
-    pub(crate) type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
+    pub(crate) type Queue = std::collections::VecDeque<super::Entry>;
 }
 
 impl Entry {
@@ -248,8 +231,7 @@ pub struct PromisePair {
 
 // See `entry` note above.
 pub mod promise_pair {
-    pub(crate) type Queue =
-        super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
+    pub(crate) type Queue = std::collections::VecDeque<super::PromisePair>;
 }
 
 impl PromisePair {

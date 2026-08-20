@@ -59,12 +59,6 @@ impl MySQLStatement {
     }
 }
 
-impl Default for MySQLStatement {
-    fn default() -> Self {
-        Self::new(Signature::empty(), Status::Parsing)
-    }
-}
-
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]

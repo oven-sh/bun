@@ -1012,7 +1012,7 @@ impl UpdateInteractiveCommand {
         let mut grouped_result = Self::group_catalog_dependencies(outdated_packages)?;
 
         // Sort packages: dependencies first, then devDependencies, etc.
-        grouped_result.sort_by(|a, b| {
+        index_sort::sort_slice_by(&mut grouped_result, |a, b| {
             // First sort by dependency type
             let a_priority = dep_type_priority(a.dependency_type);
             let b_priority = dep_type_priority(b.dependency_type);

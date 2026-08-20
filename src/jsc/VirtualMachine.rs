@@ -1409,6 +1409,9 @@ impl VirtualMachine {
         result: JSValue,
         exception_list: Option<&mut ExceptionList>,
     ) {
+        if result.is_termination_exception() {
+            return;
+        }
         // Save/restore `had_errors` around
         // the print, then route the value through `printException` /
         // `printErrorlikeObject` (ConsoleObject formatter). The save/restore
@@ -1540,7 +1543,9 @@ impl VirtualMachine {
         err: JSValue,
         is_rejection: bool,
     ) -> bool {
-        if self.is_shutting_down() {
+        // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
+        // to be an error may be its termination.
+        if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
             return true;
         }
 
@@ -2959,8 +2964,6 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            // accessed here (no overlapping `&mut EventLoop`).
-            self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -2983,7 +2986,6 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            self.event_loop_mut().perform_gc();
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
@@ -3771,7 +3773,7 @@ impl VirtualMachine {
     ) {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
-        if self.is_shutting_down() {
+        if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
             return;
         }
@@ -3914,8 +3916,6 @@ impl VirtualMachine {
         if main.is_empty() {
             return;
         }
-        let ext = bun_paths::extension(main);
-        let loader = self.transpiler.options.loader(ext);
         let watcher = self.bun_watcher_ptr();
         if !watcher.is_null() {
             // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
@@ -3925,7 +3925,7 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(main, loader) };
+            let _ = unsafe { (*watcher).add_file_by_path_slow(main) };
         }
     }
 
@@ -5035,7 +5035,6 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(entry_path)?;
-        self.event_loop_mut().perform_gc();
         self.event_loop_mut()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
@@ -5055,7 +5054,6 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -5078,7 +5076,6 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            self.event_loop_mut().perform_gc();
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
@@ -5894,7 +5891,8 @@ impl VirtualMachine {
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {
-                    return;
+                    // Source is gone; the frames still get remapped below.
+                    break 'code bun_core::ZigStringSlice::EMPTY;
                 };
                 *must_reset_parser_arena_later = true;
                 // Note: the transpile path `clone_utf8`s the source for
@@ -5968,7 +5966,8 @@ impl VirtualMachine {
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
-                if i == top || frames[i].position.is_invalid() {
+                // `remapped`: frames parsed back out of a formatted `error.stack`.
+                if i == top || frames[i].remapped || frames[i].position.is_invalid() {
                     continue;
                 }
                 let source_url = frames[i].source_url.to_utf8();
@@ -6959,12 +6958,8 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js()
 }
 
-/// LAYERING: moved DOWN from `bun_bundler_jsc::PluginRunner` so
-/// `resolve_maybe_needs_trailing_slash` can consult `Bun.plugin()` resolvers
-/// without a `bun_jsc → bun_bundler_jsc` cycle. The body only touches
-/// `JSGlobalObject`/`JSValue`/`bun_core::String`, all of which live at this
-/// tier; `bun_bundler_jsc` re-exports this fn for its own callers.
-pub fn plugin_runner_on_resolve_jsc(
+/// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
+pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
     namespace: bun_core::String,
     specifier: bun_core::String,

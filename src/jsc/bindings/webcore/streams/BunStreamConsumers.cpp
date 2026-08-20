@@ -263,7 +263,7 @@ static WTF::String stripTextResultBOM(const WTF::String& string)
 }
 
 // UTF-8 size / write via the simdutf-backed Buffer encoders. Lone surrogates count (and
-// write) as U+FFFD, so the pair always agrees; BunString::utf8ByteLength does not.
+// write) as U+FFFD, so the pair always agrees; plain simdutf::utf8_length_from_utf16 does not.
 static size_t utf8ByteLengthWithReplacement(const WTF::String& string)
 {
     if (string.isEmpty())
@@ -281,6 +281,23 @@ static size_t writeUTF8(const WTF::String& string, std::span<uint8_t> destinatio
     if (string.is8Bit())
         return Bun__encoding__writeLatin1(string.span8().data(), string.span8().size(), destination.data(), destination.size(), utf8);
     return Bun__encoding__writeUTF16(string.span16().data(), string.span16().size(), destination.data(), destination.size(), utf8);
+}
+
+bool appendUTF8WithinStringLimit(const WTF::String& string, WTF::Vector<uint8_t>& bytes)
+{
+    size_t byteLength = utf8ByteLengthWithReplacement(string);
+    if (!byteLength)
+        return true;
+    size_t oldSize = bytes.size();
+    // UTF-8 expansion can exceed any reserve taken from the code-unit estimate.
+    if (exceedsStringLimit(oldSize + byteLength) || !bytes.tryGrow(oldSize + byteLength)) [[unlikely]]
+        return false;
+    size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
+    // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
+    ASSERT(written == byteLength);
+    if (written < byteLength) [[unlikely]]
+        bytes.shrink(oldSize + written);
+    return true;
 }
 
 // `obj[name](...args)` with `this` = obj.
@@ -325,25 +342,26 @@ static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue 
     if (chunk.isString()) {
         WTF::String string = asString(chunk)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        if (size_t byteLength = utf8ByteLengthWithReplacement(string)) {
-            size_t oldSize = bytes.size();
-            bytes.grow(oldSize + byteLength);
-            size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
-            // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
-            ASSERT(written == byteLength);
-            if (written < byteLength) [[unlikely]]
-                bytes.shrink(oldSize + written);
+        if (!appendUTF8WithinStringLimit(string, bytes)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
         }
         return true;
     }
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-        if (!view->isDetached())
-            bytes.append(view->span());
+        if (!view->isDetached() && !bytes.tryAppend(view->span())) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
+        }
         return true;
     }
     if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
-            bytes.append(impl->span());
+        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached()) {
+            if (!bytes.tryAppend(impl->span())) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return false;
+            }
+        }
         return true;
     }
     throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
@@ -709,25 +727,39 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
             return rope.substring(1);
         return rope;
     }
-    WTF::Vector<uint8_t> bytes;
+    // estimatedLength never overcounts the bytes, so an estimate past the limit is final.
     const double estimatedLength = accumulator.estimatedLength;
-    if (estimatedLength > 0 && estimatedLength < static_cast<double>(std::numeric_limits<uint32_t>::max()))
-        bytes.reserveInitialCapacity(static_cast<size_t>(estimatedLength));
+    if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
+        || exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        releaseAccumulated();
+        throwOutOfMemoryError(globalObject, scope);
+        return WTF::String();
+    }
+    WTF::Vector<uint8_t> bytes;
+    if (estimatedLength > 0 && !bytes.tryReserveInitialCapacity(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        releaseAccumulated();
+        throwOutOfMemoryError(globalObject, scope);
+        return WTF::String();
+    }
     for (auto& piece : accumulator.pieces) {
         JSValue value = piece.get();
         if (!value)
             continue;
         bool appended = appendChunkBytes(vm, globalObject, value, bytes);
-        RETURN_IF_EXCEPTION(scope, WTF::String());
-        if (!appended)
+        if (scope.exception() || !appended) [[unlikely]] {
+            releaseAccumulated();
             return WTF::String();
+        }
     }
     if (accumulator.rope.length()) {
         WTF::String rope = accumulator.rope.toString();
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
-        WTF::CString utf8 = rope.utf8();
-        bytes.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+        if (!appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
+            releaseAccumulated();
+            throwOutOfMemoryError(globalObject, scope);
+            return WTF::String();
+        }
     }
     releaseAccumulated();
     if (exceedsStringLimit(bytes.size())) [[unlikely]] {

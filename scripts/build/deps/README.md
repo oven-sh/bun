@@ -59,7 +59,7 @@ bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
 ```
 
 Any `github-archive` dep the graph compiles or includes can be redirected
-(so not lolhtml, which cargo reads from `vendor/lolhtml` via the workspace
+(so not lolhtml or rust-argon2, which cargo reads from `vendor/` via the workspace
 `Cargo.toml` — point that path at your checkout instead); several at once
 with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
 lsquic's `-I` into boringssl) follow the redirect. The checkout is compiled
@@ -104,7 +104,7 @@ export const mydep: Dependency = {
   // How to build. `direct` lists sources explicitly; emitDirect compiles
   // each as a first-class cc/cxx edge and the resulting .o's go straight
   // into bun's link line. See `DirectBuild` in ../source.ts for all
-  // optional fields (lang/pic/defines/headers/codegen).
+  // optional fields (lang/pic/defines/headers/codegen/forbidUndefined).
   build: cfg => ({
     kind: "direct",
     sources: ["src/foo.c", "src/bar.c"],
@@ -138,7 +138,7 @@ export const mydep: Dependency = {
   across the dep boundary into bun's call sites.
 - **`nested-cmake`**: Runs `cmake --fresh -B ...` then `cmake --build`.
   See `NestedCmakeBuild` in `../source.ts` for all fields.
-- **`cargo`**: Rust deps (currently just lolhtml). See `CargoBuild` in `../source.ts`.
+- **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
 
 ## Worked examples
@@ -148,7 +148,7 @@ export const mydep: Dependency = {
 - **tinycc.ts** — direct build with a build-time codegen tool
 - **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution
 - **libarchive.ts** / **cares.ts** — direct build with hand-written per-target config.h
-- **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest
+- **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` (with libuv.ts) keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags

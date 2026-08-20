@@ -398,6 +398,10 @@ impl WindowsNamedPipe {
                 .map(Into::into),
         });
         (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
+        // Retry writes parked during the handshake; a TLS 1.2 client's completion sends nothing.
+        if handshake_success && !self.is_shutdown() {
+            (self.handlers.on_writable)(self.handlers.ctx);
+        }
     }
 
     fn on_close(&self) {

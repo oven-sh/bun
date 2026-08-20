@@ -84,8 +84,6 @@ export interface Config {
   freebsd: boolean;
   /** linux || darwin || freebsd */
   unix: boolean;
-  /** darwin || freebsd — kqueue-based event loop */
-  kqueue: boolean;
   x64: boolean;
   arm64: boolean;
 
@@ -246,6 +244,8 @@ export interface Config {
    */
   rustSysroot: string | undefined;
   strip: string;
+  /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
+  nm: string | undefined;
   /** Set when the target is darwin. Undefined on non-darwin targets. */
   dsymutil: string | undefined;
   /** Self-host bun for codegen (bun install, bun build). */
@@ -282,7 +282,7 @@ export interface Config {
   rc: string | undefined;
   /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
   mt: string | undefined;
-  /** Windows-x64: nasm for BoringSSL's NASM-syntax assembly. */
+  /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
@@ -451,6 +451,8 @@ export interface Toolchain {
    * can't read Mach-O, so darwin cross-compiles swap this in as `cfg.strip`.
    */
   llvmStrip: string | undefined;
+  /** llvm-nm; undefined skips the per-dep undefined-symbol checks (source.ts). */
+  nm: string | undefined;
   dsymutil: string | undefined;
   bun: string;
   jsRuntime: string;
@@ -482,11 +484,7 @@ export interface Toolchain {
    * source.ts) sidesteps the need.
    */
   mt: string | undefined;
-  /**
-   * Windows only: nasm. BoringSSL's win-x64 assembly is NASM syntax;
-   * clang's integrated assembler can't read it. win-aarch64 uses gas
-   * .S files instead, so this is x64-only in practice.
-   */
+  /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 }
 
@@ -740,7 +738,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const windows = os === "windows";
   const freebsd = os === "freebsd";
   const unix = linux || darwin || freebsd;
-  const kqueue = darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
   // Darwin target on a non-darwin host (Linux CI box building macOS
@@ -1183,7 +1180,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     windows,
     freebsd,
     unix,
-    kqueue,
     x64,
     arm64,
     host,
@@ -1246,6 +1242,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           ? `/usr/bin/${crossTarget}-strip`
           : (toolchain.llvmStrip ?? toolchain.strip)
         : toolchain.strip),
+    nm: toolchain.nm,
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
     jsRuntime: toolchain.jsRuntime,

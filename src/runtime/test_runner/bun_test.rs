@@ -777,9 +777,9 @@ impl BunTest {
             return Ok(());
         }
 
-        this.add_result(refdata.phase.clone());
+        this.add_result(refdata.phase);
         // `this` borrow ends here (NLL); `run_next_tick` re-derives via `.get()`.
-        Self::run_next_tick(&refdata.buntest_weak, global_this, refdata.phase.clone());
+        Self::run_next_tick(&refdata.buntest_weak, global_this, refdata.phase);
         Ok(())
     }
 
@@ -852,8 +852,8 @@ impl BunTest {
         };
         // SAFETY: `&mut` derived via `UnsafeCell`; borrow ends before
         // `run_next_tick` re-derives.
-        strong.get().add_result(ref_in.phase.clone());
-        Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase.clone());
+        strong.get().add_result(ref_in.phase);
+        Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase);
 
         Ok(JSValue::UNDEFINED)
     }
@@ -1180,7 +1180,7 @@ impl BunTest {
             }
 
             let prev_unhandled_count = vm.unhandled_error_counter;
-            global_this.handle_rejected_promises();
+            let _ = global_this.handle_rejected_promises();
             if vm.unhandled_error_counter == prev_unhandled_count {
                 break;
             }
@@ -1201,7 +1201,7 @@ impl BunTest {
                 if unsafe { (*dcb_data).called } {
                     // done callback already called or the callback errored; add result immediately
                 } else {
-                    let r = Self::ref_(this_strong, cfg_data.clone());
+                    let r = Self::ref_(this_strong, cfg_data);
                     let alias = NonNull::new(r.as_ptr())
                         .expect("ref_() returns a freshly-boxed RefData");
                     // SAFETY: see above. Move the sole +1 into the DoneCallback.
@@ -1421,10 +1421,10 @@ pub struct EntryData {
     pub(crate) remaining_repeat_count: i64,
 }
 
-// Clone: bitwise OK — `active_scope` is a non-owning borrow of a
+// Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
 // `DescribeScope` whose lifetime spans the async boundary (see field note);
 // `EntryData.entry` likewise borrows.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum RefDataValue {
     Start,
     Collection {

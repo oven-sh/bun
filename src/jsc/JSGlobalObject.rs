@@ -81,6 +81,8 @@ impl core::fmt::Debug for GlobalRef {
     }
 }
 
+bun_core::declare_scope!(TerminationTaken, hidden);
+
 impl JSGlobalObject {
     /// Alias of the macro-provided [`as_mut_ptr`](Self::as_mut_ptr) kept for
     /// call-site readability where mutation is not the intent.
@@ -104,6 +106,8 @@ impl JSGlobalObject {
         JsError::Thrown
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_out_of_memory(&self) -> JsError {
         // See `throw_stack_overflow` for the validation-scope rationale.
         crate::validation_scope!(scope, self);
@@ -116,6 +120,8 @@ impl JSGlobalObject {
         JSGlobalObject__createOutOfMemoryError(self)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
         JSGlobalObject__throwOutOfMemoryError(self);
         JSValue::ZERO
@@ -377,10 +383,6 @@ impl JSGlobalObject {
             format_args!("Expected {} to be a {} for '{}'.", field, typename, name_),
         )
         .to_js()
-    }
-
-    pub fn to_js<T: Into<JSValue>>(&self, value: T) -> JsResult<JSValue> {
-        Ok(value.into())
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
@@ -929,15 +931,6 @@ impl JSGlobalObject {
         self.throw_value(err_value)
     }
 
-    // TODO: delete these two fns
-    pub fn ref_(&self) -> &JSGlobalObject {
-        self
-    }
-    #[inline]
-    pub fn ctx(&self) -> &JSGlobalObject {
-        self.ref_()
-    }
-
     pub fn create_aggregate_error(
         &self,
         errors: &[JSValue],
@@ -1016,15 +1009,33 @@ impl JSGlobalObject {
             JsError::OutOfMemory => {
                 let _ = self.throw_out_of_memory();
             }
+            // Already taken at the boundary; nothing is pending. Hand back the (inert) termination cell.
+            JsError::Terminated => return self.vm().termination_exception(),
         }
 
         self.try_take_exception().unwrap_or_else(|| {
+            // Nothing pending behind a `Thrown`. On a VM whose stop has been carried out that is a
+            // `Terminated` that lost its name on the way here (through an error type that has none for
+            // it): stand down the same way. Anywhere else it is a bug — the exception was cleared early.
+            if self.vm().execution_forbidden() {
+                bun_core::scoped_log!(
+                    TerminationTaken,
+                    "take_exception(Thrown) with nothing pending on a stopped VM: a Terminated collapsed to Thrown"
+                );
+                return self.vm().termination_exception();
+            }
             panic!("A JavaScript exception was thrown, but it was cleared before it could be read.")
         })
     }
 
+    /// The taken exception as an error value; the VM's termination comes back as its (inert) cell —
+    /// every reporter recognises and drops it.
     pub fn take_error(&self, proof: JsError) -> JSValue {
-        self.take_exception(proof).to_error().unwrap_or_else(|| {
+        let exception = self.take_exception(proof);
+        if exception.is_termination_exception() {
+            return exception;
+        }
+        exception.to_error().unwrap_or_else(|| {
             panic!("Couldn't convert a JavaScript exception to an Error instance.");
         })
     }
@@ -1118,14 +1129,10 @@ impl JSGlobalObject {
         VirtualMachine::get()
     }
 
-    pub fn handle_rejected_promises(&self) {
-        // JSC__JSGlobalObject__handleRejectedPromises catches and reports its
-        // own exceptions; the only thing that escapes is a TerminationException
-        // (worker terminate() or process.exit()), and the request flag may
-        // already be cleared by the time we observe it. Nothing actionable here.
-        let _ = crate::from_js_host_call_generic(self, || {
-            JSC__JSGlobalObject__handleRejectedPromises(self)
-        });
+    /// Runs the `unhandledRejection` machinery, which catches and reports its own exceptions; what
+    /// can come back is the VM's termination (taken at this boundary when at loop level).
+    pub fn handle_rejected_promises(&self) -> JsResult<()> {
+        crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
     }
 
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {

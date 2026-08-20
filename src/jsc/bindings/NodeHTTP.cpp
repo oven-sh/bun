@@ -27,7 +27,6 @@ using namespace JSC;
 using namespace WebCore;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__drainMicrotasksFromJS);
-extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
@@ -233,20 +232,6 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
-}
-
-// Scope-free VM::exception() read. A callee's ThrowScope destructor
-// simulates a throw so its caller must check; when the caller is Rust
-// (writeHeadAndEnd's write-head phase) there is no ThrowScope to do it, so
-// this acknowledges the check without declaring a scope (declaring one
-// would trip the verifier before the read). The actual success/failure
-// travels through NodeHTTPServer__writeHead's return value.
-extern "C" void Bun__NodeHTTP__acknowledgeThrowScope(JSC::JSGlobalObject* globalObject)
-{
-    // The same sanctioned read RETURN_IF_EXCEPTION performs; it observes
-    // (and under exception-scope verification, acknowledges) any pending
-    // exception without constructing a verifying scope.
-    (void)globalObject->vm().hasExceptionsAfterHandlingTraps();
 }
 
 // Defined in Rust (NodeHTTPResponse.rs): moves the captured raw header bytes
@@ -585,12 +570,8 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
     }
 }
 
-// Returns false when a JS exception is pending (header conversion or
-// validation threw). The exception check happens here, inside the owning
-// ThrowScope; callers on the Rust side branch on the return value instead
-// of probing VM exception state through another scope.
 template<bool isSSL>
-static bool NodeHTTPServer__writeHead(
+static void NodeHTTPServer__writeHead(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
@@ -624,9 +605,9 @@ static bool NodeHTTPServer__writeHead(
     if (headersObject) {
         if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
             if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return true;
+            return;
         }
 
         // A flat [name, value, name, value, ...] array. Used by node:http's
@@ -638,14 +619,14 @@ static bool NodeHTTPServer__writeHead(
             unsigned length = pairsArray->length();
             for (unsigned i = 0; i + 1 < length; i += 2) {
                 JSValue nameValue = pairsArray->getIndex(globalObject, i);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
                 JSValue headerValue = pairsArray->getIndex(globalObject, i + 1);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
 
                 String name = nameValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
                 String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
 
                 // node:http marks framing decisions with a NUL-named sentinel
                 // pair instead of a real header: value "1" = close-delimited
@@ -676,14 +657,14 @@ static bool NodeHTTPServer__writeHead(
 
                 writeResponseHeader<isSSL>(response, name, value);
             }
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
             if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return true;
+            return;
         }
 
         if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
             headersObject->reifyAllStaticProperties(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
         }
 
         auto* structure = headersObject->structure();
@@ -707,31 +688,29 @@ static bool NodeHTTPServer__writeHead(
         } else {
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, void());
 
             for (unsigned i = 0; i < propertyNames.size(); ++i) {
                 JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
                 if (!headerValue.isString()) {
                     continue;
                 }
 
                 String key = propertyNames[i].string();
                 String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, void());
 
                 writeResponseHeader<isSSL>(response, key, value);
             }
         }
     }
 
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, void());
     if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-
-    return true;
 }
 
-extern "C" bool NodeHTTPServer__writeHead_http(
+extern "C" void NodeHTTPServer__writeHead_http(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
@@ -740,10 +719,10 @@ extern "C" bool NodeHTTPServer__writeHead_http(
     uint32_t keepAliveTimeoutSecs,
     uWS::HttpResponse<false>* response)
 {
-    return NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
+    NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
 }
 
-extern "C" bool NodeHTTPServer__writeHead_https(
+extern "C" void NodeHTTPServer__writeHead_https(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
@@ -752,7 +731,7 @@ extern "C" bool NodeHTTPServer__writeHead_https(
     uint32_t keepAliveTimeoutSecs,
     uWS::HttpResponse<true>* response)
 {
-    return NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
+    NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
@@ -799,22 +778,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
         response,
         upgrade_ctx,
         nodeHttpResponsePtr);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetServerIdleTimeout, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // This is an internal binding.
-    JSValue serverValue = callFrame->uncheckedArgument(0);
-    JSValue seconds = callFrame->uncheckedArgument(1);
-
-    ASSERT(callFrame->argumentCount() == 2);
-
-    Server__setIdleTimeout(JSValue::encode(serverValue), JSValue::encode(seconds), globalObject);
-
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -882,10 +845,6 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto* obj = constructEmptyObject(globalObject);
     VM& vm = globalObject->vm();
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerIdleTimeout"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "setServerIdleTimeout"_s, jsHTTPSetServerIdleTimeout, ImplementationVisibility::Public), 0);
-
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerCustomOptions"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "setServerCustomOptions"_s, jsHTTPSetCustomOptions, ImplementationVisibility::Public), 0);

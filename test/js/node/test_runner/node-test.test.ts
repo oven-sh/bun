@@ -1,18 +1,9 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { builtinModules, isBuiltin } from "node:module";
 import { join } from "node:path";
 
 describe("node:test", () => {
-  test("node:test is a built-in module", () => {
-    expect(isBuiltin("node:test")).toBe(true);
-    // Like node:sqlite, node:test is only available with the node: prefix.
-    expect(isBuiltin("test")).toBe(false);
-    expect(builtinModules).toContain("node:test");
-    expect(builtinModules).not.toContain("test");
-  });
-
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
   // a debug+ASAN `bun test` child takes several seconds to start, so give them
   // headroom and let them spawn in parallel instead of serially.

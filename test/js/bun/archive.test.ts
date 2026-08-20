@@ -610,6 +610,27 @@ describe("Bun.Archive", () => {
       }).toThrow();
     });
 
+    test("rejects when a member's header checksum does not match instead of skipping the member", async () => {
+      // libarchive discards the damaged block and would resync on last.txt;
+      // extraction used to report success with broken.txt silently missing.
+      const broken = ustarEntry("broken.txt", Buffer.from("lost"));
+      broken[104] ^= 0x01; // one digit of the mode field
+      const tarball = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("first.txt", Buffer.from("first")),
+          broken,
+          ustarEntry("last.txt", Buffer.from("last")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      const archive = new Bun.Archive(tarball);
+
+      using dir = tempDir("archive-damaged-header", {});
+
+      await expect(archive.extract(String(dir))).rejects.toThrow("ReadError");
+      expect(readdirSync(String(dir))).toEqual(["first.txt"]);
+    });
+
     test("throws when extracting random bytes as archive", async () => {
       // Generate random bytes
       const randomBytes = new Uint8Array(1024);

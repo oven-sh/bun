@@ -1442,6 +1442,13 @@ where
                         .cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
                 );
             }
+            // End request streaming here, not in deinit: a `Used` body
+            // (textStream) can only be rejected through
+            // request_body_readable_stream_ref, and finalize_without_deinit
+            // drops that ref without erroring it.
+            if this.end_request_streaming().unwrap_or(true) {
+                any_js_calls.set(true);
+            }
             this.reclaim_promise_cell();
             return;
         }

@@ -322,6 +322,128 @@ test("client abort while a direct stream pull() is parked frees the context and 
   pumpHold = undefined;
 });
 
+test("client abort while a direct stream pull() is parked rejects a parked for-await body read", async () => {
+  // Same scenario as above, but the upload is consumed as a stream (body
+  // `Used`, not `Locked`). The rejection can only come through
+  // request_body_readable_stream_ref, which finalize_without_deinit drops
+  // without erroring, so on_abort itself must end request streaming.
+  let pumpHold: Promise<never> | undefined;
+  const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<unknown>();
+  const { promise: firstWrite, resolve: signalFirstWrite } = Promise.withResolvers<void>();
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req) {
+      (async () => {
+        try {
+          for await (const _chunk of req.body!) {
+            // keep reading until the upload ends or errors
+          }
+          signalBodyRead("completed");
+        } catch (e) {
+          signalBodyRead(e);
+        }
+      })();
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          pull(ctrl) {
+            ctrl.write("hello");
+            ctrl.flush();
+            signalFirstWrite();
+            pumpHold = new Promise<never>(() => {});
+            return pumpHold;
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = connect(Number(server.port), "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    socket.on("connect", resolve);
+    socket.on("error", reject);
+  });
+  socket.removeAllListeners("error");
+  socket.on("error", () => {});
+  socket.write(
+    "POST / HTTP/1.1\r\n" + //
+      `Host: 127.0.0.1:${server.port}\r\n` +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "7\r\npartial\r\n",
+  );
+  await firstWrite;
+  socket.destroy();
+
+  const err = await bodyRead;
+  expect(err).toBeInstanceOf(Error);
+  await waitForPendingRequestsWithoutGC(server, 0);
+  pumpHold = undefined;
+});
+
+test("client abort while a direct stream pull() is parked rejects a parked textStream read", async () => {
+  // textStream() transitions the body to `Used`, so the rejection can only go
+  // through request_body_readable_stream_ref, and finalize_without_deinit
+  // drops that ref without erroring it. on_abort's sink branch must end
+  // request streaming itself while the ref is still set.
+  let pumpHold: Promise<never> | undefined;
+  const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<unknown>();
+  const { promise: firstWrite, resolve: signalFirstWrite } = Promise.withResolvers<void>();
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req) {
+      (async () => {
+        try {
+          for await (const _chunk of req.textStream()) {
+            // keep reading until the upload ends or errors
+          }
+          signalBodyRead("completed");
+        } catch (e) {
+          signalBodyRead(e);
+        }
+      })();
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          pull(ctrl) {
+            ctrl.write("hello");
+            ctrl.flush();
+            signalFirstWrite();
+            pumpHold = new Promise<never>(() => {});
+            return pumpHold;
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = connect(Number(server.port), "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    socket.on("connect", resolve);
+    socket.on("error", reject);
+  });
+  socket.removeAllListeners("error");
+  socket.on("error", () => {});
+  socket.write(
+    "POST / HTTP/1.1\r\n" + //
+      `Host: 127.0.0.1:${server.port}\r\n` +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "7\r\npartial\r\n",
+  );
+  await firstWrite;
+  socket.destroy();
+
+  const err = await bodyRead;
+  expect(err).toBeInstanceOf(Error);
+  await waitForPendingRequestsWithoutGC(server, 0);
+  pumpHold = undefined;
+});
+
 test("413 on a chunked upload frees the context while the handler promise stays parked", async () => {
   // The 413 path ends the request through end_without_body, and uWS markDone()
   // clears onAborted, so on_abort can never run for this request. The held

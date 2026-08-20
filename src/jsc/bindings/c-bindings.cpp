@@ -315,7 +315,8 @@ static void installSIGSYSHandler()
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = onSIGSYS;
-    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    // SA_RESTART matches installForwardSignalHandler for the kill(2) path; a trap skips the syscall.
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSYS, &sa, nullptr);
 }

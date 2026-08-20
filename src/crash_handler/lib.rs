@@ -1049,9 +1049,7 @@ mod draft {
                         &trace_buf
                     };
 
-                    // Decided before the trace string is encoded so that the
-                    // feature bit ends up in it, which is what lets bun.report
-                    // and Sentry tell these crashes apart from Bun's own.
+                    // Before the trace string is encoded, so that it carries the bit.
                     let native_module = native_module_of_crash(trace);
                     if native_module.is_some() {
                         bun_analytics::features::native_module_crash
@@ -2437,28 +2435,21 @@ mod draft {
         }
     };
 
-    /// Longest image name a [`StackLine`] keeps. Every non-bun frame carries its
-    /// name in the trace string.
     const MAX_OBJECT_NAME_LEN: usize = 64;
 
-    /// Holds the trace string of a crash whose 20 captured frames all carry a
-    /// `MAX_OBJECT_NAME_LEN` name (about 1.5 KB), plus the header and a fault
-    /// address. `report()` copies it into 4 KB command-line buffers.
+    /// Fits the 20 captured frames with a `MAX_OBJECT_NAME_LEN` name each.
+    /// `report()` copies the result into 4 KB buffers.
     const TRACE_STRING_CAPACITY: usize = 2048;
 
     type ObjectName = BoundedArray<u8, MAX_OBJECT_NAME_LEN>;
 
-    /// The image a captured address belongs to. This decides both how the
-    /// frame is encoded (bun frames carry no name so that bun.report can remap
-    /// them) and who a crash at that address is attributed to.
+    /// The image a captured address belongs to.
     enum Object {
+        /// Encoded without a name so that bun.report remaps the address.
         Bun,
-        /// Part of the operating system, or linked by Bun itself: libc,
-        /// ntdll.dll, the dyld shared cache. A fault in here was caused by
-        /// whatever called into it.
+        /// libc, ntdll.dll, the dyld shared cache: a fault in here is blamed on the caller.
         System(ObjectName),
-        /// Loaded by something other than Bun: a Node-API addon, a `bun:ffi`
-        /// library, or a library one of those depends on.
+        /// A Node-API addon, a `bun:ffi` library, or something one of them loaded.
         ThirdParty(ObjectName),
     }
 
@@ -2519,8 +2510,7 @@ mod draft {
                     });
                 }
 
-                // Only the basename is converted: `name_bytes` is sized for a
-                // path component, not for a whole path of non-ASCII characters.
+                // A whole path can overflow `name_bytes`; one component cannot.
                 let basename = bun_paths::basename_windows(name);
                 return Some(StackLine {
                     address,
@@ -2603,19 +2593,15 @@ mod draft {
                                     if image_name.is_null() {
                                         return None;
                                     }
-                                    // SAFETY: dyld returns a NUL-terminated path that stays
-                                    // valid while the image is loaded, and the image is
-                                    // loaded: we just found `address` inside it.
+                                    // SAFETY: dyld owns the NUL-terminated path and keeps it
+                                    // while the image is loaded, and `address` is inside it.
                                     let image_path =
                                         unsafe { bun_core::ffi::cstr(image_name) }.to_bytes();
-                                    // Everything Apple ships, including the dyld shared
-                                    // cache, lives under one of these two prefixes.
+                                    // The dyld shared cache included.
                                     let is_system = image_path.starts_with(b"/usr/lib/")
                                         || image_path.starts_with(b"/System/");
                                     return Some(StackLine {
                                         object: Object::named(image_path, is_system)?,
-                                        // Same wrapping cast as Windows: the offset is only
-                                        // informational for a library that is not bun.
                                         address: address.wrapping_sub(base_address) as i32,
                                     });
                                 }
@@ -2641,8 +2627,6 @@ mod draft {
                     });
                 }
                 return Some(StackLine {
-                    // Same wrapping cast as Windows: the offset is only
-                    // informational for a library that is not bun.
                     address: address.wrapping_sub(m.base_address) as i32,
                     object: Object::named(&m.name, is_system_library_elf(&m.name))?,
                 });
@@ -2656,9 +2640,7 @@ mod draft {
             };
 
             if let Some(object) = known.object.name() {
-                // The name goes into the URL verbatim, and bun.report reads it
-                // back as `len` characters, so it has to stay ASCII and free of
-                // URL syntax.
+                // Goes into the URL as is, and bun.report reads it back by character count.
                 let mut encodable = ObjectName::default();
                 for &byte in object {
                     let _ = encodable.append(match byte {
@@ -2676,17 +2658,15 @@ mod draft {
         }
     }
 
-    /// Whether a shared object came with the operating system, judged by where
-    /// it lives. A library that user code loads from a system directory is
-    /// treated as system too, which errs towards reporting a Bun crash.
+    /// Judged by where the object lives, so a user library installed into a
+    /// system directory counts as system too (and is reported as a Bun crash).
     #[cfg(not(any(windows, target_os = "macos")))]
     fn is_system_library_elf(path: &[u8]) -> bool {
-        // The vDSO is reported with a bare name ("linux-vdso.so.1").
+        // The vDSO ("linux-vdso.so.1") has no path.
         if !strings::contains_char(path, b'/') {
             return true;
         }
-        // /usr/local/lib is deliberately not here: that is where
-        // user-installed libraries go.
+        // Not /usr/local/lib: that is where users install libraries.
         const SYSTEM_LIBRARY_DIRS: &[&[u8]] = &[
             b"/lib/",
             b"/lib32/",
@@ -2707,9 +2687,7 @@ mod draft {
         if SYSTEM_LIBRARY_DIRS.iter().any(|dir| path.starts_with(dir)) {
             return true;
         }
-        // Nix and Guix keep libc in a store path instead, so also recognize
-        // the libraries Bun itself links against (and the ones glibc loads
-        // lazily) by name.
+        // Nix and Guix keep these in store paths.
         const LIBC_FAMILY: &[&[u8]] = &[
             b"libc.",
             b"libm.",
@@ -2727,11 +2705,9 @@ mod draft {
             .any(|prefix| basename.starts_with(prefix))
     }
 
-    /// DLLs that ship with Windows load from the system directory
-    /// (`C:\Windows\System32`, which also holds `DriverStore` and the api-set
-    /// DLLs) or from `WinSxS`. The rest of the Windows directory does not
-    /// count: `C:\Windows\Temp` is the temp directory of a service, which is
-    /// where a standalone executable extracts its embedded addons to.
+    /// System32 (drivers included) or WinSxS. Not the whole Windows directory:
+    /// a service's temp directory is `C:\Windows\Temp`, and embedded addons
+    /// are extracted into the temp directory.
     #[cfg(windows)]
     fn is_system_image_windows(path: &[u16]) -> bool {
         let mut directory = [0u16; bun_sys::windows::MAX_PATH];
@@ -2752,9 +2728,7 @@ mod draft {
         is_inside_directory_w(path, &directory[..windows_len + winsxs.len()])
     }
 
-    /// `path` names something inside `directory` (which has no trailing
-    /// separator). Windows paths compare case-insensitively, and
-    /// `GetModuleFileNameW` reports whatever casing the image was loaded with.
+    /// `directory` has no trailing separator. Case-insensitive, like the file system.
     #[cfg(windows)]
     fn is_inside_directory_w(path: &[u16], directory: &[u16]) -> bool {
         fn is_separator(unit: u16) -> bool {
@@ -2775,12 +2749,9 @@ mod draft {
                 .all(|(&a, &b)| fold(a) == fold(b) || (is_separator(a) && is_separator(b)))
     }
 
-    /// Names the third-party image the crash happened in, if any. The
-    /// innermost frame that belongs to an image at all decides: if that is
-    /// Bun's own code, this is a Bun crash, whatever native code is further
-    /// up the stack. System libraries do not decide anything because a fault
-    /// inside `memcpy` belongs to whoever passed it the pointer, and neither
-    /// do frames outside every image (JIT code, `bun:ffi` trampolines).
+    /// The innermost frame inside an image decides. System frames are skipped
+    /// (a fault in `memcpy` belongs to the caller), and so are frames outside
+    /// every image (JIT code, FFI trampolines).
     fn native_module_of_crash(trace: &StackTrace) -> Option<ObjectName> {
         let mut name_bytes: [u8; 1024] = [0; 1024];
         for &addr in &trace.instruction_addresses[0..trace.index] {

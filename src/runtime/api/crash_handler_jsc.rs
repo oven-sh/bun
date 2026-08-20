@@ -127,13 +127,9 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Reports a segmentation fault as if the faulting instruction were at the
-    /// code address passed in (a number, e.g. a `bun:ffi` function's `.ptr`),
-    /// which is how the signal and exception handlers seed the trace from a
-    /// real fault. Lets a test choose which image frame 0 falls into without
-    /// a real fault, which ASAN builds would not route to the crash handler.
-    /// On POSIX the rest of the trace is this function's callers; on Windows
-    /// the walk needs a fault `CONTEXT`, so the trace is frame 0 alone.
+    /// Reports a segfault whose frame 0 is the code address passed in, so a test
+    /// can put the fault inside any image without a real fault (which ASAN
+    /// builds do not route here). Windows has no fault `CONTEXT` to walk from.
     #[bun_jsc::host_fn]
     fn js_segfault_at_pc(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let pc = frame.argument(0).to_number(global)?;

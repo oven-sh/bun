@@ -5112,9 +5112,8 @@ pub mod c {
         pub safe fn _dyld_image_count() -> u32;
         /// `intptr_t _dyld_get_image_vmaddr_slide(uint32_t image_index)`
         pub safe fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
-        /// `const char* _dyld_get_image_name(uint32_t image_index)` — the
-        /// image's install path, owned by dyld and valid while the image stays
-        /// loaded; null for an out-of-range index.
+        /// `const char* _dyld_get_image_name(uint32_t image_index)` — dyld-owned,
+        /// valid while the image is loaded; null when out of range.
         pub safe fn _dyld_get_image_name(image_index: u32) -> *const core::ffi::c_char;
         /// `const struct mach_header* _dyld_get_image_header(uint32_t)` — by-value
         /// index; out-of-range returns null (no precondition).
@@ -8432,9 +8431,8 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
-        /// The object is the executable itself, not a shared object. glibc,
-        /// musl and bionic all report the main program first; what they put in
-        /// its `dlpi_name` differs, so the position is what identifies it.
+        /// The first object reported, which glibc, musl and bionic all define
+        /// as the executable (its `dlpi_name` differs between them).
         pub is_main_program: bool,
     }
 

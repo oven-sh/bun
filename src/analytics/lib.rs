@@ -299,11 +299,9 @@ pub mod features {
         58 => (xml_parse, "xml_parse", core = XML_PARSE),
         /// A standalone executable whose embedded bytecode was produced on a different os/arch/libc than the one running it.
         59 => (cross_compiled_bytecode, "cross_compiled_bytecode"),
-        /// `bun:ffi` `dlopen()` loaded a library. Together with `process_dlopen`
-        /// this tells a crash report how third-party native code got in.
+        /// `bun:ffi` `dlopen()` loaded a library (`process_dlopen` is the Node-API counterpart).
         60 => (ffi_dlopen, "ffi_dlopen"),
-        /// Set by the crash handler when the crash happened inside a native
-        /// module rather than in Bun (see `native_module_of_crash`).
+        /// Set while crashing when the crash is inside a native module, not in Bun.
         61 => (native_module_crash, "native_module_crash"),
     }
 

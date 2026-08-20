@@ -216,6 +216,8 @@ typedef struct ZigStackTrace {
     OrdinalNumber* source_lines_numbers;
     uint8_t source_lines_len;
     uint8_t source_lines_to_collect;
+    /// Column of `source_lines_ptr[0]` the caret is drawn under (-1 if unset); filled together with that line.
+    int32_t source_lines_caret_column_zero_based;
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
     uint8_t frames_cap;

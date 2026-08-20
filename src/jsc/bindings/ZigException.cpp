@@ -636,6 +636,24 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     }
 
     if (except.stack.frames_len == 0 && getFromSourceURL) {
+        // Parse-time SyntaxErrors have no stack; addErrorInfo() still set the C++ fields (#5192).
+        const String& nativeSourceURL = err->sourceURL();
+        if (!nativeSourceURL.isEmpty()) {
+            auto& frame = except.stack.frames_ptr[0];
+            frame.source_url.deref();
+            frame.source_url = Bun::toStringRef(nativeSourceURL);
+            if (err->line() > 0) {
+                if (auto* zigGlobal = dynamicDowncast<Zig::GlobalObject>(global))
+                    Bun__remapParseErrorFrame(zigGlobal->bunVM(), &frame, err->line(), err->column());
+                else
+                    frame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(err->line()).zeroBasedInt();
+            }
+            except.stack.frames_len = 1;
+            frame.remapped = true;
+            except.remapped = true;
+            return;
+        }
+
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;

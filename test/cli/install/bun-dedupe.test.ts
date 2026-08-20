@@ -1,18 +1,18 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { copyFile, exists, mkdir, realpath, rm } from "fs/promises";
+import { copyFile, exists, mkdir, readdir, readFile, realpath, rm } from "fs/promises";
 import {
-  DirectoryTree,
-  VerdaccioRegistry,
   bunEnv,
   bunExe,
+  DirectoryTree,
   makeTreeSync,
   nodeModulesPackages,
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
+  VerdaccioRegistry,
 } from "harness";
-import { dirname, join, sep } from "path";
+import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -227,20 +227,26 @@ async function installTwice(packageDir: string, packageJson: string, first: obje
   return lock(packageDir);
 }
 
-// An installed project (package.json, bun.lock, node_modules) captured once and written into each case's own directory, so the cases that start from it skip the installs and never share a directory.
+// An installed project, captured once as the files `makeTreeSync` writes into each case's own directory (bunfig.toml comes from the case's createTestDir), so the cases that start from it skip the installs, start with the same warm cache an install leaves behind, and never share a directory.
 type Tree = { files: DirectoryTree; lockfile: string; installed: string[] };
 
+// A DirectoryTree holds plain files. The cache's per-name index entries are links that installs only ever write, so they are left out; any other link (a workspace member, an isolated store) would make the copy differ from the original, so such a project is refused rather than copied without it.
 async function captureTree(packageDir: string): Promise<Tree> {
   const files: DirectoryTree = {};
-  const paths = [
-    "package.json",
-    "bun.lock",
-    ...new Bun.Glob("node_modules/**").scanSync({ cwd: packageDir, dot: true }),
-  ];
-  for (const path of paths) {
-    files[path.split(sep).join("/")] = await file(join(packageDir, path)).text();
+  async function capture(dir: string) {
+    for (const entry of await readdir(join(packageDir, dir), { withFileTypes: true })) {
+      const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
+      if (entry.isSymbolicLink()) {
+        if (!path.startsWith(".bun-cache/")) throw new Error(`${path} is a link, which a captured tree cannot hold`);
+      } else if (entry.isDirectory()) {
+        await capture(path);
+      } else if (path !== "bunfig.toml") {
+        files[path] = await readFile(join(packageDir, path));
+      }
+    }
   }
-  return { files, lockfile: files["bun.lock"] as string, installed: installed(packageDir) };
+  await capture("");
+  return { files, lockfile: await lock(packageDir), installed: installed(packageDir) };
 }
 
 // Root depends on one-range-dep@1.0.0 alone: three packages, nothing to remove.
@@ -2284,11 +2290,12 @@ test.concurrent("exits 1 and keeps bun.lock when the install after deduplicating
     port: 0,
     fetch: () => new Response("tarballs are unavailable", { status: 500 }),
   });
-  // Tarball URLs are recorded per package, so the lockfile is what points the install at the failing server (the copied tree has no cache).
+  // Tarball URLs are recorded per package, so the lockfile is what points the install at the failing server.
   expect(lockfile).toContain(registry.registryUrl());
   const unavailable = lockfile.replaceAll(registry.registryUrl(), `http://localhost:${server.port}/`);
   await Promise.all([
     rm(join(packageDir, "node_modules"), { recursive: true }),
+    rm(join(packageDir, ".bun-cache"), { recursive: true }),
     write(join(packageDir, "bun.lock"), unavailable),
   ]);
 

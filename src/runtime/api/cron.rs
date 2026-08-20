@@ -15,6 +15,7 @@ use super::cron_parser;
 use super::cron_parser::{CronExpression, CronTz};
 
 use core::ffi::c_char;
+use core::ptr::NonNull;
 use std::cell::Cell;
 
 #[cfg(not(windows))]
@@ -206,6 +207,62 @@ enum JobAction {
     Advance,
 }
 
+/// The ref on a spawned [`Process`] that `to_process` hands out. Releasing it
+/// also detaches the process, so it can no longer call back into the job.
+struct HeldProcess(NonNull<Process>);
+
+impl HeldProcess {
+    /// # Safety
+    /// `process` must have been returned by `to_process`; the returned value
+    /// takes over the ref it carries.
+    unsafe fn adopt(process: *mut Process) -> Self {
+        // SAFETY: caller contract: `to_process` never returns null.
+        Self(unsafe { NonNull::new_unchecked(process) })
+    }
+
+    fn as_ptr(&self) -> *mut Process {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HeldProcess {
+    fn drop(&mut self) {
+        let process = self.as_ptr();
+        // SAFETY: `adopt` took over a ref, so `process` is live until this deref.
+        unsafe {
+            (*process).detach();
+            Process::deref(process);
+        }
+    }
+}
+
+/// A file removed when the job that wrote it goes away: the crontab/schtasks
+/// input, or on macOS the plist until `launchctl bootstrap` takes it over.
+struct UnlinkOnDrop(ZString);
+
+#[cfg(target_os = "macos")]
+impl UnlinkOnDrop {
+    /// Leaves the file in place and hands back its path.
+    fn keep(self) -> ZString {
+        let this = core::mem::ManuallyDrop::new(self);
+        // SAFETY: `this` is never dropped, so the path is moved out exactly once.
+        unsafe { core::ptr::read(&raw const this.0) }
+    }
+}
+
+impl core::ops::Deref for UnlinkOnDrop {
+    type Target = ZStr;
+    fn deref(&self) -> &ZStr {
+        self.0.as_zstr()
+    }
+}
+
+impl Drop for UnlinkOnDrop {
+    fn drop(&mut self) {
+        let _ = sys::unlink(&self.0);
+    }
+}
+
 // ============================================================================
 // CronRegisterJob
 // ============================================================================
@@ -225,8 +282,7 @@ struct CronRegisterJob {
     parsed_cron: CronExpression,
 
     state: RegisterState,
-    // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
-    process: Option<*mut Process>,
+    process: Option<HeldProcess>,
     stdout_reader: OutputReader,
     #[cfg(windows)]
     stderr_reader: OutputReader,
@@ -234,7 +290,7 @@ struct CronRegisterJob {
     has_called_process_exit: bool,
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
-    tmp_path: Option<ZString>,
+    tmp_path: Option<UnlinkOnDrop>,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -298,13 +354,7 @@ impl CronJobBase for CronRegisterJob {
         if !self.has_called_process_exit || self.remaining_fds != 0 {
             return JobAction::Pending;
         }
-        if let Some(proc) = self.process.take() {
-            // SAFETY: `proc` is the intrusive-RC pointer returned by `to_process`.
-            unsafe {
-                (*proc).detach();
-                Process::deref(proc);
-            }
-        }
+        self.process = None;
         if self.err_msg.is_some() {
             return JobAction::Finish;
         }
@@ -519,7 +569,7 @@ impl CronRegisterJob {
             }
         };
         let tmp_path_ptr = tmp_path.as_ptr();
-        self.tmp_path = Some(tmp_path);
+        self.tmp_path = Some(UnlinkOnDrop(tmp_path));
 
         let file = match File::openat(
             Fd::cwd(),
@@ -606,7 +656,7 @@ impl CronRegisterJob {
                 return Err(());
             }
         };
-        self.tmp_path = Some(plist_path);
+        self.tmp_path = Some(UnlinkOnDrop(plist_path));
 
         // XML-escape all dynamic values
         macro_rules! try_escape {
@@ -730,7 +780,7 @@ impl CronRegisterJob {
     #[cfg(target_os = "macos")]
     fn prepare_bootstrap(&mut self) -> Result<(ZString, ZString), ()> {
         self.state = RegisterState::Bootstrapping;
-        let Some(plist_path) = self.tmp_path.take() else {
+        let Some(plist_path) = self.tmp_path.take().map(UnlinkOnDrop::keep) else {
             self.set_err(format_args!("No plist path"));
             return Err(());
         };
@@ -999,7 +1049,7 @@ impl CronRegisterJob {
             }
         };
         let xml_path_ptr = xml_path.as_ptr();
-        self.tmp_path = Some(xml_path);
+        self.tmp_path = Some(UnlinkOnDrop(xml_path));
 
         let file = match File::openat(
             Fd::cwd(),
@@ -1024,23 +1074,6 @@ impl CronRegisterJob {
     }
 }
 
-impl Drop for CronRegisterJob {
-    fn drop(&mut self) {
-        // stdout_reader / stderr_reader drop via their own Drop.
-        if let Some(proc) = self.process.take() {
-            // SAFETY: intrusive-RC pointer; we hold a ref.
-            unsafe {
-                (*proc).detach();
-                Process::deref(proc);
-            }
-        }
-        if let Some(p) = self.tmp_path.take() {
-            let _ = sys::unlink(&p);
-        }
-        // err_msg, abs_path, schedule, title freed via field Drop.
-    }
-}
-
 #[cfg(windows)]
 const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 
@@ -1056,8 +1089,7 @@ struct CronRemoveJob {
     title: ZString,
 
     state: RemoveState,
-    // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
-    process: Option<*mut Process>,
+    process: Option<HeldProcess>,
     stdout_reader: OutputReader,
     #[cfg(windows)]
     stderr_reader: OutputReader,
@@ -1065,7 +1097,8 @@ struct CronRemoveJob {
     has_called_process_exit: bool,
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
-    tmp_path: Option<ZString>,
+    #[cfg(not(target_os = "macos"))]
+    tmp_path: Option<UnlinkOnDrop>,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -1124,13 +1157,7 @@ impl CronJobBase for CronRemoveJob {
         if !self.has_called_process_exit || self.remaining_fds != 0 {
             return JobAction::Pending;
         }
-        if let Some(proc) = self.process.take() {
-            // SAFETY: intrusive-RC pointer; we hold a ref.
-            unsafe {
-                (*proc).detach();
-                Process::deref(proc);
-            }
-        }
+        self.process = None;
         if self.err_msg.is_some() {
             return JobAction::Finish;
         }
@@ -1321,7 +1348,7 @@ impl CronRemoveJob {
             }
         };
         let tmp_path_ptr = tmp_path.as_ptr();
-        self.tmp_path = Some(tmp_path);
+        self.tmp_path = Some(UnlinkOnDrop(tmp_path));
 
         let file = match File::openat(
             Fd::cwd(),
@@ -1405,6 +1432,7 @@ pub(crate) fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
         has_called_process_exit: false,
         exit_status: None,
         err_msg: None,
+        #[cfg(not(target_os = "macos"))]
         tmp_path: None,
         // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
         event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
@@ -1461,21 +1489,6 @@ impl CronRemoveJob {
             bstr::BStr::new(self.title.as_bytes())
         ))
         .map_err(|_| self.set_err(format_args!("Out of memory")))
-    }
-}
-
-impl Drop for CronRemoveJob {
-    fn drop(&mut self) {
-        if let Some(proc) = self.process.take() {
-            // SAFETY: intrusive-RC pointer; we hold a ref.
-            unsafe {
-                (*proc).detach();
-                Process::deref(proc);
-            }
-        }
-        if let Some(p) = self.tmp_path.take() {
-            let _ = sys::unlink(&p);
-        }
     }
 }
 
@@ -2165,7 +2178,7 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
 trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     const EXIT_KIND: bun_spawn::ProcessExitKind;
-    fn process_slot(&mut self) -> &mut Option<*mut Process>;
+    fn process_slot(&mut self) -> &mut Option<HeldProcess>;
     #[cfg(unix)]
     fn stdout_reader(&mut self) -> &mut OutputReader;
     #[cfg(windows)]
@@ -2189,7 +2202,7 @@ bun_spawn::link_impl_ProcessExit! {
 
 impl SpawnCmdTarget for CronRegisterJob {
     const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRegister;
-    fn process_slot(&mut self) -> &mut Option<*mut Process> {
+    fn process_slot(&mut self) -> &mut Option<HeldProcess> {
         &mut self.process
     }
     #[cfg(unix)]
@@ -2206,7 +2219,7 @@ impl SpawnCmdTarget for CronRegisterJob {
 }
 impl SpawnCmdTarget for CronRemoveJob {
     const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
-    fn process_slot(&mut self) -> &mut Option<*mut Process> {
+    fn process_slot(&mut self) -> &mut Option<HeldProcess> {
         &mut self.process
     }
     #[cfg(unix)]
@@ -2469,8 +2482,10 @@ unsafe fn spawn_cmd_prepare<T: SpawnCmdTarget>(
 
     // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
     let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
-    let process = spawned.to_process(ev_handle);
-    *s!().process_slot() = Some(process);
+    // SAFETY: `to_process` returns a fresh `Process` carrying one ref, which `held` takes over.
+    let held = unsafe { HeldProcess::adopt(spawned.to_process(ev_handle)) };
+    let process = held.as_ptr();
+    *s!().process_slot() = Some(held);
     Ok(process)
 }
 

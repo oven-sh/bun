@@ -857,7 +857,11 @@ impl WebWorker {
                 Bun__Worker__loadNodeWorkerThreadsModule(global)
             }) {
                 let exception = global.take_exception(err);
-                let _ = vm.as_mut().uncaught_exception(global, exception, false);
+                let _ = vm.as_mut().uncaught_exception(
+                    global,
+                    exception,
+                    crate::virtual_machine::UncaughtExceptionOrigin::Exception,
+                );
                 if !self.exit_called.load(Ordering::Relaxed) {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }

@@ -419,14 +419,16 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(...outputs);
 }
 
-function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
+/** Exported (with emitBakeCodegen) for test/internal/source-lints/build-codegen-bundle-inputs.test.ts. */
+export function emitRuntimeJs({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const src = resolve(cfg.cwd, "src", "runtime.bun.js");
   const out = resolve(cfg.codegenDir, "runtime.out.js");
 
   n.build({
     outputs: [out],
     rule: "esbuild",
-    inputs: [src],
+    // The entry plus runtime.js, which it re-exports; esbuild has no depfile.
+    inputs: sources.bundlerRuntime,
     implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
@@ -753,7 +755,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.cppHeaders.push(...outputs.filter(p => p.endsWith(".h")));
 }
 
-function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bake-codegen.ts");
 
   // InternalModuleRegistry.cpp is listed as a dep in CMake for this step too.
@@ -775,7 +777,9 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.bakeRuntime],
+    // hmr-module.ts imports ../../runtime.bun, so the bundler runtime is
+    // inlined into bake.client.js and bake.server.js as well.
+    inputs: [script, ...sources.bakeRuntime, ...sources.bundlerRuntime],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

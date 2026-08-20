@@ -298,8 +298,7 @@ pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
-// `join_abs_string_buf` asserts an absolute base. A non-absolute env var
-// falls through to the next candidate.
+// `join_abs_string_buf` asserts an absolute base; skip non-absolute env values (BUN-2V31).
 #[inline]
 fn get_abs(v: Option<&'static [u8]>) -> Option<&'static [u8]> {
     v.filter(|p| bun_paths::is_absolute(p))

@@ -1927,7 +1927,6 @@ pub fn init(
 
         // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
         // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
-        // Non-absolute values are skipped (join requires an absolute base).
         let mut global_len: usize = 0;
         if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME
             .get_not_empty()

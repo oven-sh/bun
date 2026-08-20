@@ -89,7 +89,12 @@ pub(crate) fn exec(
         .iter()
         .map(|&arg| {
             use bun_paths::resolve_path::{join_abs_string, platform};
-            match (arg.strip_prefix(b"~/"), bun_core::env_var::HOME.get()) {
+            match (
+                arg.strip_prefix(b"~/"),
+                bun_core::env_var::HOME
+                    .get()
+                    .filter(|p| bun_paths::is_absolute(p)),
+            ) {
                 (Some(rest), Some(home)) => {
                     join_abs_string::<platform::Auto>(home, &[rest]).to_vec()
                 }

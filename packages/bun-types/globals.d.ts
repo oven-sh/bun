@@ -2014,15 +2014,17 @@ interface BunFetchRequestInit extends RequestInit {
   /**
    * Force the underlying HTTP version. `"http2"` advertises only `h2` in
    * the TLS ALPN list and the request fails with `HTTP2Unsupported` if the
-   * server doesn't select it. `"http1.1"` pins the request to HTTP/1.1,
-   * overriding `--experimental-http2-fetch` /
+   * server doesn't select it. `"http3"` sends the request over HTTP/3
+   * (QUIC). `"http1.1"` pins the request to HTTP/1.1, overriding
+   * `--experimental-http2-fetch` /
    * `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` if set. Omit to use the
-   * default (h2 is offered iff the flag is on).
+   * default (h2 is offered iff the flag is on). `"h2"`, `"h3"` and `"h1"`
+   * are aliases.
    *
    * Requires `https`. Not part of the Fetch API specification.
    * @experimental
    */
-  protocol?: "http2" | "http1.1" | "h2" | "h1";
+  protocol?: "http2" | "http1.1" | "http3" | "h2" | "h1" | "h3";
 
   /**
    * Control automatic decompression of the response body. When `false`, the

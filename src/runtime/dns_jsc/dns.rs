@@ -3399,11 +3399,9 @@ impl c_ares::ReplyHandler<c_ares::struct_ares_tlsa_reply>
         timeouts: i32,
         results: *mut c_ares::struct_ares_tlsa_reply,
     ) {
-        let result = if results.is_null() {
-            None
-        } else {
-            Some(results)
-        };
+        // SAFETY: `ares_reply_callback` hands over the list head built by
+        // `struct_ares_tlsa_reply::parse`, which `destroy` frees.
+        let result = NonNull::new(results).map(|reply| unsafe { OwnedReply::adopt(reply) });
         Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
     }
 }

@@ -316,8 +316,8 @@ pub(crate) fn tlsa_reply_to_js_response(
     cares_list_to_js_array(this, global_this, tlsa_reply_to_js)
 }
 
-pub(crate) fn tlsa_reply_to_js(
-    this: &mut c_ares::struct_ares_tlsa_reply,
+fn tlsa_reply_to_js(
+    this: &c_ares::struct_ares_tlsa_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 4);

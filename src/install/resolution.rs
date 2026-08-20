@@ -1014,6 +1014,24 @@ impl Tag {
         self == Tag::Git || self == Tag::Github
     }
 
+    /// The tags a package can have in a saved lockfile. A package is appended
+    /// only once it is resolved, so `Uninitialized` never reaches a writer, and
+    /// `SingleFileModule` has no producer. Nothing can install either one.
+    pub(crate) fn belongs_in_lockfile(self) -> bool {
+        matches!(
+            self,
+            Tag::Root
+                | Tag::Npm
+                | Tag::Folder
+                | Tag::LocalTarball
+                | Tag::Github
+                | Tag::Git
+                | Tag::Symlink
+                | Tag::Workspace
+                | Tag::RemoteTarball
+        )
+    }
+
     pub(crate) fn can_enqueue_install_task(self) -> bool {
         self == Tag::Npm
             || self == Tag::LocalTarball

@@ -3322,30 +3322,12 @@ pub mod serializer {
             if end_pos as u64 <= end_at {
                 let src = &stream.buffer[stream.pos..stream.pos + bytes.len()];
                 if matches!(field, PackageField::Resolution) {
-                    // Validate the tag of every element on the raw stream bytes
-                    // before they are copied into the typed column. `ResolutionType`
-                    // is `#[repr(C)] { tag: Tag, _padding: [u8; 7], value: ... }`,
-                    // so the tag is the first byte of each element. The accepted
-                    // tags are the ones a writer produces, the same set the bun.lock
-                    // writer persists. `Uninitialized` is the in-memory default of a
-                    // package that is not resolved yet and `SingleFileModule` is a
-                    // placeholder without a producer. A loaded package with either
-                    // tag keeps its dependents resolved while nothing can install it.
+                    // `ResolutionType` is `#[repr(C)]` with the tag as its first
+                    // byte, so validate it before the bytes reach the typed column.
                     let stride = mem::size_of::<ResolutionType<SemverIntType>>();
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
-                        if !matches!(
-                            ResolutionTag(raw[0]),
-                            ResolutionTag::Root
-                                | ResolutionTag::Npm
-                                | ResolutionTag::Folder
-                                | ResolutionTag::LocalTarball
-                                | ResolutionTag::Github
-                                | ResolutionTag::Git
-                                | ResolutionTag::Symlink
-                                | ResolutionTag::Workspace
-                                | ResolutionTag::RemoteTarball
-                        ) {
+                        if !ResolutionTag(raw[0]).belongs_in_lockfile() {
                             return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
                         }
                     }

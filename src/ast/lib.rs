@@ -2810,6 +2810,10 @@ fn range_data_text(source: Option<&Source>, r: Range, text: Cow<'static, [u8]>) 
 #[derive(Default, Clone, Copy)]
 pub struct ToSourceOptions {
     pub convert_bom: bool,
+    /// Read the path even if it is not a regular file
+    /// ([`bun_sys::File::read_from_any_file_type`]). Only for a path the user
+    /// named, such as `--config=/dev/null`.
+    pub any_file_type: bool,
 }
 
 /// Read `path` (rooted at cwd) into memory and wrap it in a `Source`.
@@ -2827,7 +2831,11 @@ fn source_from_file_at(
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
 ) -> bun_sys::Maybe<Source> {
-    let mut bytes = bun_sys::file::File::read_from(dir_fd, path)?;
+    let mut bytes = if opts.any_file_type {
+        bun_sys::file::File::read_from_any_file_type(dir_fd, path)?
+    } else {
+        bun_sys::file::File::read_from(dir_fd, path)?
+    };
     if opts.convert_bom {
         if let Some(bom) = bun_core::strings::BOM::detect(&bytes) {
             bytes = bom.remove_and_convert_to_utf8_and_free(bytes);

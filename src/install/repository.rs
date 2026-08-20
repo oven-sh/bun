@@ -129,7 +129,10 @@ impl SloppyGlobalGitConfig {
         // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
         let Ok(source) = bun_ast::to_source(
             config_file_path,
-            bun_ast::ToSourceOptions { convert_bom: true },
+            bun_ast::ToSourceOptions {
+                convert_bom: true,
+                ..Default::default()
+            },
         ) else {
             return SloppyGlobalGitConfig::default();
         };

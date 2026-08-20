@@ -317,9 +317,7 @@ impl ReadableStream {
         use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
         use webcore::SinkHandle;
 
-        // Once the stream has been materialized, part of the body already sits in the
-        // controller's queue, which only the JS pump can reach. Wiring the native source
-        // here would deliver just the bytes that arrive after this point.
+        // Only the JS pump can reach bytes already queued on the controller.
         if self.is_native_source_consumed(global) {
             return NativeWireResult::NotNative;
         }
@@ -407,9 +405,7 @@ impl ReadableStream {
         is_disturbed_value(self.value, global_object)
     }
 
-    /// The native source handle no longer holds the whole body: the stream was read, or
-    /// materializing it moved bytes into the controller's queue. Bypassing the stream to
-    /// read the handle directly is only sound while this is false.
+    /// See `JSReadableStream::nativeSourceConsumed()`.
     pub fn is_native_source_consumed(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isNativeSourceConsumed(self.value, global_object)

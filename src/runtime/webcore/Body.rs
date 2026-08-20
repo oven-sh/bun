@@ -2217,9 +2217,6 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
         .reject()
 }
 
-/// Fetch spec "body unusable": a body whose stream is locked rejects the read without
-/// recording an action, so releasing the lock leaves the body readable again. Mirrors the
-/// message `Bun.readableStreamTo*` would have rejected with further down.
 fn handle_body_locked(global_object: &JSGlobalObject) -> JSValue {
     global_object
         .err(

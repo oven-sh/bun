@@ -3091,9 +3091,7 @@ where
                             return;
                         }
 
-                        // A materialized ByteStream has already moved its buffered bytes into
-                        // the controller's queue, so the handle below would serve a truncated
-                        // body. Read through the stream instead.
+                        // The arm below reads the handle, which no longer holds the whole body.
                         readable_stream::Source::Bytes(_)
                             if stream.is_native_source_consumed(global_this) =>
                         {

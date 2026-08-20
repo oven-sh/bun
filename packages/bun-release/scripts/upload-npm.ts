@@ -12,7 +12,7 @@ import { fetch } from "../src/fetch";
 import { chmod, copy, exists, join, write, writeJson } from "../src/fs";
 import { getRelease, getSemver } from "../src/github";
 import type { Platform } from "../src/platform";
-import { platforms } from "../src/platform";
+import { describePlatform, platforms } from "../src/platform";
 import { spawn } from "../src/spawn";
 
 const module = "bun";
@@ -159,7 +159,7 @@ async function buildModule(
   writeJson(join(cwd, "package.json"), {
     name: module,
     version: version,
-    description: "This is the macOS arm64 binary for Bun, a fast all-in-one JavaScript runtime.",
+    description: `This is the ${describePlatform({ os, arch, abi })} binary for Bun, a fast all-in-one JavaScript runtime.`,
     homepage: "https://bun.com",
     bugs: "https://github.com/oven-sh/issues",
     license: "MIT",

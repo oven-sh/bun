@@ -50,6 +50,8 @@ Ref<MessagePort> MessagePort::create(ScriptExecutionContext& context, Ref<Messag
 {
     auto messagePort = adoptRef(*new MessagePort(context, WTF::move(pipe), side));
     messagePort->suspendIfNeeded();
+    // So the peer's close() reaches this port (peerClosed()) even if it never gets a listener.
+    messagePort->m_pipe->registerCloseContext(side, context.identifier(), ThreadSafeWeakPtr<MessagePort> { messagePort.get() });
     return messagePort;
 }
 
@@ -105,14 +107,11 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     }
     RETURN_IF_EXCEPTION(warnScope, {});
 
-    if (!isEntangled())
-        return {};
-
     Vector<TransferredMessagePort> transferredPorts;
+    // Posting a port's own entangled peer targets the message at itself.
+    // (The source port itself was rejected before serialization above.)
+    bool targetsEntangledPeer = false;
     if (!ports.isEmpty()) {
-        // Posting a port's own entangled peer targets the message at itself.
-        // (The source port itself was rejected before serialization above.)
-        bool targetsEntangledPeer = false;
         for (auto& port : ports) {
             if (port->pipe() == m_pipe.ptr()) {
                 targetsEntangledPeer = true;
@@ -125,20 +124,25 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         if (disentangled.hasException())
             return disentangled.releaseException();
         transferredPorts = disentangled.releaseReturnValue();
+    }
 
-        if (targetsEntangledPeer) {
-            // Posting the port's own entangled peer: node warns and loses the channel
-            // rather than throwing. Transferables were already detached above; drop the
-            // message and close so the dead channel stops reffing the loop.
-            Bun__Process__emitWarning(defaultGlobalObject(&state),
-                JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
-                JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),
-                JSC::JSValue::encode(JSC::jsUndefined()),
-                JSC::JSValue::encode(JSC::jsUndefined()));
-            CLEAR_IF_EXCEPTION(warnScope);
-            close();
-            return {};
-        }
+    // A closed port drops the message; the ports taken out of the transfer list go down with it
+    // (~TransferredMessagePort closes their sides, so their peers see a close), as in node.
+    if (!isEntangled())
+        return {};
+
+    if (targetsEntangledPeer) {
+        // Posting the port's own entangled peer: node warns and loses the channel
+        // rather than throwing. Transferables were already detached above; drop the
+        // message and close so the dead channel stops reffing the loop.
+        Bun__Process__emitWarning(defaultGlobalObject(&state),
+            JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
+            JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),
+            JSC::JSValue::encode(JSC::jsUndefined()),
+            JSC::JSValue::encode(JSC::jsUndefined()));
+        CLEAR_IF_EXCEPTION(warnScope);
+        close();
+        return {};
     }
 
     m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
@@ -154,20 +158,25 @@ void MessagePort::entrySettled()
 
 void MessagePort::start()
 {
-    if (m_started || !isEntangled())
+    if (!isEntangled())
         return;
-    // A node worker's parentPort delivers nothing until the entry module has evaluated; keep the
-    // request and let entrySettled() perform it. Messages stay buffered in the pipe meanwhile.
-    if (auto* context = scriptExecutionContext()) {
-        if (auto* jsGlobal = context->globalObject()) {
-            auto* globalObject = defaultGlobalObject(jsGlobal);
-            if (globalObject->nodeParentPort() == this && !globalObject->nodeWorkerEntrySettled()) {
-                m_startDeferredUntilEntrySettled = true;
-                return;
+    if (!m_started) {
+        // A node worker's parentPort delivers nothing until the entry module has evaluated; keep the
+        // request and let entrySettled() perform it. Messages stay buffered in the pipe meanwhile.
+        if (auto* context = scriptExecutionContext()) {
+            if (auto* jsGlobal = context->globalObject()) {
+                auto* globalObject = defaultGlobalObject(jsGlobal);
+                if (globalObject->nodeParentPort() == this && !globalObject->nodeWorkerEntrySettled()) {
+                    m_startDeferredUntilEntrySettled = true;
+                    return;
+                }
             }
         }
+        m_started = true;
     }
-    m_started = true;
+    // Every call turns delivery (back) on, as node's Start() does for a port whose last 'message'
+    // listener was removed. attach() re-schedules the drain and re-reports a peer that has closed.
+    m_receiving = true;
 
     auto* context = scriptExecutionContext();
     ASSERT(context);
@@ -191,10 +200,11 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     // re-injecting into this closing port (via its entangled peer) can't starve the loop.
     size_t limit = std::max<size_t>(MessagePortPipe::queuedCount(m_pipe->state(m_side)), 1000);
     for (size_t i = 0; i < limit; ++i) {
-        // A handler (or a microtask it queued) may have transferred this port; the
-        // remaining inbox now belongs to the new owner. drainAndDispatch()'s
-        // per-iteration ctxId/port re-check guards the same case.
-        if (m_isDetached)
+        // A handler (or a microtask it queued) may have transferred this port (the remaining
+        // inbox now belongs to the new owner) or removed the last listener, e.g. once(): like
+        // drainAndDispatch(), stop and leave the rest queued. peerClosed() then keeps the port
+        // open for a later listener; close() drops it.
+        if (m_isDetached || !hasMessageEventListener())
             break;
         auto message = m_pipe->takeOne(m_side);
         if (!message)
@@ -271,24 +281,35 @@ void MessagePort::dispatchCloseEvent()
 
 void MessagePort::peerClosed()
 {
-    if (m_isDetached)
+    if (m_isDetached || m_isClosing)
         return;
     auto* context = scriptExecutionContext();
     if (!context || !context->globalObject())
         return;
     Ref protectedThis { *this };
-    // Deliver whatever the peer sent before it closed, then fire 'close'. Node orders
-    // them that way, and registerCloseContext()'s retroactive notify can land before any
-    // drain is scheduled -- e.g. on('close') registered before on('message').
+    // Node delivers what the peer sent before closing first; this task can run before the drain.
     if (m_started && hasMessageEventListener())
         flushQueuedMessagesBeforeClose();
-    // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
-    // so the loop can idle, matching node.
-    dispatchCloseEvent();
-    // jsUnref() clears both the listener loop-ref (m_isRefd) and the onmessage/ref()
-    // keepalive (m_hasRef), so a listening transferred port stops pinning the loop.
-    auto* globalObject = defaultGlobalObject(context->globalObject());
-    jsUnref(globalObject);
+    // A handler in that flush closed or transferred this port.
+    if (m_isDetached || m_isClosing)
+        return;
+    if (!m_pipe->isOtherSideClosedByRequest(m_side)) {
+        // Peer collected, not closed: node never closes a channel over that (see jsRef()), so
+        // only release the loop refs of a port that is started or listening for 'close'. An
+        // idle port keeps its one 'close' event for its own close(cb); it is notified again
+        // if it ever gets a 'close' listener (addEventListener) or starts (attach()).
+        if (m_started || m_hasCloseEventListener.load(std::memory_order_relaxed)) {
+            dispatchCloseEvent();
+            jsUnref(defaultGlobalObject(context->globalObject()));
+        }
+        return;
+    }
+    // Not receiving with messages queued: node's close notification waits behind them. The
+    // next 'message' listener (attach()) or the receiveMessageOnPort() that empties the queue
+    // (tryTakeMessage()) completes the close.
+    if (!m_receiving && MessagePortPipe::queuedCount(m_pipe->state(m_side)) > 0)
+        return;
+    close();
 }
 
 TransferredMessagePort MessagePort::disentangle()
@@ -381,8 +402,14 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& h
         return jsUndefined();
 
     auto message = m_pipe->takeOne(m_side);
-    if (!message)
+    if (!message) {
+        // This read reached the peer's close: node closes the port here (see peerClosed()).
+        // Peer state before our queue, as in virtualHasPendingActivity(): a message the peer
+        // sent between takeOne() and its close() is then visible and must not be dropped.
+        if (m_pipe->isOtherSideClosedByRequest(m_side) && !MessagePortPipe::queuedCount(m_pipe->state(m_side)))
+            close();
         return jsUndefined();
+    }
 
     hadMessage = true;
     auto ports = MessagePort::entanglePorts(*context, WTF::move(message->transferredPorts));
@@ -515,19 +542,13 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
     if (eventType == eventNames().messageEvent) {
+        // Also resumes a port paused by removing its listeners (see start()).
         start();
         m_hasMessageEventListener = true;
-        // start() no-ops after the first call; re-attach so a listener re-added after a
-        // pause re-schedules the drain for messages buffered meanwhile.
-        if (m_started && isEntangled()) {
-            if (auto* context = scriptExecutionContext())
-                m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
-        }
     } else if (eventType == eventNames().closeEvent) {
         m_hasCloseEventListener.store(true, std::memory_order_release);
+        // Reports a peer that went away while this port had no listener (see peerClosed()).
         if (isEntangled()) {
-            // Record our context with the pipe so the peer's close() can deliver a
-            // 'close' event even if we never started (no 'message' listener).
             if (auto* context = scriptExecutionContext())
                 m_pipe->registerCloseContext(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
         }
@@ -538,8 +559,12 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
 bool MessagePort::removeEventListener(const AtomString& eventType, EventListener& listener, const EventListenerOptions& options)
 {
     auto result = EventTarget::removeEventListener(eventType, listener, options);
-    if (!hasEventListeners(eventNames().messageEvent))
+    if (!hasEventListeners(eventNames().messageEvent)) {
         m_hasMessageEventListener = false;
+        // Node stops the port when its last 'message' listener goes.
+        if (eventType == eventNames().messageEvent)
+            m_receiving = false;
+    }
     if (!hasEventListeners(eventNames().closeEvent))
         m_hasCloseEventListener.store(false, std::memory_order_release);
     return result;

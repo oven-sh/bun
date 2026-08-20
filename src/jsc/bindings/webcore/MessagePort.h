@@ -79,8 +79,7 @@ public:
     // The worker's entry module finished evaluating: a start() requested before that takes effect now.
     void entrySettled();
     void close();
-    // Called on the entangled peer when this side closes: dispatches a
-    // 'close' event and releases the event-loop ref so the loop can idle.
+    // Posted by the pipe to the peer of a side that closed: closes this port too once its queue is drained.
     void peerClosed();
     void dispatchCloseEvent();
 
@@ -147,6 +146,10 @@ private:
     const uint8_t m_side { 0 };
 
     bool m_started { false };
+    // Node's receiving_messages_: set by start() (explicitly or through a 'message' listener),
+    // cleared when the last 'message' listener is removed. While clear, a peer's close waits
+    // behind the queued messages (peerClosed()); m_started itself is never cleared.
+    bool m_receiving { false };
     bool m_isDetached { false };
     bool m_isClosing { false };
     // True while a 'message' handler is on the stack. close() called from inside one

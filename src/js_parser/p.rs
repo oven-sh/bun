@@ -4774,46 +4774,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         parts: &[&'a [u8]],
     ) -> Result<Expr, crate::Error> {
-        let result = self.find_symbol(loc, parts[0])?;
+        self.member_expression_for_names(
+            loc,
+            parts[0],
+            parts[1..].iter().copied(),
+            true,
+            IdentifierOpts::new(),
+        )
+    }
+
+    /// `first.rest[0]...` as if written at `loc`, for names that come from options, not source.
+    fn member_expression_for_names(
+        &mut self,
+        loc: bun_ast::Loc,
+        first: &'a [u8],
+        rest: impl Iterator<Item = &'a [u8]>,
+        can_be_removed_if_unused: bool,
+        last_link_opts: IdentifierOpts,
+    ) -> Result<Expr, crate::Error> {
+        let mut rest = rest.peekable();
+        let result = self.find_symbol(loc, first)?;
+        let head_opts = if rest.peek().is_some() {
+            IdentifierOpts::new()
+        } else {
+            last_link_opts
+        };
 
         let value = self.handle_identifier(
             loc,
             E::Identifier::init(result.r#ref)
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
-                .with_can_be_removed_if_unused(true),
-            Some(parts[0]),
-            IdentifierOpts::new().with_was_originally_identifier(true),
+                .with_can_be_removed_if_unused(can_be_removed_if_unused),
+            None,
+            head_opts.with_was_originally_identifier(true),
         );
-        if parts.len() > 1 {
-            return Ok(self.member_expression(loc, value, &parts[1..]));
-        }
-
-        Ok(value)
+        Ok(self.member_expression(loc, value, rest, last_link_opts))
     }
 
-    fn member_expression(
+    fn member_expression<I: Iterator<Item = &'a [u8]>>(
         &mut self,
         loc: bun_ast::Loc,
         initial_value: Expr,
-        parts: &[&'a [u8]],
+        mut parts: core::iter::Peekable<I>,
+        last_link_opts: IdentifierOpts,
     ) -> Expr {
         let mut value = initial_value;
 
-        for part in parts {
-            if let Some(rewrote) = self.maybe_rewrite_property_access(
-                loc,
-                value,
-                part,
-                loc,
-                // All defaults on the packed-u8 IdentifierOpts.
-                IdentifierOpts::default(),
-            ) {
+        while let Some(part) = parts.next() {
+            let opts = if parts.peek().is_some() {
+                IdentifierOpts::new()
+            } else {
+                last_link_opts
+            };
+            if let Some(rewrote) = self.maybe_rewrite_property_access(loc, value, part, loc, opts) {
                 value = rewrote;
             } else {
                 value = self.new_expr(
                     E::Dot {
                         target: value,
-                        name: (*part).into(),
+                        name: part.into(),
                         name_loc: loc,
                         can_be_removed_if_unused: self.options.features.dead_code_elimination,
                         ..Default::default()
@@ -6209,35 +6228,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         assign_target: js_ast::AssignTarget,
         is_delete_target: bool,
-        define_data: &DefineData,
+        define_data: &'a DefineData,
     ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
         // real Expr.Data by contract.
         let value = define_data.value;
         match value {
             js_ast::ExprData::EIdentifier(id) => {
-                // Identifier defines always carry a name. Match the
-                // contract so `handle_identifier`'s trailing `find_symbol`
-                // rebind runs against the *resolved* scope ref, not the
-                // define-time ref silently passed through with `None`.
-                let original_name: &[u8] = define_data
+                // `DefineData::parse` keeps an `a.b.c` value as one identifier named "a.b.c".
+                let path: &'a [u8] = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
-                // SAFETY: `define_data` borrows `p.define: &'a Define`; the
-                // backing `original_name` bytes live for `'a`. Erase the local
-                // borrow lifetime to satisfy `handle_identifier`'s
-                // `Option<&'a [u8]>` param.
-                let original_name: &'a [u8] =
-                    unsafe { bun_collections::detach_lifetime(original_name) };
-                return self.handle_identifier(
-                    loc,
-                    id,
-                    Some(original_name),
-                    IdentifierOpts::new()
-                        .with_assign_target(assign_target)
-                        .with_is_delete_target(is_delete_target)
-                        .with_was_originally_identifier(true),
-                );
+                let (first, rest) = strings::split_once_char(path, b'.').unwrap_or((path, b""));
+                return self
+                    .member_expression_for_names(
+                        loc,
+                        first,
+                        // `tokenize`, not `split`: an empty `rest` has no parts.
+                        strings::tokenize(rest, b"."),
+                        id.can_be_removed_if_unused(),
+                        IdentifierOpts::new()
+                            .with_assign_target(assign_target)
+                            .with_is_delete_target(is_delete_target),
+                    )
+                    .expect("unreachable");
             }
             js_ast::ExprData::EString(str_) => {
                 return self.new_expr(&*str_, loc);

@@ -3170,10 +3170,183 @@ describe("bundler", () => {
     },
     run: { stdout: "try:false" },
   });
+
+  // A define whose value names a symbol (`--define X=ns.value`) has to become a
+  // reference to that symbol at every use site. Printing the value's text
+  // instead leaves the declaration unused, so tree shaking drops it and
+  // minification renames it out from under the substituted expression.
+  itBundled("edgecase/DefineDotKeyValueReferencesLocal", {
+    files: {
+      "/entry.js": /* js */ `
+        const cfg = { foo: "from cfg" };
+        console.log(process.env.FOO);
+      `,
+    },
+    define: { "process.env.FOO": "cfg.foo" },
+    run: { stdout: "from cfg" },
+  });
+  itBundled("edgecase/DefineImportMetaValueReferencesLocal", {
+    files: {
+      "/entry.js": /* js */ `
+        const shim = { meta: { url: "shimmed url" } };
+        console.log(import.meta.url);
+      `,
+    },
+    define: { "import.meta": "shim.meta" },
+    run: { stdout: "shimmed url" },
+  });
+  itBundled("edgecase/DefineValueDeepPropertyChainReferencesLocal", {
+    files: {
+      "/entry.js": /* js */ `
+        const a = { b: { c: "deep" } };
+        console.log(X);
+      `,
+    },
+    define: { X: "a.b.c" },
+    run: { stdout: "deep" },
+  });
+  itBundled("edgecase/DefineValueFollowsRenamedLocal", {
+    files: {
+      "/entry.js": /* js */ `
+        const namespaceObject = { value: "renamed" };
+        console.log(typeof namespaceObject, X);
+      `,
+    },
+    define: { X: "namespaceObject.value" },
+    minifyIdentifiers: true,
+    run: { stdout: "object renamed" },
+  });
+  itBundled("edgecase/DefineValueAsAssignmentTargetFollowsRenamedLocal", {
+    files: {
+      "/entry.js": /* js */ `
+        const namespaceObject = {};
+        X = "assigned";
+        console.log(X);
+      `,
+    },
+    define: { X: "namespaceObject.value" },
+    minifyIdentifiers: true,
+    run: { stdout: "assigned" },
+  });
+  itBundled("edgecase/DefineValueFollowsRenamedLocalWithoutBundling", {
+    files: {
+      "/entry.js": /* js */ `
+        function read() {
+          const namespaceObject = { value: "transpiled" };
+          return X;
+        }
+        console.log(read());
+      `,
+    },
+    define: { X: "namespaceObject.value" },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { stdout: "transpiled" },
+  });
+  // TypeScript drops imports it sees no use of; a use through a define counts.
+  itBundled("edgecase/DefineValueKeepsTypeScriptImportWithoutBundling", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { ns } from "./ns.js";
+        console.log(X);
+      `,
+      "/ns.js": /* js */ `export const ns = { value: "kept" };`,
+    },
+    define: { X: "ns.value" },
+    bundling: false,
+    run: { stdout: "kept" },
+  });
+  itBundled("edgecase/DefineValueReferencesImports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { esm } from "./esm.js";
+        import * as ns from "./esm.js";
+        import { cjs } from "./cjs.cjs";
+        console.log(FROM_ESM, FROM_NAMESPACE, FROM_CJS === cjs, FROM_CJS_PROPERTY);
+      `,
+      "/esm.js": /* js */ `export const esm = { value: "esm" };`,
+      "/cjs.cjs": /* js */ `module.exports = { cjs: { value: "cjs" } };`,
+    },
+    define: {
+      FROM_ESM: "esm.value",
+      FROM_NAMESPACE: "ns.esm.value",
+      FROM_CJS: "cjs",
+      FROM_CJS_PROPERTY: "cjs.value",
+    },
+    run: { stdout: "esm esm true cjs" },
+  });
+  // Assigning through a define is assigning to its value, with the same rules
+  // and rewrites as writing the value out: import bindings and namespace
+  // members are rejected, a property of an imported object is fine, and a
+  // CommonJS export is converted like any other `exports.x = ...`.
+  itBundled("edgecase/DefineValueImportBindingCannotBeAssigned", {
+    files: {
+      "/entry.js": /* js */ `
+        import { binding } from "./other.js";
+        X = 1;
+      `,
+      "/other.js": /* js */ `export let binding = 0;`,
+    },
+    define: { X: "binding" },
+    bundleErrors: {
+      "/entry.js": ['Cannot assign to import "binding"'],
+    },
+  });
+  itBundled("edgecase/DefineValueNamespaceMemberCannotBeAssigned", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./other.js";
+        X = 1;
+      `,
+      "/other.js": /* js */ `export let member = 0;`,
+    },
+    define: { X: "ns.member" },
+    bundleErrors: {
+      "/entry.js": ['Cannot assign to import "member"'],
+    },
+  });
+  itBundled("edgecase/DefineValuePropertyOfImportCanBeAssigned", {
+    files: {
+      "/entry.js": /* js */ `
+        import { box } from "./other.js";
+        X = "stored";
+        console.log(box.prop);
+      `,
+      "/other.js": /* js */ `export const box = {};`,
+    },
+    define: { X: "box.prop" },
+    run: { stdout: "stored" },
+  });
+  itBundled("edgecase/DefineValueCommonJSExportCanBeAssigned", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as lib from "./lib.cjs";
+        console.log(lib.foo);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.bar = 1;
+        X = 2;
+      `,
+    },
+    define: { X: "exports.foo" },
+    cjs2esm: true,
+    run: { stdout: "2" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {
   describe(`bundler_edgecase/${backend}`, () => {
+    itBundled("edgecase/DefineValueReferencesLocal", {
+      files: {
+        "/entry.js": /* js */ `
+          const ns = { value: "from ns" };
+          console.log(X);
+        `,
+      },
+      define: { X: "ns.value" },
+      backend,
+      run: { stdout: "from ns" },
+    });
     itBundled("edgecase/ProcessEnvArbitrary", {
       files: {
         "/entry.js": /* js */ `

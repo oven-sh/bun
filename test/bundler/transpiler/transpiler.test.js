@@ -2197,6 +2197,46 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
+  // `X: "ns.value"` must reference the `ns` in scope at the use site rather
+  // than print the define's text, or renaming `ns` breaks the substitution.
+  it("define value that reads a property off a local follows the renamed local", () => {
+    const minifier = new Bun.Transpiler({
+      loader: "js",
+      define: { X: "namespaceObject.value", "process.env.FOO": "configObject.foo" },
+      minify: { identifiers: true },
+    });
+    const code = minifier.transformSync(`
+      function read() {
+        const namespaceObject = { value: "from namespace" }, configObject = { foo: "from config" };
+        return [X, process.env.FOO];
+      }
+      report(read());
+    `);
+    let result;
+    new Function("report", code)(value => (result = value));
+    expect(result).toEqual(["from namespace", "from config"]);
+  });
+
+  // Each JSX element is one use of its factory, so a factory that is a
+  // single-use local is inlined exactly like the equivalent hand-written call.
+  it("a JSX element counts as one use of a classic factory", () => {
+    const minifier = new Bun.Transpiler({ loader: "jsx", minify: { syntax: true } });
+    const code = minifier.transformSync(`
+      /* @jsxRuntime classic */
+      /* @jsx h */
+      export function render(mk) {
+        const h = mk();
+        return <div id="x">hi</div>;
+      }
+    `);
+    expect(code).toBe(`export function render(mk) {
+  return mk()("div", {
+    id: "x"
+  }, "hi");
+}
+`);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

@@ -98,9 +98,11 @@ export function neverCalled(x) {
 `;
 
 // The exported-declaration form makes JSC emit a zero-width basic block past
-// the end of the function (issue #39821).
+// the end of the function, and an empty vm script would get a zero-width
+// whole-script range (issue #39821).
 const zeroWidthRangeFixture = `
 import { Session } from "node:inspector/promises";
+import vm from "node:vm";
 
 const session = new Session();
 session.connect();
@@ -109,6 +111,7 @@ await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed:
 
 const { f } = await import("./exported-fn.mjs");
 f(1);
+vm.runInThisContext("", { filename: "file:///empty-script.js" });
 
 const coverage = await session.post("Profiler.takePreciseCoverage");
 await session.post("Profiler.stopPreciseCoverage");

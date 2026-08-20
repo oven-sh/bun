@@ -293,6 +293,9 @@ function buildScriptCoverageList(
 
   for (const script of rawScripts) {
     const { scriptId, sourceLength } = script;
+    // V8 does not report empty scripts. Emitting one would make the
+    // whole-script range below zero-width.
+    if (sourceLength === 0) continue;
     let { url } = script;
     // V8 coverage reports file-backed scripts with file:// URLs even when the
     // script name is a plain filesystem path (e.g. a vm script filename or a

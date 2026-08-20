@@ -1303,9 +1303,22 @@ mod _async_tasks {
         /// the functions to check .signal.aborted() for early returns.
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
+        /// The shape `run_async` / `node_fs_binding.rs` dispatch through: the
+        /// `Binding` is only read by the Windows `UVFSRequest` twin of this
+        /// function (path scratch), never by a pool task.
         pub(crate) fn create(
             global_object: &JSGlobalObject,
             _binding: &Binding,
+            args: A,
+            vm: &mut VirtualMachine,
+        ) -> JSValue {
+            Self::schedule(global_object, args, vm)
+        }
+
+        /// Entry point for native callers (`Blob.stat()`, `File::unlink()`),
+        /// which have no `Binding` and need none.
+        pub(crate) fn schedule(
+            global_object: &JSGlobalObject,
             args: A,
             vm: &mut VirtualMachine,
         ) -> JSValue {
@@ -9595,23 +9608,18 @@ fn map_rm_errno_narrow(e: E) -> E {
 /// `path` must point to a valid NUL-terminated C string.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__mkdirp(
-    global_this: &JSGlobalObject,
+    _global_this: &JSGlobalObject,
     path: *const c_char,
 ) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
-    // `mkdir_recursive` never re-enters JS, so the closure-scoped borrow of the
-    // VM's binding is the only one live.
-    Binding::for_vm(global_this)
-        .node_fs
-        .with_mut(|node_fs| {
-            node_fs.mkdir_recursive(&args::Mkdir {
-                path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                    path_bytes, false,
-                )),
-                recursive: true,
-                ..Default::default()
-            })
+    NodeFS::default()
+        .mkdir_recursive(&args::Mkdir {
+            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                path_bytes, false,
+            )),
+            recursive: true,
+            ..Default::default()
         })
         .is_ok()
 }

@@ -2025,7 +2025,7 @@ extern crate alloc;
 // real work (I/O, JS callback, allocation).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Opaque per-VM state owned by `bun_runtime` (Timer::All, NodeFS, Body hive
+/// Opaque per-VM state owned by `bun_runtime` (Timer::All, Body hive
 /// allocator, …). Stored as `*mut c_void` in `VirtualMachine`; the high tier
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;

@@ -2177,14 +2177,12 @@ impl BlobExt for Blob {
                     .expect("infallible: store present")
                     .data
                     .as_file();
-                let binding = crate::node::fs::Binding::for_vm(global_this);
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        Ok(crate::node::fs::async_::Stat::create(
+                        Ok(crate::node::fs::async_::Stat::schedule(
                             global_this,
-                            binding,
                             crate::node::fs::args::Stat {
                                 path: crate::node::types::PathLike::EncodedSlice(match path_like {
                                     // Already UTF-8 — take an owned copy.
@@ -2202,9 +2200,8 @@ impl BlobExt for Blob {
                     PathOrFileDescriptor::Fd(fd) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        Ok(crate::node::fs::async_::Fstat::create(
+                        Ok(crate::node::fs::async_::Fstat::schedule(
                             global_this,
-                            binding,
                             crate::node::fs::args::Fstat {
                                 fd: *fd,
                                 big_int: false,
@@ -4394,8 +4391,6 @@ fn write_file_with_empty_source_to_destination(
     match &destination_store.data {
         store::Data::File(file) => {
             // TODO: make this async
-            // A fresh `NodeFS` suffices: `truncate`/`mkdir_recursive` keep no
-            // state on it between calls.
             let mut node_fs = node::fs::NodeFS::default();
             let mut result = node_fs.truncate(
                 &node::fs::args::Truncate {

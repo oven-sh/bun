@@ -160,6 +160,61 @@ describe("node:http", () => {
       server.close();
     });
 
+    it("listen({ signal }) closes the server when the signal is aborted", async () => {
+      const server = createServer();
+      try {
+        const controller = new AbortController();
+        await new Promise<void>(resolve =>
+          server.listen({ port: 0, host: "127.0.0.1", signal: controller.signal }, resolve),
+        );
+        const { port } = server.address() as AddressInfo;
+        const closed = once(server, "close");
+
+        controller.abort();
+
+        expect(server.listening).toBe(false);
+        expect(server.address()).toBeNull();
+        await closed;
+
+        const socket = connect({ port, host: "127.0.0.1" });
+        const [err] = await once(socket, "error");
+        expect(err.code).toBe("ECONNREFUSED");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("listen({ signal }) with an already aborted signal closes the server without emitting 'listening'", async () => {
+      const server = createServer();
+      try {
+        const onListening = mock(() => {});
+        server.on("listening", onListening);
+        const closed = once(server, "close");
+
+        server.listen({ port: 0, host: "127.0.0.1", signal: AbortSignal.abort() }, onListening);
+        await new Promise<void>(resolve => process.nextTick(resolve));
+
+        expect(server.listening).toBe(false);
+        expect(server.address()).toBeNull();
+        await closed;
+        expect(onListening).not.toHaveBeenCalled();
+      } finally {
+        server.close();
+      }
+    });
+
+    it("listen({ signal }) rejects a value that is not an AbortSignal", () => {
+      const server = createServer();
+      try {
+        expect(() => server.listen({ port: 0, host: "127.0.0.1", signal: "INVALID_SIGNAL" as any })).toThrow(
+          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+        );
+        expect(server.address()).toBeNull();
+      } finally {
+        server.close();
+      }
+    });
+
     it("should use the provided port", async () => {
       while (true) {
         try {

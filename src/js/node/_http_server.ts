@@ -22,6 +22,7 @@ const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptio
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
+const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -553,6 +554,7 @@ Server.prototype.listen = function () {
     const arg0 = arguments[0];
     if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
       // (options[...][, cb])
+      addServerAbortSignalOption(this, arg0);
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;

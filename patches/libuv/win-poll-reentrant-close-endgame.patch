@@ -1,0 +1,38 @@
+--- a/src/win/poll.c
++++ b/src/win/poll.c
+@@ -237,11 +237,19 @@
+   /* poll_cb may have called uv_poll_start (covered above by the dual-req
+    * submitting the other slot) or uv_poll_stop / uv_close. Only the
+    * close-endgame check needs to run post-callback. A re-submit here is
+-   * still needed for the `events == 0` path (filtered-out completion). */
++   * still needed for the `events == 0` path (filtered-out completion).
++   *
++   * poll_cb may also have run the loop itself (uv_run from inside the
++   * callback: an embedder waiting synchronously on something, a deasync-style
++   * addon). If it closed this handle in there, the close's cancellation
++   * completed and was processed by the nested run, which saw both slots empty
++   * and ran the endgame: the handle is UV_HANDLE_CLOSED and its close_cb has
++   * been called. Queueing the endgame a second time would close it again. */
+   if ((handle->events & ~(handle->submitted_events_1 |
+       handle->submitted_events_2)) != 0) {
+     uv__fast_poll_submit_poll_req(loop, handle);
+-  } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++  } else if ((handle->flags & (UV_HANDLE_CLOSING | UV_HANDLE_CLOSED)) ==
++                 UV_HANDLE_CLOSING &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
+     uv__want_endgame(loop, (uv_handle_t*) handle);
+@@ -439,10 +447,12 @@
+     }
+   }
+ 
++  /* UV_HANDLE_CLOSED: see uv__fast_poll_process_poll_req. */
+   if ((handle->events & ~(handle->submitted_events_1 |
+       handle->submitted_events_2)) != 0) {
+     uv__slow_poll_submit_poll_req(loop, handle);
+-  } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++  } else if ((handle->flags & (UV_HANDLE_CLOSING | UV_HANDLE_CLOSED)) ==
++                 UV_HANDLE_CLOSING &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
+     uv__want_endgame(loop, (uv_handle_t*) handle);

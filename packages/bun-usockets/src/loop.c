@@ -443,10 +443,13 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #endif
     if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
-     * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
-     * closed sockets: the outer tick's dispatch is mid-iteration and may still
-     * hold a pointer to one (it reads s->flags right after on_data returns).
-     * Defer to the outermost tick's loop_post. */
+     * waitForPromise → us_loop_run_bun_tick, or uv_run on Windows). The inner
+     * tick must not free closed sockets: the outer tick's dispatch is
+     * mid-iteration and may still hold a pointer to one (it reads s->flags
+     * right after on_data returns). Defer to the outermost tick's loop_post.
+     * Every backend runs loop_post at depth 1 when nothing is nested: the
+     * epoll/kqueue tick functions count ticks, eventing/libuv.c counts the
+     * callbacks libuv is running, check_cb included. */
     if (loop->data.tick_depth <= 1) {
         us_internal_free_closed_sockets(loop);
     }

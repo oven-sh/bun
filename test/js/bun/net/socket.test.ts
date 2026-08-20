@@ -369,6 +369,20 @@ describe.concurrent("socket", () => {
     expect(await bunRun(fileURLToPath(new URL("./tls-handshake-pause-spin-fixture.ts", import.meta.url)))).toSpawn();
   });
 
+  // A socket closed from its data handler is freed by loop_post. A nested event
+  // loop run from that same handler (Bun.build waiting on an async plugin
+  // setup) must leave it allocated: the dispatch that called the handler still
+  // reads the socket after the handler returns. The libuv backend ran
+  // loop_post from every nested uv_run (its tick_depth was never maintained),
+  // so on Windows this freed the socket under the dispatch. The TLS variant is
+  // the us_internal_ssl_on_data tail (ssl_retry_parked_write) from the crash
+  // reports; the TCP variant is the plain loop.c read loop.
+  it.each(["tcp", "tls"])("closing a %s socket from data() and then running a nested event loop", async mode => {
+    const fixture = fileURLToPath(new URL("./socket-close-in-nested-loop-fixture.ts", import.meta.url));
+    const env = { FIXTURE_TLS_CERT: tls.cert, FIXTURE_TLS_KEY: tls.key };
+    expect(await bunRun([fixture, mode], env)).toSpawn("ok");
+  });
+
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fileURLToPath(new URL("./socket-reload-fixture.ts", import.meta.url))],

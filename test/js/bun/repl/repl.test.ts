@@ -61,7 +61,12 @@ class ScreenModel {
   // An escape sequence cut off at the end of the previous chunk.
   private unfinished = "";
 
-  constructor(private readonly cols: number) {}
+  constructor(private cols: number) {}
+
+  /** Rows drawn so far keep their cells, as in a terminal that does not reflow. */
+  resize(cols: number): void {
+    this.cols = cols;
+  }
 
   private rowAt(index: number): string[] {
     while (this.rows.length <= index) this.rows.push([]);
@@ -191,12 +196,15 @@ async function withTerminalRepl(
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
     /** Resolves with the rendered screen once `ready` accepts it. */
     waitForScreen: (ready: (screen: Screen) => boolean, timeoutMs?: number) => Promise<Screen>;
+    /** Changes the width of the pty, and of the screen that `waitForScreen` renders. */
+    resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
   options: { env?: Record<string, string | undefined>; cols?: number } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
+  const rows = 40;
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
   // Streaming, so that a multi-byte character split across two reads stays intact.
@@ -206,7 +214,7 @@ async function withTerminalRepl(
   using home = tempDir("repl-home", {});
   await using terminal = new Bun.Terminal({
     cols,
-    rows: 40,
+    rows,
     data(_term, data) {
       const str = decoder.decode(data, { stream: true });
       received.push(str);
@@ -260,10 +268,13 @@ async function withTerminalRepl(
   // below the test timeout so that a failure reports the screen it got stuck on.
   const model = new ScreenModel(cols);
   let modelled = 0;
+  const renderReceived = () => {
+    while (modelled < received.length) model.feed(received[modelled++]);
+  };
   const waitForScreen = async (ready: (screen: Screen) => boolean, timeoutMs = 3000): Promise<Screen> => {
     const deadline = Date.now() + timeoutMs;
     while (true) {
-      while (modelled < received.length) model.feed(received[modelled++]);
+      renderReceived();
       const screen = model.screen();
       if (ready(screen)) return screen;
       const remaining = deadline - Date.now();
@@ -282,11 +293,19 @@ async function withTerminalRepl(
     }
   };
 
+  // Call this while the REPL waits for input: what it wrote before is laid out
+  // at the old width, and what it writes next at the new one.
+  const resize = (newCols: number) => {
+    renderReceived();
+    terminal.resize(newCols, rows);
+    model.resize(newCols);
+  };
+
   const allOutput = () => stripAnsi(received.join(""));
 
   await waitFor(/\u276f|> /); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, waitForScreen, allOutput });
+  await fn({ terminal, proc, send, waitFor, waitForScreen, resize, allOutput });
 
   // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
   // the line, wherever the cursor is, so `.exit` is not appended to it (which
@@ -1744,6 +1763,23 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
         },
         { cols },
       );
+    });
+
+    test("a terminal narrowed after startup wraps the input at its new width", async () => {
+      // The pty starts out 120 columns wide, on which the line fits on one row.
+      await withTerminalRepl(async ({ send, resize, waitForScreen }) => {
+        const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+        resize(cols);
+
+        send(line);
+        let screen = await waitForScreen(s => s.rows.at(-1) === line.slice(split));
+        expect(screen.rows.slice(top)).toEqual([`> ${line.slice(0, split)}`, line.slice(split)]);
+        await waitForScreen(s => s.cursor.row === top + 1 && s.cursor.col === line.length - split);
+
+        send("\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "6");
+        expect(screen.rows.slice(top)).toEqual([`> ${line.slice(0, split)}`, line.slice(split), "6", "> "]);
+      });
     });
   });
 

@@ -4,6 +4,7 @@ import { describe, expect, it, test } from "bun:test";
 import {
   createCipheriv,
   createDecipheriv,
+  createECDH,
   createPrivateKey,
   createPublicKey,
   createSecretKey,
@@ -13,6 +14,7 @@ import {
   generateKeyPair,
   generateKeyPairSync,
   generateKeySync,
+  getCurves,
   KeyObject,
   privateDecrypt,
   privateEncrypt,
@@ -547,7 +549,6 @@ describe("crypto.KeyObjects", () => {
     },
   ].forEach(info => {
     const { keyType, namedCurve } = info;
-    const test = namedCurve === "secp256k1" ? it.skip : it;
     let privateKey: KeyObject;
     test(`${keyType} ${namedCurve} createPrivateKey from Buffer should work`, async () => {
       const key = createPrivateKey(info.private);
@@ -808,7 +809,6 @@ describe("crypto.KeyObjects", () => {
   });
   describe("Test async elliptic curve key generation with 'jwk' encoding and named curve", () => {
     ["P-384", "P-256", "P-521", "secp256k1"].forEach(curve => {
-      const test = curve === "secp256k1" ? it.skip : it;
       test(`should work with ${curve}`, async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         generateKeyPair(
@@ -842,6 +842,96 @@ describe("crypto.KeyObjects", () => {
         expect(publicKey.crv).toEqual(curve);
         expect(publicKey.crv).toEqual(privateKey.crv);
       });
+    });
+  });
+
+  // secp256k1 elliptic curve support. https://github.com/oven-sh/bun/issues/32524
+  describe("secp256k1", () => {
+    // DER encoding of the named-curve OID 1.3.132.0.10.
+    const secp256k1Oid = Buffer.from([0x2b, 0x81, 0x04, 0x00, 0x0a]);
+
+    function pemToDer(pem: string): Buffer {
+      const body = pem
+        .split("\n")
+        .filter(line => line && !line.startsWith("-----"))
+        .join("");
+      return Buffer.from(body, "base64");
+    }
+
+    it("generateKeyPairSync exports spki/pkcs8 PEM with the secp256k1 OID", () => {
+      const { publicKey, privateKey } = generateKeyPairSync("ec", {
+        namedCurve: "secp256k1",
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      });
+      expect(publicKey).toContain("-----BEGIN PUBLIC KEY-----");
+      expect(privateKey).toContain("-----BEGIN PRIVATE KEY-----");
+      // Node/OpenSSL encode secp256k1 as a named curve, not explicit parameters.
+      expect(pemToDer(publicKey).includes(secp256k1Oid)).toBe(true);
+      expect(pemToDer(privateKey).includes(secp256k1Oid)).toBe(true);
+    });
+
+    it("generateKeyPair (async) produces a re-importable key (issue repro)", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers<{ publicKey: KeyObject; privateKey: KeyObject }>();
+      generateKeyPair("ec", { namedCurve: "secp256k1" }, (err, publicKey, privateKey) => {
+        if (err) return reject(err);
+        resolve({ publicKey, privateKey });
+      });
+      const { publicKey, privateKey } = await promise;
+      expect(publicKey.asymmetricKeyDetails?.namedCurve).toBe("secp256k1");
+      expect(privateKey.asymmetricKeyDetails?.namedCurve).toBe("secp256k1");
+
+      const spki = publicKey.export({ type: "spki", format: "pem" }) as string;
+      const pkcs8 = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+      expect(createPublicKey(spki).asymmetricKeyDetails?.namedCurve).toBe("secp256k1");
+      expect(createPrivateKey(pkcs8).asymmetricKeyDetails?.namedCurve).toBe("secp256k1");
+    });
+
+    it("signs and verifies with ECDSA", () => {
+      const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "secp256k1" });
+      const data = Buffer.from("the quick brown fox");
+      const signature = createSign("sha256").update(data).sign(privateKey);
+      expect(createVerify("sha256").update(data).verify(publicKey, signature)).toBe(true);
+      // A different message must not verify against the same signature.
+      expect(createVerify("sha256").update(Buffer.from("other")).verify(publicKey, signature)).toBe(false);
+    });
+
+    it("imports a known secp256k1 key and round-trips it", () => {
+      const privatePem = readFile(path.join(import.meta.dir, "fixtures", "ec_secp256k1_private.pem"), "ascii");
+      const publicPem = readFile(path.join(import.meta.dir, "fixtures", "ec_secp256k1_public.pem"), "ascii");
+      const privateKey = createPrivateKey(privatePem);
+      const publicKey = createPublicKey(privateKey);
+      expect(privateKey.export({ type: "pkcs8", format: "pem" })).toBe(privatePem);
+      expect(publicKey.export({ type: "spki", format: "pem" })).toBe(publicPem);
+      expect((publicKey.export({ format: "jwk" }) as any).crv).toBe("secp256k1");
+    });
+
+    it("SEC1 private key exports and re-imports", () => {
+      // SEC1 import uses BoringSSL's curve OID lookup table, a different path
+      // from SPKI/PKCS8 (EVP). This is the default output of
+      // `openssl ecparam -genkey -name secp256k1`.
+      const { privateKey } = generateKeyPairSync("ec", { namedCurve: "secp256k1" });
+      const sec1 = privateKey.export({ type: "sec1", format: "pem" }) as string;
+      expect(sec1).toContain("-----BEGIN EC PRIVATE KEY-----");
+      const imported = createPrivateKey(sec1);
+      expect(imported.asymmetricKeyDetails?.namedCurve).toBe("secp256k1");
+      expect(imported.export({ type: "sec1", format: "pem" })).toBe(sec1);
+    });
+
+    it("is not listed by getCurves() yet", () => {
+      // Registered for keygen/import/export/ECDH, but intentionally not
+      // advertised until the remaining ECDH parity gaps are addressed.
+      expect(getCurves()).not.toContain("secp256k1");
+    });
+
+    it("derives a shared secret over ECDH", () => {
+      const alice = createECDH("secp256k1");
+      const bob = createECDH("secp256k1");
+      alice.generateKeys();
+      bob.generateKeys();
+      const aliceSecret = alice.computeSecret(bob.getPublicKey());
+      const bobSecret = bob.computeSecret(alice.getPublicKey());
+      expect(aliceSecret.equals(bobSecret)).toBe(true);
     });
   });
 
@@ -1179,7 +1269,6 @@ describe("crypto.KeyObjects", () => {
 
   describe("Test sync elliptic curve key generation with 'jwk' encoding and named curve", () => {
     ["P-384", "P-256", "P-521", "secp256k1"].forEach(curve => {
-      const test = curve === "secp256k1" ? it.skip : it;
       test(`should work with ${curve}`, async () => {
         const { publicKey, privateKey } = generateKeyPairSync("ec", {
           namedCurve: curve,

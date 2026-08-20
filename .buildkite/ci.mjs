@@ -516,15 +516,12 @@ function getBuildCommand(target, options, mode) {
  * @returns {Step}
  */
 function getBuildBunStep(platform, options) {
-  const { os, arch } = platform;
-  // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm
-  // (.buildkite/Dockerfile); best-effort install covers older images, and
-  // `|| true` keeps a missing package manager from failing the step — the
-  // build's own "nasm not found" error is clearer.
+  const { arch } = platform;
+  // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.
   const nasmSetup =
-    os === "windows" && arch === "x64"
+    arch === "x64"
       ? [
-          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || true",
+          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || brew install nasm || true",
         ]
       : [];
   return {
@@ -725,10 +722,17 @@ function getVerifyBaselineStep(platform, options) {
  *
  * linux-aarch64 is absent because its build lane runs on the aarch64 host and
  * traces itself; `packageAndUpload()` is its sole publisher.
+ *
+ * The `on` platforms are entries of `testPlatforms`, so the step runs on an
+ * image that exists. The windows tracer is built on the test VM for whichever
+ * architecture it is running on (scripts/orderfile/functrace-windows.c), so each
+ * windows target traces on its own arch's fleet.
  */
 const traceOrderTargets = [
   { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
   { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
+  { os: "windows", arch: "x64", on: { os: "windows", arch: "x64", release: "2019", tier: "oldest" } },
+  { os: "windows", arch: "aarch64", on: { os: "windows", arch: "aarch64", release: "11", tier: "latest" } },
 ];
 
 /**
@@ -744,15 +748,24 @@ const traceOrderTargets = [
  * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
  * no consumer. Soft-fail: the order file is an optimization, and a broken
  * tracer must not fail a build.
+ *
+ * Windows agents run commands under cmd.exe (see getVerifyBaselineStep for the
+ * `|| exit /b 1` convention). The generator compiles the tracer there, which
+ * takes clang-cl or a Visual Studio environment; the image has both, and
+ * vs-shell.ps1 provides the latter the same way it does for the test runner.
+ * The profile zip carries the two maps the generator resolves addresses with
+ * (packageAndUpload in scripts/build/ci.ts; scripts/orderfile/windows-symbols.ts).
  * @param {Target} target
  * @param {Platform} tracePlatform
  * @param {PipelineOptions} options
  * @returns {CommandStep}
  */
 function getTraceOrderStep(target, tracePlatform, options) {
+  const { os } = target;
   const targetKey = getTargetKey(target);
   const triplet = getTargetTriplet(target);
   const profileDir = `${triplet}-profile`;
+  const generate = `scripts/orderfile/generate.ts --build-dir=${profileDir} --out=${triplet}.order`;
   return {
     key: `${targetKey}-trace-order`,
     label: `${getTargetLabel(target)} - trace-order`,
@@ -762,13 +775,21 @@ function getTraceOrderStep(target, tracePlatform, options) {
     cancel_on_build_failing: isMergeQueue(),
     soft_fail: true,
     timeout_in_minutes: 15,
-    command: [
-      `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
-      `unzip -o '${profileDir}.zip'`,
-      `chmod +x ${profileDir}/bun-profile`,
-      `./${profileDir}/bun-profile scripts/orderfile/generate.ts --build-dir=${profileDir} --out=${triplet}.order`,
-      `buildkite-agent artifact upload '${triplet}.order'`,
-    ],
+    command:
+      os === "windows"
+        ? [
+            `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun || exit /b 1`,
+            `tar -xf ${profileDir}.zip || exit /b 1`,
+            `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 .\\${profileDir}\\bun-profile.exe ${generate} || exit /b 1`,
+            `buildkite-agent artifact upload ${triplet}.order`,
+          ]
+        : [
+            `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+            `unzip -o '${profileDir}.zip'`,
+            `chmod +x ${profileDir}/bun-profile`,
+            `./${profileDir}/bun-profile ${generate}`,
+            `buildkite-agent artifact upload '${triplet}.order'`,
+          ],
   };
 }
 

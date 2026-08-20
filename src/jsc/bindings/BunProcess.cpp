@@ -4103,12 +4103,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     //    arrayBuffers: 9386
     // }
 
+    size_t heapTotal = vm.heap.blockBytesAllocated();
     result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(heapTotal));
 
-    // heap.size() loops through every cell...
-    // TODO: add a binding for heap.sizeAfterLastCollection()
-    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
+    // heap.size() walks every block of the heap, so report the size JSC measured
+    // at the end of the most recent collection instead. Nothing requests a
+    // collection while Bun starts up, and until the first one nothing has been
+    // freed either, so the whole heap counts as used. (external is measured by
+    // collections too and stays 0 until then.)
+    size_t heapUsed = WebCore::clientData(vm)->heapSizeAfterLastCollection();
+    result->putDirectOffset(vm, 2, JSC::jsNumber(heapUsed ? heapUsed : heapTotal));
 
     result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 

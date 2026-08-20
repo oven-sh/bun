@@ -1890,6 +1890,83 @@ void test_v8_cpu_profiler(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// @datadog/pprof's restart path (used by dd-trace on every upload cycle) starts
+// the next profile *before* stopping the current one, ignores the status, and
+// then calls Stop() with whatever id Start() handed back. Overlapping sessions
+// must therefore be accepted and each Stop() must return its own profile.
+void test_v8_cpu_profiler_overlapping_sessions(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  CpuProfiler *profiler = CpuProfiler::New(isolate);
+  if (profiler == nullptr) {
+    return fail(info, "CpuProfiler::New returned null");
+  }
+  profiler->SetSamplingInterval(100);
+
+  auto busy = [] {
+    volatile double sink = 0;
+    for (int i = 0; i < 100000; i++) sink += i * 0.5;
+    (void)sink;
+  };
+
+  Local<String> title_a =
+      String::NewFromUtf8(isolate, "bun-v8-test-a").ToLocalChecked();
+  Local<String> title_b =
+      String::NewFromUtf8(isolate, "bun-v8-test-b").ToLocalChecked();
+
+  CpuProfilingResult a = profiler->Start(
+      title_a, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)a.status);
+  busy();
+
+  // Second session while the first is still running.
+  CpuProfilingResult b = profiler->Start(
+      title_b, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)b.status);
+  LOG_EXPR(a.id != b.id);
+
+  CpuProfile *profile_a = profiler->Stop(a.id);
+  if (profile_a == nullptr) {
+    return fail(info, "Stop(a) returned null while b was running");
+  }
+  if (profile_a->GetTopDownRoot() == nullptr) {
+    return fail(info, "profile a has no root");
+  }
+  busy();
+
+  CpuProfile *profile_b = profiler->Stop(b.id);
+  if (profile_b == nullptr) {
+    return fail(info, "Stop(b) returned null after a was stopped");
+  }
+  if (profile_b->GetTopDownRoot() == nullptr) {
+    return fail(info, "profile b has no root");
+  }
+
+  // b started after a, and neither profile runs backwards in time.
+  LOG_EXPR(profile_b->GetStartTime() >= profile_a->GetStartTime());
+  LOG_EXPR(profile_a->GetStartTime() <= profile_a->GetEndTime());
+  LOG_EXPR(profile_b->GetStartTime() <= profile_b->GetEndTime());
+  // No sample recorded for b may predate b's start.
+  bool b_samples_in_range = true;
+  for (int i = 0; i < profile_b->GetSamplesCount(); i++) {
+    if (profile_b->GetSampleTimestamp(i) < profile_b->GetStartTime()) {
+      b_samples_in_range = false;
+      break;
+    }
+  }
+  LOG_EXPR(b_samples_in_range);
+
+  // Stopping an id that was already stopped is not a session.
+  LOG_EXPR(profiler->Stop(a.id) == nullptr);
+
+  profile_a->Delete();
+  profile_b->Delete();
+  profiler->Dispose();
+
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1981,6 +2058,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",
                   test_v8_aligned_pointer_in_internal_field);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);
+  NODE_SET_METHOD(exports, "test_v8_cpu_profiler_overlapping_sessions",
+                  test_v8_cpu_profiler_overlapping_sessions);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

@@ -112,8 +112,7 @@ impl PackageManager {
             Err(
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                | crate::Error::DeviceBusy,
+                | crate::Error::Sys(bun_errno::SystemErrno::EACCES),
             ) => {
                 return Ok(list);
             }

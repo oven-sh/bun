@@ -225,9 +225,76 @@ function download_buildkite_artifact() {
   fi
 }
 
+function list_release_assets() {
+  gh release view "$1" --repo "$BUILDKITE_REPO" --json assets --jq '.assets[] | "\(.apiUrl) \(.name)"'
+}
+
+# `gh api` has no built-in retry (unlike `gh release upload`, which backs off
+# on 5xx). The swap loop below is ~2N metadata calls; one transient 502 under
+# `set -e` between DELETE and PATCH would leave the live asset name absent.
+function gh_api_retry() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    run_command gh api "$@" && return 0
+    echo "warn: gh api ${*:1:2} failed (attempt $attempt/5), retrying..." >&2
+    sleep "$attempt"
+  done
+  echo "error: gh api ${*:1:2} failed after 5 attempts" >&2
+  return 1
+}
+
+# Two-phase: upload everything under a per-build staging prefix first, then
+# swap each asset into place with a DELETE+PATCH pair. `gh release upload
+# --clobber` deletes an asset before uploading its replacement (5 workers in
+# parallel), so a cancel while uploads are in flight leaves those assets
+# deleted on the release and not re-uploaded. Buildkite's
+# cancel_running_branch_builds does exactly that when a later main build
+# starts mid-:rocket: (build 86848: 5 of 32 assets gone). Staging keeps the
+# live names serving users until the data transfer is done; the swap loop is
+# metadata-only so a cancel there costs at most the one asset mid-swap.
+# Prefix, not suffix: the staged file must still end in `.zip` or `gh`
+# uploads it as application/octet-stream and the PATCH rename cannot change
+# the content type.
 function upload_github_assets() {
   local tag="$(release_tag "$1")"
-  run_command gh release upload "$tag" "${@:2}" --clobber --repo "$BUILDKITE_REPO"
+  local files=("${@:2}")
+  local prefix="incoming-${BUILDKITE_BUILD_NUMBER:-$$}-"
+
+  local assets url name
+  assets="$(list_release_assets "$tag")"
+  while read -r url name; do
+    [ -n "$name" ] || continue
+    [[ "$name" == incoming-* ]] || continue
+    gh_api_retry -X DELETE "$url"
+  done <<< "$assets"
+
+  local stage="./release-stage" file staged=()
+  rm -rf "$stage" && mkdir -p "$stage"
+  for file in "${files[@]}"; do
+    ln -f "$file" "$stage/${prefix}${file}"
+    staged+=("$stage/${prefix}${file}")
+  done
+  run_command gh release upload "$tag" "${staged[@]}" --clobber --repo "$BUILDKITE_REPO"
+  rm -rf "$stage"
+
+  assets="$(list_release_assets "$tag")"
+  declare -A asset_url=()
+  while read -r url name; do
+    [ -n "$name" ] || continue
+    asset_url["$name"]="$url"
+  done <<< "$assets"
+  for file in "${files[@]}"; do
+    local new_url="${asset_url["${prefix}${file}"]}"
+    if [ -z "$new_url" ]; then
+      echo "error: staged asset ${prefix}${file} missing from release $tag after upload"
+      exit 1
+    fi
+    local old_url="${asset_url["$file"]}"
+    if [ -n "$old_url" ]; then
+      gh_api_retry -X DELETE "$old_url"
+    fi
+    gh_api_retry -X PATCH "$new_url" -f "name=$file" --jq .name
+  done
 }
 
 function update_github_release() {
@@ -367,8 +434,8 @@ function create_release() {
     run_command rm -rf "$work"
   }
 
-  # Fetch everything up front so the GitHub release can take all assets in one
-  # `gh release upload`; per-file uploads raced on the same release.
+  # Fetch everything up front so upload_github_assets can stage the full set
+  # in one `gh release upload` before touching the live asset names.
   local files=() pids=() artifact
   for artifact in "${artifacts[@]}"; do
     download_buildkite_artifact "$artifact" & pids+=("$!")

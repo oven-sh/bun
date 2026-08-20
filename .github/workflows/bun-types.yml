@@ -14,12 +14,6 @@ on:
       - "src/cli/init/tsconfig.default.json"
       - ".github/workflows/bun-types.yml"
   pull_request:
-    paths:
-      - "packages/bun-types/**"
-      - "packages/@types/bun/**"
-      - "test/integration/bun-types/**"
-      - "src/cli/init/tsconfig.default.json"
-      - ".github/workflows/bun-types.yml"
 
 env:
   BUN_VERSION: "canary"

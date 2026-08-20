@@ -1,4 +1,5 @@
 import { spawnSync } from "bun";
+import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
@@ -54,10 +55,20 @@ test.if(isWindows)("[windows] A file in drive root runs", async () => {
 // Ctrl+C on a terminal reaches `bun run` and the script together (same pgroup /
 // same console). `bun run` must leave it to the script and report its exit; on
 // Windows it used to die first with STATUS_CONTROL_C_EXIT. The script raises the
-// Ctrl+C itself once it is listening: system conhost's ConPTY does not turn a
-// written "\x03" into CTRL_C_EVENT, so on Windows it calls
-// GenerateConsoleCtrlEvent on its own (pseudo)console; on POSIX it signals its
-// own foreground process group, which is what the line discipline does for ^C.
+// Ctrl+C itself once it is listening: on POSIX it signals its own foreground
+// process group, which is what the line discipline does for ^C; on Windows it
+// calls GenerateConsoleCtrlEvent on its own (pseudo)console.
+//
+// CI agents start the test runner in a new process group, which on Windows means
+// "Ctrl+C ignored" - an attribute every descendant inherits (it is also why a
+// "\x03" written to a ConPTY looks like it does nothing there). Restore normal
+// Ctrl+C processing in this process so the `bun run` we spawn, and its script,
+// can receive CTRL_C_EVENT at all.
+if (isWindows) {
+  dlopen("kernel32.dll", {
+    SetConsoleCtrlHandler: { args: ["ptr", "i32"], returns: "i32" },
+  }).symbols.SetConsoleCtrlHandler(null, 0);
+}
 for (const shell of ["bun", "system"] as const) {
   test.concurrent(`Ctrl+C is left to the script and bun run reports its exit (--shell=${shell})`, async () => {
     using dir = tempDir("run-ctrl-c", {
@@ -110,7 +121,10 @@ for (const shell of ["bun", "system"] as const) {
     using dir = tempDir("run-ctrl-c-dies", {
       "package.json": JSON.stringify({
         name: "t",
-        scripts: { go: 'bun child.js; bun -e "console.log(String.fromCharCode(78,79,80,69))"' },
+        scripts: {
+          // cmd.exe sequences with `&`; sh and the bun shell with `;`.
+          go: `bun child.js ${isWindows && shell === "system" ? "&" : ";"} bun -e "console.log(String.fromCharCode(78,79,80,69))"`,
+        },
       }),
       "child.js": `
         setInterval(() => {}, 1000);

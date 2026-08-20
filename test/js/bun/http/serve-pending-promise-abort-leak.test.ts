@@ -365,6 +365,127 @@ test.each(bodyConsumers)(
   },
 );
 
+test("pendingRequests drops when the client aborts a parked direct-stream pull(), and the late pull() settle is a no-op", async () => {
+  // Same parked pull() scenario, driven through fetch() and an AbortController,
+  // with the pull() resolvers stashed in user state. Releasing them afterwards
+  // settles the pump promise of a context that is already gone: the stream
+  // reaction's take() returns null, and pendingRequests must not move.
+  const parked: Array<() => void> = [];
+  const pullEntered: Array<() => void> = [];
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write("x");
+            await c.flush();
+            pullEntered.shift()?.();
+            await new Promise<void>(r => parked.push(r));
+          },
+        }),
+        { headers: { "Content-Length": "100000" } },
+      );
+    },
+  });
+
+  async function abortWhileParked() {
+    const { promise: entered, resolve: markEntered } = Promise.withResolvers<void>();
+    pullEntered.push(markEntered);
+    const ac = new AbortController();
+    const res = await fetch(server.url, { signal: ac.signal });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    await reader.read();
+    await entered;
+    ac.abort();
+    await reader.closed.catch(() => {});
+  }
+
+  async function releaseParkedPulls(expectedCount: number) {
+    const resolvers = parked.splice(0);
+    expect(resolvers.length).toBe(expectedCount);
+    for (const r of resolvers) r();
+    await Bun.sleep(0);
+    Bun.gc(true);
+    await Bun.sleep(0);
+    expect(server.pendingRequests).toBe(0);
+  }
+
+  const iterations = 3;
+  for (let i = 0; i < iterations; i++) {
+    await abortWhileParked();
+  }
+  await waitForPendingRequestsWithoutGC(server, 0);
+  await releaseParkedPulls(iterations);
+
+  // The server still serves after the late settles, and the counter stays balanced.
+  await abortWhileParked();
+  await waitForPendingRequestsWithoutGC(server, 0);
+  await releaseParkedPulls(1);
+});
+
+// Between the abort and the late settle, the server itself goes away: stop()
+// (issued before or after the abort) plus pendingRequests reaching 0 lets the
+// server release its JS wrapper, and dropping the last reference lets GC free
+// it. Releasing the parked pull() after that must still be a no-op.
+for (const stopFirst of [true, false]) {
+  test(`releasing a parked pull() after the abort tore down the context and the server is a no-op (${stopFirst ? "stop-then-abort" : "abort-then-stop"})`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let release;
+        const gate = new Promise(r => (release = r));
+        let server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch() {
+            return new Response(new ReadableStream({
+              type: "direct",
+              async pull(c) {
+                c.write("x");
+                await c.flush();
+                await gate;
+              },
+            }), { headers: { "Content-Length": "100000" } });
+          },
+        });
+        const ac = new AbortController();
+        const reader = (await fetch(server.url, { signal: ac.signal })).body.getReader();
+        await reader.read();
+        ${stopFirst ? "server.stop();" : ""}
+        ac.abort();
+        await reader.closed.catch(() => {});
+        ${stopFirst ? "" : "server.stop();"}
+        // No Bun.gc here: the abort itself has to tear the context down.
+        for (let i = 0; server.pendingRequests !== 0; i++) {
+          if (i === 200) throw new Error("pendingRequests=" + server.pendingRequests);
+          await Bun.sleep(10);
+        }
+        server = undefined;
+        for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+        release();
+        for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+        console.log("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+}
+
 test("async server.upgrade() frees the context while the handler promise stays parked", async () => {
   // The upgrade detaches the response and disarms onAborted, so neither
   // on_abort nor an end path can run afterwards. The upgrade itself must

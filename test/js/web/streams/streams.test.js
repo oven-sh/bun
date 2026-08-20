@@ -1169,6 +1169,228 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   });
 
+  // Bytes the source flushes while no read is waiting stay in the controller's sink. The
+  // read issued next must drain them itself: a source that already flushed has no reason to
+  // flush again, so otherwise that read hangs until the source happens to flush or end.
+  describe("bytes a direct stream's source flushed while nothing was waiting", () => {
+    const decode = chunk => new TextDecoder().decode(chunk);
+    const macrotask = () => new Promise(resolve => setImmediate(resolve));
+    // A read this bug stalls settles only on the source's NEXT flush, so it is still pending
+    // once the microtask queue has drained; a read served from the sink has settled by then.
+    const valueOrStalled = read =>
+      Promise.race([read.then(({ value }) => decode(value)), macrotask().then(() => "stalled")]);
+    // Unless a test passes a pull(), it is only the per-read demand signal: the test writes
+    // every byte itself, so it decides whether a read is waiting at the time.
+    const makeSource = (pull = () => {}) => {
+      const state = { ctrl: undefined, pulls: 0 };
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          state.ctrl = c;
+          state.pulls++;
+          return pull(c, state.pulls);
+        },
+      });
+      return { rs, state };
+    };
+    const readOne = async (reader, state, text) => {
+      const read = reader.read();
+      state.ctrl.write(text);
+      state.ctrl.flush();
+      return decode((await read).value);
+    };
+    // Written (and flushed, unless the test is about a bare write) with nothing waiting. The
+    // macrotask yield is the point: it also puts the write's own end-of-tick flush behind us.
+    // A read issued in the same tick as the write would be served by that flush, and the sink
+    // would never be left holding bytes that nothing is going to flush again.
+    const writeWhileIdle = async (state, text, { flush = true } = {}) => {
+      state.ctrl.write(text);
+      if (flush) state.ctrl.flush();
+      await macrotask();
+    };
+
+    it.each([
+      ["explicitly flushed", { flush: true }],
+      ["flushed only by the write's end-of-tick flush", { flush: false }],
+    ])("are served to the next read() of a sync-pull stream (%s)", async (_, options) => {
+      const { rs, state } = makeSource();
+      const reader = rs.getReader();
+      expect(await readOne(reader, state, "x")).toBe("x");
+
+      await writeWhileIdle(state, "y", options);
+      // pull() still runs as this read's demand signal; the bytes come from the sink.
+      const read = reader.read();
+      expect({ read: await valueOrStalled(read), pulls: state.pulls }).toEqual({ read: "y", pulls: 2 });
+      // Delivered exactly once: the following flush reaches the following read.
+      expect(await readOne(reader, state, "z")).toBe("z");
+    });
+
+    it("are served to the next read() even though that read's pull() parks on a promise", async () => {
+      const { promise: parked, resolve: unpark } = Promise.withResolvers();
+      const { rs, state } = makeSource((_, pulls) => (pulls === 1 ? Promise.resolve() : parked));
+      const reader = rs.getReader();
+      expect(await readOne(reader, state, "x")).toBe("x");
+
+      await writeWhileIdle(state, "y");
+      const read = reader.read();
+      expect({ read: await valueOrStalled(read), pulls: state.pulls }).toEqual({ read: "y", pulls: 2 });
+      unpark();
+    });
+
+    it("are served to the next for-await step", async () => {
+      const { rs, state } = makeSource();
+      const iterator = rs[Symbol.asyncIterator]();
+      const first = iterator.next();
+      state.ctrl.write("x");
+      state.ctrl.flush();
+      expect(decode((await first).value)).toBe("x");
+
+      await writeWhileIdle(state, "y");
+      expect(await valueOrStalled(iterator.next())).toBe("y");
+      await iterator.return();
+    });
+
+    it("are served to the first read() of the next reader when no reader was attached at the time", async () => {
+      const { rs, state } = makeSource();
+      const first = rs.getReader();
+      expect(await readOne(first, state, "x")).toBe("x");
+      first.releaseLock();
+
+      await writeWhileIdle(state, "y");
+      expect(await valueOrStalled(rs.getReader().read())).toBe("y");
+    });
+
+    // The flush can also come from inside a pull(): from the async tail of the previous one,
+    // which then settles with nothing waiting. (A later pull() that is itself async and settles
+    // is no variant: its settlement drains the sink either way.)
+    it.each([
+      ["returns synchronously", () => {}],
+      ["parks on a promise", () => new Promise(() => {})],
+    ])(
+      "flushed by the previous pull()'s async tail are served to the next read(), whose pull() %s",
+      async (_, laterPull) => {
+        let tail;
+        const { rs, state } = makeSource((c, pulls) => {
+          if (pulls > 1) return laterPull();
+          tail = (async () => {
+            await macrotask();
+            c.write("x");
+            c.flush(); // into the first read
+            await macrotask();
+            c.write("y");
+            c.flush(); // nothing is waiting; this pull() is still in flight
+          })();
+          return tail;
+        });
+        const reader = rs.getReader();
+        expect(decode((await reader.read()).value)).toBe("x");
+        await tail;
+        // The first pull()'s settlement has been processed too, and found nothing waiting.
+        await macrotask();
+        const read = reader.read();
+        expect({ read: await valueOrStalled(read), pulls: state.pulls }).toEqual({ read: "y", pulls: 2 });
+      },
+    );
+
+    // Or from the re-pull that an async pull()'s settlement issues for a read that queued up
+    // behind it: once that read is served, a further flush by the re-pull finds nothing waiting.
+    it.each([
+      ["returns synchronously", () => {}],
+      ["returns a promise", () => Promise.resolve()],
+    ])(
+      "flushed by a settlement re-pull (which %s) after it served its read are served to the next read()",
+      async (_, finishRePull) => {
+        const { promise: firstPull, resolve: settleFirstPull } = Promise.withResolvers();
+        const { rs, state } = makeSource((c, pulls) => {
+          if (pulls === 1) return firstPull;
+          if (pulls !== 2) return;
+          c.write("a");
+          c.flush(); // into the read that queued up while the first pull() was pending
+          c.write("b");
+          c.flush(); // nothing is waiting any more
+          return finishRePull();
+        });
+        const reader = rs.getReader();
+        const first = reader.read();
+        const second = reader.read();
+        state.ctrl.write("x");
+        state.ctrl.flush();
+        expect(decode((await first).value)).toBe("x");
+        settleFirstPull();
+        expect({ second: decode((await second).value), pulls: state.pulls }).toEqual({ second: "a", pulls: 2 });
+        await macrotask();
+        const third = reader.read();
+        expect({ third: await valueOrStalled(third), pulls: state.pulls }).toEqual({ third: "b", pulls: 3 });
+      },
+    );
+
+    // The converse: a read only drains the sink when a flush was left holding bytes. A pull()
+    // that writes without flushing keeps relying on the end-of-tick flush, so bytes written
+    // later in the same tick still share its chunk.
+    describe("do not make other reads drain eagerly", () => {
+      const readBatchesWithSameTickWrite = async (reader, state) => {
+        const read = reader.read();
+        // pull() wrote "a" inside read(); this write lands after read() returned.
+        state.ctrl.write("b");
+        return decode((await read).value);
+      };
+
+      it("on a fresh stream", async () => {
+        const { rs, state } = makeSource(c => c.write("a"));
+        expect(await readBatchesWithSameTickWrite(rs.getReader(), state)).toBe("ab");
+      });
+
+      it("when the pull() flush()ed before writing", async () => {
+        // A flush() that found nothing buffered defers nothing, even inside pull() (it used to
+        // make the read drain as soon as pull() returned, splitting "a" off).
+        const { rs, state } = makeSource(c => {
+          c.flush();
+          c.write("a");
+        });
+        expect(await readBatchesWithSameTickWrite(rs.getReader(), state)).toBe("ab");
+      });
+
+      it.each([
+        ["a flush() with nothing buffered", state => state.ctrl.flush()],
+        ['a write("") (nothing gets buffered for it) and its flush', state => writeWhileIdle(state, "")],
+        ["a write() of an empty Uint8Array and its flush", state => writeWhileIdle(state, new Uint8Array(0))],
+      ])("after %s while nothing was waiting", async (_, idle) => {
+        const { rs, state } = makeSource(c => c.write("a"));
+        const reader = rs.getReader();
+        expect(decode((await reader.read()).value)).toBe("a");
+        await idle(state);
+        await macrotask();
+        expect(await readBatchesWithSameTickWrite(reader, state)).toBe("ab");
+      });
+
+      it("for a read issued synchronously after one that did drain", async () => {
+        const { rs, state } = makeSource(c => c.write("a"));
+        const reader = rs.getReader();
+        expect(decode((await reader.read()).value)).toBe("a");
+
+        await writeWhileIdle(state, "y");
+        const drained = reader.read();
+        const batched = readBatchesWithSameTickWrite(reader, state);
+        // The deferred "y" and its own pull()'s "a" drain into the first read (without the
+        // drain, everything piles up into it at the end of the tick and the second read hangs).
+        expect(decode((await drained).value)).toBe("ya");
+        // That drain is spent: the second read batches like the very first one did.
+        expect(await batched).toBe("ab");
+      });
+
+      it("for a read issued after the end-of-tick flush armed by a draining read's pull() found the sink empty", async () => {
+        const { rs, state } = makeSource(c => c.write("a"));
+        const reader = rs.getReader();
+        expect(decode((await reader.read()).value)).toBe("a");
+
+        await writeWhileIdle(state, "y");
+        expect(decode((await reader.read()).value)).toBe("ya");
+        await macrotask();
+        expect(await readBatchesWithSameTickWrite(reader, state)).toBe("ab");
+      });
+    });
+  });
+
   it("a patched Object.prototype.then that releases the reader mid-resolution does not crash", async () => {
     let releaseNow = null;
     Object.defineProperty(Object.prototype, "then", {

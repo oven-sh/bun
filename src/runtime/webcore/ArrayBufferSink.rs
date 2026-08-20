@@ -157,6 +157,12 @@ impl ArrayBufferSink {
     }
 }
 
+/// `JSDirectStreamController` passes a live (null-checked) `JSArrayBufferSink::wrapped()`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ArrayBufferSink__hasBufferedBytes(this: &ArrayBufferSink) -> bool {
+    !this.bytes.is_empty()
+}
+
 // `JsSinkType` impl: routes the codegen `ArrayBufferSink__*` thunks (via
 // `JSSink::<Self>::js_*`) into the inherent streaming methods above. Mirrors
 // `Sink.JSSink(@This(), "ArrayBufferSink")`.

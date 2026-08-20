@@ -9,6 +9,7 @@
 #include "JSReadRequest.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultReader.h"
+#include "JSSink.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
@@ -30,6 +31,7 @@
 #include <wtf/text/StringBuilder.h>
 
 extern "C" void Bun__Process__queueNextTick2(Zig::GlobalObject*, JSC::EncodedJSValue func, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
+extern "C" bool ArrayBufferSink__hasBufferedBytes(void* sinkPtr); // src/runtime/webcore/ArrayBufferSink.rs
 
 namespace WebCore {
 
@@ -388,9 +390,23 @@ static JSValue endDirectSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
     return {};
 }
 
+// Whether flushDirectSink would currently produce bytes.
+static bool directSinkHoldsBytes(JSDirectStreamController* controller)
+{
+    if (controller->m_sinkKind != DirectSinkKind::ArrayBuffer)
+        return false;
+    auto* sink = dynamicDowncast<JSArrayBufferSink>(controller->m_arrayBufferSink.get());
+    if (!sink)
+        return false;
+    void* sinkPtr = sink->wrapped();
+    return sinkPtr && ArrayBufferSink__hasBufferedBytes(sinkPtr);
+}
+
 // `sink.flush()`: only the ArrayBuffer sink produces bytes; the Text/Array sinks return 0.
+// onFlush calls this once it has a consumer for the result, which is what m_flushDeferred waits for.
 static JSValue flushDirectSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
+    controller->m_flushDeferred = false;
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer: {
         JSObject* sink = controller->m_arrayBufferSink.get();
@@ -565,21 +581,18 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         return jsUndefined();
 
     int8_t deferredClose = 0;
-    int8_t deferredFlush = 0;
+    bool drainSink = false;
 
     // Serialize pull(): while an async pull's promise is pending, subsequent reads install
     // m_pendingRead for it to deliver into via flush()/end(); its fulfillment reaction
     // clears m_pullInFlight and re-pulls if a consumer is still waiting.
     if (!m_pullInFlight) {
         m_deferClose = -1;
-        m_deferFlush = -1;
 
         JSValue abrupt = callDirectPull(vm, globalObject, this);
 
         deferredClose = m_deferClose;
-        deferredFlush = m_deferFlush;
         m_deferClose = 0;
-        m_deferFlush = 0;
         // A VM termination from the pull, or a failure while registering the reaction.
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -592,12 +605,14 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
                 return jsUndefined();
             RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, abrupt));
         }
+        // Flushed before this read existed, by this pull() or by the source between pulls.
+        drainSink = m_flushDeferred;
     } else {
         // A new read arrived while an async pull is pending: the fulfillment reaction will
         // re-pull. Drain anything that pull already wrote; onFlush is a no-op-restore on an
         // empty sink.
         m_pullAgain = true;
-        deferredFlush = 1;
+        drainSink = true;
     }
 
     // controller.error() inside pull is not deferred: re-validate before registering a consumer.
@@ -636,7 +651,7 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         m_deferCloseReason.clear();
         onClose(globalObject, reason);
         RETURN_IF_EXCEPTION(scope, {});
-    } else if (deferredFlush == 1) {
+    } else if (drainSink) {
         onFlush(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -724,7 +739,8 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
         return;
     if (m_closed || (m_sinkKind == DirectSinkKind::ArrayBuffer && !m_arrayBufferSink))
         return;
-    // No default reader: return WITHOUT deferring.
+    // Stands unless a consumer below takes the bytes (flushDirectSink clears it again).
+    m_flushDeferred = directSinkHoldsBytes(this);
     auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(stream->m_reader.get());
     if (!reader)
         return;
@@ -762,11 +778,7 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
                 m_pullAgain = true;
             RELEASE_AND_RETURN(scope, readableStreamFulfillReadRequest(globalObject, stream, flushed, false));
         }
-        return;
     }
-
-    if (m_deferFlush == -1)
-        m_deferFlush = 1;
 }
 
 static bool takeDirectPullAgain(JSDirectStreamController* controller)
@@ -806,12 +818,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
     while (pullAgain && !controller->m_closed && !controller->m_pullInFlight
         && directControllerHasWaitingConsumer(controller, controller->m_stream.get())) {
         controller->m_deferClose = -1;
-        controller->m_deferFlush = -1;
         JSValue abrupt = callDirectPull(vm, globalObject, controller);
         int8_t deferredClose = controller->m_deferClose;
-        int8_t deferredFlush = controller->m_deferFlush;
         controller->m_deferClose = 0;
-        controller->m_deferFlush = 0;
         RETURN_IF_EXCEPTION(scope, {});
         if (!abrupt.isEmpty()) {
             controller->handleError(globalObject, abrupt);
@@ -827,7 +836,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
             // An async re-pull left m_pullInFlight set: its own fulfillment reaction drains
             // and picks up m_pullAgain.
             if (controller->m_pullInFlight) {
-                if (deferredFlush == 1)
+                if (controller->m_flushDeferred)
                     controller->onFlush(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
                 break;

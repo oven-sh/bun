@@ -5215,11 +5215,15 @@ impl VirtualMachine {
                 allow_ansi_color,
                 allow_side_effects,
             };
-            // `getErrorsProperty` is
-            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
-            // which case the error is swallowed.
+            // `getDirect` may hand back empty or a GetterSetter; `is_object()` rejects both.
             let errors = value.get_errors_property(global_ref);
-            let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
+            if errors.is_object()
+                && errors
+                    .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
+                    .is_err()
+            {
+                global_ref.clear_exception();
+            }
             return;
         }
 

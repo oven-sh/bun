@@ -4875,8 +4875,13 @@ pub mod formatter {
             }
 
             let event_type_value: JSValue = 'brk: {
-                let Some(value_) = value.get(self.global_this, "type")? else {
-                    break 'brk JSValue::UNDEFINED;
+                let value_ = match value.get(self.global_this, "type") {
+                    Ok(Some(v)) => v,
+                    Ok(None) => break 'brk JSValue::UNDEFINED,
+                    Err(_) => {
+                        self.global_this.clear_exception();
+                        break 'brk JSValue::UNDEFINED;
+                    }
                 };
                 if value_.is_string() {
                     break 'brk value_;
@@ -4950,9 +4955,15 @@ pub mod formatter {
                     );
                 }
 
-                if let Some(message_value) =
-                    value.fast_get(self.global_this, jsc::BuiltinName::Message)?
-                {
+                let message_value =
+                    match value.fast_get(self.global_this, jsc::BuiltinName::Message) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            self.global_this.clear_exception();
+                            None
+                        }
+                    };
+                if let Some(message_value) = message_value {
                     if message_value.is_string() {
                         if !self.single_line {
                             self.write_indent(writer_).expect("unreachable");
@@ -4989,9 +5000,14 @@ pub mod formatter {
                             pf!("<d>"),
                             pf!("<r>")
                         );
-                        let data: JSValue = value
-                            .fast_get(self.global_this, jsc::BuiltinName::Data)?
-                            .unwrap_or(JSValue::UNDEFINED);
+                        let data: JSValue =
+                            match value.fast_get(self.global_this, jsc::BuiltinName::Data) {
+                                Ok(v) => v.unwrap_or(JSValue::UNDEFINED),
+                                Err(_) => {
+                                    self.global_this.clear_exception();
+                                    JSValue::UNDEFINED
+                                }
+                            };
                         let tag = Tag::get_advanced(data, self.global_this, self.tag_opts())?;
                         self.format::<C>(tag, writer_, data, self.global_this)?;
                         if self.failed {
@@ -5003,9 +5019,15 @@ pub mod formatter {
                         }
                     }
                     EventType::ErrorEvent => {
-                        if let Some(error_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Error)?
-                        {
+                        let error_value =
+                            match value.fast_get(self.global_this, jsc::BuiltinName::Error) {
+                                Ok(v) => v,
+                                Err(_) => {
+                                    self.global_this.clear_exception();
+                                    None
+                                }
+                            };
+                        if let Some(error_value) = error_value {
                             if !self.single_line {
                                 self.write_indent(writer_).expect("unreachable");
                             }

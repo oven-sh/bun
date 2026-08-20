@@ -2404,20 +2404,16 @@ mod draft {
     };
 
     struct StackLine {
-        /// Offset from the start of the image the address belongs to.
+        /// Offset inside the image.
         address: i32,
-        /// `None` -> from bun's own executable. Otherwise the basename of the
-        /// image (a `.node` addon, a system library) the address belongs to;
-        /// bun.report shows it as the frame's package, which is what tells a
-        /// native addon's crash apart from bun's own.
+        /// None -> bun's own executable; otherwise the image's basename, which bun.report shows as the frame's package.
         object: Option<Box<[u8]>>,
         // Box<[u8]> rather than a borrowed slice into caller's `name_bytes`,
         // since the only caller writes into a stack buffer and the value is consumed immediately.
     }
 
     impl StackLine {
-        /// A frame in an image other than bun's executable. `None` when the
-        /// loader has no name for the image.
+        /// `None` when the loader has no name for the image.
         #[cfg(not(windows))]
         fn in_foreign_image(image_path: &[u8], image_relative_address: usize) -> Option<StackLine> {
             let basename = bun_paths::basename_posix(image_path);
@@ -2509,42 +2505,41 @@ mod draft {
                                     continue;
                                 }
 
-                                // Subtract ASLR value for stable address
-                                let stable_address = address - vmaddr_slide;
+                                let original_address = address - vmaddr_slide;
                                 let seg_start = segment_cmd.vmaddr as usize;
                                 let seg_end = seg_start + segment_cmd.vmsize as usize;
-                                if stable_address >= seg_start && stable_address < seg_end {
-                                    let image_relative_address = stable_address - seg_start;
+                                if original_address >= seg_start && original_address < seg_end {
+                                    // Subtract ASLR value for stable address
+                                    let stable_address: usize = address - vmaddr_slide;
 
-                                    // Image 0 is always the main executable.
-                                    if i != 0 {
+                                    // Image 0 is the main executable.
+                                    if i == 0 {
+                                        let image_relative_address = stable_address - seg_start;
+                                        if image_relative_address > i32::MAX as usize {
+                                            return None;
+                                        }
+
+                                        // To remap this, you have to add the offset (which is going to be 0x100000000),
+                                        // and then you can run it through `llvm-symbolizer --obj bun-with-symbols 0x123456`
+                                        // The reason we are subtracting this known offset is mostly just so that we can
+                                        // fit it within a signed 32-bit integer. The VLQs will be shorter too.
+                                        return Some(StackLine {
+                                            object: None,
+                                            address: i32::try_from(image_relative_address)
+                                                .expect("int cast"),
+                                        });
+                                    } else {
                                         let name = bun_sys::c::_dyld_get_image_name(i);
                                         if name.is_null() {
                                             return None;
                                         }
-                                        // SAFETY: dyld returns a NUL-terminated path that
-                                        // stays valid while the image is loaded, and the
-                                        // image is loaded: we just found `address` in it.
+                                        // SAFETY: dyld owns the NUL-terminated path and keeps it while the image is loaded; `address` is inside that image.
                                         let name = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
                                         return StackLine::in_foreign_image(
                                             name,
-                                            image_relative_address,
+                                            stable_address - seg_start,
                                         );
                                     }
-
-                                    if image_relative_address > i32::MAX as usize {
-                                        return None;
-                                    }
-
-                                    // To remap this, you have to add the offset (which is going to be 0x100000000),
-                                    // and then you can run it through `llvm-symbolizer --obj bun-with-symbols 0x123456`
-                                    // The reason we are subtracting this known offset is mostly just so that we can
-                                    // fit it within a signed 32-bit integer. The VLQs will be shorter too.
-                                    return Some(StackLine {
-                                        object: None,
-                                        address: i32::try_from(image_relative_address)
-                                            .expect("int cast"),
-                                    });
                                 }
                             }
                             _ => {}
@@ -2582,9 +2577,7 @@ mod draft {
                 writer.write_all(
                     VLQ::encode(i32::try_from(object.len()).expect("int cast")).slice(),
                 )?;
-                // The name goes into the URL verbatim and the decoder reads it
-                // by length, so every byte must be one character that needs
-                // no URL escaping.
+                // Goes into the URL verbatim and is decoded by length: one URL-safe byte per byte.
                 for &byte in object.iter() {
                     writer.write_byte(match byte {
                         b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'-' => byte,
@@ -2598,10 +2591,7 @@ mod draft {
         }
     }
 
-    /// Load base of bun's own executable, found through an address that is
-    /// known to be inside it. `dl_iterate_phdr` does not flag the main program,
-    /// and its name for it differs between libcs (glibc reports "", musl the
-    /// program path), so the base address is what identifies it.
+    /// Load base of bun's executable. It is what identifies the main program: glibc names it "", musl names it by path.
     #[cfg(not(any(windows, target_os = "macos")))]
     fn own_image_base() -> usize {
         static BASE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();

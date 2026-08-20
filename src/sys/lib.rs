@@ -4969,12 +4969,10 @@ pub mod c {
     ))]
     pub use libc::{getloadavg, sockaddr_dl, sysctlbyname};
 
-    /// `dlsym` pseudo-handle: search the objects loaded after the one that
-    /// contains the caller.
+    /// `dlsym` pseudo-handle: the objects loaded after the caller's.
     #[cfg(all(unix, not(target_os = "android")))]
     pub use libc::RTLD_NEXT;
-    /// Bionic's `<dlfcn.h>` value for 64-bit targets; the `libc` crate has no
-    /// binding for it on Android.
+    /// Bionic's 64-bit `<dlfcn.h>` value; the `libc` crate does not bind it for Android.
     #[cfg(all(target_os = "android", target_pointer_width = "64"))]
     pub const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
 
@@ -5125,9 +5123,7 @@ pub mod c {
         /// index; out-of-range returns null (no precondition).
         #[link_name = "_dyld_get_image_header"]
         safe fn dyld_get_image_header_raw(image_index: u32) -> *const core::ffi::c_void;
-        /// `const char* _dyld_get_image_name(uint32_t image_index)` — the path
-        /// the image was loaded from, owned by dyld and valid while the image
-        /// stays loaded; null for an out-of-range index (no precondition).
+        /// `const char* _dyld_get_image_name(uint32_t)`: dyld-owned path, live while the image is; null when out of range.
         pub safe fn _dyld_get_image_name(image_index: u32) -> *const core::ffi::c_char;
     }
     /// `mach_task_self()` — C macro `#define mach_task_self() mach_task_self_`.

@@ -779,7 +779,8 @@ impl MachoSigner {
         if end - off > 0 {
             let mut digest = [0u8; HASH_SIZE];
             // SAFETY: range [off..end] is within the original len (sig_off).
-            let page = unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), end - off) };
+            let page =
+                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), end - off) };
             sha256_hash(page, &mut digest);
             self.data.extend_from_slice(&digest);
         }

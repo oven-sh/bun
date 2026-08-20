@@ -2735,7 +2735,8 @@ impl FetchTasklet {
             //
             // 1. The body arrived, or it is a stream: a stream outlives its Response, and its
             //    own collection ends the body (`on_body_stream_collected`).
-            // 2. `.text()` and friends hold a promise for it: keep loading.
+            // 2. A consumer waits for the whole body (`.text()` and friends hold a promise,
+            //    `Bun.write` an `on_receive_value`): keep loading.
             // 3. Still arriving, so longer than the mark `callback` receives on its own, and
             //    nothing will ever take it: abort, as for a collected stream.
             //
@@ -2746,9 +2747,10 @@ impl FetchTasklet {
             }
 
             if let BodyValue::Locked(locked) = body {
-                let has_consumer = locked
-                    .promise
-                    .is_some_and(|promise| !promise.is_empty_or_undefined_or_null());
+                let has_consumer = locked.on_receive_value.is_some()
+                    || locked
+                        .promise
+                        .is_some_and(|promise| !promise.is_empty_or_undefined_or_null());
                 if has_consumer {
                     return;
                 }

@@ -830,7 +830,9 @@ impl Value {
             Value::Locked(_) => self.locked_to_native_stream(global_this, true),
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
-                ReadableStream::errored(global_this, reason)
+                let stream = ReadableStream::errored(global_this, reason)?;
+                *self = Value::Used;
+                Ok(stream)
             }
         }
     }

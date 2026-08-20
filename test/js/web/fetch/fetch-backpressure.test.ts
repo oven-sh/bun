@@ -1,13 +1,14 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
 import { createServer as createTcpServer } from "node:net";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { gzipSync } from "node:zlib";
@@ -839,6 +840,45 @@ describe("fetch() receive backpressure — a Response whose body nothing touches
       ).then(bodies => bodies.map(body => body.byteLength));
       expect(lengths).toEqual(Array(N).fill(2 * CHUNK));
       expect({ opened: origin.connections() - N, closed: origin.closed() }).toEqual({ opened: 0, closed: 0 });
+    }, 30_000);
+  }
+
+  // The boundary of the abort above: a consumer that waits for the whole body (`.text()` through
+  // a promise, `Bun.write()` through a native callback) may be all that is left of a Response.
+  // Its body still has to arrive.
+  const wholeBodyConsumers: [string, (res: Response, dir: string) => Promise<number>][] = [
+    ["res.text()", res => res.text().then(text => text.length)],
+    ["Bun.write(file, res)", (res, dir) => Bun.write(join(dir, "body"), res)],
+  ];
+  for (const [name, consume] of wholeBodyConsumers) {
+    test(`a Response collected while ${name} waits for its body: the body still arrives`, async () => {
+      using dir = tempDir("fetch-collected-while-consumed", {});
+      await using origin = await rawOrigin("content-length", 2 * CHUNK, true);
+      let collected = false;
+      const registry = new FinalizationRegistry(() => (collected = true));
+      // Its own frame: once it returns, the consumer's promise is all that is held.
+      async function start() {
+        const res = await fetch(origin.url);
+        registry.register(res, null);
+        return consume(res, String(dir));
+      }
+      const received = start();
+      for (const until = deadline(); !collected && performance.now() < until; ) {
+        Bun.gc(true);
+        await Bun.sleep(10);
+      }
+      origin.finishHeld();
+
+      // Before, the collection let go of the body instead, and Bun.write() never settled.
+      const outcome = await Promise.race([
+        received,
+        Bun.sleep(isASAN || isDebug ? 15_000 : 3000).then(() => "never arrived"),
+      ]);
+      expect({ collected, outcome, closed: origin.closed() }).toEqual({
+        collected: true,
+        outcome: 2 * CHUNK,
+        closed: 0,
+      });
     }, 30_000);
   }
 });

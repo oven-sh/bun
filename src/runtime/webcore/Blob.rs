@@ -1279,25 +1279,28 @@ impl BlobExt for Blob {
     }
 
     fn get_exists_sync(&self) -> JSValue {
-        if self.size.get() == MAX_SIZE {
-            self.resolve_size();
-        }
-
         // If there's no store that means it's empty and we just return true
         let Some(store) = self.store.get() else {
             return JSValue::TRUE;
         };
 
-        if matches!(store.data, store::Data::Bytes(_)) {
+        // Dispatch on the tag and re-read through `data_mut` after the stat;
+        // see `resolve_size` for why no `&Data` may be live across it.
+        match store.data_mut().tag() {
             // Bytes will never error
-            return JSValue::TRUE;
+            store::DataTag::Bytes => JSValue::TRUE,
+            store::DataTag::S3 => JSValue::FALSE,
+            store::DataTag::File => {
+                // Stat on every call, so a file created or deleted since the
+                // last answer is seen. This refreshes only the store's stat
+                // cache. It must not resolve `self.size`: a size cached from
+                // here caps every later read and copy of this blob.
+                resolve_file_stat(store);
+                let mode = store.data_mut().as_file().mode;
+                // We say regular files and pipes exist.
+                JSValue::from(bun_sys::S::ISREG(mode) || bun_sys::S::ISFIFO(mode))
+            }
         }
-
-        // We say regular files and pipes exist.
-        let store::Data::File(file) = &store.data else {
-            return JSValue::FALSE;
-        };
-        JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -2232,15 +2235,17 @@ impl BlobExt for Blob {
                 return JSValue::js_number(f64::NAN);
             }
             self.resolve_size();
-            if self.size.get() == MAX_SIZE && self.store.get().is_some() {
-                return JSValue::js_number(f64::INFINITY);
-            } else if self.size.get() == 0 && self.store.get().is_some() {
-                if let store::Data::File(file) =
-                    &self.store().expect("infallible: store present").data
-                {
-                    if !file.seekable.unwrap_or(true) && file.max_size == MAX_SIZE {
-                        return JSValue::js_number(f64::INFINITY);
-                    }
+            if self.size.get() == MAX_SIZE {
+                if let Some(store) = self.store.get() {
+                    return match &store.data {
+                        // The stat failed, so there is no file to size. Report
+                        // 0 without caching it: the file may be created later.
+                        store::Data::File(file) if file.seekable.is_none() => {
+                            JSValue::js_number(0.0)
+                        }
+                        // A pipe or a tty has no end.
+                        _ => JSValue::js_number(f64::INFINITY),
+                    };
                 }
             }
         }
@@ -2258,9 +2263,9 @@ impl BlobExt for Blob {
         // borrow is live across the arm body where `resolve_file_stat`
         // materializes `&mut File` on the same memory via the raw
         // `heap::alloc` pointer — Stacked Borrows UB, and under noalias the
-        // optimizer may legally cache the pre-call `seekable: None` and fall
-        // through to `self.size.get() = 0`. `StoreRef::data_mut` centralises
-        // the raw-ptr deref so each read here is a fresh, safe borrow.
+        // optimizer may legally cache the pre-call `seekable: None` and skip
+        // the freshly resolved size. `StoreRef::data_mut` centralises the
+        // raw-ptr deref so each read here is a fresh, safe borrow.
         match store.data_mut().tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
@@ -2284,16 +2289,10 @@ impl BlobExt for Blob {
                     self.offset.set(store_size.min(offset));
                     let available = store_size - self.offset.get();
                     self.size.set(window_size(self.size.get(), available));
-                    return;
                 }
-
-                // For non-seekable files (pipes, FIFOs), the size is genuinely
-                // unknown — leave it as max_size so that stream readers don't
-                // treat it as an empty file.
-                if file.seekable == Some(false) {
-                    return;
-                }
-                self.size.set(0);
+                // Otherwise the size stays unresolved: a pipe has no size, and
+                // a file the stat did not find may be created later. Caching 0
+                // here would cap every later read of this blob at 0 bytes.
             }
             store::DataTag::S3 => self.size.set(0),
         }
@@ -2333,10 +2332,7 @@ impl BlobExt for Blob {
                     let available = store_size - offset;
                     return (offset, window_size(self.size.get(), available));
                 }
-                if file.seekable == Some(false) {
-                    return (self.offset.get(), self.size.get());
-                }
-                (self.offset.get(), 0)
+                (self.offset.get(), self.size.get())
             }
             store::DataTag::S3 => (self.offset.get(), 0),
         }
@@ -6125,43 +6121,40 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
     }
 }
 
-/// resolve file stat like size, last_modified
+/// Stat the file behind `store` and cache `max_size`, `mode`, `seekable` and
+/// `last_modified` on it. The cache always describes the most recent stat:
+/// when the stat fails (the file does not exist, or does not exist anymore)
+/// the four fields go back to their unresolved defaults, so a later call
+/// stats again instead of answering from a file that is gone.
 fn resolve_file_stat(store: &StoreRef) {
     // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
     // `StoreRef` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = store.data_mut().as_file_mut();
-    match &file.pathlike {
+    let stat = match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::PathBuffer::uninit();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
-                bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
-                    } else {
-                        MAX_SIZE
-                    };
-                    file.mode = stat.st_mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = stat_to_js_mtime(&stat);
-                }
-                // the file may not exist yet. That's okay.
-                _ => {}
-            }
+            bun_sys::stat(path.slice_z(&mut buffer))
         }
-        PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
-            bun_sys::Result::Ok(stat) => {
-                file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
-                } else {
-                    MAX_SIZE
-                };
-                file.mode = stat.st_mode as bun_sys::Mode;
-                file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                file.last_modified = stat_to_js_mtime(&stat);
-            }
-            _ => {}
-        },
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+    };
+    match stat {
+        Ok(stat) => {
+            file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
+                ((stat.st_size.max(0)) as u64) as SizeType
+            } else {
+                MAX_SIZE
+            };
+            file.mode = stat.st_mode as bun_sys::Mode;
+            file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
+            file.last_modified = stat_to_js_mtime(&stat);
+        }
+        Err(_) => {
+            file.max_size = MAX_SIZE;
+            file.mode = 0;
+            file.seekable = None;
+            file.last_modified = jsc::INIT_TIMESTAMP;
+        }
     }
 }
 

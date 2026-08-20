@@ -2654,7 +2654,6 @@ mod spawn_process_body {
         impl CtrlCChild {
             pub fn enter(pid: PidT) -> Self {
                 CTRL_C_CHILD_COUNT.fetch_add(1, Ordering::Relaxed);
-                let pid = i32::try_from(pid).unwrap_or(0);
                 let slot = if pid > 0 {
                     CTRL_C_CHILDREN.iter().position(|s| {
                         s.compare_exchange(0, pid, Ordering::Relaxed, Ordering::Relaxed)

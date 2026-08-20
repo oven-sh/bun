@@ -5189,6 +5189,7 @@ describe.concurrent("bun-install", () => {
     async function installWithBrokenRootPackageJson(
       withLockfile: boolean,
       breakPackageJson: (packageJsonPath: string) => Promise<void>,
+      command: string[] = ["install"],
     ) {
       using dir = tempDir("broken-root-package-json", {
         "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { dep: "file:./dep" } }),
@@ -5213,14 +5214,14 @@ describe.concurrent("bun-install", () => {
       await breakPackageJson(join(String(dir), "package.json"));
 
       await using proc = spawn({
-        cmd: [bunExe(), "install"],
+        cmd: [bunExe(), ...command],
         cwd: String(dir),
         env,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toStartWith("bun install v1.");
+      expect(stdout).toStartWith(`bun ${command[0]} v1.`);
       return {
         stderr: normalizeBunSnapshot(stderr, String(dir)),
         exitCode,
@@ -5261,18 +5262,21 @@ describe.concurrent("bun-install", () => {
       });
 
       // An empty file parses as `{}` elsewhere. For the root that would mean "no
-      // dependencies", and bun install would delete the lockfile.
-      it(`rejects an empty file and keeps the lockfile ${lockfile}`, async () => {
-        const result = await installWithBrokenRootPackageJson(withLockfile, empty);
-        expect(result).toEqual({
-          stderr: [
-            "error: failed to parse '<dir>/package.json': file is empty",
-            "note: Restore package.json, or write {} to it to start without dependencies",
-          ].join("\n"),
-          exitCode: 1,
-          lockfileKept: withLockfile,
+      // dependencies", and the command would delete the lockfile. `bun update` reads
+      // the file on its own path before it installs, so it is checked as well.
+      for (const command of [["install"], ["update"], ["update", "dep"]]) {
+        it(`bun ${command.join(" ")} rejects an empty file and keeps the lockfile ${lockfile}`, async () => {
+          const result = await installWithBrokenRootPackageJson(withLockfile, empty, command);
+          expect(result).toEqual({
+            stderr: [
+              "error: failed to parse '<dir>/package.json': file is empty",
+              "note: Restore package.json, or write {} to it to start without dependencies",
+            ].join("\n"),
+            exitCode: 1,
+            lockfileKept: withLockfile,
+          });
         });
-      });
+      }
     }
   });
 

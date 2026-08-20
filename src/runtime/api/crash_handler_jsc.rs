@@ -125,7 +125,7 @@ pub(crate) mod js_bindings {
             // is what `libc::strlen as usize` is in a non-PIE executable): the
             // faulting pc has to be inside libc's image.
             // SAFETY: RTLD_NEXT is a valid pseudo-handle and the name is NUL-terminated.
-            let strlen = unsafe { libc::dlsym(libc::RTLD_NEXT, c"strlen".as_ptr()) };
+            let strlen = unsafe { bun_sys::c::dlsym(bun_sys::c::RTLD_NEXT, c"strlen".as_ptr()) };
             if strlen.is_null() {
                 return Err(global.throw(format_args!("dlsym(RTLD_NEXT, \"strlen\") failed")));
             }

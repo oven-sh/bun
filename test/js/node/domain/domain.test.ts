@@ -14,6 +14,28 @@ describe("node:domain", () => {
     expect(d.members).toEqual([]);
   });
 
+  it("Domain is constructible with new", () => {
+    const d = new domain.Domain();
+    expect(d).toBeInstanceOf(domain.Domain);
+    expect(d).toBeInstanceOf(EventEmitter);
+    expect(d.members).toEqual([]);
+    let processInRun: unknown;
+    d.run(() => {
+      processInRun = process.domain;
+    });
+    expect(processInRun).toBe(d);
+
+    class Sub extends domain.Domain {
+      extra() {
+        return 1;
+      }
+    }
+    const sub = new Sub();
+    expect(sub).toBeInstanceOf(domain.Domain);
+    expect(sub.extra()).toBe(1);
+    expect(sub.members).toEqual([]);
+  });
+
   it("run sets the active domain and process.domain", () => {
     const d = domain.create();
     let activeInRun: unknown, processInRun: unknown, thisInRun: unknown;
@@ -64,6 +86,55 @@ describe("node:domain", () => {
     d.remove(ee);
     expect(d.members).toEqual([]);
     expect(ee.domain).toBe(null);
+  });
+
+  it("add defines emitter.domain as non-enumerable like node", () => {
+    const d = domain.create();
+    const ee = new EventEmitter();
+    d.add(ee);
+    expect(Object.getOwnPropertyDescriptor(ee, "domain")).toEqual({
+      value: d,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+
+    let seen: any;
+    d.on("error", (e: any) => {
+      seen = e;
+    });
+    ee.emit("error", new Error("emitted"));
+    // Neither the members list nor err.domainEmitter leads back into the domain,
+    // so none of these is cyclic.
+    expect(Object.keys(ee)).not.toContain("domain");
+    expect(JSON.parse(JSON.stringify(ee))).not.toHaveProperty("domain");
+    expect(JSON.parse(JSON.stringify(d)).members).toHaveLength(1);
+    expect(JSON.parse(JSON.stringify(seen))).toEqual({
+      domainEmitter: JSON.parse(JSON.stringify(ee)),
+      domainThrown: false,
+    });
+  });
+
+  it("add is idempotent and moves an emitter between domains", () => {
+    const a = domain.create();
+    const b = domain.create();
+    const received: string[] = [];
+    a.on("error", (e: Error) => received.push(`a:${e.message}`));
+    b.on("error", (e: Error) => received.push(`b:${e.message}`));
+
+    const ee = new EventEmitter();
+    a.add(ee);
+    a.add(ee);
+    expect(a.members).toEqual([ee]);
+    ee.emit("error", new Error("once"));
+    expect(received).toEqual(["a:once"]);
+
+    b.add(ee);
+    expect(a.members).toEqual([]);
+    expect(b.members).toEqual([ee]);
+    expect(ee.domain).toBe(b);
+    ee.emit("error", new Error("moved"));
+    expect(received).toEqual(["a:once", "b:moved"]);
   });
 
   it("http client responses do not accumulate in domain.members", async () => {

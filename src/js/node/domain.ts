@@ -54,8 +54,19 @@ class Domain extends EventEmitter {
   }
 
   add(emitter) {
+    // Like node, an emitter belongs to at most one domain at a time.
+    const previous = emitter.domain;
+    if (previous != null && typeof previous.remove === "function") {
+      previous.remove(emitter);
+    }
     emitter.on("error", this[kEmitError]);
-    emitter.domain = this;
+    ObjectDefineProperty(emitter, "domain", {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      value: this,
+      writable: true,
+    });
     this.members.push(emitter);
   }
 

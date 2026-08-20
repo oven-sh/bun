@@ -92,6 +92,8 @@ typedef int mode_t;
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
 #include "ProcessBindingNatives.h"
+#include <unicode/utypes.h>
+U_CAPI const char* U_EXPORT2 ucal_getTZDataVersion(UErrorCode* status);
 
 #if OS(LINUX)
 #include <features.h>
@@ -266,6 +268,12 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "icu"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_ICU_VERSION)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "unicode"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_UNICODE_VERSION)))), 0);
+    {
+        UErrorCode status = U_ZERO_ERROR;
+        const char* tz = ucal_getTZDataVersion(&status);
+        if (U_SUCCESS(status) && tz != nullptr)
+            object->putDirect(vm, JSC::Identifier::fromString(vm, "tz"_s), JSValue(JSC::jsString(vm, String::fromLatin1(tz))), 0);
+    }
     object->putDirect(vm, JSC::Identifier::fromString(vm, "sqlite"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__sqlite3_version())))), 0);
 
 #define STRINGIFY_IMPL(x) #x

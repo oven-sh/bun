@@ -491,6 +491,10 @@ it("ICU version does not regress", () => {
   expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
 });
 
+it("process.versions.tz reports the bundled IANA tzdata version", () => {
+  expect(process.versions.tz).toMatch(/^20\d{2}[a-z]$/);
+});
+
 it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 

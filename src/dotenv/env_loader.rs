@@ -72,10 +72,8 @@ impl DirEntryProbe for DirEntryKeys {
     }
 }
 
-/// Probe for callers without a listing of the cwd: `Loader::load` then
-/// `openat`s each default file (at most four) and `load_env_file` treats
-/// `ENOENT` as absent. Building a listing instead means reading the cwd and
-/// every ancestor directory in full.
+/// Probe for callers without a cwd listing: `Loader::load` opens every default
+/// file and `load_env_file` treats `ENOENT` as absent.
 pub struct OpenEachDefaultFile;
 
 impl DirEntryProbe for OpenEachDefaultFile {

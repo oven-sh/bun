@@ -784,12 +784,9 @@ impl<'a> Transpiler<'a> {
                 };
 
                 if !self.resolver.opts.load_tsconfig_json {
-                    // The `read_dir_info(cwd)` walk below reads the cwd and
-                    // every ancestor directory in full. Without tsconfig.json
-                    // loading (standalone executables, unless built with
-                    // `--compile-autoload-tsconfig`) nothing else at startup
-                    // needs those listings, and the walk would only serve as
-                    // an existence check for the default .env files.
+                    // Standalone executables (tsconfig.json loading off) have no
+                    // other use for the cwd listing, which `read_dir_info` builds
+                    // by reading every ancestor directory in full.
                     env.load(
                         &dot_env::OpenEachDefaultFile,
                         &env_files,

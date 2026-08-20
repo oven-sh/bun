@@ -853,11 +853,19 @@ impl<'a> Linker<'a> {
         }
     }
 
-    fn unlink_bin_or_shim(abs_dest: &ZStr) {
+    /// Removes the bin at `abs_dest`, but only if it is one this package's
+    /// bins were linked to. The global bin directory also holds `bun` itself
+    /// and whatever else the user keeps on `$PATH`, and a package's `bin` map
+    /// chooses the names, so a name alone never justifies a delete.
+    fn unlink_bin_or_shim(&self, abs_dest: &ZStr) {
+        if !self.existing_bin_belongs_to_package(abs_dest) {
+            self.log_foreign_bin("removing", abs_dest);
+            return;
+        }
+
         #[cfg(not(windows))]
         {
             let _ = sys::unlink(abs_dest);
-            return;
         }
 
         #[cfg(windows)]
@@ -882,6 +890,158 @@ impl<'a> Linker<'a> {
                 bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
             let _ = sys::unlink_w(abs_exe_file);
         }
+    }
+
+    /// Something that is not this package's bin occupies a name this package
+    /// wants in the global bin directory. The callers' error messages only name
+    /// the package, so the path goes to the debug log.
+    fn fail_on_foreign_global_bin(&mut self, abs_dest: &ZStr) {
+        self.log_foreign_bin("replacing", abs_dest);
+        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::EEXIST));
+    }
+
+    fn log_foreign_bin(&self, action: &str, abs_dest: &ZStr) {
+        bun_output::scoped_log!(
+            BinLinker,
+            "Not {} {}: it is not a bin of {}",
+            action,
+            bstr::BStr::new(abs_dest.as_bytes()),
+            bstr::BStr::new(self.package_name.slice())
+        );
+    }
+
+    /// Whether the bin already at `abs_dest` was linked to this package: on
+    /// POSIX a symlink into the package directory, on Windows a shim whose
+    /// `.bunx` sidecar names a file in the package directory. Anything else
+    /// (a missing entry, a regular file such as the `bun` binary, a directory,
+    /// the user's own symlink, another package's bin) is not ours to replace
+    /// or remove.
+    #[cfg(not(windows))]
+    fn existing_bin_belongs_to_package(&self, abs_dest: &ZStr) -> bool {
+        let mut link_buf = path::path_buffer_pool::get();
+        let Ok(len) = sys::readlink(abs_dest, &mut link_buf[..]) else {
+            return false;
+        };
+        self.bin_target_is_inside_package(abs_dest, &link_buf[..len])
+    }
+
+    #[cfg(windows)]
+    fn existing_bin_belongs_to_package(&self, abs_dest: &ZStr) -> bool {
+        let mut bunx_path_buf = path::path_buffer_pool::get();
+        let bunx_path = Self::path_with_suffix(&mut bunx_path_buf[..], abs_dest, b".bunx");
+        let Ok(bunx_file) = sys::File::openat(Fd::cwd(), bunx_path, sys::O::RDONLY, 0) else {
+            return false;
+        };
+        // The sidecar starts with `[WSTR:bin_path][u16:'"']`, see
+        // `windows-shim/BinLinkingShim.rs`.
+        let mut shim_buf = path::w_path_buffer_pool::get();
+        let Ok(read) = bunx_file.read_all(bytemuck::cast_slice_mut(&mut shim_buf[..])) else {
+            return false;
+        };
+        let units = &shim_buf[..read / size_of::<u16>()];
+        let Some(end) = strings::index_of_any16(units, &[b'"' as u16]) else {
+            return false;
+        };
+        let mut bin_path_buf = path::path_buffer_pool::get();
+        let bin_path = strings::from_w_path(&mut bin_path_buf[..], &units[..end]);
+        self.bin_target_is_inside_package(abs_dest, bin_path.as_bytes())
+    }
+
+    /// The counterpart of the EEXIST check in `create_symlink`. A shim is the
+    /// pair `<name>.exe` + `<name>.bunx`, written with truncation, so the
+    /// check has to happen before anything is written: the pair may be
+    /// rewritten only when the sidecar says it is this package's. A `.exe`
+    /// without a sidecar is a real program (`bun.exe` itself lives here).
+    #[cfg(windows)]
+    fn global_shim_conflicts(&self, abs_dest: &ZStr) -> bool {
+        if self.existing_bin_belongs_to_package(abs_dest) {
+            return false;
+        }
+        let mut path_buf = path::path_buffer_pool::get();
+        if sys::exists_z(Self::path_with_suffix(
+            &mut path_buf[..],
+            abs_dest,
+            b".bunx",
+        )) {
+            return true;
+        }
+        sys::exists_z(Self::path_with_suffix(&mut path_buf[..], abs_dest, b".exe"))
+    }
+
+    /// `abs_dest` + `suffix`, NUL-terminated, in `buf`.
+    #[cfg(windows)]
+    fn path_with_suffix<'b>(buf: &'b mut [u8], abs_dest: &ZStr, suffix: &[u8]) -> &'b ZStr {
+        let dest = abs_dest.as_bytes();
+        buf[..dest.len()].copy_from_slice(dest);
+        buf[dest.len()..dest.len() + suffix.len()].copy_from_slice(suffix);
+        buf[dest.len() + suffix.len()] = 0;
+        ZStr::from_buf(buf, dest.len() + suffix.len())
+    }
+
+    /// Whether `stored_target`, the path recorded in the bin at `abs_dest`
+    /// (the symlink target, or the bin path in a `.bunx` shim), names a file
+    /// inside the package this linker links: `<node_modules>/<package_name>/`
+    /// or, under the native binlink redirect, the platform package's
+    /// directory. Bun records the target relative to the bin directory (POSIX)
+    /// or to its parent (Windows shims), so the relative form of each package
+    /// directory is accepted next to the absolute one.
+    fn bin_target_is_inside_package(&self, abs_dest: &ZStr, stored_target: &[u8]) -> bool {
+        let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
+        // SAFETY: `target_node_modules_path` is set at construction to either
+        // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
+        // both outlive `self` and are not mutated for the duration of this
+        // read.
+        let target_node_modules = unsafe { (*self.target_node_modules_path).slice() };
+        let candidates: [(&[u8], &[u8]); 2] = [
+            (target_node_modules, self.target_package_name.slice()),
+            (self.node_modules_path.slice(), self.package_name.slice()),
+        ];
+        let candidate_count = if self.is_native_binlink_redirect() {
+            2
+        } else {
+            1
+        };
+
+        let mut package_dir_buf = path::path_buffer_pool::get();
+        let mut rel_package_dir_buf = path::path_buffer_pool::get();
+        for &(node_modules, package_name) in &candidates[..candidate_count] {
+            let Some(package_dir) = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
+                node_modules,
+                &mut package_dir_buf[..],
+                &[package_name],
+            ) else {
+                continue;
+            };
+            let package_dir = strings::without_trailing_slash(package_dir);
+            if Self::is_inside_dir(stored_target, package_dir) {
+                return true;
+            }
+
+            let rel_package_dir: &[u8] = resolve_path::relative_buf_z(
+                &mut rel_package_dir_buf[..],
+                abs_dest_dir,
+                package_dir,
+            )
+            .as_bytes();
+            #[cfg(windows)]
+            let rel_package_dir: &[u8] =
+                match strings::without_prefix_if_possible_comptime(rel_package_dir, b"..\\") {
+                    Some(relative_to_parent) => relative_to_parent,
+                    // Another drive: `relative` returned the absolute path, checked above.
+                    None => continue,
+                };
+            if Self::is_inside_dir(stored_target, rel_package_dir) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn is_inside_dir(target: &[u8], dir: &[u8]) -> bool {
+        !dir.is_empty()
+            && target.len() > dir.len()
+            && strings::has_prefix(target, dir)
+            && target[dir.len()] == SEP
     }
 
     fn link_bin_or_create_shim(
@@ -947,7 +1107,7 @@ impl<'a> Linker<'a> {
 
         if self.err.is_some() {
             // cleanup on error just in case
-            Self::unlink_bin_or_shim(abs_dest);
+            self.unlink_bin_or_shim(abs_dest);
             return;
         }
 
@@ -1112,6 +1272,11 @@ impl<'a> Linker<'a> {
         abs_dest: &ZStr,
         global: bool,
     ) {
+        if global && self.global_shim_conflicts(abs_dest) {
+            self.fail_on_foreign_global_bin(abs_dest);
+            return;
+        }
+
         // `encode_into` reinterprets this byte buffer as `[u16]`.
         // Constructing a `&mut [u16]` from a pointer that is not 2-aligned is
         // *immediate language UB* — the reference validity invariant requires
@@ -1263,8 +1428,14 @@ impl<'a> Linker<'a> {
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
-        let rel_target =
-            resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
+        let rel_target: &ZStr = {
+            let r = resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
+            // SAFETY: `r` lives in `self.rel_buf`, which nothing below writes to
+            // (`existing_bin_belongs_to_package` works in pooled buffers).
+            // Detached from the `self` borrow so `self` can be used while it
+            // is alive, like `abs_dest` in `link()`.
+            unsafe { ZStr::from_raw(r.as_bytes().as_ptr(), r.len()) }
+        };
 
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 
@@ -1314,8 +1485,16 @@ impl<'a> Linker<'a> {
             }
         }
 
-        // delete and try again
-        let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
+        // A project's `node_modules/.bin` is owned by the installer, so whatever
+        // entry is there is stale. The global bin directory is shared with the
+        // user (and with `bun` itself): only a link to this package may be
+        // replaced there. Either way only the entry itself is removed, never a
+        // directory's contents; a directory makes the retry fail with EEXIST.
+        if global && !self.existing_bin_belongs_to_package(abs_dest) {
+            self.fail_on_foreign_global_bin(abs_dest);
+            return;
+        }
+        let _ = sys::unlink(abs_dest);
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
             self.err = Some(err.into());
         }
@@ -1884,7 +2063,7 @@ impl<'a> Linker<'a> {
                     let abs_dest_len = dest_off;
                     let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
-                    Self::unlink_bin_or_shim(abs_dest);
+                    self.unlink_bin_or_shim(abs_dest);
                 }
                 Tag::NamedFile => {
                     let named = self.bin.value.named_file;
@@ -1905,7 +2084,7 @@ impl<'a> Linker<'a> {
                     let abs_dest_len = dest_off;
                     let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
-                    Self::unlink_bin_or_shim(abs_dest);
+                    self.unlink_bin_or_shim(abs_dest);
                 }
                 Tag::Map => {
                     let mut i = self.bin.value.map.begin();
@@ -1936,7 +2115,7 @@ impl<'a> Linker<'a> {
                         let abs_dest_len = dest_off;
                         let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
-                        Self::unlink_bin_or_shim(abs_dest);
+                        self.unlink_bin_or_shim(abs_dest);
 
                         i += 2;
                     }
@@ -1985,7 +2164,7 @@ impl<'a> Linker<'a> {
                                 let abs_dest_len = dest_off;
                                 let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
-                                Self::unlink_bin_or_shim(abs_dest);
+                                self.unlink_bin_or_shim(abs_dest);
                             }
                             _ => {}
                         }

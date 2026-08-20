@@ -5294,7 +5294,12 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(await first.exited).toBe(0);
+      const [firstStdout, firstStderr, firstExitCode] = await Promise.all([
+        first.stdout.text(),
+        first.stderr.text(),
+        first.exited,
+      ]);
+      expect(firstExitCode, `bun install --lockfile-only failed: ${firstStdout}${firstStderr}`).toBe(0);
       const lockfileBefore = await file(join(String(dir), "bun.lock")).text();
       expect(lockfileBefore).toContain('"dep"');
 

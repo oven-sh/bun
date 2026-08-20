@@ -90,15 +90,12 @@ pub mod kernel32 {
         /// No preconditions; reads the calling thread's ID.
         pub safe fn GetCurrentThreadId() -> DWORD;
 
-        /// `GetSystemWindowsDirectoryW` (`sysinfoapi.h`): the shared Windows
-        /// directory (`C:\Windows`), unlike `GetWindowsDirectoryW`, which can
-        /// be a per-user directory under Terminal Services.
+        /// Unlike `GetWindowsDirectoryW`, never a per-user (Terminal Services) directory.
         pub fn GetSystemWindowsDirectoryW(lpBuffer: LPWSTR, uSize: UINT) -> UINT;
     }
 }
 
-/// The Windows directory (`C:\Windows`) without a trailing separator, written
-/// into `buf`. `None` if the call fails or `buf` is too small.
+/// `C:\Windows`, without a trailing separator.
 pub fn system_windows_directory_w(buf: &mut [u16]) -> Option<&[u16]> {
     // SAFETY: `buf` is valid for `capacity` u16 writes.
     well_known_directory_w(buf, |ptr, capacity| unsafe {
@@ -106,8 +103,7 @@ pub fn system_windows_directory_w(buf: &mut [u16]) -> Option<&[u16]> {
     })
 }
 
-/// The system directory (`C:\Windows\System32`) without a trailing separator,
-/// written into `buf`. `None` if the call fails or `buf` is too small.
+/// `C:\Windows\System32`, without a trailing separator.
 pub fn system_directory_w(buf: &mut [u16]) -> Option<&[u16]> {
     // SAFETY: `buf` is valid for `capacity` u16 writes.
     well_known_directory_w(buf, |ptr, capacity| unsafe {
@@ -115,12 +111,10 @@ pub fn system_directory_w(buf: &mut [u16]) -> Option<&[u16]> {
     })
 }
 
-/// Shared shape of `GetSystemDirectoryW` and friends: they return the length
-/// written without the NUL, or the size needed including the NUL when the
-/// buffer is too small.
 fn well_known_directory_w(buf: &mut [u16], get: impl FnOnce(LPWSTR, u32) -> u32) -> Option<&[u16]> {
     let capacity = u32::try_from(buf.len()).ok()?;
     let len = get(buf.as_mut_ptr(), capacity) as usize;
+    // `len >= buf.len()` is the "buffer too small, this is the size needed" return.
     if len == 0 || len >= buf.len() {
         return None;
     }

@@ -297,11 +297,9 @@ pub mod features {
         #[unsafe(export_name = "Bun__Feature__webview_webkit")]
         57 => (webview_webkit, "webview_webkit"),
         58 => (xml_parse, "xml_parse", core = XML_PARSE),
-        /// `bun:ffi` `dlopen()` loaded a library. Together with `process_dlopen`
-        /// this tells a crash report how third-party native code got in.
+        /// `bun:ffi` `dlopen()` loaded a library (`process_dlopen` is the Node-API counterpart).
         59 => (ffi_dlopen, "ffi_dlopen"),
-        /// Set by the crash handler when the crash happened inside a native
-        /// module rather than in Bun (see `native_module_of_crash`).
+        /// Set while crashing when the crash is inside a native module, not in Bun.
         60 => (native_module_crash, "native_module_crash"),
     }
 

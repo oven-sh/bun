@@ -701,6 +701,51 @@ describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
   });
 });
 
+// Uses a fake `crontab` found through PATH, so it needs no cron daemon and
+// leaves the real crontab alone.
+describe.skipIf(!isLinux)("crontab temp file (Linux)", () => {
+  // The new crontab is written to a temp file in $TMPDIR and `crontab <file>` is run.
+  // With a relative TMPDIR the file name used to be built as `/<TMPDIR minus its first
+  // byte>/<name>` (`cron-tmp` -> `/ron-tmp/...`), so registration failed with "Failed
+  // to create temp file". A relative temp directory now resolves against the cwd.
+  test("writes the crontab to a relative TMPDIR resolved against the cwd", async () => {
+    using dir = tempDir("bun-cron-relative-tmpdir", {
+      "job.ts": `export default { scheduled() {} };`,
+      "register.ts": `
+        console.log(await Bun.cron("./job.ts", "0 3 * * *", "relative-tmpdir").then(() => "registered", e => "failed: " + e.message));
+      `,
+      "cron-tmp/.keep": "",
+      "fake-bin/.keep": "",
+    });
+    const cwd = String(dir);
+    const record = `${cwd}/crontab-argument.txt`;
+    writeFileSync(`${cwd}/fake-bin/crontab`, `#!/bin/sh\n[ "$1" = -l ] && exit 0\nprintf '%s' "$1" > '${record}'\n`, {
+      mode: 0o755,
+    });
+
+    const env: NodeJS.Dict<string> = {
+      ...bunEnv,
+      PATH: `${cwd}/fake-bin:${bunEnv.PATH}`,
+      TMPDIR: "cron-tmp",
+    };
+    delete env.TMP;
+    delete env.TEMP;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "register.ts"],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "registered", exitCode: 0 });
+    expect(stderr).toBe("");
+    expect(readFileSync(record, "utf8")).toStartWith(`${cwd}/cron-tmp/`);
+  });
+});
+
 // ==========================================================================
 // Registration & Removal (Windows — schtasks)
 // ==========================================================================

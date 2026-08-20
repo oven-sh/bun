@@ -1084,3 +1084,48 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+// The global directory (`$BUN_INSTALL/install/global`, else `$XDG_CACHE_HOME/.bun/...`,
+// else `$HOME/.bun/...`) used to be joined with the variable as the base of an
+// absolute join. A relative value came out anchored at the filesystem root with its
+// first byte missing (`rel-bun` -> `/el-bun/install/global`, `` -> `/nstall/global`).
+// Relative values now resolve against the directory the command runs in, and the bin
+// directory (opened after bun has changed into the global directory) comes from the
+// same root. An empty value counts as unset.
+for (const [title, envOverride, root] of [
+  ["relative $BUN_INSTALL resolves against the cwd", { BUN_INSTALL: "rel-bun" }, ["rel-bun"]],
+  ["empty $BUN_INSTALL falls through to $HOME", { BUN_INSTALL: "" }, ["fake-home", ".bun"]],
+  ["relative $XDG_CACHE_HOME resolves against the cwd", { XDG_CACHE_HOME: "rel-xdg" }, ["rel-xdg", ".bun"]],
+  ["relative $HOME resolves against the cwd", { HOME: "rel-home", USERPROFILE: "rel-home" }, ["rel-home", ".bun"]],
+  ["unset $BUN_INSTALL falls through to $HOME", {}, ["fake-home", ".bun"]],
+] as const) {
+  test(`bun pm bin -g: ${title}`, async () => {
+    // `bun pm bin -g` needs a package.json in the global directory it ends up in.
+    using dir = tempDir("pm-global-dir-env", {
+      [[...root, "install/global/package.json"].join("/")]: JSON.stringify({ name: "global", version: "1.0.0" }),
+    });
+    const cwd = String(dir);
+    const binDir = join(cwd, ...root, "bin");
+
+    // bunEnv spreads process.env, where CI and developer machines set these.
+    const spawnEnv: NodeJS.Dict<string> = { ...env, HOME: join(cwd, "fake-home"), USERPROFILE: join(cwd, "fake-home") };
+    delete spawnEnv.BUN_INSTALL;
+    delete spawnEnv.BUN_INSTALL_GLOBAL_DIR;
+    delete spawnEnv.BUN_INSTALL_BIN;
+    delete spawnEnv.XDG_CACHE_HOME;
+    delete spawnEnv.XDG_CONFIG_HOME;
+    Object.assign(spawnEnv, envOverride);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "bin", "-g"],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: binDir, stderr: "", exitCode: 0 });
+    expect(await exists(binDir)).toBeTrue();
+  });
+}

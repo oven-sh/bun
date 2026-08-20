@@ -89,6 +89,34 @@ test.if(isPosix)(
   20_000,
 );
 
+// bun installs a std::terminate handler. A C++ exception that escapes from a
+// native addon's code into bun ends up there (bun is built without unwind
+// tables, so the unwinder gives up at the first bun frame), and the report used
+// to say only "A C++ exception occurred". It has to name the exception's type
+// and, for a std::exception, carry its what(). The fixture throws a
+// std::runtime_error through the C++ ABI; on Windows, whose runtime has none of
+// those entry points, it calls std::terminate() with no exception in flight.
+test("an uncaught C++ exception is reported with its type and message", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      path.join(import.meta.dir, "fixture-crash.js"),
+      "uncaughtCxxException",
+      "--debug-crash-handler-use-trace-string",
+    ],
+    env: noReportEnv,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(
+    isWindows
+      ? "panic(main thread): std::terminate() was called with no C++ exception in flight"
+      : "panic(main thread): uncaught C++ exception std::runtime_error: thrown by the crash handler test",
+  );
+  expect(exitCode).not.toBe(0);
+});
+
 // After printing the crash report the handler must terminate with a signal
 // that reflects the crash cause: panics abort (SIGABRT), a caught fault is
 // re-raised as the original signal. Previously the handler ended in a trap

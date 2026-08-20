@@ -1461,11 +1461,40 @@ unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
     unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
 }
 
+/// Called by the C++ terminate handler (CxxTerminateHandler.cpp); either string is null when it has nothing to say.
 #[unsafe(no_mangle)]
-extern "C" fn Zig__GlobalObject__onCrash() {
+unsafe extern "C" fn Zig__GlobalObject__onCrash(
+    exception_type: *const c_char,
+    what: *const c_char,
+) -> ! {
+    use core::fmt::Write as _;
     crate::mark_binding();
     Output::flush();
-    panic!("A C++ exception occurred");
+
+    let as_bytes = |ptr: *const c_char| {
+        // SAFETY: the C++ side passes null or a NUL-terminated string that outlives this call, which never returns.
+        (!ptr.is_null()).then(|| unsafe { bun_core::ffi::cstr(ptr) }.to_bytes())
+    };
+    let mut message = bun_core::BoundedArray::<u8, 1024>::default();
+    match (as_bytes(exception_type), as_bytes(what)) {
+        (None, _) => {
+            let _ = message
+                .append_slice(b"std::terminate() was called with no C++ exception in flight");
+        }
+        (Some(exception_type), what) => {
+            let _ = write!(
+                message,
+                "uncaught C++ exception {}",
+                bstr::BStr::new(exception_type)
+            );
+            if let Some(what) = what {
+                // Bounded so the message fits the trace string together with the frames.
+                let what = &what[..what.len().min(256)];
+                let _ = write!(message, ": {}", bstr::BStr::new(what));
+            }
+        }
+    }
+    bun_crash_handler::panic_impl(message.const_slice(), None, None)
 }
 
 // LAYERING: `getBodyStreamOrBytesForWasmStreaming` deals entirely

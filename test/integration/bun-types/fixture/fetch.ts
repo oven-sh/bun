@@ -332,3 +332,16 @@ if (typeof process !== "undefined") {
   // @ts-expect-error - Proxy must be string or object, not array
   fetch("https://example.com", { proxy: ["http://proxy.example.com"] });
 }
+
+{
+  // crl takes the same value types as ca
+  fetch("https://example.com", { tls: { ca: "ca", crl: "crl" } });
+  fetch("https://example.com", { tls: { ca: Buffer.from("ca"), crl: Buffer.from("crl") } });
+  fetch("https://example.com", { tls: { ca: Bun.file("ca.pem"), crl: Bun.file("crl.pem") } });
+  fetch("https://example.com", { tls: { crl: ["crl", new Uint8Array(1), Bun.file("crl.pem")] } });
+}
+
+{
+  // @ts-expect-error - crl takes PEM contents, not a number
+  fetch("https://example.com", { tls: { crl: 1 } });
+}

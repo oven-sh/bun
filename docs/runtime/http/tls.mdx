@@ -55,6 +55,22 @@ Bun.serve({
 });
 ```
 
+### Certificate revocation lists
+
+Pass `crl` to reject peer certificates that a CA has revoked. It accepts the same value types as `ca`: the PEM contents of one or more CRLs as a string, `BunFile`, `TypedArray`, `Buffer`, or an array of those. On a server this applies to client certificates, so it is used together with `requestCert`.
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    ca: Bun.file("./client-ca.pem"), // CA that issues the client certificates
+    requestCert: true, // ask clients for a certificate
+    crl: Bun.file("./client-ca.crl.pem"), // reject the ones this CA has revoked // [!code ++]
+  },
+});
+```
+
 ### Diffie-Hellman
 
 To override Diffie-Hellman parameters:

@@ -137,6 +137,120 @@ error: Hello World`,
     },
     run: { stdout: "" },
   });
+
+  // cjs output for the bun target (which --bytecode implies) receives the real
+  // import.meta of the output file as the sixth argument of the @bun-cjs
+  // wrapper. So import.meta describes the output file at run time, the same as
+  // in esm output. Before, import.meta.dir/file/path/url were inlined as the
+  // source file's paths on the build machine, and every other use of
+  // import.meta was a SyntaxError inside the wrapper.
+  const importMetaFiles = {
+    "/entry.ts": /* js */ `
+      import { basename, dirname } from "node:path";
+      import { pathOfDep } from "./lib/dep.cjs";
+      var $Bun_import_meta = "user variable";
+      function shadowed() {
+        let $Bun_import_meta = "shadowed";
+        return import.meta.file;
+      }
+      console.log(
+        import.meta.path === Bun.main,
+        import.meta.dir === dirname(Bun.main),
+        import.meta.file === basename(Bun.main),
+        import.meta.url === Bun.pathToFileURL(Bun.main).href,
+        import.meta.filename === Bun.main,
+        import.meta.dirname === dirname(Bun.main),
+        import.meta.main,
+        typeof import.meta,
+        typeof import.meta.env,
+        typeof import.meta.resolve,
+        shadowed() === basename(Bun.main),
+        $Bun_import_meta,
+        pathOfDep() === Bun.main,
+      );
+    `,
+    "/lib/dep.cjs": /* js */ `
+      exports.pathOfDep = () => import.meta.path;
+    `,
+  };
+  const importMetaStdout = "true true true true true true true object object function true user variable true";
+  const expectBytecodeCacheHit = {
+    env: { BUN_JSC_verboseDiskCache: "1" },
+    validate({ stderr }: { stderr: string }) {
+      expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+    },
+  };
+  for (const variant of ["", "+minify", "+bytecode"] as const) {
+    const bytecode = variant === "+bytecode";
+    const minify = variant === "+minify";
+    itBundled(`bun/ImportMetaFormatCjs${variant}`, {
+      target: "bun",
+      format: "cjs",
+      minifySyntax: minify,
+      minifyWhitespace: minify,
+      minifyIdentifiers: minify,
+      bytecode,
+      // --bytecode writes a second file, which the CLI only allows with --outdir.
+      ...(bytecode ? { outdir: "/out" } : {}),
+      files: importMetaFiles,
+      onAfterBundle(api) {
+        const out = api.readFile(bytecode ? "/out/entry.js" : "/out.js");
+        expect(out).toStartWith(
+          `// @bun ${bytecode ? "@bytecode " : ""}@bun-cjs\n` +
+            "(function(exports, require, module, __filename, __dirname, $Bun_import_meta) {",
+        );
+        expect(out).not.toContain("import.meta");
+        // The build directory must not end up in the output.
+        expect(out).not.toContain(api.root);
+      },
+      run: { stdout: importMetaStdout, ...(bytecode ? expectBytecodeCacheHit : {}) },
+    });
+  }
+  itBundled("bun/ImportMetaFormatCjsUnused", {
+    target: "bun",
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        import { value } from "./dep.cjs";
+        console.log(value);
+      `,
+      "/dep.cjs": /* js */ `
+        exports.value = "no import.meta here";
+      `,
+    },
+    onAfterBundle(api) {
+      // The runtime helpers linked into this chunk use import.meta in their
+      // source, but cjs output never keeps that part, so the wrapper does not
+      // take the argument.
+      expect(api.readFile("/out.js")).toStartWith(
+        "// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {",
+      );
+    },
+    run: { stdout: "no import.meta here" },
+  });
+  // `bun build --compile --bytecode` is the documented production command.
+  itBundled("bun/ImportMetaCompileBytecode", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { basename, dirname } from "node:path";
+        const slashes = (s) => s.replaceAll("\\\\", "/");
+        console.log(
+          slashes(import.meta.path) === slashes(Bun.main),
+          slashes(import.meta.dir) === slashes(dirname(Bun.main)),
+          import.meta.file === basename(Bun.main),
+          import.meta.url === Bun.pathToFileURL(Bun.main).href,
+          slashes(import.meta.dir),
+        );
+      `,
+    },
+    run: {
+      stdout: /^true true true true (\/\$bunfs|[A-Z]:\/~BUN)\/root$/,
+      ...expectBytecodeCacheHit,
+    },
+  });
+
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

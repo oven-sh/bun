@@ -2974,23 +2974,27 @@ pub(crate) mod __gated_printer {
                         debug_assert!(self.options.hmr_ref.is_valid());
                         self.print_symbol(self.options.hmr_ref);
                         self.print(b".importMeta");
-                    } else if !self.options.import_meta_ref.is_valid() {
-                        // Most of the time, leave it in there
-                        if let Some(mi) = self.module_info() {
-                            mi.flags.contains_import_meta = true;
-                        }
-                        self.print(b"import.meta");
-                    } else {
-                        // Note: The bundler will not hit this code path. The bundler will replace
-                        // the ImportMeta AST node with a regular Identifier AST node.
-                        //
-                        // This is currently only used in Bun's runtime for CommonJS modules
-                        // referencing import.meta
+                    } else if self.options.import_meta_ref.is_valid() {
+                        // Bun's runtime wrapping a CommonJS module that references import.meta.
+                        // The bundler never sets `import_meta_ref`.
                         //
                         // TODO: This assertion trips when using `import.meta` with `--format=cjs`
                         debug_assert!(self.options.module_type == bundle_opts::Format::Cjs);
 
                         self.print_symbol(self.options.import_meta_ref);
+                    } else if self.options.bundling
+                        && self.options.module_type == bundle_opts::Format::Cjs
+                        && self.options.target.is_bun()
+                    {
+                        // `post_process_js_chunk` declares this argument on the
+                        // `@bun-cjs` wrapper of every chunk whose files use import.meta.
+                        self.print(E::ImportMeta::CJS_WRAPPER_ARG);
+                    } else {
+                        // Most of the time, leave it in there
+                        if let Some(mi) = self.module_info() {
+                            mi.flags.contains_import_meta = true;
+                        }
+                        self.print(b"import.meta");
                     }
                 }
                 ExprData::EImportMetaMain(data) => {

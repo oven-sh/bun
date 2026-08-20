@@ -2606,6 +2606,14 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
+        // cjs output for bun keeps `import.meta` as written: the linker adds
+        // `E::ImportMeta::CJS_WRAPPER_ARG` to the `@bun-cjs` wrapper and the
+        // printer prints `import.meta` as that argument (see
+        // `post_process_js_chunk`). Both key off the build's target, so this
+        // does too, not off a per-file hashbang override.
+        opts.inline_import_meta_paths = topts.framework.is_some()
+            || (output_format == options::Format::Cjs && !topts.target.is_bun());
+
         opts.tree_shaking = if task.source_index.is_runtime() {
             true
         } else {

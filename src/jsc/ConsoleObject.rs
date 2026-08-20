@@ -490,41 +490,6 @@ fn with_console_sink<R>(
     )
 }
 
-/// `process._rawDebug(...args)`: `util.format` the args and write straight to fd 2,
-/// skipping `process.stderr` so it works when that stream is broken or replaced.
-/// <https://github.com/nodejs/node/blob/main/lib/internal/process/per_thread.js>
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__Process__rawDebug(
-    global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
-) {
-    let console: *mut ConsoleObject = vm_console(global);
-    let _stream_lock = ConsoleStreamLock::acquire(true);
-    // SAFETY: see [`vm_console`] — JS-thread-only, points at this VM's boxed
-    // `ConsoleObject`; no other borrow of it is live in this function.
-    let writer: &mut bun_core::io::Writer = unsafe { (*console).error_writer() };
-    // `util.format` never colorizes, so neither does this.
-    let result = write_message(
-        MessageType::Log,
-        MessageLevel::Log,
-        global,
-        vals,
-        len,
-        0,
-        false,
-        &mut *writer,
-    );
-    let _ = writer.flush();
-    if let Err(err) = result {
-        if matches!(err, jsc::JsError::OutOfMemory) {
-            global.throw_out_of_memory_value();
-        }
-        debug_assert!(global.has_exception());
-    }
-}
-
 /// Set the first time a `process.stdout` / `process.stderr` stream object is
 /// built. See [`with_console_sink`] for why this is a process-wide flag.
 static STDIO_WRITE_STREAM_EXISTS: core::sync::atomic::AtomicBool =
@@ -982,29 +947,27 @@ impl<'a> TablePrinter<'a> {
         row: &CollectedRow,
         cell_text: &[u8],
     ) {
-        writer.write_all("│".as_bytes()).ok();
+        let _ = writer.write_all("│".as_bytes());
         {
             let needed = columns[0].width.saturating_sub(row.key.width());
 
             // Left-justified, like every other cell and like Node's cli_table.
-            writer.splat_byte_all(b' ', PADDING as usize).ok();
+            let _ = writer.splat_byte_all(b' ', PADDING as usize);
             match &row.key {
                 RowKey::Str { text, .. } => {
-                    writer.write_all(text.slice()).ok();
+                    let _ = writer.write_all(text.slice());
                 }
                 RowKey::Num(value) => {
-                    write!(writer, "{value}").ok();
+                    let _ = write!(writer, "{value}");
                 }
             }
-            writer
-                .splat_byte_all(b' ', (needed + PADDING) as usize)
-                .ok();
+            let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
         }
 
         for col_idx in 1..columns.len() {
             let col = &columns[col_idx];
 
-            writer.write_all("│".as_bytes()).ok();
+            let _ = writer.write_all("│".as_bytes());
 
             let cell = if col_idx == self.values_col_idx {
                 row.values_cell
@@ -1014,21 +977,17 @@ impl<'a> TablePrinter<'a> {
 
             match cell {
                 None => {
-                    writer
-                        .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', (col.width + PADDING * 2) as usize);
                 }
                 Some(cell) => {
                     let needed = col.width.saturating_sub(cell.width);
-                    writer.splat_byte_all(b' ', PADDING as usize).ok();
-                    writer.write_all(cell.text(cell_text)).ok();
-                    writer
-                        .splat_byte_all(b' ', (needed + PADDING) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', PADDING as usize);
+                    let _ = writer.write_all(cell.text(cell_text));
+                    let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
                 }
             }
         }
-        writer.write_all("│\n".as_bytes()).ok();
+        let _ = writer.write_all("│\n".as_bytes());
     }
 
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
@@ -1184,51 +1143,49 @@ impl<'a> TablePrinter<'a> {
                 );
             }
 
-            writer.write_all("┌".as_bytes()).ok();
+            let _ = writer.write_all("┌".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┬".as_bytes()).ok();
+                    let _ = writer.write_all("┬".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
 
-            writer.write_all("┐\n│".as_bytes()).ok();
+            let _ = writer.write_all("┐\n│".as_bytes());
 
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("│".as_bytes()).ok();
+                    let _ = writer.write_all("│".as_bytes());
                 }
                 let len = col.name.visible_width_exclude_ansi_colors(false);
                 let needed = (col.width as usize).saturating_sub(len);
-                writer.splat_byte_all(b' ', 1).ok();
+                let _ = writer.splat_byte_all(b' ', 1);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r><b>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r><b>", true).as_bytes());
                 }
-                write!(writer, "{}", col.name).ok();
+                let _ = write!(writer, "{}", col.name);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
-                writer.splat_byte_all(b' ', needed + PADDING as usize).ok();
+                let _ = writer.splat_byte_all(b' ', needed + PADDING as usize);
             }
 
-            writer.write_all("│\n├".as_bytes()).ok();
+            let _ = writer.write_all("│\n├".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┼".as_bytes()).ok();
+                    let _ = writer.write_all("┼".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┤\n".as_bytes()).ok();
+            let _ = writer.write_all("┤\n".as_bytes());
         }
 
         // render pass: replay each row's pre-formatted cell bytes
@@ -1238,23 +1195,21 @@ impl<'a> TablePrinter<'a> {
 
         // print the table bottom border
         {
-            writer.write_all("└".as_bytes()).ok();
-            Self::write_string_n_times(
+            let _ = writer.write_all("└".as_bytes());
+            let _ = Self::write_string_n_times(
                 writer,
                 "─".as_bytes(),
                 (columns[0].width + PADDING * 2) as usize,
-            )
-            .ok();
+            );
             for column in columns[1..].iter() {
-                writer.write_all("┴".as_bytes()).ok();
-                Self::write_string_n_times(
+                let _ = writer.write_all("┴".as_bytes());
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (column.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┘\n".as_bytes()).ok();
+            let _ = writer.write_all("┘\n".as_bytes());
         }
 
         Ok(())
@@ -2163,12 +2118,6 @@ pub mod formatter {
     }
 
     impl TagPayload {
-        /// The constructor lives here as well as on the bare
-        /// discriminant `Tag`. Callers in sibling modules use either name.
-        #[inline]
-        pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
-            Tag::get(value, global_this)
-        }
         pub(crate) fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }
@@ -3406,7 +3355,7 @@ pub mod formatter {
         value.get_class_name(global_this, &mut name_str)?;
         if !name_str.eql_comptime(b"Object") {
             return Ok(Some(name_str));
-        } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
+        } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
             return Ok(Some(ZigString::static_("[Object: null prototype]")));
         }
         Ok(None)
@@ -4136,7 +4085,7 @@ pub mod formatter {
             // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
             // have `Function.prototype` as their prototype, which would
             // render as `[class X extends Function]` and is noise.
-            let proto = value.get_prototype(self.global_this);
+            let proto = value.get_prototype(self.global_this)?;
             let proto_is_class = !proto.is_empty_or_undefined_or_null()
                 && proto.is_cell()
                 && proto.is_class(self.global_this);
@@ -4202,7 +4151,7 @@ pub mod formatter {
             }
             let printable = OwnedString::new(value.get_name(self.global_this)?);
 
-            let proto = value.get_prototype(self.global_this);
+            let proto = value.get_prototype(self.global_this)?;
             // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
             let func_name = OwnedString::new(proto.get_name(self.global_this)?);
 
@@ -5864,10 +5813,31 @@ pub mod formatter {
             }
             self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
         }
+
+        /// Format a single value into `writer`, propagating a JS exception
+        /// thrown while inspecting it (e.g. a throwing `[inspect.custom]`).
+        /// Use this instead of the `Display` adapter ([`ZigFormatter`]) when a
+        /// `JsResult` caller needs the error: `Display` can only report
+        /// `fmt::Error`, which panics inside `io::Write::write_fmt` when the
+        /// sink itself did not fail.
+        pub fn format_value<const ENABLE_ANSI_COLORS: bool>(
+            &mut self,
+            value: JSValue,
+            writer: &mut dyn bun_io::Write,
+        ) -> JsResult<()> {
+            self.stack_check.update();
+            let one = [value];
+            self.remaining_values = bun_ptr::RawSlice::new(&one);
+            let global = self.global_this;
+            let result = Tag::get(value, global)
+                .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global));
+            self.remaining_values = bun_ptr::RawSlice::EMPTY;
+            result
+        }
     }
 
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
-    pub trait TypedArrayElement: Copy {
+    trait TypedArrayElement: Copy {
         const IS_BIGINT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;

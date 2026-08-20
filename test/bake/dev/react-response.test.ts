@@ -1,23 +1,10 @@
 import { expect } from "bun:test";
-import { ByteBuffer } from "peechy";
-import { decodeFallbackMessageContainer } from "../../../src/api/schema";
 import { devTest } from "../bake-harness";
 
+// The dev error page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs).
 function getFallbackMessageContainer(text: string) {
-  const regex = /\s*\<script id="__bunfallback" type="binary\/peechy"\>([^\<]+)\<\/script\>/gm;
-  const match = regex.exec(text);
-
-  const encodedData = match![1].trim();
-  const binary_string = globalThis.atob(encodedData);
-
-  let len = binary_string.length;
-  let bytes = new Uint8Array(len);
-  for (var i = 0; i < len; i++) {
-    bytes[i] = binary_string.charCodeAt(i);
-  }
-
-  const fallback_message_container = decodeFallbackMessageContainer(new ByteBuffer(bytes));
-  return fallback_message_container;
+  const regex = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/m;
+  return JSON.parse(regex.exec(text)![1]);
 }
 
 // Test case 1: Simple page which throws an error when streaming = false

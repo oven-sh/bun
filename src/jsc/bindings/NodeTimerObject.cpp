@@ -7,6 +7,7 @@
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/Heap.h"
 #include "ZigGlobalObject.h"
+#include "BunClientData.h"
 
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/JSPromise.h>
@@ -14,21 +15,32 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
 #include "NodeAsyncHooks.h"
+
 namespace Bun {
 using namespace JSC;
 
-// Returns true if an exception was pending, after handing it to the unhandled
-// error path.
+enum class PendingException : uint8_t {
+    None,
+    // Handed to the unhandled error path; JS may be entered again.
+    Reported,
+    // A termination, handed to the VM's stop path; nothing may enter JS again.
+    Terminated,
+};
+
 template<typename Scope>
-static bool reportPendingException(JSGlobalObject* globalObject, Scope& scope)
+static PendingException takePendingException(JSGlobalObject* globalObject, VM& vm, Scope& scope)
 {
     auto* exception = scope.exception();
     if (!exception) [[likely]] {
-        return false;
+        return PendingException::None;
     }
     (void)scope.tryClearException();
+    if (vm.isTerminationException(exception)) {
+        Bun__VM__takeTerminationOutsideScript(globalObject);
+        return PendingException::Terminated;
+    }
     Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
-    return true;
+    return PendingException::Reported;
 }
 
 static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
@@ -37,7 +49,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::Before);
-    if (reportPendingException(globalObject, scope)) [[unlikely]] {
+    if (takePendingException(globalObject, vm, scope) != PendingException::None) [[unlikely]] {
         return true;
     }
 
@@ -77,14 +89,20 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
     }
 
-    bool hadException = reportPendingException(globalObject, scope);
+    auto pending = takePendingException(globalObject, vm, scope);
+    bool hadException = pending != PendingException::None;
 
     // Take any pending exception between the two: entering JS again with one
-    // still set is illegal.
-    emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::After);
-    hadException |= reportPendingException(globalObject, scope);
-    emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::Destroy);
-    hadException |= reportPendingException(globalObject, scope);
+    // still set is illegal, and after a termination nothing may enter JS at all.
+    if (pending != PendingException::Terminated) {
+        emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::After);
+        pending = takePendingException(globalObject, vm, scope);
+        hadException |= pending != PendingException::None;
+    }
+    if (pending != PendingException::Terminated) {
+        emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::Destroy);
+        hadException |= takePendingException(globalObject, vm, scope) != PendingException::None;
+    }
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
@@ -97,7 +115,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
 {
     auto& vm = globalObject->vm();
-    if (vm.hasPendingTerminationException()) [[unlikely]] {
+    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
         return true;
     }
 

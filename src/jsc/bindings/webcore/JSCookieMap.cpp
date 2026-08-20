@@ -10,7 +10,6 @@
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertBoolean.h"
-#include "JSDOMConvertDate.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertRecord.h"
@@ -577,6 +576,9 @@ private:
     {
     }
 };
+template<> struct DOMStructureSlotOf<CookieMapIterator> {
+    static constexpr DOMStructureSlot value = DOMStructureSlot::CookieMapIterator;
+};
 
 using CookieMapIteratorPrototype = JSDOMIteratorPrototype<JSCookieMap, CookieMapIteratorTraits>;
 JSC_ANNOTATE_HOST_FUNCTION(CookieMapIteratorPrototypeNext, CookieMapIteratorPrototype::next);
@@ -643,21 +645,6 @@ void JSCookieMap::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = uncheckedDowncast<JSCookieMap>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSCookieMapOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSCookieMapOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsCookieMap = static_cast<JSCookieMap*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsCookieMap->wrapped(), jsCookieMap);
 }
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)

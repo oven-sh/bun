@@ -438,7 +438,7 @@ impl FilePoll {
 
         debug_assert!(!self.owner.is_null());
 
-        // Hot-path hoisted-match: the per-tag `switch` lives in
+        // Hot-path hoisted-match: the per-tag `match` lives in
         // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
         // this T3 crate names no variant types.
         // SAFETY: `self` is a live FilePoll for the duration of the call

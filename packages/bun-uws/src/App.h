@@ -135,7 +135,7 @@ public:
 
 
     /* Server name */
-    TemplatedApp &&addServerName(const std::string &hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr) {
+    TemplatedApp &&addServerName(const std::string &hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr, bool applyClientCertPolicy = false) {
 
         /* Do nothing if not even on SSL */
         if constexpr (SSL) {
@@ -144,6 +144,12 @@ public:
             if (!domainCtx) {
                 if (success) *success = false;
                 return std::move(*this);
+            }
+            /* A per-serverName entry carries its own client-certificate
+             * policy; the default entry's own hostname keeps the app-level
+             * one. */
+            if (applyClientCertPolicy) {
+                us_ssl_ctx_set_sni_policy(domainCtx, options.request_cert, options.reject_unauthorized);
             }
             auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
             int result = 0;
@@ -391,20 +397,28 @@ public:
         return std::move(*this);
     }
 
-    /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket. */
-    TemplatedApp &&closeIdle() {
+    /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
+     * With closeWhenIdle set, connections that are busy right now are marked to close as soon as their in-flight work completes (graceful shutdown);
+     * upgraded WebSockets and CONNECT/Upgrade tunnels never become idle, so they are left alone either way.
+     * Returns the number of connections closed. */
+    size_t closeIdle(bool closeWhenIdle = false) {
         auto *group = httpContext->getSocketGroup();
         struct us_socket_t *s = group->head_sockets;
+        size_t closed = 0;
         while (s) {
-            // no matter the type of socket will always contain the AsyncSocketData
-            auto *data = ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
+            /* The HTTP group only holds HTTP sockets (an upgraded WebSocket is
+             * adopted into its own group), so the ext block is an HttpResponseData. */
+            auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
             struct us_socket_t *next = s->next;
             if (data->isIdle) {
                 us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+                closed++;
+            } else if (closeWhenIdle) {
+                data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
             }
             s = next;
         }
-        return std::move(*this);
+        return closed;
     }
 
     template <typename UserData>
@@ -775,10 +789,13 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool httpAllowHalfOpen) {
+    /* lenientHttpFlags: bit 0 = lenient header values (llhttp LENIENT_HEADERS),
+     * bit 1 = lenient transfer-encoding (llhttp LENIENT_TRANSFER_ENCODING). */
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, uint8_t lenientHttpFlags, bool httpAllowHalfOpen) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
         httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
-        httpContext->getSocketContextData()->flags.useInsecureHTTPParser = useInsecureHTTPParser;
+        httpContext->getSocketContextData()->flags.useInsecureHTTPParser = (lenientHttpFlags & 1) != 0;
+        httpContext->getSocketContextData()->flags.useLenientTransferEncoding = (lenientHttpFlags & 2) != 0;
         httpContext->getSocketContextData()->flags.httpAllowHalfOpen = httpAllowHalfOpen;
         return std::move(*this);
     }

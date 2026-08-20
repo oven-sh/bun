@@ -23,6 +23,26 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
   2,
 );
 
+// Runtime-dispatched SIMD byte-search kernels (src/jsc/bindings/highway_strings.cpp)
+// behind `bun_core::strings`, driven directly so tests can sweep lengths and
+// alignments. Returns the kernel's raw result: an index (`haystack.length` =
+// not found), a count, or for memmem/memrmem the offset with -1 = not found.
+export const highwayStringsForTesting: (
+  op:
+    | "indexOfChar"
+    | "lastIndexOfChar"
+    | "indexOfNotChar"
+    | "countChar"
+    | "indexOfAny"
+    | "lastIndexOfAny"
+    | "memmem"
+    | "memrmem"
+    | "memmem16"
+    | "memrmem16",
+  haystack: Uint8Array,
+  arg: number | Uint8Array,
+) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {
@@ -105,6 +125,7 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   rootError: () => void;
   outOfMemory: () => void;
   abort: () => void;
+  fastfail: () => void;
   trap: () => void;
   raiseIgnoringPanicHandler: () => void;
 };
@@ -164,15 +185,6 @@ export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindin
    */
   parseManifest: (manifestFileName: string, registryUrl: string) => any;
 };
-
-// Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
-export type Dependency = any;
-export const npa: (name: string) => Dependency = $newRustFunction("dependency.rs", "fromJS", 1);
-
-export const npmTag: (
-  name: string,
-) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
-  $newRustFunction("dependency.rs", "Version.Tag.inferFromJS", 1);
 
 export const readTarball: (tarball: string) => any = $newRustFunction("pack_command.rs", "bindings.jsReadTarball", 1);
 
@@ -522,14 +534,6 @@ export function getWebStreamState(stream: ReadableStream | WritableStream): {
   }
 }
 
-export const fs = require("node:fs/promises").$data;
-
-export const fsStreamInternals = {
-  writeStreamFastPath(str) {
-    return str[require("internal/fs/streams").kWriteStreamFastPath];
-  },
-};
-
 export const arrayBufferViewHasBuffer = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_arrayBufferViewHasBuffer",
@@ -545,7 +549,6 @@ export const timerInternals = {
 export const dgramInternals = {
   newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
   closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
-  isFdAdopted: $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -577,8 +580,8 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
- * "poll_start"; see fault_inject.h for the per-hook description). Arming
- * anything else is rejected.
+ * "poll_start", "session_buffer"; see fault_inject.h for the per-hook
+ * description). Arming anything else is rejected.
  */
 export type SocketFaultSyscall =
   | "recv"
@@ -589,7 +592,8 @@ export type SocketFaultSyscall =
   | "connect"
   | "accept"
   | "ssl_loop_buffer"
-  | "poll_start";
+  | "poll_start"
+  | "session_buffer";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
@@ -616,7 +620,7 @@ export type SocketFaultRule = {
   after?: number;
   /** fire this many times then disarm; -1 = forever. Default 1. */
   repeat?: number;
-  /** match only this fd; -1 (default) = any. Rejected for "ssl_loop_buffer", which has no fd. */
+  /** match only this fd; -1 (default) = any. Rejected for "ssl_loop_buffer" and "session_buffer", which have no fd. */
   fd?: number;
 };
 
@@ -642,8 +646,6 @@ export const structuredCloneAdvanced: (
   forStorage: boolean,
   serializationContext: SerializationContext,
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
-
-export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
@@ -671,8 +673,29 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
-export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
-  $newRustFunction("event_loop.rs", "getActiveTasks", 0);
+// True when the installed watcher registered a real OS source (a PSI trigger
+// on Linux). The watcher installs silently without one when the kernel
+// refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.
+export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction(
+  "memory_pressure.rs",
+  "jsWatcherHasOsBackend",
+  0,
+);
+
+// The exact bytes Bun writes to /proc/pressure/memory to arm its trigger.
+// null where there is no PSI backend (everything except Linux).
+export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
+
+export const getEventLoopStats: () => {
+  activeTasks: number;
+  tasks: number;
+  immediateTasks: number;
+  concurrentTasksEmpty: boolean;
+  concurrentRef: number;
+  numPolls: number;
+  loopActive: boolean;
+  eventLoopAlive: boolean;
+} = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
 export const hostedGitInfo = {
   parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),
@@ -739,4 +762,13 @@ export const fetchH3Internals = {
 
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
+};
+
+export const byteStreamInternals = {
+  // Swap a ByteStream-backed stream's producer for one whose drain signal
+  // re-enters on_cancel, making consumed-during-signal_drained re-entrancy
+  // deterministic in tests.
+  cancelOnDrain: $newRustFunction("runtime/webcore/ByteStream.rs", "TestingAPIs.byteStreamCancelOnDrain", 1) as (
+    stream: ReadableStream,
+  ) => void,
 };

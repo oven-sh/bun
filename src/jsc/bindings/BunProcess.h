@@ -37,6 +37,10 @@ class Process : public WebCore::JSEventEmitter {
     // Index 0 = fd 1, index 1 = fd 2; empty until first touched.
     WriteBarrier<JSObject> m_stdioWriteStream[2];
     WriteBarrier<Unknown> m_pristineStdioWrite[2];
+    // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
+    WriteBarrier<JSObject> m_onWarning;
+
+    void installDefaultWarningListener(JSC::VM&);
 
 public:
     // fd is 1 or 2. Called once per stream, from the lazy property.
@@ -61,6 +65,8 @@ public:
 
     bool m_isExitCodeObservable = false;
     bool m_sourceMapsEnabled = false;
+    // Node's per-Environment EmitProcessEnvWarning one-shot for DEP0104.
+    bool m_emitEnvNonstringWarning = true;
     // Re-entry guard for dispatchExitInternal. Per-Process (i.e. per-VM): a
     // function-local static would be shared across worker threads, so a
     // worker's exit would suppress the main thread's 'exit' event.
@@ -83,6 +89,8 @@ public:
     // Some Node.js events want to be emitted on the next tick rather than synchronously.
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
+
+    JSObject* ensureOnWarning(Zig::GlobalObject*);
 
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
@@ -146,7 +154,6 @@ public:
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
-bool isSignalName(WTF::String input);
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 
 // Routes its argument onto the uncaught-exception path. Used by the

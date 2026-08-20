@@ -342,9 +342,8 @@ impl Diagnostic {
             crate::Error::InvalidArgument => {
                 bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name)
             }
-            _ => bun_core::pretty_errorln!(
-                "<red>error<r><d>:<r> {} while parsing argument '{}'",
-                err,
+            crate::Error::InvalidNegation => bun_core::pretty_errorln!(
+                "<red>error<r><d>:<r> The argument '{}' is an invalid negation because it is not a boolean option.",
                 name
             ),
         }

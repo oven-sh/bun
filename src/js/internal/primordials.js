@@ -115,12 +115,8 @@ const SafePromiseAllReturnArrayLike = (promises, mapFn) => {
 };
 
 export default {
-  Array,
   SafeArrayIterator,
   MapPrototypeGetSize: getGetter(Map, "size"),
-  Number,
-  Object,
-  RegExp,
   SafeStringIterator: createSafeIterator(StringIterator, uncurryThis(StringIteratorPrototype.next)),
   SafeMap: makeSafe(
     Map,
@@ -140,14 +136,6 @@ export default {
       }
     },
   ),
-  SafeWeakSet: makeSafe(
-    WeakSet,
-    class SafeWeakSet extends WeakSet {
-      constructor(i) {
-        super(i);
-      }
-    },
-  ),
   SafeWeakMap: makeSafe(
     WeakMap,
     class SafeWeakMap extends WeakMap {
@@ -157,7 +145,9 @@ export default {
     },
   ),
   SetPrototypeGetSize: getGetter(Set, "size"),
-  String,
+  TypedArrayPrototypeGetBuffer: getGetter(Uint8Array, "buffer"),
+  TypedArrayPrototypeGetByteLength: getGetter(Uint8Array, "byteLength"),
+  TypedArrayPrototypeGetByteOffset: getGetter(Uint8Array, "byteOffset"),
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
   TypedArrayPrototypeGetSymbolToStringTag: getGetter(Uint8Array, Symbol.toStringTag),
   Uint8ClampedArray,

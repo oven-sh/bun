@@ -1,9 +1,11 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
-import { dirname, join } from "path";
+import { createRequire } from "module";
+import { basename, dirname, join } from "path";
+import { pathToFileURL } from "url";
 
 const registry = new VerdaccioRegistry();
 
@@ -22,6 +24,20 @@ function withoutEntryHash(link: string): string {
 // always differ) but the hash suffix is what proves sharing/isolation.
 function entryStoreName(link: string): string {
   return link.slice(link.lastIndexOf("links") + "links".length + 1);
+}
+
+// What a store entry name carries in place of its URL's userinfo and query
+// string (see "store entry names of URL dependencies").
+function urlHash(url: string): string {
+  return Bun.hash(url).toString(16).padStart(16, "0");
+}
+
+// `<name>@<resolution>`, with the resolution cut and hashed past MAX_RESOLUTION_LEN (see "long store entry names").
+const MAX_RESOLUTION_LEN = 80;
+const CUT_RESOLUTION_LEN = MAX_RESOLUTION_LEN - "+".length - 16;
+function storeEntryName(name: string, resolution: string): string {
+  if (resolution.length <= MAX_RESOLUTION_LEN) return `${name}@${resolution}`;
+  return `${name}@${resolution.slice(0, CUT_RESOLUTION_LEN)}+${urlHash(resolution)}`;
 }
 
 beforeAll(async () => {
@@ -721,6 +737,337 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await install();
   await checkInstall();
+});
+
+test("adding, removing and re-adding a patch for an npm dependency", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const rootPackageJson = { name: "npm-patch-cycle", dependencies: { "no-deps": "1.0.0" } };
+  const patched = {
+    ...rootPackageJson,
+    patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+  };
+  await write(
+    join(packageDir, "patches", "no-deps@1.0.0.patch"),
+    `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`,
+  );
+  const patchedFile = join(packageDir, "node_modules", "no-deps", "patched.txt");
+
+  const steps = [
+    [rootPackageJson, false],
+    [patched, true],
+    [rootPackageJson, false],
+    [patched, true],
+  ] as const;
+  for (const [step, [manifest, expectPatched]] of steps.entries()) {
+    await write(packageJson, JSON.stringify(manifest));
+    // hardlink (the Linux default) installs into the store entry in place; clonefile replaces it.
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--backend", "hardlink"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect({ step, patched: existsSync(patchedFile) }).toEqual({ step, patched: expectPatched });
+  }
+});
+
+// Adding a patchedDependencies entry for a github: dependency of a workspace
+// member deadlocked `bun install` forever with the isolated linker:
+// re-resolution re-downloaded the github tarball, and the install phase then
+// re-enqueued the same tarball task and parked the store entry on the
+// completed task's already-drained callback list, so the pending-task count
+// never reached zero.
+test("adding and removing a patch for a github dependency in a workspace completes", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // Minimal gzipped tarball shaped like a github codeload tarball: a single
+  // root directory wrapping the package contents.
+  function tarHeader(name: string, size: number, isDir: boolean): Uint8Array {
+    const header = new Uint8Array(512);
+    const encoder = new TextEncoder();
+    header.set(encoder.encode(name), 0);
+    header.set(encoder.encode(isDir ? "0000755 " : "0000644 "), 100);
+    header.set(encoder.encode("0000000 "), 108);
+    header.set(encoder.encode("0000000 "), 116);
+    header.set(encoder.encode(size.toString(8).padStart(11, "0") + " "), 124);
+    header.set(encoder.encode("00000000000 "), 136);
+    header.set(encoder.encode("        "), 148);
+    header[156] = (isDir ? "5" : "0").charCodeAt(0);
+    header.set(encoder.encode("ustar"), 257);
+    header.set(encoder.encode("00"), 263);
+    let checksum = 0;
+    for (const byte of header) checksum += byte;
+    header.set(encoder.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
+    return header;
+  }
+  const blocks: Uint8Array[] = [];
+  blocks.push(tarHeader("testowner-testrepo-aaaaaaa/", 0, true));
+  for (const [name, contents] of [
+    ["package.json", JSON.stringify({ name: "gh-dep", version: "1.0.0" })],
+    ["index.js", 'console.log("original");\n'],
+  ]) {
+    const bytes = new TextEncoder().encode(contents);
+    blocks.push(tarHeader(`testowner-testrepo-aaaaaaa/${name}`, bytes.length, false));
+    blocks.push(bytes);
+    if (bytes.length % 512 !== 0) blocks.push(new Uint8Array(512 - (bytes.length % 512)));
+  }
+  blocks.push(new Uint8Array(1024));
+  const tarball = Bun.gzipSync(Buffer.concat(blocks));
+
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(tarball, { headers: { "Content-Type": "application/gzip" } }),
+  });
+
+  const env = {
+    ...bunEnv,
+    GITHUB_API_URL: `http://localhost:${server.port}`,
+    // CI exports BUN_INSTALL_CACHE_DIR; pin it so this test's cache state is
+    // its own.
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+
+  async function install() {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const rootPackageJson = {
+    name: "patched-github-workspace",
+    workspaces: ["packages/*"],
+  };
+  await write(packageJson, JSON.stringify(rootPackageJson));
+  await write(
+    join(packageDir, "packages", "member", "package.json"),
+    JSON.stringify({
+      name: "member",
+      version: "1.0.0",
+      dependencies: {
+        "gh-dep": "github:testowner/testrepo#aaaaaaa",
+      },
+    }),
+  );
+  await write(
+    join(packageDir, "patches", "gh-dep.patch"),
+    `diff --git a/index.js b/index.js
+index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1d 100644
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-console.log("original");
++console.log("patched");
+`,
+  );
+
+  const installedIndexJs = file(join(packageDir, "packages", "member", "node_modules", "gh-dep", "index.js"));
+
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+
+  // Adding the patch triggers a re-resolution; this install hung forever
+  // before the fix.
+  await write(
+    packageJson,
+    JSON.stringify({
+      ...rootPackageJson,
+      patchedDependencies: {
+        "gh-dep@github:testowner/testrepo#aaaaaaa": "patches/gh-dep.patch",
+      },
+    }),
+  );
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
+
+  // Cold cache with the patch still in the lockfile: the install phase itself
+  // downloads the tarball and applies the patch after extraction.
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "packages", "member", "node_modules"), { recursive: true, force: true });
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
+
+  // Removing the patch re-resolves again and rebuilds the store entry from
+  // the unpatched cache folder (the PatchInfo::Remove path, which hung the
+  // same way).
+  await write(packageJson, JSON.stringify(rootPackageJson));
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+
+  // Re-adding the same patch must patch again.
+  await write(
+    packageJson,
+    JSON.stringify({
+      ...rootPackageJson,
+      patchedDependencies: {
+        "gh-dep@github:testowner/testrepo#aaaaaaa": "patches/gh-dep.patch",
+      },
+    }),
+  );
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
+});
+
+// Same deadlock through the git: task-id space (clone + checkout tasks
+// instead of a tarball download). The repo is served over git's dumb HTTP
+// protocol: after `git update-server-info`, a bare repo is plain static
+// files. Requires the git executable to build the fixture repository.
+const gitExecutable = Bun.which("git");
+test.skipIf(!gitExecutable)("adding and removing a patch for a git dependency in a workspace completes", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  const srcDir = join(packageDir, "git-src");
+  const bareDir = join(packageDir, "repo.git");
+  // Isolate git from system/global config (e.g. core.autocrlf on Windows
+  // would rewrite the checked-out file contents this test asserts on).
+  const gitConfigEnv = {
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: join(packageDir, "gitconfig"),
+  };
+  const gitEnv = {
+    ...bunEnv,
+    ...gitConfigEnv,
+    GIT_AUTHOR_NAME: "bun-test",
+    GIT_AUTHOR_EMAIL: "test@bun.sh",
+    GIT_COMMITTER_NAME: "bun-test",
+    GIT_COMMITTER_EMAIL: "test@bun.sh",
+  };
+  async function git(args: string[], cwd: string): Promise<string> {
+    await using proc = spawn({ cmd: [gitExecutable!, ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("fatal:");
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  await write(join(packageDir, "gitconfig"), "[core]\n\tautocrlf = false\n");
+  await write(join(srcDir, "package.json"), JSON.stringify({ name: "git-dep", version: "1.0.0" }));
+  await write(join(srcDir, "index.js"), 'console.log("original");\n');
+  await git(["init", "-q"], srcDir);
+  await git(["add", "-A"], srcDir);
+  await git(["commit", "-qm", "init"], srcDir);
+  const sha = (await git(["rev-parse", "HEAD"], srcDir)).trim();
+  await git(["clone", "-q", "--bare", srcDir, bareDir], packageDir);
+  await git(["update-server-info"], bareDir);
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (!pathname.startsWith("/repo.git/")) return new Response("not found", { status: 404 });
+      const f = file(join(bareDir, pathname.slice("/repo.git/".length)));
+      return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+    },
+  });
+  const repoUrl = `git+http://127.0.0.1:${server.port}/repo.git`;
+
+  const env = {
+    ...bunEnv,
+    ...gitConfigEnv,
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+
+  async function install() {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const rootPackageJson = {
+    name: "patched-git-workspace",
+    workspaces: ["packages/*"],
+  };
+  await write(packageJson, JSON.stringify(rootPackageJson));
+  await write(
+    join(packageDir, "packages", "member", "package.json"),
+    JSON.stringify({
+      name: "member",
+      version: "1.0.0",
+      dependencies: {
+        "git-dep": repoUrl,
+      },
+    }),
+  );
+  await write(
+    join(packageDir, "patches", "git-dep.patch"),
+    `diff --git a/index.js b/index.js
+index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1d 100644
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-console.log("original");
++console.log("patched");
+`,
+  );
+
+  const installedIndexJs = file(join(packageDir, "packages", "member", "node_modules", "git-dep", "index.js"));
+
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+
+  // The patchedDependencies key must carry the resolved commit; a key without
+  // it is silently ignored, which the patched-content assertion would catch.
+  await write(
+    packageJson,
+    JSON.stringify({
+      ...rootPackageJson,
+      patchedDependencies: {
+        [`git-dep@${repoUrl}#${sha}`]: "patches/git-dep.patch",
+      },
+    }),
+  );
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
+
+  // Cold cache with the patch still in the lockfile: the install phase
+  // clones and checks out itself, applying the patch after the checkout.
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "packages", "member", "node_modules"), { recursive: true, force: true });
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
+
+  await write(packageJson, JSON.stringify(rootPackageJson));
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("original");\n');
+
+  // Re-adding the same patch must patch again.
+  await write(
+    packageJson,
+    JSON.stringify({
+      ...rootPackageJson,
+      patchedDependencies: {
+        [`git-dep@${repoUrl}#${sha}`]: "patches/git-dep.patch",
+      },
+    }),
+  );
+  await install();
+  expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
@@ -1651,7 +1998,13 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   using packageDir = tempDir("transitive-peer-test-", {});
   const packageJson = join(String(packageDir), "package.json");
   const cacheDir = join(String(packageDir), ".bun-cache");
-  const bunfig = `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${server.port}/"\nlinker = "isolated"\n`;
+  const bunfig = Bun.TOML.stringify({
+    install: {
+      cache: cacheDir,
+      registry: `http://localhost:${server.port}/`,
+      linker: "isolated",
+    },
+  });
   await write(join(String(packageDir), "bunfig.toml"), bunfig);
 
   await write(
@@ -1697,6 +2050,577 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
     join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
   );
+});
+
+// https://github.com/oven-sh/bun/issues/36987
+// A tarball URL with a query string must not put a literal `?` in the .bun
+// store directory name: module resolution parses `?` as a query-string
+// delimiter (truncating the path), and `?` is invalid in Windows filenames.
+// (The query string is now left out of the name altogether, see "store entry
+// names of URL dependencies" below.)
+test("tarball URL with query string resolves at runtime", async () => {
+  const tarball = file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"));
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname !== "/pkg.tgz") {
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(tarball, {
+        headers: { "Content-Type": "application/octet-stream" },
+      });
+    },
+  });
+
+  const url = `http://localhost:${server.port}/pkg.tgz?x=y`;
+  using cacheDir = tempDir("tarball-query-cache-", {});
+  using packageDir = tempDir("tarball-query-test-", {
+    "bunfig.toml": `[install]\ncache = "${String(cacheDir).replaceAll("\\", "\\\\")}"\nlinker = "isolated"\n`,
+    "package.json": JSON.stringify({
+      name: "test-tarball-query",
+      dependencies: {
+        "no-deps": url,
+      },
+    }),
+    "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);`,
+  });
+
+  await runBunInstall(bunEnv, String(packageDir));
+
+  const bunDir = join(String(packageDir), "node_modules", ".bun");
+  const storeEntries = (await readdirSorted(bunDir)).filter(entry => entry !== "node_modules");
+  expect(storeEntries).toEqual([`no-deps@http+++localhost+${server.port}+pkg.tgz+${urlHash(url)}`]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(packageDir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("1.0.0\n");
+  expect(exitCode).toBe(0);
+});
+
+// The resolution part of a store entry name (`<name>@<resolution>`) embeds
+// folder paths, tarball URLs and git URLs verbatim. `write_resolution` in
+// src/install/isolated_install/Store.rs bounds it: a resolution longer than
+// MAX_RESOLUTION_LEN bytes is cut and suffixed with `+` and the wyhash of the
+// full text. Unbounded, the entry's absolute path passes MAX_PATH on Windows,
+// where the package's lifecycle scripts then fail to spawn with ENOENT, and a
+// resolution longer than NAME_MAX cannot be created at all.
+describe("long store entry names", () => {
+  async function storeEntries(packageDir: string): Promise<string[]> {
+    return (await readdirSorted(join(packageDir, "node_modules", ".bun"))).filter(entry => entry !== "node_modules");
+  }
+
+  test("a resolution at the limit is kept verbatim, a longer one is cut and hashed", async () => {
+    // `file+` plus this folder name is exactly MAX_RESOLUTION_LEN bytes; the
+    // other three folders are one byte longer.
+    const atLimit = Buffer.alloc(MAX_RESOLUTION_LEN - "file+".length, "a").toString();
+    const pastLimit = `${atLimit}b`;
+    // Two resolutions of the same package that only differ after the cut
+    // point: the hash is what keeps their entries apart.
+    const sharedPrefix1 = `${atLimit}1`;
+    const sharedPrefix2 = `${atLimit}2`;
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        [`${atLimit}/package.json`]: JSON.stringify({ name: "at-limit", version: "1.0.0" }),
+        [`${pastLimit}/package.json`]: JSON.stringify({ name: "past-limit", version: "1.0.0" }),
+        [`${sharedPrefix1}/package.json`]: JSON.stringify({ name: "shared-prefix", version: "1.0.0" }),
+        [`${sharedPrefix2}/package.json`]: JSON.stringify({ name: "shared-prefix", version: "2.0.0" }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-long-store-entry-names",
+        dependencies: {
+          "at-limit": `file:./${atLimit}`,
+          "past-limit": `file:./${pastLimit}`,
+          "shared-prefix-1": `file:./${sharedPrefix1}`,
+          "shared-prefix-2": `file:./${sharedPrefix2}`,
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const pastLimitEntry = storeEntryName("past-limit", `file+${pastLimit}`);
+    expect(pastLimitEntry).toMatch(/^past-limit@file\+a{58}\+[0-9a-f]{16}$/);
+    const expectedEntries = [
+      `at-limit@file+${atLimit}`,
+      pastLimitEntry,
+      storeEntryName("shared-prefix", `file+${sharedPrefix1}`),
+      storeEntryName("shared-prefix", `file+${sharedPrefix2}`),
+    ].sort();
+    expect(await storeEntries(packageDir)).toEqual(expectedEntries);
+
+    expect(readlinkSync(join(packageDir, "node_modules", "past-limit"))).toBe(
+      join(".bun", pastLimitEntry, "node_modules", "past-limit"),
+    );
+    expect(
+      await Promise.all(
+        ["at-limit", "past-limit", "shared-prefix-1", "shared-prefix-2"].map(alias =>
+          file(join(packageDir, "node_modules", alias, "package.json")).json(),
+        ),
+      ),
+    ).toEqual([
+      { name: "at-limit", version: "1.0.0" },
+      { name: "past-limit", version: "1.0.0" },
+      { name: "shared-prefix", version: "1.0.0" },
+      { name: "shared-prefix", version: "2.0.0" },
+    ]);
+
+    // The cut name is a pure function of the resolution, so the next install
+    // finds the same entries again.
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await storeEntries(packageDir)).toEqual(expectedEntries);
+  });
+
+  test("the peer hash is appended after the cut resolution", async () => {
+    const folder = Buffer.alloc(MAX_RESOLUTION_LEN, "p").toString();
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        [`${folder}/package.json`]: JSON.stringify({
+          name: "has-peer",
+          version: "1.0.0",
+          peerDependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-long-store-entry-name-with-peer",
+        dependencies: { "has-peer": `file:./${folder}`, "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // `+7347ae2d86f1441a` is the hash of the peer set `no-deps@1.0.0`.
+    const entry = `${storeEntryName("has-peer", `file+${folder}`)}+7347ae2d86f1441a`;
+    expect(await storeEntries(packageDir)).toEqual([entry, "no-deps@1.0.0"]);
+    expect(
+      await file(join(packageDir, "node_modules", ".bun", entry, "node_modules", "no-deps", "package.json")).json(),
+    ).toEqual({ name: "no-deps", version: "1.0.0" });
+  });
+
+  test("a cut that would split a multi-byte character backs up to the character boundary", async () => {
+    // `file+x` is 6 bytes and every character after it is 2 bytes wide, so
+    // byte 63 of the resolution falls inside a character and the cut ends at
+    // byte 62. Only the shape is asserted: how non-ASCII bytes are spelled in
+    // the name is a separate matter (#32304), the boundary handling is not.
+    const folder = `x${Buffer.alloc(40 * 2, "\u00e9").toString()}`;
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: { [`${folder}/package.json`]: JSON.stringify({ name: "non-ascii", version: "1.0.0" }) },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({ name: "test-non-ascii-store-entry-name", dependencies: { "non-ascii": `file:./${folder}` } }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entries = await storeEntries(packageDir);
+    expect(entries).toEqual([expect.stringMatching(/^non-ascii@file\+x.*\+[0-9a-f]{16}$/)]);
+    const [entry] = entries;
+    const cutResolution = entry.slice("non-ascii@".length, -"+0123456789abcdef".length);
+    expect(Buffer.byteLength(cutResolution)).toBe(CUT_RESOLUTION_LEN - 1);
+    expect(readlinkSync(join(packageDir, "node_modules", "non-ascii"))).toBe(
+      join(".bun", entry, "node_modules", "non-ascii"),
+    );
+    expect(await file(join(packageDir, "node_modules", "non-ascii", "package.json")).json()).toEqual({
+      name: "non-ascii",
+      version: "1.0.0",
+    });
+  });
+
+  test("a local tarball and a folder in a deep directory install when their paths are longer than NAME_MAX", async () => {
+    // Every directory on the way is short; only the resolution, which is the
+    // whole relative path (257 bytes here), would make the entry name longer
+    // than NAME_MAX. Unbounded, the install fails with ENAMETOOLONG.
+    const segment = Buffer.alloc(85, "d").toString();
+    const deep = `${segment}/${segment}/${segment}`;
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        [`${deep}/bar-0.0.2.tgz`]: readFileSync(join(import.meta.dir, "bar-0.0.2.tgz")),
+        [`${deep}/pkg/package.json`]: JSON.stringify({ name: "folder-pkg", version: "1.0.0" }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-deep-local-tarball-and-folder",
+        dependencies: {
+          "bar": `file:./${deep}/bar-0.0.2.tgz`,
+          "folder-pkg": `file:./${deep}/pkg`,
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const tarballEntry = storeEntryName("bar", `.+${deep.replaceAll("/", "+")}+bar-0.0.2.tgz`);
+    const folderEntry = storeEntryName("folder-pkg", `file+${deep.replaceAll("/", "+")}+pkg`);
+    expect(tarballEntry).toMatch(/^bar@\.\+d{61}\+[0-9a-f]{16}$/);
+    expect(folderEntry).toMatch(/^folder-pkg@file\+d{58}\+[0-9a-f]{16}$/);
+    const expectedEntries = [tarballEntry, folderEntry].sort();
+    expect(await storeEntries(packageDir)).toEqual(expectedEntries);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    expect(
+      await Promise.all([
+        readlink(join(packageDir, "node_modules", "bar")),
+        readlink(join(packageDir, "node_modules", "folder-pkg")),
+        // The `.bun/node_modules` fallback directory links to the cut name too.
+        readlink(join(bunDir, "node_modules", "bar")),
+        file(join(packageDir, "node_modules", "bar", "package.json")).json(),
+        file(join(packageDir, "node_modules", "folder-pkg", "package.json")).json(),
+      ]),
+    ).toEqual([
+      join(".bun", tarballEntry, "node_modules", "bar"),
+      join(".bun", folderEntry, "node_modules", "folder-pkg"),
+      join("..", tarballEntry, "node_modules", "bar"),
+      { name: "bar", version: "0.0.2" },
+      { name: "folder-pkg", version: "1.0.0" },
+    ]);
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await storeEntries(packageDir)).toEqual(expectedEntries);
+  });
+
+  test("a tarball URL longer than NAME_MAX installs, also into the global store", async () => {
+    const tarball = file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"));
+    const segment = Buffer.alloc(255, "t").toString();
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname !== `/${segment}/no-deps.tgz`) {
+          return new Response("Not found", { status: 404 });
+        }
+        return new Response(tarball, { headers: { "Content-Type": "application/octet-stream" } });
+      },
+    });
+    const url = `http://localhost:${server.port}/${segment}/no-deps.tgz`;
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+      files: { "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);` },
+    });
+    await write(packageJson, JSON.stringify({ name: "test-long-tarball-url", dependencies: { "no-deps": url } }));
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entry = storeEntryName("no-deps", url.replaceAll(/[/:]/g, "+"));
+    expect(entry).toMatch(/^no-deps@http\+\+\+localhost\+\d+\+t+\+[0-9a-f]{16}$/);
+    expect(await storeEntries(packageDir)).toEqual([entry]);
+
+    const localEntry = join(packageDir, "node_modules", ".bun", entry);
+    expect(lstatSync(localEntry).isSymbolicLink()).toBe(true);
+    expect(entryStoreName(readlinkSync(localEntry))).toMatch(
+      new RegExp(`^${entry.replaceAll("+", "\\+")}-[0-9a-f]{16}$`),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1.0.0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The reported case: a git dependency's resolution is its repository URL
+  // (here: a path inside the temp directory) plus the commit, and the entry is
+  // the cwd its lifecycle scripts are spawned with.
+  test.skipIf(!gitExecutable)("a trusted git dependency with a long URL runs its lifecycle scripts", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const repoDir = join(packageDir, Buffer.alloc(60, "r").toString());
+    const gitEnv = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: join(packageDir, "gitconfig"),
+      GIT_AUTHOR_NAME: "bun-test",
+      GIT_AUTHOR_EMAIL: "test@bun.sh",
+      GIT_COMMITTER_NAME: "bun-test",
+      GIT_COMMITTER_EMAIL: "test@bun.sh",
+    };
+    async function git(...args: string[]): Promise<string> {
+      await using proc = spawn({
+        cmd: [gitExecutable!, ...args],
+        cwd: repoDir,
+        env: gitEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("fatal:");
+      expect(exitCode).toBe(0);
+      return out;
+    }
+
+    await Promise.all([
+      write(join(packageDir, "gitconfig"), ""),
+      write(
+        join(repoDir, "package.json"),
+        JSON.stringify({
+          name: "git-dep",
+          version: "1.0.0",
+          scripts: { postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"` },
+        }),
+      ),
+    ]);
+    await git("init", "-q");
+    await git("add", "package.json");
+    await git("commit", "-qm", "init", "--no-gpg-sign");
+    const sha = (await git("rev-parse", "HEAD")).trim();
+
+    const repoUrl = pathToFileURL(repoDir).href;
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-long-git-url",
+        dependencies: { "git-dep": `git+${repoUrl}` },
+        trustedDependencies: ["git-dep"],
+      }),
+    );
+
+    await runBunInstall(gitEnv, packageDir);
+
+    const entry = storeEntryName("git-dep", `git+${repoUrl.replaceAll(/[/:]/g, "+")}+${sha}`);
+    expect(entry).toMatch(/^git-dep@git\+file\+\+\+\+.*\+[0-9a-f]{16}$/);
+    expect(await storeEntries(packageDir)).toEqual([entry]);
+    expect(await file(join(packageDir, "node_modules", "git-dep", "postinstall-ran.txt")).text()).toBe("ran");
+  });
+});
+
+// The store entry of a tarball or git dependency is named after its URL, and
+// that name ends up in every path under the entry (realpaths, stack traces,
+// `bun pm` output). Credentials travel in the userinfo (`user:token@`) or the
+// query string (`?token=`), so those parts are left out of the name; the hash
+// of the complete URL takes their place (see `urlHash`), which also keeps URLs
+// that differ only in those parts in separate entries. A URL without either
+// part keeps the name it always had.
+describe("store entry names of URL dependencies", () => {
+  const installEnv = (dir: string, env: NodeJS.Dict<string> = bunEnv) => ({
+    ...env,
+    BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"),
+  });
+
+  async function storeEntries(dir: string): Promise<string[]> {
+    return (await readdirSorted(join(dir, "node_modules", ".bun"))).filter(entry => entry !== "node_modules");
+  }
+
+  async function runIndexMjs(dir: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "index.mjs"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Serves the registry fixture `no-deps-<v>.tgz` at `/cdn/pkg.tgz?v=<v>`
+  // (1.0.0 without a query string), whatever else the query string contains.
+  function serveTarballs() {
+    return Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname, searchParams } = new URL(req.url);
+        if (pathname !== "/cdn/pkg.tgz") return new Response("not found", { status: 404 });
+        const version = searchParams.get("v") ?? "1.0.0";
+        return new Response(file(join(import.meta.dir, "registry", "packages", "no-deps", `no-deps-${version}.tgz`)));
+      },
+    });
+  }
+
+  // (A username without a password, `http://token@host:port/...`, is covered
+  // by the git cases below: the tarball downloader currently sends such a URL
+  // with the userinfo still in the Host header, which the server rejects.)
+  const tarballCases: [description: string, url: (port: number) => string, hashed: boolean][] = [
+    ["a plain URL", port => `http://127.0.0.1:${port}/cdn/pkg.tgz`, false],
+    ["a password in the URL", port => `http://carol:s3cret@127.0.0.1:${port}/cdn/pkg.tgz`, true],
+    ["a token in the query string", port => `http://127.0.0.1:${port}/cdn/pkg.tgz?token=npm_s3cret`, true],
+    [
+      "credentials in both places",
+      port => `http://carol:s3cret@127.0.0.1:${port}/cdn/pkg.tgz?token=npm_s3cret#fragment`,
+      true,
+    ],
+  ];
+
+  test.concurrent.each(tarballCases)("tarball dependency with %s", async (_, urlFor, hashed) => {
+    using server = serveTarballs();
+    const url = urlFor(server.port);
+    using dir = tempDir("store-name-tarball-", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": url } }),
+      "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);`,
+    });
+    const env = installEnv(String(dir));
+
+    await runBunInstall(env, String(dir));
+
+    const entry = `no-deps@http+++127.0.0.1+${server.port}+cdn+pkg.tgz${hashed ? `+${urlHash(url)}` : ""}`;
+    expect(await storeEntries(String(dir))).toEqual([entry]);
+    expect(readlinkSync(join(String(dir), "node_modules", "no-deps"))).toBe(
+      join(".bun", entry, "node_modules", "no-deps"),
+    );
+    // Only the directory is named differently; the dependency still resolves
+    // to the URL as written.
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain(`no-deps@${url}`);
+    expect(await runIndexMjs(String(dir))).toEqual({ stdout: "1.0.0\n", stderr: "", exitCode: 0 });
+
+    // The next install derives the same name from the lockfile.
+    await runBunInstall(env, String(dir), { savesLockfile: false });
+    expect(await storeEntries(String(dir))).toEqual([entry]);
+  });
+
+  test.concurrent("tarball URLs that differ only in their query string get separate store entries", async () => {
+    using server = serveTarballs();
+    const base = `http://127.0.0.1:${server.port}/cdn/pkg.tgz`;
+    const urls = { "no-deps-v1": `${base}?v=1.0.0`, "no-deps-v2": `${base}?v=2.0.0` };
+    using dir = tempDir("store-name-tarball-query-", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: urls }),
+      "index.mjs": `import v1 from "no-deps-v1";\nimport v2 from "no-deps-v2";\nconsole.log(v1.version, v2.version);`,
+    });
+
+    await runBunInstall(installEnv(String(dir)), String(dir));
+
+    expect(await storeEntries(String(dir))).toEqual(
+      Object.values(urls)
+        .map(url => `no-deps@http+++127.0.0.1+${server.port}+cdn+pkg.tgz+${urlHash(url)}`)
+        .sort(),
+    );
+    expect(await runIndexMjs(String(dir))).toEqual({ stdout: "1.0.0 2.0.0\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("the global store entry of a tarball dependency is named the same way", async () => {
+    using server = serveTarballs();
+    const url = `http://carol:s3cret@127.0.0.1:${server.port}/cdn/pkg.tgz?token=npm_s3cret`;
+    using dir = tempDir("store-name-tarball-global-", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\nglobalStore = true\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": url } }),
+    });
+
+    await runBunInstall(installEnv(String(dir)), String(dir));
+
+    const entry = `no-deps@http+++127.0.0.1+${server.port}+cdn+pkg.tgz+${urlHash(url)}`;
+    expect(await storeEntries(String(dir))).toEqual([entry]);
+    // `node_modules/.bun/<entry>` links to `<cache>/links/<entry>-<entry hash>`.
+    const target = readlinkSync(join(String(dir), "node_modules", ".bun", entry));
+    expect(basename(dirname(target))).toBe("links");
+    expect(basename(target).slice(0, entry.length)).toBe(entry);
+    expect(basename(target).slice(entry.length)).toMatch(/^-[0-9a-f]{16}$/);
+    expect(await file(join(target, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+  });
+
+  describe.skipIf(!gitExecutable)("git dependencies", () => {
+    const gitEnv = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "bun-test",
+      GIT_AUTHOR_EMAIL: "test@bun.sh",
+      GIT_COMMITTER_NAME: "bun-test",
+      GIT_COMMITTER_EMAIL: "test@bun.sh",
+    };
+
+    async function git(cwd: string, ...args: string[]): Promise<string> {
+      await using proc = spawn({ cmd: [gitExecutable!, ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("fatal:");
+      expect(exitCode).toBe(0);
+      return stdout;
+    }
+
+    // `<root>/repo.git`: a bare repository with one commit of the package
+    // `git-dep`, prepared for git's dumb HTTP protocol (after
+    // `git update-server-info` a bare repository is plain static files).
+    async function createBareRepo(root: string): Promise<{ bare: string; sha: string }> {
+      const src = join(root, "git-src");
+      const bare = join(root, "repo.git");
+      await write(join(src, "package.json"), JSON.stringify({ name: "git-dep", version: "1.0.0" }));
+      await git(src, "init", "-q");
+      await git(src, "add", "package.json");
+      await git(src, "commit", "-q", "-m", "init", "--no-gpg-sign");
+      const sha = (await git(src, "rev-parse", "HEAD")).trim();
+      await git(root, "clone", "-q", "--bare", src, bare);
+      await git(bare, "update-server-info");
+      return { bare, sha };
+    }
+
+    function serveBareRepo(bare: string) {
+      return Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const { pathname } = new URL(req.url);
+          if (!pathname.startsWith("/repo.git/")) return new Response("not found", { status: 404 });
+          const f = file(join(bare, pathname.slice("/repo.git/".length)));
+          return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+        },
+      });
+    }
+
+    const gitCases: [description: string, repo: (port: number) => string, hashed: boolean][] = [
+      ["a plain URL", port => `http://127.0.0.1:${port}/repo.git`, false],
+      ["a password in the URL", port => `http://carol:s3cret@127.0.0.1:${port}/repo.git`, true],
+      ["a token as the username", port => `http://ghp_s3cret@127.0.0.1:${port}/repo.git`, true],
+    ];
+
+    test.concurrent.each(gitCases)("git dependency with %s", async (_, repoFor, hashed) => {
+      using dir = tempDir("store-name-git-", {});
+      const { bare, sha } = await createBareRepo(String(dir));
+      using server = serveBareRepo(bare);
+      const repo = repoFor(server.port);
+      const project = join(String(dir), "project");
+      await write(
+        join(project, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "git-dep": `git+${repo}` } }),
+      );
+      await write(join(project, "bunfig.toml"), `[install]\nlinker = "isolated"\n`);
+      const env = installEnv(String(dir), gitEnv);
+
+      await runBunInstall(env, project);
+
+      const entry = storeEntryName(
+        "git-dep",
+        `git+http+++127.0.0.1+${server.port}+repo.git${hashed ? `+${urlHash(repo)}` : ""}+${sha}`,
+      );
+      expect(await storeEntries(project)).toEqual([entry]);
+      expect(readlinkSync(join(project, "node_modules", "git-dep"))).toBe(
+        join(".bun", entry, "node_modules", "git-dep"),
+      );
+      expect(await file(join(project, "node_modules", "git-dep", "package.json")).json()).toEqual({
+        name: "git-dep",
+        version: "1.0.0",
+      });
+      expect(await file(join(project, "bun.lock")).text()).toContain(`git-dep@git+${repo}#${sha}`);
+
+      await runBunInstall(env, project, { savesLockfile: false });
+      expect(await storeEntries(project)).toEqual([entry]);
+    });
+  });
 });
 
 describe("global virtual store", () => {
@@ -1969,6 +2893,53 @@ describe("global virtual store", () => {
     ).toMatchObject({ version: "1.1.0" });
   });
 
+  test("re-resolving the same project re-points the entry link at the new-hash global entry", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-reresolve",
+        dependencies: { "two-range-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
+    const nestedNoDeps = join(entry, "node_modules", "no-deps", "package.json");
+    const before = readlinkSync(entry);
+    expect(entryStoreName(before)).toMatch(/^two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
+    expect(await file(nestedNoDeps).json()).toStrictEqual({ name: "no-deps", version: "1.1.0" });
+
+    // Same node_modules; the override changes two-range-deps' closure so its existing link must move.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-reresolve",
+        dependencies: { "two-range-deps": "1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    const after = readlinkSync(entry);
+    expect(entryStoreName(after)).toMatch(/^two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
+    expect(after).not.toBe(before);
+    expect(await file(nestedNoDeps).json()).toStrictEqual({ name: "no-deps", version: "1.0.0" });
+    expect(readlinkSync(join(after, "node_modules", "no-deps"))).toMatch(
+      /^\.\.[\/\\]\.\.[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}[\/\\]node_modules[\/\\]no-deps$/,
+    );
+
+    // The old-closure entry is untouched in the shared store.
+    expect(await file(join(before, "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
+      name: "no-deps",
+      version: "1.1.0",
+    });
+  });
+
   test("two projects with the same closure share one global entry", async () => {
     const a = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
     const b = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
@@ -2072,7 +3043,14 @@ describe("global virtual store", () => {
     const sharedCache = join(a.packageDir, ".bun-cache");
     await write(
       join(b.packageDir, "bunfig.toml"),
-      `[install]\ncache = "${sharedCache.replaceAll("\\", "\\\\")}"\nregistry = "${registry.registryUrl()}"\nlinker = "isolated"\nglobalStore = true\n`,
+      Bun.TOML.stringify({
+        install: {
+          cache: sharedCache,
+          registry: registry.registryUrl(),
+          linker: "isolated",
+          globalStore: true,
+        },
+      }),
     );
 
     for (const { packageJson } of [a, b]) {
@@ -2442,4 +3420,221 @@ test("invalid --linker value is echoed back in the error", async () => {
   expect(stderr).toContain('--linker: "isoalted"');
   expect(stderr).toContain("'isolated' or 'hoisted'");
   expect(exitCode).toBe(1);
+});
+
+test("store build timings are printed by --verbose only", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "store-timings",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  async function install(...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return stderr;
+  }
+
+  const verbose = await install("--verbose");
+  expect(verbose).toMatch(/^Resolved peers \[\S+\]$/m);
+  expect(verbose).toMatch(/^Created store \[\S+\]$/m);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  const quiet = await install();
+  expect(quiet).not.toContain("Resolved peers");
+  expect(quiet).not.toContain("Created store");
+});
+
+describe("hoist", () => {
+  // `node_modules/.bun/node_modules` holds a symlink to every installed
+  // package and sits on the upward resolution path of every store entry, so
+  // by default a store package can resolve dependencies it never declared.
+  // `install.hoist = false` (pnpm's `hoist=false`) skips that fallback
+  // directory without touching the rest of the layout.
+  test("hoist = false skips the hidden fallback directory", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoist: false },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-false",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+
+    // declared dependency symlinks are unchanged
+    expect(readlinkSync(join(packageDir, "node_modules", "a-dep"))).toBe(
+      join(".bun", "a-dep@1.0.1", "node_modules", "a-dep"),
+    );
+    expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+
+    // a store package still resolves the dependencies it declares
+    const fromTwoRangeDeps = createRequire(
+      join(
+        packageDir,
+        "node_modules",
+        ".bun",
+        "two-range-deps@1.0.0",
+        "node_modules",
+        "two-range-deps",
+        "package.json",
+      ),
+    );
+    expect(fromTwoRangeDeps.resolve("no-deps/package.json")).toEndWith(
+      join(".bun", "no-deps@1.1.0", "node_modules", "no-deps", "package.json"),
+    );
+
+    // and cannot resolve a package it does not declare
+    const fromADep = createRequire(
+      join(packageDir, "node_modules", ".bun", "a-dep@1.0.1", "node_modules", "a-dep", "package.json"),
+    );
+    expect(() => fromADep.resolve("no-deps/package.json")).toThrow(
+      expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
+    );
+
+    // packages linked at the project root (here: a direct dependency) remain
+    // reachable because `.bun` lives inside node_modules, matching pnpm
+    expect(fromADep.resolve("two-range-deps/package.json")).toEndWith(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps", "package.json"),
+    );
+  });
+
+  test("hoist = false keeps publicHoistPattern working", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoist: false, publicHoistPattern: "*types*" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-public",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // the transitive @types/is-number is still publicly hoisted to the root
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "@types", "two-range-deps"]);
+    expect(readlinkSync(join(packageDir, "node_modules", "@types", "is-number"))).toBe(
+      join("..", ".bun", "@types+is-number@2.0.0", "node_modules", "@types", "is-number"),
+    );
+    // while the hidden fallback is not created
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+  });
+
+  test("hoist = false removes a stale fallback directory from a previous install", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-stale",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // hoisting is on by default: transitive deps resolve through the fallback
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"))).toBe(
+      join("..", "no-deps@1.1.0", "node_modules", "no-deps"),
+    );
+
+    await registry.writeBunfig(packageDir, { linker: "isolated", hoist: false });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+
+    // the rest of the install is untouched: removing the fallback symlinks
+    // must not touch the store entries they pointed at
+    expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+    expect(await file(join(packageDir, "node_modules", "two-range-deps", "package.json")).json()).toMatchObject({
+      name: "two-range-deps",
+    });
+    expect(
+      await file(
+        join(packageDir, "node_modules", ".bun", "no-deps@1.1.0", "node_modules", "no-deps", "package.json"),
+      ).json(),
+    ).toMatchObject({ name: "no-deps", version: "1.1.0" });
+  });
+
+  test("hoist = false takes precedence over hoistPattern", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoist: false, hoistPattern: "*" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-precedence",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+  });
+
+  test("npmrc hoist=false", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        ".npmrc": "hoist=false",
+      },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-npmrc",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+    expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+  });
 });

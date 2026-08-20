@@ -3,9 +3,10 @@
 // An agent that starts buildkite-agent and runs others services.
 
 import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { darwinReleaseTier } from "./darwin-ci/lib/release-tier.mjs";
 import {
   getAbi,
   getAbiVersion,
@@ -36,22 +37,8 @@ import {
 const BUILDKITE_TOKEN_SECRET = "buildkite/agent-token";
 const AZURE_KEYVAULT = "bun-ci";
 const AZURE_TOKEN_SECRET = "buildkite-agent-token";
-
-// macOS major-version thresholds for the `release-tier` agent tag.
-//   >= LATEST   -> "latest"   (current macOS; arm64-only in practice)
-//   >= PREVIOUS -> "previous" (recent-but-not-current; 14/15 today)
-//   else        -> "oldest"   (min-supported; 13 today)
-// Bump LATEST when a new macOS ships and the first runner on it is online.
-// Bump PREVIOUS when the floor of "recent" moves.
-const LATEST_DARWIN_RELEASE = 26;
-const PREVIOUS_DARWIN_RELEASE = 14;
-
-function darwinReleaseTier(distroVersion) {
-  const major = parseInt(distroVersion?.split(".")[0] || "0");
-  if (major >= LATEST_DARWIN_RELEASE) return "latest";
-  if (major >= PREVIOUS_DARWIN_RELEASE) return "previous";
-  return "oldest";
-}
+// must match the import above; install() copies it next to agent.mjs at the same relative path
+const RELEASE_TIER_MODULE = "darwin-ci/lib/release-tier.mjs";
 
 /**
  * @param {"install" | "start"} action
@@ -149,7 +136,8 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       // Copy this script and its imports into homePath so the launchd plist
       // doesn't depend on the checkout that ran `install` sticking around.
       const srcDir = fileURLToPath(new URL(".", import.meta.url));
-      for (const f of ["agent.mjs", "utils.mjs"]) {
+      for (const f of ["agent.mjs", "utils.mjs", RELEASE_TIER_MODULE]) {
+        mkdir(dirname(join(homePath, f)));
         copyFileSync(join(srcDir, f), join(homePath, f));
       }
       // Stable node path (the Homebrew/usr-local symlink, not a Cellar version
@@ -370,7 +358,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       // ci.mjs targets darwin test jobs by `release-tier` so each PR runs on
       // distinct OS-age pools without needing per-box config. arm64 uses
       // latest+previous; x64 uses previous+oldest (Intel can't run latest).
-      "release-tier": isMacOS ? darwinReleaseTier(distroVersion) : undefined,
+      "release-tier": isMacOS ? darwinReleaseTier(parseInt(distroVersion?.split(".")[0] || "0")) : undefined,
       "ephemeral": ephemeral || false,
       "cloud": cloud,
     };

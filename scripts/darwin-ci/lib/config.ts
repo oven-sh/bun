@@ -18,9 +18,3 @@ export const config = {
 } as const;
 
 export const toolchain = ["bun", "node", "cmake", "ninja", "ccache", "cargo", "go", "clang-21"];
-
-export function releaseTier(release: number): "latest" | "previous" | "oldest" {
-  if (release >= 26) return "latest";
-  if (release >= 14) return "previous";
-  return "oldest";
-}

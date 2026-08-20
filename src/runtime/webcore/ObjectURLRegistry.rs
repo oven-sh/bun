@@ -40,9 +40,18 @@ const _: fn() = || {
 impl Entry {
     pub(crate) fn init(blob: &Blob) -> Box<Entry> {
         Box::new(Entry {
-            blob: blob.dupe_with_content_type(true),
+            blob: dupe_with_private_name(blob),
         })
     }
+}
+
+/// A name impl reachable from JS may become that thread's atom, which no other thread may release.
+fn dupe_with_private_name(blob: &Blob) -> Blob {
+    let copy = blob.dupe_with_content_type(true);
+    let mut name = copy.name.replace(bun_core::String::dead()).into_inner();
+    name.to_thread_safe();
+    copy.name.set(name);
+    copy
 }
 
 impl Drop for Entry {
@@ -70,7 +79,7 @@ impl ObjectURLRegistry {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
         map.get(&uuid.bytes)
-            .map(|e| e.blob.dupe_with_content_type(true))
+            .map(|e| dupe_with_private_name(&e.blob))
     }
 
     pub(crate) fn resolve_and_dupe_to_js(

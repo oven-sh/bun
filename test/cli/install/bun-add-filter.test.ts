@@ -1,9 +1,9 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, readdirSync } from "fs";
-import { chmod, exists, mkdir, rm } from "fs/promises";
+import { readdirSync } from "fs";
+import { chmod, copyFile, exists, mkdir, rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -22,21 +22,16 @@ const WARM = {
   },
 };
 
-// The manifests (`*.npm`) and extracted packages of the warm cache, as paths relative to it. The per-name index
-// entries bun also leaves in a cache are links; installing does not read them, so a copy is plain files and
-// directories on every platform.
-const warmCache = { root: "", dirs: [] as string[], files: [] as string[] };
+// The files of the warm cache (the manifests and the extracted packages) and their directories, relative to its
+// root. The per-name index entries bun also leaves in a cache are links; installing does not read them, so they are
+// skipped and a copy is plain files and directories on every platform.
+let warmCache: { root: string; dirs: string[]; files: string[] };
 
-function listWarmCache(rel: string) {
-  for (const entry of readdirSync(join(warmCache.root, rel), { withFileTypes: true })) {
+function listFiles(root: string, rel = "."): string[] {
+  return readdirSync(join(root, rel), { withFileTypes: true }).flatMap(entry => {
     const path = join(rel, entry.name);
-    if (entry.isDirectory()) {
-      warmCache.dirs.push(path);
-      listWarmCache(path);
-    } else if (entry.isFile()) {
-      warmCache.files.push(path);
-    }
-  }
+    return entry.isDirectory() ? listFiles(root, path) : entry.isFile() ? [path] : [];
+  });
 }
 
 beforeAll(async () => {
@@ -46,9 +41,10 @@ beforeAll(async () => {
     bunfigOpts: { linker: "hoisted" },
   });
   await installOk(packageDir, "hoisted");
-  warmCache.root = join(packageDir, ".bun-cache");
-  listWarmCache("");
-  expect(warmCache.files).not.toBeEmpty();
+  const root = join(packageDir, ".bun-cache");
+  const files = listFiles(root);
+  expect(files).not.toBeEmpty();
+  warmCache = { root, files, dirs: [...new Set(files.map(path => dirname(path)))] };
 });
 
 afterAll(() => {
@@ -75,8 +71,8 @@ type Linker = "hoisted" | "isolated";
 async function createDir(files: Record<string, string> = {}, linker: Linker = "hoisted") {
   const { packageDir } = await registry.createTestDir({ files, bunfigOpts: { linker } });
   const cache = join(packageDir, ".bun-cache");
-  for (const dir of ["", ...warmCache.dirs]) mkdirSync(join(cache, dir));
-  for (const path of warmCache.files) copyFileSync(join(warmCache.root, path), join(cache, path));
+  await Promise.all(warmCache.dirs.map(dir => mkdir(join(cache, dir), { recursive: true })));
+  await Promise.all(warmCache.files.map(path => copyFile(join(warmCache.root, path), join(cache, path))));
   return packageDir;
 }
 

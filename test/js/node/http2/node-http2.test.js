@@ -2292,6 +2292,77 @@ describe.concurrent("http2 session goawayCode / goawayLastStreamID", () => {
   });
 });
 
+// node declares Http2Session#destroy(error = NGHTTP2_NO_ERROR, code). An undefined error takes
+// the numeric default, which then replaces code, so destroy(undefined, code) puts NGHTTP2_NO_ERROR
+// on the wire exactly like destroy(); the code argument is only sent next to an Error (or null).
+// The table is what the peer's 'goaway' event reports under node v26.3.0 for client and server
+// sessions alike.
+describe.concurrent("http2 session.destroy(error, code) sends the GOAWAY code node sends", () => {
+  const { NGHTTP2_NO_ERROR, NGHTTP2_REFUSED_STREAM } = http2.constants;
+  const shapes = {
+    "destroy()": [],
+    "destroy(undefined, REFUSED_STREAM)": [undefined, NGHTTP2_REFUSED_STREAM],
+    "destroy(undefined, -1)": [undefined, -1],
+    "destroy(null, REFUSED_STREAM)": [null, NGHTTP2_REFUSED_STREAM],
+    "destroy(REFUSED_STREAM)": [NGHTTP2_REFUSED_STREAM],
+    "destroy(new Error('boom'), REFUSED_STREAM)": [new Error("boom"), NGHTTP2_REFUSED_STREAM],
+  };
+  const expected = {
+    "destroy()": { goaway: NGHTTP2_NO_ERROR, error: undefined },
+    "destroy(undefined, REFUSED_STREAM)": { goaway: NGHTTP2_NO_ERROR, error: undefined },
+    "destroy(undefined, -1)": { goaway: NGHTTP2_NO_ERROR, error: undefined },
+    "destroy(null, REFUSED_STREAM)": { goaway: NGHTTP2_REFUSED_STREAM, error: undefined },
+    "destroy(REFUSED_STREAM)": { goaway: NGHTTP2_REFUSED_STREAM, error: "ERR_HTTP2_SESSION_ERROR" },
+    "destroy(new Error('boom'), REFUSED_STREAM)": { goaway: NGHTTP2_REFUSED_STREAM, error: "boom" },
+  };
+
+  // Destroys a fresh session with `args` and reports the GOAWAY code its peer received plus the
+  // 'error' (code, or message for a plain Error) the destroyed session itself emitted, if any.
+  async function destroySession(side, args) {
+    const server = http2.createServer();
+    const { promise: serverSessionPromise, resolve: onServerSession } = Promise.withResolvers();
+    server.once("session", onServerSession);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, onConnect);
+    client.on("error", () => {});
+    const serverSession = await serverSessionPromise;
+    serverSession.on("error", () => {});
+    await connected;
+    try {
+      const [session, peer] = side === "client" ? [client, serverSession] : [serverSession, client];
+      let error;
+      session.on("error", e => (error = e.code ?? e.message));
+      const { promise: goawayReceived, resolve: onGoaway } = Promise.withResolvers();
+      peer.once("goaway", onGoaway);
+      const { promise: closed, resolve: onClose } = Promise.withResolvers();
+      session.once("close", onClose);
+      session.destroy(...args);
+      const goaway = await goawayReceived;
+      await closed;
+      return { goaway, error };
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  }
+
+  async function destroyEveryShape(side) {
+    const names = Object.keys(shapes);
+    const results = await Promise.all(names.map(name => destroySession(side, shapes[name])));
+    return Object.fromEntries(names.map((name, i) => [name, results[i]]));
+  }
+
+  it("from a client session", async () => {
+    expect(await destroyEveryShape("client")).toEqual(expected);
+  });
+
+  it("from a server session", async () => {
+    expect(await destroyEveryShape("server")).toEqual(expected);
+  });
+});
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {

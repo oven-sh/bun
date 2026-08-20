@@ -1830,9 +1830,9 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             ActiveHandle::S3Download(t) => unsafe {
                 crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask::stop_for_vm_teardown(t.as_ptr())
             },
-            // SAFETY: live until it unregisters in its `Drop`, i.e. right now; the
-            // ref taken here keeps it so until `stop_for_vm_teardown` below.
             ActiveHandle::S3Upload(u) => {
+                // SAFETY: live until it unregisters in its `Drop`, i.e. right now; the
+                // ref taken here keeps it so until `stop_for_vm_teardown` below.
                 unsafe { u.as_ref() }.ref_();
                 uploads.push(u);
             }

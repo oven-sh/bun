@@ -683,6 +683,76 @@ describe("bun test", () => {
         /^::error file=.*,line=\d+,col=\d+,title=Odd%3AName%2CWith%25Chars: alpha%3A one%2C two 100%25::beta: three, four%0A {6}at /,
       );
     });
+    test.each([
+      {
+        label: "a percent sign in the body",
+        message: "header\n\nprogress: 50%, %0A stays text",
+        expected: "error: header::progress: 50%25, %250A stays text",
+      },
+      {
+        label: "a lone carriage return in the body",
+        message: "header\n\nleft\rright",
+        expected: "error: header::left%0Dright",
+      },
+      {
+        label: "a tab in the body",
+        message: "header\n\nleft\tright",
+        expected: "error: header::left\tright",
+      },
+      {
+        label: "CRLF line endings in the body",
+        message: "header\n\nline one\r\nline two",
+        expected: "error: header::line one%0Aline two",
+      },
+      {
+        label: "CRLF in the title",
+        name: "Odd\r\nName",
+        message: "header\n\nbody",
+        expected: "Odd%0AName: header::body",
+      },
+    ])("should percent-encode an annotation with $label", ({ name, message, expected }) => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            const err = new Error(${JSON.stringify(message)});
+            ${name === undefined ? "" : `err.name = ${JSON.stringify(name)};`}
+            throw err;
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"))!;
+      expect(annotation).toMatch(/^::error file=.*,line=\d+,col=\d+,title=/);
+      expect(annotation.slice(annotation.indexOf(",title=") + ",title=".length)).toStartWith(`${expected}%0A      at `);
+    });
+    test("should percent-encode the stack frames in the annotation body", () => {
+      const stderr = runTest({
+        input: [
+          {
+            filename: "odd%name.test.ts",
+            contents: `
+              import { test } from "bun:test";
+              function inner() {
+                throw new Error("boom");
+              }
+              Object.defineProperty(inner, "name", { value: "50%done" });
+              test("fail", () => {
+                inner();
+              });
+            `,
+          },
+        ],
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(/^::error file=(.*[\\/])?odd%25name\.test\.ts,line=\d+,col=\d+,title=error: boom::/);
+      expect(annotation).toMatch(/%0A {6}at 50%25done \((.*[\\/])?odd%25name\.test\.ts:\d+:\d+\)/);
+    });
     test("should keep a function name containing a newline on the annotation line", () => {
       const stderr = runTest({
         input: `

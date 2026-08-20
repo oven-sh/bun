@@ -1155,10 +1155,11 @@ describe.concurrent("net diagnostics channels and fd-attached sockets", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it("cluster-worker accepts publish net.server.socket and not net.client.socket", async () => {
-    // The worker receives the accepted handle via onClusterConnection, which
-    // attaches it with connect({ fd }); in Node this is onconnection, which
-    // publishes net.server.socket only.
+  it("cluster-worker listen and accepts publish the same net channels as Node", async () => {
+    // Under the default round-robin policy the worker's listen() ends in
+    // kClusterFauxListen and its accepts arrive via onClusterConnection; in
+    // Node both converge on setupListenHandle / onconnection, which publish
+    // net.server.listen asyncEnd and net.server.socket respectively.
     using dir = tempDir("net-dc-cluster", {
       "cluster-fixture.js": `
       const cluster = require("cluster");
@@ -1177,7 +1178,10 @@ describe.concurrent("net diagnostics channels and fd-attached sockets", () => {
         worker.on("exit", () => process.exit(0));
       } else {
         const dc = require("diagnostics_channel");
-        const counts = { server: 0, client: 0 };
+        const counts = { listenStart: 0, listenEnd: 0, listenError: 0, server: 0, client: 0 };
+        dc.subscribe("tracing:net.server.listen:asyncStart", () => counts.listenStart++);
+        dc.subscribe("tracing:net.server.listen:asyncEnd", () => counts.listenEnd++);
+        dc.subscribe("tracing:net.server.listen:error", () => counts.listenError++);
         dc.subscribe("net.server.socket", () => counts.server++);
         dc.subscribe("net.client.socket", () => counts.client++);
         const server = net.createServer(s => s.end());
@@ -1197,7 +1201,7 @@ describe.concurrent("net diagnostics channels and fd-attached sockets", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr.trim()).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({ server: 1, client: 0 });
+    expect(JSON.parse(stdout.trim())).toEqual({ listenStart: 1, listenEnd: 1, listenError: 0, server: 1, client: 0 });
     expect(exitCode).toBe(0);
   });
 });

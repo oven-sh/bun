@@ -4197,6 +4197,10 @@ function listenInCluster(
         server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;
         handle.close();
+        // Node's setupListenHandle publishes the listen failure in workers too.
+        if (netServerListen.hasSubscribers) {
+          netServerListen.error.publish({ server, error: err });
+        }
         setTimeout(emitErrorNextTick, 1, server, err);
       }
       return;
@@ -4220,6 +4224,11 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle.onconnection = onClusterConnection;
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
+  // The round-robin analog of setupListenHandle's asyncEnd; listen() already
+  // published asyncStart and [kRealListen] is never reached on this path.
+  if (netServerListen.hasSubscribers) {
+    netServerListen.asyncEnd.publish({ server: this });
+  }
   if (this._unref) this.unref();
   setTimeout(emitListeningNextTick, 1, this);
 };

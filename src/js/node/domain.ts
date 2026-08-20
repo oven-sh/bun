@@ -97,8 +97,7 @@ class Domain extends EventEmitter {
   }
 
   run(fn, ...args) {
-    // A bare call, like bind() and intercept(), so emitError does not see the
-    // domain as the emitter and leaves e.domainEmitter undefined.
+    // Bare call like bind(): run()-thrown errors get no domainEmitter.
     const emitError = this[kEmitError];
     this.enter();
     try {

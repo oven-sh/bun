@@ -5,22 +5,17 @@ import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wra
 import path from "path";
 
 describe.concurrent("node-module-module", () => {
-  test("builtinModules exists", () => {
+  // test/internal/source-lints/builtin-module-tables.test.ts checks the table behind builtinModules against the
+  // table behind isBuiltin(), so this only checks what the array looks like at runtime.
+  test("builtinModules holds requireable builtins and lists prefix-only modules with their prefix, as Node does", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
-    // "bun:wrap" is no longer listed: it is internal transpiler plumbing,
-    // not a requireable public module.
-    expect(builtinModules).toHaveLength(77);
-  });
-
-  test("builtinModules lists prefix-only node modules with their prefix, as Node does", () => {
-    const prefixed = builtinModules.filter(name => name.startsWith("node:"));
-    // Node lists these with the prefix because the bare names are not builtins. "node:quic" is left out on
-    // purpose: Node 26 does not list it unless QUIC is compiled in and enabled with --experimental-quic.
-    expect(prefixed).toEqual(["node:sqlite", "node:test"]);
+    expect(builtinModules).toContain("node:test");
     expect(builtinModules).not.toContain("test");
-    // Every entry resolves as a builtin, and a prefixed entry is requireable only with its prefix.
+    // "bun:wrap" is internal transpiler plumbing, not a requireable public module.
+    expect(builtinModules).not.toContain("bun:wrap");
     expect(builtinModules.filter(name => !isBuiltin(name))).toEqual([]);
-    for (const name of prefixed) {
+    // A prefixed entry is listed that way because it is requireable only with its prefix.
+    for (const name of builtinModules.filter(name => name.startsWith("node:"))) {
       expect(isBuiltin(name.slice("node:".length))).toBe(false);
       expect(process.getBuiltinModule(name)).toBe(require(name));
     }

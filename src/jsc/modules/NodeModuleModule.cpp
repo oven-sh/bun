@@ -42,14 +42,16 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 
-// This is a list of builtin module names that do not have the node prefix. It
-// also includes Bun's builtin modules, as well as Bun's thirdparty overrides.
-// The reason for overstuffing this list is so that uses that use these as the
-// 'external' option to a bundler will properly exclude things like 'ws' which
-// only work with Bun's native 'ws' implementation and not the JS one on NPM.
+// The contents of module.builtinModules. As in Node, a builtin is listed
+// without the "node:" prefix unless it only resolves with the prefix, like
+// "node:sqlite" and "node:test". The list also includes Bun's builtin modules
+// and Bun's thirdparty overrides: users pass this list as the 'external'
+// option of a bundler, and that has to exclude things like 'ws', which only
+// works with Bun's native 'ws' implementation and not the JS one on NPM.
 //
-// Modules that only resolve with the "node:" prefix ("node:sqlite",
-// "node:test") are listed with the prefix, as in Node's module.builtinModules.
+// Bun::isBuiltinModule() (isBuiltinModule.cpp) accepts this list plus a few
+// internal names. test/internal/source-lints/builtin-module-tables.test.ts
+// keeps the two tables in sync.
 static constexpr ASCIILiteral builtinModuleNames[] = {
     "_http_agent"_s,
     "_http_client"_s,

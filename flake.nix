@@ -40,6 +40,7 @@
           # Core build tools
           pkgs.cmake # Expected: 3.30+ on nixpkgs-unstable as of 2025-10
           pkgs.ninja
+          pkgs.nasm
           pkgs.pkg-config
           pkgs.ccache
 

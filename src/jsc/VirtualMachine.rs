@@ -5224,9 +5224,8 @@ impl VirtualMachine {
             if errors
                 .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
                 .is_err()
-                && !global_ref.clear_exception_except_termination()
             {
-                return;
+                global_ref.clear_exception();
             }
             if ctx.printed_member {
                 return;

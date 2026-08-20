@@ -4860,10 +4860,7 @@ CPP_DECL double Bun__JSValue__toNumber(JSC::EncodedJSValue JSValue0, JSC::JSGlob
 // The own `errors` property of an AggregateError if it holds an object, else undefined.
 JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global)
 {
-    JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
-    if (!obj)
-        return JSC::JSValue::encode(JSC::jsUndefined());
-
+    JSC::JSObject* obj = JSC::asObject(JSC::JSValue::decode(JSValue0));
     JSC::JSValue errors = obj->getDirect(global->vm(), global->vm().propertyNames->errors);
     // Empty when the property is missing (isObject() would dereference it), a GetterSetter cell for an accessor.
     if (!errors || !errors.isObject())

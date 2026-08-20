@@ -1210,4 +1210,310 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // The lowering declares temporaries (_init, _dec, _<Class>, one _<name> WeakMap
+  // per lowered member, ...) next to the class. The runtime transpiler prints
+  // symbols under their original names, so the names themselves must be unique:
+  // distinct from the identifiers the file uses and from each other.
+  describe.concurrent("lowering temporaries do not collide", () => {
+    test("with identifiers declared by the file (class statement)", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const _init = "init";
+        const _dec = "dec";
+        let _x = "x";
+        var _A = "A";
+        function dec(value, ctx) {}
+        class A {
+          @dec m() {}
+          accessor x = 1;
+        }
+        console.log(_init, _dec, _x, _A, new A().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("init dec x A 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("with identifiers declared by the file (class expression)", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const _class = "class";
+        const _init = "init";
+        const _dec = "dec";
+        const _base = "base";
+        function dec(value, ctx) {}
+        class Base {}
+        const Foo = @dec class extends Base {
+          @dec m() {}
+        };
+        console.log(_class, _init, _dec, _base, Foo.name, new Foo() instanceof Base);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("class init dec base Foo true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("with globals the file only references after the class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        globalThis._init = "global init";
+        globalThis._A = "global A";
+        function dec(value, ctx) {}
+        class A {
+          @dec m() {}
+        }
+        console.log(_init, _A);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("global init global A\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("with a parameter of a method that reads the lowered member", async () => {
+      // The `_value` WeakMap is read inside `set`, where a parameter of the
+      // same name would shadow it, so bindings of nested scopes count too.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Store {
+          #value = 0;
+          @dec set(_value) { this.#value = _value; return this; }
+          get() { return this.#value; }
+        }
+        console.log(new Store().set(5).get());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("with a variable named like the temporary that captures a private call receiver", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const _obj = "outer";
+        function dec(value, ctx) { return value; }
+        class A {
+          @dec m() {}
+          #secret() { return "secret"; }
+          static #staticSecret() { return "static secret"; }
+          self() { return this; }
+          static self() { return A; }
+          run() { return [this.self().#secret(), _obj]; }
+          static { console.log(A.self().#staticSecret(), _obj); }
+        }
+        console.log(...new A().run());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("static secret outer\nsecret outer\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between members of one class", async () => {
+      // `accessor x` and `#x` both want a WeakMap named `_x`.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class A {
+          @dec accessor x = 1;
+          #x = 2;
+          get hidden() { return this.#x; }
+        }
+        const a = new A();
+        console.log(a.x, a.hidden);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between classes in one scope", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        function main() {
+          class A {
+            @dec accessor x = "a";
+            #tag = "A";
+            get tag() { return this.#tag; }
+          }
+          const a = new A();
+          class B {
+            @dec accessor x = "b";
+            #tag = "B";
+            get tag() { return this.#tag; }
+          }
+          const b = new B();
+          console.log(a.x, a.tag, b.x, b.tag);
+        }
+        main();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a A b B\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between classes whose constructors read a computed key", async () => {
+      // `this[_computedKey] = ...` runs at construction time, after the sibling
+      // class has been evaluated.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        function main() {
+          const keyA = "a", keyB = "b";
+          class A { @dec [keyA] = 1; }
+          class B { @dec [keyB] = 2; }
+          console.log(JSON.stringify(new A()), JSON.stringify(new B()));
+        }
+        main();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('{"a":1} {"b":2}\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("between a base class and a subclass", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Base {
+          @dec get kind() { return "base"; }
+          #secret = "base secret";
+          get baseSecret() { return this.#secret; }
+        }
+        class Derived extends Base {
+          @dec get kind() { return "derived"; }
+          #secret = "derived secret";
+          get derivedSecret() { return this.#secret; }
+        }
+        const d = new Derived();
+        console.log(d.kind, d.baseSecret, d.derivedSecret);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("derived base secret derived secret\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between the field initializers of a base class and a subclass", async () => {
+      // https://github.com/oven-sh/bun/issues/28010: the constructor reads its
+      // class's `_init` at construction time, after the subclass was evaluated.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function tag(name) {
+          return function (value, context) {
+            return function (initialValue) {
+              console.log(name, String(context.name), initialValue);
+              return initialValue;
+            };
+          };
+        }
+        class Parent {
+          @tag("Parent.foo") foo = "parent_foo";
+          @tag("Parent.shared") shared = "parent_shared";
+        }
+        class Child extends Parent {
+          @tag("Child.foo") foo = "child_foo";
+          @tag("Child.childOnly") childOnly = "child_childOnly";
+        }
+        new Child();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        "Parent.foo foo parent_foo\n" +
+          "Parent.shared shared parent_shared\n" +
+          "Child.foo foo child_foo\n" +
+          "Child.childOnly childOnly child_childOnly\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test("between the accessor storage of a base class and a subclass", async () => {
+      // https://github.com/oven-sh/bun/issues/29837
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor name = "A";
+        }
+        class B extends A {
+          accessor name = "B";
+          logName() {
+            console.log(this.name);
+            console.log(super.name);
+          }
+        }
+        new B().logName();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B\nA\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between the decorated private methods of two classes", async () => {
+      // `this.#m()` reads the class's `_m` WeakSet and `_m_fn` (the decorated
+      // method) at call time.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function first(value, ctx) { return function () { return "first"; }; }
+        function second(value, ctx) { return function () { return "second"; }; }
+        class A { @first #m() { return "a"; } call() { return this.#m(); } }
+        class B { @second #m() { return "b"; } call() { return this.#m(); } }
+        console.log(new A().call(), new B().call());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("first second\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between a class named like a temporary and another class's temporary", async () => {
+      // The statement form keeps the class in a `_<Class>` binding, so
+      // `class init` asks for `_init`, the base name of every class's
+      // initializer array.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        function answer(value, ctx) { return () => 42; }
+        @dec class init { @dec m() { return init; } }
+        const C = class { @answer x = 1; };
+        console.log(new init().m() === init, new C().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true 42\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between class expressions in sibling blocks", async () => {
+      // The `var` declarations for both expressions hoist to the same scope.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let A, B;
+        { A = class { @dec m() {} accessor x = "a"; }; }
+        const a = new A();
+        { B = class { @dec m() {} accessor x = "b"; }; }
+        console.log(a.x, new B().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between a class expression and one nested in its static initializer", async () => {
+      // https://github.com/oven-sh/bun/issues/31929: both expressions are
+      // lowered into the same scope, and the inner one is evaluated while the
+      // outer one is still using its temporaries.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        const C = class Outer {
+          @dec static s = (class { @dec static x = 42; }).x;
+        };
+        console.log(C.name, C.s);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Outer 42\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("accessor keys that are not identifiers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class A {
+          accessor "x y" = 1;
+          @dec accessor "x-y" = 2;
+          static accessor "x y" = 3;
+        }
+        const a = new A();
+        a["x y"] += 10;
+        console.log(a["x y"], a["x-y"], A["x y"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("11 2 3\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

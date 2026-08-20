@@ -536,6 +536,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
 
+    /// Standard decorator lowering temporaries still to be named by
+    /// `name_decorator_temps` after the visit pass.
+    pub(crate) decorator_temp_refs: List<'a, Ref>,
+
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
     // The old "var" statements are turned into regular assignments instead. This
@@ -2830,7 +2834,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.runtime_imports.put(b"__require", ref_);
     }
 
-    fn will_use_renamer(&self) -> bool {
+    pub(crate) fn will_use_renamer(&self) -> bool {
         self.options.bundle || self.options.features.minify_identifiers
     }
 
@@ -7344,6 +7348,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
+    /// The scope a `var` emitted at the current position is a binding of.
+    pub(crate) fn var_hoisting_scope(&self) -> js_ast::StoreRef<Scope> {
+        let mut scope = self.current_scope_ref();
+        while !scope.kind_stops_hoisting() {
+            scope = scope.parent.expect("the module scope stops hoisting");
+        }
+        scope
+    }
+
+    /// Registers a generated symbol that a lowering declares in `scope` so the
+    /// renamers rename it like a user declaration. Nested scopes are renamed
+    /// from `scope.generated`; the top level of a file only from
+    /// `Part.declared_symbols`, so a symbol missing from the latter keeps its
+    /// original name.
+    pub(crate) fn declare_generated_binding(
+        &mut self,
+        mut scope: js_ast::StoreRef<Scope>,
+        ref_: Ref,
+    ) {
+        VecExt::append(&mut scope.generated, ref_);
+        self.declared_symbols
+            .append(DeclaredSymbol {
+                ref_,
+                is_top_level: scope == self.module_scope,
+            })
+            .expect("oom");
+    }
+
     pub(crate) fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
         // TODO: We do not support lowering await, but when we do this needs to point to that var
         let lower_await = false;
@@ -8714,6 +8746,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            decorator_temp_refs: BumpVec::new_in(arena),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
@@ -8929,40 +8962,10 @@ impl LowerUsingDeclarationsContext {
         let err_ref = p.generate_temp_ref(Some(b"_err"));
         let has_err_ref = p.generate_temp_ref(Some(b"_hasErr"));
 
-        // `StoreRef<Scope>` (Copy + safe `Deref`/`DerefMut`) lets the
-        // parent-chain walk and the `.generated` writes below run without
-        // raw-pointer `unsafe`, and does not borrow `p`.
-        let mut scope: js_ast::StoreRef<Scope> = p.current_scope_ref();
-        while !scope.kind_stops_hoisting() {
-            scope = scope.parent.unwrap();
+        let scope = p.var_hoisting_scope();
+        for ref_ in [self.stack_ref, caught_ref, err_ref, has_err_ref] {
+            p.declare_generated_binding(scope, ref_);
         }
-
-        let is_top_level = scope == p.module_scope;
-        scope
-            .generated
-            .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref]);
-        p.declared_symbols
-            .ensure_unused_capacity(
-                // 5 to include the _promise decl later on:
-                if self.has_await_using { 5 } else { 4 },
-            )
-            .expect("oom");
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: self.stack_ref,
-        });
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: caught_ref,
-        });
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: err_ref,
-        });
-        p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-            is_top_level,
-            ref_: has_err_ref,
-        });
 
         let loc = self.first_using_loc;
         let call_dispose = {
@@ -8997,11 +9000,7 @@ impl LowerUsingDeclarationsContext {
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
             let promise_ref = p.generate_temp_ref(Some(b"_promise"));
-            VecExt::append(&mut scope.generated, promise_ref);
-            p.declared_symbols.append_assume_capacity(DeclaredSymbol {
-                is_top_level,
-                ref_: promise_ref,
-            });
+            p.declare_generated_binding(scope, promise_ref);
 
             let promise_ref_expr = p.new_expr(
                 E::Identifier {

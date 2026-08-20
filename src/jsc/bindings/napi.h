@@ -789,8 +789,7 @@ public:
             strongRef.set(globalObject->vm(), value);
         }
 
-        // In NAPI non-experimental, types other than object, function and symbol can't be used as values for references.
-        // In NAPI experimental, they can be, but we must not store weak references to them.
+        // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
         if (can_be_weak) {
             weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
         }

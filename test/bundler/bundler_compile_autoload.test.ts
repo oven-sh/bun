@@ -1,4 +1,6 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import path from "node:path";
 import { itBundled } from "./expectBundled";
 
 // Not describe.concurrent: the backend:"cli" cases each spawn a full
@@ -60,6 +62,77 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+
+  // .env autoload must open the default files in the cwd directly. It used to
+  // go through the resolver's directory cache, which reads the cwd and every
+  // ancestor directory in full, so startup scaled with the size of unrelated
+  // directories. The resolver logs each listing it reads under the `Fs` debug
+  // scope, which is compiled out of release builds.
+  (isDebug ? itBundled : itBundled.skip)("compile/AutoloadDotenvDoesNotReadDirectories", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      setCwd: true,
+      env: {
+        BUN_DEBUG_Fs: "1",
+      },
+      validate({ stdout }) {
+        expect(stdout).toContain("from_dotenv");
+        expect(stdout).not.toContain("readdir(");
+      },
+    },
+  });
+
+  // The resolver's directory walk gives up once a path has more than 256
+  // uncached components. .env autoload no longer depends on that walk, so the
+  // files still load from such a cwd. Windows limits a process cwd to 260
+  // characters, which is too short for this path.
+  test.skipIf(isWindows)(
+    "compile/AutoloadDotenvFromDeepCwd",
+    async () => {
+      const deep = Array(300).fill("d").join("/");
+      using dir = tempDir("compile-autoload-dotenv-deep", {
+        "entry.ts": `console.log(process.env.TEST_VAR || "not found");`,
+        [`${deep}/.env`]: "TEST_VAR=from_dotenv",
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./entry.ts", "--outfile", "app"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExitCode] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect(buildStderr).not.toContain("error:");
+      expect(buildExitCode).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [path.join(String(dir), "app")],
+        env: bunEnv,
+        cwd: path.join(String(dir), deep),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("from_dotenv\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    // Same budget itBundled gives its compile cases: the link step dominates.
+    30_000,
+  );
 
   // Test that process environment variables take precedence over .env files
   itBundled("compile/AutoloadDotenvWithExistingEnv", {

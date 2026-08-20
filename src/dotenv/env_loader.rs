@@ -53,9 +53,10 @@ impl DefaultEnvFile {
 /// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
 /// `bun_resolver` in the crate graph, so the directory listing is taken
 /// generically; the only operation `load_default_files` performs is a lookup
-/// of a known-at-compile-time filename. Callers snapshot the resolver's
-/// listing into a [`DirEntryKeys`] (the live `DirEntry` map may be rewritten
-/// in place by a concurrent resolver, so `load` must not probe it directly).
+/// of a known-at-compile-time filename. Callers that already hold the cwd
+/// listing snapshot it into a [`DirEntryKeys`] (the live `DirEntry` map may be
+/// rewritten in place by a concurrent resolver, so `load` must not probe it
+/// directly). Callers without a listing pass [`OpenEachDefaultFile`].
 pub trait DirEntryProbe {
     /// The argument MUST already be ASCII-lowercase.
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
@@ -68,6 +69,18 @@ pub struct DirEntryKeys(pub Vec<Box<[u8]>>);
 impl DirEntryProbe for DirEntryKeys {
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         self.0.iter().any(|k| **k == *query_lower)
+    }
+}
+
+/// Probe for callers without a listing of the cwd: `Loader::load` then
+/// `openat`s each default file (at most four) and `load_env_file` treats
+/// `ENOENT` as absent. Building a listing instead means reading the cwd and
+/// every ancestor directory in full.
+pub struct OpenEachDefaultFile;
+
+impl DirEntryProbe for OpenEachDefaultFile {
+    fn has_comptime_query(&self, _query_lower: &'static [u8]) -> bool {
+        true
     }
 }
 
@@ -746,7 +759,6 @@ impl Loader {
     ) -> crate::Result<()> {
         if dir.has_comptime_query(env_file.name()) {
             self.load_env_file::<false>(dir_handle, env_file, value_buffer)?;
-            analytics::Features::dotenv_inc();
         }
         Ok(())
     }
@@ -803,12 +815,9 @@ impl Loader {
             Err(err) => {
                 use bun_sys::E;
                 match err.get_errno() {
+                    // Not recorded: `print_loaded` lists `default_files_loaded`.
                     // A unix socket: ENXIO on Linux, EOPNOTSUPP on macOS and FreeBSD.
-                    E::EISDIR | E::ENOENT | E::ENXIO | E::EOPNOTSUPP => {
-                        // prevent retrying
-                        self.default_files_loaded.insert(env_file);
-                        return Ok(());
-                    }
+                    E::EISDIR | E::ENOENT | E::ENXIO | E::EOPNOTSUPP => return Ok(()),
                     E::EBUSY | E::EACCES => {
                         if !self.quiet {
                             bun_core::pretty_errorln!(
@@ -843,6 +852,7 @@ impl Loader {
         }
 
         self.default_files_loaded.insert(env_file);
+        analytics::Features::dotenv_inc();
         Ok(())
     }
 

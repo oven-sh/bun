@@ -399,8 +399,8 @@ fn find_playwright_shell() -> Option<ZBox> {
         return None;
     }
 
-    // Build the binary path. Possible subdir layouts, per Playwright's registry (no arch suffix
-    // on linux x64): https://github.com/microsoft/playwright/blob/v1.62.1/packages/playwright-core/src/server/registry/index.ts#L75
+    // Build the binary path. Possible subdir layouts, per Playwright's registry (no arch suffix on linux x64):
+    // https://github.com/microsoft/playwright/blob/26a9e470a7b3c7822084b09fb7f13902c5f37b51/packages/playwright-core/src/server/registry/index.ts#L75
     //   cft mac:   chrome-headless-shell-mac-<arch>/chrome-headless-shell
     //   cft linux: chrome-headless-shell-linux64/chrome-headless-shell
     //   windows: chrome-headless-shell-win64/chrome-headless-shell.exe

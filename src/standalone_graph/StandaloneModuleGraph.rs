@@ -132,6 +132,40 @@ pub fn target_base_public_path(
     }
 }
 
+/// See [`default_outfile`].
+pub struct DefaultOutfile<'a> {
+    pub name: &'a [u8],
+    /// Callers use `index` instead when the output path turns out to be that directory itself.
+    pub is_dir_name: bool,
+}
+
+/// Entry file name minus extension; `index.*`/`bun.*` use the directory name (or `index` if none).
+pub fn default_outfile(entry_point: &[u8]) -> DefaultOutfile<'_> {
+    let file_name = path::basename(entry_point);
+    let name = &file_name[..file_name.len() - path::extension(file_name).len()];
+    if !name.is_empty() && name != b"index" && name != b"bun" {
+        return DefaultOutfile {
+            name,
+            is_dir_name: false,
+        };
+    }
+
+    let dir_name: &[u8] = match path::dirname(entry_point) {
+        Some(dir) => path::basename(dir),
+        None => b"",
+    };
+    match dir_name {
+        b"" | b"." | b".." => DefaultOutfile {
+            name: b"index",
+            is_dir_name: false,
+        },
+        _ => DefaultOutfile {
+            name: dir_name,
+            is_dir_name: true,
+        },
+    }
+}
+
 pub(crate) fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
     str_.starts_with(BASE_PATH.as_bytes())
         || (cfg!(windows) && str_.starts_with(BASE_PUBLIC_PATH.as_bytes()))

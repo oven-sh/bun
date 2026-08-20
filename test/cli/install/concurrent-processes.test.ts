@@ -31,13 +31,11 @@ describe("package manager processes that share a project", () => {
   ];
   const PACKAGES = [...PATCHABLE, "a-dep@1.0.1", "lifecycle-postinstall@1.0.0"];
 
-  // The first start of the registry on a fresh Windows machine took longer than the 5 second hook
-  // default (1.5 seconds once warm).
   beforeAll(async () => {
     await registry.start();
     const { packageDir } = await registry.createTestDir();
     succeeded(await run(packageDir, "add", ...PACKAGES));
-  }, 60_000);
+  });
 
   afterAll(() => {
     registry.stop();

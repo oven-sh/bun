@@ -824,7 +824,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    // protocol: "http2" | "h2" | "http3" | "h3" | "http1.1" | "h1" | undefined.
+    // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
     'extract_protocol: {
         let objects_to_try = [
             options_object.unwrap_or_default(),

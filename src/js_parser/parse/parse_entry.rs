@@ -1136,15 +1136,10 @@ impl<'a> Parser<'a> {
         //    var __filename = "foo/bar/baz.js"
         //
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
-            // The refs are unbound during the visit pass so `define` and friends treat
-            // them as globals, and the renamer never renames an unbound symbol. In a
-            // bundle every module declares its own `var __dirname`, and unwrapped
-            // modules share the chunk's top-level scope, so the declarations have to be
-            // ordinary `var` bindings for the renamer to give each module its own name.
-            // This also applies to modules that do not use them: an unbound symbol
-            // reserves its name in the whole chunk even when nothing references it.
-            // A module with a direct `eval()` keeps the fixed names so that
-            // `eval("__dirname")` still resolves.
+            // Each bundled module declares its own `var __dirname`, so the refs become
+            // renamable once visiting (which needs them unbound for `define`) is done.
+            // Unused refs too: an unbound symbol reserves its name for the whole chunk.
+            // Direct eval pins names, so such a module keeps the unbound refs.
             if p.options.bundle && !p.module_scope().contains_direct_eval {
                 for ref_ in [p.dirname_ref, p.filename_ref] {
                     p.symbols.as_mut_slice()[ref_.inner_index() as usize].kind =

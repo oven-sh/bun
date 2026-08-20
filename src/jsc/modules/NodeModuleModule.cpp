@@ -31,14 +31,12 @@ using namespace JSC;
 BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
 
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
@@ -131,13 +129,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
 template<std::size_t N, class T> consteval std::size_t countof(T (&)[N])
 {
     return N;
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionDebugNoop,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleCall,
@@ -288,13 +279,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
-    (JSGlobalObject * globalObject,
-        CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
@@ -698,6 +682,15 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
 }
 
+// Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a
+// subclass, as jest-runtime does) is not an override.
+static void setModuleWrapper(Zig::GlobalObject* global, String&& start, String&& end)
+{
+    global->hasOverriddenModuleWrapper = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
+    global->m_moduleWrapperStart = WTF::move(start);
+    global->m_moduleWrapperEnd = WTF::move(end);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -708,9 +701,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalOb
     RETURN_IF_EXCEPTION(scope, {});
     String bString = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    global->m_moduleWrapperStart = aString;
-    global->m_moduleWrapperEnd = bString;
-    global->hasOverriddenModuleWrapper = true;
+    setModuleWrapper(global, WTF::move(aString), WTF::move(bString));
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -729,6 +720,8 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
         vm, global, 1, "onMutate"_s,
         jsFunctionSetCJSWrapperItem, JSC::ImplementationVisibility::Public,
         JSC::NoIntrinsic));
+    args.append(jsString(vm, String(commonJSDefaultWrapperStart)));
+    args.append(jsString(vm, String(commonJSDefaultWrapperEnd)));
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     NakedPtr<JSC::Exception> returnedException = nullptr;
@@ -765,10 +758,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     auto bstring = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    globalObject->m_moduleWrapperStart = astring;
-    globalObject->m_moduleWrapperEnd = bstring;
-    globalObject->hasOverriddenModuleWrapper = true;
-
+    setModuleWrapper(globalObject, WTF::move(astring), WTF::move(bstring));
     return true;
 }
 
@@ -980,7 +970,7 @@ flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
-prototype               getModulePrototypeObject          PropertyCallback
+prototype               getModulePrototypeObject          DontEnum|DontDelete|PropertyCallback
 register                jsFunctionRegister                Function 1
 runMain                 moduleRunMain                        CustomAccessor
 SourceMap               getSourceMapFunction              PropertyCallback
@@ -1228,11 +1218,14 @@ JSC::JSObject* generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGloba
     auto& vm = JSC::getVM(globalObject);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
 
-    // The exports are the static table's entries, not the constructor's own properties (`length`, `name`,
-    // whatever user code assigned onto Module).
+    // The exports are the static table's enumerable entries, not the constructor's own properties (`length`,
+    // `name`, `prototype`, whatever user code assigned onto Module).
     PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    for (const auto& entry : Bun::nodeModuleObjectTableValues)
+    for (const auto& entry : Bun::nodeModuleObjectTableValues) {
+        if (entry.attributes() & PropertyAttribute::DontEnum)
+            continue;
         properties.add(Identifier::fromString(vm, entry.m_key));
+    }
 
     return exportObjectProperties(vm, constructor, properties, exportNames, exportValues);
 }

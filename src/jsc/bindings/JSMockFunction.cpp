@@ -788,29 +788,6 @@ template<typename Visitor> void JSMockModule::visit(Visitor& visitor)
 template void JSMockModule::visit(JSC::AbstractSlotVisitor&);
 template void JSMockModule::visit(JSC::SlotVisitor&);
 
-extern Structure* createMockResultStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
-        globalObject,
-        globalObject->objectPrototype(),
-        2);
-    JSC::PropertyOffset offset;
-
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        vm.propertyNames->type,
-        0,
-        offset);
-
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        vm.propertyNames->value,
-        0, offset);
-    return structure;
-}
-
 static JSValue createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, const WTF::String& type, JSC::JSValue value)
 {
     JSC::Structure* structure = globalObject->mockModule.mockResultStructure.getInitializedOnMainThread(globalObject);
@@ -833,7 +810,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     }
 
     JSC::ArgList args = JSC::ArgList(callframe);
-    JSValue thisValue = callframe->thisValue();
+    JSValue thisValue = callframe->thisValue().toThis(globalObject, ECMAMode::strict());
     JSC::JSArray* argumentsArray = nullptr;
     {
         JSC::ObjectInitializationScope object(vm);
@@ -1271,7 +1248,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetter_mockGetLastCall, (JSC::JSGlobalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisObject = callframe->thisValue();
+    JSValue thisObject = callframe->thisValue().toThis(globalObject, ECMAMode::strict());
     if (!thisObject.isObject()) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }

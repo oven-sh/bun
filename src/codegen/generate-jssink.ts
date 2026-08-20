@@ -19,14 +19,12 @@ function names(name) {
     controllerName: `Readable${name}Controller`,
     prototypeName: `JS${name}Prototype`,
     controllerPrototypeName: `JSReadable${name}ControllerPrototype`,
-    writableStreamSourcePrototype: `JSWritableStreamSource${name}Prototype`,
-    writableStreamName: `JSWritableStreamSource${name}`,
   };
 }
 
 function header() {
   function classTemplate(name) {
-    const { constructor, className, controller, writableStreamName } = names(name);
+    const { constructor, className, controller } = names(name);
 
     return `class ${constructor} final : public JSC::InternalFunction {                                                                                                     
         public:                                                                                                                                                                     
@@ -312,18 +310,7 @@ const ClassInfo JSReadableSinkControllerBase::s_info = { "ReadableSinkController
   var templ = head;
 
   for (let name of classes) {
-    const {
-      className,
-      controller,
-      prototypeName,
-      controllerName,
-      controllerPrototypeName,
-      constructor,
-      writableStreamName,
-      writableStreamSourcePrototype,
-    } = names(name);
-    const protopad = `${controller}__close`.length;
-    const padding = `${name}__doClose`.length;
+    const { className, controller, prototypeName, controllerName, controllerPrototypeName, constructor } = names(name);
     templ += `
 
   void ${className}::ref() {
@@ -972,15 +959,14 @@ extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
     return (void*)1;
 }
 
-extern "C" JSC::EncodedJSValue ${name}__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue stream, void* sinkPtr, void **controllerValue)
+// JSSink::assign_to_stream (Sink.rs): records the controller as the sink's source, then pumps via JSSinkController__assignToStream.
+extern "C" JSC::EncodedJSValue ${name}__createController(JSC::JSGlobalObject* arg0, void* sinkPtr)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
 
     JSC::Structure* structure = WebCore::getDOMStructure<WebCore::${controller}>(vm, *globalObject);
-    WebCore::${controller} *controller = WebCore::${controller}::create(vm, globalObject, structure, sinkPtr, 0);
-    *controllerValue = reinterpret_cast<void*>(JSC::JSValue::encode(controller));
-    return globalObject->assignToStream(JSC::JSValue::decode(stream), controller);
+    return JSC::JSValue::encode(WebCore::${controller}::create(vm, globalObject, structure, sinkPtr, 0));
 }
 
 `;
@@ -1031,6 +1017,12 @@ extern "C" void JSSinkController__onClose(JSC::EncodedJSValue controllerValue, J
     arguments.append(JSC::JSValue::decode(reason));
     AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
     RELEASE_AND_RETURN(scope, void());
+}
+
+extern "C" JSC::EncodedJSValue JSSinkController__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue stream, JSC::EncodedJSValue controllerValue)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    return globalObject->assignToStream(JSC::JSValue::decode(stream), JSC::JSValue::decode(controllerValue));
 }
 
 extern "C" void JSSinkController__detachPtr(JSC::EncodedJSValue controllerValue)

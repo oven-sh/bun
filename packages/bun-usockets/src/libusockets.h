@@ -107,7 +107,7 @@
 /* close() codes — two orthogonal bits collapsed into three states:
  *   0  graceful: TLS sends close_notify and DEFERS the fd close until the
  *      peer replies; TCP FINs.
- *   1  reset: TLS fast-shutdown (no wait), TCP arms SO_LINGER{1,0} → RST.
+ *   1  reset: TLS sends no close_notify (abortive), TCP arms SO_LINGER{1,0} → RST.
  *      Drops any unflushed kernel send buffer; only for terminate()/abort.
  *   2  fast-shutdown: TLS fast-shutdown (no wait), TCP FINs normally. For
  *      net.Socket._destroy() / _handle.close() where the wrapper detaches
@@ -618,7 +618,9 @@ void us_poll_init(us_poll_r p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type);
 void us_poll_start(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 /* Returns 0 if successful */
 int us_poll_start_rc(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
-void us_poll_change(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
+/* Returns 0 unless the fd had to be registered anew (a poll parked by the
+ * dispatcher while paused) and that registration failed; errno is set then. */
+int us_poll_change(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 void us_poll_stop(us_poll_r p, struct us_loop_t *loop) nonnull_fn_decl;
 
 /* Return what events we are polling for */

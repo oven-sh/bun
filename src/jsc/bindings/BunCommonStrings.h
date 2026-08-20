@@ -37,7 +37,8 @@
     macro(httpOPTIONS, "OPTIONS") \
     macro(OperationFailed, "The operation failed.") \
     macro(OperationTimedOut, "The operation timed out.") \
-    macro(OperationWasAborted, "The operation was aborted.") \
+    /* node's AbortError default message, which unlike the DOMException one has no trailing period: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L980 */ \
+    macro(OperationWasAborted, "The operation was aborted") \
     macro(httpPATCH, "PATCH") \
     macro(httpPOST, "POST") \
     macro(httpPROPFIND, "PROPFIND") \
@@ -114,25 +115,30 @@
 
 // clang-format on
 
-#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)                           \
-    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject)             \
-    {                                                                          \
-        return m_commonString_##name.getInitializedOnMainThread(globalObject); \
+#define BUN_COMMON_STRINGS_INDEX_ENTRY(name) name,
+#define BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES(name, literal) name,
+
+#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)                                                 \
+    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject)                                   \
+    {                                                                                                \
+        return m_strings[static_cast<size_t>(Index::name)].getInitializedOnMainThread(globalObject); \
     }
 
 #define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES(name, literal) \
     BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)
 
-#define BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION(name) \
-    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_commonString_##name;
-
-#define BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION_NOT_BUILTIN_NAMES(name, literal) \
-    BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION(name)
-
 namespace Bun {
 
 class CommonStrings {
 public:
+    // clang-format off
+    enum class Index : uint8_t {
+        BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_INDEX_ENTRY)
+        BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES)
+        Count
+    };
+    // clang-format on
+
     BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION)
     BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES)
     void initialize();
@@ -141,13 +147,12 @@ public:
     void visit(Visitor& visitor);
 
 private:
-    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION)
-    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION_NOT_BUILTIN_NAMES)
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_strings[static_cast<size_t>(Index::Count)];
 };
 
 } // namespace Bun
 
+#undef BUN_COMMON_STRINGS_INDEX_ENTRY
+#undef BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES
 #undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION
-#undef BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION
 #undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES
-#undef BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION_NOT_BUILTIN_NAMES

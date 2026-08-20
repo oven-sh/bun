@@ -2477,7 +2477,134 @@ describe("css tests", () => {
     );
   });
 
-  describe("scroll-paddding", () => {
+  describe("scroll-padding", () => {
+    cssTest(
+      `
+      .foo {
+        scroll-padding-left: 10px;
+        scroll-padding-right: 10px;
+        scroll-padding-top: 20px;
+        scroll-padding-bottom: 20px;
+      }
+    `,
+      indoc`
+      .foo {
+        scroll-padding: 20px 10px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        scroll-padding-block-start: 15px;
+        scroll-padding-block-end: 15px;
+      }
+    `,
+      indoc`
+      .foo {
+        scroll-padding-block: 15px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        scroll-padding-left: 10px;
+        scroll-padding-right: 10px;
+        scroll-padding-inline-start: 15px;
+        scroll-padding-inline-end: 15px;
+        scroll-padding-top: 20px;
+        scroll-padding-bottom: 20px;
+      }
+    `,
+      indoc`
+      .foo {
+        scroll-padding-left: 10px;
+        scroll-padding-right: 10px;
+        scroll-padding-inline: 15px;
+        scroll-padding-top: 20px;
+        scroll-padding-bottom: 20px;
+      }
+    `,
+    );
+
+    // Later declarations of the same scroll-padding property replace earlier ones.
+    minify_test(".foo { scroll-padding: 1px; scroll-padding: 0 }", ".foo{scroll-padding:0}");
+    minify_test(".foo { scroll-padding-top: 1px; scroll-padding-top: 2px }", ".foo{scroll-padding-top:2px}");
+    minify_test(".foo { scroll-padding-block: 1px; scroll-padding-block: 2px }", ".foo{scroll-padding-block:2px}");
+    minify_test(
+      ".foo { scroll-padding-top: 1px; scroll-padding-right: 2px; scroll-padding-bottom: 3px; scroll-padding-left: 4px }",
+      ".foo{scroll-padding:1px 2px 3px 4px}",
+    );
+    minify_test(
+      ".foo { scroll-padding-top: auto; scroll-padding-right: auto; scroll-padding-bottom: auto; scroll-padding-left: auto }",
+      ".foo{scroll-padding:auto}",
+    );
+    minify_test(".foo { scroll-padding: 1px; scroll-padding-left: 2px }", ".foo{scroll-padding:1px 1px 1px 2px}");
+    minify_test(".foo { scroll-padding-left: 2px; scroll-padding: 1px }", ".foo{scroll-padding:1px}");
+    minify_test(
+      ".foo { scroll-padding-inline-start: 1px; scroll-padding-inline-end: 2px }",
+      ".foo{scroll-padding-inline:1px 2px}",
+    );
+    minify_test(
+      ".foo { scroll-padding-block: 1px 2px; scroll-padding-block-end: 3px }",
+      ".foo{scroll-padding-block:1px 3px}",
+    );
+    minify_test(
+      ".foo { scroll-padding-block-start: 1px; scroll-padding-block-end: 1px; scroll-padding-inline-start: 2px; scroll-padding-inline-end: 3px }",
+      ".foo{scroll-padding-block:1px;scroll-padding-inline:2px 3px}",
+    );
+    minify_test(
+      ".foo { scroll-padding-top: 1px !important; scroll-padding-right: 1px !important; scroll-padding-bottom: 1px !important; scroll-padding-left: 1px !important }",
+      ".foo{scroll-padding:1px!important}",
+    );
+    // `!important` declarations are minified separately from normal ones, so a
+    // mixed set of longhands cannot be merged into one shorthand.
+    minify_test(
+      ".foo { scroll-padding-top: 1px; scroll-padding-right: 1px; scroll-padding-bottom: 1px; scroll-padding-left: 1px !important }",
+      ".foo{scroll-padding-top:1px;scroll-padding-bottom:1px;scroll-padding-right:1px;scroll-padding-left:1px!important}",
+    );
+    // scroll-margin and scroll-padding are merged independently of each other,
+    // with scroll-margin emitted first.
+    minify_test(
+      ".foo { scroll-padding-top: 1px; scroll-margin-top: 2px; scroll-padding-bottom: 1px; scroll-margin-bottom: 2px; scroll-padding-left: 1px; scroll-margin-left: 2px; scroll-padding-right: 1px; scroll-margin-right: 2px }",
+      ".foo{scroll-margin:2px;scroll-padding:1px}",
+    );
+    // Partially collected longhands in one rule must not leak into the next.
+    minify_test(
+      ".foo { scroll-padding-block-start: 1px } .bar { scroll-padding-top: 2px; scroll-padding-bottom: 2px; scroll-padding-left: 2px; scroll-padding-right: 2px }",
+      ".foo{scroll-padding-block-start:1px}.bar{scroll-padding:2px}",
+    );
+
+    // An unparsed value (var()) may not be supported everywhere the parsed one
+    // is, so the earlier declaration is kept as a fallback.
+    minify_test(
+      ".foo { scroll-padding-top: 1px; scroll-padding-top: var(--x) }",
+      ".foo{scroll-padding-top:1px;scroll-padding-top:var(--x)}",
+    );
+    minify_test(
+      ".foo { scroll-padding: 1px; scroll-padding: var(--x) }",
+      ".foo{scroll-padding:1px;scroll-padding:var(--x)}",
+    );
+    minify_test(
+      ".foo { scroll-padding-block-start: 1px; scroll-padding-block-end: var(--x) }",
+      ".foo{scroll-padding-block-start:1px;scroll-padding-block-end:var(--x)}",
+    );
+    // Switching between physical and logical properties flushes what was
+    // collected so far instead of merging across the two.
+    minify_test(
+      ".foo { scroll-padding: 1px; scroll-padding-block-start: 2px }",
+      ".foo{scroll-padding:1px;scroll-padding-block-start:2px}",
+    );
+    minify_test(
+      ".foo { scroll-padding-top: 1px; scroll-padding-block-start: 1px; scroll-padding-top: 2px }",
+      ".foo{scroll-padding-top:1px;scroll-padding-block-start:1px;scroll-padding-top:2px}",
+    );
+
+    // Unlike padding, the logical scroll-padding properties are never compiled
+    // down to physical ones, whatever the targets.
     prefix_test(
       `
       .foo {
@@ -2487,6 +2614,39 @@ describe("css tests", () => {
       indoc`
       .foo {
         scroll-padding-inline: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        scroll-padding-inline-start: 2px;
+        scroll-padding-inline-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        scroll-padding-inline: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        scroll-padding-block-start: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        scroll-padding-block-start: 2px;
       }
     `,
       {

@@ -11,7 +11,7 @@ use crate::css_properties::custom::CustomPropertyName;
 use crate::css_properties::flex::FlexHandler;
 use crate::css_properties::font::FontHandler;
 use crate::css_properties::margin_padding::{
-    InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler,
+    InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler, ScrollPaddingHandler,
 };
 use crate::css_properties::prefix_handler::FallbackHandler;
 use crate::css_properties::size::SizeHandler;
@@ -396,6 +396,7 @@ pub struct DeclarationHandler<'bump> {
     pub(crate) margin: MarginHandler,
     pub(crate) padding: PaddingHandler,
     pub(crate) scroll_margin: ScrollMarginHandler,
+    pub(crate) scroll_padding: ScrollPaddingHandler,
     pub(crate) transition: TransitionHandler,
     pub(crate) font: FontHandler,
     pub(crate) inset: InsetHandler,
@@ -425,6 +426,7 @@ impl<'bump> DeclarationHandler<'bump> {
         self.margin.finalize(&mut self.decls, context);
         self.padding.finalize(&mut self.decls, context);
         self.scroll_margin.finalize(&mut self.decls, context);
+        self.scroll_padding.finalize(&mut self.decls, context);
         self.transition.finalize(&mut self.decls, context);
         self.font.finalize(&mut self.decls, context);
         self.inset.finalize(&mut self.decls, context);
@@ -464,6 +466,9 @@ impl<'bump> DeclarationHandler<'bump> {
                 .scroll_margin
                 .handle_property(property, &mut self.decls, context)
             || self
+                .scroll_padding
+                .handle_property(property, &mut self.decls, context)
+            || self
                 .transition
                 .handle_property(property, &mut self.decls, context)
             || self
@@ -496,6 +501,7 @@ impl<'bump> DeclarationHandler<'bump> {
             margin: Default::default(),
             padding: Default::default(),
             scroll_margin: Default::default(),
+            scroll_padding: Default::default(),
             transition: Default::default(),
             font: Default::default(),
             inset: Default::default(),

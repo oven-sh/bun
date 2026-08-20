@@ -267,6 +267,7 @@ define_rect_shorthand! {
 pub type MarginHandler = SizeHandler<MarginSpec>;
 pub type PaddingHandler = SizeHandler<PaddingSpec>;
 pub type ScrollMarginHandler = SizeHandler<ScrollMarginSpec>;
+pub type ScrollPaddingHandler = SizeHandler<ScrollPaddingSpec>;
 pub type InsetHandler = SizeHandler<InsetSpec>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -278,7 +279,7 @@ pub type InsetHandler = SizeHandler<InsetSpec>;
 // helpers) calls through `S::*`. Each concrete handler is a zero-sized
 // marker type implementing the spec.
 //
-// A macro could generate the four `SizeHandlerSpec` impls from a single
+// A macro could generate the five `SizeHandlerSpec` impls from a single
 // argument table, eliminating the per-spec extract/construct boilerplate.
 // Left explicit for reviewability.
 
@@ -1345,6 +1346,43 @@ impl SizeHandlerSpec for ScrollMarginSpec {
     );
 }
 
+pub struct ScrollPaddingSpec;
+impl SizeHandlerSpec for ScrollPaddingSpec {
+    const TOP: PropertyIdTag = PropertyIdTag::ScrollPaddingTop;
+    const BOTTOM: PropertyIdTag = PropertyIdTag::ScrollPaddingBottom;
+    const LEFT: PropertyIdTag = PropertyIdTag::ScrollPaddingLeft;
+    const RIGHT: PropertyIdTag = PropertyIdTag::ScrollPaddingRight;
+    const BLOCK_START: PropertyIdTag = PropertyIdTag::ScrollPaddingBlockStart;
+    const BLOCK_END: PropertyIdTag = PropertyIdTag::ScrollPaddingBlockEnd;
+    const INLINE_START: PropertyIdTag = PropertyIdTag::ScrollPaddingInlineStart;
+    const INLINE_END: PropertyIdTag = PropertyIdTag::ScrollPaddingInlineEnd;
+    const SHORTHAND: PropertyIdTag = PropertyIdTag::ScrollPadding;
+    const BLOCK_SHORTHAND: PropertyIdTag = PropertyIdTag::ScrollPaddingBlock;
+    const INLINE_SHORTHAND: PropertyIdTag = PropertyIdTag::ScrollPaddingInline;
+    const SHORTHAND_CATEGORY: PropertyCategory = PropertyCategory::Physical;
+    const FEATURE: Option<Feature> = None;
+    const SHORTHAND_FEATURE: Option<Feature> = None;
+    type Shorthand = ScrollPadding;
+    type BlockShorthand = ScrollPaddingBlock;
+    type InlineShorthand = ScrollPaddingInline;
+    size_handler_spec_projections!(
+        ScrollPaddingTop,
+        ScrollPaddingBottom,
+        ScrollPaddingLeft,
+        ScrollPaddingRight,
+        ScrollPaddingBlockStart,
+        ScrollPaddingBlockEnd,
+        ScrollPaddingInlineStart,
+        ScrollPaddingInlineEnd,
+        ScrollPadding,
+        ScrollPaddingBlock,
+        ScrollPaddingInline,
+        ScrollPadding,
+        ScrollPaddingBlock,
+        ScrollPaddingInline
+    );
+}
+
 pub struct InsetSpec;
 impl SizeHandlerSpec for InsetSpec {
     const TOP: PropertyIdTag = PropertyIdTag::Top;
@@ -1381,6 +1419,3 @@ impl SizeHandlerSpec for InsetSpec {
         InsetInline
     );
 }
-
-// NOTE: `ScrollPadding{,Block,Inline}` value types are defined above but no
-// `ScrollPaddingHandler` is instantiated.

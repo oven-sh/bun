@@ -47,9 +47,8 @@ impl JSMap {
     }
 
     /// Retrieve the number of entries in this JS Map object.
-    #[track_caller]
-    pub fn size(&mut self, global: &JSGlobalObject) -> JsResult<u32> {
-        crate::cpp::JSC__JSMap__size(self, global)
+    pub fn size(&mut self) -> u32 {
+        crate::cpp::JSC__JSMap__size(self)
     }
 
     /// Attempt to convert a `JSValue` to a `*JSMap`.

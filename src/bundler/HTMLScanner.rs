@@ -43,7 +43,8 @@ impl<'a> HTMLScanner<'a> {
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
         else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
             'blk: {
-                let Some(index_of_dot) = input_path.iter().rposition(|&b| b == b'.') else {
+                let Some(index_of_dot) = bun_core::strings::last_index_of_char(input_path, b'.')
+                else {
                     break 'blk input_path;
                 };
                 let ext = &input_path[index_of_dot..];
@@ -165,7 +166,7 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
 pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
 
 #[derive(Clone, Copy)]
-pub struct TagHandler {
+struct TagHandler {
     /// CSS selector to match elements
     pub(crate) selector: &'static str,
     /// The attribute to extract the URL from

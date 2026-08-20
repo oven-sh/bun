@@ -89,10 +89,15 @@ function createContext(contextObject?, options?) {
   return context;
 }
 
+// Node's runInContext()/runInNewContext() (lib/vm.js) spread `options` into a
+// fresh object before handing it to Script, so unlike the Script methods they
+// accept any non-string options value.
 function runInContext(code, context, options) {
   validateContext(context);
   if (typeof options === "string") {
     options = { filename: options };
+  } else {
+    options = { ...options };
   }
   return new Script(code, options).runInContext(context, options);
 }
@@ -110,6 +115,8 @@ function runInNewContext(code, context, options) {
   }
   if (typeof options === "string") {
     options = { filename: options };
+  } else {
+    options = { ...options };
   }
   context = createContext(context, options);
   return createScript(code, options).runInNewContext(context, options);

@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -95,6 +95,66 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
     `),
   );
 });
+
+// A paused socket whose peer hung up is taken out of epoll by the dispatcher
+// (EPOLLHUP is level-triggered and cannot be masked) and registered again by
+// resume(), which is a fresh EPOLL_CTL_ADD and can fail the way the first one
+// can. epoll only: kqueue and libuv never park the fd, so their resume is a
+// plain filter/poll change with nothing for the hook to fail.
+test.skipIf(!fault.available() || !isLinux)(
+  "resume() of a parked socket that cannot be registered again fails the socket instead of leaving it deaf",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const net = require("net");
+        const { once } = require("events");
+        let resolveClosed;
+        const serverClosed = new Promise(r => (resolveClosed = r));
+        const server = net.createServer({ allowHalfOpen: true }, s => {
+          s.resume();
+          s.on("end", () => s.write(Buffer.alloc(64 * 1024, 0x61), () => s.end()));
+          s.on("close", resolveClosed);
+        });
+        server.listen(0, async () => {
+          const conn = net.connect({ port: server.address().port, allowHalfOpen: true });
+          await once(conn, "connect");
+          conn.end();
+          conn.pause();
+          await serverClosed;
+          server.close();
+          // The peer's FIN reached our fd before its close event reached us, so
+          // the next poll phase reports the hangup and parks the socket; an
+          // immediate runs after that phase.
+          await new Promise(r => setImmediate(r));
+          conn.on("data", () => console.log("data"));
+          conn.on("error", e => console.log("error", e.code, e.syscall));
+          conn.on("end", () => console.log("end"));
+          conn.on("close", hadError => console.log("close", hadError));
+          fault.set({ syscall: "poll_start", action: "errno", errno: "ENOMEM", repeat: 1 });
+          try {
+            conn.resume();
+          } finally {
+            fault.clear();
+          }
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: ["error ENOMEM read", "close true"],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 // uSockets' TLS low-priority handshake queue (loop->data.low_prio_head)
 // shares its prev/next links with group->head_sockets. A socket already

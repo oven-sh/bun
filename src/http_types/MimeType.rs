@@ -285,7 +285,7 @@ impl MimeType {
 
     pub fn init(str_: &[u8], dupe: bool, allocated: Option<&mut bool>) -> MimeType {
         let mut str = str_;
-        if let Some(slash) = str.iter().position(|&b| b == b'/') {
+        if let Some(slash) = strings::index_of_char_usize(str, b'/') {
             let category_ = &str[0..slash];
 
             if category_.is_empty() || category_[0] == b'*' || str.len() <= slash + 1 {
@@ -294,7 +294,7 @@ impl MimeType {
 
             str = &str[slash + 1..];
 
-            if let Some(semicolon) = str.iter().position(|&b| b == b';') {
+            if let Some(semicolon) = strings::index_of_char_usize(str, b';') {
                 str = &str[0..semicolon];
             }
 

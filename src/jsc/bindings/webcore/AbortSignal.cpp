@@ -45,7 +45,6 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 
 extern "C" AbortSignalTimeout AbortSignal__Timeout__create(void* vm, AbortSignal* signal, uint64_t milliseconds);
-extern "C" void AbortSignal__Timeout__run(AbortSignalTimeout timeout, void* vm);
 extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
@@ -117,7 +116,7 @@ AbortSignal::~AbortSignal()
     // on the freed vector. Clearing only the impl's object pointer leaves
     // the impl itself (and the EventTargetData it hosts) intact so
     // ~EventTarget()'s eventTargetData() lookup still works.
-    if (auto* impl = weakPtrFactory().impl())
+    if (auto* impl = EventTargetWithInlineData::weakPtrFactory().impl())
         impl->clear();
 
     cancelTimer();
@@ -287,25 +286,6 @@ void AbortSignal::cleanNativeBindings(void* ref)
     this->eventListenersDidChange();
 }
 
-// https://dom.spec.whatwg.org/#abortsignal-follow
-void AbortSignal::signalFollow(AbortSignal& signal)
-{
-    if (aborted())
-        return;
-
-    if (signal.aborted()) {
-        signalAbort(signal.jsReason(*scriptExecutionContext()->jsGlobalObject()));
-        return;
-    }
-
-    ASSERT(!m_followingSignal);
-    m_followingSignal = signal;
-    signal.addAlgorithm([weakThis = WeakPtr { *this }](JSC::JSValue reason) {
-        if (RefPtr signal = weakThis.get())
-            signal->signalAbort(reason);
-    });
-}
-
 void AbortSignal::eventListenersDidChange()
 {
     bool hadListeners = hasAbortEventListener();
@@ -317,14 +297,6 @@ void AbortSignal::eventListenersDidChange()
         else
             m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
     }
-
-    // When a timeout signal loses all observers there is nothing left to
-    // notify when the timer fires, so cancel it eagerly.
-    // JSAbortSignalOwner::isReachableFromOpaqueRoots then no longer keeps the
-    // wrapper alive and ~AbortSignal() runs on collection; this just frees the
-    // native timer sooner.
-    if (m_timeout && !aborted() && !hasTimeoutObserver())
-        cancelTimer();
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)

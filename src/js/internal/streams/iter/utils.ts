@@ -254,7 +254,6 @@ export default {
   kMultiConsumerDefaultHWM,
   kPushDefaultHWM,
   kResolvedPromise,
-  allUint8Array,
   clampHWM,
   concatBytes,
   convertChunks,

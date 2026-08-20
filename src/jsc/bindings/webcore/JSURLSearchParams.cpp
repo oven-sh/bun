@@ -589,7 +589,7 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
 
             if constexpr (hasIndex) {
                 obj->putDirectIndex(lexicalGlobalObject, index.value(), array);
-                throwScope.assertNoException(); // not a proxy.
+                RETURN_IF_EXCEPTION(throwScope, ); // not a proxy: OOM / termination only
             } else {
                 obj->putDirect(vm, ident, array);
             }
@@ -604,7 +604,7 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
         seenKeys.add(key);
         if constexpr (hasIndex) {
             obj->putDirectIndex(lexicalGlobalObject, index.value(), stringValue);
-            throwScope.assertNoException(); // not a proxy.
+            RETURN_IF_EXCEPTION(throwScope, ); // not a proxy: OOM / termination only
         } else {
             obj->putDirect(vm, ident, stringValue);
         }
@@ -704,6 +704,9 @@ private:
     {
     }
 };
+template<> struct DOMStructureSlotOf<URLSearchParamsIterator> {
+    static constexpr DOMStructureSlot value = DOMStructureSlot::URLSearchParamsIterator;
+};
 
 using URLSearchParamsIteratorPrototype = JSDOMIteratorPrototype<JSURLSearchParams, URLSearchParamsIteratorTraits>;
 JSC_ANNOTATE_HOST_FUNCTION(URLSearchParamsIteratorPrototypeNext, URLSearchParamsIteratorPrototype::next);
@@ -772,21 +775,6 @@ void JSURLSearchParams::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     // if (thisObject->scriptExecutionContext())
     //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSURLSearchParamsOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSURLSearchParamsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsURLSearchParams = static_cast<JSURLSearchParams*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsURLSearchParams->wrapped(), jsURLSearchParams);
 }
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<URLSearchParams>&& impl)

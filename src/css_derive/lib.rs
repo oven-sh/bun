@@ -1153,8 +1153,8 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // Emit the body in the **trait** impl so `css::generic::parse[_with_options]`
-    // (bounded on `T: generics::Parse[WithOptions]`) resolves. An inherent
+    // Emit the body in the **trait** impl so `css::generic::parse_with_options`
+    // (bounded on `T: generics::ParseWithOptions`) resolves. An inherent
     // `parse` is kept as a thin forwarder for call sites that don't import the
     // trait. `ParseWithOptions` ignores options — types that
     // genuinely consume options hand-write their own impl instead of deriving.

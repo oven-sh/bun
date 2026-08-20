@@ -46,12 +46,13 @@ describe.concurrent("native binlink optimization", () => {
       // Create bunfig
       await writeFile(
         join(packageDir, "bunfig.toml"),
-        `
-[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${verdaccio.registryUrl()}"
-linker = "${linker}"
-`,
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: verdaccio.registryUrl(),
+            linker,
+          },
+        }),
       );
 
       // Install the main package
@@ -129,12 +130,13 @@ linker = "${linker}"
 
       await writeFile(
         join(packageDir, "bunfig.toml"),
-        `
-[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${verdaccio.registryUrl()}"
-linker = "${linker}"
-`,
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: verdaccio.registryUrl(),
+            linker,
+          },
+        }),
       );
 
       await writeFile(
@@ -221,12 +223,13 @@ linker = "${linker}"
 
       await writeFile(
         join(packageDir, "bunfig.toml"),
-        `
-[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${verdaccio.registryUrl()}"
-linker = "${opts.linker}"
-`,
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: verdaccio.registryUrl(),
+            linker: opts.linker,
+          },
+        }),
       );
 
       await writeFile(
@@ -469,12 +472,13 @@ describe.concurrent("native binlink altpath", () => {
 
         await writeFile(
           join(packageDir, "bunfig.toml"),
-          `
-[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${verdaccio.registryUrl()}"
-linker = "${linker}"
-`,
+          Bun.TOML.stringify({
+            install: {
+              cache: join(packageDir, ".bun-cache"),
+              registry: verdaccio.registryUrl(),
+              linker,
+            },
+          }),
         );
 
         await writeFile(

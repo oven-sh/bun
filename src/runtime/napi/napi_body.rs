@@ -3520,7 +3520,12 @@ mod v8_api {
         pub(super) fn _ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj()
         -> *mut c_void;
         pub(super) fn _ZN2v811CpuProfiler4StopEj() -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEEb() -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13StopProfilingENS_5LocalINS_6StringEEE() -> *mut c_void;
         pub(super) fn _ZN2v810CpuProfile6DeleteEv() -> *mut c_void;
+        pub(super) fn _ZNK2v810CpuProfile8GetTitleEv() -> *mut c_void;
         pub(super) fn _ZNK2v810CpuProfile10GetEndTimeEv() -> *mut c_void;
         pub(super) fn _ZNK2v810CpuProfile12GetStartTimeEv() -> *mut c_void;
         pub(super) fn _ZNK2v810CpuProfile14GetTopDownRootEv() -> *mut c_void;
@@ -3875,10 +3880,18 @@ mod v8_api {
         pub(super) fn v8_CpuProfiler_Start() -> *mut c_void;
         #[link_name = "?Stop@CpuProfiler@v8@@QEAAPEAVCpuProfile@2@I@Z"]
         pub(super) fn v8_CpuProfiler_Stop() -> *mut c_void;
+        #[link_name = "?StartProfiling@CpuProfiler@v8@@QEAA?AW4CpuProfilingStatus@2@V?$Local@VString@v8@@@2@W4CpuProfilingMode@2@_NI@Z"]
+        pub(super) fn v8_CpuProfiler_StartProfiling_mode() -> *mut c_void;
+        #[link_name = "?StartProfiling@CpuProfiler@v8@@QEAA?AW4CpuProfilingStatus@2@V?$Local@VString@v8@@@2@_N@Z"]
+        pub(super) fn v8_CpuProfiler_StartProfiling() -> *mut c_void;
+        #[link_name = "?StopProfiling@CpuProfiler@v8@@QEAAPEAVCpuProfile@2@V?$Local@VString@v8@@@2@@Z"]
+        pub(super) fn v8_CpuProfiler_StopProfiling() -> *mut c_void;
         #[link_name = "?CollectSample@CpuProfiler@v8@@SAXPEAVIsolate@2@V?$optional@_K@std@@@Z"]
         pub(super) fn v8_CpuProfiler_CollectSample() -> *mut c_void;
         #[link_name = "?Delete@CpuProfile@v8@@QEAAXXZ"]
         pub(super) fn v8_CpuProfile_Delete() -> *mut c_void;
+        #[link_name = "?GetTitle@CpuProfile@v8@@QEBA?AV?$Local@VString@v8@@@2@XZ"]
+        pub(super) fn v8_CpuProfile_GetTitle() -> *mut c_void;
         #[link_name = "?GetEndTime@CpuProfile@v8@@QEBA_JXZ"]
         pub(super) fn v8_CpuProfile_GetEndTime() -> *mut c_void;
         #[link_name = "?GetStartTime@CpuProfile@v8@@QEBA_JXZ"]
@@ -4935,7 +4948,11 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZN2v811CpuProfiler19SetSamplingIntervalEi,
             _ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj,
             _ZN2v811CpuProfiler4StopEj,
+            _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj,
+            _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEEb,
+            _ZN2v811CpuProfiler13StopProfilingENS_5LocalINS_6StringEEE,
             _ZN2v810CpuProfile6DeleteEv,
+            _ZNK2v810CpuProfile8GetTitleEv,
             _ZNK2v810CpuProfile10GetEndTimeEv,
             _ZNK2v810CpuProfile12GetStartTimeEv,
             _ZNK2v810CpuProfile14GetTopDownRootEv,
@@ -5118,8 +5135,12 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_CpuProfiler_SetSamplingInterval,
             v8_CpuProfiler_Start,
             v8_CpuProfiler_Stop,
+            v8_CpuProfiler_StartProfiling_mode,
+            v8_CpuProfiler_StartProfiling,
+            v8_CpuProfiler_StopProfiling,
             v8_CpuProfiler_CollectSample,
             v8_CpuProfile_Delete,
+            v8_CpuProfile_GetTitle,
             v8_CpuProfile_GetEndTime,
             v8_CpuProfile_GetStartTime,
             v8_CpuProfile_GetTopDownRoot,

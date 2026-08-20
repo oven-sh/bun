@@ -177,7 +177,8 @@ WTF::String formatStackTrace(
 
     if (errorInstance) {
         if (JSC::ErrorInstance* err = dynamicDowncast<JSC::ErrorInstance>(errorInstance)) {
-            if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
+            // Parser errors record the rejected source's URL via addErrorInfo(); it is what this frame shows.
+            if (err->errorType() == ErrorType::SyntaxError && !err->sourceURL().isEmpty() && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
                 // There appears to be an off-by-one error.
                 // The following reproduces the issue:
                 // /* empty comment */
@@ -193,15 +194,12 @@ WTF::String formatStackTrace(
                 String sourceURLForFrame = err->sourceURL();
 
                 // If it's not a Zig::GlobalObject, don't bother source-mapping it.
-                if (globalObject && !sourceURLForFrame.isEmpty()) {
-                    // https://github.com/oven-sh/bun/issues/3595
-                    if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        // This ensures the lifetime of the sourceURL is accounted for correctly
-                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
+                if (globalObject) {
+                    remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
+                    // This ensures the lifetime of the sourceURL is accounted for correctly
+                    Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
 
-                        sourceURLForFrame = remappedFrame.source_url.toWTFString();
-                    }
+                    sourceURLForFrame = remappedFrame.source_url.toWTFString();
                 }
 
                 // there is always a newline before each stack frame line, ensuring that the name + message
@@ -655,6 +653,16 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     return result;
 }
 
+void clearStaleErrorLocation(JSC::ErrorInstance* instance)
+{
+    // Only a parse location outlives the frames; any other one was derived from the old frames.
+    if (instance->isParseError())
+        return;
+    instance->setSourceURL(String());
+    instance->setLine(0);
+    instance->setColumn(0);
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -670,6 +678,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (!destination->stackTrace()) {
+        clearStaleErrorLocation(destination);
         destination->captureStackTrace(vm, globalObject, 1);
     }
 
@@ -780,6 +789,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
+        clearStaleErrorLocation(instance);
         if (instance->hasMaterializedErrorInfo()) {
             // Error info was already materialized (e.g. .stack was previously accessed).
             // Don't call setStackFrames — it would leave m_errorInfoMaterialized=true with

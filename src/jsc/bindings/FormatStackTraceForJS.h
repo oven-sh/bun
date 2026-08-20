@@ -70,6 +70,9 @@ WTF::String formatStackTrace(
     WTF::Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance);
 
+// Call before giving an existing ErrorInstance new frames.
+void clearStaleErrorLocation(JSC::ErrorInstance* instance);
+
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);

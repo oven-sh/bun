@@ -4,6 +4,7 @@
 
 #include "BunClientData.h"
 #include "ErrorStackFrame.h"
+#include "FormatStackTraceForJS.h"
 
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/ErrorInstance.h>
@@ -174,5 +175,6 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
     if (frames.isEmpty())
         return;
 
+    Bun::clearStaleErrorLocation(instance);
     instance->setStackFrames(vm, WTF::move(frames));
 }

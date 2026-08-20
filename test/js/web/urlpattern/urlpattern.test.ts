@@ -206,4 +206,52 @@ describe("URLPattern", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
     });
   });
+
+  describe("pathname canonicalization strips trailing C0 control or space", () => {
+    test("trailing space and NUL are stripped", () => {
+      expect(new URLPattern({ pathname: "/p/ " }).pathname).toBe("/p/");
+      expect(new URLPattern({ pathname: "/p/\0" }).pathname).toBe("/p/");
+      expect(new URLPattern({ pathname: "/p  " }).pathname).toBe("/p");
+      expect(new URLPattern({ pathname: "/p\0 " }).pathname).toBe("/p");
+      expect(new URLPattern({ pathname: "\x01/p/\x1f" }).pathname).toBe("%01/p/");
+      expect(new URLPattern({ pathname: "   " }).pathname).toBe("");
+      expect(new URLPattern({ pathname: "\0" }).pathname).toBe("");
+    });
+
+    test("pattern with trailing space matches the clean URL", () => {
+      const p = new URLPattern({ pathname: "/admin " });
+      expect(p.pathname).toBe("/admin");
+      // The URL parser strips the trailing space from "http://x/admin ", so both forms
+      // should match once the pattern itself is canonicalized the same way.
+      expect(p.test("http://x/admin ")).toBe(true);
+      expect(p.test("http://x/admin")).toBe(true);
+      expect(p.test({ pathname: "/admin " })).toBe(true);
+      expect(p.test({ pathname: "/admin" })).toBe(true);
+    });
+
+    test("pattern with trailing NUL matches the clean URL", () => {
+      const n = new URLPattern({ pathname: "/p/\0" });
+      expect(n.pathname).toBe("/p/");
+      expect(n.test("http://x/p/")).toBe(true);
+      expect(n.test("http://x/p/%00")).toBe(false);
+    });
+
+    test("leading and mid-string C0/space are still percent-encoded", () => {
+      expect(new URLPattern({ pathname: " /p/" }).pathname).toBe("%20/p/");
+      expect(new URLPattern({ pathname: "\0/p/" }).pathname).toBe("%00/p/");
+      expect(new URLPattern({ pathname: "/a b/" }).pathname).toBe("/a%20b/");
+      expect(new URLPattern({ pathname: "/a\0b/" }).pathname).toBe("/a%00b/");
+    });
+
+    test("tabs and newlines are still stripped everywhere", () => {
+      expect(new URLPattern({ pathname: "/a\tb" }).pathname).toBe("/ab");
+      expect(new URLPattern({ pathname: "/a\nb\r" }).pathname).toBe("/ab");
+    });
+
+    test("other components keep trailing space percent-encoded", () => {
+      expect(new URLPattern({ search: "q=1 " }).search).toBe("q=1%20");
+      expect(new URLPattern({ hash: "foo " }).hash).toBe("foo%20");
+      expect(new URLPattern({ username: "u " }).username).toBe("u%20");
+    });
+  });
 });

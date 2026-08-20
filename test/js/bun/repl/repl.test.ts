@@ -85,7 +85,7 @@ class ScreenModel {
           throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(rest)}`);
         }
         i += seq[0].length;
-        this.control(seq[2], seq[1] === "" ? undefined : Number(seq[1]), seq[0]);
+        this.control(seq[2], seq[1], seq[0]);
         continue;
       }
       const ch = codePoint > 0xffff ? String.fromCodePoint(codePoint) : output[i];
@@ -103,10 +103,12 @@ class ScreenModel {
     }
   }
 
-  private control(command: string, n: number | undefined, sequence: string): void {
+  private control(command: string, params: string, sequence: string): void {
+    if (command === "m") return; // colors
+    // The line editor only ever sends a single parameter.
+    if (!/^\d*$/.test(params)) throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(sequence)}`);
+    const n = params === "" ? undefined : Number(params);
     switch (command) {
-      case "m": // colors
-        return;
       case "A":
         this.row = Math.max(0, this.row - (n ?? 1));
         break;

@@ -1446,6 +1446,24 @@ describe("bun test", () => {
       expect(stderr).toContain("failed later");
       expect(stderr).toContain("1 fail");
     });
+
+    // This arrow is rewritten in this very file, and its toString() text lands in a different
+    // module, so the rewrite must not reference anything from the module it was made in.
+    test("the rewrite survives a Function.toString round-trip into another module", async () => {
+      const fn = () => expect(1).toBe(1);
+      using dir = tempDir("tail-tostring", {
+        "roundtrip.test.ts": `import { test, expect } from "bun:test";\ntest("round-trip", ${fn.toString()});`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "roundtrip.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
   });
 
   test("path to a non-test.ts file will work", () => {

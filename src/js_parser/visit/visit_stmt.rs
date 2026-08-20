@@ -1598,14 +1598,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `bun test` only. A returned matcher call, which is also what `() => expect(x).toBe(1)` is,
     /// is a proper tail call (test files are modules, so strict mode): JSC replaces the frame that
     /// contains the call with the matcher's own, so a failure has no location to report and an
-    /// inline snapshot has nowhere to be written. `return (tmp = expect(x).toBe(1), tmp)` keeps the
+    /// inline snapshot has nowhere to be written. `return [expect(x).toBe(1)][0]` keeps the
     /// frame. Tail position continues into the branches of `?:` and the right operand of `,`,
     /// `&&`, `||` and `??`.
     fn keep_matcher_call_frame(&mut self, value: &mut Expr) {
         match value.data {
             js_ast::ExprData::ECall(call) => {
                 if self.is_matcher_call(call.target) {
-                    *value = self.assign_to_matcher_result(*value);
+                    *value = self.take_out_of_tail_position(*value);
                 }
             }
             js_ast::ExprData::EIf(mut e) => {
@@ -1657,25 +1657,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `(tmp = call, tmp)`, with `tmp` declared once per module by `_parse`.
-    fn assign_to_matcher_result(&mut self, call: Expr) -> Expr {
-        let ref_ = match self.jest.matcher_result {
-            Some(ref_) => ref_,
-            None => {
-                let ref_ = self.declare_generated_symbol(
-                    js_ast::symbol::Kind::Other,
-                    b"bun_test_matcher_result",
-                );
-                self.jest.matcher_result = Some(ref_);
-                ref_
-            }
-        };
+    /// `[call][0]`. Self-contained on purpose: a generated temporary would turn
+    /// `Function.prototype.toString` output into code with a free identifier, and test code does
+    /// round-trip such text into other modules.
+    fn take_out_of_tail_position(&mut self, call: Expr) -> Expr {
+        self.jest.rewrote_matcher_tail_call = true;
         let loc = call.loc;
-        self.record_usage(ref_);
-        let assigned = self.new_expr(E::Identifier::init(ref_), loc);
-        self.record_usage(ref_);
-        let read = self.new_expr(E::Identifier::init(ref_), loc);
-        Expr::assign(assigned, call).join_with_comma(read)
+        let items = js_ast::ExprNodeList::from_arena_slice(self.arena.alloc_slice_copy(&[call]));
+        let array = self.new_expr(
+            E::Array {
+                items,
+                is_single_line: true,
+                ..Default::default()
+            },
+            loc,
+        );
+        let index = self.new_expr(E::Number::new(0.0), loc);
+        self.new_expr(
+            E::Index {
+                target: array,
+                index,
+                optional_chain: None,
+            },
+            loc,
+        )
     }
 
     fn s_block(

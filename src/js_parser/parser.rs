@@ -1574,9 +1574,9 @@ pub struct Jest {
     pub(crate) xit: Ref,
     pub(crate) xtest: Ref,
     pub(crate) xdescribe: Ref,
-    /// Module-level temporary that returned matcher calls are assigned to, created by the first
-    /// such return (`P::keep_matcher_call_frame`). Not in `FIELDS`: it is declared, not imported.
-    pub(crate) matcher_result: Option<Ref>,
+    /// `P::keep_matcher_call_frame` rewrote a returned matcher call, so the output is specific
+    /// to `bun test` and must not enter the runtime transpiler cache.
+    pub(crate) rewrote_matcher_tail_call: bool,
 }
 
 impl Jest {
@@ -1619,7 +1619,7 @@ impl Default for Jest {
             xit: Ref::NONE,
             xtest: Ref::NONE,
             xdescribe: Ref::NONE,
-            matcher_result: None,
+            rewrote_matcher_tail_call: false,
         }
     }
 }

@@ -976,10 +976,7 @@ for (const [title, bunInstallValue, base] of [
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stderr, exitCode }).toEqual({
-      stderr: expect.not.stringContaining("error:"),
-      exitCode: 0,
-    });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(await exists(binDir)).toBeTrue();
     expect(realpathSync(stdout.trim())).toBe(realpathSync(binDir));
   });

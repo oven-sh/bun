@@ -329,8 +329,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
     // disjoint manager fields.
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
-    // `bun add` and `bun link` fill an empty file. The other commands would print `{}` into
-    // the cache below, past the check in `root_package_json_source`.
+    // `bun add` and `bun link` put their dependency into the empty file.
     if current_package_json.source.contents.is_empty()
         && !matches!(subcommand, Subcommand::Add | Subcommand::Link)
     {

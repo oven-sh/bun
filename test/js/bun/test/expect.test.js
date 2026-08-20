@@ -274,6 +274,38 @@ describe("expect()", () => {
     expect([, 1]).toEqual([undefined, 1]);
   });
 
+  test("toStrictEqual() distinguishes null-prototype objects from object literals", () => {
+    const nullProto = () => ANY(Object.assign(Object.create(null), { a: 1 }));
+
+    expect(nullProto()).toEqual({ a: 1 });
+    expect({ a: 1 }).toEqual(nullProto());
+    expect(nullProto()).not.toStrictEqual({ a: 1 });
+    expect({ a: 1 }).not.toStrictEqual(nullProto());
+    expect(ANY(Object.create(null))).not.toStrictEqual({});
+    expect({}).not.toStrictEqual(ANY(Object.create(null)));
+
+    // Nested in an object property and in an array element.
+    expect({ x: nullProto() }).toEqual({ x: { a: 1 } });
+    expect({ x: nullProto() }).not.toStrictEqual({ x: { a: 1 } });
+    expect({ x: { a: 1 } }).not.toStrictEqual({ x: nullProto() });
+    expect([nullProto()]).toEqual([{ a: 1 }]);
+    expect([nullProto()]).not.toStrictEqual([{ a: 1 }]);
+    expect([{ a: 1 }]).not.toStrictEqual([nullProto()]);
+
+    // Two null-prototype objects compare like any other pair of objects.
+    expect(nullProto()).toStrictEqual(nullProto());
+    expect({ x: nullProto() }).toStrictEqual({ x: nullProto() });
+    expect([nullProto()]).toStrictEqual([nullProto()]);
+    expect(nullProto()).not.toStrictEqual(ANY(Object.assign(Object.create(null), { a: 2 })));
+    expect(nullProto()).not.toStrictEqual(ANY(Object.assign(Object.create(null), { a: 1, b: undefined })));
+    expect(nullProto()).toEqual(ANY(Object.assign(Object.create(null), { a: 1, b: undefined })));
+
+    const grouped = Object.groupBy([1, 2, 3], n => (n % 2 ? "odd" : "even"));
+    expect(grouped).toEqual({ odd: [1, 3], even: [2] });
+    expect(grouped).not.toStrictEqual({ odd: [1, 3], even: [2] });
+    expect(grouped).toStrictEqual(Object.groupBy([1, 2, 3], n => (n % 2 ? "odd" : "even")));
+  });
+
   describe("toEqual() with DOM types", () => {
     test("URLSearchParams", () => {
       expect(new URLSearchParams("a=1")).not.toEqual(new URLSearchParams("b=1"));

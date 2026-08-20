@@ -94,10 +94,13 @@ test.if(isPosix)(
 // has no unwind tables) ends up in that handler, and the report used to say only
 // "A C++ exception occurred". It has to name the exception's type and, for a
 // std::exception, carry its what(). The fixture throws a std::runtime_error
-// there. Everywhere else it calls std::terminate() with nothing in flight: a
-// Linux addon has its own runtime, and a throw from inside a glibc release build
-// of bun aborts in the unwinder (its tables are stripped) before any handler.
-test("an uncaught C++ exception is reported with its type and message", async () => {
+// there. Elsewhere it calls std::terminate() with nothing in flight: a Linux
+// addon has its own runtime, and a throw from inside a glibc release build of
+// bun aborts in the unwinder (its tables are stripped) before any handler. Not
+// on Windows: bun builds with _HAS_EXCEPTIONS=0, and the MSVC STL's
+// std::terminate() then aborts (exit status 3, nothing printed) without calling
+// the handler std::set_terminate installed, so there is nothing to observe.
+test.if(isPosix)("an uncaught C++ exception is reported with its type and message", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

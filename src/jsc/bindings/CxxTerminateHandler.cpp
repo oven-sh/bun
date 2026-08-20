@@ -103,7 +103,7 @@ void terminateHandler()
 
 namespace {
 
-// MSVC's exception machinery has none of the entry points used above.
+// MSVC's runtime has none of the entry points used above, and with _HAS_EXCEPTIONS=0 its std::terminate() aborts without calling this handler at all (bun's own CRT is static, so an addon's terminate never arrives here either).
 void terminateHandler()
 {
     Zig__GlobalObject__onCrash(nullptr, nullptr);

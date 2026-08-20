@@ -7,9 +7,9 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_alloc::Arena;
+use bun_ast::ImportRecordFlags;
 use bun_ast::Loader;
 use bun_ast::{ASTMemoryAllocator, ExportsKind};
-use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
 use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
@@ -1064,20 +1064,13 @@ impl TranspilerJob {
         }
 
         for import_record in parse_result.ast.import_records.as_mut_slice() {
-            let import_record: &mut ImportRecord = import_record;
-
-            if let Some(replacement) = HardcodedAlias::get(
-                import_record.path.text,
+            if HardcodedAlias::rewrite_import_record(
+                import_record,
                 transpiler.options.target,
                 HardcodedAliasCfg {
                     rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
                 },
             ) {
-                import_record.path.text = replacement.path.as_bytes();
-                import_record.tag = replacement.tag;
-                import_record
-                    .flags
-                    .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                 continue;
             }
 

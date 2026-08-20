@@ -308,6 +308,48 @@ test.concurrent("hooks may be registered during preload, test/describe may not",
   expect(exitCode).toBe(0);
 });
 
+// The test file and files it require()s are transpiled on the JS thread; files
+// it imports are transpiled by the concurrent transpiler. `bun test` rewrites
+// @jest/globals and vitest to bun:test on both, for require() as well as for
+// import.
+test.concurrent("require() of @jest/globals and vitest resolves to bun:test on every transpile path", async () => {
+  // Evaluates to the same shape as `expected` below; a failing require()
+  // reports its error code in place of the value.
+  const probe = /* js */ `(() => {
+    const bunTest = require("bun:test");
+    const attempt = fn => { try { return fn(); } catch (e) { return e.code; } };
+    return {
+      jestGlobals: attempt(() => require("@jest/globals") === bunTest),
+      vitest: attempt(() => require("vitest") === bunTest),
+      resolved: attempt(() => require.resolve("@jest/globals")),
+    };
+  })()`;
+  using dir = tempDir("bun-test-require-jest-aliases", {
+    "via-require.cjs": `module.exports = ${probe};`,
+    "via-import.cjs": `module.exports = ${probe};`,
+    "aliases.test.js": /* js */ `
+      const direct = ${probe};
+      const viaRequire = require("./via-require.cjs");
+      const { default: viaImport } = await import("./via-import.cjs");
+      console.log(JSON.stringify({ direct, viaRequire, viaImport }));
+      require("bun:test").test("aliases", () => {});
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./aliases.test.js"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  const expected = { jestGlobals: true, vitest: true, resolved: "bun:test" };
+  const report = stdout.split("\n").find(line => line.startsWith("{"));
+  expect(JSON.parse(report!)).toEqual({ direct: expected, viaRequire: expected, viaImport: expected });
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("test/describe and hooks throw outside of the test runner", async () => {
   await using proc = Bun.spawn({
     cmd: [

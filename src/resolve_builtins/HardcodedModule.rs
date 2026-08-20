@@ -1,5 +1,5 @@
-use bun_ast::Target;
 use bun_ast::import_record;
+use bun_ast::{ImportRecord, ImportRecordFlags, Target};
 use bun_core::ZStr;
 use bun_core::zstr;
 
@@ -949,5 +949,29 @@ impl Alias {
             return lookup(&NODE_ALIAS_MAP, name);
         }
         None
+    }
+
+    /// The module loader's pre-pass over one import record, shared by the
+    /// JS-thread linker and the concurrent transpiler so both print a file the
+    /// same way. Returns whether the record names a hardcoded module.
+    ///
+    /// `require()` / `require.resolve()` of a builtin stays as written: the
+    /// runtime resolves table names, not paths (`internal:cluster/RoundRobinHandle`
+    /// does not resolve), and node's `require.resolve("fs") === "fs"` and
+    /// `require.cache["fs"]` semantics need the written name. Only `"bun"`
+    /// (`Tag::Bun`) is rewritten, since the printer inlines it as `globalThis.Bun`.
+    pub fn rewrite_import_record(record: &mut ImportRecord, target: Target, cfg: Cfg) -> bool {
+        let Some(alias) = Self::get(record.path.text, target, cfg) else {
+            return false;
+        };
+        if alias.tag == import_record::Tag::Builtin && record.kind.is_common_js() {
+            return true;
+        }
+        record.path.text = alias.path.as_bytes();
+        record.tag = alias.tag;
+        record
+            .flags
+            .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+        true
     }
 }

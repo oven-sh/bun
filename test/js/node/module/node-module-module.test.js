@@ -618,6 +618,77 @@ console.log("survived", require("./late.js"));`,
       delete require.cache["util/types"];
     }
   });
+  // The two tests above run in a file transpiled on the JS thread. Files
+  // loaded with import (statically or with import()) are transpiled by the
+  // concurrent transpiler instead. Both must print a require()/require.resolve()
+  // of a node builtin with the specifier the user wrote: like node, the
+  // runtime resolves that specifier when the call runs, so rewriting it to the
+  // canonical "node:" form at transpile time changes what require.resolve()
+  // returns, skips the require.cache entry, and changes what a
+  // Module._resolveFilename override sees.
+  test.each([
+    ["concurrent transpiler", {}],
+    ["concurrent transpiler disabled", { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" }],
+  ])("require() of node builtins keeps the written specifier on every transpile path (%s)", async (_, env) => {
+    const probe = /* js */ `
+      const Module = require("module");
+      const seenByResolveFilename = [];
+      const originalResolveFilename = Module._resolveFilename;
+      Module._resolveFilename = function (request, ...rest) {
+        seenByResolveFilename.push(request);
+        return originalResolveFilename.call(this, request, ...rest);
+      };
+      try {
+        require("os");
+        require.resolve("os");
+      } finally {
+        Module._resolveFilename = originalResolveFilename;
+      }
+
+      const fakeFs = { fake: true };
+      require.cache["fs"] = { exports: fakeFs };
+      let cacheOverrideApplies;
+      try {
+        cacheOverrideApplies = [require("fs") === fakeFs, require("node:fs") === fakeFs];
+      } finally {
+        delete require.cache["fs"];
+      }
+
+      module.exports = {
+        resolve: [require.resolve("fs"), require.resolve("node:fs"), require.resolve("sys")],
+        cacheOverrideApplies,
+        seenByResolveFilename,
+      };
+    `;
+    using dir = tempDir("require-builtin-specifier", {
+      "via-require.cjs": probe,
+      "via-static-import.cjs": probe,
+      "via-import.cjs": probe,
+      "main.js": /* js */ `
+        import viaStaticImport from "./via-static-import.cjs";
+        const viaRequire = require("./via-require.cjs");
+        const { default: viaImport } = await import("./via-import.cjs");
+        console.log(JSON.stringify({ viaRequire, viaStaticImport, viaImport }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // What node prints for each of these files.
+    const expected = {
+      resolve: ["fs", "node:fs", "sys"],
+      cacheOverrideApplies: [true, false],
+      seenByResolveFilename: ["os", "os"],
+    };
+    expect(JSON.parse(stdout)).toEqual({ viaRequire: expected, viaStaticImport: expected, viaImport: expected });
+    expect(exitCode).toBe(0);
+  });
   test("require a cjs file uses the 'module.exports' export", () => {
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });

@@ -219,10 +219,6 @@ unsafe extern "C" {
         length: usize,
         use_insecure_http_parser: bool,
     ) -> JSValue;
-    // Scope-free exception read: satisfies the exception-check verifier
-    // after a callee ThrowScope destructor simulated a throw for this
-    // (scope-less native) caller. A single traps check in release builds.
-    safe fn Bun__NodeHTTP__acknowledgeThrowScope(global_object: &JSGlobalObject);
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
     // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
     safe fn Bun__NodeHTTP__buildRawHeadersArray(
@@ -234,8 +230,6 @@ unsafe extern "C" {
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
     // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
     // from the matched `AnyResponse` arm. Module-private with one call site.
-    // Returns false when the C++ header writer left a JS exception pending
-    // (checked inside its own ThrowScope).
     safe fn NodeHTTPServer__writeHead_http(
         global_object: &JSGlobalObject,
         status_message: *const u8,
@@ -244,7 +238,7 @@ unsafe extern "C" {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    ) -> bool;
+    );
 
     safe fn NodeHTTPServer__writeHead_https(
         global_object: &JSGlobalObject,
@@ -254,7 +248,7 @@ unsafe extern "C" {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    ) -> bool;
+    );
 }
 
 /// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
@@ -473,7 +467,6 @@ impl NodeHTTPResponse {
         self.request_trailers.with_mut(|v| v.append_slice(bytes));
     }
 
-    #[allow(dead_code)]
     pub(crate) fn pause_socket(&self) {
         scoped_log!(NodeHTTPResponse, "pauseSocket");
         let flags = self.flags.get();
@@ -997,20 +990,19 @@ impl NodeHTTPResponse {
             }
         }
 
-        let wrote_head_ok;
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
                     HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
                 {
-                    wrote_head_ok = write_head_internal(
+                    write_head_internal(
                         &raw_response,
                         global_object,
                         status_message,
                         headers_object_value,
                         auto_header_bits,
                         keep_alive_timeout_secs,
-                    );
+                    )?;
                     break 'do_it;
                 }
             }
@@ -1033,39 +1025,29 @@ impl NodeHTTPResponse {
                 stack_buf[..code.len()].copy_from_slice(code);
                 stack_buf[code.len()] = b' ';
                 stack_buf[code.len() + 1..n].copy_from_slice(message);
-                wrote_head_ok = write_head_internal(
+                write_head_internal(
                     &raw_response,
                     global_object,
                     &stack_buf[..n],
                     headers_object_value,
                     auto_header_bits,
                     keep_alive_timeout_secs,
-                );
+                )?;
             } else {
                 // Heap fallback for absurdly long status messages (> 252 bytes).
                 let mut heap = Vec::with_capacity(n);
                 heap.extend_from_slice(code);
                 heap.push(b' ');
                 heap.extend_from_slice(message);
-                wrote_head_ok = write_head_internal(
+                write_head_internal(
                     &raw_response,
                     global_object,
                     &heap,
                     headers_object_value,
                     auto_header_bits,
                     keep_alive_timeout_secs,
-                );
+                )?;
             }
-        }
-
-        // The writeHead ThrowScope's destructor simulates a throw so its
-        // caller must check; acknowledge it scope-free (we are that caller
-        // when running inside writeHeadAndEnd), then propagate the result
-        // that traveled through the return value - otherwise the end phase
-        // would run with an exception pending.
-        Bun__NodeHTTP__acknowledgeThrowScope(global_object);
-        if !wrote_head_ok {
-            return Err(jsc::JsError::Thrown);
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1162,35 +1144,32 @@ fn write_head_internal(
     headers: JSValue,
     auto_header_bits: u32,
     keep_alive_timeout_secs: u32,
-) -> bool {
+) -> JsResult<()> {
     scoped_log!(
         NodeHTTPResponse,
         "writeHeadInternal({})",
         BStr::new(status_message)
     );
-    match response {
-        uws::AnyResponse::TCP(tcp) => NodeHTTPServer__writeHead_http(
-            global_object,
-            status_message.as_ptr(),
-            status_message.len(),
-            headers,
-            auto_header_bits,
-            keep_alive_timeout_secs,
-            (*tcp).cast::<c_void>(),
-        ),
-        uws::AnyResponse::SSL(ssl) => NodeHTTPServer__writeHead_https(
-            global_object,
-            status_message.as_ptr(),
-            status_message.len(),
-            headers,
-            auto_header_bits,
-            keep_alive_timeout_secs,
-            (*ssl).cast::<c_void>(),
-        ),
+    type WriteHead =
+        extern "C" fn(&JSGlobalObject, *const u8, usize, JSValue, u32, u32, *mut c_void);
+    let (write_head, response): (WriteHead, *mut c_void) = match response {
+        uws::AnyResponse::TCP(tcp) => (NodeHTTPServer__writeHead_http, (*tcp).cast::<c_void>()),
+        uws::AnyResponse::SSL(ssl) => (NodeHTTPServer__writeHead_https, (*ssl).cast::<c_void>()),
         uws::AnyResponse::H3(_) => {
             bun_core::Output::panic(format_args!("node:http does not support HTTP/3 responses"));
         }
-    }
+    };
+    bun_jsc::from_js_host_call_generic(global_object, || {
+        write_head(
+            global_object,
+            status_message.as_ptr(),
+            status_message.len(),
+            headers,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+            response,
+        )
+    })
 }
 
 impl NodeHTTPResponse {
@@ -1404,11 +1383,7 @@ impl NodeHTTPResponse {
             raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
         }
 
-        // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
-        #[cfg(not(windows))]
-        {
-            self.pause_socket();
-        }
+        self.pause_socket();
         Ok(JSValue::TRUE)
     }
 
@@ -2143,11 +2118,11 @@ impl NodeHTTPResponse {
                 let pinned_value = if is_buffer && input_value.is_cell() {
                     match input_value.as_pinned_arraybuffer(global_object) {
                         Some(ab) if ab.resizable && !ab.shared => {
-                            input_value.unpin_array_buffer();
+                            ab.unpin();
                             None
                         }
-                        Some(_) => Some(input_value),
-                        None => Some(JSValue::ZERO),
+                        Some(ab) if ab.pinned => Some(input_value),
+                        Some(_) | None => Some(JSValue::ZERO),
                     }
                 } else {
                     Some(JSValue::ZERO)
@@ -2637,7 +2612,7 @@ impl NodeHTTPResponse {
         self.body_read_ref.with_mut(|r| r.unref(vm_get()));
 
         self.promise.with_mut(|p| p.deinit());
-        // SAFETY: self was allocated via `heap::into_raw` in `createForJS`;
+        // SAFETY: self was allocated via `heap::into_raw` in `NodeHTTPResponse__createForJS`;
         // refcount is zero so no other references remain — `self` is the unique
         // owner at count==0, so the `*const → *mut` cast is sound.
         unsafe { drop(bun_core::heap::take(self.as_ctx_ptr())) };
@@ -2807,32 +2782,4 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     // SAFETY: out-param provided by caller.
     unsafe { *node_response_ptr = response };
     js_this
-}
-
-impl NodeHTTPResponse {
-    #[uws::uws_callback(export = "NodeHTTPResponse__setTimeout")]
-    pub(crate) fn ffi_set_timeout(&self, seconds: JSValue, global_this: &JSGlobalObject) -> bool {
-        if !seconds.is_number() {
-            let _: jsc::JsError =
-                global_this.throw_invalid_argument_type_value(b"timeout", b"number", seconds);
-            return false;
-        }
-
-        let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else {
-            return false;
-        };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::UPGRADED)
-        {
-            return false;
-        }
-
-        // ECMAScript ToUint32 — same bit pattern as
-        // ToInt32 reinterpreted as unsigned (negative inputs wrap, e.g. -1 → u32::MAX).
-        let secs = (seconds.to_int32() as c_uint).min(255) as u8;
-        raw.timeout(secs);
-        true
-    }
 }

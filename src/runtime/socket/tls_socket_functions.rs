@@ -941,69 +941,54 @@ pub(crate) fn export_keying_material(
 
     let label = label_arg.to_slice_or_null(global)?;
     let label_slice = label.slice();
+
+    // Converting `context` can run user JS (toString / Symbol.toPrimitive)
+    // that closes the socket, so do it before fetching the SSL*.
+    let context = if frame.arguments_count() > 2 {
+        match StringOrBuffer::from_js(global, context_arg)? {
+            Some(sb) => Some(sb),
+            None => {
+                return Err(global.throw(format_args!(
+                    "Expected context to be a string, Buffer or TypedArray"
+                )));
+            }
+        }
+    } else {
+        None
+    };
+    let (context_ptr, context_len, use_context) = match &context {
+        Some(sb) => (sb.slice().as_ptr(), sb.slice().len(), 1),
+        None => (core::ptr::null(), 0, 0),
+    };
+
+    let buffer_size = usize::try_from(length).expect("int cast");
+    let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
+    let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
+
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
 
-    if frame.arguments_count() > 2 {
-        if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
-            let context_slice = sb.slice();
-
-            let buffer_size = usize::try_from(length).expect("int cast");
-            let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
-            let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
-
-            // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context_slice are valid for the lengths passed.
-            let result = unsafe {
-                ffi::SSL_export_keying_material(
-                    ssl_ptr,
-                    buffer_ptr,
-                    buffer_size,
-                    label_slice.as_ptr().cast::<c_char>(),
-                    label_slice.len(),
-                    context_slice.as_ptr(),
-                    context_slice.len(),
-                    1,
-                )
-            };
-            if result != 1 {
-                return Err(global.throw_value(get_ssl_exception(
-                    global,
-                    b"Failed to export keying material",
-                )));
-            }
-            Ok(buffer)
-        } else {
-            Err(global.throw(format_args!(
-                "Expected context to be a string, Buffer or TypedArray"
-            )))
-        }
-    } else {
-        let buffer_size = usize::try_from(length).expect("int cast");
-        let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
-        let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
-
-        // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice are valid for the lengths passed; context is null with use_context=0.
-        let result = unsafe {
-            ffi::SSL_export_keying_material(
-                ssl_ptr,
-                buffer_ptr,
-                buffer_size,
-                label_slice.as_ptr().cast::<c_char>(),
-                label_slice.len(),
-                core::ptr::null(),
-                0,
-                0,
-            )
-        };
-        if result != 1 {
-            return Err(global.throw_value(get_ssl_exception(
-                global,
-                b"Failed to export keying material",
-            )));
-        }
-        Ok(buffer)
+    // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context are valid for the lengths passed (context is null with use_context=0).
+    let result = unsafe {
+        ffi::SSL_export_keying_material(
+            ssl_ptr,
+            buffer_ptr,
+            buffer_size,
+            label_slice.as_ptr().cast::<c_char>(),
+            label_slice.len(),
+            context_ptr,
+            context_len,
+            use_context,
+        )
+    };
+    if result != 1 {
+        return Err(global.throw_value(get_ssl_exception(
+            global,
+            b"Failed to export keying material",
+        )));
     }
+    Ok(buffer)
 }
 
 pub(super) fn get_ephemeral_key_info(

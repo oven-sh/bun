@@ -34,15 +34,6 @@ pub struct SocketAddress {
     _presentation: Cell<BunString>,
 }
 
-impl Default for SocketAddress {
-    fn default() -> Self {
-        Self {
-            _addr: sockaddr::LOOPBACK_V4,
-            _presentation: Cell::new(BunString::dead()),
-        }
-    }
-}
-
 impl SocketAddress {
     pub(crate) fn new(init: SocketAddress) -> Box<SocketAddress> {
         Box::new(init)

@@ -1,6 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import path from "path";
 
@@ -150,6 +150,68 @@ test("discovers from filesystem paths", () => {
       },
     ],
   });
+});
+
+// A route group adds no URL segment, but it is a node of the tree: its layout wraps only the routes inside the group.
+test("route group layouts wrap only the routes inside the group", () => {
+  using dir = tempDir("fsr-groups", {
+    "layout.tsx": "1",
+    "page.tsx": "1",
+    "(marketing)/layout.tsx": "1",
+    "(marketing)/about/page.tsx": "1",
+    "(marketing)/[slug]/page.tsx": "1",
+    "(shop)/layout.tsx": "1",
+    "(shop)/cart/page.tsx": "1",
+    "other/page.tsx": "1",
+  });
+  const router = new FrameworkRouter({ root: String(dir), style: "nextjs-app-ui" });
+  const file = (f: string | null) => (f === null ? null : path.relative(String(dir), f).replaceAll("\\", "/"));
+  // [part, layout] for the matched route and each of its parents, up to the root.
+  const layoutChain = (url: string) => {
+    const result = router.match(url);
+    if (result === null) return null;
+    const chain: [string, string | null][] = [];
+    for (let route = result.route; route !== null; route = route.parent) chain.push([route.part, file(route.layout)]);
+    return { page: file(result.route.page), params: result.params, chain };
+  };
+  expect(layoutChain("/")).toEqual({ page: "page.tsx", params: null, chain: [["/", "layout.tsx"]] });
+  expect(layoutChain("/about")).toEqual({
+    page: "(marketing)/about/page.tsx",
+    params: null,
+    chain: [
+      ["/about", null],
+      ["/(marketing)", "(marketing)/layout.tsx"],
+      ["/", "layout.tsx"],
+    ],
+  });
+  expect(layoutChain("/hello")).toEqual({
+    page: "(marketing)/[slug]/page.tsx",
+    params: { slug: "hello" },
+    chain: [
+      ["/:slug", null],
+      ["/(marketing)", "(marketing)/layout.tsx"],
+      ["/", "layout.tsx"],
+    ],
+  });
+  expect(layoutChain("/cart")).toEqual({
+    page: "(shop)/cart/page.tsx",
+    params: null,
+    chain: [
+      ["/cart", null],
+      ["/(shop)", "(shop)/layout.tsx"],
+      ["/", "layout.tsx"],
+    ],
+  });
+  expect(layoutChain("/other")).toEqual({
+    page: "other/page.tsx",
+    params: null,
+    chain: [
+      ["/other", null],
+      ["/", "layout.tsx"],
+    ],
+  });
+  // The group name itself is not a URL.
+  expect(layoutChain("/(shop)/cart")).toBe(null);
 });
 
 // Custom router styles are not implemented: a function is rejected at option parsing, like any unknown name.
@@ -590,9 +652,16 @@ describe("url matching", () => {
     expect(() => r.router.match("docs/a")).toThrow("should be non-empty and start with a slash");
   });
 
-  // The path is percent-decoded once before matching, like Bun.FileSystemRouter, so browsers can reach non-ASCII routes.
-  test("percent-encoded paths are decoded before matching", () => {
-    using r = makeMatcher("héllo.tsx", "hello world.tsx", "a/b.tsx", "blog/[slug].tsx", "docs/[...rest].tsx");
+  // Like Next.js: the raw path is split on "/", then each static segment and param value is percent-decoded once.
+  test("percent-escapes are decoded per segment", () => {
+    using r = makeMatcher(
+      "héllo.tsx",
+      "hello world.tsx",
+      "a/b.tsx",
+      "[id].tsx",
+      "blog/[slug].tsx",
+      "docs/[...rest].tsx",
+    );
     // Static segments.
     expect(r.match("/h%C3%A9llo")).toStrictEqual({ file: "héllo.tsx", params: null });
     expect(r.match("/héllo")).toStrictEqual({ file: "héllo.tsx", params: null });
@@ -603,15 +672,23 @@ describe("url matching", () => {
     expect(r.match("/blog/a%20b")).toStrictEqual({ file: "blog/[slug].tsx", params: { slug: "a b" } });
     expect(r.match("/blog/100%2525")).toStrictEqual({ file: "blog/[slug].tsx", params: { slug: "100%25" } });
     expect(r.match("/docs/x%20y/z")).toStrictEqual({ file: "docs/[...rest].tsx", params: { rest: ["x y", "z"] } });
-    // Unlike Bun.FileSystemRouter, an escaped slash never acts as a separator; no route segment can contain one.
-    expect(r.match("/a%2Fb")).toBe(null);
-    expect(r.match("/a%2fb")).toBe(null);
-    expect(r.match("/blog/a%2Fb")).toBe(null);
+    // An escaped slash is segment data: it can fill a param, and never matches the separator between static segments.
+    expect(r.match("/a%2Fb")).toStrictEqual({ file: "[id].tsx", params: { id: "a/b" } });
+    expect(r.match("/blog/a%2Fb")).toStrictEqual({ file: "blog/[slug].tsx", params: { slug: "a/b" } });
+    expect(r.match("/blog/a%2fb/")).toStrictEqual({ file: "blog/[slug].tsx", params: { slug: "a/b" } });
+    expect(r.match("/docs/a%2Fb/c")).toStrictEqual({ file: "docs/[...rest].tsx", params: { rest: ["a/b", "c"] } });
     // A malformed escape names no route.
     expect(r.match("/%zz")).toBe(null);
+    expect(r.match("/h%C3%A9llo%")).toBe(null);
     expect(r.match("/blog/%zz")).toBe(null);
     expect(r.match("/blog/a%")).toBe(null);
     expect(r.match("/blog/a%2")).toBe(null);
+    // The encoded form is longer than any path buffer; only the segments matter.
+    const long = Buffer.alloc(MAX_PATH_BYTES, "é").toString();
+    expect(r.match("/blog/" + encodeURIComponent(long))).toStrictEqual({
+      file: "blog/[slug].tsx",
+      params: { slug: long },
+    });
   });
 
   test("optional catch-all matches zero segments", () => {
@@ -774,14 +851,26 @@ describe("scan errors", () => {
     ]);
   });
 
-  // A route group adds no URL segment, so both files land on the same route.
+  // A route group adds no URL segment, so both files serve the same URL. Layouts in different groups do not collide.
   test("a route group next to the plain route", () => {
     expect(
       scanErrors("nextjs-app-ui", {
+        "layout.tsx": "1",
+        "page.tsx": "1",
+        "(home)/layout.tsx": "1",
+        "(home)/page.tsx": "1",
         "docs/page.tsx": "1",
+        "(marketing)/layout.tsx": "1",
         "(marketing)/docs/page.tsx": "1",
+        "(a)/pricing/page.tsx": "1",
+        "(b)/pricing/page.tsx": "1",
+        "(a)/[id]/page.tsx": "1",
+        "[slug]/page.tsx": "1",
       }),
     ).toStrictEqual([
+      'Multiple pages matching the same route pattern is ambiguous: "(a)/[id]/page.tsx" and "[slug]/page.tsx"',
+      'Multiple pages matching the same route pattern is ambiguous: "(a)/pricing/page.tsx" and "(b)/pricing/page.tsx"',
+      'Multiple pages matching the same route pattern is ambiguous: "(home)/page.tsx" and "page.tsx"',
       'Multiple pages matching the same route pattern is ambiguous: "(marketing)/docs/page.tsx" and "docs/page.tsx"',
     ]);
   });
@@ -816,5 +905,65 @@ describe("scan errors", () => {
       'Invalid route "blog-[slug].tsx": Parameters must take up the entire file name',
       'Multiple pages matching the same route pattern is ambiguous: "[id].tsx" and "[name].tsx"',
     ]);
+  });
+});
+
+// `bun build --app` writes one directory per URL; the dev router must serve each of those URLs from the same page with the same params.
+test("dev and production agree on every pre-rendered URL", async () => {
+  const params: Record<string, object[]> = {
+    "pages/blog/[post-id].ts": [{ "post-id": "hello" }, { "post-id": "wörld" }],
+    "pages/[a]/[b].ts": [{ a: "x", b: "y" }],
+    "pages/docs/[...rest].ts": [{ rest: ["a", "b"] }, { rest: "c" }],
+  };
+  using dir = tempDir("fsr-parity", {
+    "bun.app.ts": `export default {
+      app: { framework: { fileSystemRouterTypes: [{ root: "pages", style: "nextjs-pages", serverEntryPoint: "./server.ts" }] } },
+    };`,
+    // Each page is rendered to the params it received; a dynamic page lists its params in a `params` export.
+    "server.ts": `
+      export function render() { return new Response("unused"); }
+      export function prerender(meta) { return { files: { "/index.html": JSON.stringify(meta.params) } }; }
+      export function getParams(meta) { return { pages: meta.pageModule.params }; }
+    `,
+    "pages/index.ts": `export default () => "index";`,
+    "pages/about.ts": `export default () => "about";`,
+    ...Object.fromEntries(
+      Object.entries(params).map(([file, list]) => [
+        file,
+        `export const params = ${JSON.stringify(list)}; export default () => "";`,
+      ]),
+    ),
+  });
+  const { stderr, exitCode } = await run(String(dir), ["build", "--app", "./bun.app.ts"]);
+  expect(exitCode, stderr).toBe(0);
+
+  const router = new FrameworkRouter({ root: path.join(String(dir), "pages"), style: "nextjs-pages" });
+  const dist = path.join(String(dir), "dist");
+  const served: Record<string, unknown> = {};
+  for (const html of new Bun.Glob("**/index.html").scanSync(dist)) {
+    const url = "/" + path.dirname(html).replaceAll("\\", "/").replace(/^\.$/, "");
+    const match = router.match(url);
+    served[url] = match && {
+      file: path.relative(String(dir), match.route.page).replaceAll("\\", "/"),
+      params: match.params,
+      rendered: JSON.parse(readFileSync(path.join(dist, html), "utf8")),
+    };
+  }
+  expect(served).toEqual({
+    "/": { file: "pages/index.ts", params: null, rendered: null },
+    "/about": { file: "pages/about.ts", params: null, rendered: null },
+    "/blog/hello": {
+      file: "pages/blog/[post-id].ts",
+      params: { "post-id": "hello" },
+      rendered: { "post-id": "hello" },
+    },
+    "/blog/wörld": {
+      file: "pages/blog/[post-id].ts",
+      params: { "post-id": "wörld" },
+      rendered: { "post-id": "wörld" },
+    },
+    "/x/y": { file: "pages/[a]/[b].ts", params: { a: "x", b: "y" }, rendered: { a: "x", b: "y" } },
+    "/docs/a/b": { file: "pages/docs/[...rest].ts", params: { rest: ["a", "b"] }, rendered: { rest: ["a", "b"] } },
+    "/docs/c": { file: "pages/docs/[...rest].ts", params: { rest: "c" }, rendered: { rest: "c" } },
   });
 });

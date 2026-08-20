@@ -48,6 +48,25 @@ devTest("a trailing slash serves the same route", {
   },
 });
 
+// Like Next.js: segments split on the raw path, then each static segment and param value is percent-decoded once.
+devTest("percent-escapes are decoded per segment", {
+  framework: minimalFramework,
+  files: {
+    "routes/héllo.ts": page("héllo"),
+    "routes/blog/[slug].ts": `export default (req, meta) => new Response("slug:" + meta.params.slug);`,
+    "routes/docs/[...rest].ts": `export default (req, meta) => new Response("rest:" + [].concat(meta.params.rest).join("|"));`,
+  },
+  async test(dev) {
+    await dev.fetch("/h%C3%A9llo").equals("héllo");
+    await dev.fetch("/blog/caf%C3%A9").equals("slug:café");
+    // An escaped slash is data inside a param, not a separator.
+    await dev.fetch("/blog/a%2Fb").equals("slug:a/b");
+    await dev.fetch("/docs/a%2Fb/c").equals("rest:a/b|c");
+    // A malformed escape names no route.
+    expect((await dev.fetch("/blog/%zz")).status).toBe(404);
+  },
+});
+
 // The request-target carries the query string; only its pathname picks the route.
 devTest("the query string is not part of the route path", {
   framework: minimalFramework,

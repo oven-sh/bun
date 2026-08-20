@@ -322,6 +322,7 @@ impl EncodedPattern {
         })
     }
 
+    /// `path` is the raw request path with well-formed escapes; captured values stay encoded until `MatchedParams::to_js`.
     /// `match_slow` strips the trailing slash first, so a separator with nothing after it is an empty segment.
     fn matches(&self, path: &[u8], params: &mut MatchedParamList) -> bool {
         // Discard captures left by a previous candidate that failed partway.
@@ -342,11 +343,8 @@ impl EncodedPattern {
         while let Some(part) = it.next() {
             match part {
                 Part::Text(expect) => {
-                    let end = i + expect.len();
-                    if path.len() < end
-                        || (end < path.len() && path[end] != b'/')
-                        || !strings::eql(&path[i..end], expect)
-                    {
+                    let end = strings::index_of_char_pos(path, b'/', i).unwrap_or(path.len());
+                    if !segment_decodes_to(&path[i..end], expect) {
                         return false;
                     }
                     let Some(next) = next_segment(end) else {
@@ -415,6 +413,45 @@ impl EncodedPattern {
         }
         i == path.len()
     }
+}
+
+/// Whether the raw URL segment `segment`, whose escapes are well-formed, percent-decodes to exactly `text`.
+fn segment_decodes_to(segment: &[u8], text: &[u8]) -> bool {
+    if !strings::contains_char(segment, b'%') {
+        return strings::eql(segment, text);
+    }
+    let mut decoded = 0usize;
+    let mut i = 0usize;
+    while i < segment.len() {
+        let byte = if segment[i] == b'%' {
+            i += 3;
+            (strings::to_ascii_hex_value(segment[i - 2]) << 4)
+                | strings::to_ascii_hex_value(segment[i - 1])
+        } else {
+            i += 1;
+            segment[i - 1]
+        };
+        if text.get(decoded) != Some(&byte) {
+            return false;
+        }
+        decoded += 1;
+    }
+    decoded == text.len()
+}
+
+/// Whether one of the `%XX` escapes in `path` is an escaped slash, or `None` if an escape is malformed.
+fn scan_escapes(path: &[u8]) -> Option<bool> {
+    let mut escaped_slash = false;
+    let mut rest = path;
+    while let Some(i) = strings::index_of_char_usize(rest, b'%') {
+        let hex = rest.get(i + 1..i + 3)?;
+        if !(hex[0].is_ascii_hexdigit() && hex[1].is_ascii_hexdigit()) {
+            return None;
+        }
+        escaped_slash |= hex[0] == b'2' && (hex[1] | 0x20) == b'f';
+        rest = &rest[i + 3..];
+    }
+    Some(escaped_slash)
 }
 
 pub(crate) struct EncodedPatternIterator<'a> {
@@ -1024,7 +1061,13 @@ bun_core::oom_from_alloc!(InsertError);
 
 // Runtime enum carrying both pattern shapes; profile if hot.
 pub(crate) enum InsertPattern {
+    /// The '/'-joined text is both the tree path and the URL.
     Static(StaticPattern),
+    /// No params but inside a route group: the tree keeps the group nodes (they scope layouts), the URL does not.
+    GroupedStatic {
+        parts: EncodedPattern,
+        url: StaticPattern,
+    },
     Dynamic(EncodedPattern),
 }
 
@@ -1051,7 +1094,9 @@ impl FrameworkRouter {
         // Set up iterators (one will be None depending on pattern variant)
         let (mut static_it, mut dynamic_it) = match &pattern {
             InsertPattern::Static(p) => (Some(p.iterate()), None),
-            InsertPattern::Dynamic(p) => (None, Some(p.iterate())),
+            InsertPattern::GroupedStatic { parts: p, .. } | InsertPattern::Dynamic(p) => {
+                (None, Some(p.iterate()))
+            }
         };
         // Note: a closure can't express that the returned `Part<'a>` borrows from the
         // iterator's `'a` (Rust infers fresh anon lifetimes per `'_`). Use a local fn item.
@@ -1147,7 +1192,7 @@ impl FrameworkRouter {
         if file_kind == FileKind::Page {
             // A different route can still serve the same URLs (see `dynamic_routes`).
             let aliased_route = match pattern {
-                InsertPattern::Static(p) => {
+                InsertPattern::Static(p) | InsertPattern::GroupedStatic { url: p, .. } => {
                     let key: &[u8] = if p.route_path().is_empty() {
                         b"/"
                     } else {
@@ -1224,15 +1269,14 @@ pub(crate) type MatchedParamList = BoundedArray<MatchedParamEntry, { MatchedPara
 #[derive(Default)]
 pub struct MatchedParams {
     pub(crate) params: MatchedParamList,
-    /// Percent-decoded copy of the path when it had escapes; param values borrow it, so it lives as long as they do.
-    decoded: Option<paths::path_buffer_pool::Guard>,
 }
 
 #[derive(Copy, Clone)]
 pub(crate) struct MatchedParamEntry {
-    // Borrow from the input `path`/`pattern` buffers or `MatchedParams::decoded`;
-    // all outlive the `MatchedParams` stack frame. See `RawSlice` invariant.
+    // Borrow from the input `path`/`pattern` buffers; both outlive the
+    // `MatchedParams` stack frame. See `RawSlice` invariant.
     pub key: bun_ptr::RawSlice<u8>,
+    /// One raw path segment whose escapes `match_slow` validated; `to_js` percent-decodes it, like Next.js does per param.
     pub value: bun_ptr::RawSlice<u8>,
 }
 
@@ -1253,8 +1297,16 @@ impl MatchedParams {
         for param in params_array {
             let key_str =
                 bun_core::OwnedString::new(bun_core::String::clone_utf8(param.key.slice()));
-            let value_str =
-                bun_core::OwnedString::new(bun_core::String::clone_utf8(param.value.slice()));
+            let raw = param.value.slice();
+            let decoded;
+            let value: &[u8] = if strings::contains_char(raw, b'%') {
+                decoded = bun_url::PercentEncoding::decode_alloc(raw)
+                    .expect("match_slow only captures well-formed escapes");
+                &decoded
+            } else {
+                raw
+            };
+            let value_str = bun_core::OwnedString::new(bun_core::String::clone_utf8(value));
 
             obj.put_bun_string_one_or_array(
                 global,
@@ -1272,44 +1324,31 @@ impl FrameworkRouter {
     /// complicated data structure that production uses to efficiently map
     /// urls to routes instead of this tree-traversal algorithm.
     pub(crate) fn match_slow(&self, path: &[u8], params: &mut MatchedParams) -> Option<RouteIndex> {
-        let MatchedParams {
-            params: captures,
-            decoded,
-        } = params;
+        let captures = &mut params.params;
         *captures = BoundedArray::default();
 
         // Request-targets like `*` or `host:port` name no path, so they match no route.
         if path.first() != Some(&b'/') {
             return None;
         }
-        // Percent-decode once, like Bun.FileSystemRouter, so `/h%C3%A9llo` reaches `héllo.tsx` and params arrive decoded.
-        let path: &[u8] = if strings::index_of_char(path, b'%').is_some() {
-            // An escaped slash is segment data, not a separator, and no file-system route segment contains one.
-            if path
-                .windows(3)
-                .any(|w| w[0] == b'%' && w[1] == b'2' && (w[2] | 0x20) == b'f')
-            {
-                return None;
-            }
-            let buf = decoded.insert(paths::path_buffer_pool::get());
-            if path.len() > buf.len() {
-                return None;
-            }
-            // A malformed escape names no route.
-            let Ok(len) = bun_url::PercentEncoding::decode_into(&mut buf[..], path) else {
-                return None;
-            };
-            &buf[..len as usize]
-        } else {
-            path
-        };
         // "/about/" serves the same route as "/about", like Bun.FileSystemRouter.
         let path = if path.len() > 1 && path[path.len() - 1] == b'/' {
             &path[..path.len() - 1]
         } else {
             path
         };
-        if let Some(static_route) = self.static_routes.get(path) {
+        // Like Next.js, segments split on the raw path and decode one at a time, so `%2F` is data. A malformed escape names no route.
+        let decoded;
+        let static_key: Option<&[u8]> = if !strings::contains_char(path, b'%') {
+            Some(path)
+        } else if scan_escapes(path)? {
+            // No file-system route segment contains a slash.
+            None
+        } else {
+            decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
+            Some(&decoded)
+        };
+        if let Some(static_route) = static_key.and_then(|key| self.static_routes.get(key)) {
             return Some(*static_route);
         }
 
@@ -1732,13 +1771,14 @@ impl FrameworkRouter {
 
                         let mut static_total_len: usize = 0;
                         let mut param_count: usize = 0;
+                        let mut has_group = false;
                         for part in parsed.parts {
                             match part {
                                 Part::Text(data) => static_total_len += 1 + data.len(),
                                 Part::Param(_) | Part::CatchAll(_) | Part::CatchAllOptional(_) => {
                                     param_count += 1
                                 }
-                                Part::Group(_) => {}
+                                Part::Group(_) => has_group = true,
                             }
                         }
 
@@ -1810,12 +1850,23 @@ impl FrameworkRouter {
                                 }
                             }
                             debug_assert!(pos == allocation.len());
-                            let pattern = StaticPattern {
+                            let url = StaticPattern {
                                 route_path: bun_ptr::RawSlice::new(allocation),
+                            };
+                            let pattern = if has_group {
+                                InsertPattern::GroupedStatic {
+                                    parts: EncodedPattern::init_from_parts(
+                                        parsed.parts,
+                                        &self.pattern_string_arena,
+                                    )?,
+                                    url,
+                                }
+                            } else {
+                                InsertPattern::Static(url)
                             };
                             self.insert(
                                 t_index,
-                                InsertPattern::Static(pattern),
+                                pattern,
                                 file_kind,
                                 abs_path,
                                 ctx,

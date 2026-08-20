@@ -213,10 +213,7 @@ function validateOrderOption(options) {
   }
 }
 
-// resolve(hostname, rrtype) calls the resolve* method of rrtype, like Node's resolveMap.
-// So an rrtype is valid exactly when a method exists for it, and the lookup is
-// case-sensitive: "a" throws like it does in Node.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/utils.js#L289-L306
+// Node's resolveMap: an rrtype is valid exactly when a resolve* method exists for it, case-sensitively.
 const resolveMethodNames = {
   __proto__: null,
   A: "resolve4",
@@ -233,8 +230,7 @@ const resolveMethodNames = {
   TXT: "resolveTxt",
 };
 
-// Captures the methods of one surface (callback Resolver, promises, promises Resolver) at
-// module load. As in Node, a later reassignment of dns.resolve4 does not change resolve().
+// Bound at module load: reassigning resolve4 later does not change resolve(), as in Node.
 function createResolveMap(methods) {
   const map = { __proto__: null };
   for (const rrtype in resolveMethodNames) {

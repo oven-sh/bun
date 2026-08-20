@@ -2994,8 +2994,24 @@ pub mod bv2_impl {
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
             this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;
             this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
-            this.linker.options.ignore_dce_annotations =
-                this.transpiler.options.ignore_dce_annotations;
+            {
+                let server = this.transpiler.options.ignore_dce_annotations;
+                let client = this
+                    .client_transpiler_ref()
+                    .map_or(server, |t| t.options.ignore_dce_annotations);
+                let ssr = if core::ptr::eq(this.ssr_transpiler, this.transpiler()) {
+                    server
+                } else {
+                    // SAFETY: not aliasing `transpiler` ⇒ bake installed a separate SSR transpiler that lives for `'a`.
+                    unsafe { (*this.ssr_transpiler).options.ignore_dce_annotations }
+                };
+                this.linker.options.ignore_dce_annotations =
+                    enum_map::EnumMap::from_fn(|target| match target {
+                        Target::Browser => client,
+                        Target::ServerComponentsSsr => ssr,
+                        Target::Bun | Target::BunMacro | Target::Node => server,
+                    });
+            }
             // SAFETY: `transpiler.options.{banner,footer,public_path,metafile_*}` are
             // owned by the `'a`-lifetime `Transpiler` which outlives `this.linker`;
             // `LinkerOptions` stores `&'static [u8]` as an arena-erased lifetime
@@ -5083,6 +5099,16 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
+            // `link()` schedules these but only `generate_chunks_in_parallel` joins them; an early return (no chunks, a link error) gets here with pool threads still running them.
+            self.linker.source_maps.wait_for_tasks();
+            debug_assert_eq!(
+                self.linker
+                    .pending_task_count
+                    .load(core::sync::atomic::Ordering::Relaxed),
+                0,
+                "linker tasks outlived the bundle",
+            );
+
             {
                 // We do this first to make it harder for any dangling pointers to data to be used in there.
                 let on_parse_finalizers = core::mem::take(&mut self.finalizers);

@@ -75,9 +75,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     if c.source_maps.line_offset_tasks.len() > 0 {
         debug!(" START {} source maps (line offset)", chunks.len());
-        c.source_maps.line_offset_wait_group.wait();
-        // `c.arena().free(...)` + `.len = 0` → Vec drop semantics.
-        c.source_maps.line_offset_tasks = Box::default();
+        c.source_maps.wait_for_line_offset_tasks();
         debug!("  DONE {} source maps (line offset)", chunks.len());
     }
 
@@ -255,8 +253,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
         if c.source_maps.quoted_contents_tasks.len() > 0 {
             debug!(" START {} source maps (quoted contents)", chunks.len());
-            c.source_maps.quoted_contents_wait_group.wait();
-            c.source_maps.quoted_contents_tasks = Box::default();
+            c.source_maps.wait_for_quoted_contents_tasks();
             debug!("  DONE {} source maps (quoted contents)", chunks.len());
         }
 

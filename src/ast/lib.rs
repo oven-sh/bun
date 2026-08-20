@@ -1642,6 +1642,7 @@ impl Log {
         specifier_arg: &[u8],
         import_kind: ImportKind,
         err: crate::Error,
+        notes: Box<[Data]>,
     ) {
         let text = alloc_print(args);
         // TODO: fix this. this is stupid, the specifier should be returned by
@@ -1671,6 +1672,7 @@ impl Log {
         let msg = Msg {
             kind: if IS_ERR { Kind::Err } else { Kind::Warn },
             data,
+            notes,
             metadata: Metadata::Resolve(MetadataResolve {
                 specifier,
                 import_kind,
@@ -1701,6 +1703,7 @@ impl Log {
             specifier_arg,
             import_kind,
             err,
+            Box::default(),
         )
     }
 
@@ -1720,6 +1723,28 @@ impl Log {
             specifier_arg,
             import_kind,
             crate::Error::ModuleNotFound,
+            Box::default(),
+        )
+    }
+
+    #[cold]
+    pub fn add_resolve_error_with_text_dupe_notes(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        args: fmt::Arguments<'_>,
+        specifier_arg: &[u8],
+        import_kind: ImportKind,
+        notes: Box<[Data]>,
+    ) {
+        self.add_resolve_error_with_level::<true, true>(
+            source,
+            r,
+            args,
+            specifier_arg,
+            import_kind,
+            crate::Error::ModuleNotFound,
+            notes,
         )
     }
 

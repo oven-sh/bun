@@ -3322,12 +3322,11 @@ pub mod serializer {
             if end_pos as u64 <= end_at {
                 let src = &stream.buffer[stream.pos..stream.pos + bytes.len()];
                 if matches!(field, PackageField::Resolution) {
-                    // `ResolutionType` is `#[repr(C)]` with the tag as its first
-                    // byte, so validate it before the bytes reach the typed column.
                     let stride = mem::size_of::<ResolutionType<SemverIntType>>();
+                    let tag_at = mem::offset_of!(ResolutionType<SemverIntType>, tag);
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
-                        if !ResolutionTag(raw[0]).belongs_in_lockfile() {
+                        if !ResolutionTag(raw[tag_at]).belongs_in_lockfile() {
                             return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
                         }
                     }

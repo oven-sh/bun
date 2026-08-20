@@ -1014,9 +1014,8 @@ impl Tag {
         self == Tag::Git || self == Tag::Github
     }
 
-    /// The tags a package can have in a saved lockfile. A package is appended
-    /// only once it is resolved, so `Uninitialized` never reaches a writer, and
-    /// `SingleFileModule` has no producer. Nothing can install either one.
+    /// Tags a saved package can have. `Uninitialized` is the state before a
+    /// package is appended and `SingleFileModule` has no producer.
     pub(crate) fn belongs_in_lockfile(self) -> bool {
         matches!(
             self,

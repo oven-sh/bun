@@ -91,7 +91,9 @@ function internalBinding(name: string) {
     case "tcp_wrap":
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
     case "util":
-      return { isInsideNodeModules };
+      // getProxyDetails is the function util.inspect itself formats proxies with
+      // (test-util-inspect-proxy.js checks it directly).
+      return { isInsideNodeModules, getProxyDetails: require("internal/util/inspect").getProxyDetails };
     case "cares_wrap":
       // Only the pure IP-normalizer the vendored tls/dns tests reach for; the
       // resolver surface lives in node:dns.

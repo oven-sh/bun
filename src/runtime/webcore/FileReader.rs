@@ -1019,6 +1019,25 @@ impl FileReader {
         // ReadableStreamSource covers @sizeOf(FileReader)
         self.reader().memory_cost() + self.buffered.get().capacity()
     }
+
+    /// Raw fd as a JS-visible number, `-1` when closed or not fd-backed.
+    /// Before `start` (a lazy subprocess pipe) the fd lives in the
+    /// `BufferedReader`, not in `self.fd`. Windows pipes have no CRT fd, so
+    /// return `-1` there like Node's `StreamBase::GetFD`.
+    pub(crate) fn get_fd(&self) -> i32 {
+        #[cfg(windows)]
+        {
+            -1
+        }
+        #[cfg(not(windows))]
+        {
+            let mut fd = self.fd.get();
+            if fd == Fd::INVALID {
+                fd = self.reader().get_fd();
+            }
+            if fd == Fd::INVALID { -1 } else { fd.native() }
+        }
+    }
 }
 
 pub type Source = readable_stream::NewSource<FileReader>;
@@ -1071,6 +1090,9 @@ impl readable_stream::SourceContext for FileReader {
     }
     fn set_flowing(&mut self, flag: bool) {
         Self::set_flowing(self, flag)
+    }
+    fn get_fd(&mut self) -> i32 {
+        Self::get_fd(self)
     }
     // toBufferedValue: null
 }

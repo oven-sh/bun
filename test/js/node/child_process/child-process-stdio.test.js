@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { readSync, writeSync } from "node:fs";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -164,5 +165,62 @@ describe("child.stdin", () => {
       ret: false,
       cbCode: "ERR_STREAM_DESTROYED",
     });
+  });
+});
+
+describe("stdio _handle", () => {
+  it("piped stdio streams carry a _handle with a numeric fd", async () => {
+    const child = spawn(bunExe(), ["-e", "setTimeout(() => {}, 100_000)"], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      expect(typeof child.stdin._handle.fd).toBe("number");
+      expect(typeof child.stdout._handle.fd).toBe("number");
+      expect(typeof child.stderr._handle.fd).toBe("number");
+      if (!isWindows) {
+        // Windows pipes have no CRT fd: Node reports -1 there too.
+        expect(child.stdin._handle.fd).toBeGreaterThanOrEqual(0);
+        expect(child.stdout._handle.fd).toBeGreaterThanOrEqual(0);
+        expect(child.stderr._handle.fd).toBeGreaterThanOrEqual(0);
+      }
+    } finally {
+      child.kill();
+    }
+    await once(child, "exit");
+  });
+
+  // The synchronous fd-based IPC pattern used by TypeScript 7's sync API:
+  // grab the raw fds from _handle, make them blocking, keep the streams
+  // paused, and drive a request/response cycle with writeSync/readSync.
+  it.skipIf(isWindows)("_handle.fd supports blocking readSync/writeSync IPC", async () => {
+    const child = spawn(
+      bunExe(),
+      ["-e", `process.stdin.once("data", d => process.stdout.write("pong:" + d.toString().trim()))`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "inherit"] },
+    );
+    try {
+      const readFd = child.stdout._handle.fd;
+      const writeFd = child.stdin._handle.fd;
+      expect(child.stdout._handle.setBlocking(true)).toBe(true);
+      expect(child.stdin._handle.setBlocking(true)).toBe(true);
+      child.stdout.pause();
+      child.stdout.unref();
+      child.stdin.unref();
+      child.unref();
+
+      writeSync(writeFd, "ping\n");
+      const buf = Buffer.alloc(64);
+      let out = "";
+      while (!out.includes("pong:ping")) {
+        const n = readSync(readFd, buf, 0, buf.length, null);
+        expect(n).toBeGreaterThan(0);
+        out += buf.toString("utf8", 0, n);
+      }
+      expect(out).toBe("pong:ping");
+    } finally {
+      child.kill();
+    }
+    await once(child, "exit");
   });
 });

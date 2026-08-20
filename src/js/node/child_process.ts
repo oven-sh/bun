@@ -44,6 +44,30 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 const MAX_BUFFER = 1024 * 1024;
 const kFromNode = Symbol("kFromNode");
 
+const setStdioBlocking = $newRustFunction("subprocess.rs", "setStdioBlocking", 2);
+
+// Minimal stand-in for Node's `Pipe` handle on piped child stdio streams.
+// It exposes the raw parent-end fd for synchronous fd-based IPC
+// (`fs.readSync`/`fs.writeSync` on `stream._handle.fd`, the pattern used by
+// TypeScript 7's sync API) plus `setBlocking`, which such consumers call
+// before a blocking read. The fd stays owned by the native stream; closing
+// it here would double-close.
+class StdioPipeHandle {
+  #getFd;
+  constructor(getFd) {
+    this.#getFd = getFd;
+  }
+  get fd() {
+    const fd = this.#getFd();
+    return typeof fd === "number" ? fd : -1;
+  }
+  setBlocking(blocking) {
+    const fd = this.fd;
+    if (fd < 0) return false;
+    return setStdioBlocking(fd, !!blocking);
+  }
+}
+
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
   $debug("child_process: debug mode on");
@@ -1214,6 +1238,17 @@ class ChildProcess extends EventEmitter {
             }
             const result = require("internal/fs/streams").writableFromFileSink(stdin);
             result.readable = false;
+            result._handle = new StdioPipeHandle(() => stdin._getFd());
+            // Node's child.stdin is a net.Socket, which has ref/unref.
+            // Forward them to the FileSink (fs.WriteStream has neither).
+            result.ref = function ref() {
+              stdin.ref();
+              return this;
+            };
+            result.unref = function unref() {
+              stdin.unref();
+              return this;
+            };
             return result;
           }
           case "inherit":
@@ -1252,6 +1287,10 @@ class ChildProcess extends EventEmitter {
             }
 
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
+            const ptr = pipe.$bunNativePtr;
+            if (ptr) {
+              pipe._handle = new StdioPipeHandle(() => ptr.getFd());
+            }
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();

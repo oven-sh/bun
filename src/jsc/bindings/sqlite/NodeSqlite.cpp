@@ -225,6 +225,19 @@ static EncodedJSValue throwNodeState(JSGlobalObject* globalObject, ThrowScope& s
     return {};
 }
 
+// Matches V8's FunctionTemplate Signature rejection: plain TypeError, no .code.
+static EncodedJSValue throwIllegalInvocation(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    scope.throwException(globalObject, JSC::createTypeError(globalObject, "Illegal invocation"_s));
+    return {};
+}
+
+// Matches node_errors.h THROW_ERR_ILLEGAL_CONSTRUCTOR: plain Error, not TypeError.
+static EncodedJSValue throwIllegalConstructor(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR_Error, "Illegal constructor"_s);
+}
+
 // Node.js installs these getters via InstanceTemplate()->SetAccessorProperty
 // (DontDelete), so they are OWN properties — Object.keys(db) lists them and
 // {...db} copies them. Install in each finishCreation rather than on the
@@ -1225,14 +1238,12 @@ JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncDeserialize);
 JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore);
 JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncDispose);
 
-#define THIS_DATABASE()                                                                                                     \
-    auto& vm = JSC::getVM(globalObject);                                                                                    \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                   \
-    JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue());                                         \
-    if (!self) [[unlikely]] {                                                                                               \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "DatabaseSync"_s)); \
-        return {};                                                                                                          \
-    }
+#define THIS_DATABASE()                                                             \
+    auto& vm = JSC::getVM(globalObject);                                            \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                           \
+    JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue()); \
+    if (!self) [[unlikely]]                                                         \
+        return throwIllegalInvocation(globalObject, scope);
 
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncOpen, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -2200,7 +2211,6 @@ void JSDatabaseSyncPrototype::finishCreation(VM& vm, JSGlobalObject* globalObjec
     reifyStaticProperties(vm, JSDatabaseSync::info(), JSDatabaseSyncPrototypeTableValues, *this);
     // Symbol.dispose — swallow errors if not open, matching Node.js.
     putDirectNativeFunction(vm, globalObject, vm.propertyNames->disposeSymbol, 0, jsDatabaseSyncDispose, ImplementationVisibility::Public, NoIntrinsic, 0);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
 // ─── DatabaseSync constructor ───────────────────────────────────────────────
@@ -2747,14 +2757,12 @@ JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetReturnArrays);
 JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetAllowBareNamedParameters);
 JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetAllowUnknownNamedParameters);
 
-#define THIS_STATEMENT()                                                                                                     \
-    auto& vm = JSC::getVM(globalObject);                                                                                     \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                    \
-    JSStatementSync* self = dynamicDowncast<JSStatementSync>(callFrame->thisValue());                                        \
-    if (!self) [[unlikely]] {                                                                                                \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSync"_s)); \
-        return {};                                                                                                           \
-    }
+#define THIS_STATEMENT()                                                              \
+    auto& vm = JSC::getVM(globalObject);                                              \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                             \
+    JSStatementSync* self = dynamicDowncast<JSStatementSync>(callFrame->thisValue()); \
+    if (!self) [[unlikely]]                                                           \
+        return throwIllegalInvocation(globalObject, scope);
 
 struct StatementResetter {
     sqlite3_stmt* stmt;
@@ -3004,21 +3012,20 @@ void JSStatementSyncPrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSStatementSync::info(), JSStatementSyncPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSStatementSyncConstructor::call(JSGlobalObject* globalObject, CallFrame*)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+    return throwIllegalConstructor(globalObject, scope);
 }
 
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSStatementSyncConstructor::construct(JSGlobalObject* globalObject, CallFrame*)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+    return throwIllegalConstructor(globalObject, scope);
 }
 
 JSStatementSyncConstructor* JSStatementSyncConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
@@ -3090,10 +3097,8 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = dynamicDowncast<JSStatementSyncIterator>(callFrame->thisValue());
-    if (!self) [[unlikely]] {
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSyncIterator"_s));
-        return {};
-    }
+    if (!self) [[unlikely]]
+        return throwIllegalInvocation(globalObject, scope);
     // Once exhausted, next() doesn't touch the statement — so keep
     // returning {done:true} regardless of whether the db has since been
     // closed (matches the iterator protocol's "exhausted is permanent").
@@ -3105,7 +3110,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         return throwNodeState(globalObject, scope, "statement has been finalized"_s);
     }
     if (self->capturedGeneration() != stmt->resetGeneration()) {
-        return throwNodeState(globalObject, scope, "iterator was invalidated by calling run(), get(), all(), or iterate() on the backing statement"_s);
+        return throwNodeState(globalObject, scope, "iterator was invalidated"_s);
     }
     if (stmt->isStepping()) [[unlikely]] {
         return throwNodeState(globalObject, scope, "statement is currently executing"_s);
@@ -3145,10 +3150,8 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = dynamicDowncast<JSStatementSyncIterator>(callFrame->thisValue());
-    if (!self) [[unlikely]] {
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSyncIterator"_s));
-        return {};
-    }
+    if (!self) [[unlikely]]
+        return throwIllegalInvocation(globalObject, scope);
     // return() is the iterator-protocol cleanup hook (called implicitly by
     // for-of's IteratorClose on break/return). Cleanup must be tolerant of
     // already-closed state — throwing here would turn a benign
@@ -3265,14 +3268,12 @@ GCClient::IsoSubspace* JSNodeSqliteSession::subspaceForImpl(VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteSession = std::forward<decltype(space)>(space); });
 }
 
-#define THIS_SESSION()                                                                                                 \
-    auto& vm = JSC::getVM(globalObject);                                                                               \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                              \
-    JSNodeSqliteSession* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue());                          \
-    if (!self) [[unlikely]] {                                                                                          \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "Session"_s)); \
-        return {};                                                                                                     \
-    }
+#define THIS_SESSION()                                                                        \
+    auto& vm = JSC::getVM(globalObject);                                                      \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                     \
+    JSNodeSqliteSession* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue()); \
+    if (!self) [[unlikely]]                                                                   \
+        return throwIllegalInvocation(globalObject, scope);
 
 static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallFrame* callFrame,
     int (*fn)(sqlite3_session*, int*, void**))
@@ -3370,14 +3371,14 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSNodeSqliteSessionConstructor::call(JSG
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+    return throwIllegalConstructor(globalObject, scope);
 }
 
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSNodeSqliteSessionConstructor::construct(JSGlobalObject* globalObject, CallFrame*)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+    return throwIllegalConstructor(globalObject, scope);
 }
 
 JSNodeSqliteSessionConstructor* JSNodeSqliteSessionConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
@@ -3742,14 +3743,12 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     return stmtObj;
 }
 
-#define THIS_TAGSTORE()                                                                                                    \
-    auto& vm = JSC::getVM(globalObject);                                                                                   \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                  \
-    JSNodeSqliteTagStore* self = dynamicDowncast<JSNodeSqliteTagStore>(callFrame->thisValue());                            \
-    if (!self) [[unlikely]] {                                                                                              \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "SQLTagStore"_s)); \
-        return {};                                                                                                         \
-    }
+#define THIS_TAGSTORE()                                                                         \
+    auto& vm = JSC::getVM(globalObject);                                                        \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                       \
+    JSNodeSqliteTagStore* self = dynamicDowncast<JSNodeSqliteTagStore>(callFrame->thisValue()); \
+    if (!self) [[unlikely]]                                                                     \
+        return throwIllegalInvocation(globalObject, scope);
 
 // Shared tag execution: prepare/reset/bind then delegate to the same
 // post-bind step drivers StatementSync uses (statementStep{Run,Get,All}),
@@ -3834,7 +3833,6 @@ void JSNodeSqliteTagStorePrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSNodeSqliteTagStore::info(), JSNodeSqliteTagStorePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
 const ClassInfo JSNodeSqliteTagStoreConstructor::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStoreConstructor) };
@@ -3843,14 +3841,14 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSNodeSqliteTagStoreConstructor::call(JS
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+    return throwIllegalConstructor(globalObject, scope);
 }
 
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSNodeSqliteTagStoreConstructor::construct(JSGlobalObject* globalObject, CallFrame*)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+    return throwIllegalConstructor(globalObject, scope);
 }
 
 JSNodeSqliteTagStoreConstructor* JSNodeSqliteTagStoreConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)

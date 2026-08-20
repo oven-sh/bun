@@ -2238,6 +2238,110 @@ describe("module exports", () => {
   });
 });
 
+describe("error identity and branding (Node.js parity)", () => {
+  const thrown = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e) {
+      return e as Error & { code?: string };
+    }
+    throw new Error("expected to throw");
+  };
+
+  test("instances have no Symbol.toStringTag (Object.prototype.toString is [object Object])", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x INTEGER)");
+    const stmt = db.prepare("SELECT x FROM t");
+    const tagStore = db.createTagStore();
+    expect({
+      db: Object.prototype.toString.call(db),
+      stmt: Object.prototype.toString.call(stmt),
+      tagStore: Object.prototype.toString.call(tagStore),
+      dbTag: db[Symbol.toStringTag],
+      stmtTag: stmt[Symbol.toStringTag],
+      tagStoreTag: tagStore[Symbol.toStringTag],
+    }).toEqual({
+      db: "[object Object]",
+      stmt: "[object Object]",
+      tagStore: "[object Object]",
+      dbTag: undefined,
+      stmtTag: undefined,
+      tagStoreTag: undefined,
+    });
+    db.close();
+  });
+
+  test("StatementSync/Session/SQLTagStore constructors throw plain Error with ERR_ILLEGAL_CONSTRUCTOR", () => {
+    const db = new DatabaseSync(":memory:");
+    const TagStoreCtor = db.createTagStore().constructor as new () => unknown;
+    db.close();
+    for (const [name, fn] of [
+      ["new StatementSync()", () => new StatementSync()],
+      ["StatementSync()", () => (StatementSync as () => void)()],
+      ["new Session()", () => new Session()],
+      ["new SQLTagStore()", () => new TagStoreCtor()],
+    ] as const) {
+      const e = thrown(fn);
+      expect({
+        name,
+        ctor: e.constructor.name,
+        code: e.code,
+        message: e.message,
+        isTypeError: e instanceof TypeError,
+      }).toEqual({
+        name,
+        ctor: "Error",
+        code: "ERR_ILLEGAL_CONSTRUCTOR",
+        message: "Illegal constructor",
+        isTypeError: false,
+      });
+    }
+  });
+
+  test("prototype methods called on a wrong receiver throw TypeError('Illegal invocation') with no .code", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x)");
+    const it = db.prepare("SELECT 1").iterate();
+    const IterProto = Object.getPrototypeOf(it);
+    const TagProto = Object.getPrototypeOf(db.createTagStore());
+    it.return();
+    db.close();
+    for (const [name, fn] of [
+      ["DatabaseSync.close", DatabaseSync.prototype.close],
+      ["DatabaseSync.exec", DatabaseSync.prototype.exec],
+      ["StatementSync.run", StatementSync.prototype.run],
+      ["StatementSync.all", StatementSync.prototype.all],
+      ["Session.close", Session.prototype.close],
+      ["SQLTagStore.run", TagProto.run],
+      ["iterate().next", IterProto.next],
+      ["iterate().return", IterProto.return],
+    ] as const) {
+      const e = thrown(() => fn.call({}));
+      expect({ name, isTypeError: e instanceof TypeError, message: e.message, code: e.code }).toEqual({
+        name,
+        isTypeError: true,
+        message: "Illegal invocation",
+        code: undefined,
+      });
+    }
+  });
+
+  test("iterate().next() after the statement is re-run throws ERR_INVALID_STATE with Node's exact message", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1),(2)");
+    const stmt = db.prepare("SELECT x FROM t");
+    const it = stmt.iterate();
+    it.next();
+    stmt.run();
+    const e = thrown(() => it.next());
+    expect({ code: e.code, message: e.message }).toEqual({
+      code: "ERR_INVALID_STATE",
+      message: "iterator was invalidated",
+    });
+    db.close();
+  });
+});
+
 describe("loadExtension() / enableLoadExtension()", () => {
   test.skipIf(sqliteHasLoadExtension)(
     "{allowExtension: true} throws with a setCustomSQLite hint when the library was built with OMIT_LOAD_EXTENSION",

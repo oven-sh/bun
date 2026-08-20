@@ -28,7 +28,7 @@ mod _impl {
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
-    // `mod js { write_callback_*, error_callback_*, dictionary_* }` is emitted by
+    // `mod js { write_callback_*, error_callback_*, ... }` is emitted by
     // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
 
     /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.

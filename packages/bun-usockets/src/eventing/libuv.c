@@ -569,7 +569,7 @@ int us_socket_get_error(struct us_socket_t *s) {
   socklen_t len = sizeof(error);
   if (getsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_ERROR,
                  (char *)&error, &len) == -1) {
-    return errno;
+    return LIBUS_ERR;
   }
   return error;
 }

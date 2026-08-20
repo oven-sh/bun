@@ -21,8 +21,8 @@ use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
-    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind,
-    IdentifierOpts, ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
+    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
+    ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
@@ -2201,118 +2201,77 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::ENew(mut new) => {
-                    match self.substitute_single_use_symbol_in_expr(
-                        new.target,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut new.target,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            new.target = result;
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            new.target = result;
-                            return Substitution::Failure(expr);
-                        }
+                        return done;
                     }
 
                     if replacement_can_be_removed {
                         for arg in new.args.slice_mut() {
-                            match self.substitute_single_use_symbol_in_expr(
-                                *arg,
+                            if let Some(done) = self.substitute_single_use_symbol_in_child(
+                                arg,
+                                expr,
                                 r#ref,
                                 replacement,
                                 replacement_can_be_removed,
                             ) {
-                                Substitution::Continue => {}
-                                Substitution::Success(result) => {
-                                    *arg = result;
-                                    return Substitution::Success(expr);
-                                }
-                                Substitution::Failure(result) => {
-                                    *arg = result;
-                                    return Substitution::Failure(expr);
-                                }
+                                return done;
                             }
                         }
                     }
                 }
                 js_ast::ExprData::ESpread(mut spread) => {
-                    match self.substitute_single_use_symbol_in_expr(
-                        spread.value,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut spread.value,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            spread.value = result;
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            spread.value = result;
-                            return Substitution::Failure(expr);
-                        }
+                        return done;
                     }
                 }
                 js_ast::ExprData::EAwait(mut await_expr) => {
-                    match self.substitute_single_use_symbol_in_expr(
-                        await_expr.value,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut await_expr.value,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            await_expr.value = result;
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            await_expr.value = result;
-                            return Substitution::Failure(expr);
-                        }
+                        return done;
                     }
                 }
                 js_ast::ExprData::EYield(mut yield_) => {
-                    let value = yield_.value.unwrap_or(Expr {
+                    let mut value = yield_.value.unwrap_or(Expr {
                         data: js_ast::ExprData::EMissing(E::Missing {}),
                         loc: expr.loc,
                     });
-                    match self.substitute_single_use_symbol_in_expr(
-                        value,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut value,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            yield_.value = Some(result);
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            yield_.value = Some(result);
-                            return Substitution::Failure(expr);
-                        }
+                        yield_.value = Some(value);
+                        return done;
                     }
                 }
                 js_ast::ExprData::EImport(mut import) => {
-                    match self.substitute_single_use_symbol_in_expr(
-                        import.expr,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut import.expr,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            import.expr = result;
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            import.expr = result;
-                            return Substitution::Failure(expr);
-                        }
+                        return done;
                     }
 
                     // The "import()" expression has side effects but the side effects are
@@ -2335,60 +2294,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | js_ast::op::Code::UnDelete => {
                             // Do not substitute into an assignment position
                         }
-                        _ => match self.substitute_single_use_symbol_in_expr(
-                            e.value,
-                            r#ref,
-                            replacement,
-                            replacement_can_be_removed,
-                        ) {
-                            Substitution::Continue => {}
-                            Substitution::Success(result) => {
-                                e.value = result;
-                                return Substitution::Success(expr);
+                        _ => {
+                            if let Some(done) = self.substitute_single_use_symbol_in_child(
+                                &mut e.value,
+                                expr,
+                                r#ref,
+                                replacement,
+                                replacement_can_be_removed,
+                            ) {
+                                return done;
                             }
-                            Substitution::Failure(result) => {
-                                e.value = result;
-                                return Substitution::Failure(expr);
-                            }
-                        },
+                        }
                     }
                 }
                 js_ast::ExprData::EDot(mut e) => {
-                    match self.substitute_single_use_symbol_in_expr(
-                        e.target,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut e.target,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            e.target = result;
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            e.target = result;
-                            return Substitution::Failure(expr);
-                        }
+                        return done;
                     }
                 }
                 js_ast::ExprData::EBinary(mut e) => {
                     // Do not substitute into an assignment position
                     if js_ast::op::Code::binary_assign_target(e.op) == js_ast::AssignTarget::None {
-                        match self.substitute_single_use_symbol_in_expr(
-                            e.left,
+                        if let Some(done) = self.substitute_single_use_symbol_in_child(
+                            &mut e.left,
+                            expr,
                             r#ref,
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue => {}
-                            Substitution::Success(result) => {
-                                e.left = result;
-                                return Substitution::Success(expr);
-                            }
-                            Substitution::Failure(result) => {
-                                e.left = result;
-                                return Substitution::Failure(expr);
-                            }
+                            return done;
                         }
                     } else if !self.expr_can_be_removed_if_unused(&e.left) {
                         // Do not reorder past a side effect in an assignment target, as that may
@@ -2415,39 +2355,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // If we get here then it should be safe to attempt to substitute the
                     // replacement past the left operand into the right operand.
-                    match self.substitute_single_use_symbol_in_expr(
-                        e.right,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut e.right,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            e.right = result;
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            e.right = result;
-                            return Substitution::Failure(expr);
-                        }
+                        return done;
                     }
                 }
                 js_ast::ExprData::EIf(mut e) => {
-                    match self.substitute_single_use_symbol_in_expr(
-                        e.test,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut e.test,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            e.test = result;
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            e.test = result;
-                            return Substitution::Failure(expr);
-                        }
+                        return done;
                     }
 
                     // Do not substitute our unconditionally-executed value into a branch
@@ -2491,41 +2417,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EIndex(mut index) => {
-                    match self.substitute_single_use_symbol_in_expr(
-                        index.target,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut index.target,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            index.target = result;
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            index.target = result;
-                            return Substitution::Failure(expr);
-                        }
+                        return done;
                     }
 
                     // Do not substitute our unconditionally-executed value into a branch
                     // unless the value itself has no side effects
                     if replacement_can_be_removed || index.optional_chain.is_none() {
-                        match self.substitute_single_use_symbol_in_expr(
-                            index.index,
+                        if let Some(done) = self.substitute_single_use_symbol_in_child(
+                            &mut index.index,
+                            expr,
                             r#ref,
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue => {}
-                            Substitution::Success(result) => {
-                                index.index = result;
-                                return Substitution::Success(expr);
-                            }
-                            Substitution::Failure(result) => {
-                                index.index = result;
-                                return Substitution::Failure(expr);
-                            }
+                            return done;
                         }
                     }
                 }
@@ -2541,63 +2453,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => {}
                     }
 
-                    match self.substitute_single_use_symbol_in_expr(
-                        e.target,
+                    if let Some(done) = self.substitute_single_use_symbol_in_child(
+                        &mut e.target,
+                        expr,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue => {}
-                        Substitution::Success(result) => {
-                            e.target = result;
-                            return Substitution::Success(expr);
-                        }
-                        Substitution::Failure(result) => {
-                            e.target = result;
-                            return Substitution::Failure(expr);
-                        }
+                        return done;
                     }
 
                     // Do not substitute our unconditionally-executed value into a branch
                     // unless the value itself has no side effects
                     if replacement_can_be_removed || e.optional_chain.is_none() {
                         for arg in e.args.slice_mut() {
-                            match self.substitute_single_use_symbol_in_expr(
-                                *arg,
+                            if let Some(done) = self.substitute_single_use_symbol_in_child(
+                                arg,
+                                expr,
                                 r#ref,
                                 replacement,
                                 replacement_can_be_removed,
                             ) {
-                                Substitution::Continue => {}
-                                Substitution::Success(result) => {
-                                    *arg = result;
-                                    return Substitution::Success(expr);
-                                }
-                                Substitution::Failure(result) => {
-                                    *arg = result;
-                                    return Substitution::Failure(expr);
-                                }
+                                return done;
                             }
                         }
                     }
                 }
                 js_ast::ExprData::EArray(mut e) => {
                     for item in e.items.slice_mut() {
-                        match self.substitute_single_use_symbol_in_expr(
-                            *item,
+                        if let Some(done) = self.substitute_single_use_symbol_in_child(
+                            item,
+                            expr,
                             r#ref,
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue => {}
-                            Substitution::Success(result) => {
-                                *item = result;
-                                return Substitution::Success(expr);
-                            }
-                            Substitution::Failure(result) => {
-                                *item = result;
-                                return Substitution::Failure(expr);
-                            }
+                            return done;
                         }
                     }
                 }
@@ -2605,21 +2496,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     for property in e.properties.slice_mut() {
                         // Check the key
                         if property.flags.contains(Flags::Property::IsComputed) {
-                            match self.substitute_single_use_symbol_in_expr(
-                                property.key.expect("infallible: prop has key"),
+                            let key = property.key.as_mut().expect("infallible: prop has key");
+                            if let Some(done) = self.substitute_single_use_symbol_in_child(
+                                key,
+                                expr,
                                 r#ref,
                                 replacement,
                                 replacement_can_be_removed,
                             ) {
-                                Substitution::Continue => {}
-                                Substitution::Success(result) => {
-                                    property.key = Some(result);
-                                    return Substitution::Success(expr);
-                                }
-                                Substitution::Failure(result) => {
-                                    property.key = Some(result);
-                                    return Substitution::Failure(expr);
-                                }
+                                return done;
                             }
 
                             // Stop now because both computed keys and property spread have side effects
@@ -2627,53 +2512,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // Check the value
-                        if let Some(value) = property.value {
-                            match self.substitute_single_use_symbol_in_expr(
+                        if let Some(value) = property.value.as_mut() {
+                            if let Some(done) = self.substitute_single_use_symbol_in_child(
                                 value,
+                                expr,
                                 r#ref,
                                 replacement,
                                 replacement_can_be_removed,
                             ) {
-                                Substitution::Continue => {}
-                                Substitution::Success(result) => {
-                                    property.value =
-                                        if matches!(result.data, js_ast::ExprData::EMissing(_)) {
-                                            None
-                                        } else {
-                                            Some(result)
-                                        };
-                                    return Substitution::Success(expr);
+                                if matches!(value.data, js_ast::ExprData::EMissing(_)) {
+                                    property.value = None;
                                 }
-                                Substitution::Failure(result) => {
-                                    property.value =
-                                        if matches!(result.data, js_ast::ExprData::EMissing(_)) {
-                                            None
-                                        } else {
-                                            Some(result)
-                                        };
-                                    return Substitution::Failure(expr);
-                                }
+                                return done;
                             }
                         }
                     }
                 }
                 js_ast::ExprData::ETemplate(mut e) => {
                     if let Some(tag) = e.tag.as_mut() {
-                        match self.substitute_single_use_symbol_in_expr(
-                            *tag,
+                        if let Some(done) = self.substitute_single_use_symbol_in_child(
+                            tag,
+                            expr,
                             r#ref,
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue => {}
-                            Substitution::Success(result) => {
-                                *tag = result;
-                                return Substitution::Success(expr);
-                            }
-                            Substitution::Failure(result) => {
-                                *tag = result;
-                                return Substitution::Failure(expr);
-                            }
+                            return done;
                         }
                     }
 
@@ -2682,22 +2546,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // SAFETY: arena-owned slice; single-threaded visit pass has exclusive
                     // access and no other borrow of this slice is live across the loop body.
                     for part in e.parts_mut().iter_mut() {
-                        match self.substitute_single_use_symbol_in_expr(
-                            part.value,
+                        if let Some(done) = self.substitute_single_use_symbol_in_child(
+                            &mut part.value,
+                            expr,
                             r#ref,
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue => {}
-                            Substitution::Success(result) => {
-                                part.value = result;
-                                // todo: mangle template parts
-                                return Substitution::Success(expr);
-                            }
-                            Substitution::Failure(result) => {
-                                part.value = result;
-                                return Substitution::Failure(expr);
-                            }
+                            // todo: mangle template parts
+                            return done;
                         }
                     }
                 }
@@ -2718,6 +2575,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Otherwise we should stop trying to substitute past this point
         Substitution::Failure(expr)
+    }
+
+    /// `None` is `Continue`; otherwise `slot` was rewritten and this is `parent`'s outcome.
+    fn substitute_single_use_symbol_in_child(
+        &mut self,
+        slot: &mut Expr,
+        parent: Expr,
+        r#ref: Ref,
+        replacement: Expr,
+        replacement_can_be_removed: bool,
+    ) -> Option<Substitution> {
+        match self.substitute_single_use_symbol_in_expr(
+            *slot,
+            r#ref,
+            replacement,
+            replacement_can_be_removed,
+        ) {
+            Substitution::Continue => None,
+            Substitution::Success(child) => {
+                *slot = child;
+                Some(Substitution::Success(parent))
+            }
+            Substitution::Failure(child) => {
+                *slot = child;
+                Some(Substitution::Failure(parent))
+            }
+        }
     }
 
     pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
@@ -4635,7 +4519,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    pub(crate) fn validate_function_name(&mut self, func: &G::Fn, kind: FunctionKind) {
+    pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
             let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
@@ -4648,9 +4532,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_lexer::range_of_identifier(self.source, name.loc),
                     b"An async function cannot be named \"await\"",
                 );
-            } else if kind == FunctionKind::Expr
-                && func.flags.contains(Flags::Function::IsGenerator)
-                && original_name == b"yield"
+            } else if func.flags.contains(Flags::Function::IsGenerator) && original_name == b"yield"
             {
                 self.log().add_range_error(
                     Some(self.source),

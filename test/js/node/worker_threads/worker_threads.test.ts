@@ -2732,3 +2732,115 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     expect(code).toBe(7);
   });
 });
+
+// Once a worker's VM has been stopped — by its own process.exit(), from a timer, from a subprocess
+// onExit callback (a foreign trampoline), or by the parent's terminate() landing mid-callback —
+// nothing it had queued may run: not the rest of the callback, not a nextTick, not a microtask.
+describe("nothing queued runs after the worker's VM stops", () => {
+  const cases: [string, string, (w: Worker) => void][] = [
+    [
+      "process.exit() in a timer",
+      `setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         process.exit(0);
+         parentPort.postMessage("sync code after exit ran");
+       }, 5);`,
+      () => {},
+    ],
+    [
+      "process.exit() in Bun.spawn onExit",
+      `Bun.spawn({ cmd: [process.execPath, "-e", "0"], env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" }, onExit() {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         process.exit(0);
+       }});`,
+      () => {},
+    ],
+    [
+      "terminate() landing mid-callback",
+      `parentPort.on("message", () => {});
+       setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         parentPort.postMessage("ready");
+         const t = Date.now(); while (Date.now() - t < 5000) {}
+         parentPort.postMessage("busy loop was not interrupted");
+       }, 5);`,
+      w => w.on("message", m => m === "ready" && w.terminate()),
+    ],
+  ];
+  for (const [name, body, arm] of cases) {
+    test(name, async () => {
+      const w = new Worker(`const { parentPort } = require("worker_threads");\n${body}`, { eval: true });
+      const messages: string[] = [];
+      w.on("message", m => m !== "ready" && messages.push(m));
+      arm(w);
+      const [code] = await once(w, "exit");
+      expect(messages).toEqual([]);
+      expect(typeof code).toBe("number");
+    });
+  }
+});
+
+// A worker's stop makes JSC forbid execution in the step that throws its TerminationException (WebCore's
+// forbidExecutionOnTermination, armed per stop). Whatever was queued or in flight when a callback got stuck —
+// due timers, immediates, nextTicks, microtasks, socket data, MessagePort deliveries, intervals, 'exit'
+// listeners — must not enter JS once the termination has unwound that callback: any such entry is one that
+// happened after termination, by construction (only the termination could have unwound the endless loop).
+describe("no JS entry after a worker's termination has been thrown", () => {
+  const worker = (stuckIn: "portMessage" | "socketData") => `
+    const { parentPort, workerData } = require("node:worker_threads");
+    const c = new Int32Array(workerData.sab);
+    let armed = false;
+    const B = i => () => { if (armed) Atomics.add(c, i, 1); };
+    let stuckOnce = false;
+    function scheduleEverythingThenGetStuck() {
+      if (stuckOnce) return;
+      stuckOnce = true;
+      for (let k = 0; k < 50; k++) { setTimeout(B(0), 0); setImmediate(B(1)); process.nextTick(B(2)); queueMicrotask(B(3)); Promise.resolve().then(B(3)); }
+      setInterval(B(6), 1);
+      process.on("exit", B(7));
+      parentPort.postMessage("stuck");
+      const t = Date.now(); while (Date.now() - t < 30) {}
+      // Stuck in native code each iteration, so no JIT tier can turn this into a poll-free loop.
+      for (;;) Atomics.wait(c, 7, 0, 5);
+    }
+    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+      open(s) { setInterval(() => { for (let k = 0; k < 8; k++) s.write("x"); }, 1); }, data() {}, drain() {} } });
+    Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open() {}, drain() {},
+      data() { if (!armed) return; B(4)(); if (${JSON.stringify(stuckIn)} === "socketData") scheduleEverythingThenGetStuck(); } } });
+    parentPort.on("message", m => {
+      if (m !== "go") { B(5)(); return; }
+      armed = true;
+      if (${JSON.stringify(stuckIn)} === "portMessage") scheduleEverythingThenGetStuck();
+    });
+  `;
+  for (const stuckIn of ["portMessage", "socketData"] as const) {
+    test(`stuck in a ${stuckIn} callback`, async () => {
+      const sab = new SharedArrayBuffer(4 * 8);
+      const counts = new Int32Array(sab);
+      const w = new Worker(worker(stuckIn), { eval: true, workerData: { sab } });
+      w.postMessage("go");
+      expect(await once(w, "message")).toEqual(["stuck"]);
+      for (let k = 0; k < 200; k++) w.postMessage("flood");
+      const t = Date.now();
+      while (Date.now() - t < 50) {}
+      await w.terminate();
+      const names = [
+        "timeout",
+        "immediate",
+        "nextTick",
+        "microtask",
+        "socketData",
+        "portMessage",
+        "interval",
+        "exitHandler",
+      ];
+      const after = Object.fromEntries(names.map((n, i) => [n, counts[i]]));
+      // The one socket data callback the worker got stuck in ran before termination.
+      if (stuckIn === "socketData") after.socketData -= 1;
+      expect(after).toEqual(Object.fromEntries(names.map(n => [n, 0])));
+    });
+  }
+});

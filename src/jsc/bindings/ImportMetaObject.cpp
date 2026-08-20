@@ -396,8 +396,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto fromWTFString = from.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // WHATWG parsing makes any `file:` specifier absolute (`file:/p` and
-    // `file:p` normalize to `file:///p`), so parse it standalone like Node.
+    // Parse a `file:` specifier standalone (no base), like Node: WHATWG parsing makes it absolute.
     if (specifier.startsWith("file:"_s)) {
         WTF::URL url(specifier);
         if (url.isValid() && !url.isEmpty()) {

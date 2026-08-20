@@ -399,42 +399,20 @@ fn find_playwright_shell() -> Option<ZBox> {
         return None;
     }
 
-    // Build the binary path. Possible subdir layouts:
+    // Build the binary path. Possible subdir layouts, per Playwright's registry (no arch suffix
+    // on linux x64): https://github.com/microsoft/playwright/blob/v1.62.1/packages/playwright-core/src/server/registry/index.ts#L75
     //   cft mac:   chrome-headless-shell-mac-<arch>/chrome-headless-shell
     //   cft linux: chrome-headless-shell-linux64/chrome-headless-shell
     //   windows: chrome-headless-shell-win64/chrome-headless-shell.exe
-    //   non-cft: chrome-linux/headless_shell   (linux arm64 only)
+    //   non-cft: chrome-linux/headless_shell   (linux arm64 only, no CfT build; fallback below)
     #[cfg(windows)]
     let subdir_cft: &[u8] = b"chrome-headless-shell-win64/chrome-headless-shell.exe";
-    #[cfg(not(windows))]
-    let subdir_cft_owned: Vec<u8> = {
-        // Playwright's registry names each directory per platform, and linux x64 carries NO arch
-        // suffix (packages/playwright-core/src/server/registry/index.ts):
-        //   'linux-x64' -> chrome-headless-shell-linux64
-        //   'mac-x64'   -> chrome-headless-shell-mac-x64
-        //   'mac-arm64' -> chrome-headless-shell-mac-arm64
-        // linux arm64 has no CfT shell build; it uses the non-cft chrome-linux/headless_shell
-        // layout handled by the fallback below.
-        let plat_dir: &str = if cfg!(target_os = "macos") {
-            if cfg!(target_arch = "aarch64") {
-                "mac-arm64"
-            } else {
-                "mac-x64"
-            }
-        } else {
-            "linux64"
-        };
-        let mut v: Vec<u8> = Vec::new();
-        write!(
-            &mut v,
-            "chrome-headless-shell-{}/chrome-headless-shell",
-            plat_dir
-        )
-        .ok()?;
-        v
-    };
-    #[cfg(not(windows))]
-    let subdir_cft: &[u8] = &subdir_cft_owned;
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    let subdir_cft: &[u8] = b"chrome-headless-shell-mac-arm64/chrome-headless-shell";
+    #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+    let subdir_cft: &[u8] = b"chrome-headless-shell-mac-x64/chrome-headless-shell";
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let subdir_cft: &[u8] = b"chrome-headless-shell-linux64/chrome-headless-shell";
 
     let cache_dir: &[u8] = &cache_dir[..];
     let mut bin_buf = path_buffer_pool::get();

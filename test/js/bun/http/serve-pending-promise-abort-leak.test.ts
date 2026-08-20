@@ -317,6 +317,7 @@ test("client abort while a direct stream pull() is parked frees the context and 
   // The cut-off upload rejects the pending req.text() at abort time.
   const err = await bodyRead;
   expect(err).toBeInstanceOf(Error);
+  expect((err as Error).name).toBe("AbortError");
   await waitForPendingRequestsWithoutGC(server, 0);
   pumpHold = undefined;
 });
@@ -376,6 +377,9 @@ test("413 on a chunked upload frees the context while the handler promise stays 
   }
 
   await gotResponse;
+  // An early close resolves gotResponse too; fail on the missing response
+  // before the status-line comparison so the cause is visible.
+  expect(received).not.toBe("");
   expect(received.split("\r\n")[0]).toBe("HTTP/1.1 413 Payload Too Large");
 
   // The context is torn down by the 413, not by GC collecting the promise.

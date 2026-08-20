@@ -247,6 +247,8 @@ pub struct ShellSubprocess {
     pub(crate) stderr: Readable,
 
     pub closed: EnumSet<StdioKind>,
+
+    ctrl_c_child: Option<bun_process::sync::CtrlCChild>,
 }
 
 pub(crate) type SignalCode = bun_core::SignalCode;
@@ -779,6 +781,7 @@ impl ShellSubprocess {
         };
 
         let mut spawn_result = spawn_result;
+        let ctrl_c_child = bun_process::sync::CtrlCChild::enter();
 
         // Note: Stdio impls Drop, so move out via mem::replace instead of clone.
         let stdio0 = core::mem::replace(&mut stdio_guard[0], Stdio::Ignore);
@@ -843,6 +846,7 @@ impl ShellSubprocess {
                 stderr,
                 cmd_parent,
                 closed: EnumSet::empty(),
+                ctrl_c_child: Some(ctrl_c_child),
             });
         }
         // Ownership of the now-initialised Box is released as a raw pointer
@@ -960,8 +964,13 @@ impl ShellSubprocess {
 
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
+        self.ctrl_c_child = None;
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
+                #[cfg(windows)]
+                if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                    break 'brk SignalCode::SIGINT.to_exit_code();
+                }
                 break 'brk Some(exited.code);
             }
 

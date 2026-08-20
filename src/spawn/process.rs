@@ -2624,6 +2624,110 @@ mod spawn_process_body {
             result
         }
 
+        /// Live children that receive the terminal's Ctrl+C themselves (same
+        /// foreground pgroup / same console). While non-zero, `LeaveCtrlCToChildren`
+        /// keeps the parent alive so it can report how they exited.
+        pub static CTRL_C_CHILDREN: core::sync::atomic::AtomicU32 =
+            core::sync::atomic::AtomicU32::new(0);
+
+        /// RAII `CTRL_C_CHILDREN += 1`.
+        pub struct CtrlCChild;
+        impl CtrlCChild {
+            pub fn enter() -> Self {
+                CTRL_C_CHILDREN.fetch_add(1, Ordering::Relaxed);
+                Self
+            }
+        }
+        impl Drop for CtrlCChild {
+            fn drop(&mut self) {
+                CTRL_C_CHILDREN.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+
+        /// While installed, Ctrl+C is left to `CTRL_C_CHILDREN` when there are any
+        /// and takes its previous action otherwise. Not inherited across spawn: on
+        /// POSIX a caught (not ignored) signal resets to default on exec; on Windows a
+        /// handler routine, unlike `SetConsoleCtrlHandler(NULL, TRUE)`, is per-process.
+        pub struct LeaveCtrlCToChildren;
+        impl LeaveCtrlCToChildren {
+            #[cfg(windows)]
+            extern "system" fn handler(
+                ctrl_type: bun_sys::windows::DWORD,
+            ) -> bun_sys::windows::BOOL {
+                if ctrl_type == bun_sys::windows::CTRL_C_EVENT
+                    && CTRL_C_CHILDREN.load(Ordering::Relaxed) > 0
+                {
+                    return bun_sys::windows::TRUE;
+                }
+                bun_sys::windows::FALSE
+            }
+
+            #[cfg(unix)]
+            extern "C" fn handler(sig: c_int) {
+                if CTRL_C_CHILDREN.load(Ordering::Relaxed) > 0 {
+                    return;
+                }
+                // SAFETY: PREVIOUS_SIGINT was written before this handler was
+                // installed; SIGINT is blocked while we run, so the re-raise is
+                // delivered with the restored disposition once we return.
+                unsafe {
+                    libc::sigaction(
+                        sig,
+                        (*PREVIOUS_SIGINT.get()).as_ptr(),
+                        core::ptr::null_mut(),
+                    );
+                    libc::raise(sig);
+                }
+            }
+
+            pub fn install() -> Self {
+                #[cfg(windows)]
+                {
+                    let _ = bun_sys::windows::SetConsoleCtrlHandler(
+                        Some(Self::handler),
+                        bun_sys::windows::TRUE,
+                    );
+                }
+                #[cfg(unix)]
+                // SAFETY: zeroed sigaction + our handler is a valid disposition;
+                // PREVIOUS_SIGINT is only touched here, in `drop`, and in the handler.
+                unsafe {
+                    let mut sa: libc::sigaction = bun_core::ffi::zeroed();
+                    sa.sa_sigaction = Self::handler as *const () as usize;
+                    libc::sigemptyset(&raw mut sa.sa_mask);
+                    libc::sigaction(
+                        libc::SIGINT,
+                        &raw const sa,
+                        (*PREVIOUS_SIGINT.get()).as_mut_ptr(),
+                    );
+                }
+                Self
+            }
+        }
+        impl Drop for LeaveCtrlCToChildren {
+            fn drop(&mut self) {
+                #[cfg(windows)]
+                {
+                    let _ = bun_sys::windows::SetConsoleCtrlHandler(
+                        Some(Self::handler),
+                        bun_sys::windows::FALSE,
+                    );
+                }
+                #[cfg(unix)]
+                // SAFETY: restores the disposition saved by `install`.
+                unsafe {
+                    libc::sigaction(
+                        libc::SIGINT,
+                        (*PREVIOUS_SIGINT.get()).as_ptr(),
+                        core::ptr::null_mut(),
+                    );
+                }
+            }
+        }
+        #[cfg(unix)]
+        static PREVIOUS_SIGINT: bun_core::RacyCell<core::mem::MaybeUninit<libc::sigaction>> =
+            bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+
         #[cfg(windows)]
         fn spawn_windows_without_pipes(
             options: &Options,
@@ -2784,6 +2888,7 @@ mod spawn_process_body {
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             #[cfg(windows)]
             {
+                let _child = CtrlCChild::enter();
                 if options.stdin != SyncStdio::Buffer
                     && options.stderr != SyncStdio::Buffer
                     && options.stdout != SyncStdio::Buffer

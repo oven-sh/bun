@@ -72,10 +72,8 @@ impl DirEntryProbe for DirEntryKeys {
     }
 }
 
-/// Probe for callers without a listing of the cwd: `Loader::load` then
-/// `openat`s each default file (at most four) and `load_env_file` treats
-/// `ENOENT` as absent. Building a listing instead means reading the cwd and
-/// every ancestor directory in full.
+/// Probe for callers without a cwd listing: `Loader::load` opens every default
+/// file and `load_env_file` treats `ENOENT` as absent.
 pub struct OpenEachDefaultFile;
 
 impl DirEntryProbe for OpenEachDefaultFile {
@@ -816,9 +814,7 @@ impl Loader {
                 Err(err) => {
                     use bun_sys::E;
                     match err.get_errno() {
-                        // Absent files stay out of `default_files_loaded`:
-                        // `print_loaded` lists that set, and with
-                        // `OpenEachDefaultFile` most probes end here.
+                        // Not recorded: `print_loaded` lists `default_files_loaded`.
                         E::EISDIR | E::ENOENT => return Ok(()),
                         E::EBUSY | E::EACCES => {
                             if !self.quiet {

@@ -36,10 +36,7 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
     }
 }
 
-/// Whether the `@bun-cjs` wrapper must declare `E::ImportMeta::CJS_WRAPPER_ARG`.
-/// Must match the printer's `EImportMeta` condition, which also reads `c.options`.
-/// The runtime module's only `import.meta` is `__require`, which cjs output never
-/// links in (`should_call_runtime_require`).
+/// Must agree with the printer's `EImportMeta` arm, which prints `CJS_WRAPPER_ARG` under `c.options`.
 fn chunk_uses_import_meta(c: &LinkerContext, chunk: &Chunk) -> bool {
     if !c.options.target.is_bun() {
         return false;
@@ -50,6 +47,7 @@ fn chunk_uses_import_meta(c: &LinkerContext, chunk: &Chunk) -> bool {
         .keys()
         .iter()
         .any(|&source_index| {
+            // The runtime's only import.meta is `__require`, which cjs output never links in.
             source_index != Index::RUNTIME.value()
                 && flags[source_index as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
         })

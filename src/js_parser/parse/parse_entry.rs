@@ -94,8 +94,7 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
-    /// Replace `import.meta.dir`, `.dirname`, `.file`, `.path` and `.url` with the
-    /// source file's paths (Bake, and cjs output that has no `import.meta` at run time).
+    /// Inline the source file's paths for `import.meta.dir`, `.dirname`, `.file`, `.path`, `.url`.
     pub inline_import_meta_paths: bool,
 
     /// When using react fast refresh or server components, the framework is

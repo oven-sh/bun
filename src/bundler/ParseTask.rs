@@ -2607,8 +2607,7 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
-        // For bun, cjs output gets import.meta from the `@bun-cjs` wrapper instead
-        // (`chunk_uses_import_meta`), which reads the build target like this does.
+        // For bun, cjs output gets import.meta from the wrapper instead (`chunk_uses_import_meta`).
         opts.inline_import_meta_paths = topts.framework.is_some()
             || (output_format == options::Format::Cjs && !topts.target.is_bun());
 

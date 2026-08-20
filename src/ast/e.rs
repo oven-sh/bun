@@ -202,10 +202,7 @@ pub struct Super;
 pub struct ImportMeta;
 
 impl ImportMeta {
-    /// Sixth parameter of Bun's CommonJS module wrapper. `evaluateCommonJSModuleOnce`
-    /// (JSCommonJSModule.cpp) passes the module's `import.meta` for it when the wrapper
-    /// declares more than five parameters. Declared by the runtime transpiler and by the
-    /// bundler's `@bun-cjs` wrapper.
+    /// Sixth parameter of the CommonJS wrapper. JSCommonJSModule.cpp passes `import.meta` for it.
     pub const CJS_WRAPPER_ARG: &'static [u8] = b"$Bun_import_meta";
 }
 

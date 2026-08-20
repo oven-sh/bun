@@ -229,11 +229,13 @@ describe("node:domain", () => {
     });
     const d = domain.create();
     d.on("error", () => {});
+    let lastRes: any;
     for (let i = 0; i < 5; i++) {
       await new Promise<void>((resolve, reject) => {
         d.run(() => {
           http
             .get(`http://localhost:${server.port}/`, res => {
+              lastRes = res;
               res.resume();
               res.on("close", resolve);
             })
@@ -242,6 +244,16 @@ describe("node:domain", () => {
       });
     }
     expect(d.members).toEqual([]);
+
+    // Error routing stays for the response's whole lifetime, like node.
+    expect(lastRes.domain).toBe(d);
+    const late = new Error("late");
+    let seenLate: unknown;
+    d.on("error", (e: unknown) => {
+      seenLate = e;
+    });
+    lastRes.emit("error", late);
+    expect(seenLate).toBe(late);
   });
 
   it("process.domain is null after requiring node:domain", async () => {

@@ -847,9 +847,11 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   const reqDomain = req.domain;
   if (reqDomain != null && typeof reqDomain.add === "function" && res.domain == null) {
     reqDomain.add(res);
-    if (typeof reqDomain.remove === "function") {
-      // add() tracks the response in domain.members; untrack when done.
-      res.once("close", () => reqDomain.remove(res));
+    // Like node's implicit binding: keep res.domain and the error routing, but no members entry.
+    const members = reqDomain.members;
+    if ($isArray(members)) {
+      const index = members.indexOf(res);
+      if (index !== -1) members.splice(index, 1);
     }
   }
 

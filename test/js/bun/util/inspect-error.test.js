@@ -327,3 +327,132 @@ describe("source map remapping of the printed stack", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The printer replaces an AggregateError with the members of its `errors`
+// property. When there is nothing to walk it has to print the AggregateError
+// itself. A deleted `errors` used to crash the process (the empty value was
+// passed to the iteration, which read it as a cell at address 0), an accessor
+// was passed to it as well, the other shapes printed nothing, and a
+// non-iterable `errors` made console.error throw.
+describe.concurrent("AggregateError whose errors cannot be walked", () => {
+  async function run(cmd, files) {
+    using dir = tempDir("inspect-aggregate-error", files ?? {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const header = "AggregateError: outer message";
+  const make = 'const e = new AggregateError([new Error("inner")], "outer message");';
+  const shapes = {
+    "errors was deleted": "delete e.errors;",
+    "errors is an empty array": "e.errors = [];",
+    "errors is not iterable": "e.errors = {};",
+    "errors is null": "e.errors = null;",
+    "errors is a primitive": "e.errors = 1;",
+    "the errors getter throws": 'Object.defineProperty(e, "errors", { get() { throw new Error("getter"); } });',
+  };
+
+  for (const [name, shape] of Object.entries(shapes)) {
+    test(`console.error: ${name}`, async () => {
+      const { stdout, stderr, exitCode } = await run([
+        "-e",
+        `${make} ${shape} console.error(e); console.log("after");`,
+      ]);
+      expect(stderr).toContain(header);
+      expect(stdout).toBe("after\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test(`uncaught: ${name}`, async () => {
+      const { stderr, exitCode } = await run(["-e", `${make} ${shape} throw e;`]);
+      expect(stderr).toContain(header);
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  test("Bun.inspect: errors was deleted", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `${make} delete e.errors; console.log(JSON.stringify(Bun.inspect(e)));`,
+    ]);
+    expect(JSON.parse(stdout)).toContain(header);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("errors is an accessor: the members it returns are printed", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `${make}
+       Object.defineProperty(e, "errors", { get() { return [new Error("from the getter")]; } });
+       console.error(e);
+       console.log("after");`,
+    ]);
+    expect(stderr).toContain("error: from the getter");
+    expect(stderr).not.toContain(header);
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("members are still printed in place of the AggregateError", async () => {
+    const { stderr, exitCode } = await run([
+      "-e",
+      'throw new AggregateError([new Error("first member"), new TypeError("second member")], "outer message");',
+    ]);
+    expect(stderr).toContain("error: first member");
+    expect(stderr).toContain("TypeError: second member");
+    expect(stderr).not.toContain(header);
+    expect(exitCode).toBe(1);
+  });
+
+  // Without any user code: a module with two or more build errors rejects its
+  // first load with an AggregateError of BuildMessages. JSC settles every later
+  // load of it from the module registry with a copy made by
+  // JSModuleLoader::duplicateError, which keeps the error type and message but
+  // not the `errors` property.
+  const broken = {
+    "broken.ts": "export function f() {\n  const v = {b: {},),r,};\n}\n",
+  };
+
+  test("the error a second load of a module that failed to build rejects with", async () => {
+    const { stdout, stderr, exitCode } = await run(["main.ts"], {
+      ...broken,
+      "main.ts": `
+        const seen = [];
+        for (let i = 0; i < 2; i++) {
+          try {
+            await import("./broken.ts");
+          } catch (e) {
+            seen.push(e.constructor.name);
+            if (i === 1) console.error(e);
+          }
+        }
+        console.log(JSON.stringify(seen));
+      `,
+    });
+    expect(stdout).toBe('["AggregateError","AggregateError"]\n');
+    expect(stderr).toContain("broken.ts");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/36963
+  test("bun test: two files import a module that failed to build", async () => {
+    const importer = 'import { f } from "./broken.ts";\nf();\n';
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
+      ...broken,
+      "a.test.ts": importer,
+      "b.test.ts": importer,
+    });
+    expect(stderr).toContain("a.test.ts:");
+    expect(stderr).toContain("b.test.ts:");
+    expect(stderr).toContain("across 2 files");
+    expect(exitCode).toBe(1);
+  });
+});

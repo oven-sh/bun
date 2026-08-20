@@ -4857,12 +4857,6 @@ CPP_DECL double Bun__JSValue__toNumber(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     return value.toInt32(arg1);
 }
 
-JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global)
-{
-    JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
-    return JSC::JSValue::encode(obj->getDirect(global->vm(), global->vm().propertyNames->errors));
-}
-
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsTDZValue()
 {
     return JSC::JSValue::encode(JSC::jsTDZValue());
@@ -5316,6 +5310,7 @@ enum class BuiltinNamesMap : uint8_t {
     type,
     signal,
     cmd,
+    errors,
     // Private names below: set by builtins via $putByIdDirectPrivate, unreachable from user code.
     internal,
     sharedFd,
@@ -5397,6 +5392,9 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::cmd: {
         return clientData->builtinNames().cmdPublicName();
+    }
+    case BuiltinNamesMap::errors: {
+        return vm.propertyNames->errors;
     }
     case BuiltinNamesMap::internal: {
         return clientData->builtinNames().internalPrivateName();

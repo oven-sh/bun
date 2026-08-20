@@ -140,6 +140,7 @@ function innerFail(obj) {
   const objMessage = obj.message;
   if (objMessage instanceof Error) throw objMessage;
 
+  if (AssertionError === undefined) loadAssertionError();
   throw new AssertionError(obj);
 }
 

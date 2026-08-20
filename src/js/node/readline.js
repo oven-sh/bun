@@ -517,6 +517,9 @@ Object.defineProperty(__node_module__.exports, "promises", {
   get() {
     return (promises ??= require("node:readline/promises"));
   },
+  set(value) {
+    Object.defineProperty(__node_module__.exports, "promises", { value, writable: true, enumerable: true, configurable: true });
+  },
 });
 
 // Bun-internal hook consumed by pre-existing readline tests/utilities.

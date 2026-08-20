@@ -47,10 +47,11 @@ const copyProps = (src, dest) => {
   }
 };
 
+const SymbolIterator = Symbol.iterator;
 const makeSafe = (unsafe, safe) => {
   const unsafePrototype = unsafe.prototype;
   const safePrototype = safe.prototype;
-  if (Symbol.iterator in unsafePrototype) {
+  if (SymbolIterator in unsafePrototype) {
     const dummy = new unsafe();
     let next; // We can reuse the same `next` method.
 
@@ -61,7 +62,7 @@ const makeSafe = (unsafe, safe) => {
       const desc = Reflect.getOwnPropertyDescriptor(unsafePrototype, key);
       if (typeof desc.value === "function" && desc.value.length === 0) {
         const called = desc.value.$call(dummy) || {};
-        if (Symbol.iterator in (typeof called === "object" ? called : {})) {
+        if (SymbolIterator in (typeof called === "object" ? called : {})) {
           const createIterator = uncurryThis(desc.value);
           next ??= uncurryThis(createIterator(dummy).next);
           const SafeIterator = createSafeIterator(createIterator, next);
@@ -117,8 +118,6 @@ const SafePromiseAllReturnArrayLike = (promises, mapFn) => {
   return safePromiseAllCollect(promises, mapFn, returnVal);
 };
 
-let SafeWeakMap;
-
 export default {
   SafeArrayIterator,
   MapPrototypeGetSize: getGetter(Map, "size"),
@@ -141,16 +140,14 @@ export default {
       }
     },
   ),
-  get SafeWeakMap() {
-    return (SafeWeakMap ??= makeSafe(
-      WeakMap,
-      class SafeWeakMap extends WeakMap {
-        constructor(i) {
-          super(i);
-        }
-      },
-    ));
-  },
+  SafeWeakMap: makeSafe(
+    WeakMap,
+    class SafeWeakMap extends WeakMap {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
   SetPrototypeGetSize: getGetter(Set, "size"),
   TypedArrayPrototypeGetBuffer: getGetter(Uint8Array, "buffer"),
   TypedArrayPrototypeGetByteLength: getGetter(Uint8Array, "byteLength"),

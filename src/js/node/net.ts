@@ -4381,7 +4381,7 @@ Server.prototype[kArmHandshakeTimeout] = function (socket) {
   initAcceptedTLSSocket(this, socket);
 };
 
-export default {
+const netExports = {
   createServer,
   Server,
   createConnection,
@@ -4402,14 +4402,15 @@ export default {
     return lazyBlockList();
   },
   set BlockList(value) {
-    BlockList = value;
+    Object.defineProperty(netExports, "BlockList", { value, writable: true, enumerable: true, configurable: true });
   },
   get SocketAddress() {
     return (SocketAddress ??= $rust("node_net_binding.rs", "SocketAddress"));
   },
   set SocketAddress(value) {
-    SocketAddress = value;
+    Object.defineProperty(netExports, "SocketAddress", { value, writable: true, enumerable: true, configurable: true });
   },
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
 } as any as typeof import("node:net");
+export default netExports;

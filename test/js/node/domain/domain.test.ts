@@ -119,17 +119,24 @@ describe("node:domain", () => {
       seen = e;
     });
     let activeInIntercept: unknown;
-    const fn = d.intercept(function (data: number) {
+    const inner = function (data: number) {
       activeInIntercept = domain.active;
       return data * 2;
-    });
+    };
+    const fn = d.intercept(inner);
     expect(fn(null, 21)).toBe(42);
     expect(activeInIntercept).toBe(d);
     expect(process.domain).toBeUndefined();
 
+    // Like node, a truthy non-Error first argument is dropped, not routed.
+    expect(fn("not-an-error", 21)).toBe(42);
+    expect(seen).toBeUndefined();
+
     const err = new Error("intercepted");
     fn(err);
     expect(seen).toBe(err);
+    expect(seen.domainBound).toBe(inner);
+    expect(seen.domainThrown).toBe(false);
   });
 
   it("enter and exit maintain the domain stack", () => {

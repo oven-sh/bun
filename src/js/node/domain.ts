@@ -100,7 +100,9 @@ class Domain extends EventEmitter {
     const self = this;
     const emitError = this[kEmitError];
     return function (err) {
-      if (err) {
+      // Like node, only an Error first argument is routed. Anything else is dropped.
+      if (err instanceof Error) {
+        err.domainBound = fn;
         emitError(err);
         return;
       }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { SourceMapConsumer } from "source-map";
 
@@ -398,16 +398,23 @@ body { color: blue; }`,
       "app.js": `console.log("test");`,
     });
 
+    // Without --outfile the CLI writes `<entry basename>` into its cwd, so the
+    // cwd has to be the temp dir or the executable is left in the test runner's cwd.
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--target=browser", `${dir}/app.js`],
       env: bunEnv,
+      cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });
 
-    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Non-HTML entrypoints with --compile --target=browser should fall back to normal bun compile
-    expect(exitCode).toBe(0);
+    expect({ stderr, exitCode, executable: existsSync(`${dir}/${isWindows ? "app.exe" : "app"}`) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      executable: true,
+    });
   });
 
   test("fails with splitting", async () => {

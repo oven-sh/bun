@@ -383,7 +383,7 @@ impl JunitReporter {
         let dir = FileSystem::instance().top_level_dir;
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
-            let file = resolve_path::relative(dir, source_url.slice());
+            let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
             let func = frame.function_name.to_utf8();
             if file.is_empty() && func.slice().is_empty() {
                 continue;

@@ -77,6 +77,12 @@ describe("Bun.deepMatch", () => {
       new Set(["a", "b", "c"]),
       new Set(["a", "b", "c"]),
     ],
+
+    // Headers / URLSearchParams are compared by their entries
+    [new Headers({ a: "1", b: "2" }), new Headers({ b: "2", a: "1" })],
+    [{ headers: new Headers({ a: "1" }) }, { headers: new Headers({ a: "1" }), status: 200 }],
+    [new URLSearchParams("a=1&b=2"), new URLSearchParams("a=1&b=2")],
+    [{ query: new URLSearchParams("a=1") }, { query: new URLSearchParams("a=1"), path: "/" }],
   ])("Bun.deepMatch(%p, %p) === true", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(true);
   });
@@ -133,6 +139,14 @@ describe("Bun.deepMatch", () => {
     //   new Set(["a", "b", "c"]),
     //   new Set(["a", "b", "d"]),
     // ],
+
+    // Headers / URLSearchParams: every entry has to match, the entries themselves are not subset-matched
+    [new Headers({ a: "1" }), new Headers({ a: "2" })],
+    [{ headers: new Headers({ a: "1" }) }, { headers: new Headers({ b: "1" }), status: 200 }],
+    [{ headers: new Headers({ a: "1" }) }, { headers: new Headers({ a: "1", b: "2" }) }],
+    [new URLSearchParams("a=1"), new URLSearchParams("a=2")],
+    [{ query: new URLSearchParams("a=1") }, { query: new URLSearchParams("b=1"), path: "/" }],
+    [{ query: new URLSearchParams("a=1") }, { query: new URLSearchParams("a=1&b=2") }],
   ])("Bun.deepMatch(%p, %p) === false", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(false);
   });

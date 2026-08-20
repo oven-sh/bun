@@ -38,36 +38,43 @@ function git(cwd: string, ...args: string[]) {
   return run(cwd, ["git", ...args], `git ${args.join(" ")}`);
 }
 
-// The fixture packages are `@scope/pkg-<letter>`; each one's branch, tarball
-// and the marker its index.js exports are named `pkg-<letter>`.
+// The fixture packages are `@scope/pkg-<letter>`. Each one's branch or tarball
+// is named `pkg-<letter>`, and so is the marker its index.js exports, which is
+// how a test tells what got installed (a later commit exports its own marker).
 const letters = "abcdefghijklmnop".split("");
 const nameOf = (l: string) => `@scope/pkg-${l}`;
 const markers = (installed: string[]) => Object.fromEntries(installed.map(l => [nameOf(l), `pkg-${l}`]));
 
 interface BranchPackage {
-  name: string;
+  name?: string;
   branch: string;
   dependencies?: Record<string, string>;
+  /** Files committed next to package.json; an `index.js` entry replaces the default one. */
+  files?: Record<string, string>;
 }
 
 function indexJs(marker: string) {
   return `module.exports = ${JSON.stringify(marker)};\n`;
 }
 
-function packageFiles(pkg: BranchPackage): Record<string, string> {
+function packageFiles(name: string | undefined, marker: string, dependencies?: Record<string, string>) {
   return {
-    "package.json": JSON.stringify({ name: pkg.name, version: "1.0.0", dependencies: pkg.dependencies }, null, 2),
-    "index.js": indexJs(pkg.branch),
+    "package.json": JSON.stringify({ name, version: "1.0.0", dependencies }),
+    "index.js": indexJs(marker),
   };
 }
 
 interface Commit {
-  branch: string;
+  /** The full name of the ref the commit lands on: `refs/heads/<branch>` or `refs/tags/<tag>`. */
+  ref: string;
+  /**
+   * The ref or commit the new commit extends, as the repo has it before this
+   * call; its files carry over unless `files` replaces them. Without it the
+   * commit has no parent.
+   */
+  from?: string;
   message: string;
   files: Record<string, string>;
-  // Commit on top of the branch's current tip, keeping the files not listed
-  // in `files`. Otherwise the branch is new and the commit has no parent.
-  extend?: boolean;
 }
 
 function fastImportData(text: string) {
@@ -75,15 +82,17 @@ function fastImportData(text: string) {
 }
 
 // Writes the commits to the bare repo with a single `git fast-import`, so a
-// fixture costs the same two processes however many branches it has, then
+// fixture costs the same two processes however many refs it has, then
 // regenerates the static files that dumb HTTP clients read.
 async function commitTo(bare: string, commits: Commit[]) {
   let stream = "";
-  for (const { branch, message, files, extend } of commits) {
-    stream += `commit refs/heads/${branch}\n`;
+  for (const { ref, from, message, files } of commits) {
+    stream += `commit ${ref}\n`;
     stream += `committer ${gitEnv.GIT_COMMITTER_NAME} <${gitEnv.GIT_COMMITTER_EMAIL}> 0 +0000\n`;
     stream += fastImportData(message);
-    if (extend) stream += `from refs/heads/${branch}^0\n`;
+    // `^0` makes fast-import look the name up in the repo instead of in this
+    // stream, so a commit can extend the very ref it updates.
+    if (from) stream += `from ${from}^0\n`;
     for (const [path, contents] of Object.entries(files)) {
       stream += `M 100644 inline ${path}\n${fastImportData(contents)}`;
     }
@@ -93,25 +102,34 @@ async function commitTo(bare: string, commits: Commit[]) {
   await git(bare, "update-server-info");
 }
 
-// Creates `<root>/shared-repo.git`, a bare repo with one branch per package
-// (a single root commit each), ready to be served over dumb HTTP.
-async function makeSharedRepo(root: string, packages: BranchPackage[]): Promise<string> {
-  const bare = join(root, "shared-repo.git");
-  await git(root, "init", "-q", "--bare", "shared-repo.git");
+// Creates `<root>/<repoName>`, a bare repo with one branch per package (a
+// single root commit each), ready to be served over dumb HTTP.
+async function makeSharedRepo(
+  root: string,
+  packages: BranchPackage[],
+  repoName: string = "shared-repo.git",
+): Promise<string> {
+  const bare = join(root, repoName);
+  await git(root, "init", "-q", "--bare", repoName);
   await commitTo(
     bare,
-    packages.map(pkg => ({ branch: pkg.branch, message: pkg.branch, files: packageFiles(pkg) })),
+    packages.map(pkg => ({
+      ref: `refs/heads/${pkg.branch}`,
+      message: pkg.branch,
+      files: { ...packageFiles(pkg.name, pkg.branch, pkg.dependencies), ...pkg.files },
+    })),
   );
   return bare;
 }
 
 // Adds a commit to `branch` that changes the marker its index.js exports.
 function moveBranch(bare: string, branch: string, marker: string) {
-  return commitTo(bare, [{ branch, message: marker, files: { "index.js": indexJs(marker) }, extend: true }]);
+  const ref = `refs/heads/${branch}`;
+  return commitTo(bare, [{ ref, from: ref, message: marker, files: { "index.js": indexJs(marker) } }]);
 }
 
 // branch -> commit SHA, read from the `info/refs` that `update-server-info`
-// writes (one `<sha>\trefs/heads/<branch>` line per branch).
+// writes (one `<sha>\t<ref>` line per ref).
 function branchCommits(bare: string): Record<string, string> {
   const commits: Record<string, string> = {};
   for (const line of readFileSync(join(bare, "info", "refs"), "utf8").split("\n")) {
@@ -131,28 +149,26 @@ function serveStatic(root: string) {
   });
 }
 
-// Builds `@scope/pkg-<letter>` for every letter as a gzipped tarball in
-// memory; `dependencies` become pkg-a's. Like the `tar -czf <dir>` output it
-// stands in for, each archive starts with its root directory entry: for a
-// GitHub tarball bun reads the root directory's `<owner>-<repo>-<committish>`
-// name off that first entry and uses it as the resolved committish.
-async function packageTarballs(letters: string[], dependencies: Record<string, string>, dirOf: (l: string) => string) {
+// A gzipped tarball of `files` under `rootDir`, built in memory. Like the
+// `tar -czf <dir>` output it replaces, it starts with the root directory's own
+// entry: for a GitHub tarball bun reads the `<owner>-<repo>-<committish>` name
+// of that first entry and takes the committish as the resolved one.
+function tarballOf(rootDir: string, files: Record<string, string>) {
+  const entries: Record<string, string> = { [`${rootDir}/`]: "" };
+  for (const [path, contents] of Object.entries(files)) entries[`${rootDir}/${path}`] = contents;
+  return new Bun.Archive(entries, { compress: "gzip" }).bytes();
+}
+
+// letter -> the tarball of `@scope/pkg-<letter>`; `dependencies` become pkg-a's.
+async function packageTarballs(
+  letters: string[],
+  dependencies: Record<string, string>,
+  rootDirOf: (l: string) => string,
+) {
   const tarballs = new Map<string, Uint8Array>();
   for (const l of letters) {
-    const dir = dirOf(l);
-    const archive = new Bun.Archive(
-      {
-        [`${dir}/`]: "",
-        [`${dir}/package.json`]: JSON.stringify({
-          name: nameOf(l),
-          version: "1.0.0",
-          dependencies: l === "a" ? dependencies : undefined,
-        }),
-        [`${dir}/index.js`]: indexJs(`pkg-${l}`),
-      },
-      { compress: "gzip" },
-    );
-    tarballs.set(l, await archive.bytes());
+    const files = packageFiles(nameOf(l), `pkg-${l}`, l === "a" ? dependencies : undefined);
+    tarballs.set(l, await tarballOf(rootDirOf(l), files));
   }
   return tarballs;
 }

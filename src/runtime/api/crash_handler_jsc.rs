@@ -97,11 +97,7 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Triggers a segfault with the fault PC inside a system library (ntdll.dll,
-    /// libc) rather than inside bun's own executable. Windows: exercises the
-    /// fault-context unwinder, which must recover the bun frames that called
-    /// into the DLL. Everywhere: frame 0 of the trace string must name the
-    /// image it is in, the way a crash inside a `.node` addon names the addon.
+    /// Triggers a segfault with the fault PC inside a system library (ntdll.dll, libc) rather than inside bun's own image.
     #[bun_jsc::host_fn]
     fn js_segfault_in_dll(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
@@ -121,16 +117,13 @@ pub(crate) mod js_bindings {
         #[cfg(not(windows))]
         {
             const BAD_ADDRESS: usize = 0xDEADBEEF;
-            // libc's own `strlen`, not this executable's PLT stub for it (which
-            // is what `libc::strlen as usize` is in a non-PIE executable): the
-            // faulting pc has to be inside libc's image.
+            // Not `libc::strlen as usize`: in a non-PIE executable that is the PLT stub in bun's own image.
             // SAFETY: RTLD_NEXT is a valid pseudo-handle and the name is NUL-terminated.
             let strlen = unsafe { bun_sys::c::dlsym(bun_sys::c::RTLD_NEXT, c"strlen".as_ptr()) };
             if strlen.is_null() {
                 return Err(global.throw(format_args!("dlsym(RTLD_NEXT, \"strlen\") failed")));
             }
-            // Under ASAN bun's SIGSEGV handler is not installed (see `js_segfault`),
-            // so hand the handler the context the fault below would have given it.
+            // ASAN owns SIGSEGV (see `js_segfault`): hand the handler the context the fault below would produce.
             if Environment::ENABLE_ASAN {
                 crash_handler::crash_handler(
                     crash_handler::CrashReason::SegmentationFault(BAD_ADDRESS),
@@ -143,8 +136,7 @@ pub(crate) mod js_bindings {
             // SAFETY: the symbol is libc's `strlen`, which has this signature.
             let strlen: unsafe extern "C" fn(*const core::ffi::c_char) -> usize =
                 unsafe { core::mem::transmute(strlen) };
-            // SAFETY: intentionally reading from an invalid address so the
-            // fault happens inside libc for testing.
+            // SAFETY: intentionally reading from an invalid address so the fault happens inside libc.
             let len = unsafe { strlen(core::hint::black_box(BAD_ADDRESS as *const _)) };
             core::hint::black_box(len);
         }

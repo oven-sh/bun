@@ -5243,6 +5243,97 @@ describe("transitive file dependencies", () => {
       version: "1.1.1",
     });
   });
+
+  // Unlike the registry packages above, whose file: targets only exist once the
+  // package is installed, a local file: package's own file: dependency is on
+  // disk while resolving, so it is read like one declared by the root.
+  for (const linker of ["hoisted", "isolated"] as const) {
+    test(`${linker}: a file: dependency of a local file: package is resolved like a root one`, async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": JSON.stringify({
+            name: "foo",
+            dependencies: {
+              lib: "file:./vendor/lib",
+            },
+          }),
+          "vendor/lib/package.json": JSON.stringify({
+            name: "lib",
+            version: "1.0.0",
+            dependencies: {
+              tool: "file:../tool",
+            },
+          }),
+          "vendor/lib/index.js": `module.exports = "lib->" + require("tool");`,
+          "vendor/tool/package.json": JSON.stringify({
+            name: "tool",
+            version: "1.0.0",
+            bin: { tool: "cli.js" },
+            dependencies: {
+              "no-deps": "1.0.0",
+            },
+          }),
+          "vendor/tool/cli.js": `#!/usr/bin/env node\nconsole.log("tool");`,
+          "vendor/tool/index.js": `module.exports = "tool->no-deps@" + require("no-deps").version;`,
+        },
+      });
+      const libNodeModules =
+        linker === "hoisted"
+          ? join(packageDir, "node_modules", "lib", "node_modules")
+          : join(packageDir, "node_modules", ".bun", "lib@file+vendor+lib", "node_modules");
+
+      let { out } = await runBunInstall(env, packageDir);
+      expect(out).toContain("3 packages installed");
+
+      const lock = (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234");
+      expect(normalizeBunSnapshot(lock)).toMatchInlineSnapshot(`
+        "{
+          "lockfileVersion": 2,
+          "configVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "foo",
+              "dependencies": {
+                "lib": "file:./vendor/lib",
+              },
+            },
+          },
+          "packages": {
+            "lib": ["lib@file:vendor/lib", { "dependencies": { "tool": "file:../tool" } }],
+
+            "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+
+            "lib/tool": ["tool@file:vendor/tool", { "dependencies": { "no-deps": "1.0.0" }, "bin": { "tool": "cli.js" } }],
+          }
+        }"
+      `);
+
+      // Once from the package.json files, once from the lockfile they produced.
+      for (const frozenLockfile of [false, true]) {
+        if (frozenLockfile) {
+          await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+          ({ out } = await runBunInstall(env, packageDir, { frozenLockfile }));
+          expect(out).toContain("3 packages installed");
+        }
+
+        expect(await readdirSorted(join(libNodeModules, ".bin"))).toHaveBins(["tool"]);
+        expect(join(libNodeModules, ".bin", "tool")).toBeValidBin(join("..", "tool", "cli.js"));
+
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", `console.log(require("lib"))`],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [runOut, runErr, runExit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(runErr).toBe("");
+        expect(runOut).toBe("lib->tool->no-deps@1.0.0\n");
+        expect(runExit).toBe(0);
+      }
+    });
+  }
 });
 
 test("name from manifest is scoped and url encoded", async () => {

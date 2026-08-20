@@ -1,7 +1,7 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
-import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
+import { access, chmod, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -10613,7 +10613,7 @@ for (const field of ["resolutions", "overrides"]) {
         "packages": {
           "pkg-a": ["pkg-a@file:pkg-a", { "dependencies": { "shared": "1.0.0" } }],
 
-          "pkg-a/shared": ["shared@file:./vendor/shared", {}],
+          "pkg-a/shared": ["shared@file:vendor/shared", {}],
         }
       }"
     `);
@@ -10679,6 +10679,152 @@ it("installs the transitive file: dependency of a file: dependency", async () =>
     expect(runExit).toBe(0);
   }
 });
+
+// Where each linker puts the `node_modules` of the two file: packages that have
+// dependencies. Folder packages are never hoisted, so `tool` lives under `lib`.
+// (bun-install-registry.test.ts covers requiring a registry dependency of such a
+// package at runtime.)
+for (const [linker, libNodeModules, toolNodeModules, toolNodeModulesEntries] of [
+  [
+    "hoisted",
+    join("node_modules", "lib", "node_modules"),
+    join("node_modules", "lib", "node_modules", "tool", "node_modules"),
+    [".bin", "dev-only", "helper"],
+  ],
+  [
+    "isolated",
+    join("node_modules", ".bun", "lib@file+vendor+lib", "node_modules"),
+    join("node_modules", ".bun", "tool@file+vendor+tool", "node_modules"),
+    // the isolated store also links a package's own bins into its own entry
+    [".bin", "dev-only", "helper", "tool"],
+  ],
+] as const) {
+  it.concurrent(`${linker}: nested file: dependencies are installed with their dependencies and bins`, async () => {
+    using dir = tempDir("nested-file-dep-bins", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          lib: "file:./vendor/lib",
+        },
+      }),
+      "vendor/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: {
+          tool: "file:../tool",
+        },
+      }),
+      "vendor/tool/package.json": JSON.stringify({
+        name: "tool",
+        version: "1.0.0",
+        bin: { tool: "cli.js" },
+        dependencies: {
+          helper: "file:../helper",
+        },
+        devDependencies: {
+          "dev-only": "file:../dev-only",
+        },
+      }),
+      "vendor/tool/cli.js": "#!/bin/sh\necho tool\n",
+      "vendor/helper/package.json": JSON.stringify({
+        name: "helper",
+        version: "1.0.0",
+        bin: { helper: "cli.js" },
+      }),
+      "vendor/helper/cli.js": "#!/bin/sh\necho helper\n",
+      "vendor/dev-only/package.json": JSON.stringify({
+        name: "dev-only",
+        version: "1.0.0",
+      }),
+    });
+    const projectDir = String(dir);
+    const locks: string[] = [];
+
+    // The hoisted linker installs these packages as per-file symlinks and its bin
+    // chmod does not reach through them (#38777), so the scripts are made
+    // executable up front; what is checked below is that each .bin link runs
+    // the right script.
+    if (!isWindows) {
+      await chmod(join(projectDir, "vendor", "tool", "cli.js"), 0o755);
+      await chmod(join(projectDir, "vendor", "helper", "cli.js"), 0o755);
+    }
+
+    // The first pass resolves from the package.json files, the second installs
+    // what the first one recorded in bun.lock.
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+
+      await using proc = spawn({
+        cmd: [bunExe(), ...args, `--linker=${linker}`],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+      expect(err).not.toContain("error:");
+      expect(out).toContain("4 packages installed");
+      expect(exitCode).toBe(0);
+
+      locks.push(await file(join(projectDir, "bun.lock")).text());
+
+      expect(await readdirSorted(join(projectDir, libNodeModules, ".bin"))).toHaveBins(["tool"]);
+      expect(join(projectDir, libNodeModules, ".bin", "tool")).toBeValidBin(join("..", "tool", "cli.js"));
+      expect(await readdirSorted(join(projectDir, toolNodeModules))).toEqual(toolNodeModulesEntries);
+      expect(join(projectDir, toolNodeModules, ".bin", "helper")).toBeValidBin(join("..", "helper", "cli.js"));
+
+      if (!isWindows) {
+        for (const [bin, expected] of [
+          [join(libNodeModules, ".bin", "tool"), "tool\n"],
+          [join(toolNodeModules, ".bin", "helper"), "helper\n"],
+        ]) {
+          await using binProc = spawn({
+            cmd: [join(projectDir, bin)],
+            cwd: projectDir,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [binOut, binErr, binExit] = await Promise.all([
+            binProc.stdout.text(),
+            binProc.stderr.text(),
+            binProc.exited,
+          ]);
+          expect(binErr).toBe("");
+          expect(binOut).toBe(expected);
+          expect(binExit).toBe(0);
+        }
+      }
+    }
+
+    expect(locks[1]).toBe(locks[0]);
+    expect(normalizeBunSnapshot(locks[0], projectDir)).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "my-app",
+            "dependencies": {
+              "lib": "file:./vendor/lib",
+            },
+          },
+        },
+        "packages": {
+          "lib": ["lib@file:vendor/lib", { "dependencies": { "tool": "file:../tool" } }],
+
+          "lib/tool": ["tool@file:vendor/tool", { "dependencies": { "helper": "file:../helper" }, "devDependencies": { "dev-only": "file:../dev-only" }, "bin": { "tool": "cli.js" } }],
+
+          "lib/tool/dev-only": ["dev-only@file:vendor/dev-only", {}],
+
+          "lib/tool/helper": ["helper@file:vendor/helper", { "bin": { "helper": "cli.js" } }],
+        }
+      }"
+    `);
+  });
+}
 
 const fileDepCycleFixture = {
   "package.json": JSON.stringify({
@@ -10776,9 +10922,9 @@ it("installs file: dependencies that depend on each other", async () => {
 
         "b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
 
-        "a/b": ["b@file:packages/b", {}],
+        "a/b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
 
-        "b/a": ["a@file:packages/a", {}],
+        "b/a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
       }
     }"
   `);
@@ -10827,33 +10973,71 @@ it("installs file: dependencies that depend on each other from a lockfile that o
   `);
 });
 
-it("fails when a transitive file: dependency's folder does not exist", async () => {
-  using dir = tempDir("transitive-file-dep-missing", {
-    "package.json": JSON.stringify({
-      name: "my-app",
-      version: "1.0.0",
-      dependencies: {
-        lib: "file:./vendor/lib",
-      },
-    }),
-    "vendor/lib/package.json": JSON.stringify({
-      name: "lib",
-      version: "1.0.0",
-      dependencies: {
-        nested: "file:../nested",
-      },
-    }),
-    "vendor/lib/index.js": `module.exports = require("nested");`,
-  });
+const missingTransitiveFileDepFixture = {
+  "package.json": JSON.stringify({
+    name: "my-app",
+    version: "1.0.0",
+    dependencies: {
+      lib: "file:./vendor/lib",
+    },
+  }),
+  "vendor/lib/package.json": JSON.stringify({
+    name: "lib",
+    version: "1.0.0",
+    dependencies: {
+      nested: "file:../nested",
+    },
+  }),
+  "vendor/lib/index.js": `module.exports = require("nested");`,
+};
 
-  const { stdout, stderr, exited } = spawn({
+it.concurrent("fails to resolve when a transitive file: dependency's folder does not exist", async () => {
+  using dir = tempDir("transitive-file-dep-missing", missingTransitiveFileDepFixture);
+
+  await using proc = spawn({
     cmd: [bunExe(), "install"],
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
     env,
   });
-  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+  // Same failure as a missing file: dependency of the root: the folder is read
+  // while resolving, so nothing is installed and no lockfile is written.
+  expect(normalizeBunSnapshot(err, String(dir))).toMatchInlineSnapshot(`
+    "error: Could not find package.json for "file:vendor/nested" dependency "nested"
+    error: nested@file:../nested failed to resolve"
+  `);
+  expect(out).not.toContain("packages installed");
+  expect(await exists(join(String(dir), "bun.lock"))).toBe(false);
+  expect(await exists(join(String(dir), "node_modules"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
+it.concurrent("fails to install a lockfile's transitive file: dependency whose folder is missing", async () => {
+  using dir = tempDir("transitive-file-dep-missing-lock", {
+    ...missingTransitiveFileDepFixture,
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      workspaces: {
+        "": { name: "my-app", dependencies: { lib: "file:./vendor/lib" } },
+      },
+      packages: {
+        "lib": ["lib@file:vendor/lib", { dependencies: { nested: "file:../nested" } }],
+        "lib/nested": ["nested@file:vendor/nested", {}],
+      },
+    }),
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
   // The printed folder path uses the platform separator on Windows.
   expect(err.replaceAll(sep, "/")).toContain('Could not find folder "file:vendor/nested" for dependency "nested"');

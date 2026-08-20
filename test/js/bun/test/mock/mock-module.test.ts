@@ -8,6 +8,7 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -165,4 +166,34 @@ test("mocking a builtin", async () => {
 
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
+});
+
+// Runs in a child so the mock of "bun" does not outlive this test. A literal
+// import("bun") used to be rewritten by the transpiler and skip the module
+// registry, so only the non-literal form saw the mock.
+test('mocking "bun" applies to a literal import("bun") like it does to a computed specifier', async () => {
+  using dir = tempDir("mock-bun-module", {
+    "mock-bun.test.ts": `
+      import { expect, mock, test } from "bun:test";
+
+      test("literal and computed import() of bun agree", async () => {
+        mock.module("bun", () => ({ mocked: true }));
+        const literal = await import("bun");
+        const computed = await import(eval("'bun'"));
+        expect(literal.mocked).toBe(true);
+        expect(literal).toBe(computed);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "mock-bun.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass\n");
+  expect(stderr).toContain(" 0 fail\n");
+  expect(exitCode).toBe(0);
 });

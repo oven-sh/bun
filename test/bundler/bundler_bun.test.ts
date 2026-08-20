@@ -3,6 +3,41 @@ import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
+  // import("bun") is left for the runtime, which resolves it to the "bun" module
+  // namespace (default = Bun plus a named export per property), the same thing a
+  // non-literal specifier gets. require("bun") is still inlined to globalThis.Bun,
+  // which is also what the runtime returns for a non-literal require().
+  itBundled("bun/dynamic-import-bun-is-module-namespace", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        const ns = await import("bun");
+        console.log(Object.prototype.toString.call(ns), ns.default === Bun, ns.serve === Bun.serve);
+        console.log(require("bun") === Bun);
+      `,
+    },
+    run: { stdout: "[object Module] true true\ntrue" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").toContain('import("bun")');
+      api.expectFile("out.js").not.toContain("Promise.resolve(globalThis.Bun)");
+    },
+  });
+  // --minify-syntax inlines the const, so the import() reaches the printer as a literal.
+  itBundled("bun/dynamic-import-bun-inlined-const", {
+    target: "bun",
+    minifySyntax: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const specifier = "bun";
+        const ns = await import(specifier);
+        console.log(Object.prototype.toString.call(ns), ns.default === Bun, ns.serve === Bun.serve);
+      `,
+    },
+    run: { stdout: "[object Module] true true" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").toContain('import("bun")');
+    },
+  });
   // https://github.com/oven-sh/bun/issues/18899
   itBundled("bun/import-bun-format-cjs", {
     target: "bun",

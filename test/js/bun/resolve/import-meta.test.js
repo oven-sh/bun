@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
-import { expect, it, mock } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { describe, expect, it, mock } from "bun:test";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
@@ -224,8 +224,43 @@ it('require("bun") works', () => {
   expect(require("bun")).toBe(Bun);
 });
 
-it('import("bun") works', async () => {
-  expect(await import("bun")).toBe(Bun);
+it('import("bun") returns the "bun" module namespace', async () => {
+  const ns = await import("bun");
+  expect(ns.default).toBe(Bun);
+  expect(ns.serve).toBe(Bun.serve);
+  // Same module record as a specifier the transpiler cannot see through.
+  expect(ns).toBe(await import(eval("'bun'")));
+});
+
+// Whether `import(specifier)` reaches the printer as a literal depends on const
+// inlining, which only applies to a const declared before any other statement in
+// its scope. What comes back must not depend on that.
+describe.concurrent('import() of "bun" resolves to the same thing however the specifier is written', () => {
+  it.each([
+    ["string literal", `const ns = await import("bun");`],
+    ["const declared first (inlined)", `const specifier = "bun"; const ns = await import(specifier);`],
+    [
+      "const declared after an import (not inlined)",
+      `import "./empty.mjs"; const specifier = "bun"; const ns = await import(specifier);`,
+    ],
+    ["let", `let specifier = "bun"; const ns = await import(specifier);`],
+  ])("%s", async (_, source) => {
+    using dir = tempDir("import-bun", {
+      "empty.mjs": "",
+      "entry.mjs": `${source}\nconsole.log(Object.prototype.toString.call(ns), ns.default === Bun, ns.serve === Bun.serve);\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("[object Module] true true\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("require.resolve with empty options object", () => {

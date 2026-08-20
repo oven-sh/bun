@@ -2478,31 +2478,17 @@ pub(crate) mod __gated_printer {
             let module_type = self.options.module_type;
 
             if IS_BUN_PLATFORM {
-                // "bun" is not a real module. It's just globalThis.Bun.
-                //
-                //  transform from:
-                //      const foo = await import("bun")
-                //      const bar = require("bun")
-                //
-                //  transform to:
-                //      const foo = await Promise.resolve(globalThis.Bun)
-                //      const bar = globalThis.Bun
-                //
-                if record.tag == ImportRecordTag::Bun {
-                    if record.kind == ImportKind::Dynamic {
-                        self.print(b"Promise.resolve(globalThis.Bun)");
-                        if wrap {
-                            self.print(b")");
-                        }
-                        return;
-                    } else if record.kind == ImportKind::Require || record.kind == ImportKind::Stmt
-                    {
-                        self.print(b"globalThis.Bun");
-                        if wrap {
-                            self.print(b")");
-                        }
-                        return;
+                // import("bun") is excluded: the loader returns the module namespace for it,
+                // and a specifier that escapes const inlining reaches the loader anyway, so
+                // the literal form has to resolve to that same namespace.
+                if record.tag == ImportRecordTag::Bun
+                    && (record.kind == ImportKind::Require || record.kind == ImportKind::Stmt)
+                {
+                    self.print(b"globalThis.Bun");
+                    if wrap {
+                        self.print(b")");
                     }
+                    return;
                 }
             }
 

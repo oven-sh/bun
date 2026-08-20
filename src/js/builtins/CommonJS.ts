@@ -106,34 +106,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
-    try {
-      out = $requireESM(id);
-    } catch (exception) {
-      // Since the ESM code is mostly JS, we need to handle exceptions here.
-      $requireMap.$delete(id);
-      throw exception;
-    }
-
-    // If we can pull out a ModuleNamespaceObject, let's do it.
-    const namespace = $esmNamespaceForCjs(id);
-    if (namespace !== undefined) {
-      // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-      // Various libraries expect __esModule to be set when using ESM from require().
-      // We don't want to always inject the __esModule export into every module,
-      // And creating an Object wrapper causes the actual exports to not be own properties.
-      // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-      // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-      // https://github.com/oven-sh/bun/issues/14411
-      if (namespace.__esModule === undefined) {
-        try {
-          namespace.__esModule = true;
-        } catch {
-          // https://github.com/oven-sh/bun/issues/17816
-        }
-      }
-
-      return (mod.exports = namespace["module.exports"] ?? namespace);
-    }
+    $requireESMIntoModule.$call(mod, id);
+    return mod.exports;
   }
 
   const c = $evaluateCommonJSModule(mod, this);
@@ -313,49 +287,45 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 }
 */
 
+// Also bound as import.meta.bakeBuiltin, so this returns the namespace unshaped.
 $visibility = "Private";
 export function requireESM(this, resolved: string) {
   var exports = $esmNamespaceForCjs(resolved);
   if (exports === undefined) {
     exports = $loadEsmIntoCjs(resolved);
   }
-  if (exports === undefined) {
-    throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
-  }
   return exports;
 }
 
-export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
+// Also called from C++ by the builtin Module._extensions loaders (JSCommonJSExtensions.cpp).
+$visibility = "Private";
+export function requireESMIntoModule(this: JSCommonJSModule, id: string) {
   $assert(this);
+  let namespace: any;
   try {
-    $requireESM(id);
+    namespace = $requireESM(id);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
     $requireMap.$delete(id);
     throw exception;
   }
 
-  // If we can pull out a ModuleNamespaceObject, let's do it.
-  const namespace = $esmNamespaceForCjs(id);
-  if (namespace !== undefined) {
-    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-    // Various libraries expect __esModule to be set when using ESM from require().
-    // We don't want to always inject the __esModule export into every module,
-    // And creating an Object wrapper causes the actual exports to not be own properties.
-    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-    // https://github.com/oven-sh/bun/issues/14411
-    if (namespace.__esModule === undefined) {
-      try {
-        namespace.__esModule = true;
-      } catch {
-        // https://github.com/oven-sh/bun/issues/17816
-      }
+  // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
+  // Various libraries expect __esModule to be set when using ESM from require().
+  // We don't want to always inject the __esModule export into every module,
+  // And creating an Object wrapper causes the actual exports to not be own properties.
+  // So instead of either of those, we make it so that the __esModule property can be set at runtime.
+  // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
+  // https://github.com/oven-sh/bun/issues/14411
+  if (namespace.__esModule === undefined) {
+    try {
+      namespace.__esModule = true;
+    } catch {
+      // https://github.com/oven-sh/bun/issues/17816
     }
-
-    this.exports = namespace["module.exports"] ?? namespace;
-    return;
   }
+
+  this.exports = namespace["module.exports"] ?? namespace;
 }
 
 $visibility = "Private";

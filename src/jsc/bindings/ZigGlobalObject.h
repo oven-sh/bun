@@ -312,7 +312,7 @@ public:
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
     Bun::JSCommonJSExtensions* lazyRequireExtensionsObject() const { return m_lazyRequireExtensionsObject.getInitializedOnMainThread(this); }
     JSC::JSFunction* modulePrototypeUnderscoreCompileFunction() const { return m_modulePrototypeUnderscoreCompileFunction.getInitializedOnMainThread(this); }
-    JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* requireESMIntoModuleFunction() const { return m_commonJSRequireESMIntoModuleFunction.getInitializedOnMainThread(this); }
 
     Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
@@ -517,7 +517,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMIntoModuleFunction)                \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeModuleConstructor)                                 \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapEntryStructure)                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapOriginStructure)                   \

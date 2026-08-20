@@ -280,13 +280,13 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     RETURN_IF_EXCEPTION(scope, {});
     if (result == jsNumber(-1)) {
         // ESM
-        JSC::JSFunction* requireESM = global->requireESMFromHijackedExtension();
+        JSC::JSFunction* requireESMIntoModule = global->requireESMIntoModuleFunction();
         JSC::MarkedArgumentBuffer args;
         args.append(specifier);
-        JSC::CallData callData = JSC::getCallData(requireESM);
+        JSC::CallData callData = JSC::getCallData(requireESMIntoModule);
         ASSERT(callData.type == JSC::CallData::Type::JS);
         NakedPtr<JSC::Exception> returnedException = nullptr;
-        JSC::profiledCall(global, JSC::ProfilingReason::API, requireESM, callData, mod, args, returnedException);
+        JSC::profiledCall(global, JSC::ProfilingReason::API, requireESMIntoModule, callData, mod, args, returnedException);
         if (returnedException) [[unlikely]] {
             throwException(globalObject, scope, returnedException->value());
             return {};

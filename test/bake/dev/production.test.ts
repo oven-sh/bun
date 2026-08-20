@@ -441,6 +441,115 @@ export default function Docs() {
     expect(exitCode).toBe(1);
   });
 
+  // The output directory of a pre-rendered page is built from the route's parts, so any param name the router accepts works.
+  describe.concurrent("static output paths for dynamic routes", () => {
+    // A custom framework: each page lists its params in a `params` export and renders to the params it received.
+    const framework = {
+      "bun.app.ts": `export default {
+        app: { framework: { fileSystemRouterTypes: [{ root: "pages", style: "nextjs-pages", serverEntryPoint: "./server.ts" }] } },
+      };`,
+      "server.ts": `
+        export function render() { return new Response("unused"); }
+        export function prerender(meta) { return { files: { "/index.html": JSON.stringify(meta.params) } }; }
+        export function getParams(meta) { return { pages: meta.pageModule.params }; }
+      `,
+      "pages/index.ts": `export default () => "index";`,
+    };
+    const page = (...params: object[]) => `export const params = ${JSON.stringify(params)}; export default () => "";`;
+
+    async function build(files: Record<string, string>) {
+      using dir = tempDir("bake-production-ssg-paths", { ...framework, ...files });
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+        .cwd(String(dir))
+        .env(bunEnv)
+        .quiet()
+        .throws(false);
+      const html = Array.from(new Bun.Glob("**/index.html").scanSync(path.join(String(dir), "dist")))
+        .map(p => normalizePath(p))
+        .sort();
+      return { exitCode, html, error: stderr.toString().match(/error: (.*)/)?.[1] ?? null };
+    }
+
+    test("param names that are not identifiers, and catch-all values joined by slashes", async () => {
+      expect(
+        await build({
+          "pages/posts/[post-id].ts": page({ "post-id": "hello" }, { "post-id": "wörld" }),
+          "pages/u/[üser].ts": page({ üser: "alice" }),
+          "pages/docs/[...slug].ts": page({ slug: ["a", "b"] }, { slug: "c" }),
+        }),
+      ).toEqual({
+        exitCode: 0,
+        error: null,
+        html: [
+          "docs/a/b/index.html",
+          "docs/c/index.html",
+          "index.html",
+          "posts/hello/index.html",
+          "posts/wörld/index.html",
+          "u/alice/index.html",
+        ],
+      });
+    });
+
+    test("a missing or mistyped param names the param and the route", async () => {
+      expect(await build({ "pages/posts/[post-id].ts": page({ post: "hello" }) })).toEqual({
+        exitCode: 1,
+        error: `Missing param "post-id" for route ${JSON.stringify(platformPath("pages/posts/[post-id].ts"))}`,
+        html: ["index.html"],
+      });
+      expect(await build({ "pages/posts/[post-id].ts": page({ "post-id": ["a", "b"] }) })).toEqual({
+        exitCode: 1,
+        error: `Param "post-id" for route ${JSON.stringify(platformPath("pages/posts/[post-id].ts"))} must be a non-empty string, got [ "a", "b" ]`,
+        html: ["index.html"],
+      });
+    });
+  });
+
+  // The Next.js "opting specific segments into a layout" structure: each group's layout wraps only the pages inside that group.
+  test.concurrent("route group layouts build and wrap only their own pages", async () => {
+    const layout = (name: string) => `export const name = ${JSON.stringify(name)};`;
+    const page = `export default () => "";`;
+    using dir = tempDir("bake-production-route-groups", {
+      "bun.app.ts": `export default {
+        app: {
+          framework: {
+            fileSystemRouterTypes: [{ root: "app", style: "nextjs-app-ui", serverEntryPoint: "./server.ts", layouts: true }],
+          },
+        },
+      };`,
+      // Each page is rendered to the names of its layouts, innermost first.
+      "server.ts": `
+        export function render() { return new Response("unused"); }
+        export function prerender(meta) { return { files: { "/index.html": meta.layouts.map(l => l.name).join(" < ") } }; }
+      `,
+      "app/layout.ts": layout("root"),
+      "app/page.ts": page,
+      "app/(marketing)/layout.ts": layout("marketing"),
+      "app/(marketing)/about/page.ts": page,
+      "app/(shop)/layout.ts": layout("shop"),
+      "app/(shop)/cart/page.ts": page,
+      "app/other/page.ts": page,
+    });
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .quiet()
+      .throws(false);
+    expect(stderr.toString()).not.toContain("ambiguous");
+    const dist = path.join(String(dir), "dist");
+    const rendered: Record<string, string> = {};
+    for (const html of new Bun.Glob("**/index.html").scanSync(dist)) {
+      rendered[normalizePath(html)] = await Bun.file(path.join(dist, html)).text();
+    }
+    expect(rendered).toEqual({
+      "index.html": "root",
+      "about/index.html": "marketing < root",
+      "cart/index.html": "shop < root",
+      "other/index.html": "root",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("rejects a non-array plugins option", async () => {
     using dir = tempDir("bake-production-plugins-not-array", {
       "server.ts": `export function render() { return new Response("unused"); }`,
@@ -495,6 +604,95 @@ export function prerender(meta) { return { files: { "/index.html": String(meta.p
 
       const rejected = `'fileSystemRouterTypes[0].prefix' other than "/" is not supported yet`;
       expect(Object.fromEntries(results)).toStrictEqual({ null: 0, "/": 0, "/docs": rejected, "": rejected });
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
+
+  test(
+    "bundlerOptions reach the bundler for their graph",
+    async () => {
+      // Custom framework: no react install needed. The page renders a `define`d global and logs while
+      // prerendering; the client entry logs too and imports a package with a "custom" export condition.
+      const files = {
+        "server.ts": `export function render() { return new Response("unused"); }
+export function prerender(meta) { return { files: { "/index.html": String(meta.pageModule.default()) } }; }`,
+        "routes/index.ts": `console.log("prerender-marker"); export default () => "mark:" + String(globalThis.MARK);`,
+        "client.ts": `import { value } from "cond-pkg";
+export function add(first, second) { const sum = first + second; console.log("client-marker", sum, value); return sum; }
+globalThis.add = add;`,
+        "node_modules/cond-pkg/package.json": JSON.stringify({
+          name: "cond-pkg",
+          version: "1.0.0",
+          exports: { ".": { custom: "./custom.js", default: "./default.js" } },
+        }),
+        "node_modules/cond-pkg/custom.js": `export const value = "resolved:custom";`,
+        "node_modules/cond-pkg/default.js": `export const value = "resolved:default";`,
+        "bun.app.ts": `
+        const { app = {}, framework = {} } = JSON.parse(process.env.BUNDLER_OPTIONS_JSON!);
+        export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" }],
+              bundlerOptions: framework,
+            },
+            bundlerOptions: app,
+          },
+        };
+      `,
+      };
+      const build = async (options: { app?: object; framework?: object }) => {
+        using dir = tempDir("bake-production-bundler-options", files);
+        const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+          .cwd(String(dir))
+          .env({ ...bunEnv, BUNDLER_OPTIONS_JSON: JSON.stringify(options) })
+          .quiet()
+          .throws(false);
+        const [clientChunk] = new Bun.Glob("dist/_bun/*.js").scanSync(String(dir));
+        expect(clientChunk, stderr.toString()).toBeDefined();
+        const client = await Bun.file(path.join(String(dir), clientChunk)).text();
+        return {
+          exitCode,
+          html: await Bun.file(path.join(String(dir), "dist", "index.html")).text(),
+          prerenderLogged: stdout.toString().includes("prerender-marker"),
+          clientLogs: client.includes("client-marker"),
+          clientCondition: client.match(/resolved:\w+/)?.[0],
+          // Minified output renames the parameters and drops the newlines inside the function.
+          clientReadable: client.includes("function add(first, second) {\n"),
+          // Syntax minification turns the `const` into a `let`.
+          clientConst: client.includes("const "),
+        };
+      };
+
+      const defaults = {
+        exitCode: 0,
+        html: "mark:undefined",
+        prerenderLogged: true,
+        clientLogs: true,
+        clientCondition: "resolved:default",
+        clientReadable: false,
+        clientConst: false,
+      };
+      const [base, defineAndConditions, drop, serverMinifyOff, clientMinifyOff] = await Promise.all([
+        build({}),
+        // The app's define replaces the framework's; the framework's client conditions still apply.
+        build({
+          framework: { server: { define: { "globalThis.MARK": '"framework"' } }, client: { conditions: ["custom"] } },
+          app: { server: { define: { "globalThis.MARK": '"app"' } } },
+        }),
+        build({ app: { server: { drop: ["console"] }, client: { drop: ["console"] } } }),
+        // Whitespace and identifier minification are link-wide and follow `server`; `false` used to be ignored.
+        build({ app: { server: { minify: false } } }),
+        // Syntax minification is per graph, so only the client keeps its `const`.
+        build({ app: { client: { minify: false } } }),
+      ]);
+      expect({ base, defineAndConditions, drop, serverMinifyOff, clientMinifyOff }).toStrictEqual({
+        base: defaults,
+        defineAndConditions: { ...defaults, html: "mark:app", clientCondition: "resolved:custom" },
+        // Dropping the client's console.log leaves the "cond-pkg" import unused, so it is shaken out too.
+        drop: { ...defaults, prerenderLogged: false, clientLogs: false, clientCondition: undefined },
+        serverMinifyOff: { ...defaults, clientReadable: true },
+        clientMinifyOff: { ...defaults, clientConst: true },
+      });
     },
     60_000 * WAIT_MULTIPLIER,
   );
@@ -1332,6 +1530,34 @@ export default function IndexPage() { return <div><Box>hydrated</Box><pre>{text}
   );
 
   test.concurrent(
+    "a binary flight row that ends mid UTF-8 sequence is inlined without losing bytes",
+    async () => {
+      // Over 2 KB, so Flight writes the bytes as their own chunk; valid UTF-8 except the last byte is half of an "é".
+      const dir = await tempDirWithBakeDeps("bake-production-flight-split-utf8", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `export default function IndexPage() {
+  return <div data-b={new Uint8Array(Buffer.alloc(2999, "é"))}>x</div>;
+}`,
+      });
+
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      if (exitCode !== 0) expect(stderr.toString()).toBe("");
+
+      const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+      const inlined = Buffer.concat(inlineFlightChunks(html).map(chunk => Buffer.from(chunk as any)));
+      const rsc = Buffer.from(await Bun.file(path.join(dir, "dist", "index.rsc")).arrayBuffer());
+      expect(rsc.readUInt32LE(0)).toBe(0);
+      expect(inlined.length).toBe(rsc.length - 4);
+      expect(inlined.equals(rsc.subarray(4))).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
+
+  test.concurrent(
     "a NUL byte in a flight row is escaped in the inline flight script",
     async () => {
       // All zeroes is valid UTF-8, so this row takes the quoted-string form, and HTML would turn a raw NUL into U+FFFD.
@@ -1490,8 +1716,18 @@ export default function OtherPage() {
         "pages/plain.tsx": `export default function PlainPage() {
   return <div>plain</div>;
 }`,
+        // The layout and its page import the same sheet, so they share one CSS chunk.
+        "pages/sub/_layout.tsx": `import "../s.css";
+export default function SubLayout({ children }) {
+  return <main>{children}</main>;
+}`,
+        "pages/sub/index.tsx": `import "../s.css";
+export default function SubPage() {
+  return <div>sub</div>;
+}`,
         "pages/a.css": `.a { color: red; }`,
         "pages/b.css": `.b { color: blue; }`,
+        "pages/s.css": `.s { color: green; }`,
       });
 
       const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
@@ -1506,7 +1742,7 @@ export default function OtherPage() {
       const cssByRule: Record<string, string> = {};
       for (const file of readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"))) {
         const text = await Bun.file(path.join(dir, "dist", "_bun", file)).text();
-        cssByRule[text.includes(".a") ? "a" : "b"] = `/_bun/${file}`;
+        cssByRule[text.includes(".a") ? "a" : text.includes(".b") ? "b" : "s"] = `/_bun/${file}`;
       }
 
       const route = async (route: string) => {
@@ -1522,10 +1758,16 @@ export default function OtherPage() {
         expect(buf.toString("utf8", 4 + header)).toMatch(/^\d+:/);
         return { links, rsc };
       };
-      expect({ index: await route(""), other: await route("other"), plain: await route("plain") }).toEqual({
+      expect({
+        index: await route(""),
+        other: await route("other"),
+        plain: await route("plain"),
+        sub: await route("sub"),
+      }).toEqual({
         index: { links: [cssByRule.a], rsc: [cssByRule.a] },
         other: { links: [cssByRule.b], rsc: [cssByRule.b] },
         plain: { links: [], rsc: [] },
+        sub: { links: [cssByRule.s], rsc: [cssByRule.s] },
       });
     },
     60_000 * WAIT_MULTIPLIER,

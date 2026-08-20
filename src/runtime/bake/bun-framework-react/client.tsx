@@ -435,13 +435,12 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
       let i = 0;
       let chunk;
       let len;
-      while (size > 0) {
+      while (i < size) {
         chunk = chunks.shift();
         const { byteLength } = chunk;
-        len = Math.min(byteLength, size);
+        len = Math.min(byteLength, size - i);
         buffer.set(len === byteLength ? chunk : chunk.subarray(0, len), i);
         i += len;
-        size -= len;
       }
       if (chunk.byteLength > len) {
         chunks.unshift(chunk.subarray(len));
@@ -450,13 +449,16 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
       return buffer;
     }
   };
-  const header = new Uint32Array(await readChunk(4))[0];
-  if (header === 0) {
+  const header = await readChunk(4);
+  // Little-endian u32, as written by `encodeCssHeader` in server.tsx.
+  const len = new DataView(header.buffer, header.byteOffset, 4).getUint32(0, true);
+  if (len === 0) {
     currentCssList = [];
   } else {
-    currentCssList = td.decode(await readChunk(header)).split("\n");
+    currentCssList = td.decode(await readChunk(len)).split("\n");
   }
   if (chunks.length === 0) {
+    reader.releaseLock();
     return stream;
   }
   // New readable stream that includes the remaining data

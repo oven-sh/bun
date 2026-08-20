@@ -7,7 +7,6 @@ use std::sync::OnceLock;
 
 use bstr::BStr;
 
-use super::PatternBuffer;
 use crate::bake;
 use crate::bake::bake_body;
 use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
@@ -957,8 +956,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         );
     }
 
-    // Route URL patterns with parameter placeholders.
-    // Examples: "/", "/about", "/blog/:slug", "/products/:category/:id"
+    // Each route's URL parts, root first, as `{ kind: "text" | "param" | "catchAll", value }` (see `RoutePart` in Bake.ts).
+    // Example: pages/blog/[post-id].tsx is [{ kind: "text", value: "blog" }, { kind: "param", value: "post-id" }]
     let route_patterns =
         JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
@@ -977,8 +976,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let route_source_files =
         JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
-    // Parameter names for dynamic routes (reversed order), null for static routes.
-    // Examples: ["slug"] for /blog/[slug], ["id", "category"] for /products/[category]/[id]
+    // Parameter names for dynamic routes, root first, null for static routes.
+    // Examples: ["slug"] for /blog/[slug], ["category", "id"] for /products/[category]/[id]
     let route_param_info =
         JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
@@ -987,13 +986,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let route_style_references =
         JSValue::create_empty_array(global, navigatable_routes.len()).map_err(js_err)?;
 
-    let mut params_buf: Vec<&[u8]> = Vec::new();
+    // `RoutePart` (kind, value) pairs, leaf first while walking up the tree; route groups add no URL part.
+    let mut parts_buf: Vec<(&'static str, &[u8])> = Vec::new();
+    let mut route_css: Vec<usize> = Vec::new();
     for (nav_index, &route_index) in navigatable_routes.iter().enumerate() {
-        // defer params_buf.clearRetainingCapacity()
-        let mut params_guard = scopeguard::guard(&mut params_buf, |b| b.clear());
-        let params_buf = &mut **params_guard;
-
-        let mut pattern = PatternBuffer::EMPTY;
+        parts_buf.clear();
+        route_css.clear();
 
         let route = router.route_ptr(route_index);
         let main_file_route_index = route.file_page.unwrap();
@@ -1001,41 +999,34 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // immutably, but `pt.preload_bundled_module()` below needs `&mut pt`.
         // Fetch the output file fresh at each use site instead of binding it.
 
-        // Count how many JS+CSS files associated with this route and prepare `pattern`
+        // Count how many JS files associated with this route and collect `parts_buf`
         let mut file_count: u32 = 1;
-        let mut css_count: usize = pt
-            .output_file(main_file_route_index)
-            .referenced_css_chunks
-            .len();
         let mut next: Option<framework_router::RouteIndex> = Some(route_index);
         while let Some(current_index) = next {
             let current = router.route_ptr(current_index);
-            pattern.prepend_part(current.part);
             match current.part {
-                framework_router::Part::Param(name) | framework_router::Part::CatchAll(name) => {
-                    params_buf.push(name);
-                }
+                // The root route is empty text.
+                framework_router::Part::Text([]) | framework_router::Part::Group(_) => {}
+                framework_router::Part::Text(text) => parts_buf.push(("text", text)),
+                framework_router::Part::Param(name) => parts_buf.push(("param", name)),
+                framework_router::Part::CatchAll(name) => parts_buf.push(("catchAll", name)),
                 framework_router::Part::CatchAllOptional(_) => {
                     return Err(js_err(global.throw(format_args!(
                         "catch-all routes are not supported in static site generation",
                     ))));
                 }
-                framework_router::Part::Text(_) | framework_router::Part::Group(_) => {}
             }
-            if let Some(layout) = current.file_layout {
+            if current.file_layout.is_some() {
                 file_count += 1;
-                css_count += pt.output_file(layout).referenced_css_chunks.len();
             }
             next = current.parent;
         }
 
-        // Fill styles and file_list
-        let styles = JSValue::create_empty_array(global, css_count).map_err(js_err)?;
+        // Fill route_css and file_list
         let file_list = JSValue::create_empty_array(global, file_count as usize).map_err(js_err)?;
 
         next = route.parent;
         file_count = 1;
-        let mut css_file_count: u32 = 0;
         // The page and every layout are separate entry points; all must be static.
         let mut fully_static = pt
             .output_file(main_file_route_index)
@@ -1050,19 +1041,16 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     .map_err(js_err)?,
             )
             .map_err(js_err)?;
+        // A page and its layouts can share one CSS chunk; list each chunk once, page first.
         for r#ref in pt
             .output_file(main_file_route_index)
             .referenced_css_chunks
             .iter()
         {
-            styles
-                .put_index(
-                    global,
-                    css_file_count,
-                    css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                )
-                .map_err(js_err)?;
-            css_file_count += 1;
+            let i = r#ref.get() as usize - css_chunks_first;
+            if !route_css.contains(&i) {
+                route_css.push(i);
+            }
         }
         if let Some(file) = route.file_layout {
             fully_static &= pt.output_file(file).bake_extra.route.is_fully_static();
@@ -1074,14 +1062,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 )
                 .map_err(js_err)?;
             for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
-                styles
-                    .put_index(
-                        global,
-                        css_file_count,
-                        css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                    )
-                    .map_err(js_err)?;
-                css_file_count += 1;
+                let i = r#ref.get() as usize - css_chunks_first;
+                if !route_css.contains(&i) {
+                    route_css.push(i);
+                }
             }
             file_count += 1;
         }
@@ -1098,27 +1082,38 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     )
                     .map_err(js_err)?;
                 for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
-                    styles
-                        .put_index(
-                            global,
-                            css_file_count,
-                            css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                        )
-                        .map_err(js_err)?;
-                    css_file_count += 1;
+                    let i = r#ref.get() as usize - css_chunks_first;
+                    if !route_css.contains(&i) {
+                        route_css.push(i);
+                    }
                 }
                 file_count += 1;
             }
             next = parent.parent;
         }
+        let styles = JSValue::create_array_from_iter(global, route_css.iter(), |&i| {
+            Ok(css_chunk_js_strings[i].value())
+        })
+        .map_err(js_err)?;
 
         // Init the items
-        let mut pattern_string = BunString::clone_utf8(pattern.slice());
+        let route_parts =
+            JSValue::create_array_from_iter(global, parts_buf.iter().rev(), |&(kind, value)| {
+                let obj = JSValue::create_empty_object(global, 2);
+                obj.put(global, b"kind", BunString::static_str(kind).to_js(global)?);
+                obj.put(
+                    global,
+                    b"value",
+                    jsc::bun_string_jsc::create_utf8_for_js(global, value)?,
+                );
+                Ok(obj)
+            })
+            .map_err(js_err)?;
         route_patterns
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                jsc::bun_string_jsc::transfer_to_js(&mut pattern_string, global).map_err(js_err)?,
+                route_parts,
             )
             .map_err(js_err)?;
 
@@ -1151,11 +1146,15 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             )
             .map_err(js_err)?;
 
-        if !params_buf.is_empty() {
-            // reverse-index fill ≡ forward fill over `.iter().rev()`
-            // (slice iterators are ExactSize + DoubleEnded).
+        let param_names: Vec<&[u8]> = parts_buf
+            .iter()
+            .rev()
+            .filter(|(kind, _)| *kind != "text")
+            .map(|(_, name)| *name)
+            .collect();
+        if !param_names.is_empty() {
             let param_info_array =
-                JSValue::create_array_from_iter(global, params_buf.iter().rev(), |param| {
+                JSValue::create_array_from_iter(global, param_names.iter(), |param| {
                     jsc::bun_string_jsc::create_utf8_for_js(global, param)
                 })
                 .map_err(js_err)?;

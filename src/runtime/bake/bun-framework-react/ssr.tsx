@@ -162,7 +162,7 @@ class RscInjectionStream extends EventEmitter {
   htmlHasEnded = false;
   tail = "";
   /** Shared state for decoding RSC data into UTF-8 strings */
-  decoder = new TextDecoder("utf-8", { fatal: true });
+  decoder = new FlightDecoder();
 
   /** Resolved when all data is written */
   finished: Promise<void>;
@@ -193,6 +193,8 @@ class RscInjectionStream extends EventEmitter {
     // Fizz can finish before Flight has serialized a Promise prop that SSR never read, so wait for both.
     rscPayload.on("end", () => {
       this.rscHasEnded = true;
+      // The payload ended mid UTF-8 sequence after the last write; an empty final write flushes those bytes as base64.
+      if (this.decoder.held.byteLength && this.rscChunks.length === 0) this.writeRscData(noBytes);
       if (this.htmlHasEnded) this.finalize();
     });
     rscPayload.on("error", err => {
@@ -251,7 +253,7 @@ class RscInjectionStream extends EventEmitter {
       controller.write(continueScriptTag);
       this.rsc = RscState.Paused;
     }
-    writeManyFlightScriptData(rscChunks, decoder, controller);
+    writeManyFlightScriptData(rscChunks, decoder, controller, this.rscHasEnded);
     if (this.rscHasEnded) {
       this.rsc = RscState.Done;
     }
@@ -281,7 +283,7 @@ class RscInjectionStream extends EventEmitter {
           controller.write(continueScriptTag);
           this.rsc = RscState.Paused;
         }
-        writeSingleFlightScriptData(chunk, decoder, controller);
+        writeSingleFlightScriptData(chunk, decoder, controller, this.rscHasEnded);
       } catch {
         // The client went away while the document was held open for this row.
         this.finalize();
@@ -378,9 +380,7 @@ class StaticRscInjectionStream extends EventEmitter {
     this.chunks[this.chunks.length - 1] = lastChunk.slice(0, lastChunk.length - closingBodyTag.length);
 
     let string = startScriptTag;
-    writeManyFlightScriptData(this.rscPayloadChunks, new TextDecoder("utf-8", { fatal: true }), {
-      write: str => (string += str),
-    });
+    writeManyFlightScriptData(this.rscPayloadChunks, new FlightDecoder(), { write: str => (string += str) }, true);
     this.chunks.push(string + closingBodyTag);
     this.resolve(new Blob(this.chunks, { type: "text/html" }));
   }
@@ -394,20 +394,44 @@ class StaticRscInjectionStream extends EventEmitter {
   }
 }
 
+const noBytes = new Uint8Array(0);
+
+/** Flight rows split across chunks can end mid UTF-8 sequence; this tracks the bytes `TextDecoder` buffers so a base64 fallback loses none. */
+class FlightDecoder {
+  td = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  /** Trailing bytes of an incomplete sequence that `td` holds until the next chunk. */
+  held: Uint8Array = noBytes;
+
+  /** Throws on invalid UTF-8, and on an incomplete trailing sequence when `last`. */
+  text(chunk: Uint8Array, last: boolean): string {
+    const str = this.td.decode(chunk, { stream: !last });
+    const pending = this.held.byteLength + chunk.byteLength - Buffer.byteLength(str);
+    this.held = pending === 0 ? noBytes : Buffer.concat([this.held, chunk]).subarray(-pending);
+    return str;
+  }
+
+  /** The bytes `text()` has consumed but not returned, followed by `chunks`. Starts a fresh decoder. */
+  base64(chunks: Uint8Array[]): string {
+    const str = Buffer.concat([this.held, ...chunks]).toString("base64");
+    this.held = noBytes;
+    this.td = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    return str;
+  }
+}
+
 /** Assumes the opening script tag and function call have been written */
 function writeSingleFlightScriptData(
   chunk: Uint8Array,
-  decoder: TextDecoder,
+  decoder: FlightDecoder,
   controller: { write: (str: string) => void },
+  last: boolean,
 ) {
   try {
-    // `decode()` will throw on invalid UTF-8 sequences.
-    controller.write("'" + toSingleQuote(decoder.decode(chunk, { stream: true })) + "')</script>");
+    controller.write("'" + toSingleQuote(decoder.text(chunk, last)) + "')</script>");
   } catch {
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // No data should have been written yet, so a base64 fallback can be used.
-    const base64 = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength).toString("base64");
-    controller.write(`Uint8Array.from(atob("${base64}"),m=>m.codePointAt(0)))</script>`);
+    controller.write(`Uint8Array.from(atob("${decoder.base64([chunk])}"),m=>m.codePointAt(0)))</script>`);
   }
 }
 
@@ -417,26 +441,25 @@ function writeSingleFlightScriptData(
  */
 function writeManyFlightScriptData(
   chunks: Uint8Array[],
-  decoder: TextDecoder,
+  decoder: FlightDecoder,
   controller: { write: (str: string) => void },
+  last: boolean,
 ) {
-  if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller);
+  if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller, last);
 
   let i = 0;
   let decoded = "";
   try {
     // Combine all chunks into a single string if possible.
     for (; i < chunks.length; i++) {
-      // `decode()` will throw on invalid UTF-8 sequences.
-      decoded += decoder.decode(chunks[i], { stream: true });
+      decoded += decoder.text(chunks[i], last && i === chunks.length - 1);
     }
     controller.write("'" + toSingleQuote(decoded) + "')</script>");
   } catch {
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // Since this is rare, just make the rest of the chunks base64.
     if (i > 0) controller.write("'" + toSingleQuote(decoded) + "');__bun_f.push(");
-    const base64 = Buffer.concat(chunks.slice(i)).toString("base64");
-    controller.write(`Uint8Array.from(atob("${base64}"),m=>m.codePointAt(0)))</script>`);
+    controller.write(`Uint8Array.from(atob("${decoder.base64(chunks.slice(i))}"),m=>m.codePointAt(0)))</script>`);
   }
 }
 

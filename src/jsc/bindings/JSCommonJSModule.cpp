@@ -1055,7 +1055,9 @@ void populateESMExports(
                 });
             } else {
                 JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+                // Include, like the fast path above: non-enumerable data properties are exports too.
+                // The DontEnum check on each slot below filters out the non-enumerable accessors.
+                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
                 if (scope.exception()) [[unlikely]] {
                     if (!vm.hasPendingTerminationException()) (void)scope.tryClearException();
                     return;

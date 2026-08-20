@@ -91,6 +91,21 @@ describe("ResolveMessage", () => {
     expect(err.message).toContain(referrer);
   });
 
+  it("reports an unknown node: builtin as No such built-in module (bundler)", async () => {
+    const spec = "node:definitely-not-a-real-module";
+    const lineText = `import "${spec}";`;
+    const fileName = "entry-unknown-node-builtin.js";
+    using dir = tempDir("resolve-unknown-node-builtin", {
+      [fileName]: lineText + "\n",
+    });
+    const result = await Bun.build({ entrypoints: [path.join(String(dir), fileName)], throw: false });
+    expect(result.success).toBe(false);
+    const log: any = result.logs.find(l => l.name === "ResolveMessage");
+    expect(log).toBeDefined();
+    expect(log.specifier).toBe(spec);
+    expect(log.message).toBe(`No such built-in module: ${spec}`);
+  });
+
   it("preserves non-ASCII in position.lineText and position.file", async () => {
     const lineText = `const caf\u00e9 = 1; import "./na\u00efve-missing.js"; // \u{1F389}`;
     const fileName = "entry-caf\u00e9-\u{1F389}.js";

@@ -572,6 +572,18 @@ impl Linker {
                     import_record.kind,
                     bun_ast::Error::ModuleNotFound,
                 );
+            } else if import_record.path.text.starts_with(b"node:") {
+                log.add_resolve_error(
+                    Some(source),
+                    import_record.range,
+                    format_args!(
+                        "No such built-in module: {}",
+                        bstr::BStr::new(import_record.path.text)
+                    ),
+                    import_record.path.text,
+                    import_record.kind,
+                    bun_ast::Error::ModuleNotFound,
+                );
             } else {
                 log.add_resolve_error(
                     Some(source),

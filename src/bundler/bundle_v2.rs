@@ -2367,6 +2367,18 @@ pub mod bv2_impl {
                                             path_to_use,
                                             import_record.kind,
                                         );
+                                    } else if import_record.specifier.starts_with(b"node:") {
+                                        add_error(
+                                            log,
+                                            source,
+                                            import_record.range,
+                                            format_args!(
+                                                "No such built-in module: {}",
+                                                bstr::BStr::new(path_to_use)
+                                            ),
+                                            path_to_use,
+                                            import_record.kind,
+                                        );
                                     } else {
                                         add_error(
                                             log,
@@ -6267,6 +6279,18 @@ pub mod bv2_impl {
                                                     } else {
                                                         ""
                                                     },
+                                                ),
+                                                import_record.path.text,
+                                                import_record.kind,
+                                            );
+                                        } else if import_record.path.text.starts_with(b"node:") {
+                                            add_error(
+                                                log,
+                                                Some(source),
+                                                import_record.range,
+                                                format_args!(
+                                                    "No such built-in module: {}",
+                                                    bstr::BStr::new(&import_record.path.text)
                                                 ),
                                                 import_record.path.text,
                                                 import_record.kind,

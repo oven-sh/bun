@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 describe("bun test", () => {
@@ -1747,6 +1747,46 @@ describe("bun test", () => {
       expect(stderr).toContain("2 pass");
       expect(exitCode).toBe(0);
     });
+  });
+});
+
+describe("inline snapshots", () => {
+  test("matcher in tail position is located (JSC elides the caller frame)", () => {
+    const cwd = createTest([
+      {
+        filename: "tail-inline.test.ts",
+        contents: `
+          import { test, expect } from "bun:test";
+          test("expression body", () => expect(1).toMatchInlineSnapshot());
+          test("explicit return", () => {
+            return expect("a").toMatchInlineSnapshot();
+          });
+          test("multi-line expect", () =>
+            expect({
+              a: 1,
+            }).toMatchInlineSnapshot(),
+          );
+        `,
+      },
+    ]);
+    try {
+      const { stderr, exitCode } = spawnSync({
+        cwd,
+        cmd: [bunExe(), "test", "--update-snapshots", "tail-inline.test.ts"],
+        env: { ...bunEnv, CI: "false", AGENT: "0" },
+        stderr: "pipe",
+        stdout: "ignore",
+      });
+      expect(exitCode).toBe(0);
+      expect(stderr.toString()).not.toContain("called from file");
+      expect(stderr.toString()).not.toContain("Matcher error");
+      const updated = readFileSync(join(cwd, "tail-inline.test.ts"), "utf8");
+      expect(updated).toContain('expect(1).toMatchInlineSnapshot(`1`)');
+      expect(updated).toContain('expect("a").toMatchInlineSnapshot(`"a"`)');
+      expect(updated).toContain(".toMatchInlineSnapshot(`");
+    } finally {
+      rmSync(cwd, { recursive: true });
+    }
   });
 });
 

@@ -4,11 +4,11 @@ use core::fmt;
 
 use bun_core::Output;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
+    CallFrame, CallerSrcLoc, JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
-use bun_core::ZigString;
+use bun_core::{ZStr, ZigString};
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
@@ -41,6 +41,10 @@ pub struct Expect {
     pub(crate) flags: Cell<Flags>,
     pub(crate) parent: Option<bun_test::RefDataPtr>,
     pub(crate) custom_label: bun_core::String,
+    /// Caller source location captured when `expect()` was called. Not in
+    /// tail position (its result feeds the matcher member access), so it is
+    /// intact even when JSC elides the caller frame for a tail-called matcher.
+    pub(crate) caller_src_loc: CallerSrcLoc,
 }
 
 
@@ -684,6 +688,7 @@ impl Expect {
     #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
         self.custom_label.deref();
+        self.caller_src_loc.str.deref();
         // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
         // so the Box drop below would leak the +1 — release explicitly.
         if let Some(parent) = self.parent.take() {
@@ -719,9 +724,16 @@ impl Expect {
         // error path between ref creation and the wrapper taking ownership; from
         // then on `Expect::finalize` derefs `parent` (RefDataPtr has no Drop).
 
+        // Capture the caller src loc now: `expect()` is never in tail position
+        // (its result feeds the matcher member access), so the caller frame is
+        // intact here even when the matcher call itself is tail-called and JSC
+        // elides the caller frame (see `inline_snapshot` fallback).
+        let caller_src_loc = callframe.get_caller_src_loc(global_this);
+
         let expect = Expect {
             flags: Cell::new(Flags::default()),
             custom_label,
+            caller_src_loc,
             parent: active_execution_entry_ref,
         };
         // `JsClass::to_js` boxes `self` and hands the pointer to `${T}__create`.
@@ -1120,7 +1132,25 @@ impl Expect {
             let buntest = buntest_strong.get();
 
             // 1. find the src loc of the snapshot
-            let srcloc = call_frame.get_caller_src_loc(global_this);
+            let mut srcloc = call_frame.get_caller_src_loc(global_this);
+            // When the matcher is the last expression of a function body,
+            // JavaScriptCore applies tail-call optimization and elides the
+            // caller frame, so the walk above finds no location. `expect()`
+            // itself is never in tail position (its result feeds the matcher
+            // member access), so fall back to the location captured when the
+            // `Expect` was created — it points at the `expect(` call, and the
+            // matcher call site is relocated from the test file below.
+            let mut relocated_from_expect = false;
+            if srcloc.str.is_empty() {
+                // release the +1 captured by the failed walk above
+                bun_core::OwnedString::new(srcloc.str);
+                srcloc = CallerSrcLoc {
+                    str: this.caller_src_loc.str.clone_ref(),
+                    line: this.caller_src_loc.line,
+                    column: this.caller_src_loc.column,
+                };
+                relocated_from_expect = true;
+            }
             // bun_core::String is Copy
             // with no Drop, so wrap in the RAII guard to release the +1 on
             // every exit path (including the early returns below).
@@ -1143,6 +1173,20 @@ impl Expect {
             }
 
             // 2. save to write later
+            if relocated_from_expect {
+                // The fallback location points at the `expect(` call, but the
+                // writer needs the matcher call site — read the test file and
+                // find the `fn_name(` call at/after the `expect()` position.
+                if let Some((line, column)) = Self::locate_matcher_call_in_test_file(
+                    fget_source_path_text,
+                    u64::from(srcloc.line),
+                    u64::from(srcloc.column),
+                    fn_name.as_bytes(),
+                ) {
+                    srcloc.line = u32::try_from(line).unwrap_or(srcloc.line);
+                    srcloc.column = u32::try_from(column).unwrap_or(srcloc.column);
+                }
+            }
             runner.snapshots.add_inline_snapshot_to_write(file_id, super::snapshot::InlineSnapshotToWrite {
                 line: core::ffi::c_ulong::from(srcloc.line),
                 col: core::ffi::c_ulong::from(srcloc.column),
@@ -1194,6 +1238,73 @@ impl Expect {
             )));
         }
         Ok(())
+    }
+
+    /// Read the test file and find the first `fn_name(` call site at/after the
+    /// given `expect()` position (1-based line/column). Used to relocate the
+    /// [`Expect::caller_src_loc`] fallback — which points at `expect(` — to the
+    /// actual matcher call site when JSC elided the caller frame (tail call).
+    fn locate_matcher_call_in_test_file(
+        test_file_path: &ZigString,
+        expect_line: u64,
+        expect_col: u64,
+        fn_name: &[u8],
+    ) -> Option<(u64, u64)> {
+        let mut path_buf = test_file_path.to_vec();
+        path_buf.push(0);
+        // SAFETY: NUL appended above
+        let path_z = ZStr::from_slice_with_nul(&path_buf);
+        let fd = match bun_sys::open(path_z, bun_sys::O::RDONLY, 0) {
+            bun_sys::Result::Ok(r) => r,
+            bun_sys::Result::Err(_) => return None,
+        };
+        let file_text: Vec<u8> = match bun_sys::File::from_fd(fd).read_to_end() {
+            bun_sys::Result::Ok(t) => t,
+            bun_sys::Result::Err(_) => return None,
+        };
+        Self::locate_matcher_call(&file_text, expect_line, expect_col, fn_name)
+    }
+
+    /// Search `file_text` for the first `fn_name(` call at/after the given
+    /// 1-based line/column and return its line/column.
+    fn locate_matcher_call(
+        file_text: &[u8],
+        expect_line: u64,
+        expect_col: u64,
+        fn_name: &[u8],
+    ) -> Option<(u64, u64)> {
+        let start = bun_ast::Source::line_col_to_byte_offset(file_text, 1, 1, expect_line, expect_col)?;
+        let mut i = start;
+        while i < file_text.len() {
+            if file_text[i..].starts_with(fn_name) {
+                let after = i + fn_name.len();
+                let mut j = after;
+                while j < file_text.len() && matches!(file_text[j], b' ' | b'\t') {
+                    j += 1;
+                }
+                if j < file_text.len()
+                    && file_text[j] == b'('
+                    // the name must be a real property access / call token, not
+                    // a substring of an identifier or of a string/comment
+                    && (i == 0
+                        || !matches!(
+                            file_text[i - 1],
+                            b'a'..=b'z'
+                                | b'A'..=b'Z'
+                                | b'0'..=b'9'
+                                | b'_'
+                                | b'$'
+                                | b'"'
+                                | b'\''
+                                | b'`'
+                        ))
+                {
+                    return line_col_of_byte(file_text, i);
+                }
+            }
+            i += 1;
+        }
+        None
     }
 
     pub(crate) fn snapshot(
@@ -3267,6 +3378,51 @@ unsafe extern "C" {
 
 // Exports: handled by #[unsafe(no_mangle)] on:
 //   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+
+/// 1-based line/column of the codepoint starting at `byte` in `text`, using the
+/// same newline/column semantics as `Source::line_col_to_byte_offset` (so the
+/// round trip `byte → line/col → byte` is exact).
+fn line_col_of_byte(text: &[u8], byte: usize) -> Option<(u64, u64)> {
+    use bun_core::strings::{CodepointIterator, Cursor};
+    let iter_ = CodepointIterator::init(text);
+    let mut iter = Cursor::default();
+    let _ = iter_.next(&mut iter);
+    let mut line: u64 = 1;
+    let mut column: u64 = 1;
+    loop {
+        let c = iter.c;
+        let start = iter.i as usize;
+        if start == byte {
+            return Some((line, column));
+        }
+        if start > byte {
+            return None;
+        }
+        if !iter_.next(&mut iter) {
+            break;
+        }
+        match c {
+            0x0A => {
+                column = 1;
+                line += 1;
+            }
+            0x0D => {
+                column = 1;
+                line += 1;
+                if iter.c == ('\n' as i32) {
+                    let _ = iter_.next(&mut iter);
+                }
+            }
+            0x2028 | 0x2029 => {
+                line += 1;
+                column = 1;
+            }
+            _ => {
+                column += if c > 0xFFFF { 2 } else { 1 };
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -2115,6 +2115,38 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
+/// One `KEY=VALUE` line of the child's environment.
+struct EnvLine {
+    line: ZBox,
+    key_len: usize,
+}
+
+impl EnvLine {
+    fn key(&self) -> &[u8] {
+        &self.line.as_bytes()[..self.key_len]
+    }
+
+    fn value(&self) -> &[u8] {
+        &self.line.as_bytes()[self.key_len + 1..]
+    }
+}
+
+/// Windows names are case-insensitive and the child reads the first matching block
+/// entry, so `{ ...process.env, PATH: dir }` (spelled `Path` by process.env) would
+/// keep the parent's value. As with bun's env maps on Windows (ASCII-folded names,
+/// later writes win), the last property of each name is the one passed on.
+fn dedupe_env_names_windows(lines: &mut Vec<EnvLine>) {
+    fn cmp_names(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
+        a.iter()
+            .map(u8::to_ascii_uppercase)
+            .cmp(b.iter().map(u8::to_ascii_uppercase))
+    }
+    // Reversed plus a stable sort puts each name's last property first in its run.
+    lines.reverse();
+    lines.sort_by(|a, b| cmp_names(a.key(), b.key()));
+    lines.dedup_by(|other, kept| cmp_names(other.key(), kept.key()).is_eq());
+}
+
 /// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
 /// into `envp` (and, for `PATH=`, sliced into `*path`); the caller's
 /// `Vec<ZBox>` is dropped after `spawn_process` returns.
@@ -2135,14 +2167,7 @@ fn append_envp_from_js(
     )?;
     // drops at scope exit (was `defer object_iter.deinit()`).
 
-    envp.reserve_exact(
-        (object_iter.len +
-            // +1 incase there's IPC
-            // +1 for null terminator
-            2)
-        .saturating_sub(envp.len()),
-    );
-    storage.reserve(object_iter.len);
+    let mut lines: Vec<EnvLine> = Vec::with_capacity(object_iter.len);
     while let Some(key) = object_iter.next()? {
         let value = object_iter.value;
         if value.is_undefined() {
@@ -2178,32 +2203,50 @@ fn append_envp_from_js(
         }
 
         // PERF: per-entry allocation — profile if it shows up on a hot path.
-        let line: ZBox = {
+        let line: EnvLine = {
             let mut buf: Vec<u8> = Vec::new();
-            write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string())
+            write!(&mut buf, "{}", key).map_err(|_| JsError::OutOfMemory)?;
+            let key_len = buf.len();
+            write!(&mut buf, "={}", value_bunstr.to_zig_string())
                 .map_err(|_| JsError::OutOfMemory)?;
-            ZBox::from_vec(buf)
+            EnvLine {
+                line: ZBox::from_vec(buf),
+                key_len,
+            }
         };
+        lines.push(line);
+    }
 
+    if cfg!(windows) {
+        dedupe_env_names_windows(&mut lines);
+    }
+
+    envp.reserve_exact(
+        (lines.len() +
+            // +1 incase there's IPC
+            // +1 for null terminator
+            2)
+        .saturating_sub(envp.len()),
+    );
+    storage.reserve(lines.len());
+    for entry in lines {
         // Windows environment variable names are case-insensitive: an env
         // object carrying `Path` (the usual casing there) must still drive
         // the executable lookup, like libuv's spawn does.
-        let line_bytes = line.as_bytes();
-        let key_end = strings::index_of_char_usize(line_bytes, b'=').unwrap_or(line_bytes.len());
         let is_path_key = if cfg!(windows) {
-            strings::eql_case_insensitive_ascii(&line_bytes[..key_end], b"PATH", true)
+            strings::eql_case_insensitive_ascii(entry.key(), b"PATH", true)
         } else {
-            &line_bytes[..key_end] == b"PATH"
+            entry.key() == b"PATH"
         };
-        if is_path_key && key_end < line_bytes.len() {
-            // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
-            // outlives every read of `*path`), and `ZBox` is heap-backed so the
-            // bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe { bun_ptr::detach_lifetime(&line_bytes[key_end + 1..]) };
+        if is_path_key {
+            // SAFETY: `entry.line` is moved into `storage` below (a `Vec<ZBox>`
+            // that outlives every read of `*path`), and `ZBox` is heap-backed so
+            // the bytes don't move when the `ZBox` value itself is moved.
+            *path = unsafe { bun_ptr::detach_lifetime(entry.value()) };
         }
 
-        envp.push(line.as_ptr());
-        storage.push(line);
+        envp.push(entry.line.as_ptr());
+        storage.push(entry.line);
     }
     Ok(())
 }

@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -159,7 +160,7 @@ error: Hello World`,
         import.meta.dirname === dirname(Bun.main),
         import.meta.main,
         typeof import.meta,
-        typeof import.meta.env,
+        import.meta.env.IMPORT_META_PROBE,
         typeof import.meta.resolve,
         shadowed() === basename(Bun.main),
         $Bun_import_meta,
@@ -170,13 +171,16 @@ error: Hello World`,
       exports.pathOfDep = () => import.meta.path;
     `,
   };
-  const importMetaStdout = "true true true true true true true object object function true user variable true";
+  const importMetaStdout = "true true true true true true true object from-env function true user variable true";
+  const importMetaEnv = { IMPORT_META_PROBE: "from-env" };
   const expectBytecodeCacheHit = {
-    env: { BUN_JSC_verboseDiskCache: "1" },
+    env: { ...importMetaEnv, BUN_JSC_verboseDiskCache: "1" },
     validate({ stderr }: { stderr: string }) {
       expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
     },
   };
+  const bunCjsWrapper = (pragma: string, arg: string) =>
+    `// @bun ${pragma}@bun-cjs\n(function(exports, require, module, __filename, __dirname${arg}) {`;
   for (const variant of ["", "+minify", "+bytecode"] as const) {
     const bytecode = variant === "+bytecode";
     const minify = variant === "+minify";
@@ -192,15 +196,12 @@ error: Hello World`,
       files: importMetaFiles,
       onAfterBundle(api) {
         const out = api.readFile(bytecode ? "/out/entry.js" : "/out.js");
-        expect(out).toStartWith(
-          `// @bun ${bytecode ? "@bytecode " : ""}@bun-cjs\n` +
-            "(function(exports, require, module, __filename, __dirname, $Bun_import_meta) {",
-        );
+        expect(out).toStartWith(bunCjsWrapper(bytecode ? "@bytecode " : "", ", $Bun_import_meta"));
         expect(out).not.toContain("import.meta");
         // The build directory must not end up in the output.
         expect(out).not.toContain(api.root);
       },
-      run: { stdout: importMetaStdout, ...(bytecode ? expectBytecodeCacheHit : {}) },
+      run: { stdout: importMetaStdout, env: importMetaEnv, ...(bytecode ? expectBytecodeCacheHit : {}) },
     });
   }
   itBundled("bun/ImportMetaFormatCjsUnused", {
@@ -219,14 +220,11 @@ error: Hello World`,
       // The runtime helpers linked into this chunk use import.meta in their
       // source, but cjs output never keeps that part, so the wrapper does not
       // take the argument.
-      expect(api.readFile("/out.js")).toStartWith(
-        "// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {",
-      );
+      expect(api.readFile("/out.js")).toStartWith(bunCjsWrapper("", ""));
     },
     run: { stdout: "no import.meta here" },
   });
-  // The sqlite loader builds its module as `import.meta.require(...)` without
-  // parsing anything, so it is the one import.meta the parser does not see.
+  // The sqlite loader builds its module out of `import.meta.require(...)` itself.
   itBundled("bun/ImportMetaFormatCjsEmbeddedSqlite", {
     target: "bun",
     format: "cjs",
@@ -244,14 +242,36 @@ error: Hello World`,
         return db.serialize();
       })(),
     },
-    onAfterBundle(api) {
-      expect(api.readFile("/out/entry.js")).toStartWith(
-        "// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname, $Bun_import_meta) {",
-      );
-    },
     run: { stdout: "Hello from cjs!" },
   });
+  // The browser chunk of an HTML import is loaded as a module script, so it
+  // keeps `import.meta`. Only the server chunk is wrapped.
+  itBundled("bun/ImportMetaFormatCjsHtmlImport", {
+    target: "bun",
+    format: "cjs",
+    outdir: "/out",
+    entryPoints: ["/server.ts"],
+    files: {
+      "/server.ts": /* js */ `
+        import html from "./index.html";
+        console.log(typeof html, import.meta.path === Bun.main);
+      `,
+      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
+      "/client.ts": /* js */ `
+        console.log(typeof import.meta.env, import.meta);
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/server.js")).toStartWith(bunCjsWrapper("", ", $Bun_import_meta"));
+      const browserChunk = readdirSync(api.outdir).find(name => name !== "server.js" && name.endsWith(".js"))!;
+      const browser = api.readFile("/out/" + browserChunk);
+      expect(browser).toContain("typeof import.meta.env, import.meta");
+      expect(browser).not.toContain("$Bun_import_meta");
+    },
+    run: { stdout: "object true" },
+  });
   // `bun build --compile --bytecode` is the documented production command.
+  // https://github.com/oven-sh/bun/issues/21097
   itBundled("bun/ImportMetaCompileBytecode", {
     compile: true,
     bytecode: true,
@@ -264,12 +284,13 @@ error: Hello World`,
           slashes(import.meta.dir) === slashes(dirname(Bun.main)),
           import.meta.file === basename(Bun.main),
           import.meta.url === Bun.pathToFileURL(Bun.main).href,
+          import.meta.env.IMPORT_META_PROBE,
           slashes(import.meta.dir),
         );
       `,
     },
     run: {
-      stdout: /^true true true true (\/\$bunfs|[A-Z]:\/~BUN)\/root$/,
+      stdout: /^true true true true from-env (\/\$bunfs|[A-Z]:\/~BUN)\/root$/,
       ...expectBytecodeCacheHit,
     },
   });

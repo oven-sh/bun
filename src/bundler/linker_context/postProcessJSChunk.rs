@@ -36,21 +36,16 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
     }
 }
 
-/// Must agree with the printer's `EImportMeta` arm, which prints `CJS_WRAPPER_ARG` under `c.options`.
-fn chunk_uses_import_meta(c: &LinkerContext, chunk: &Chunk) -> bool {
-    if !c.options.target.is_bun() {
-        return false;
-    }
-    let flags = c.graph.ast.items_flags();
-    chunk
-        .files_with_parts_in_chunk
-        .keys()
-        .iter()
-        .any(|&source_index| {
-            // The runtime's only import.meta is `__require`, which cjs output never links in.
-            source_index != Index::RUNTIME.value()
-                && flags[source_index as usize].contains(crate::bundled_ast::Flags::HAS_IMPORT_META)
-        })
+fn chunk_uses_import_meta_arg(chunk: &Chunk) -> bool {
+    chunk.compile_results_for_chunk.iter().any(|result| {
+        matches!(
+            result,
+            CompileResult::Javascript {
+                result: PrintResult::Result(printed),
+                ..
+            } if printed.uses_import_meta_arg
+        )
+    })
 }
 
 /// This runs after we've already populated the compile results
@@ -287,10 +282,7 @@ pub(crate) fn post_process_js_chunk(
 
         break 'brk CompileResult::Javascript {
             source_index: Index::INVALID.value(),
-            result: PrintResult::Result(js_printer::PrintResultSuccess {
-                code: Box::default(),
-                source_map: None,
-            }),
+            result: PrintResult::Result(js_printer::PrintResultSuccess::default()),
             module_info: None,
         };
     };
@@ -367,24 +359,25 @@ pub(crate) fn post_process_js_chunk(
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
-    if is_bun {
-        if output_format == options::OutputFormat::Cjs {
-            let mut push = |bytes: &'static [u8]| {
-                j.push_static(bytes);
-                line_offset.advance(bytes);
-            };
-            push(if c.options.generate_bytecode_cache {
-                b"// @bun @bytecode @bun-cjs\n"
-            } else {
-                b"// @bun @bun-cjs\n"
-            });
-            push(b"(function(exports, require, module, __filename, __dirname");
-            if chunk_uses_import_meta(c, chunk) {
-                push(b", ");
-                push(E::ImportMeta::CJS_WRAPPER_ARG);
-            }
-            push(b") {");
-        } else if c.options.generate_bytecode_cache {
+    let has_bun_cjs_wrapper = c.chunk_has_bun_cjs_wrapper(chunk);
+    if has_bun_cjs_wrapper {
+        let mut push = |bytes: &'static [u8]| {
+            j.push_static(bytes);
+            line_offset.advance(bytes);
+        };
+        push(if c.options.generate_bytecode_cache {
+            b"// @bun @bytecode @bun-cjs\n"
+        } else {
+            b"// @bun @bun-cjs\n"
+        });
+        push(b"(function(exports, require, module, __filename, __dirname");
+        if chunk_uses_import_meta_arg(chunk) {
+            push(b", ");
+            push(E::ImportMeta::CJS_WRAPPER_ARG);
+        }
+        push(b") {");
+    } else if is_bun {
+        if c.options.generate_bytecode_cache {
             j.push_static(b"// @bun @bytecode\n");
             line_offset.advance(b"// @bun @bytecode\n");
         } else {
@@ -667,7 +660,7 @@ pub(crate) fn post_process_js_chunk(
             }
         }
         options::OutputFormat::Cjs => {
-            if is_bun {
+            if has_bun_cjs_wrapper {
                 j.push_static(b"})\n");
                 line_offset.advance(b"})\n");
             }
@@ -1135,10 +1128,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     if stmts.is_empty() {
         return CompileResult::Javascript {
             source_index,
-            result: PrintResult::Result(js_printer::PrintResultSuccess {
-                code: Box::default(),
-                source_map: None,
-            }),
+            result: PrintResult::Result(js_printer::PrintResultSuccess::default()),
             module_info: None,
         };
     }

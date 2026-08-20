@@ -1058,12 +1058,7 @@ pub fn compute_initial_reserved_names(
 
     const EXTRAS: [&[u8]; 2] = [b"Promise", b"Require"];
 
-    const CJS_NAMES: [&[u8]; 3] = [
-        b"exports",
-        b"module",
-        // Printed by name in `@bun-cjs` output.
-        js_ast::E::ImportMeta::CJS_WRAPPER_ARG,
-    ];
+    const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];
 
     let cjs_names_len: u32 = if output_format == Format::Cjs {
         CJS_NAMES.len() as u32

@@ -1061,19 +1061,18 @@ pub mod parse_worker {
                     Loc { start: 0 },
                 );
 
-                let mut ast = js_parser::new_lazy_export_ast(
-                    bump,
-                    &mut topts.define,
-                    opts,
-                    log,
-                    root,
-                    source,
-                    b"",
-                )?
-                .ok_or(AnyError::ParserError)?;
-                // `root` uses import.meta; nothing parsed it, so record that here.
-                ast.has_import_meta = true;
-                return Ok(JSAst::init(ast));
+                return Ok(JSAst::init(
+                    js_parser::new_lazy_export_ast(
+                        bump,
+                        &mut topts.define,
+                        opts,
+                        log,
+                        root,
+                        source,
+                        b"",
+                    )?
+                    .ok_or(AnyError::ParserError)?,
+                ));
             }
             Loader::Napi => {
                 // (dap-eval-cb "source.contents.ptr")
@@ -2607,9 +2606,9 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
-        // For bun, cjs output gets import.meta from the wrapper instead (`chunk_uses_import_meta`).
+        // For bun, cjs output gets import.meta from the `@bun-cjs` wrapper instead.
         opts.inline_import_meta_paths = topts.framework.is_some()
-            || (output_format == options::Format::Cjs && !topts.target.is_bun());
+            || (output_format == options::Format::Cjs && !target.is_bun());
 
         opts.tree_shaking = if task.source_index.is_runtime() {
             true

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { unlinkSync } from "fs";
+import { mkdirSync, unlinkSync } from "fs";
 import fsPromises from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
@@ -185,20 +185,51 @@ describe.concurrent("BunFile does not cache a failed stat", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/22484
-  test("exists() follows the file through create, delete and create again", async () => {
+  test("exists() and lastModified follow the file through delete and create again", async () => {
     await using dir = tempDir("bun-file-exists-live", { "f.txt": "first" });
     const path = join(dir, "f.txt");
     const file = Bun.file(path);
-    const seen: boolean[] = [];
+    // At every step the old handle must answer like a handle created right now.
+    const observe = async () => ({
+      exists: await file.exists(),
+      lastModified: file.lastModified,
+      freshLastModified: Bun.file(path).lastModified,
+    });
 
-    seen.push(await file.exists());
+    const created = await observe();
     unlinkSync(path);
-    seen.push(await file.exists());
+    const deleted = await observe();
     await Bun.write(path, "second");
-    seen.push(await file.exists());
+    const recreated = await observe();
 
-    expect(seen).toEqual([true, false, true]);
+    expect([created.exists, deleted.exists, recreated.exists]).toEqual([true, false, true]);
+    expect(created.lastModified).toBe(created.freshLastModified);
+    expect(deleted.lastModified).toBe(deleted.freshLastModified);
+    expect(recreated.lastModified).toBe(recreated.freshLastModified);
     expect(await file.text()).toBe("second");
+  });
+
+  // A stat can fail for a reason other than ENOENT. That failure is not cached
+  // either: reads keep reporting the real error, and once the path is usable
+  // the same handle works.
+  test("a stat that fails with ENOTDIR is not cached on the handle", async () => {
+    await using dir = tempDir("bun-file-enotdir", { blocker: "not a directory" });
+    const blocker = join(dir, "blocker");
+    const path = join(blocker, "f.txt");
+    const file = Bun.file(path);
+
+    expect(file.size).toBe(0);
+    expect(await file.exists()).toBe(false);
+    const error = await file.text().catch(e => e);
+    expect(["ENOTDIR", "ENOENT"]).toContain(error.code);
+
+    unlinkSync(blocker);
+    mkdirSync(blocker);
+    await Bun.write(path, "hello world");
+
+    expect(await file.exists()).toBe(true);
+    expect(await file.text()).toBe("hello world");
+    expect(file.size).toBe(11);
   });
 
   test("exists() on a slice stats the file", async () => {

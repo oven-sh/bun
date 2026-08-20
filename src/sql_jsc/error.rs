@@ -22,8 +22,6 @@ pub enum Error {
     UnsupportedArrayType,
     #[error("JSError")]
     JSError,
-    #[error("AuthenticationFailed")]
-    AuthenticationFailed,
     #[error("InvalidBinaryValue")]
     InvalidBinaryValue,
     #[error("Thrown")]
@@ -53,7 +51,6 @@ impl Error {
             Self::InvalidServerSignature => "InvalidServerSignature",
             Self::UnsupportedArrayType => "UnsupportedArrayType",
             Self::JSError => "JSError",
-            Self::AuthenticationFailed => "AuthenticationFailed",
             Self::InvalidBinaryValue => "InvalidBinaryValue",
             Self::Thrown => "Thrown",
             Self::Alloc(_) => "OutOfMemory",

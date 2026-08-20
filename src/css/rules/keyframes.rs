@@ -21,8 +21,6 @@ pub enum KeyframesName {
     Custom(&'static [u8]),
 }
 
-// A generic type alias keyed by `KeyframesName` with the custom hash/eq below.
-
 impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         use bun_core::strings;

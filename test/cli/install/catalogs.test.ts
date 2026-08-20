@@ -1822,7 +1822,10 @@ describe("version published after the manifest was cached", () => {
   test.concurrent("a bump to a dist-tag published after the manifest was cached installs it", async () => {
     const versions = ["1.0.0"];
     const tags: Record<string, string> = {};
-    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions }, { tags: { "fresh-pkg": tags } });
+    const { server, manifestRequests } = serveMutableRegistry(
+      { "fresh-pkg": versions },
+      { tags: { "fresh-pkg": tags } },
+    );
     await using _server = server;
     using dir = writeRegistryProject(
       { "package.json": JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.0" } }) },
@@ -1919,8 +1922,7 @@ describe("version published after the manifest was cached", () => {
     const versions = ["1.0.0"];
     const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
     await using _server = server;
-    const pkgJson = (name: string, spec: string) =>
-      JSON.stringify({ name, dependencies: { "fresh-pkg": spec } });
+    const pkgJson = (name: string, spec: string) => JSON.stringify({ name, dependencies: { "fresh-pkg": spec } });
     using dir = writeRegistryProject(
       {
         "package.json": JSON.stringify({ name: "root", workspaces: { packages: ["packages/*"] } }),

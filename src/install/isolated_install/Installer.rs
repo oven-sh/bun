@@ -224,8 +224,7 @@ impl<'a> Installer<'a> {
                     });
 
                 if let Err(err) = patched {
-                    // monotonic is okay because we haven't started the task yet (it isn't running
-                    // on another thread)
+                    // .monotonic is okay because the task isn't running on another thread.
                     entry_steps[entry_id.get() as usize]
                         .store(Step::Done as u32, Ordering::Relaxed);
                     self.on_task_fail(entry_id, &err);
@@ -2047,8 +2046,7 @@ impl PatchInfo {
 }
 
 impl<'a> Installer<'a> {
-    /// A patched package whose patch file was never hashed is an error, not
-    /// `PatchInfo::None`: the entry fails instead of installing unpatched.
+    /// A patch entry without a hash is an error, not `PatchInfo::None`.
     pub(crate) fn package_patch_info(
         &self,
         pkg_name: SemverString,

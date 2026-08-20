@@ -1103,12 +1103,13 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
   });
 });
 
-// The swap fails a multipart S3 upload the finished file left open. Two things
-// about how it does so:
+// The swap fails a multipart S3 upload the finished file left open, whether a
+// stream or a writer() feeds it. Two things about how it does so:
 // - The AbortMultipartUpload that failing it sends must reach S3. It is a new
 //   request started by the swap's own sweep, so it must not be caught and
-//   aborted by that sweep (retry: 0 makes the one attempt the only one).
-// - Failing the upload cancels the stream feeding it, and the pump's own
+//   aborted by that sweep (retry: 0 makes the one attempt the only one). It is
+//   also the only sign, on a release build, that the swap reached the upload.
+// - Failing a stream-fed upload cancels the stream, and the pump's own
 //   completion then releases the upload's native wrapper, on the swap's
 //   microtask drain. On a debug build the wrapper's and the upload's own
 //   teardown log lines show both were freed exactly once: the wrapper at the
@@ -1116,31 +1117,41 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 //   it had not yet). File a keeps its stream reachable: an upload whose pump
 //   was already collected by the time of the swap keeps its wrapper (there is
 //   no safe point to release it without the pump, see pump_ref_is_stranded).
-test.concurrent("--isolate: a multipart S3 upload left open is rolled back and freed", async () => {
-  const testFile = (body: string) => `
+const ROLLBACK_FEEDERS = {
+  stream: `
+    globalThis.source = new ReadableStream({
+      pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return new Promise(() => {}); },
+    });
+    s3.file("key").write(new Response(globalThis.source)).catch(() => {});
+  `,
+  writer: `
+    s3.file("key").writer({ retry: 0 }).write(new Uint8Array(5 * 1024 * 1024));
+  `,
+};
+test.concurrent.each(Object.keys(ROLLBACK_FEEDERS) as (keyof typeof ROLLBACK_FEEDERS)[])(
+  "--isolate: a multipart S3 upload fed by a %s and left open is rolled back and freed",
+  async feeder => {
+    const testFile = (body: string) => `
     import { test } from "bun:test";
     const seen = async (method) => (await (await fetch(process.env.STAND_IN + "__seen")).json()).includes(method);
     ${body}
   `;
-  using dir = tempDir("isolate-s3-rollback", {
-    "a.test.js": testFile(`
+    using dir = tempDir("isolate-s3-rollback", {
+      "a.test.js": testFile(`
       const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: process.env.STAND_IN, retry: 0 });
-      globalThis.source = new ReadableStream({
-        pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return new Promise(() => {}); },
-      });
-      s3.file("key").write(new Response(globalThis.source)).catch(() => {});
+      ${ROLLBACK_FEEDERS[feeder]}
       test("a: the upload gets its first part out, then waits for more", async () => {
         while (!(await seen("PUT"))) await Bun.sleep(10);
-        // The reachable stream keeps the pump alive through this.
+        // The stream stays reachable, so its pump survives this; the writer object does not.
         Bun.gc(true);
       });
     `),
-    "b.test.js": testFile(`
+      "b.test.js": testFile(`
       test("b: the swap rolled a's upload back", async () => {
         while (!(await seen("DELETE"))) await Bun.sleep(10);
       });
     `),
-    "host.js": `
+      "host.js": `
       const seen = [];
       const standIn = Bun.serve({
         port: 0,
@@ -1173,32 +1184,33 @@ test.concurrent("--isolate: a multipart S3 upload left open is rolled back and f
         output: exitCode === 0 ? "" : output,
       }));
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "host.js"],
-    cwd: String(dir),
-    // The S3 client does not honor NO_PROXY; an inherited proxy would hijack the
-    // requests to the stand-in.
-    env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    seen: [
-      "POST /b/key?uploads=",
-      "PUT /b/key?partNumber=1&uploadId=upload-1&x-id=UploadPart",
-      "DELETE /b/key?uploadId=upload-1",
-    ],
-    wrappers: isDebug ? 1 : 0,
-    uploads: isDebug ? 1 : 0,
-    passed: true,
-    exitCode: 0,
-    output: "",
-  });
-  expect(exitCode).toBe(0);
-});
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.js"],
+      cwd: String(dir),
+      // The S3 client does not honor NO_PROXY; an inherited proxy would hijack the
+      // requests to the stand-in.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      seen: [
+        "POST /b/key?uploads=",
+        "PUT /b/key?partNumber=1&uploadId=upload-1&x-id=UploadPart",
+        "DELETE /b/key?uploadId=upload-1",
+      ],
+      wrappers: isDebug && feeder === "stream" ? 1 : 0,
+      uploads: isDebug ? 1 : 0,
+      passed: true,
+      exitCode: 0,
+      output: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 // fs.watchFile's StatWatcher is thread-safe-refcounted: the scheduler queue
 // holds a ref that is dropped on the work-pool thread. After unwatchFile +

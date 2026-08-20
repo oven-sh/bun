@@ -2592,8 +2592,8 @@ describe("VM teardown ordering", () => {
   // rows before the fix, and ASAN itself for a double release. The writer() rows
   // run without leak detection: the sink object behind s3file.writer() is not
   // freed on any path, fixed or not (#34999), and the leaked upload stayed
-  // reachable to LeakSanitizer there anyway. The test after this block is the
-  // writer() path's oracle on release builds.
+  // reachable to LeakSanitizer there anyway. On release builds the writer()
+  // path is checked by the rollback test in test/cli/test/isolation.test.ts.
   describe.skipIf(!isDebug && !isASAN)("an S3 upload still open when its VM goes", () => {
     const ROWS: {
       name: string;
@@ -2751,55 +2751,6 @@ describe("VM teardown ordering", () => {
         expect(actual).toEqual(expected);
       });
     }
-  });
-
-  // What the leak above costs, measured on any build: each terminated worker
-  // kept the bytes its unfinished writer() upload had buffered (the part size
-  // is raised so that the 16 MiB stay buffered). Three such workers grew the
-  // host by 49 to 50 MiB before the fix and by 0 to 3 MiB after, on the debug
-  // build. ASAN's quarantine is shortened so that freed buffers leave the
-  // figure, and leak detection is off because of #34999.
-  test("terminated workers do not keep the bytes their unfinished writer() uploads buffered", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const { Worker } = require("node:worker_threads");
-        const standIn = Bun.serve({ port: 0, fetch: () => new Promise(() => {}) });
-        const runOne = async () => {
-          const worker = new Worker(
-            'const { workerData, parentPort } = require("node:worker_threads");' +
-            'new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: workerData.url }).file("key").writer({ partSize: 64 * 1024 * 1024 }).write(new Uint8Array(16 * 1024 * 1024));' +
-            'parentPort.postMessage("buffered");',
-            { eval: true, workerData: { url: standIn.url.href } },
-          );
-          await new Promise(resolve => worker.once("message", resolve));
-          await worker.terminate();
-        };
-        const rssMiB = () => { Bun.gc(true); return process.memoryUsage.rss() / 1024 / 1024; };
-        await runOne();
-        const before = rssMiB();
-        for (let i = 0; i < 3; i++) await runOne();
-        console.log(JSON.stringify({ grewMiB: Math.round(rssMiB() - before) }));
-        standIn.stop(true);
-        `,
-      ],
-      env: {
-        ...bunEnv,
-        HTTP_PROXY: undefined,
-        HTTPS_PROXY: undefined,
-        http_proxy: undefined,
-        https_proxy: undefined,
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=1:detect_leaks=0"].filter(Boolean).join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout).grewMiB).toBeLessThan(24);
   });
 });
 

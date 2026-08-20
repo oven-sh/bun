@@ -477,3 +477,119 @@ devTest("a Promise prop that settles after the HTML is ready is still inlined", 
     expect(response.status).toBe(200);
   },
 });
+
+// Runs the inline `__bun_f` scripts of a served page like a browser would and returns the pushed chunks as bytes.
+// Fizz's own inline scripts (`$RC` and friends) touch the DOM, so only the flight pushes are run.
+function inlineFlightBytes(html: string): Buffer {
+  const self: { __bun_f?: (string | Uint8Array)[] } = {};
+  for (const [, body] of html.matchAll(/<script>((?:\(self\.__bun_f\|\|=\[\]\)|__bun_f)\.push\([\s\S]*?)<\/script>/g)) {
+    // `with` stands in for the browser's global scope so a bare `__bun_f` resolves too.
+    new Function("self", `with (self) {\n${body}\n}`)(self);
+  }
+  return Buffer.concat((self.__bun_f ?? []).map(chunk => Buffer.from(chunk as any)));
+}
+
+// Flight writes a Uint8Array as an "o" row: the byte length in hex, a comma, then the raw bytes with no
+// terminator. 2999 bytes of "é" is valid UTF-8 except that the last byte is half a sequence, so the
+// streaming decoder holds it back and must still emit it once the row turns out to be the last text.
+const splitUtf8Bytes = `new Uint8Array(Buffer.alloc(2999, "é"))`;
+const splitUtf8Row = Buffer.concat([Buffer.from(":obb7,"), Buffer.alloc(2999, "é")]);
+
+// The row arrives after Fizz has finished, so RscInjectionStream writes it on the Flight 'end' path.
+devTest("a binary Promise prop that settles after the HTML is ready is inlined byte for byte", {
+  framework: "react",
+  files: {
+    // Only `use()`d after mount, so server rendering never waits on it.
+    "components/Late.tsx": `
+      "use client";
+      import { use, useEffect, useState } from "react";
+      function Inner({ p }: { p: Promise<Uint8Array> }) { return <span>{use(p).byteLength}</span>; }
+      export function Late({ p }: { p: Promise<Uint8Array> }) {
+        const [mounted, setMounted] = useState(false);
+        useEffect(() => setMounted(true), []);
+        return <div>{mounted ? <Inner p={p} /> : "not-mounted"}</div>;
+      }
+    `,
+    "pages/index.tsx": `
+      import { Late } from "../components/Late";
+      export default function IndexPage() {
+        const p = new Promise<Uint8Array>(resolve => setTimeout(() => resolve(${splitUtf8Bytes}), 50));
+        return <main><h1>hello</h1><Late p={p} /></main>;
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const text = await response.text();
+    expect(text).toContain("not-mounted");
+    expect(inlineFlightBytes(text).includes(splitUtf8Row)).toBe(true);
+    expect(text.trimEnd().endsWith("</body></html>")).toBe(true);
+    expect(response.status).toBe(200);
+  },
+});
+
+// The row arrives while Fizz is still streaming, so it is written directly between HTML chunks.
+devTest("a binary prop inside a streamed Suspense boundary is inlined byte for byte", {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      import { Suspense } from "react";
+      export const streaming = true;
+      async function Bytes() {
+        await new Promise(resolve => setImmediate(resolve));
+        return <div id="bytes" data-b={${splitUtf8Bytes}}>BYTES_DONE</div>;
+      }
+      export default function IndexPage() {
+        return <main><Suspense fallback={<p>loading</p>}><Bytes /></Suspense></main>;
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const text = await response.text();
+    expect(text).toContain("BYTES_DONE");
+    expect(inlineFlightBytes(text).includes(splitUtf8Row)).toBe(true);
+    expect(text.trimEnd().endsWith("</body></html>")).toBe(true);
+    expect(response.status).toBe(200);
+  },
+});
+
+// A client-side navigation reads the stylesheet list that prefixes the RSC payload before handing the
+// rest to React. happy-dom streams have no BYOB reader, so this goes through readCssMetadataFallback.
+devTest("client navigation reads the stylesheet list ahead of the RSC payload", {
+  framework: "react",
+  files: {
+    ...Object.fromEntries(
+      Array.from({ length: 8 }, (_, i) => [`styles/s${i}.css`, `.s${i} { color: ${i === 7 ? "red" : "blue"}; }`]),
+    ),
+    "pages/index.tsx": `
+      ${Array.from({ length: 8 }, (_, i) => `import "../styles/s${i}.css";`).join("\n      ")}
+      export default function IndexPage() {
+        return <h1 className="s7">Home</h1>;
+      }
+    `,
+  },
+  async test(dev) {
+    const html = await (await dev.fetch("/")).text();
+    // The flight payload repeats these as JSON, so count only the rendered tags.
+    const sheetCount = html.match(/<link[^>]*data-bake-ssr/g)?.length ?? 0;
+    expect(sheetCount).toBeGreaterThan(1);
+
+    await using c = await dev.client("/");
+    expect(await c.elemText("h1")).toBe("Home");
+
+    // The framework refetches the current route as an RSC payload when its server code changes.
+    await dev.write(
+      "pages/index.tsx",
+      `
+        ${Array.from({ length: 8 }, (_, i) => `import "../styles/s${i}.css";`).join("\n        ")}
+        export default function IndexPage() {
+          return <h1 className="s7">Updated</h1>;
+        }
+      `,
+    );
+    await c.expectElemText("h1", "Updated");
+    expect(await c.js`$bake.currentCssList.length`).toBe(sheetCount);
+    await c.style(".s7").color.expect.toBe("red");
+  },
+});

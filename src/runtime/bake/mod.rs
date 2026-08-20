@@ -294,6 +294,13 @@ impl Framework {
         out.sync_resolver_opts();
 
         out.configure_linker();
+        // `configure_defines` turns these into valueless defines and `drop_debugger`, as `Bun.build` does.
+        out.options.drop = bundler_options
+            .drop
+            .keys()
+            .iter()
+            .map(|k| Box::<[u8]>::from(*k))
+            .collect();
         out.configure_defines()?;
         out.options.jsx.development = mode == Mode::Development;
 
@@ -306,7 +313,7 @@ impl Framework {
             },
         )?;
 
-        if (bundler_options.define.keys.len() + bundler_options.drop.count()) > 0 {
+        if !bundler_options.define.keys.is_empty() {
             debug_assert_eq!(
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
@@ -321,15 +328,6 @@ impl Framework {
                 let parsed =
                     bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
                 out.options.define.insert(k, parsed)?;
-            }
-
-            for drop_item in bundler_options.drop.keys() {
-                if !drop_item.is_empty() {
-                    let parsed = bun_bundler::defines::DefineData::parse(
-                        drop_item, b"", true, true, log, arena,
-                    )?;
-                    out.options.define.insert(drop_item, parsed)?;
-                }
             }
         }
 

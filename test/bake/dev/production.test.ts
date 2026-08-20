@@ -616,10 +616,18 @@ export function prerender(meta) { return { files: { "/index.html": String(meta.p
       const files = {
         "server.ts": `export function render() { return new Response("unused"); }
 export function prerender(meta) { return { files: { "/index.html": String(meta.pageModule.default()) } }; }`,
-        "routes/index.ts": `console.log("prerender-marker"); export default () => "mark:" + String(globalThis.MARK);`,
+        "routes/index.ts": `import "se-pkg";
+console.log("prerender-marker");
+export default () => "mark:" + String(globalThis.MARK) + ":" + String(globalThis.KEPT);`,
+        // `se-pkg` declares itself side-effect free and `pureCall` is annotated pure, so both are
+        // shaken out unless `ignoreDCEAnnotations` is set for the importing graph.
         "client.ts": `import { value } from "cond-pkg";
-export function add(first, second) { const sum = first + second; console.log("client-marker", sum, value); return sum; }
-globalThis.add = add;`,
+import "se-pkg";
+import { pureCall } from "pure-pkg";
+/* @__PURE__ */ pureCall();
+export function add(first, second) { debugger; const sum = first + second; console.log("client-marker", sum, value); return sum; }
+globalThis.add = add;
+globalThis.expr = function namedExpr() {};`,
         "node_modules/cond-pkg/package.json": JSON.stringify({
           name: "cond-pkg",
           version: "1.0.0",
@@ -627,6 +635,19 @@ globalThis.add = add;`,
         }),
         "node_modules/cond-pkg/custom.js": `export const value = "resolved:custom";`,
         "node_modules/cond-pkg/default.js": `export const value = "resolved:default";`,
+        "node_modules/se-pkg/package.json": JSON.stringify({
+          name: "se-pkg",
+          version: "1.0.0",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "node_modules/se-pkg/index.js": `console.log("side-effects-marker");`,
+        "node_modules/pure-pkg/package.json": JSON.stringify({
+          name: "pure-pkg",
+          version: "1.0.0",
+          main: "./index.js",
+        }),
+        "node_modules/pure-pkg/index.js": `export function pureCall() { console.log("pure-call-marker"); }`,
         "bun.app.ts": `
         const { app = {}, framework = {} } = JSON.parse(process.env.BUNDLER_OPTIONS_JSON!);
         export default {
@@ -654,8 +675,14 @@ globalThis.add = add;`,
           exitCode,
           html: await Bun.file(path.join(String(dir), "dist", "index.html")).text(),
           prerenderLogged: stdout.toString().includes("prerender-marker"),
+          prerenderSideEffects: stdout.toString().includes("side-effects-marker"),
           clientLogs: client.includes("client-marker"),
           clientCondition: client.match(/resolved:\w+/)?.[0],
+          clientSideEffects: client.includes("side-effects-marker"),
+          clientPureCall: client.includes("pure-call-marker"),
+          clientDebugger: client.includes("debugger"),
+          // Identifier minification renames `namedExpr`; without `keepNames` the unused name is removed instead.
+          clientKeptName: /function \w+\(\)\{\}/.test(client),
           // Minified output renames the parameters and drops the newlines inside the function.
           clientReadable: client.includes("function add(first, second) {\n"),
           // Syntax minification turns the `const` into a `let`.
@@ -665,36 +692,100 @@ globalThis.add = add;`,
 
       const defaults = {
         exitCode: 0,
-        html: "mark:undefined",
+        html: "mark:undefined:undefined",
         prerenderLogged: true,
+        prerenderSideEffects: false,
         clientLogs: true,
         clientCondition: "resolved:default",
+        clientSideEffects: false,
+        clientPureCall: false,
+        clientDebugger: true,
+        clientKeptName: false,
         clientReadable: false,
         clientConst: false,
       };
-      const [base, defineAndConditions, drop, serverMinifyOff, clientMinifyOff] = await Promise.all([
-        build({}),
-        // The app's define replaces the framework's; the framework's client conditions still apply.
-        build({
-          framework: { server: { define: { "globalThis.MARK": '"framework"' } }, client: { conditions: ["custom"] } },
-          app: { server: { define: { "globalThis.MARK": '"app"' } } },
-        }),
-        build({ app: { server: { drop: ["console"] }, client: { drop: ["console"] } } }),
-        // Whitespace and identifier minification are link-wide and follow `server`; `false` used to be ignored.
-        build({ app: { server: { minify: false } } }),
-        // Syntax minification is per graph, so only the client keeps its `const`.
-        build({ app: { client: { minify: false } } }),
-      ]);
-      expect({ base, defineAndConditions, drop, serverMinifyOff, clientMinifyOff }).toStrictEqual({
+      const [base, defineAndConditions, drop, serverMinifyOff, clientMinifyOff, clientOnly, serverOnly] =
+        await Promise.all([
+          build({}),
+          // `define` merges key by key: the app's MARK replaces the framework's, the framework's KEPT
+          // survives, and the framework's client conditions still apply.
+          build({
+            framework: {
+              server: { define: { "globalThis.MARK": '"framework"', "globalThis.KEPT": '"kept"' } },
+              client: { conditions: ["custom"] },
+            },
+            app: { server: { define: { "globalThis.MARK": '"app"' } } },
+          }),
+          build({ app: { server: { drop: ["console"] }, client: { drop: ["console", "debugger"] } } }),
+          // Whitespace and identifier minification are link-wide and follow `server`; `false` used to be ignored.
+          build({ app: { server: { minify: false } } }),
+          // Syntax minification is per graph, so only the client keeps its `const`.
+          build({ app: { client: { minify: false } } }),
+          // `ignoreDCEAnnotations` and `minify.keepNames` on one graph do not reach the other.
+          build({ app: { client: { ignoreDCEAnnotations: true, minify: { keepNames: true } } } }),
+          build({ app: { server: { ignoreDCEAnnotations: true, minify: { keepNames: true } } } }),
+        ]);
+      expect({
+        base,
+        defineAndConditions,
+        drop,
+        serverMinifyOff,
+        clientMinifyOff,
+        clientOnly,
+        serverOnly,
+      }).toStrictEqual({
         base: defaults,
-        defineAndConditions: { ...defaults, html: "mark:app", clientCondition: "resolved:custom" },
+        defineAndConditions: { ...defaults, html: "mark:app:kept", clientCondition: "resolved:custom" },
         // Dropping the client's console.log leaves the "cond-pkg" import unused, so it is shaken out too.
-        drop: { ...defaults, prerenderLogged: false, clientLogs: false, clientCondition: undefined },
+        drop: {
+          ...defaults,
+          prerenderLogged: false,
+          clientLogs: false,
+          clientCondition: undefined,
+          clientDebugger: false,
+        },
         serverMinifyOff: { ...defaults, clientReadable: true },
-        clientMinifyOff: { ...defaults, clientConst: true },
+        // Without syntax minification the unused expression name is never removed.
+        clientMinifyOff: { ...defaults, clientConst: true, clientKeptName: true },
+        clientOnly: { ...defaults, clientSideEffects: true, clientPureCall: true, clientKeptName: true },
+        serverOnly: { ...defaults, prerenderSideEffects: true },
       });
+
+      // Separate SSR graph (react): the SSR copy of a "use client" component takes `ssr`, not `server`.
+      const reactDir = await tempDirWithBakeDeps("bake-production-bundler-options-ssr", {
+        "bun.app.ts": `export default {
+          app: {
+            framework: "react",
+            bundlerOptions: {
+              server: { define: { GRAPH_MARK: '"mark-server"' } },
+              ssr: { define: { GRAPH_MARK: '"mark-ssr"' } },
+              client: { define: { GRAPH_MARK: '"mark-client"' } },
+            },
+          },
+        };`,
+        "components/Client.tsx": `"use client";
+declare const GRAPH_MARK: string;
+export function Client() { return <b>{"client-sees:" + GRAPH_MARK}</b>; }`,
+        "pages/index.tsx": `import { Client } from "../components/Client";
+declare const GRAPH_MARK: string;
+export default function Page() { return <p>{"server-sees:" + GRAPH_MARK}<Client /></p>; }`,
+      });
+      const ssrBuild = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+        .cwd(reactDir)
+        .env(bunEnv)
+        .quiet()
+        .throws(false);
+      const ssrHtml = await Bun.file(path.join(reactDir, "dist", "index.html")).text();
+      const clientChunks = await Promise.all(
+        [...new Bun.Glob("dist/_bun/*.js").scanSync(reactDir)].map(f => Bun.file(path.join(reactDir, f)).text()),
+      );
+      expect({
+        stderr: ssrBuild.exitCode === 0 ? "" : ssrBuild.stderr.toString(),
+        html: [...new Set(ssrHtml.match(/(?:server|client)-sees:[\w-]+/g))],
+        client: [...new Set(clientChunks.join("\n").match(/mark-\w+/g))],
+      }).toEqual({ stderr: "", html: ["server-sees:mark-server", "client-sees:mark-ssr"], client: ["mark-client"] });
     },
-    60_000 * WAIT_MULTIPLIER,
+    90_000 * WAIT_MULTIPLIER,
   );
 
   test(

@@ -213,28 +213,42 @@ function validateOrderOption(options) {
   }
 }
 
-// Node validates rrtype case-sensitively: only the exact uppercase names are valid.
-const validResolveRRTypes = {
+// resolve(hostname, rrtype) calls the resolve* method of rrtype, like Node's resolveMap.
+// So an rrtype is valid exactly when a method exists for it, and the lookup is
+// case-sensitive: "a" throws like it does in Node.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/utils.js#L289-L306
+const resolveMethodNames = {
   __proto__: null,
-  A: true,
-  AAAA: true,
-  ANY: true,
-  CAA: true,
-  CNAME: true,
-  MX: true,
-  NAPTR: true,
-  NS: true,
-  PTR: true,
-  SOA: true,
-  SRV: true,
-  TLSA: true,
-  TXT: true,
+  A: "resolve4",
+  AAAA: "resolve6",
+  ANY: "resolveAny",
+  CAA: "resolveCaa",
+  CNAME: "resolveCname",
+  MX: "resolveMx",
+  NAPTR: "resolveNaptr",
+  NS: "resolveNs",
+  PTR: "resolvePtr",
+  SOA: "resolveSoa",
+  SRV: "resolveSrv",
+  TXT: "resolveTxt",
 };
 
-function validateRRType(rrtype) {
-  if (!validResolveRRTypes[rrtype]) {
+// Captures the methods of one surface (callback Resolver, promises, promises Resolver) at
+// module load. As in Node, a later reassignment of dns.resolve4 does not change resolve().
+function createResolveMap(methods) {
+  const map = { __proto__: null };
+  for (const rrtype in resolveMethodNames) {
+    map[rrtype] = methods[resolveMethodNames[rrtype]];
+  }
+  return map;
+}
+
+function getResolveMethod(map, rrtype) {
+  const method = map[rrtype];
+  if (method === undefined) {
     throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype, "is invalid");
   }
+  return method;
 }
 
 // Validates and returns the callback wrapped by guardCallback.
@@ -432,30 +446,9 @@ var InternalResolver = class Resolver {
       rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
-    } else {
-      validateRRType(rrtype);
     }
 
-    callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolve(hostname, rrtype)
-      .then(
-        results => {
-          switch (rrtype) {
-            case "A":
-            case "AAAA":
-              callback(null, results.map(mapResolveX));
-              break;
-            default:
-              callback(null, results);
-              break;
-          }
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    getResolveMethod(resolveMap, rrtype).$call(this, hostname, callback);
   }
 
   resolve4(hostname, options, callback) {
@@ -628,10 +621,7 @@ var InternalResolver = class Resolver {
     if (arguments.length > 2) {
       callback = arguments[2];
     }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveCaa(hostname)
@@ -649,10 +639,7 @@ var InternalResolver = class Resolver {
     if (arguments.length > 2) {
       callback = arguments[2];
     }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveTxt(hostname)
@@ -669,10 +656,7 @@ var InternalResolver = class Resolver {
     if (arguments.length > 2) {
       callback = arguments[2];
     }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveSoa(hostname)
@@ -716,6 +700,8 @@ var InternalResolver = class Resolver {
     return setServersOn(servers, Resolver.#getResolver(this));
   }
 };
+
+const resolveMap = createResolveMap(InternalResolver.prototype);
 
 function Resolver(options) {
   return new InternalResolver(options);
@@ -855,25 +841,18 @@ const promises = {
   },
 
   resolve(hostname, rrtype) {
-    if (typeof hostname !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
-    }
-
     if (typeof rrtype === "undefined") {
       rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
-    } else {
-      validateRRType(rrtype);
+    }
+    const method = getResolveMethod(promisesResolveMap, rrtype);
+
+    if (typeof hostname !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
     }
 
-    switch (rrtype) {
-      case "A":
-      case "AAAA":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false)));
-      default:
-        return translateErrorCode(dns.resolve(hostname, rrtype));
-    }
+    return method.$call(this, hostname);
   },
 
   resolve4(hostname, options) {
@@ -942,18 +921,14 @@ const promises = {
         rrtype = "A";
       } else if (typeof rrtype !== "string") {
         throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
-      } else {
-        validateRRType(rrtype);
       }
-      switch (rrtype) {
-        case "A":
-        case "AAAA":
-          return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
-          );
-        default:
-          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));
+      const method = getResolveMethod(promisesResolverResolveMap, rrtype);
+
+      if (typeof hostname !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
       }
+
+      return method.$call(this, hostname);
     }
 
     resolve4(hostname, options) {
@@ -1027,6 +1002,9 @@ const promises = {
   getServers,
   setServers,
 };
+
+const promisesResolveMap = createResolveMap(promises);
+const promisesResolverResolveMap = createResolveMap(promises.Resolver.prototype);
 
 // Compatibility with util.promisify(dns[method])
 for (const [method, pMethod] of [

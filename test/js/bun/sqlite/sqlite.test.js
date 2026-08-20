@@ -990,6 +990,7 @@ describe("prepare() binds a single non-array parameter", () => {
     ["number", 42, 42],
     ["zero", 0, 0],
     ["boolean", true, 1],
+    ["boolean false", false, 0],
     ["null", null, null],
   ])("%s", (_label, binding, expected) => {
     using db = new Database(":memory:");
@@ -1018,6 +1019,13 @@ describe("prepare() binds a single non-array parameter", () => {
     using db = new Database(":memory:");
 
     expect(() => db.prepare("SELECT 1 AS a", "extra")).toThrow("SQLite query expected 0 values, received 1");
+  });
+
+  it("an explicit undefined binding stays unbound", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("SELECT ? AS value", undefined);
+
+    expect(stmt.get()).toEqual({ value: null });
   });
 
   it("arrays and objects keep binding positionally and by name", () => {

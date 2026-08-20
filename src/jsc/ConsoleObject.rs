@@ -9,7 +9,7 @@ use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, PropertyKeyKind, ZigString};
 use bun_collections::HashMap;
 use bun_core::{Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};
@@ -3023,78 +3023,80 @@ pub mod formatter {
         fn write_property_key(
             writer: &mut WrappedWriter<'_>,
             key: &ZigString,
-            is_symbol: bool,
-            is_private_symbol: bool,
+            key_kind: PropertyKeyKind,
             quote_keys: bool,
             value_is_string_like: bool,
         ) {
-            if !is_symbol {
-                // TODO: make this one pass?
-                if (!key.is_16_bit()
-                    && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
-                    || (key.is_16_bit()
-                        && (!quote_keys
-                            && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned())))
-                {
-                    writer.add_for_new_line(key.len + 1);
-                    writer.print(format_args!(
-                        concat!("{}", "{}", "{}"),
-                        pfmt!("<r>", C),
-                        key,
-                        pfmt!("<d>:<r> ", C),
-                    ));
-                } else if key.is_16_bit() {
-                    let mut utf16_slice = key.utf16_slice_aligned();
+            match key_kind {
+                PropertyKeyKind::String => {
+                    if (!key.is_16_bit()
+                        && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
+                        || (key.is_16_bit()
+                            && (!quote_keys
+                                && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned())))
+                    {
+                        writer.add_for_new_line(key.len + 1);
+                        writer.print(format_args!(
+                            concat!("{}", "{}", "{}"),
+                            pfmt!("<r>", C),
+                            key,
+                            pfmt!("<d>:<r> ", C),
+                        ));
+                    } else if key.is_16_bit() {
+                        let mut utf16_slice = key.utf16_slice_aligned();
 
-                    writer.add_for_new_line(utf16_slice.len() + 2);
+                        writer.add_for_new_line(utf16_slice.len() + 2);
 
-                    if C {
-                        writer.write_all(pfmt!("<r><green>", true).as_bytes());
-                    }
+                        if C {
+                            writer.write_all(pfmt!("<r><green>", true).as_bytes());
+                        }
 
-                    writer.write_all(b"\"");
-
-                    const QUOTE_U16: &[u16] = &[b'"' as u16];
-                    while let Some(j) = strings::index_of_any16(utf16_slice, QUOTE_U16) {
-                        writer.write_16_bit(&utf16_slice[0..j]);
                         writer.write_all(b"\"");
-                        utf16_slice = &utf16_slice[j + 1..];
+
+                        const QUOTE_U16: &[u16] = &[b'"' as u16];
+                        while let Some(j) = strings::index_of_any16(utf16_slice, QUOTE_U16) {
+                            writer.write_16_bit(&utf16_slice[0..j]);
+                            writer.write_all(b"\"");
+                            utf16_slice = &utf16_slice[j + 1..];
+                        }
+
+                        writer.write_16_bit(utf16_slice);
+
+                        writer.print(format_args!("{}", pfmt!("\"<r><d>:<r> ", C)));
+                    } else {
+                        writer.add_for_new_line(key.len + 2);
+
+                        writer.print(format_args!(
+                            "{}{}{}",
+                            pfmt!("<r><green>", C),
+                            bun_core::fmt::format_json_string_latin1(key.slice()),
+                            pfmt!("<r><d>:<r> ", C),
+                        ));
                     }
-
-                    writer.write_16_bit(utf16_slice);
-
-                    writer.print(format_args!("{}", pfmt!("\"<r><d>:<r> ", C)));
-                } else {
-                    writer.add_for_new_line(key.len + 2);
-
+                }
+                PropertyKeyKind::PrivateSymbol if cfg!(debug_assertions) => {
+                    writer.add_for_new_line(1 + "$:".len() + key.len);
                     writer.print(format_args!(
-                        "{}{}{}",
-                        pfmt!("<r><green>", C),
-                        bun_core::fmt::format_json_string_latin1(key.slice()),
+                        "{}{}{}{}",
+                        pfmt!("<r><magenta>", C),
+                        if key.len > 0 && key.char_at(0) == u16::from(b'#') {
+                            ""
+                        } else {
+                            "$"
+                        },
+                        key,
                         pfmt!("<r><d>:<r> ", C),
                     ));
                 }
-            } else if cfg!(debug_assertions) && is_private_symbol {
-                writer.add_for_new_line(1 + "$:".len() + key.len);
-                writer.print(format_args!(
-                    "{}{}{}{}",
-                    pfmt!("<r><magenta>", C),
-                    if key.len > 0 && key.char_at(0) == u16::from(b'#') {
-                        ""
-                    } else {
-                        "$"
-                    },
-                    key,
-                    pfmt!("<r><d>:<r> ", C),
-                ));
-            } else {
-                writer.add_for_new_line(1 + "[Symbol()]:".len() + key.len);
-                writer.print(format_args!(
-                    "{}Symbol({}){}",
-                    pfmt!("<r><d>[<r><blue>", C),
-                    key,
-                    pfmt!("<r><d>]:<r> ", C),
-                ));
+                PropertyKeyKind::Symbol | PropertyKeyKind::PrivateSymbol => {
+                    writer.add_for_new_line(1 + "[Symbol()]:".len() + key.len);
+                    writer.print(format_args!(
+                        "{}Symbol({}){}",
+                        pfmt!("<r><d>[<r><blue>", C),
+                        key,
+                        pfmt!("<r><d>]:<r> ", C),
+                    ));
+                }
             }
 
             if value_is_string_like {
@@ -3115,8 +3117,7 @@ pub mod formatter {
             global_this: &JSGlobalObject,
             key: *mut ZigString,
             value: JSValue,
-            is_symbol: bool,
-            is_private_symbol: bool,
+            key_kind: PropertyKeyKind,
         ) -> Option<TagResult> {
             // SAFETY: caller passes a valid `*ZigString`.
             let key = unsafe { &*key };
@@ -3177,8 +3178,7 @@ pub mod formatter {
             Self::write_property_key(
                 &mut writer,
                 key,
-                is_symbol,
-                is_private_symbol,
+                key_kind,
                 quote_keys,
                 tag.cell.is_string_like(),
             );
@@ -3195,17 +3195,14 @@ pub mod formatter {
             ctx_ptr: *mut c_void,
             key: *mut ZigString,
             value: JSValue,
-            is_symbol: bool,
-            is_private_symbol: bool,
+            key_kind: PropertyKeyKind,
         ) {
             // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
             let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else {
                 return;
             };
 
-            let Some(tag) =
-                Self::for_each_prelude(ctx, global_this, key, value, is_symbol, is_private_symbol)
-            else {
+            let Some(tag) = Self::for_each_prelude(ctx, global_this, key, value, key_kind) else {
                 return;
             };
 

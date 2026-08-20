@@ -6,7 +6,7 @@ use bun_collections::HashMap;
 use bun_core::fmt as bun_fmt;
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
+    JSPropertyIterator, JSType, JSValue, JsError, JsResult, PropertyKeyKind, VM,
 };
 use bun_core::{strings, ZigString, ZigStringSlice};
 
@@ -885,10 +885,9 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         ctx_ptr: *mut c_void,
         key_: *mut ZigString,
         value: JSValue,
-        is_symbol: bool,
-        is_private_symbol: bool,
+        key_kind: PropertyKeyKind,
     ) {
-        if is_private_symbol {
+        if key_kind == PropertyKeyKind::PrivateSymbol {
             return;
         }
 
@@ -938,7 +937,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             }
         }
 
-        if !is_symbol {
+        if key_kind == PropertyKeyKind::String {
             // TODO: make this one pass?
             if (!key.is_16_bit() && bun_ast::lexer_tables::is_latin1_identifier(key.slice()))
                 || (key.is_16_bit()

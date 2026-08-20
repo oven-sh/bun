@@ -53,6 +53,13 @@ enum class UWSResponseKind : int32_t {
     SSL = 1,
     H3 = 2,
 };
+
+/// Must match `bun_jsc::PropertyKeyKind` (`#[repr(u8)]`).
+enum class PropertyKeyKind : uint8_t {
+    String = 0,
+    Symbol = 1,
+    PrivateSymbol = 2,
+};
 #endif
 
 typedef struct BunString {

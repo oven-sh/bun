@@ -54,11 +54,19 @@ async function runTests(dir: string, extraArgs: string[], files = ["./a-leaker.t
 describe.concurrent("bun test --isolate", () => {
   test("--environment evaluates once and runs setup and teardown for each isolated file", async () => {
     using dir = tempDir("test-environment-lifecycle", {
+      "environment-state.ts": `
+        console.log("environment-state:evaluate");
+        export const token = {};
+      `,
       "environment.ts": `
+        import { token } from "./environment-state";
         console.log("environment:evaluate");
         let previousGlobal: typeof globalThis | undefined;
         export default {
-          setup(testGlobal: typeof globalThis, { testPath }: { testPath: string }) {
+          async setup(testGlobal: typeof globalThis, { testPath }: { testPath: string }) {
+            if ((await import("./environment-state")).token !== token) {
+              throw new Error("environment module registry was cleared");
+            }
             if (testGlobal === previousGlobal) throw new Error("test global was reused");
             previousGlobal = testGlobal;
             console.log("environment:setup:" + testPath.split(/[\\\\/]/).at(-1));
@@ -91,6 +99,7 @@ describe.concurrent("bun test --isolate", () => {
     );
     expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
       "bun test <version> (<revision>)
+      environment-state:evaluate
       environment:evaluate
       environment:setup:a.test.ts
       environment:teardown

@@ -708,14 +708,14 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
 
-    // Detach the outgoing file's module graph so it's reclaimed even if the old global lingers.
-    {
+    if (mode == TestIsolationGlobalMode::ReplaceTestGlobal) {
+        // Detach the outgoing file's module graph so it's reclaimed even if the old global lingers.
         auto scope = DECLARE_THROW_SCOPE(vm);
         oldGlobal->clearModuleRegistry();
         scope.assertNoException();
     }
 
-    // Drop the permanent root on the previous global so it becomes collectable.
+    // Drop the default-global role while retaining the environment host's explicit root.
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
     if (mode == TestIsolationGlobalMode::ReplaceTestGlobal)
         JSC::gcUnprotect(oldGlobal);

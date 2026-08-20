@@ -276,22 +276,22 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 }
 
 #if CPU(X86_64) || CPU(ARM64)
+#include <atomic>
 #include <ucontext.h>
 
 #ifndef SYS_SECCOMP
 #define SYS_SECCOMP 1
 #endif
 
-static struct sigaction sigsys_action_before_seccomp_shim;
+extern "C" void Bun__onPosixSignal(int signalNumber);
 
-// A seccomp policy answers a blocked syscall either with an errno
-// (SECCOMP_RET_ERRNO, what Docker's default profile does) or with SIGSYS
-// (SECCOMP_RET_TRAP, what Android's per-app policy does). Every newer syscall
-// Bun issues (close_range, pidfd_open, openat2, copy_file_range, clone3, ...)
-// has a fallback for the errno form, so turn the signal form into it: make the
-// blocked syscall return -ENOSYS and resume. This is the documented use of
-// SECCOMP_RET_TRAP (seccomp(2)).
-static void onSeccompTrap(int sig, siginfo_t* info, void* context)
+// Set while JS has a process.on("SIGSYS") listener (BunProcess.cpp).
+static std::atomic<bool> forwardSIGSYSToJS { false };
+
+// A SECCOMP_RET_TRAP policy (Android's per-app policy) answers a blocked
+// syscall with SIGSYS instead of an errno. Make the call return ENOSYS, which
+// the callers of close_range, pidfd_open, openat2, fchmodat2, ... handle.
+static void onSIGSYS(int sig, siginfo_t* info, void* context)
 {
     if (info->si_code == SYS_SECCOMP && context) {
         ucontext_t* uc = static_cast<ucontext_t*>(context);
@@ -303,30 +303,43 @@ static void onSeccompTrap(int sig, siginfo_t* info, void* context)
         return;
     }
 
-    // Sent with kill(2): behave as if this handler was never installed.
-    sigaction(SIGSYS, &sigsys_action_before_seccomp_shim, nullptr);
+    // Sent with kill(2).
+    if (forwardSIGSYSToJS.load(std::memory_order_relaxed)) {
+        Bun__onPosixSignal(sig);
+        return;
+    }
+    signal(sig, SIG_DFL);
     raise(sig);
 }
 
-static void installSeccompTrapHandler()
+static void installSIGSYSHandler()
 {
-    // A second install would save this handler as the previous action and make
-    // the kill(2) path above re-enter itself forever.
-    static bool installed = false;
-    if (installed)
-        return;
-    installed = true;
-
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_sigaction = onSeccompTrap;
+    sa.sa_sigaction = onSIGSYS;
     sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigemptyset(&sa.sa_mask);
-    sigaction(SIGSYS, &sa, &sigsys_action_before_seccomp_shim);
+    sigaction(SIGSYS, &sa, nullptr);
+}
+
+// process.on("SIGSYS") must not replace the handler above, so it registers
+// here instead. Returns false where the handler does not exist and the caller
+// has to install its own.
+extern "C" bool Bun__forwardSIGSYSToJS(bool enabled)
+{
+    forwardSIGSYSToJS.store(enabled, std::memory_order_relaxed);
+    if (enabled)
+        installSIGSYSHandler();
+    return true;
 }
 #else
-static void installSeccompTrapHandler()
+static void installSIGSYSHandler()
 {
+}
+
+extern "C" bool Bun__forwardSIGSYSToJS(bool)
+{
+    return false;
 }
 #endif // CPU(X86_64) || CPU(ARM64)
 #else // OS(FREEBSD)
@@ -377,8 +390,9 @@ extern "C" void on_before_reload_process_posix()
     }
 
     // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
-    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume are left
-    // for execve to reset atomically — resetting them here races JSC's sampler/GC threads fatally.
+    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume/SIGSYS are left
+    // for execve to reset atomically — resetting them here races JSC's sampler/GC threads (and, for
+    // SIGSYS, any thread whose syscall a seccomp policy traps) fatally.
     struct sigaction sa {};
     sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);
@@ -386,7 +400,7 @@ extern "C" void on_before_reload_process_posix()
         if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
             continue;
 #if OS(LINUX)
-        if (s == g_wtfConfig.sigThreadSuspendResume)
+        if (s == g_wtfConfig.sigThreadSuspendResume || s == SIGSYS)
             continue;
 #endif
 #ifdef SIGRTMIN
@@ -675,9 +689,8 @@ extern "C" void bun_initialize_process()
     setvbuf(stderr, nullptr, _IONBF, 0);
 
 #if OS(LINUX)
-    // Must come before bun_close_range: close_range(2) is the first syscall a
-    // seccomp policy is likely to block.
-    installSeccompTrapHandler();
+    // Before bun_close_range: a seccomp policy may trap it.
+    installSIGSYSHandler();
 
     // Prevent leaking inherited file descriptors on Linux
     // This is less of an issue for macOS due to posix_spawn
@@ -1003,8 +1016,7 @@ static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
 
 // npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N])
-// and minus SIGSYS: the kernel raises it for a syscall of this process, so there is nothing to forward, and on Linux
-// the handler installed by bun_initialize_process must stay in place while the child runs.
+// and minus SIGSYS (raised for this process's own syscall; owned by installSIGSYSHandler on Linux).
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \

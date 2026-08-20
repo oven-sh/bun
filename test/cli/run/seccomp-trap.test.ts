@@ -172,6 +172,34 @@ describe.skipIf(!isLinux)("seccomp SECCOMP_RET_TRAP policies", () => {
       signalCode: "SIGSYS",
     });
   });
+
+  test.concurrent.skipIf(!helper)("process.on('SIGSYS') keeps the trap handler and still sees kill", async () => {
+    // signal-exit and similar libraries listen for SIGSYS. The listener must
+    // not replace the trap handler (spawning still works while it is installed
+    // and after it is removed), and a SIGSYS sent with kill still reaches JS.
+    const result = await runTrapped(
+      [SYS_pidfd_open],
+      [
+        bunExe(),
+        "-e",
+        `const { promise, resolve } = Promise.withResolvers();
+         process.on("SIGSYS", resolve);
+         const first = Bun.spawnSync(["echo", "hi"]).stdout.toString();
+         process.kill(process.pid, "SIGSYS");
+         await promise;
+         process.removeAllListeners("SIGSYS");
+         const second = Bun.spawnSync(["echo", "hi"]).stdout.toString();
+         console.log(JSON.stringify({ first, listenerRan: true, second }));
+         process.kill(process.pid, "SIGSYS");`,
+      ],
+    );
+    expect(result).toEqual({
+      stdout: JSON.stringify({ first: "hi\n", listenerRan: true, second: "hi\n" }) + "\n",
+      stderr: "",
+      exitCode: null,
+      signalCode: "SIGSYS",
+    });
+  });
 });
 
 // Compiles seccomp-trap.c and checks that this environment lets us install a

@@ -248,10 +248,8 @@ extern "C" ssize_t posix_spawn_bun(
 
     sigfillset(&blockall);
 #if OS(LINUX)
-    // A seccomp trap (SIGSYS) kills the process when the signal is blocked
-    // instead of reaching the handler from bun_initialize_process, which turns
-    // it into ENOSYS. Keep it deliverable so clone3 below and the child's setup
-    // syscalls fail with ENOSYS like they do under an errno-returning policy.
+    // A seccomp trap on a blocked SIGSYS kills the process instead of reaching
+    // the ENOSYS handler (installSIGSYSHandler in c-bindings.cpp).
     sigdelset(&blockall, SIGSYS);
 #endif
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
@@ -304,9 +302,7 @@ extern "C" ssize_t posix_spawn_bun(
         sa.sa_handler = SIG_DFL;
         for (int i = 0; i < NSIG; i++) {
 #if OS(LINUX)
-            // Keep the seccomp trap handler until right before execve so a
-            // blocked close_range() below falls back to the loop instead of
-            // killing the child.
+            // close_range() below still needs the ENOSYS handler; reset before execve.
             if (i == SIGSYS)
                 continue;
 #endif
@@ -464,8 +460,7 @@ extern "C" ssize_t posix_spawn_bun(
         // Close all fds > current_max_fd, preferring cloexec if available
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
 
-        // The caller's mask goes back last (execve keeps it): a caller that
-        // blocks SIGSYS must not make a trapped close_range() above fatal.
+        // After close_range(): the caller's mask may block SIGSYS. execve keeps the mask.
         sigprocmask(SIG_SETMASK, &childmask, 0);
 #if OS(LINUX)
         sigaction(SIGSYS, &sa, 0);

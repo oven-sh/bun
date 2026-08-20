@@ -7,7 +7,7 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "h
 // paths, then the Playwright cache) so the test detects Chrome whenever the
 // runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -129,12 +129,18 @@ function findChrome(): string | undefined {
     }
   } catch {}
   if (!bestRev) return undefined;
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
-  const plat = process.platform === "darwin" ? "mac" : "linux";
+  // Playwright's registry names each directory per platform (packages/playwright-core/src/server/registry/index.ts).
+  // Linux x64 carries NO arch suffix ("chrome-headless-shell-linux64"); only mac keeps one.
+  const plat =
+    process.platform === "win32"
+      ? "chrome-headless-shell-win64"
+      : process.platform === "darwin"
+        ? `chrome-headless-shell-mac-${process.arch === "arm64" ? "arm64" : "x64"}`
+        : "chrome-headless-shell-linux64";
   const bin =
     process.platform === "win32"
-      ? join(cacheDir, bestName, "chrome-headless-shell-win64", "chrome-headless-shell.exe")
-      : join(cacheDir, bestName, `chrome-headless-shell-${plat}-${arch}`, "chrome-headless-shell");
+      ? join(cacheDir, bestName, plat, "chrome-headless-shell.exe")
+      : join(cacheDir, bestName, plat, "chrome-headless-shell");
   if (isExecutable(bin)) return bin;
   if (process.platform === "linux" && process.arch === "arm64") {
     const bin2 = join(cacheDir, bestName, "chrome-linux/headless_shell");
@@ -1228,6 +1234,86 @@ it("BUN_CHROME_PATH is used as the executable", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "env", stderr: "", exitCode: 0 });
 });
+
+// Regression coverage for find_playwright_shell() (ChromeProcess.rs): it used to build
+// chrome-headless-shell-<plat>-<arch>, which only matches Playwright's actual registry layout
+// (packages/playwright-core/src/server/registry/index.ts) on mac. Linux x64 carries no arch
+// suffix ("chrome-headless-shell-linux64"), so discovery could never find a Playwright-installed
+// headless shell there. This builds a fake ms-playwright cache tree using the *correct*
+// per-platform directory name and proves discovery finds it, spawns it, and completes a real CDP
+// round trip -- with no BUN_CHROME_PATH, backend.path, or $PATH browser available, so discovery
+// must fall through to the cache. Reintroducing the old <plat>-<arch> naming on Linux makes this
+// fail exactly the way the original bug did (ERR_DLOPEN_FAILED).
+//
+// Skipped if the host has a real browser at one of find_chrome()'s hardcoded absolute paths
+// (checked before the Playwright cache) -- those take precedence and would mask what this test
+// is trying to isolate.
+const playwrightShellSubdir =
+  process.platform === "darwin"
+    ? `chrome-headless-shell-mac-${process.arch === "arm64" ? "arm64" : "x64"}`
+    : process.platform === "win32"
+      ? "chrome-headless-shell-win64"
+      : "chrome-headless-shell-linux64";
+const hardcodedLinuxBrowsers = [
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium-browser",
+  "/usr/bin/chromium",
+  "/snap/bin/chromium",
+  "/usr/bin/brave-browser",
+  "/snap/bin/brave",
+  "/usr/bin/microsoft-edge",
+];
+const hasHardcodedBrowser =
+  process.platform === "linux" &&
+  hardcodedLinuxBrowsers.some(p => {
+    try {
+      accessSync(p, fsConstants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+(process.platform === "win32" || hasHardcodedBrowser ? test.todo : test)(
+  "chrome: discovered via the Playwright chrome-headless-shell cache (fixture tree, no BUN_CHROME_PATH)",
+  async () => {
+    using home = tempDir("webview-playwright-cache", {});
+    const cacheDir = join(
+      String(home),
+      process.platform === "darwin" ? "Library/Caches/ms-playwright" : ".cache/ms-playwright",
+    );
+    const shellDir = join(cacheDir, "chromium_headless_shell-9999", playwrightShellSubdir);
+    mkdirSync(shellDir, { recursive: true });
+    const shimPath = join(shellDir, "chrome-headless-shell");
+    // A real chrome-headless-shell accepts --remote-debugging-pipe and speaks CDP over fd 3/4.
+    // This shim ignores every flag the runtime passes it and just runs fake-chrome-fixture.ts,
+    // which speaks that protocol -- enough to prove discovery + spawn end-to-end without shipping
+    // a real browser.
+    const fixture = join(import.meta.dir, "fake-chrome-fixture.ts");
+    writeFileSync(shimPath, `#!/bin/sh\nexec ${JSON.stringify(bunExe())} ${JSON.stringify(fixture)}\n`);
+    chmodSync(shimPath, 0o755);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 200, height: 200 });
+          await view.navigate("data:text/html,<body>discovered</body>");
+          // fake-chrome-fixture.ts evals the raw expression itself (no real DOM) --
+          // a literal proves the CDP round trip without depending on document.*.
+          console.log(await view.evaluate("'discovered'"));
+          view.close();
+        `,
+      ],
+      env: { ...bunEnv, BUN_CHROME_PATH: undefined, HOME: String(home), PATH: "" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "discovered", stderr: "", exitCode: 0 });
+  },
+);
 
 // No browser involved: the constructor refuses before it would spawn one. The
 // CDP transport is one per process, owned by the global that spawned it, so a

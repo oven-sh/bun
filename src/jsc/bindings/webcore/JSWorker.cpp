@@ -134,7 +134,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWorkerPrototype, JSWorkerPrototype::Base);
 
 using JSWorkerDOMConstructor = JSDOMConstructor<JSWorker>;
 
-template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

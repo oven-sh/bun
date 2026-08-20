@@ -48,6 +48,8 @@
 namespace Bun {
 using namespace JSC;
 
+// Tables end with a `{ nullptr, 0 }` row: every entry of some tables is
+// `#ifdef`-guarded, and an empty array could not be passed as a span.
 struct NumericConstant {
     const char* name;
     double value;
@@ -55,10 +57,10 @@ struct NumericConstant {
 
 // One loop instead of a `putDirect` call sequence per constant; these objects
 // are each built once, lazily.
-static void putNumericConstants(VM& vm, JSObject* object, std::span<const NumericConstant> constants)
+static void putNumericConstants(VM& vm, JSObject* object, const NumericConstant* constants)
 {
-    for (auto& constant : constants)
-        object->putDirect(vm, Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant.name)), jsNumber(constant.value));
+    for (; constants->name; ++constants)
+        object->putDirect(vm, Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constants->name)), jsNumber(constants->value));
 }
 
 static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
@@ -71,6 +73,7 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
     auto priorityObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     static constexpr NumericConstant kConstants1[] = {
         { "UV_UDP_REUSEADDR", static_cast<double>(4) },
+        { nullptr, 0 },
     };
     putNumericConstants(vm, osObj, kConstants1);
     Bun::putDirectNamed(vm, osObj, "dlopen"_s, dlopenObj);
@@ -489,6 +492,7 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 #ifdef WSAEREFUSED
         { "WSAEREFUSED", static_cast<double>(WSAEREFUSED) },
 #endif
+        { nullptr, 0 },
     };
     putNumericConstants(vm, errnoObj, kConstants2);
     static constexpr NumericConstant kConstants3[] = {
@@ -603,6 +607,7 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 #ifdef SIGUNUSED
         { "SIGUNUSED", static_cast<double>(SIGUNUSED) },
 #endif
+        { nullptr, 0 },
     };
     putNumericConstants(vm, signalsObj, kConstants3);
     static constexpr NumericConstant kConstants4[] = {
@@ -612,6 +617,7 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
         { "PRIORITY_ABOVE_NORMAL", static_cast<double>(-7) },
         { "PRIORITY_HIGH", static_cast<double>(-14) },
         { "PRIORITY_HIGHEST", static_cast<double>(-20) },
+        { nullptr, 0 },
     };
     putNumericConstants(vm, priorityObj, kConstants4);
     static constexpr NumericConstant kConstants5[] = {
@@ -630,6 +636,7 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 #ifdef RTLD_DEEPBIND
         { "RTLD_DEEPBIND", static_cast<double>(RTLD_DEEPBIND) },
 #endif
+        { nullptr, 0 },
     };
     putNumericConstants(vm, dlopenObj, kConstants5);
     return osObj;
@@ -666,6 +673,7 @@ static JSValue processBindingConstantsGetTrace(VM& vm, JSObject* bindingObject)
         { "TRACE_EVENT_PHASE_ENTER_CONTEXT", static_cast<double>(40) },
         { "TRACE_EVENT_PHASE_LEAVE_CONTEXT", static_cast<double>(41) },
         { "TRACE_EVENT_PHASE_LINK_IDS", static_cast<double>(61) },
+        { nullptr, 0 },
     };
     putNumericConstants(vm, object, kConstants6);
     return object;
@@ -805,6 +813,7 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
         { "COPYFILE_FICLONE_FORCE", static_cast<double>(4) },
         { "EXTENSIONLESS_FORMAT_JAVASCRIPT", static_cast<double>(0) },
         { "EXTENSIONLESS_FORMAT_WASM", static_cast<double>(1) },
+        { nullptr, 0 },
     };
     putNumericConstants(vm, object, kConstants7);
 
@@ -900,6 +909,7 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #ifdef SSL_OP_TLS_ROLLBACK_BUG
         { "SSL_OP_TLS_ROLLBACK_BUG", static_cast<double>(SSL_OP_TLS_ROLLBACK_BUG) },
 #endif
+        { nullptr, 0 },
     };
     putNumericConstants(vm, object, kConstants8);
     // OBSOLETE OPTIONS retained for compatibility
@@ -921,6 +931,7 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
         { "SSL_OP_PKCS1_CHECK_2", static_cast<double>(0) },
         { "SSL_OP_NETSCAPE_CA_DN_BUG", static_cast<double>(0) },
         { "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG", static_cast<double>(0) },
+        { nullptr, 0 },
     };
     putNumericConstants(vm, object, kConstants9);
     // BoringSSL does not define engine constants in openssl/engine.h
@@ -983,6 +994,7 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #else
         { "RSA_PSS_SALTLEN_AUTO", static_cast<double>(-2) },
 #endif
+        { nullptr, 0 },
     };
     putNumericConstants(vm, object, kConstants10);
     auto cipherList = String("TLS_AES_256_GCM_SHA384:"
@@ -1021,6 +1033,7 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
         { "POINT_CONVERSION_COMPRESSED", static_cast<double>(POINT_CONVERSION_COMPRESSED) },
         { "POINT_CONVERSION_UNCOMPRESSED", static_cast<double>(POINT_CONVERSION_UNCOMPRESSED) },
         { "POINT_CONVERSION_HYBRID", static_cast<double>(POINT_CONVERSION_HYBRID) },
+        { nullptr, 0 },
     };
     putNumericConstants(vm, object, kConstants11);
     return object;
@@ -1201,6 +1214,7 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
         { "ZSTD_error_dstBuffer_null", static_cast<double>(ZSTD_error_dstBuffer_null) },
         { "ZSTD_error_noForwardProgress_destFull", static_cast<double>(ZSTD_error_noForwardProgress_destFull) },
         { "ZSTD_error_noForwardProgress_inputEmpty", static_cast<double>(ZSTD_error_noForwardProgress_inputEmpty) },
+        { nullptr, 0 },
     };
     putNumericConstants(vm, object, kConstants12);
 

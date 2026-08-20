@@ -2917,9 +2917,7 @@ pub mod time {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EmbedKind {
     Codegen,
-    CodegenEager,
     Src,
-    SrcEager,
 }
 
 #[doc(hidden)]
@@ -2928,10 +2926,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
     // → bytes), so the bytes are valid UTF-8 by construction.
     let from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
     let mut p = match kind {
-        EmbedKind::Codegen | EmbedKind::CodegenEager => {
-            ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH))
-        }
-        EmbedKind::Src | EmbedKind::SrcEager => {
+        EmbedKind::Codegen => ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH)),
+        EmbedKind::Src => {
             let mut b = ::std::path::PathBuf::from(from(crate::build_options::BASE_PATH));
             b.push("src");
             b
@@ -2947,8 +2943,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
 }
 
 /// Per-call-site embedded file.
-/// `$root` must be one of the bare idents `Codegen` /
-/// `CodegenEager` / `Src` / `SrcEager` and `$sub_path` a string literal.
+/// `$root` must be one of the bare idents `Codegen` / `Src` and `$sub_path` a
+/// string literal.
 ///
 /// The `cfg(bun_codegen_embed)` split lives **inside** the macro so call
 /// sites never repeat the `#[cfg]`/`#[cfg(not)]` pair (which is error-prone
@@ -2965,10 +2961,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
 /// whenever `bun_codegen_embed` is set).
 #[macro_export]
 macro_rules! runtime_embed_file {
-    (Codegen,      $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
-    (CodegenEager, $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
-    (Src,          $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
-    (SrcEager,     $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
+    (Codegen, $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
+    (Src,     $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
 }
 
 #[doc(hidden)]

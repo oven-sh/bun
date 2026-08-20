@@ -117,20 +117,6 @@ pub trait RunTasksCallbacks {
     fn on_resolve(_ctx: &mut Self::Ctx) {
         unreachable!()
     }
-
-    /// Reinterpret `&mut Self::Ctx` as `&mut PackageInstaller` — only valid
-    /// when `IS_PACKAGE_INSTALLER` is true. Default body is unreachable; the `PackageInstaller`
-    /// impl overrides it with an identity cast.
-    fn as_package_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut PackageInstaller<'a> {
-        unreachable!()
-    }
-
-    /// Reinterpret `&mut Self::Ctx` as `&mut Store::Installer` — only valid
-    /// when `IS_STORE_INSTALLER` is true. Default body is unreachable; the `Store::Installer`
-    /// impl overrides it with an identity cast.
-    fn as_store_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut Store::Installer<'a> {
-        unreachable!()
-    }
 }
 
 /// Type-erased view of a `RunTasksCallbacks` impl, so the ~2k-line body of
@@ -208,7 +194,7 @@ impl ErasedCallbacks {
 }
 
 impl ErasedCallbacks {
-    /// `C::as_package_installer`: `ctx` *is* the installer when `is_package_installer`.
+    /// `ctx` *is* the installer when `is_package_installer` (`C::Ctx == PackageInstaller`).
     fn package_installer<'a>(&self, ctx: *mut ()) -> &'a mut PackageInstaller<'a> {
         debug_assert!(self.is_package_installer);
         // SAFETY: `is_package_installer` means `C::Ctx == PackageInstaller`, and
@@ -216,7 +202,7 @@ impl ErasedCallbacks {
         unsafe { &mut *ctx.cast() }
     }
 
-    /// `C::as_store_installer`: `ctx` *is* the installer when `is_store_installer`.
+    /// `ctx` *is* the installer when `is_store_installer` (`C::Ctx == Store::Installer`).
     fn store_installer<'a>(&self, ctx: *mut ()) -> &'a mut Store::Installer<'a> {
         debug_assert!(self.is_store_installer);
         // SAFETY: `is_store_installer` means `C::Ctx == Store::Installer`, and

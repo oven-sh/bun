@@ -11,7 +11,6 @@ use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-use bun_jsc::JsCell;
 use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
@@ -19,6 +18,7 @@ use bun_jsc::{
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
     VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
 };
+use bun_jsc::{JsCell, JsCellRefExt as _};
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;

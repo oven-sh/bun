@@ -185,6 +185,14 @@ const MAX_INLINE_EQ_LEN: usize = 64;
 /// Past this many keys the `match len` compare tree (~20 bytes of code per
 /// key) is replaced by a binary search over the keys stored as sorted data
 /// (`bun_core::comptime_string_map::sorted_key_index`).
+/// `#[inline]` on the map/set declaration opts a hot lookup back into the
+/// fully inlined compare tree regardless of size (see `Method::which`).
+fn take_inline_attr(attrs: &mut Vec<Attribute>) -> bool {
+    let before = attrs.len();
+    attrs.retain(|a| !a.path().is_ident("inline"));
+    attrs.len() != before
+}
+
 const MAX_COMPARE_TREE_KEYS: usize = 64;
 
 /// `(blob, buckets, order)` for `sorted_key_index`: keys sorted by
@@ -277,8 +285,9 @@ fn key_index_parts(
     keys: &[(Vec<u8>, Span)],
     arms: &TokenStream,
     miss: &TokenStream,
+    force_inline: bool,
 ) -> (TokenStream, TokenStream) {
-    if keys.len() <= MAX_COMPARE_TREE_KEYS {
+    if force_inline || keys.len() <= MAX_COMPARE_TREE_KEYS {
         let body = quote! {
             match key.len() {
                 #arms
@@ -316,13 +325,14 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let MapParse(input) = syn::parse2(input)?;
     let Input {
         crate_path,
-        attrs,
+        mut attrs,
         vis,
         name,
         value_ty,
         keys,
         values,
     } = input;
+    let force_inline = take_inline_attr(&mut attrs);
     let value_ty = value_ty.expect("map form always has a value type");
 
     let ty_name = format_ident!("__ComptimeStringMap_{}", name);
@@ -361,6 +371,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
         &keys,
         &quote! { #(#eq_arms)* },
         &quote!(::core::primitive::u32::MAX),
+        force_inline,
     );
 
     // Same dispatch with a caller-supplied comparator; monomorphized only
@@ -383,10 +394,14 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let decl_keys = (0..n).map(|i| key_lit(&keys, i));
     let decl_values = values.iter();
     let decl_values_again = values.iter();
-    // Small maps are a handful of compares and should vanish into the caller;
-    // past that the compare tree is big enough that one shared copy wins and
-    // LLVM can still inline a single-caller map on its own.
-    let lookup_inline = if n < 8 { quote!(#[inline]) } else { quote!() };
+    // The compare tree is meant to vanish into the caller (length dispatch
+    // first, so most misses cost one compare); the sorted-table lookup for
+    // large maps is a real function.
+    let lookup_inline = if force_inline || n <= MAX_COMPARE_TREE_KEYS {
+        quote!(#[inline])
+    } else {
+        quote!()
+    };
 
     Ok(quote! {
         #(#attrs)*
@@ -536,13 +551,14 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
     let SetParse(input) = syn::parse2(input)?;
     let Input {
         crate_path,
-        attrs,
+        mut attrs,
         vis,
         name,
         value_ty: _,
         keys,
         values: _,
     } = input;
+    let force_inline = take_inline_attr(&mut attrs);
 
     let ty_name = format_ident!("__ComptimeStringSet_{}", name);
     let blob_name = format_ident!("__COMPTIME_STRING_SET_KEY_BLOB_{}", name);
@@ -574,8 +590,9 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
             &keys,
             &quote! { #(#eq_arms)* },
             &quote!(false),
+            force_inline,
         );
-        if keys.len() <= MAX_COMPARE_TREE_KEYS {
+        if force_inline || keys.len() <= MAX_COMPARE_TREE_KEYS {
             (body, statics)
         } else {
             (quote! { #body != ::core::primitive::u32::MAX }, statics)
@@ -583,7 +600,11 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
     };
 
     let decl_keys = (0..n).map(|i| key_lit(&keys, i));
-    let lookup_inline = if n < 8 { quote!(#[inline]) } else { quote!() };
+    let lookup_inline = if force_inline || n <= MAX_COMPARE_TREE_KEYS {
+        quote!(#[inline])
+    } else {
+        quote!()
+    };
 
     Ok(quote! {
         #(#attrs)*

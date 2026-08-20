@@ -211,7 +211,7 @@ static void encodeParamValue(const StringView& value, StringBuilder& builder)
 
 // Parses the parameter string and populates the map.
 // Returns true on success, false on failure (exception should be set).
-bool parseMIMEParamsString(JSGlobalObject* globalObject, JSMap* map, StringView input)
+__attribute__((minsize)) bool parseMIMEParamsString(JSGlobalObject* globalObject, JSMap* map, StringView input)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

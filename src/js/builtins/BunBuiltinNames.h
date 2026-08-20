@@ -223,6 +223,9 @@ public:
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 #undef BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR
 
+    const JSC::Identifier& publicName(Name name) const { return m_publicNames[static_cast<size_t>(name)]; }
+    const JSC::Identifier& privateName(Name name) const { return m_privateNames[static_cast<size_t>(name)]; }
+
     const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
     const JSC::Identifier& inspectCustomPublicName() {
         if (m_inspectCustomPublicName.isEmpty()) [[unlikely]] {

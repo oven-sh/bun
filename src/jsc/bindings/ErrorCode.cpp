@@ -1889,7 +1889,8 @@ static JSC::EncodedJSValue makeSimpleErrorMessage(JSC::JSGlobalObject* globalObj
 
 } // namespace Bun
 
-JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Error construction is dominated by stack capture; favour size for this switch.
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -1420,14 +1420,13 @@ pub(crate) fn get_hmr_runtime(side: Side) -> HmrRuntime {
         // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
         ZStr::from_slice_with_nul(&buf[..])
     }
-    static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
     static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
     hmr_runtime_init(match side {
-        // Shipped to the browser: compressed in release builds.
-        Side::Client => nul_terminate(
-            bun_zstd::embed_compressed!(codegen "bake.client.js"),
-            &CLIENT,
-        ),
+        // Shipped to the browser, so release builds embed it compressed; the
+        // bundler owns the one inflated (NUL-terminated) copy.
+        Side::Client => {
+            ZStr::from_slice_with_nul(bun_bundler::bake_types::bake_client_js_with_nul())
+        }
         // server runtime is loaded once, so it is pointless to make this eager.
         Side::Server => nul_terminate(
             bun_core::runtime_embed_file!(Codegen, "bake.server.js").as_bytes(),

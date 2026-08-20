@@ -52,6 +52,7 @@ bun_core::comptime_string_map! {
     /// hot path hits the uppercase entries; the all-lower entries exist only
     /// for `new Request("get", …)` JS-side convenience (mixed-case still
     /// rejects).
+    #[inline]
     static METHOD_MAP: Method = {
         b"ACL" => Method::ACL,
         b"acl" => Method::ACL,

@@ -471,7 +471,7 @@ static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, J
     return {};
 }
 
-static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
+__attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
     JSC::JSValue val, PopulateStackTraceFlags flags)
 {

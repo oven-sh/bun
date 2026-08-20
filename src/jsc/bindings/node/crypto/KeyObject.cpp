@@ -1167,7 +1167,7 @@ inline BignumPointer jwkBufToBn(JSArrayBufferView* buf)
     return BignumPointer(reinterpret_cast<uint8_t*>(buf->vector()), buf->byteLength());
 }
 
-KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* jwk, PrepareAsymmetricKeyMode mode)
+__attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* jwk, PrepareAsymmetricKeyMode mode)
 {
     auto ktyView = getJwkStringView(globalObject, scope, jwk, "kty"_s, "key.kty"_s);
     RETURN_IF_EXCEPTION(scope, {});

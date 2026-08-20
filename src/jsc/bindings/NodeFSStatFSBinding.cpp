@@ -389,13 +389,13 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
 
     JSFinalObject* object = JSC::JSFinalObject::create(vm, structure);
     object->putDirect(vm, vm.propertyNames->type, type, 0);
-    Bun::putDirectNamed(vm, object, "bsize"_s, bsize);
-    Bun::putDirectNamed(vm, object, "frsize"_s, frsize);
-    Bun::putDirectNamed(vm, object, "blocks"_s, blocks);
-    Bun::putDirectNamed(vm, object, "bfree"_s, bfree);
-    Bun::putDirectNamed(vm, object, "bavail"_s, bavail);
-    Bun::putDirectNamed(vm, object, "files"_s, files);
-    Bun::putDirectNamed(vm, object, "ffree"_s, ffree);
+    object->putDirect(vm, Identifier::fromString(vm, "bsize"_s), bsize, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "frsize"_s), frsize, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "blocks"_s), blocks, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "bfree"_s), bfree, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "bavail"_s), bavail, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "files"_s), files, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "ffree"_s), ffree, 0);
 
     return object;
 }

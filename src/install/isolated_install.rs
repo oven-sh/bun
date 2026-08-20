@@ -158,14 +158,6 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
     ) {
         ctx.on_package_download_error(id, name, resolution, err, url);
     }
-
-    fn as_store_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut store::Installer<'x> {
-        // SAFETY: identity cast — narrows the invariant `'a` param to the
-        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut Installer<'a>`).
-        // The returned reference cannot outlive `'x`, so all inner `'a`
-        // borrows remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<store::Installer<'x>>() }
-    }
 }
 
 struct Wait<'a, 'b> {

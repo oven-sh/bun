@@ -694,6 +694,38 @@ macro_rules! embed_compressed {
             ::bun_core::runtime_embed_file!(Codegen, $sub).as_bytes()
         )
     };
+    // Same, with a trailing NUL included in the slice (for C-string consumers).
+    (codegen_nul $sub:literal) => {{
+        #[allow(unexpected_cfgs)]
+        let __bytes: &'static [u8] = {
+            #[cfg(bun_codegen_embed)]
+            {
+                static __INFLATED: ::bun_core::Once<::std::vec::Vec<u8>> = ::bun_core::Once::new();
+                __INFLATED
+                    .get_or_init(|| {
+                        $crate::inflate_embedded_nul(::core::include_bytes!(::core::concat!(
+                            ::core::env!("BUN_CODEGEN_DIR"),
+                            "/compressed/codegen/",
+                            $sub,
+                            ".zst"
+                        )))
+                    })
+                    .as_slice()
+            }
+            #[cfg(not(bun_codegen_embed))]
+            {
+                static __COPY: ::std::sync::OnceLock<::std::boxed::Box<[u8]>> = ::std::sync::OnceLock::new();
+                &__COPY.get_or_init(|| {
+                    let text = ::bun_core::runtime_embed_file!(Codegen, $sub).as_bytes();
+                    let mut copy = ::std::vec::Vec::with_capacity(text.len() + 1);
+                    copy.extend_from_slice(text);
+                    copy.push(0);
+                    copy.into_boxed_slice()
+                })[..]
+            }
+        };
+        __bytes
+    }};
     // A file under `src/`; debug builds read it from the source tree at runtime.
     (src $sub:literal) => {
         $crate::embed_compressed!(("src/", $sub), ::bun_core::runtime_embed_file!(Src, $sub).as_bytes())
@@ -732,4 +764,14 @@ macro_rules! embed_compressed {
 #[inline(never)]
 pub fn inflate_embedded(compressed: &'static [u8]) -> Vec<u8> {
     decompress_alloc(compressed).expect("embedded asset: invalid zstd frame")
+}
+
+/// [`inflate_embedded`] plus a trailing NUL byte.
+#[cold]
+#[inline(never)]
+pub fn inflate_embedded_nul(compressed: &'static [u8]) -> Vec<u8> {
+    let mut inflated = inflate_embedded(compressed);
+    inflated.reserve_exact(1);
+    inflated.push(0);
+    inflated
 }

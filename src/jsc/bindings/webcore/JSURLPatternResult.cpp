@@ -78,12 +78,12 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     // Output input
     auto inputValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, dictionary.input);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "input"_s, inputValue);
+    result->putDirect(vm, Identifier::fromString(vm, "input"_s), inputValue);
 
     // Output groups - record<USVString, (undefined or USVString)>
     auto groupsValue = convertGroupsToJS(lexicalGlobalObject, globalObject, dictionary.groups);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "groups"_s, groupsValue);
+    result->putDirect(vm, Identifier::fromString(vm, "groups"_s), groupsValue);
 
     return result;
 }
@@ -104,47 +104,47 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
         inputsArray->putDirectIndex(&lexicalGlobalObject, i, inputValue);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
     }
-    Bun::putDirectNamed(vm, result, "inputs"_s, inputsArray);
+    result->putDirect(vm, Identifier::fromString(vm, "inputs"_s), inputsArray);
 
     // Output protocol
     auto protocolValue = convertDictionaryToJS(lexicalGlobalObject, globalObject, dictionary.protocol);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "protocol"_s, protocolValue);
+    result->putDirect(vm, Identifier::fromString(vm, "protocol"_s), protocolValue);
 
     // Output username
     auto usernameValue = convertDictionaryToJS(lexicalGlobalObject, globalObject, dictionary.username);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "username"_s, usernameValue);
+    result->putDirect(vm, Identifier::fromString(vm, "username"_s), usernameValue);
 
     // Output password
     auto passwordValue = convertDictionaryToJS(lexicalGlobalObject, globalObject, dictionary.password);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "password"_s, passwordValue);
+    result->putDirect(vm, Identifier::fromString(vm, "password"_s), passwordValue);
 
     // Output hostname
     auto hostnameValue = convertDictionaryToJS(lexicalGlobalObject, globalObject, dictionary.hostname);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "hostname"_s, hostnameValue);
+    result->putDirect(vm, Identifier::fromString(vm, "hostname"_s), hostnameValue);
 
     // Output port
     auto portValue = convertDictionaryToJS(lexicalGlobalObject, globalObject, dictionary.port);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "port"_s, portValue);
+    result->putDirect(vm, Identifier::fromString(vm, "port"_s), portValue);
 
     // Output pathname
     auto pathnameValue = convertDictionaryToJS(lexicalGlobalObject, globalObject, dictionary.pathname);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "pathname"_s, pathnameValue);
+    result->putDirect(vm, Identifier::fromString(vm, "pathname"_s), pathnameValue);
 
     // Output search
     auto searchValue = convertDictionaryToJS(lexicalGlobalObject, globalObject, dictionary.search);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "search"_s, searchValue);
+    result->putDirect(vm, Identifier::fromString(vm, "search"_s), searchValue);
 
     // Output hash
     auto hashValue = convertDictionaryToJS(lexicalGlobalObject, globalObject, dictionary.hash);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    Bun::putDirectNamed(vm, result, "hash"_s, hashValue);
+    result->putDirect(vm, Identifier::fromString(vm, "hash"_s), hashValue);
 
     return result;
 }

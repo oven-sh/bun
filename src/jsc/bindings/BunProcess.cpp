@@ -412,7 +412,7 @@ extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
     auto callCountAtStart = globalObject->napiModuleRegisterCallCount;
@@ -1850,7 +1850,7 @@ struct ExecveCloexecRestorer {
 };
 #endif
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((minsize)), (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
@@ -2150,7 +2150,7 @@ JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObje
     RETURN_IF_EXCEPTION(scope, {});
     return jsUndefined();
 }
-JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor)
+__attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = getVM(globalObject);
@@ -2288,7 +2288,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlob
     return false;
 }
 
-static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName)
+// process.report.getReport(): cold and large, favour size.
+__attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if !OS(WINDOWS)
@@ -2729,7 +2730,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     return report;
 }
 
-static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
+__attribute__((minsize)) static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     //   target_defaults:

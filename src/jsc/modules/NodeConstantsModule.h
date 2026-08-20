@@ -58,6 +58,7 @@ namespace Zig {
 using namespace WebCore;
 
 namespace {
+// Tables end with a `{ nullptr, 0 }` row (some are all-`#ifdef` and may be empty).
 struct NumericConstant {
     const char* name;
     double value;
@@ -823,9 +824,10 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #ifdef SSL_OP_TLS_ROLLBACK_BUG
         { "SSL_OP_TLS_ROLLBACK_BUG", static_cast<double>(SSL_OP_TLS_ROLLBACK_BUG) },
 #endif
+        { nullptr, 0 },
     };
-    for (auto& constant : kConstants1)
-        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant.name)), jsNumber(constant.value));
+    for (const NumericConstant* constant = kConstants1; constant->name; ++constant)
+        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant->name)), jsNumber(constant->value));
     // BoringSSL does not define engine constants in openssl/engine.h.
     // Values mirror ProcessBindingConstants.cpp (and node).
     static constexpr NumericConstant kConstants3[] = {
@@ -883,9 +885,10 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #ifdef RSA_PSS_SALTLEN_AUTO
         { "RSA_PSS_SALTLEN_AUTO", static_cast<double>(RSA_PSS_SALTLEN_AUTO) },
 #endif
+        { nullptr, 0 },
     };
-    for (auto& constant : kConstants3)
-        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant.name)), jsNumber(constant.value));
+    for (const NumericConstant* constant = kConstants3; constant->name; ++constant)
+        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant->name)), jsNumber(constant->value));
     auto cipherList = String("TLS_AES_256_GCM_SHA384:"
                              "TLS_CHACHA20_POLY1305_SHA256:"
                              "TLS_AES_128_GCM_SHA256:"
@@ -930,9 +933,10 @@ DEFINE_NATIVE_MODULE(NodeConstants)
         { "POINT_CONVERSION_COMPRESSED", static_cast<double>(POINT_CONVERSION_COMPRESSED) },
         { "POINT_CONVERSION_UNCOMPRESSED", static_cast<double>(POINT_CONVERSION_UNCOMPRESSED) },
         { "POINT_CONVERSION_HYBRID", static_cast<double>(POINT_CONVERSION_HYBRID) },
+        { nullptr, 0 },
     };
-    for (auto& constant : kConstants4)
-        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant.name)), jsNumber(constant.value));
+    for (const NumericConstant* constant = kConstants4; constant->name; ++constant)
+        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant->name)), jsNumber(constant->value));
 
     // OBSOLETE OPTIONS retained for compatibility (always 0, as in node).
     static constexpr NumericConstant kConstants5[] = {
@@ -952,17 +956,19 @@ DEFINE_NATIVE_MODULE(NodeConstants)
         { "SSL_OP_PKCS1_CHECK_2", static_cast<double>(0) },
         { "SSL_OP_NETSCAPE_CA_DN_BUG", static_cast<double>(0) },
         { "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG", static_cast<double>(0) },
+        { nullptr, 0 },
     };
-    for (auto& constant : kConstants5)
-        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant.name)), jsNumber(constant.value));
+    for (const NumericConstant* constant = kConstants5; constant->name; ++constant)
+        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant->name)), jsNumber(constant->value));
 
     // fs formats the binding exposes; keep in sync with ProcessBindingConstants.cpp.
     static constexpr NumericConstant kConstants6[] = {
         { "EXTENSIONLESS_FORMAT_JAVASCRIPT", static_cast<double>(0) },
         { "EXTENSIONLESS_FORMAT_WASM", static_cast<double>(1) },
+        { nullptr, 0 },
     };
-    for (auto& constant : kConstants6)
-        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant.name)), jsNumber(constant.value));
+    for (const NumericConstant* constant = kConstants6; constant->name; ++constant)
+        put(Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constant->name)), jsNumber(constant->value));
 
     // node freezes require('constants') (lib/constants.js ObjectFreeze).
     auto scope = DECLARE_THROW_SCOPE(vm);

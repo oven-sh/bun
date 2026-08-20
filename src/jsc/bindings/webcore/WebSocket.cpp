@@ -410,7 +410,7 @@ size_t WebSocket::memoryCost() const
     return cost;
 }
 
-ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit, std::optional<ProxyConfig>&& proxyConfig)
+__attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit, std::optional<ProxyConfig>&& proxyConfig)
 {
     // LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().data());
     m_url = URL { url };

@@ -91,75 +91,33 @@ impl Compact {
     }
 }
 
-// MIME strings a `Blob`/`File` `type` option is interned against: a hit
-// hands back a static (and, for a few, charset-qualified — see
-// `Compact::to_mime_type`) value instead of a lowercased heap copy. Anything
-// else takes the copy path, which yields the same visible string.
-bun_core::comptime_string_map! {
-    static COMMON_TYPES: Table = {
-        "application/atom+xml" => t!("application/atom+xml"),
-        "application/gzip" => t!("application/gzip"),
-        "application/javascript" => t!("application/javascript"),
-        "application/json" => t!("application/json"),
-        "application/ld+json" => t!("application/ld+json"),
-        "application/manifest+json" => t!("application/manifest+json"),
-        "application/octet-stream" => t!("application/octet-stream"),
-        "application/pdf" => t!("application/pdf"),
-        "application/rss+xml" => t!("application/rss+xml"),
-        "application/wasm" => t!("application/wasm"),
-        "application/webassembly" => t!("application/webassembly"),
-        "application/x-tar" => t!("application/x-tar"),
-        "application/x-www-form-urlencoded" => t!("application/x-www-form-urlencoded"),
-        "application/xhtml+xml" => t!("application/xhtml+xml"),
-        "application/xml" => t!("application/xml"),
-        "application/zip" => t!("application/zip"),
-        "audio/aac" => t!("audio/aac"),
-        "audio/mp4" => t!("audio/mp4"),
-        "audio/mpeg" => t!("audio/mpeg"),
-        "audio/ogg" => t!("audio/ogg"),
-        "audio/wav" => t!("audio/wav"),
-        "audio/webm" => t!("audio/webm"),
-        "font/collection" => t!("font/collection"),
-        "font/otf" => t!("font/otf"),
-        "font/ttf" => t!("font/ttf"),
-        "font/woff" => t!("font/woff"),
-        "font/woff2" => t!("font/woff2"),
-        "image/apng" => t!("image/apng"),
-        "image/avif" => t!("image/avif"),
-        "image/bmp" => t!("image/bmp"),
-        "image/gif" => t!("image/gif"),
-        "image/heic" => t!("image/heic"),
-        "image/jpeg" => t!("image/jpeg"),
-        "image/png" => t!("image/png"),
-        "image/svg+xml" => t!("image/svg+xml"),
-        "image/vnd.microsoft.icon" => t!("image/vnd.microsoft.icon"),
-        "image/webp" => t!("image/webp"),
-        "image/x-icon" => t!("image/x-icon"),
-        "multipart/byteranges" => t!("multipart/byteranges"),
-        "multipart/form-data" => t!("multipart/form-data"),
-        "text/calendar" => t!("text/calendar"),
-        "text/css" => t!("text/css"),
-        "text/csv" => t!("text/csv"),
-        "text/html" => t!("text/html"),
-        "text/javascript" => t!("text/javascript"),
-        "text/jsx" => t!("text/jsx"),
-        "text/markdown" => t!("text/markdown"),
-        "text/plain" => t!("text/plain"),
-        "text/xml" => t!("text/xml"),
-        "text/yaml" => t!("text/yaml"),
-        "video/mp4" => t!("video/mp4"),
-        "video/ogg" => t!("video/ogg"),
-        "video/quicktime" => t!("video/quicktime"),
-        "video/webm" => t!("video/webm"),
-        "video/x-matroska" => t!("video/x-matroska"),
-    };
-}
-
-/// Case-sensitive lookup of a full MIME string against the interned set above.
+/// Case-sensitive lookup of a full MIME string against the interned set
+/// (`mime_type_list.txt`). A hit hands back the static spelling — and, for a
+/// few, the canonical constant, see `Compact::to_mime_type` — so `Blob` can
+/// hold it as `BlobContentType::Static`; anything else takes the copy path.
 pub fn by_name_static(name: &[u8]) -> Option<MimeType> {
-    COMMON_TYPES
-        .get(name)
-        .map(|entry| Compact::from(*entry).to_mime_type())
+    use super::mime_type_list_sorted::{BUCKETS, NAMES};
+    let interned = bun_core::comptime_string_map::sorted_key_slice(name, NAMES, &BUCKETS)?;
+    Some(match interned {
+        b"application/webassembly" => WASM,
+        b"application/javascript" | b"text/javascript" | b"text/jsx" => JAVASCRIPT,
+        b"application/json" => JSON,
+        b"application/x-www-form-urlencoded" => {
+            const VALUE: &[u8] = b"application/x-www-form-urlencoded;charset=UTF-8";
+            MimeType {
+                value: Cow::Borrowed(VALUE),
+                category: Category::from_interned(VALUE),
+            }
+        }
+        b"image/vnd.microsoft.icon" => ICO,
+        b"text/css" => CSS,
+        b"text/html" => HTML,
+        b"text/plain" => TEXT,
+        _ => MimeType {
+            value: Cow::Borrowed(interned),
+            category: Category::from_interned(interned),
+        },
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -190,6 +148,10 @@ pub enum Category {
 
 impl Category {
     pub(crate) fn from_table(entry: Table) -> Category {
+        Self::from_interned(entry.slice())
+    }
+
+    fn from_interned(name: &[u8]) -> Category {
         bun_core::comptime_string_map! {
             static CATEGORY_OVERRIDES: Category = {
                 b"text/javascript" => Category::Javascript,
@@ -212,10 +174,10 @@ impl Category {
                 b"application/json;charset=utf8" => Category::Json,
             };
         }
-        if let Some(&category) = CATEGORY_OVERRIDES.get(entry.slice()) {
+        if let Some(&category) = CATEGORY_OVERRIDES.get(name) {
             return category;
         }
-        Category::init(entry.slice())
+        Category::init(name)
     }
 }
 

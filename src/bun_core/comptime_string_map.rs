@@ -80,13 +80,33 @@ impl HasLength for &crate::String {
 /// the declaration index, or `u32::MAX` on a miss.
 #[doc(hidden)]
 pub fn sorted_key_index(key: &[u8], blob: &[u8], buckets: &[(u32, u32)], order: &[u16]) -> u32 {
+    match sorted_key_position(key, blob, buckets) {
+        Some((position, _)) => u32::from(order[position]),
+        None => u32::MAX,
+    }
+}
+
+/// The interned copy of `key` in a sorted key blob (same layout as above), for
+/// tables that only need membership plus a `'static` spelling of the key.
+pub fn sorted_key_slice(
+    key: &[u8],
+    blob: &'static [u8],
+    buckets: &[(u32, u32)],
+) -> Option<&'static [u8]> {
+    let (_, offset) = sorted_key_position(key, blob, buckets)?;
+    Some(&blob[offset..offset + key.len()])
+}
+
+/// `(sorted position, blob offset)` of `key`, if present.
+fn sorted_key_position(key: &[u8], blob: &[u8], buckets: &[(u32, u32)]) -> Option<(usize, usize)> {
     let len = key.len();
     if len + 1 >= buckets.len() {
-        return u32::MAX;
+        return None;
     }
     let (offset, first) = buckets[len];
+    let offset = offset as usize;
     let count = (buckets[len + 1].1 - first) as usize;
-    let keys = &blob[offset as usize..offset as usize + count * len];
+    let keys = &blob[offset..offset + count * len];
     // Binary search over `count` fixed-width keys.
     let (mut lo, mut hi) = (0usize, count);
     while lo < hi {
@@ -95,10 +115,10 @@ pub fn sorted_key_index(key: &[u8], blob: &[u8], buckets: &[(u32, u32)], order: 
         match candidate.cmp(key) {
             core::cmp::Ordering::Less => lo = mid + 1,
             core::cmp::Ordering::Greater => hi = mid,
-            core::cmp::Ordering::Equal => return u32::from(order[first as usize + mid]),
+            core::cmp::Ordering::Equal => return Some((first as usize + mid, offset + mid * len)),
         }
     }
-    u32::MAX
+    None
 }
 
 #[macro_export]

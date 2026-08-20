@@ -2033,6 +2033,27 @@ struct LazyClassStructureInit {
     void (*init)(LazyClassStructure::Initializer&);
 };
 
+// The table entry for the lazy member at `member`. The owner a caller passed to
+// `get()` is normally the GlobalObject holding the member, but some sites pass
+// another realm's global and reach the holder via `defaultGlobalObject()`, so
+// try both.
+template<const auto& table>
+const auto& lazyTableEntry(const void* member, JSGlobalObject* owner)
+{
+    for (JSGlobalObject* candidate : { owner, static_cast<JSGlobalObject*>(defaultGlobalObject(owner)) }) {
+        if (auto* holder = dynamicDowncast<GlobalObject>(candidate)) {
+            size_t offset = reinterpret_cast<const uint8_t*>(member) - reinterpret_cast<const uint8_t*>(holder);
+            if (offset < sizeof(GlobalObject)) {
+                for (auto& entry : table) {
+                    if (entry.offset == offset)
+                        return entry;
+                }
+            }
+        }
+    }
+    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("lazy GlobalObject member initialised through an unrelated global object");
+}
+
 // One `LazyProperty::callFunc` instantiation per table instead of one per
 // member: the shared initializer finds its entry by the member's offset.
 template<typename T, const auto& table>
@@ -2041,12 +2062,7 @@ void initLazyProperties(GlobalObject* globalObject)
     for (auto& entry : table) {
         auto& property = *reinterpret_cast<LazyProperty<JSGlobalObject, T>*>(reinterpret_cast<uint8_t*>(globalObject) + entry.offset);
         property.initLater([](const typename LazyProperty<JSGlobalObject, T>::Initializer& init) {
-            size_t offset = reinterpret_cast<const uint8_t*>(&init.property) - reinterpret_cast<const uint8_t*>(static_cast<GlobalObject*>(init.owner));
-            for (auto& entry : table) {
-                if (entry.offset == offset)
-                    return entry.init(init);
-            }
-            RELEASE_ASSERT_NOT_REACHED();
+            lazyTableEntry<table>(&init.property, init.owner).init(init);
         });
     }
 }
@@ -2057,12 +2073,7 @@ void initLazyClassStructures(GlobalObject* globalObject)
     for (auto& entry : table) {
         auto& classStructure = *reinterpret_cast<LazyClassStructure*>(reinterpret_cast<uint8_t*>(globalObject) + entry.offset);
         classStructure.initLater([](LazyClassStructure::Initializer& init) {
-            size_t offset = reinterpret_cast<const uint8_t*>(&init.classStructure) - reinterpret_cast<const uint8_t*>(static_cast<GlobalObject*>(init.global));
-            for (auto& entry : table) {
-                if (entry.offset == offset)
-                    return entry.init(init);
-            }
-            RELEASE_ASSERT_NOT_REACHED();
+            lazyTableEntry<table>(&init.classStructure, init.global).init(init);
         });
     }
 }
@@ -2989,37 +3000,46 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Private/Static Properties -----
 
-    GlobalPropertyInfo staticGlobals[] = {
-        GlobalPropertyInfo { builtinNames.lazyPrivateName(),
-            JSC::JSFunction::create(vm, this, 0, "@lazy"_s, JS2Native::jsDollarLazy, ImplementationVisibility::Public),
-            PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0 },
-
-        GlobalPropertyInfo(builtinNames.makeGetterTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeGetterTypeErrorForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.makeDOMExceptionPrivateName(), JSFunction::create(vm, this, 2, String(), makeDOMExceptionForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.addAbortAlgorithmToSignalPrivateName(), JSFunction::create(vm, this, 2, String(), addAbortAlgorithmToSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.removeAbortAlgorithmFromSignalPrivateName(), JSFunction::create(vm, this, 2, String(), removeAbortAlgorithmFromSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.isAbortSignalPrivateName(), JSFunction::create(vm, this, 1, String(), isAbortSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.peekPromiseStatusPrivateName(), JSFunction::create(vm, this, 1, String(), jsBunPeekPromiseStatus, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.peekPromiseSettledValuePrivateName(), JSFunction::create(vm, this, 1, String(), jsBunPeekPromiseSettledValue, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.pokePromiseAsHandledPrivateName(), JSFunction::create(vm, this, 1, String(), jsBunPokePromiseAsHandled, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.webStreamClosedPromisePrivateName(), JSFunction::create(vm, this, 1, String(), jsWebStreamClosedPromise, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.webStreamControllerErrorPrivateName(), JSFunction::create(vm, this, 2, String(), jsWebStreamControllerError, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.esmNamespaceForCjsPrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmNamespaceForCjs, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.esmRegistryDeletePrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmRegistryDelete, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.esmRegistryEvaluatedKeysPrivateName(), JSFunction::create(vm, this, 0, String(), functionEsmRegistryEvaluatedKeys, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.esmLoadSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmLoadSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
-        GlobalPropertyInfo(builtinNames.makeErrorWithCodePrivateName(), JSFunction::create(vm, this, 2, String(), jsFunctionMakeErrorWithCode, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.toClassPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionToClass, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.inheritsPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionInherits, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.makeAbortErrorPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionMakeAbortError, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.checkBufferReadPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionCheckBufferRead, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+    // Private native functions, all `DontDelete | ReadOnly` with no name.
+    using BuiltinName = WebCore::BunBuiltinNames::Name;
+    struct PrivateFunction {
+        BuiltinName name;
+        uint8_t length;
+        JSC::EncodedJSValue (JSC_HOST_CALL_ATTRIBUTES* function)(JSC::JSGlobalObject*, JSC::CallFrame*);
     };
-    addStaticGlobals(staticGlobals);
+    static constexpr PrivateFunction privateFunctions[] = {
+        { BuiltinName::k_makeGetterTypeError, 2, makeGetterTypeErrorForBuiltins },
+        { BuiltinName::k_makeDOMException, 2, makeDOMExceptionForBuiltins },
+        { BuiltinName::k_addAbortAlgorithmToSignal, 2, addAbortAlgorithmToSignal },
+        { BuiltinName::k_removeAbortAlgorithmFromSignal, 2, removeAbortAlgorithmFromSignal },
+        { BuiltinName::k_isAbortSignal, 1, isAbortSignal },
+        { BuiltinName::k_peekPromiseStatus, 1, jsBunPeekPromiseStatus },
+        { BuiltinName::k_peekPromiseSettledValue, 1, jsBunPeekPromiseSettledValue },
+        { BuiltinName::k_pokePromiseAsHandled, 1, jsBunPokePromiseAsHandled },
+        { BuiltinName::k_webStreamClosedPromise, 1, jsWebStreamClosedPromise },
+        { BuiltinName::k_webStreamControllerError, 2, jsWebStreamControllerError },
+        { BuiltinName::k_fulfillModuleSync, 1, functionFulfillModuleSync },
+        { BuiltinName::k_esmNamespaceForCjs, 1, functionEsmNamespaceForCjs },
+        { BuiltinName::k_esmRegistryDelete, 1, functionEsmRegistryDelete },
+        { BuiltinName::k_esmRegistryEvaluatedKeys, 0, functionEsmRegistryEvaluatedKeys },
+        { BuiltinName::k_esmLoadSync, 1, functionEsmLoadSync },
+        { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
+        { BuiltinName::k_toClass, 1, jsFunctionToClass },
+        { BuiltinName::k_inherits, 1, jsFunctionInherits },
+        { BuiltinName::k_makeAbortError, 1, jsFunctionMakeAbortError },
+        { BuiltinName::k_checkBufferRead, 1, jsFunctionCheckBufferRead },
+    };
+    Vector<GlobalPropertyInfo, 32> staticGlobals;
+    staticGlobals.append(GlobalPropertyInfo { builtinNames.lazyPrivateName(),
+        JSC::JSFunction::create(vm, this, 0, "@lazy"_s, JS2Native::jsDollarLazy, ImplementationVisibility::Public),
+        PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0 });
+    for (auto& entry : privateFunctions)
+        staticGlobals.append(GlobalPropertyInfo(builtinNames.privateName(entry.name), JSFunction::create(vm, this, entry.length, String(), entry.function, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    staticGlobals.append(GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    staticGlobals.append(GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    staticGlobals.append(GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    staticGlobals.append(GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));
+    addStaticGlobals(staticGlobals.mutableSpan());
 
     // TODO: most/all of these private properties can be made as static globals.
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them

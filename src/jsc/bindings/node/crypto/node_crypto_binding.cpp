@@ -301,7 +301,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     return JSValue::encode(result);
 }
 
-JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
+__attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     JSObject* obj = constructEmptyObject(globalObject);

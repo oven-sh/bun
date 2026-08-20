@@ -116,9 +116,17 @@ impl JestPrettyFormat {
         // Nested values re-enter the formatter through `ConsoleFormatter::print_as`
         // with a `FmtAdapter<AsFmt>` sink; adapt the caller's writer to that same
         // type up front so the whole `Formatter` tree is instantiated once.
-        let mut bridge = AsFmt::new(writer);
-        let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-        Self::format_adapted(level, global, vals, len, &mut adapted, options)
+        let flush = options.flush;
+        let result = {
+            let mut bridge = AsFmt::new(&mut *writer);
+            let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
+            Self::format_adapted(level, global, vals, len, &mut adapted, options)
+        };
+        // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
+        if flush {
+            let _ = writer.flush();
+        }
+        result
     }
 
     fn format_adapted(

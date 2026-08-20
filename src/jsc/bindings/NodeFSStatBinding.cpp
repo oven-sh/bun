@@ -886,26 +886,26 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     }
 
     JSFinalObject* object = JSC::JSFinalObject::create(vm, structure);
-    Bun::putDirectNamed(vm, object, "dev"_s, dev);
-    Bun::putDirectNamed(vm, object, "mode"_s, mode);
-    Bun::putDirectNamed(vm, object, "nlink"_s, nlink);
-    Bun::putDirectNamed(vm, object, "uid"_s, uid);
-    Bun::putDirectNamed(vm, object, "gid"_s, gid);
-    Bun::putDirectNamed(vm, object, "rdev"_s, rdev);
-    Bun::putDirectNamed(vm, object, "blksize"_s, blksize);
-    Bun::putDirectNamed(vm, object, "ino"_s, ino);
-    Bun::putDirectNamed(vm, object, "size"_s, size);
-    Bun::putDirectNamed(vm, object, "blocks"_s, blocks);
+    object->putDirect(vm, Identifier::fromString(vm, "dev"_s), dev, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "mode"_s), mode, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "nlink"_s), nlink, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "uid"_s), uid, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "gid"_s), gid, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "rdev"_s), rdev, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "blksize"_s), blksize, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "ino"_s), ino, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "size"_s), size, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "blocks"_s), blocks, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::atime), atimeMs, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::mtime), mtimeMs, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::ctime), ctimeMs, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::birthtime), birthtimeMs, 0);
 
     if constexpr (isBigInt) {
-        Bun::putDirectNamed(vm, object, "atimeNs"_s, atimeNs);
-        Bun::putDirectNamed(vm, object, "mtimeNs"_s, mtimeNs);
-        Bun::putDirectNamed(vm, object, "ctimeNs"_s, ctimeNs);
-        Bun::putDirectNamed(vm, object, "birthtimeNs"_s, birthtimeNs);
+        object->putDirect(vm, Identifier::fromString(vm, "atimeNs"_s), atimeNs, 0);
+        object->putDirect(vm, Identifier::fromString(vm, "mtimeNs"_s), mtimeNs, 0);
+        object->putDirect(vm, Identifier::fromString(vm, "ctimeNs"_s), ctimeNs, 0);
+        object->putDirect(vm, Identifier::fromString(vm, "birthtimeNs"_s), birthtimeNs, 0);
     }
 
     return object;

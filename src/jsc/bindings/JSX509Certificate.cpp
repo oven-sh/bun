@@ -714,7 +714,7 @@ bool JSX509Certificate::verify(const KeyObject& keyObject)
 }
 
 // This one doesn't depend on a JSX509Certificate object
-JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGlobalObject* globalObject)
+__attribute__((minsize)) JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

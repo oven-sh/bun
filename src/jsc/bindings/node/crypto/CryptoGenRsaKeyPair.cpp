@@ -84,7 +84,7 @@ ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
     return ctx;
 }
 
-std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& encodingConfig)
+__attribute__((minsize)) std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& encodingConfig)
 {
     VM& vm = globalObject->vm();
 

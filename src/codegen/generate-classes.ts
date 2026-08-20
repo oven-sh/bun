@@ -644,7 +644,7 @@ ${
   !obj.noConstructor
     ? `
   extern JSC_CALLCONV JSC::EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
-    return JSValue::encode(globalObject->${className(typeName)}Constructor());
+    return generatedClassConstructor(globalObject, Zig::GlobalObject::GeneratedLazyClass${className(typeName)});
   }`
     : ""
 }
@@ -1227,24 +1227,9 @@ function domJITTypeCheckFields(proto, klass) {
   return output;
 }
 
-/**
- * One row per distinct cached member: whether visitChildren marks it, and the
- * property names analyzeHeap reports it under (a `cache: "other"` alias reports
- * another member under its own name).
- */
-function cachedFieldTable(obj: ClassDefinition): { member: string; visit: boolean; names: string[] }[] {
-  const rows = new Map<string, { member: string; visit: boolean; names: string[] }>();
-  const row = (member: string) => {
-    let r = rows.get(member);
-    if (!r) rows.set(member, (r = { member, visit: false, names: [] }));
-    return r;
-  };
-  for (const val of obj.values || []) row(`m_${val}`).visit = true;
-  for (const [name, { cache = false }] of [...Object.entries(obj.klass), ...Object.entries(obj.proto)]) {
-    if (cache === true) row(`m_${name}`).visit = true;
-  }
-  for (const [name, cacheName] of allCachedValues(obj)) row(cacheName).names.push(name);
-  return [...rows.values()];
+/** The (heap-analyzer property name, backing member) rows analyzeHeap reports. */
+function cachedFieldTable(obj: ClassDefinition): { member: string; name: string }[] {
+  return allCachedValues(obj).map(([name, cacheName]) => ({ member: cacheName, name }));
 }
 
 function generateClassImpl(typeName, obj: ClassDefinition) {
@@ -1256,14 +1241,7 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
   const cachedFieldTableName = `${name}CachedFields`;
   const CACHED_FIELD_TABLE = useCachedFieldTable
     ? `static constexpr GeneratedCachedField ${cachedFieldTableName}[] = {
-${cachedFields
-  .flatMap(({ member, visit, names }) =>
-    (names.length ? names : [null]).map(
-      (n, i) =>
-        `    { OBJECT_OFFSETOF(${name}, ${member}), ${visit && i === 0 ? "true" : "false"}, ${n === null ? "nullptr" : JSON.stringify(n)} },`,
-    ),
-  )
-  .join("\n")}
+${cachedFields.map(({ member, name: n }) => `    { OBJECT_OFFSETOF(${name}, ${member}), ${JSON.stringify(n)} },`).join("\n")}
 };
 `
     : "";
@@ -1324,8 +1302,8 @@ visitor.reportExtraMemoryVisited(size);
 }`
         : ""
     }
-    ${useCachedFieldTable ? `visitGeneratedCachedFields(thisObject, visitor, ${cachedFieldTableName});` : `${values}
-    ${DEFINE_VISIT_CHILDREN_LIST}`}
+    ${values}
+    ${DEFINE_VISIT_CHILDREN_LIST}
     ${obj.valuesArray ? "for (auto& value : thisObject->jsvalueArray) { visitor.append(value); }" : ""}
 }
 
@@ -2380,6 +2358,11 @@ namespace WebCore {
 using namespace JSC;
 using namespace Zig;
 
+static NEVER_INLINE JSC::EncodedJSValue generatedClassConstructor(Zig::GlobalObject* globalObject, Zig::GlobalObject::GeneratedLazyClass which)
+{
+    return JSValue::encode(globalObject->m_generatedLazyClasses[which].constructorInitializedOnMainThread(globalObject));
+}
+
 // The \`new.target !== constructor\` (subclass / Reflect.construct) path shared by
 // every generated constructor.
 static NEVER_INLINE JSC::Structure* structureForNewTarget(Zig::GlobalObject* globalObject, JSC::JSObject* newTarget, Zig::GlobalObject::GeneratedLazyClass which)
@@ -2395,13 +2378,11 @@ static NEVER_INLINE JSC::Structure* structureForNewTarget(Zig::GlobalObject* glo
 }
 
 // Cached JSValue fields of a generated class, as byte offsets into the cell, so
-// visitChildren/analyzeHeap can loop over one shared body instead of expanding
-// an inlined append per field per class.
+// analyzeHeap can loop over one shared body instead of expanding an inlined
+// edge per field per class. (visitChildren stays inline: it is GC-hot.)
 struct GeneratedCachedField {
     unsigned offset;
-    // Marked by visitChildren.
-    bool visit;
-    // Property name reported to the heap analyzer, or null for none.
+    // Property name reported to the heap analyzer.
     const char* name;
 };
 
@@ -2410,21 +2391,10 @@ static ALWAYS_INLINE const JSC::WriteBarrier<JSC::Unknown>& generatedCachedField
     return *reinterpret_cast<const JSC::WriteBarrier<JSC::Unknown>*>(reinterpret_cast<const uint8_t*>(cell) + field.offset);
 }
 
-template<typename Visitor>
-static NEVER_INLINE void visitGeneratedCachedFields(const JSCell* cell, Visitor& visitor, std::span<const GeneratedCachedField> fields)
-{
-    for (auto& field : fields) {
-        if (field.visit)
-            visitor.appendHidden(generatedCachedField(cell, field));
-    }
-}
-
 static NEVER_INLINE void analyzeGeneratedCachedFields(JSCell* cell, HeapAnalyzer& analyzer, std::span<const GeneratedCachedField> fields)
 {
     auto& vm = cell->vm();
     for (auto& field : fields) {
-        if (!field.name)
-            continue;
         JSValue value = generatedCachedField(cell, field).get();
         if (value && value.isCell()) {
             const Identifier& id = Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(field.name));
@@ -2500,8 +2470,21 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
     static_assert(std::size(generatedLazyClassInits) == std::extent_v<decltype(m_generatedLazyClasses)>);
     for (auto& lazyClass : m_generatedLazyClasses) {
         lazyClass.initLater([](LazyClassStructure::Initializer& init) {
-            auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.global);
-            size_t index = &init.classStructure - globalObject->m_generatedLazyClasses;
+            // The owner passed to get() is normally the holder; some call sites pass
+            // another realm's global and reach the holder via defaultGlobalObject().
+            Zig::GlobalObject* globalObject = nullptr;
+            size_t index = std::size(generatedLazyClassInits);
+            for (JSGlobalObject* candidate : { init.global, static_cast<JSGlobalObject*>(defaultGlobalObject(init.global)) }) {
+                if (auto* holder = dynamicDowncast<Zig::GlobalObject>(candidate)) {
+                    size_t i = &init.classStructure - holder->m_generatedLazyClasses;
+                    if (i < std::size(generatedLazyClassInits)) {
+                        globalObject = holder;
+                        index = i;
+                        break;
+                    }
+                }
+            }
+            RELEASE_ASSERT(globalObject);
             const GeneratedLazyClassInit& fns = generatedLazyClassInits[index];
             init.setPrototype(fns.createPrototype(init.vm, globalObject));
             init.setStructure(fns.createStructure(init.vm, init.global, init.prototype));

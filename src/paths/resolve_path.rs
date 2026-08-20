@@ -1392,7 +1392,7 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
     parts: &[&[u8]],
 ) -> &'a [u8] {
     debug_assert!(!matches!(P::P, Platform::Nt));
-    let needed = join_abs_needed(cwd.len(), parts);
+    let needed = join_abs_result_capacity::<P>(cwd, parts);
     if needed <= PARSER_JOIN_INPUT_BUFFER_LEN {
         return join_abs_string::<P>(cwd, parts);
     }
@@ -1634,6 +1634,20 @@ fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
 }
 
+/// Output capacity that holds the result of joining `parts` onto `cwd`. A base
+/// that is not absolute is resolved against the working directory
+/// (`join_onto_working_dir`), so the result may also hold that directory, which
+/// fits in a `PathBuffer`.
+#[inline]
+fn join_abs_result_capacity<P: PlatformT>(cwd: &[u8], parts: &[&[u8]]) -> usize {
+    let needed = join_abs_needed(cwd.len(), parts);
+    if P::P.is_absolute(cwd) {
+        needed
+    } else {
+        needed + MAX_PATH_BYTES
+    }
+}
+
 /// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
 /// Draws from the
 /// thread-local `path_buffer_pool` for the common case and only heap-allocates
@@ -1685,7 +1699,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
-    let total = join_abs_needed(cwd.len(), parts);
+    let total = join_abs_result_capacity::<P>(cwd, parts);
     if total < buf.len() {
         return Some(join_abs_string_buf::<P>(cwd, buf, parts));
     }
@@ -2765,6 +2779,30 @@ mod tests {
             join_abs_string_spill::<platform::Posix>(b"rel", &mut spill, &[b"x"]),
             b"/work/rel/x"
         );
+    }
+
+    #[test]
+    fn join_abs_checked_and_spill_account_for_the_working_dir_prefix() {
+        record_working_dir();
+
+        // `rel` plus the part fits the 64-byte buffer, `/work/rel/` plus the part does not.
+        let part = [b'a'; 56];
+        let mut buf = [0u8; 64];
+        assert_eq!(
+            join_abs_string_buf_checked::<platform::Posix>(b"rel", &mut buf, &[&part]),
+            None
+        );
+
+        // The part alone fits the thread-local buffer, the prefixed result does not.
+        let part = vec![b'a'; PARSER_JOIN_INPUT_BUFFER_LEN - 4];
+        let mut expected = b"/work/".to_vec();
+        expected.extend_from_slice(&part);
+        let mut spill = Vec::new();
+        assert_eq!(
+            join_abs_string_spill::<platform::Posix>(b"", &mut spill, &[&part]),
+            &expected[..]
+        );
+        assert!(!spill.is_empty());
     }
 
     #[test]

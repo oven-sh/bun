@@ -675,6 +675,7 @@ const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
+const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
 // (Node's `context.context || context` unwrap accepts both the wrapper and
 // the unwrapped native context).
@@ -1419,15 +1420,13 @@ function Server(options, secureConnectionListener): void {
     // Skip only sockets this server's own native accept path already wrapped; anything else
     // gets a server-side TLS layer. https://github.com/nodejs/node/blob/main/lib/internal/tls/wrap.js
     if (!socket || (socket.encrypted && socket.server === this)) return;
-    let secureContext = this._sharedCreds;
-    if (!secureContext) {
-      try {
-        secureContext = buildSharedCreds(this);
-      } catch (err) {
-        socket.destroy();
-        this.emit("error", err);
-        return;
-      }
+    let secureContext;
+    try {
+      secureContext = this[kSharedCreds]();
+    } catch (err) {
+      socket.destroy();
+      this.emit("error", err);
+      return;
     }
     const wrapped = new TLSSocket(socket, {
       secureContext,
@@ -1445,6 +1444,9 @@ function Server(options, secureConnectionListener): void {
   });
 }
 $toClass(Server, "Server", NetServer);
+Server.prototype[kSharedCreds] = function () {
+  return this._sharedCreds || buildSharedCreds(this);
+};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

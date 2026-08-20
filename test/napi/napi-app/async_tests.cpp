@@ -513,7 +513,51 @@ create_threadsafe_function_after_teardown(const Napi::CallbackInfo &info) {
   return info.Env().Undefined();
 }
 
+// A finalizer that runs while the env drains its finalizers at teardown and
+// registers another one: it creates an external buffer with a finalize_cb.
+// That late finalizer must run in the same teardown. Counted process-wide so
+// the parent thread can read it after the worker is gone.
+static std::atomic<int> late_finalizer_runs{0};
+
+static void late_buffer_finalizer(napi_env env, void *data, void *hint) {
+  late_finalizer_runs.fetch_add(1);
+  free(data);
+}
+
+static void finalizer_that_creates_external_buffer(napi_env env, void *data,
+                                                   void *hint) {
+  free(data);
+  void *bytes = malloc(16);
+  napi_value buffer;
+  // Script is refused during teardown, but N-API object creation is not: this
+  // registers `late_buffer_finalizer` with the env from inside its cleanup.
+  napi_status status = napi_create_external_buffer(
+      env, 16, bytes, late_buffer_finalizer, nullptr, &buffer);
+  if (status != napi_ok) {
+    free(bytes);
+  }
+}
+
+// napi_wrap's finalizer is env-bound: for an object still alive when the
+// worker exits it runs from the env's cleanup (heap alive), not from GC.
+napi_value
+create_object_whose_finalizer_creates_external_buffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value object;
+  NODE_API_CALL(env, napi_create_object(env, &object));
+  NODE_API_CALL(env, napi_wrap(env, object, malloc(1),
+                               finalizer_that_creates_external_buffer, nullptr,
+                               nullptr));
+  return object;
+}
+
+napi_value late_finalizer_run_count(const Napi::CallbackInfo &info) {
+  return Napi::Number::New(info.Env(), late_finalizer_runs.load());
+}
+
 void register_async_tests(Napi::Env env, Napi::Object exports) {
+  REGISTER_FUNCTION(env, exports, create_object_whose_finalizer_creates_external_buffer);
+  REGISTER_FUNCTION(env, exports, late_finalizer_run_count);
   REGISTER_FUNCTION(env, exports, create_promise);
   REGISTER_FUNCTION(env, exports, create_promise_with_napi_cpp);
   REGISTER_FUNCTION(env, exports, create_promise_with_threadsafe_function);

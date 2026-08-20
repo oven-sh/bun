@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { once } from "events";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { createServer, request } from "http";
+import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
+import { connect as tlsConnect } from "tls";
 
 const fixture = "node-http-transfer-encoding-fixture.ts";
 test(`should not duplicate transfer-encoding header in request`, async () => {
@@ -578,4 +581,168 @@ test("pipelined chunked request keeps its own trailers when the next one is pars
   const trailers = await done.promise;
   socket.destroy();
   expect(trailers).toEqual({ "x-a": "a" });
+});
+
+// Once the header section is on the wire, tearing a response down (res.destroy(),
+// req.destroy(), a handler throwing) must not write anything else: the header
+// terminator is gone, so header bytes would land inside the body. Node writes
+// nothing and closes the socket; these tests pin the bytes received after the
+// header section to exactly what the handler wrote before the teardown.
+describe("tearing down a response with its headers on the wire adds no bytes", () => {
+  // Sends one raw request, waits until `marker` (the part of the response the
+  // handler wrote) has arrived so the handler's teardown runs with those bytes
+  // already flushed, then returns what arrived after the header section once
+  // the server closed the connection.
+  async function bodyAfterTeardown({
+    handler,
+    marker,
+    request = "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+    https = false,
+  }: {
+    handler: (req: any, res: any, markerArrived: Promise<void>) => void;
+    marker: string;
+    request?: string;
+    https?: boolean;
+  }) {
+    const markerArrived = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const listener = (req: any, res: any) => handler(req, res, markerArrived.promise);
+    await using server = https ? createHttpsServer(tlsCert, listener) : createServer(listener);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = https
+      ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => socket.write(request))
+      : connect(port, "127.0.0.1", () => socket.write(request));
+    let raw = "";
+    socket.on("data", (chunk: Buffer) => {
+      raw += chunk.toString("latin1");
+      if (raw.includes(marker)) markerArrived.resolve();
+    });
+    // The teardown may surface as ECONNRESET; what matters is what arrived before 'close'.
+    socket.on("error", () => {});
+    socket.on("close", closed.resolve);
+    await closed.promise;
+
+    const headerEnd = raw.indexOf("\r\n\r\n");
+    expect(raw.slice(0, headerEnd)).toStartWith("HTTP/1.1 200 OK\r\n");
+    return raw.slice(headerEnd + 4);
+  }
+
+  test.concurrent("res.destroy() after res.write() on a chunked response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "hello",
+      handler(req, res, markerArrived) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("hello");
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("5\r\nhello\r\n");
+  });
+
+  test.concurrent("res.destroy() after res.flushHeaders() on a chunked response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "\r\n\r\n",
+      handler(req, res, markerArrived) {
+        res.writeHead(200);
+        res.flushHeaders();
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("");
+  });
+
+  test.concurrent("res.destroy() after res.write() on a Content-Length response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "hello",
+      handler(req, res, markerArrived) {
+        res.writeHead(200, { "content-length": "10" });
+        res.write("hello");
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("hello");
+  });
+
+  test.concurrent("res.destroy() after res.write() on an HTTP/1.0 (close-delimited) response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "hello",
+      request: "GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+      handler(req, res, markerArrived) {
+        res.writeHead(200);
+        res.write("hello");
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("hello");
+  });
+
+  test.concurrent("req.destroy() after res.write() on a chunked response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "hello",
+      handler(req, res, markerArrived) {
+        res.writeHead(200);
+        res.write("hello");
+        markerArrived.then(() => req.destroy());
+      },
+    });
+    expect(body).toBe("5\r\nhello\r\n");
+  });
+
+  test.concurrent("res.destroy() after res.write() on a chunked https response", async () => {
+    const body = await bodyAfterTeardown({
+      https: true,
+      marker: "hello",
+      handler(req, res, markerArrived) {
+        res.writeHead(200);
+        res.write("hello");
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("5\r\nhello\r\n");
+  });
+
+  // A synchronous throw out of the request listener is ended natively by the
+  // server dispatch rather than by res.destroy(); same rule applies. Runs in a
+  // child because the throw reaches uncaughtException.
+  test.concurrent("request listener throwing after res.write() on a chunked response", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { createServer } = require("node:http");
+        const { connect } = require("node:net");
+        process.on("uncaughtException", err => {
+          if (err.message !== "boom") throw err;
+        });
+        const server = createServer((req, res) => {
+          res.writeHead(200);
+          res.write("hello");
+          throw new Error("boom");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const socket = connect(server.address().port, "127.0.0.1", () => {
+            socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          });
+          let raw = "";
+          socket.on("data", chunk => (raw += chunk.toString("latin1")));
+          socket.on("error", () => {});
+          socket.on("close", () => {
+            console.log(JSON.stringify(raw.slice(raw.indexOf("\\r\\n\\r\\n") + 4)));
+            server.close();
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toBe("5\r\nhello\r\n");
+    expect(exitCode).toBe(0);
+  });
 });

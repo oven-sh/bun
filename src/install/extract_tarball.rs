@@ -99,7 +99,7 @@ pub(crate) fn build_url(
 }
 
 /// Generic URL builder; the closure carries its own context.
-pub(crate) fn build_url_with_printer<R, E>(
+pub fn build_url_with_printer<R, E>(
     registry_: &[u8],
     full_name_: &StringOrTinyString,
     version: Version,

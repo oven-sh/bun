@@ -43,7 +43,7 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
         let _ = global
             .err(
                 crate::ErrorCode::STRING_TOO_LONG,
-                format_args!("Cannot create a string longer than 2^32-1 characters"),
+                format_args!("Cannot create a string longer than 2147483647 characters"),
             )
             .throw();
         return JSValue::ZERO;

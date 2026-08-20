@@ -181,12 +181,6 @@ impl JSValue {
     ) {
         self.then2(global, ctx, resolve, reject)
     }
-
-    /// Reinterpret a raw pointer's address as a JSValue bit-pattern.
-    #[inline]
-    pub fn cast<T>(ptr: *const T) -> JSValue {
-        JSValue(ptr as usize, PhantomData)
-    }
 }
 
 // `pub fn format(...) !void { @compileError(...) }` — intentionally NOT
@@ -226,6 +220,14 @@ impl JSValue {
         // NotCellMask = NumberTag | OtherTag (0xfffe_0000_0000_0000 | 0x2).
         const NOT_CELL_MASK: usize = 0xfffe_0000_0000_0002;
         !self.is_empty() && (self.0 & NOT_CELL_MASK) == 0
+    }
+    /// False for a cell the last completed GC found dead but the sweeper has not destroyed yet.
+    #[inline]
+    pub fn is_live_cell(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isLiveCell(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isLiveCell(self)
     }
     #[inline]
     pub fn is_int32(self) -> bool {
@@ -579,12 +581,13 @@ impl JSValue {
         crate::mark_binding!();
         host_fn::from_js_host_call(global, || JSBuffer__bufferFromLength(global, len as i64))
     }
-    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JSValue {
-        // Wraps `JSBuffer__bufferFromPointerAndLengthAndDeinit`
-        // with `MarkedArrayBuffer_deallocator` (or null for empty slices).
+    /// Wraps `slice` (mimalloc-owned; ownership moves to JSC, freed via
+    /// `MarkedArrayBuffer_deallocator`) in a Node `Buffer`. Fails like any JS
+    /// allocation: OOM, or a termination request landing in it.
+    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JsResult<JSValue> {
         // SAFETY: `global` is live; slice ptr/len describe a valid range whose
         // ownership is transferred to JSC (freed via the deallocator).
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 slice.as_mut_ptr(),
@@ -596,13 +599,13 @@ impl JSValue {
                     Some(MarkedArrayBuffer_deallocator)
                 },
             )
-        }
+        })
     }
     /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it in a Node
     /// `Buffer` without copying. Ownership transfers to JSC; freed via
     /// `MarkedArrayBuffer_deallocator` on GC. Prefer this over `Box::leak` +
     /// [`JSValue::create_buffer`] so the FFI hand-off is explicit at call sites.
-    pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
+    pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JsResult<JSValue> {
         let len = bytes.len();
         // `into_raw` (not `leak`) — this is an FFI ownership transfer, paired
         // with `mi_free` in `MarkedArrayBuffer_deallocator`. An empty
@@ -611,7 +614,7 @@ impl JSValue {
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         // SAFETY: `global` is live; `ptr`/`len` describe the just-released
         // mimalloc allocation whose ownership is transferred to JSC.
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 ptr,
@@ -623,26 +626,26 @@ impl JSValue {
                     Some(MarkedArrayBuffer_deallocator)
                 },
             )
-        }
+        })
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
-    /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
-    /// runs when the Buffer's backing store is collected.
+    /// range in a Node `Buffer`, transferring ownership to JS. `free(ptr, ctx)`
+    /// runs exactly once: when the Buffer's backing store is collected, or
+    /// before this returns `Err`.
     ///
     /// # Safety
     /// `bytes` must describe a valid allocation whose ownership transfers to
-    /// JSC; `ctx` is forwarded to `free` on collection and must remain valid
-    /// until then.
+    /// JSC; `ctx` must remain valid until `free` runs.
     pub unsafe fn create_buffer_with_ctx(
         global: &JSGlobalObject,
         bytes: core::ptr::NonNull<[u8]>,
         ctx: *mut c_void,
         free: unsafe extern "C" fn(*mut c_void, *mut c_void),
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let len = bytes.len();
         // SAFETY: `global` is live; `bytes` describes a valid range whose
         // ownership transfers to JSC and is released via `free` on collection.
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 bytes.as_ptr().cast::<u8>(),
@@ -650,7 +653,7 @@ impl JSValue {
                 ctx,
                 Some(free),
             )
-        }
+        })
     }
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
@@ -662,6 +665,24 @@ impl JSValue {
     #[track_caller]
     pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromUInt64NoTruncate(global, i))
+    }
+    /// A BigInt from a decimal integer literal (optional `-`, then digits).
+    /// Returns `Ok(None)` when `digits` is not such a literal.
+    #[track_caller]
+    pub fn big_int_from_decimal(
+        global: &JSGlobalObject,
+        digits: &[u8],
+    ) -> JsResult<Option<JSValue>> {
+        let unsigned = digits.strip_prefix(b"-").unwrap_or(digits);
+        if unsigned.is_empty() || !unsigned.iter().all(u8::is_ascii_digit) {
+            return Ok(None);
+        }
+        // Only text StringToBigInt accepts gets here, so empty means it threw (too large).
+        let value = host_fn::from_js_host_call(global, || {
+            // SAFETY: `digits` is a live slice for the duration of the call.
+            unsafe { JSC__JSValue__bigIntFromLatin1(global, digits.as_ptr(), digits.len()) }
+        })?;
+        Ok(Some(value))
     }
     /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
     /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
@@ -925,10 +946,17 @@ impl JSValue {
     /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
     /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        if !JSC__JSValue__pinArrayBuffer(self) {
+        let kind = JSC__JSValue__pinArrayBuffer(self);
+        if kind == 0 {
             return None;
         }
-        self.as_array_buffer(global)
+        let mut buffer = self.as_array_buffer(global);
+        match &mut buffer {
+            Some(buffer) => buffer.pinned = kind == 1,
+            None if kind == 1 => self.unpin_array_buffer(),
+            None => {}
+        }
+        buffer
     }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
@@ -1107,7 +1135,7 @@ impl JSValue {
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
         let property = property.as_ref();
-        // Never route a runtime key to `fastGet`: a runtime byte-slice match
+        // Never route a runtime key to `fast_get`: a runtime byte-slice match
         // here is wrong because
         // C++ `builtinNameMap` maps e.g. `asyncIterator` → `Symbol.asyncIterator`
         // (and `inspectCustom` → `Symbol.for("nodejs.util.inspect.custom")`), so
@@ -1586,6 +1614,10 @@ impl JSValue {
             JSC__JSValue__jsonStringifyFast(self, global, out)
         })
     }
+
+    pub fn temporal_type(self) -> TemporalType {
+        crate::cpp::Bun__JSValue__temporalType(self)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1970,6 +2002,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__dateInstanceFromNumber(global: &JSGlobalObject, n: f64) -> JSValue;
     safe fn JSC__JSValue__fromInt64NoTruncate(global: &JSGlobalObject, i: i64) -> JSValue;
     safe fn JSC__JSValue__fromUInt64NoTruncate(global: &JSGlobalObject, i: u64) -> JSValue;
+    fn JSC__JSValue__bigIntFromLatin1(
+        global: &JSGlobalObject,
+        ptr: *const u8,
+        len: usize,
+    ) -> JSValue;
     safe fn JSC__JSValue__fromTimevalNoTruncate(
         global: &JSGlobalObject,
         nsec: i64,
@@ -2088,7 +2125,8 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
-    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
+    /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(
@@ -2136,6 +2174,21 @@ unsafe extern "C" {
 pub enum ProxyField {
     Target = 0,
     Handler = 1,
+}
+
+/// `JSC::TemporalType` (TemporalObject.h) — result of [`JSValue::temporal_type`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalType {
+    None = 0,
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
 }
 
 /// `JSValue.SerializedFlags`.
@@ -2298,9 +2351,9 @@ impl JSValue {
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
     }
-    /// `JSValue.getPrototype`.
-    pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
-        JSC__JSValue__getPrototype(self, global)
+    /// `JSValue.getPrototype`; runs a Proxy's `getPrototypeOf` trap, so it may throw.
+    pub fn get_prototype(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || JSC__JSValue__getPrototype(self, global))
     }
 
     // ── Reflection / naming. ───────────────
@@ -2598,6 +2651,14 @@ impl JSValue {
         Bun__JSValue__getArrayBufferViewByteOffset(self)
     }
 
+    /// Force a typed array out of JSC's "fast" mode so its data pointer stays
+    /// stable for the view's lifetime (fast-mode storage is abandoned when the
+    /// backing buffer is materialized). Returns `false` only when `self` is a
+    /// view whose backing buffer could not be allocated; non-views are a no-op.
+    pub fn materialize_array_buffer_view_buffer(self) -> bool {
+        Bun__JSValue__materializeArrayBufferViewBuffer(self)
+    }
+
     // ── Formatting. ────────────────────────────────────
     #[inline]
     pub fn fmt_string(self, global: &JSGlobalObject) -> StringFormatter<'_> {
@@ -2724,6 +2785,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
     ) -> JSValue;
     safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
+    safe fn Bun__JSValue__materializeArrayBufferViewBuffer(this: JSValue) -> bool;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
     fn Bun__JSValue__deserialize(
         global: *const JSGlobalObject,

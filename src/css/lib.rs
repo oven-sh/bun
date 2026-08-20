@@ -340,7 +340,7 @@ pub struct Dimension {
 }
 
 /// CSS lexer token. Data-only definition hoisted out of `css_parser.rs`; the
-/// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` since they depend on
+/// `to_css*`/`hash` impls stay in `css_parser.rs` since they depend on
 /// `serializer::*` and `generics`.
 // Every `&'static [u8]` payload actually borrows the parser arena/source text and
 // must not outlive the arena; `&'static` is the crate-wide placeholder until the

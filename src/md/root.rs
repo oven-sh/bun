@@ -219,5 +219,5 @@ pub use crate::ansi_renderer as ansi;
 pub use ansi::ImageUrlCollector;
 pub use ansi::Theme as AnsiTheme;
 pub use ansi::detect_kitty_graphics;
-pub use ansi::detect_light_background;
 pub use ansi::render_to_ansi;
+pub use ansi::{detect_light_background, detect_light_background_probing};

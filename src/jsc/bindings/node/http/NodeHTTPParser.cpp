@@ -1,5 +1,6 @@
 #include "NodeHTTPParser.h"
 #include "BunBuiltinNames.h"
+#include "ErrorCode.h"
 #include "helpers.h"
 #include "JSConnectionsList.h"
 #include "JSHTTPParser.h"
@@ -116,6 +117,11 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
+
+    if (!isInitialized()) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "HTTPParser is not initialized"_s);
+        return {};
+    }
 
     // Forbid re-entrant execution of a new buffer while a previous execute()
     // is still on the stack: llhttp keeps span pointers into the in-progress

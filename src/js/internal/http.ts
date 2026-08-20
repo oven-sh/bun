@@ -1,33 +1,14 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const {
-  getHeader,
-  setHeader,
-  Headers,
-  assignHeaders: assignHeadersFast,
-  setRequestTimeout,
-  headersTuple,
-  webRequestOrResponseHasBodyValue,
-  setServerCustomOptions,
-  setServerAppFlags,
-  setServerSecureContext,
-  enableServerKeylog,
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
-  drainMicrotasks,
-  setServerIdleTimeout,
-} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
-  getHeader: (headers: Headers, name: string) => string | undefined;
-  setHeader: (headers: Headers, name: string, value: string) => void;
-  Headers: (typeof globalThis)["Headers"];
-  assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
-  setRequestTimeout: (req: Request, timeout: number) => boolean;
-  headersTuple: any;
-  webRequestOrResponseHasBodyValue: (arg: any) => boolean;
+const { setServerCustomOptions, setServerAppFlags, setServerSecureContext, enableServerKeylog, drainMicrotasks } = $cpp(
+  "NodeHTTP.cpp",
+  "createNodeHTTPInternalBinding",
+) as {
   setServerCustomOptions: (
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
-    insecureHTTPParser: boolean,
+    lenientHttpFlags: number,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
     onConnection?: (socketHandle: any) => undefined,
@@ -36,19 +17,16 @@ const {
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
-    insecureHTTPParser: boolean,
+    lenientHttpFlags: number,
     httpAllowHalfOpen: boolean,
   ) => void;
   setServerSecureContext: (server: any, tls: any) => void;
   enableServerKeylog: (server: any) => void;
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
-  setServerIdleTimeout: (server: any, timeout: number) => void;
 };
 
 const getRawKeys = $newCppFunction("JSFetchHeaders.cpp", "jsFetchHeaders_getRawKeys", 0);
 
-const kDeprecatedReplySymbol = Symbol("deprecatedReply");
 const kBodyChunks = Symbol("bodyChunks");
 const kPath = Symbol("path");
 const kPort = Symbol("port");
@@ -77,12 +55,8 @@ const headerStateSymbol = Symbol("headerState");
 const kEmitState = Symbol("emitState");
 
 const bodyStreamSymbol = Symbol("bodyStream");
-const controllerSymbol = Symbol("controller");
-const runSymbol = Symbol("run");
-const deferredSymbol = Symbol("deferred");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
-const firstWriteSymbol = Symbol("firstWrite");
 const headersSymbol = Symbol("headers");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
@@ -102,8 +76,6 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
-
-const kEmptyObject = Object.freeze(Object.create(null));
 
 export const enum ClientRequestEmitState {
   socket = 1,
@@ -159,20 +131,6 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
       cb(err);
     }
   }
-}
-
-// TODO: make this more robust.
-function isAbortError(err) {
-  return err?.name === "AbortError";
-}
-
-// This lets us skip some URL parsing
-let isNextIncomingMessageHTTPS = false;
-function getIsNextIncomingMessageHTTPS() {
-  return isNextIncomingMessageHTTPS;
-}
-function setIsNextIncomingMessageHTTPS(value) {
-  isNextIncomingMessageHTTPS = value;
 }
 
 function callCloseCallback(self) {
@@ -594,16 +552,12 @@ function filterEnvForProxies(env) {
 }
 
 export {
-  Headers,
   METHODS,
   STATUS_CODES,
   abortedSymbol,
-  assignHeadersFast,
   bodyStreamSymbol,
   callCloseCallback,
   checkShouldUseProxy,
-  controllerSymbol,
-  deferredSymbol,
   drainMicrotasks,
   emitCloseNT,
   emitCloseNTAndComplete,
@@ -613,26 +567,18 @@ export {
   eofInProgress,
   fakeSocketSymbol,
   filterEnvForProxies,
-  firstWriteSymbol,
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
-  getHeader,
-  getIsNextIncomingMessageHTTPS,
   getMaxHTTPHeaderSize,
   getRawKeys,
   hasServerResponseFinished,
   headerStateSymbol,
   headersSymbol,
-  headersTuple,
-  isAbortError,
   isTlsSymbol,
   kAbortController,
   kAgent,
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
-  kDeprecatedReplySymbol,
   kEmitState,
-  kEmptyObject,
   kFetchRequest,
   kHandle,
   kHost,
@@ -666,15 +612,10 @@ export {
   parseProxyConfigFromEnv,
   parseProxyUrl,
   reqSymbol,
-  runSymbol,
   serverSymbol,
-  setHeader,
-  setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
-  setRequestTimeout,
   setServerAppFlags,
   setServerCustomOptions,
-  setServerIdleTimeout,
   setServerSecureContext,
   statusCodeSymbol,
   statusMessageSymbol,
@@ -684,5 +625,4 @@ export {
   utcDate,
   validateMsecs,
   webRequestOrResponse,
-  webRequestOrResponseHasBodyValue,
 };

@@ -188,6 +188,9 @@ describe("stdio _handle", () => {
       child.kill();
     }
     await once(child, "exit");
+    // The parent-end write fd is closed once the child is gone: the handle
+    // must not leak the stale number.
+    expect(child.stdin._handle.fd).toBe(-1);
   });
 
   it("child.stdin.unref releases the stdin writer keep-alive", async () => {

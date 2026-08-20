@@ -1,4 +1,6 @@
-import { describe, expect } from "bun:test";
+import type { BuildOutput } from "bun";
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1011,4 +1013,89 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+});
+
+// An HTML entry point's scripts run in the browser, so `target: "bun"` / `"node"`
+// builds bundle them for the browser no matter how the entry point was resolved.
+describe.concurrent("html entry point in a server-side build is bundled for the browser", () => {
+  // `pkg` resolves to a different file under the "browser" export condition, which
+  // server targets do not set, so the chunk's contents show which target built it.
+  const fixture = {
+    "page.html": `<!doctype html><html><body><script src="./app.js"></script></body></html>`,
+    "app.js": `import { where } from "pkg"; console.log(where);`,
+    "node_modules/pkg/package.json": JSON.stringify({
+      name: "pkg",
+      exports: { ".": { browser: "./browser.js", default: "./server.js" } },
+    }),
+    "node_modules/pkg/browser.js": `export const where = "browser build";`,
+    "node_modules/pkg/server.js": `export const where = "server build";`,
+  };
+
+  async function expectBrowserChunk(build: BuildOutput) {
+    expect(build.logs).toBeEmpty();
+    const js = build.outputs.filter(o => o.path.endsWith(".js"));
+    expect(js).toHaveLength(1);
+    expect(build.outputs.filter(o => o.path.endsWith(".html"))).toHaveLength(1);
+    const chunk = await js[0].text();
+    expect(chunk).toContain("browser build");
+    expect(chunk).not.toContain("server build");
+    expect(chunk).not.toContain("// @bun");
+  }
+
+  for (const target of ["bun", "node"] as const) {
+    test(`target ${target}: entry point resolved from disk`, async () => {
+      using dir = tempDir("html-entry-target", fixture);
+      await expectBrowserChunk(await Bun.build({ entrypoints: [`${dir}/page.html`], target }));
+    });
+
+    test(`target ${target}: onResolve plugin matches the entry point and declines it`, async () => {
+      using dir = tempDir("html-entry-target", fixture);
+      await expectBrowserChunk(
+        await Bun.build({
+          entrypoints: [`${dir}/page.html`],
+          target,
+          plugins: [
+            {
+              name: "declines",
+              setup(build) {
+                build.onResolve({ filter: /\.html$/ }, () => undefined);
+              },
+            },
+          ],
+        }),
+      );
+    });
+
+    test(`target ${target}: onResolve plugin resolves the entry point to an html file`, async () => {
+      using dir = tempDir("html-entry-target", fixture);
+      await expectBrowserChunk(
+        await Bun.build({
+          entrypoints: ["virtual:page"],
+          target,
+          plugins: [
+            {
+              name: "resolves",
+              setup(build) {
+                build.onResolve({ filter: /^virtual:page$/ }, () => ({ path: `${dir}/page.html` }));
+              },
+            },
+          ],
+        }),
+      );
+    });
+
+    test(`target ${target}: entry point comes from the files option`, async () => {
+      using dir = tempDir("html-entry-target", fixture);
+      await expectBrowserChunk(
+        await Bun.build({
+          entrypoints: [`${dir}/mem-page.html`],
+          target,
+          files: {
+            [`${dir}/mem-page.html`]: `<!doctype html><html><body><script src="./mem-app.js"></script></body></html>`,
+            [`${dir}/mem-app.js`]: fixture["app.js"],
+          },
+        }),
+      );
+    });
+  }
 });

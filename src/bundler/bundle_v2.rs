@@ -2620,6 +2620,26 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// The target an entry point with `loader` is bundled for when the build
+        /// asked for `target`.
+        ///
+        /// An HTML entry point's scripts run in the browser, so in a server-side
+        /// build it is bundled for `Target::Browser` regardless of how the entry
+        /// was resolved (resolver, `files:`, or an onResolve plugin). This is the
+        /// same rule `process_resolve_queue` applies to HTML files imported from
+        /// server code. The dev server handles HTML routes itself and is exempt.
+        fn entry_point_target(
+            &mut self,
+            loader: Loader,
+            target: options::Target,
+        ) -> options::Target {
+            if loader == Loader::Html && target.is_server_side() && self.dev_server.is_none() {
+                self.ensure_client_transpiler();
+                return Target::Browser;
+            }
+            target
+        }
+
         pub(crate) fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
@@ -2635,6 +2655,10 @@ pub mod bv2_impl {
             };
 
             path.assert_file_path_is_absolute();
+            let loader = path
+                .loader(&self.transpiler.options.loaders)
+                .unwrap_or(Loader::File);
+            let target = self.entry_point_target(loader, target);
             // borrowck: get-then-put instead of a single get-or-put.
             if self
                 .path_to_source_index_map(target)
@@ -2645,10 +2669,6 @@ pub mod bv2_impl {
             }
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
-
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
 
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
@@ -3013,21 +3033,8 @@ pub mod bv2_impl {
                     Err(_) => continue,
                 };
 
-                let target = 'brk: {
-                    let main_target = self.transpiler.options.target;
-                    if main_target.is_server_side() {
-                        if let Some(path) = resolved.path_const() {
-                            if let Some(loader) = path.loader(&self.transpiler.options.loaders) {
-                                if loader == Loader::Html {
-                                    self.ensure_client_transpiler();
-                                    break 'brk Target::Browser;
-                                }
-                            }
-                        }
-                    }
-                    break 'brk main_target;
-                };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target)?;
+                let _ =
+                    self.enqueue_entry_item(&mut resolved, true, self.transpiler.options.target)?;
             }
             Ok(())
         }
@@ -4676,6 +4683,14 @@ pub mod bv2_impl {
                         } else {
                             path.namespace = result_ns_static;
                         }
+                        let loader = path
+                            .loader(&this.transpiler.options.loaders)
+                            .unwrap_or(Loader::File);
+                        let target = if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                            this.entry_point_target(loader, resolve.import_record.original_target)
+                        } else {
+                            resolve.import_record.original_target
+                        };
 
                         // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
                         // lifetime, blocking the `free_list`/`graph` accesses below.
@@ -4684,7 +4699,7 @@ pub mod bv2_impl {
                         // through `value_ptr` (no intervening map mutation).
                         let (value_ptr, found_existing) = {
                             let existing = this
-                                .path_to_source_index_map(resolve.import_record.original_target)
+                                .path_to_source_index_map(target)
                                 .get_or_put(path.text)
                                 .expect("oom");
                             (
@@ -4699,10 +4714,7 @@ pub mod bv2_impl {
                             this.free_list.push(result.namespace);
                             this.free_list.push(result.path);
                             path = this
-                                .path_with_pretty_initialized(
-                                    &path,
-                                    resolve.import_record.original_target,
-                                )
+                                .path_with_pretty_initialized(&path, target)
                                 .expect("oom");
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
@@ -4714,9 +4726,6 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            let loader = path
-                                .loader(&this.transpiler.options.loaders)
-                                .unwrap_or(Loader::File);
 
                             this.graph
                                 .input_files
@@ -4749,16 +4758,12 @@ pub mod bv2_impl {
                                     file: bun_sys::Fd::INVALID,
                                 },
                                 side_effects: bun_ast::SideEffects::HasSideEffects,
-                                jsx: this
-                                    .transpiler_for_target(resolve.import_record.original_target)
-                                    .options
-                                    .jsx
-                                    .clone(),
+                                jsx: this.transpiler_for_target(target).options.jsx.clone(),
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
                                 tree_shaking: this.linker.options.tree_shaking,
-                                known_target: resolve.import_record.original_target,
+                                known_target: target,
                                 ..Default::default()
                             };
                             // Arena-owned.

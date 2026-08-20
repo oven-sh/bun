@@ -216,8 +216,8 @@ run_test() {
     # 这些文件在 OHOS 上持续超时（repl/streams 连续 3+ 次全量），降低 WT
     # 让失败尽早暴露，同时省下 ~480s/文件 的等待时间。
     # 08-06 新增：import-attributes/snapshot/spawn.ipc.bun-node/26286 均 600s TIMEOUT
-    */js/node/tty.test.ts|*/cli/install/bun-pack.test.ts|*/cli/run/env.test.ts|\
-    */js/bun/repl/repl.test.ts|*/cli/install/bun-install-registry.test.ts|\
+    */js/node/tty.test.ts|*/cli/run/env.test.ts|\
+    */js/bun/repl/repl.test.ts|\
     */js/web/streams/streams.test.js|*/js/bun/shell/shell-cmdsub-crash.test.ts|\
     */js/bun/import-attributes/import-attributes.test.ts|\
     */js/bun/test/snapshot-tests/snapshots/snapshot.test.ts|\
@@ -237,6 +237,23 @@ run_test() {
       ;;
     */bake/dev/server-sourcemap.test.ts|*/web/fetch/fetch.test.ts|*/cli/create/create-jsx.test.ts|*/shell/bunshell.test.ts|*/terminal/terminal.test.ts|*/websocket/websocket-server.test.ts)
       WT=$((TMOUT * 3))       # 1800s
+      BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
+      ;;
+    # ── cli/install 连续多日 600s 超时的大文件 ──
+    # 单跑实测 4-10 分钟（bun-install 386s / bun-add-filter 599s / bun-add
+    # 226s），并行 5 worker 时资源竞争使耗时膨胀超过默认 TMOUT=300s。
+    # 给足 2×TMOUT 让它们按单跑速度完成，而非超时误杀。
+    */cli/install/bun-install.test.ts|*/cli/install/bun-run.test.ts|\
+    */cli/install/bun-update.test.ts|*/cli/install/bun-update-transitive.test.ts|\
+    */cli/install/bun-update-lockfile-sync.test.ts|*/cli/install/bun-dedupe.test.ts|\
+    */cli/install/bun-audit.test.ts|*/cli/install/bun-prune.test.ts|\
+    */cli/install/bun-pm-licenses.test.ts|*/cli/install/bun-add-catalog.test.ts|\
+    */cli/install/bun-add.test.ts|*/cli/install/migration/migrate.test.ts|\
+    */cli/install/nested-overrides.test.ts|\
+    */cli/install/bun-security-scanner-matrix-with-node-modules.test.ts|\
+    */cli/install/bun-security-scanner-matrix-without-node-modules.test.ts|\
+    */cli/install/bun-pack.test.ts|*/cli/install/bun-install-registry.test.ts)
+      WT=$((TMOUT * 2))       # 600s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     # ── 泄漏/长时间测试 ──

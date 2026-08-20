@@ -1913,16 +1913,19 @@ Socket.prototype.connect = function connect(...args) {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
 
+    let connection = this[ksocket];
+    let upgradeDuplex = false;
+    let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
+
+    // connect({ fd }) is Bun's equivalent of Node's `new Socket({ handle })`
+    // (cluster-worker accepts, IPC-transferred handles, child stdio pipes),
+    // which never goes through Node's connect() and so never publishes here.
     if (!netClientSocketChannel) initNetChannels();
-    if (netClientSocketChannel.hasSubscribers) {
+    if (fd == null && netClientSocketChannel.hasSubscribers) {
       netClientSocketChannel.publish({
         socket: this,
       });
     }
-
-    let connection = this[ksocket];
-    let upgradeDuplex = false;
-    let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
     this.servername = options.servername;
     if (socket) {
       connection = socket;
@@ -4265,6 +4268,11 @@ function onClusterConnection(err, clientHandle) {
     self.prependOnceListener("connection", connectionListener);
   }
   self.emit("connection", socket);
+  if (netServerSocketChannel.hasSubscribers) {
+    netServerSocketChannel.publish({
+      socket,
+    });
+  }
 }
 
 function createServer(options, connectionListener) {

@@ -857,6 +857,57 @@ indentation"
     ]);
     for (const r of settled) if (r.status === "rejected") throw r.reason;
   });
+
+  // Writing an inline snapshot looks up the calling file through the same
+  // caller-location binding as Bun.cron(); the reference it hands back on the
+  // caller's source URL must be released both when the snapshot is queued for
+  // writing and when the matcher bails out because it was called from another
+  // file.
+  it("releases the reference taken on the caller's source URL", async () => {
+    const refcountHelper = /*js*/ `
+      import { expect } from "bun:test";
+      import { callerSourceURLRefCount } from "bun:internal-for-testing";
+      // Written to a property rather than returned: returning the result would
+      // compile to a tail call, dropping this frame and reading the test
+      // file's URL instead of this file's.
+      export function readHelperRefCount(into) {
+        into.helper = callerSourceURLRefCount();
+      }
+      export function snapshotFromHelper(value) {
+        expect(value).toMatchInlineSnapshot();
+      }
+    `;
+    const refcountTester = new InlineSnapshotTester({ "refcount-helper.js": refcountHelper });
+    const thefile = refcountTester.tmpfile(/*js*/ `
+      import { callerSourceURLRefCount } from "bun:internal-for-testing";
+      import { readHelperRefCount, snapshotFromHelper } from "./refcount-helper";
+      test("refcounts", () => {
+        // Loading the two modules leaves garbage that still references their
+        // URLs; collect it so the readings can only differ by what the
+        // matchers leak.
+        const refCounts = () => {
+          Bun.gc(true);
+          const counts = { testFile: callerSourceURLRefCount() };
+          readHelperRefCount(counts);
+          return counts;
+        };
+        const before = refCounts();
+        for (let i = 0; i < 4; i++) {
+          expect("written").toMatchInlineSnapshot();
+          expect(() => snapshotFromHelper("rejected")).toThrow("Inline snapshot matchers must be called from the test file");
+        }
+        expect(refCounts()).toEqual(before);
+      });
+    `);
+
+    const { stderr, exitCode } = await refcountTester.spawn([], thefile);
+    expect({ stderr: stderr.toString(), exitCode }).toEqual({
+      stderr: expect.stringContaining(" 1 pass\n"),
+      exitCode: 0,
+    });
+    expect(refcountTester.readfile(thefile)).toContain('expect("written").toMatchInlineSnapshot(`"written"`);');
+    expect(refcountTester.readfile("refcount-helper.js")).toBe(refcountHelper);
+  });
 });
 test("indented inline snapshots", () => {
   expect("a\nb").toMatchInlineSnapshot(`

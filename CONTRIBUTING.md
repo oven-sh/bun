@@ -99,7 +99,7 @@ Bun requires LLVM 21.1.8 (`clang` is part of LLVM). This version is enforced by 
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@21
+$ brew install llvm@21 lld@21
 ```
 
 ```bash#Ubuntu/Debian

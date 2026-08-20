@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1391,3 +1391,52 @@ test("compile --compile-executable-path rejects a template shorter than the exec
     expect(exitCode).toBe(1);
   }
 }, 60_000);
+
+test.skipIf(!isMacOS || process.arch !== "arm64")(
+  "compile on darwin-arm64 produces a signature the kernel accepts",
+  async () => {
+    // The in-process ad-hoc signer must hash the final partial page truncated to
+    // `codeLimit % 4096` bytes (as the kernel and codesign(1) do), and the output must end
+    // exactly at the end of the signature. A wrong last-page hash is not caught by merely
+    // running the binary — the kernel only validates a page when it is faulted in, which
+    // is why the same defect was fatal on some macOS/layout combinations and invisible
+    // on others (#39764).
+    using dir = tempDir("compile-macho-codesign", {
+      "entry.js": `console.log("signed");`,
+    });
+    const cwd = String(dir);
+    const outfile = join(cwd, "app");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(cwd, "entry.js"), "--outfile", outfile],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    await using verify = Bun.spawn({
+      cmd: ["codesign", "--verify", "--strict", "--verbose=2", outfile],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [verifyOut, verifyErr, verifyCode] = await Promise.all([
+      verify.stdout.text(),
+      verify.stderr.text(),
+      verify.exited,
+    ]);
+    expect(verifyOut + verifyErr).toBe(`${outfile}: valid on disk\n${outfile}: satisfies its Designated Requirement\n`);
+    expect(verifyCode).toBe(0);
+
+    const result = await Bun.$`${outfile}`.cwd(cwd).env(bunEnv).nothrow();
+    expect(result.stdout.toString()).toBe("signed\n");
+    expect(result.exitCode).toBe(0);
+  },
+  60_000,
+);

@@ -1472,16 +1472,29 @@ pub(crate) fn inject<'a>(
                 512 * 1024,
                 bun_sys::FileWriter(cloned_executable_fd),
             );
-            if let Err(e) = macho_file.build_and_sign(&mut buffered_writer) {
-                bun_core::pretty_errorln!(
-                    "Error writing standalone module graph: {}",
-                    bstr::BStr::new(e.name())
-                );
+            let written = match macho_file.build_and_sign(&mut buffered_writer) {
+                Ok(written) => written,
+                Err(e) => {
+                    bun_core::pretty_errorln!(
+                        "Error writing standalone module graph: {}",
+                        bstr::BStr::new(e.name())
+                    );
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                }
+            };
+            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
+                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
-            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
-                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
+            // The temp file started as a copy of the template, whose original signature
+            // (CMS blob, requirements) is larger than the ad-hoc one written here.
+            if let Err(err) = Syscall::ftruncate(
+                cloned_executable_fd,
+                i64::try_from(written).expect("int cast"),
+            ) {
+                bun_core::pretty_errorln!("Error truncating Mach-O file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }

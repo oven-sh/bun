@@ -341,6 +341,12 @@ static void ssl_flush_pending_keylog(struct us_socket_t *s) {
   if (!s->ssl || us_socket_is_closed(s)) {
     return;
   }
+  /* uWS HTTP server sockets have no keylog dispatch; leave the lines parked
+   * so the JS connection callback can pop them with us_socket_pop_keylog.
+   * Whatever is never drained is freed by the ex_data destructor. */
+  if (us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS) {
+    return;
+  }
   struct us_ssl_pending_session_t *pending =
       SSL_get_ex_data(s->ssl, us_ssl_pending_keylog_idx);
   if (!pending) {
@@ -547,6 +553,18 @@ int us_ssl_pop_pending_session(SSL *ssl, unsigned char *out, int out_cap) {
 
 int us_ssl_pop_pending_keylog(SSL *ssl, unsigned char *out, int out_cap) {
   return us_ssl_pop_pending(ssl, us_ssl_pending_keylog_idx, out, out_cap);
+}
+
+/* node:https server 'keylog': arm parking for every socket subsequently
+ * accepted by `ls` (see the keylog_enabled branch in us_internal_ssl_attach).
+ * The JS layer drains via us_socket_pop_keylog once the handshake completes. */
+void us_listen_socket_enable_keylog(struct us_listen_socket_t *ls) {
+  ls->keylog_enabled = 1;
+}
+
+int us_socket_pop_keylog(struct us_socket_t *s, unsigned char *out, int out_cap) {
+  if (!s->ssl) return 0;
+  return us_ssl_pop_pending_keylog((SSL *)s->ssl, out, out_cap);
 }
 
 /* The resumable session most recently delivered via the new-session callback,
@@ -1539,7 +1557,8 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
    * sockets lives in accept_kind and may not have been copied onto `s` yet
    * when its SSL is initialized. */
   if (ssl && (us_socket_kind(s) == BUN_SOCKET_KIND_BUN_SOCKET_TLS ||
-              (listener && listener->accept_kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS))) {
+              (listener && (listener->accept_kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS ||
+                            listener->keylog_enabled)))) {
     /* The very first TLS attach in a process can be a client connection, and
      * nothing on that path has registered the ex_data indices yet - using the
      * still--1 index would make CRYPTO_set_ex_data grow its slot array toward
@@ -2070,16 +2089,22 @@ struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, vo
   return ret;
 }
 
-/* The EOF dispatch below is scoped to uWS HTTP server sockets: their
- * context's onEnd owns the EOF (premature-EOF clientError
- * HPE_INVALID_EOF_STATE, CONNECT/Upgrade half-open, pipeline drain after
- * FIN), and closing without dispatching silently skipped all of it for
- * node:https. Every other TLS socket kind predates the dispatch and
- * synthesizes its JS 'end' from the close event, so they keep the
- * historical force-close (dispatching for them strands sockets whose end
- * handler expects the transport to close underneath it). */
-static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+static int ssl_is_uws_http_tls(struct us_socket_t *s) {
   return us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS;
+}
+
+/* EOF dispatch only for kinds whose user layer consumes 'end' + honors
+ * allow_half_open (uWS HTTP server, Bun.connect/listen ⇒ node:tls); all
+ * other TLS kinds derive EOF from close and keep the force-close. */
+static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+  unsigned char kind = us_socket_kind(s);
+  if (kind == BUN_SOCKET_KIND_UWS_HTTP_TLS) {
+    return 1;
+  }
+  /* Mid-handshake EOF keeps the force-close so JS surfaces it as a failed
+   * handshake (ECONNRESET "socket hang up", like Node) not a clean 'end'. */
+  return kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS &&
+         s->ssl_handshake_state == HANDSHAKE_COMPLETED;
 }
 
 /* Deliver the plaintext EOF to the user layer once, like the plain-TCP path
@@ -2204,7 +2229,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
    * onWritable clears the teardown timeout armed at shutdown. node sockets
    * still get write-completion dispatch after a half-close in either
    * direction. */
-  if (ssl_wants_eof_dispatch(s) && us_internal_ssl_is_shut_down(s)) return s;
+  if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
     s = us_dispatch_writable(s);
@@ -3023,6 +3048,23 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
   if (!node || !node->ctx) return NULL;
   SSL_CTX_up_ref(node->ctx);
   return node->ctx;
+}
+
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+                                          SSL_CTX *ctx) {
+  if (ls->ssl_ctx == ctx) return;
+  SSL_CTX_up_ref(ctx);
+  /* Carry over the listener-level callbacks registered on the old default. */
+  if (ls->sni) {
+    SSL_CTX_set_tlsext_servername_callback(ctx, sni_cb);
+  }
+  if (ls->on_server_name) {
+    SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+  }
+  if (ls->ssl_ctx) {
+    us_internal_ssl_ctx_unref(ls->ssl_ctx);
+  }
+  ls->ssl_ctx = ctx;
 }
 
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,

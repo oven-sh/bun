@@ -192,6 +192,7 @@ using namespace JSC;
     macro(warning) \
     macro(webStreamClosedPromise) \
     macro(webStreamControllerError) \
+    macro(webStreamState) \
     macro(writable) \
     macro(writableType) \
     macro(write) \

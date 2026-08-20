@@ -620,9 +620,13 @@ var InternalResolver = class Resolver {
   }
 
   resolveTlsa(hostname, callback) {
+    if (arguments.length > 2) {
+      callback = arguments[2];
+    }
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveTlsa(hostname)

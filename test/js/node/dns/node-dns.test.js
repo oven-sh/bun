@@ -638,6 +638,7 @@ describe("a third argument shifts the callback", () => {
     ["dns.resolvePtr", dns.resolvePtr],
     ["dns.resolveSoa", dns.resolveSoa],
     ["dns.resolveSrv", dns.resolveSrv],
+    ["dns.resolveTlsa", dns.resolveTlsa],
     ["dns.resolveTxt", dns.resolveTxt],
     ["dns.reverse", dns.reverse],
   ];

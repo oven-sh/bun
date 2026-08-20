@@ -1252,12 +1252,19 @@ impl AresReply for struct_ares_tlsa_reply {
             // SAFETY: c-ares guarantees `data_ptr[..data_len]` is readable while
             // `dnsrec` is live; we copy into a Rust-owned buffer before destroy.
             let data: Box<[u8]> = unsafe { core::slice::from_raw_parts(data_ptr, data_len) }.into();
+            // SAFETY: `rr` is a valid TLSA record; all three keys are `ARES_DATATYPE_U8`.
+            let (cert_usage, selector, match_) = unsafe {
+                (
+                    ares_dns_rr_get_u8(rr, ARES_RR_TLSA_CERT_USAGE),
+                    ares_dns_rr_get_u8(rr, ARES_RR_TLSA_SELECTOR),
+                    ares_dns_rr_get_u8(rr, ARES_RR_TLSA_MATCH),
+                )
+            };
             let node = bun_core::heap::into_raw(Box::new(Self {
                 next: ptr::null_mut(),
-                // SAFETY: `rr` is a valid TLSA record; keys are `ARES_DATATYPE_U8`.
-                cert_usage: unsafe { ares_dns_rr_get_u8(rr, ARES_RR_TLSA_CERT_USAGE) },
-                selector: unsafe { ares_dns_rr_get_u8(rr, ARES_RR_TLSA_SELECTOR) },
-                match_: unsafe { ares_dns_rr_get_u8(rr, ARES_RR_TLSA_MATCH) },
+                cert_usage,
+                selector,
+                match_,
                 data,
             }));
             // SAFETY: `tail` always points at either `head` or the `.next` slot

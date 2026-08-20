@@ -553,6 +553,9 @@ function expectBundled(
     generateOutput = true,
     onAfterApiBundle,
     throw: _throw = false,
+    // Consumed by itBundled for test-registration timeout, not here. Destructured so it
+    // doesn't land in unknownProps (whose throw the dry-run swallows, silently dropping the test).
+    timeoutScale: _timeoutScale,
     ...unknownProps
   } = opts;
 

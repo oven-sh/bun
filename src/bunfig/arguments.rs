@@ -93,7 +93,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
     Ok(())
 }
 
-pub fn load_config_path(
+fn load_config_path(
     cmd: CommandTag,
     auto_loaded: bool,
     config_path: &ZStr,
@@ -133,9 +133,170 @@ fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
     Global::crash();
 }
 
+/// True when `path` contains a `node_modules` component.
+fn in_node_modules(path: &[u8]) -> bool {
+    let mut rest = path;
+    while let Some(i) = bun_core::strings::index_of(rest, b"node_modules") {
+        let end = i + b"node_modules".len();
+        let before_ok = i == 0 || bun_paths::is_sep_native(rest[i - 1]);
+        let after_ok = end == rest.len() || bun_paths::is_sep_native(rest[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+        rest = &rest[end..];
+    }
+    false
+}
+
+enum PackageJson {
+    Missing,
+    Plain,
+    Workspaces(Vec<Box<[u8]>>),
+}
+
+/// Classifies `dir/package.json`; an unparseable file or a `workspaces`
+/// value without a pattern array (yarn per-member nohoist) counts as `Plain`.
+fn read_package_json(dir: &[u8]) -> PackageJson {
+    let mut name_buf = PathBuffer::uninit();
+    let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+        dir,
+        &mut name_buf[..],
+        &[b"package.json".as_slice()],
+    );
+    let json_source = match bun_ast::to_source(json_path, Default::default()) {
+        Err(_) => return PackageJson::Missing,
+        Ok(source) => source,
+    };
+    let mut log = bun_ast::Log::default();
+    let Ok(parsed) = bun_parsers::json::ParsedJson::parse_package_json(&json_source, &mut log)
+    else {
+        return PackageJson::Plain;
+    };
+    let Some(prop) = parsed.root.as_property(b"workspaces") else {
+        return PackageJson::Plain;
+    };
+    let json_array = match prop.expr.data {
+        bun_ast::ExprData::EArrayJSON(arr) => arr,
+        bun_ast::ExprData::EObjectJSON(obj) => match (*obj).get(b"packages") {
+            Some(bun_ast::e::JsonValue::Array(arr)) => *arr,
+            _ => return PackageJson::Plain,
+        },
+        _ => return PackageJson::Plain,
+    };
+    let mut patterns: Vec<Box<[u8]>> = Vec::new();
+    for item in json_array.get().items() {
+        if let bun_ast::e::JsonValue::String(pattern) = item {
+            patterns.push(Box::<[u8]>::from(pattern.slice()));
+        }
+    }
+    PackageJson::Workspaces(patterns)
+}
+
+/// Leading `!`s toggle negation; `./` prefixes and trailing slashes are
+/// ignored. Exotic forms install accepts via path normalization (`.//`,
+/// `\\`, `../`) are not recognized and fail closed (no inheritance).
+fn workspace_pattern(p: &[u8]) -> (bool, &[u8]) {
+    let mut negated = false;
+    let mut pat = p;
+    while pat.first() == Some(&b'!') {
+        negated = !negated;
+        pat = &pat[1..];
+    }
+    while let Some(rest) = pat.strip_prefix(b"./".as_slice()) {
+        pat = rest;
+    }
+    // A residual "!" ("./!x") would read as glob negation and match almost
+    // everything; treat the entry as inert instead.
+    if pat.first() == Some(&b'!') {
+        return (false, b"");
+    }
+    while pat.len() > 1 && pat.last() == Some(&b'/') {
+        pat = &pat[..pat.len() - 1];
+    }
+    (negated, pat)
+}
+
+/// Positive patterns claim `rel`; a matching negated pattern vetoes the claim
+/// (same two-phase filter as WorkspaceMap's workspace resolution).
+fn workspaces_claim(patterns: &[Box<[u8]>], rel: &[u8]) -> bool {
+    let claimed = patterns.iter().any(|p| {
+        let (negated, pat) = workspace_pattern(p);
+        !negated && bun_glob::r#match(pat, rel).matches()
+    });
+    claimed
+        && !patterns.iter().any(|p| {
+            let (negated, pat) = workspace_pattern(p);
+            negated && bun_glob::r#match(pat, rel).matches()
+        })
+}
+
+/// Prefix length of `cwd` naming the last directory the walk may check: the
+/// project root as `--filter` finds it (filter_arg.rs). No package.json
+/// anywhere bounds at cwd, and a package.json nested inside a member bounds
+/// at that directory (both fail closed).
+fn walk_root_bound(cwd: &[u8]) -> usize {
+    bun_ast::expr::data::Store::create();
+    bun_ast::stmt::data::Store::create();
+    let _store_guard = bun_ast::StoreResetGuard::new();
+
+    // Nearest directory with a package.json.
+    let mut dir = cwd;
+    let nearest: &[u8] = loop {
+        match read_package_json(dir) {
+            // A workspace root is its own project.
+            PackageJson::Workspaces(_) => return dir.len(),
+            PackageJson::Plain => break dir,
+            PackageJson::Missing => {}
+        }
+        match bun_paths::dirname(dir) {
+            Some(parent) => dir = parent,
+            None => return cwd.len(),
+        }
+    };
+
+    // The nearest ancestor declaring workspaces bounds the walk iff its globs claim `nearest`.
+    let mut anc = nearest;
+    while let Some(parent) = bun_paths::dirname(anc) {
+        anc = parent;
+        if let PackageJson::Workspaces(patterns) = read_package_json(anc) {
+            let rel_start = anc.len()
+                + usize::from(!matches!(anc.last(), Some(&c) if bun_paths::is_sep_native(c)));
+            let mut rel: Vec<u8> = nearest[rel_start..].to_vec();
+            if cfg!(windows) {
+                for c in &mut rel {
+                    if *c == b'\\' {
+                        *c = b'/';
+                    }
+                }
+            }
+            let member = workspaces_claim(&patterns, &rel);
+            return if member { anc.len() } else { nearest.len() };
+        }
+        if matches!(anc.last(), Some(&c) if bun_paths::is_sep_native(c)) {
+            break;
+        }
+    }
+    nearest.len()
+}
+
 pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,
+    ctx: Context<'_>,
+) -> Result<(), crate::Error> {
+    load_config_impl(cmd, user_config_path_, false, ctx)
+}
+
+/// `load_config` with auto-discovery forced on, for the exec-time `bun run`
+/// and repl call sites that load config after CLI flags are applied.
+pub fn load_config_auto(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
+    load_config_impl(cmd, None, true, ctx)
+}
+
+fn load_config_impl(
+    cmd: CommandTag,
+    user_config_path_: Option<&[u8]>,
+    force_auto: bool,
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
@@ -169,6 +330,7 @@ pub fn load_config(
     let mut auto_loaded: bool = false;
     if config_path_.is_empty()
         && (user_config_path_.is_some()
+            || force_auto
             || ALWAYS_LOADS_CONFIG[cmd]
             || (cmd == CommandTag::AutoCommand
                 && (
@@ -202,25 +364,103 @@ pub fn load_config(
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }
 
-        // Reshaped for borrowck: `join_abs_string_buf` ties the
-        // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
-        // and `config_buf`. We only need the length to NUL-terminate and
-        // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
-        // the `&mut ctx` call below.
-        config_path_len = {
-            let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
-            let parts: [&[u8]; 2] = [awd, config_path_];
-            let joined =
-                resolve_path::join_abs_string_buf::<platform::Auto>(awd, &mut *config_buf, &parts);
-            joined.len()
-        };
-        config_buf[config_path_len] = 0;
+        if auto_loaded {
+            // Walk up from cwd so a workspace subdirectory finds the root bunfig.toml.
+            let awd: Box<[u8]> = ctx
+                .args
+                .absolute_working_dir
+                .as_deref()
+                .unwrap()
+                .to_vec()
+                .into_boxed_slice();
+            // Strip a trailing separator from `--cwd dir/`, keeping "/" and "C:\".
+            let mut dir: &[u8] = &awd;
+            while dir.len() > 1
+                && bun_paths::is_sep_native(dir[dir.len() - 1])
+                && (!cfg!(windows) || dir[dir.len() - 2] != b':')
+            {
+                dir = &dir[..dir.len() - 1];
+            }
+            // node_modules cwds (lifecycle scripts) and compiled
+            // executables keep the cwd-only lookup.
+            let cwd_only = StandaloneModuleGraph::get().is_some() || in_node_modules(dir);
+            let start: &[u8] = dir;
+            let mut bound: Option<usize> = None;
+            // Roots ("/", "C:\\", UNC) keep their trailing separator: the last to check.
+            let mut is_root = matches!(dir.last(), Some(&c) if bun_paths::is_sep_native(c));
+            let mut found_len: Option<usize> = None;
+            loop {
+                let parts: [&[u8]; 2] = [dir, config_path_];
+                let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+                    dir,
+                    &mut *config_buf,
+                    &parts,
+                );
+                let joined_len = joined.len();
+                config_buf[joined_len] = 0;
+                let candidate = ZStr::from_buf(&config_buf[..], joined_len);
+                let is_regular = matches!(
+                    bun_sys::stat(candidate),
+                    Ok(ref st) if bun_sys::is_regular_file(st.st_mode as bun_sys::Mode)
+                );
+                if is_regular {
+                    found_len = Some(joined_len);
+                    break;
+                }
+                let bound = *bound.get_or_insert_with(|| {
+                    if cwd_only {
+                        start.len()
+                    } else {
+                        walk_root_bound(start)
+                    }
+                });
+                if dir.len() <= bound {
+                    break;
+                }
+                if is_root {
+                    break;
+                }
+                let Some(parent) = bun_paths::dirname(dir) else {
+                    break;
+                };
+                is_root = matches!(parent.last(), Some(&c) if bun_paths::is_sep_native(c));
+                dir = parent;
+            }
+            match found_len {
+                Some(len) => {
+                    // config_buf is already populated and NUL-terminated.
+                    config_path_len = len;
+                }
+                None => {
+                    // Mark attempted so fallback load_config calls skip the walk.
+                    ctx.debug.loaded_bunfig = true;
+                    return Ok(());
+                }
+            }
+        } else {
+            // Capture the length only, ending the `ctx.args` borrow early for borrowck.
+            config_path_len = {
+                let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
+                let parts: [&[u8]; 2] = [awd, config_path_];
+                let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+                    awd,
+                    &mut *config_buf,
+                    &parts,
+                );
+                joined.len()
+            };
+            config_buf[config_path_len] = 0;
+        }
     }
     // SAFETY: `config_buf[config_path_len] == 0` (written above on both arms);
     // `config_buf` outlives the call.
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
+        // force_auto callers decide fatality themselves (`?` or `let _`).
+        if force_auto {
+            return Err(err);
+        }
         report_bunfig_load_failure(ctx.log, err);
     }
     Ok(())

@@ -39,8 +39,7 @@ describe("Given a single universal preload", () => {
     expect(code).toBe(0);
   });
 
-  // FIXME: relative paths are being resolved to cwd, not the file's directory
-  it.skip("When `bun run` is run from a different directory but bunfig.toml is explicitly used, preloads are run", async () => {
+  it("When `bun run` is run from a different directory but bunfig.toml is explicitly used, preloads are run", async () => {
     // `bun run index.ts`
     const [out, err, code] = await run(join(dir, "index.ts"), {
       args: [`--config=${join(dir, "bunfig.toml")}`],
@@ -91,11 +90,12 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
     //
     "--preload ./preload3.ts",
     "--preload=./preload3.ts",
-    // FIXME: Tests are failing due to active bugs
+    // The space-separated form misparses "run" as the script name and prints
+    // run usage; an argv-parsing quirk independent of config loading.
     // "--preload ./preload3.ts run",
-    // "--preload=./preload3.ts run",
-    // "run --preload ./preload3.ts",
-    // "run --preload=./preload3.ts",
+    "--preload=./preload3.ts run",
+    "run --preload ./preload3.ts",
+    "run --preload=./preload3.ts",
   ])("When `bun %s cli-merge.ts` is run, `--preload` adds the target file to the list of preloads", async args => {
     const [out, err, code] = await run("cli-merge.ts", { args: args.split(" "), cwd: dir });
     expect(err).toBeEmpty();

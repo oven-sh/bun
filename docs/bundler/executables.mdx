@@ -402,7 +402,7 @@ BUN_OPTIONS="--smol --cpu-prof-md" ./myapp
 
 ## Automatic config loading
 
-Standalone executables can automatically load configuration files from the directory where they are run. By default:
+Standalone executables can automatically load configuration files from the directory where they are run (unlike regular `bun` commands, they do not search parent directories). By default:
 
 - **`tsconfig.json`** and **`package.json`** loading is **disabled** — these are typically only needed at development time, and the bundler already uses them when compiling
 - **`.env`** and **`bunfig.toml`** loading is **enabled** — these often contain runtime configuration that may vary per deployment

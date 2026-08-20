@@ -23,6 +23,8 @@ use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptio
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
+use bun_paths::PathBuffer;
+use bun_paths::resolve_path::{self, platform};
 
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
@@ -244,31 +246,74 @@ impl<'a> Parser<'a> {
     }
 
     fn load_preload(&mut self, expr: &Expr) -> crate::Result<()> {
+        // Merge (not replace) so CLI --preload entries survive; bunfig first.
+        let existing = core::mem::take(&mut self.ctx.preloads);
         match &expr.data {
             ExprData::EArray(array) => {
                 let items = array.items.slice();
-                let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(items.len() + existing.len());
                 for item in items {
-                    self.expect_string(item)?;
+                    if let Err(e) = self.expect_string(item) {
+                        preloads.extend(existing);
+                        self.ctx.preloads = preloads;
+                        return Err(e);
+                    }
                     if let ExprData::EString(s) = &item.data {
                         if s.len() > 0 {
-                            preloads.push(estring_to_owned(s, self.bump));
+                            let raw = estring_to_owned(s, self.bump);
+                            preloads.push(self.resolve_preload_path(raw));
                         }
                     }
                 }
+                preloads.extend(existing);
                 self.ctx.preloads = preloads;
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    self.ctx.preloads = vec![estring_to_owned(s, self.bump)];
+                    let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(1 + existing.len());
+                    let raw = estring_to_owned(s, self.bump);
+                    preloads.push(self.resolve_preload_path(raw));
+                    preloads.extend(existing);
+                    self.ctx.preloads = preloads;
+                } else {
+                    self.ctx.preloads = existing;
                 }
             }
-            ExprData::ENull(_) => {}
+            ExprData::ENull(_) => {
+                self.ctx.preloads = existing;
+            }
             _ => {
+                self.ctx.preloads = existing;
                 self.add_error(expr.loc, b"Expected preload to be an array")?;
             }
         }
         Ok(())
+    }
+
+    /// Resolve a relative preload entry against the bunfig.toml directory.
+    /// Package specifiers and absolute paths pass through.
+    fn resolve_preload_path(&self, entry: Box<[u8]>) -> Box<[u8]> {
+        if entry.is_empty() {
+            return entry;
+        }
+        if <platform::Auto as resolve_path::PlatformT>::P.is_absolute(&entry) {
+            return entry;
+        }
+        if bun_paths::is_package_path(&entry) {
+            return entry;
+        }
+        // join_abs_string_buf requires an absolute base.
+        let Some(bunfig_dir) = bun_paths::dirname(self.source.path.text) else {
+            return entry;
+        };
+        if !<platform::Auto as resolve_path::PlatformT>::P.is_absolute(bunfig_dir) {
+            return entry;
+        }
+        let mut buf = PathBuffer::uninit();
+        let parts: [&[u8]; 2] = [bunfig_dir, &entry];
+        let joined =
+            resolve_path::join_abs_string_buf::<platform::Auto>(bunfig_dir, &mut *buf, &parts);
+        Box::<[u8]>::from(joined)
     }
 
     fn load_env_config(&mut self, expr: &Expr) -> crate::Result<()> {

@@ -115,7 +115,7 @@ describe("bundler", () => {
         build.stderr.text(),
         build.exited,
       ]);
-      expect(buildStderr).not.toContain("error:");
+      expect(buildStderr).toBe("");
       expect(buildExitCode).toBe(0);
 
       await using proc = Bun.spawn({

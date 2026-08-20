@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 // Two package manager processes that edit the same project at the same time. Each one reads
@@ -15,7 +15,8 @@ describe("package manager processes that share a project", () => {
   // tests are about processes that share a project; two projects that fill one cache with the
   // same package at the same time is a different race (the CI runner points every process at
   // one cache), and the project lock does not serialize different projects on purpose.
-  const cacheDir = join(tmpdirSync(), "cache");
+  const cacheRoot = tempDir("concurrent-processes-cache", {});
+  const cacheDir = join(String(cacheRoot), "cache");
   const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
   // Packages with an index.js to edit, and nothing to run.
   const PATCHABLE = [
@@ -40,6 +41,7 @@ describe("package manager processes that share a project", () => {
 
   afterAll(() => {
     registry.stop();
+    cacheRoot[Symbol.dispose]();
   });
 
   function run(cwd: string, ...args: string[]) {
@@ -314,14 +316,15 @@ describe("package manager processes that share a project", () => {
   // Every `bunx <pkg>@<version>` of one version shares one install directory under the temp dir.
   // Windows bunx installs are not race free (see bunx.test.ts).
   test.concurrent.skipIf(isWindows)("cold bunx runs of one package started together all run it", async () => {
-    const tempDir = tmpdirSync();
-    const cwd = tmpdirSync();
+    using dir = tempDir("bunx-race", { "tmp/.keep": "", "app/.keep": "" });
+    const temp = join(String(dir), "tmp");
+    const cwd = join(String(dir), "app");
     const bunxEnv = {
       ...bunEnv,
-      TMPDIR: tempDir,
-      BUN_TMPDIR: tempDir,
-      TEMP: tempDir,
-      BUN_INSTALL_CACHE_DIR: join(tempDir, "install-cache"),
+      TMPDIR: temp,
+      BUN_TMPDIR: temp,
+      TEMP: temp,
+      BUN_INSTALL_CACHE_DIR: join(temp, "install-cache"),
       npm_config_registry: registry.registryUrl(),
     };
 

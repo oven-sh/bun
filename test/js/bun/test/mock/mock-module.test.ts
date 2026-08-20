@@ -166,3 +166,58 @@ test("mocking a builtin", async () => {
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
 });
+
+test("a factory that throws re-throws on every require()", () => {
+  let calls = 0;
+  mock.module("throwing-mock-factory-require", () => {
+    calls++;
+    throw new Error("factory-boom");
+  });
+
+  expect(() => require("throwing-mock-factory-require")).toThrow("factory-boom");
+  expect(() => require("throwing-mock-factory-require")).toThrow("factory-boom");
+  expect(() => require("throwing-mock-factory-require")).toThrow("factory-boom");
+  expect(calls).toBe(3);
+});
+
+test("a factory that throws re-throws on every import()", async () => {
+  let calls = 0;
+  mock.module("throwing-mock-factory-import", () => {
+    calls++;
+    throw new Error("factory-boom");
+  });
+
+  await expect(import("throwing-mock-factory-import")).rejects.toThrow("factory-boom");
+  await expect(import("throwing-mock-factory-import")).rejects.toThrow("factory-boom");
+  expect(() => require("throwing-mock-factory-import")).toThrow("factory-boom");
+  expect(calls).toBe(3);
+});
+
+test("a factory returning a non-object re-throws on every load", async () => {
+  let calls = 0;
+  mock.module("non-object-mock-factory", () => {
+    calls++;
+    return null as any;
+  });
+
+  expect(() => require("non-object-mock-factory")).toThrow("requires a function that returns an object");
+  expect(() => require("non-object-mock-factory")).toThrow("requires a function that returns an object");
+  await expect(import("non-object-mock-factory")).rejects.toThrow("requires a function that returns an object");
+  await expect(import("non-object-mock-factory")).rejects.toThrow("requires a function that returns an object");
+  expect(calls).toBe(4);
+});
+
+test("a factory that throws once then succeeds is re-invoked", () => {
+  let calls = 0;
+  mock.module("throw-once-mock-factory", () => {
+    calls++;
+    if (calls === 1) throw new Error("first-boom");
+    return { value: 42 };
+  });
+
+  expect(() => require("throw-once-mock-factory")).toThrow("first-boom");
+  expect(require("throw-once-mock-factory").value).toBe(42);
+  // Success is cached: no further factory calls.
+  expect(require("throw-once-mock-factory").value).toBe(42);
+  expect(calls).toBe(2);
+});

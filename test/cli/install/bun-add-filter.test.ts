@@ -137,11 +137,12 @@ function plus(json: { name: string; dependencies?: Record<string, string> }, dep
   return { ...json, dependencies: { ...json.dependencies, [dep]: range } };
 }
 
-/** Every package.json (in WORKSPACES order) is `expected`, and bun.lock mirrors each one. */
+/** Every package.json (in WORKSPACES order) is `expected`, and the `workspaces` section of bun.lock is exactly their rows. */
 async function expectWorkspaces(dir: string, expected: Record<string, unknown>[]) {
   expect(await allPackageJsons(dir)).toStrictEqual(expected);
-  const { workspaces } = await lockfileJson(dir);
-  expect(WORKSPACES.map(w => workspaces[lockKey(w)])).toStrictEqual(expected.map(lockEntryOf));
+  expect((await lockfileJson(dir)).workspaces).toStrictEqual(
+    Object.fromEntries(WORKSPACES.map((workspace, i) => [lockKey(workspace), lockEntryOf(expected[i])])),
+  );
 }
 
 /** The workspaces (in WORKSPACES order) whose package.json declares `dep` in any dependency group. */

@@ -1,7 +1,8 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
+import { rm, symlink, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, isWindows, readdirSorted, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { join } from "path";
@@ -853,4 +854,105 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
       }
     });
   });
+});
+
+// The tarball of a `file:` dependency is read whole. A FIFO at its path used to
+// block the install forever in open(); a device file used to be read until the
+// process ran out of memory. No Windows variant: FIFOs and device files are POSIX.
+describe.skipIf(isWindows).concurrent("local tarball that is not a regular file", () => {
+  async function install(cwd: string, cacheDir: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Only matters if the install blocks on the tarball.
+      timeout: 30_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const rootProject = {
+    "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:./dep.tgz" } }),
+  };
+
+  // Without a lockfile the tarball is read while the dependency is resolved.
+  it("resolving a root dependency on a FIFO fails", async () => {
+    using dir = tempDir("local-tarball-fifo", rootProject);
+    mkfifo(join(String(dir), "dep.tgz"));
+
+    const { stdout, stderr, exitCode } = await install(String(dir), join(String(dir), ".bun-cache"));
+    expect(stderr).toContain("error: ENOTSUP extracting tarball from dep");
+    expect(stderr).toContain("error: dep@file:./dep.tgz failed to resolve");
+    expect(stdout).not.toContain("installed");
+    expect(exitCode).toBe(1);
+  });
+
+  // The path of a workspace dependency is resolved against the workspace when
+  // the read is enqueued, the path of a root dependency when it is read.
+  it("resolving a workspace dependency on a FIFO fails", async () => {
+    using dir = tempDir("local-tarball-fifo-workspace", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { dep: "file:./dep.tgz" },
+      }),
+    });
+    mkfifo(join(String(dir), "packages", "app", "dep.tgz"));
+
+    const { stdout, stderr, exitCode } = await install(String(dir), join(String(dir), ".bun-cache"));
+    expect(stderr).toContain("error: ENOTSUP extracting tarball from dep");
+    expect(stderr).toContain("error: dep@file:./dep.tgz failed to resolve");
+    expect(stdout).not.toContain("installed");
+    expect(exitCode).toBe(1);
+  });
+
+  it("resolving a dependency on a character device fails instead of reading it", async () => {
+    using dir = tempDir("local-tarball-chardev", rootProject);
+    await symlink("/dev/null", join(String(dir), "dep.tgz"));
+
+    const { stdout, stderr, exitCode } = await install(String(dir), join(String(dir), ".bun-cache"));
+    expect(stderr).toContain("error: ENOTSUP extracting tarball from dep");
+    expect(stderr).toContain("error: dep@file:./dep.tgz failed to resolve");
+    expect(stdout).not.toContain("installed");
+    expect(exitCode).toBe(1);
+  });
+
+  // With a lockfile and an empty cache the tarball is read while the package
+  // is installed. Each linker reports that failure in its own words.
+  for (const [linker, message] of [
+    ["hoisted", "error: ENOTSUP extracting tarball from dep"],
+    ["isolated", "error: failed to download dep@./dep.tgz: ENOTSUP"],
+  ] as const) {
+    it(`installing a locked dependency from a FIFO fails (${linker})`, async () => {
+      using dir = tempDir("local-tarball-fifo-locked-" + linker, rootProject);
+      const tarball = join(String(dir), "dep.tgz");
+      const archive = new Bun.Archive(
+        { "package/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+        { compress: "gzip" },
+      );
+      await Bun.write(tarball, await archive.bytes());
+      {
+        const { stderr, exitCode } = await install(String(dir), join(String(dir), ".cache-1"), "--linker", linker);
+        expect(stderr).toContain("Saved lockfile");
+        expect(exitCode).toBe(0);
+      }
+
+      await Promise.all([rm(tarball), rm(join(String(dir), "node_modules"), { recursive: true })]);
+      mkfifo(tarball);
+
+      const { stdout, stderr, exitCode } = await install(
+        String(dir),
+        join(String(dir), ".cache-2"),
+        "--linker",
+        linker,
+      );
+      expect(stderr).toContain(message);
+      expect(stdout).not.toContain("installed");
+      expect(exitCode).toBe(1);
+    });
+  }
 });

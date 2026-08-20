@@ -1880,8 +1880,7 @@ fn root_package_json_source(
     Global::exit(1);
 }
 
-/// The parser turns an empty file into `{}`, and installing from `{}` deletes the lockfile.
-/// Callers check the contents as they came from disk, before anything is printed over them.
+/// An empty file parses as `{}`, and installing from `{}` deletes the lockfile.
 pub(crate) fn exit_on_empty_package_json(path: &[u8]) -> ! {
     Output::err_generic(
         "failed to parse '{}': file is empty",

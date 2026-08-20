@@ -1878,12 +1878,14 @@ impl Package<u64> {
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {
-                    let satisfies =
-                        dependency_version
-                            .npm()
-                            .version
-                            .satisfies(workspace_version, buf, buf);
-                    if pm.options.link_workspace_packages && satisfies {
+                    let accepts = dependency::npm_range_accepts_workspace_member(
+                        &dependency_version.npm().version,
+                        Some(workspace_version),
+                        true,
+                        buf,
+                        buf,
+                    );
+                    if pm.options.link_workspace_packages && accepts {
                         // `String::sliced` takes `&'a self`; bind the unwrapped
                         // value so the borrow outlives the parse call.
                         let wp = workspace_path.unwrap();

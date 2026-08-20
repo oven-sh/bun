@@ -1603,6 +1603,64 @@ test.concurrent("run({isolation:'none'}): .only inside describe.only narrows to 
   });
 });
 
+test.concurrent.each([
+  ["a tag filter", ", testTagFilters: ['db']", "{ tags: ['db'] }, "],
+  ["an .only sibling", "", ""],
+] as const)(
+  "run({isolation:'none'}): a describe whose body failed survives pruning by %s like node",
+  async (_label, runArg, suiteOpts) => {
+    // Verified on node v26.3.0: a suite that threw (sync or async) is still
+    // reported as testCodeFailure, with a child declared before the throw
+    // cancelled, even when tag filtering or .only would otherwise drop it.
+    // Before the guard both prunes dropped it and the run reported success.
+    const onlyKeeper = suiteOpts === "" ? "describe.only" : "describe";
+    using dir = tempDir("node-test-prune-keeps-failed", {
+      "f.test.mjs": `
+        import { describe, it } from 'node:test';
+        describe('sync-fail', ${suiteOpts}() => { it('declared', () => {}); throw new Error('boom'); });
+        describe('async-fail', ${suiteOpts}async () => { throw new Error('async boom'); });
+        ${onlyKeeper}('keeper', ${suiteOpts}() => { it('kept', () => {}); });
+        describe('dropped', () => { it('never', () => { throw new Error('must be pruned'); }); });
+      `,
+      "driver.mjs": `
+        import { run } from 'node:test';
+        import { fileURLToPath } from 'node:url';
+        const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], isolation: 'none'${runArg} });
+        const out = { events: [], success: null };
+        stream.on('test:fail', t => out.events.push(['fail', t.name, t.details?.error?.failureType]));
+        stream.on('test:pass', t => out.events.push(['pass', t.name]));
+        stream.on('test:summary', t => { if (t.file === undefined) out.success = t.success; });
+        for await (const _ of stream);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      // Tags emit node's one-shot ExperimentalWarning; silence it so stderr is
+      // asserted empty like the other drivers here.
+      cmd: [bunExe(), "--no-warnings", "run", join(String(dir), "driver.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      result: {
+        events: [
+          ["fail", "declared", "cancelledByParent"],
+          ["fail", "sync-fail", "testCodeFailure"],
+          ["fail", "async-fail", "testCodeFailure"],
+          ["pass", "kept"],
+          ["pass", "keeper"],
+        ],
+        success: false,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 test.concurrent.skipIf(isWindows)("--test runs the named file when bun is invoked as node", async () => {
   using dir = tempDir("node-test-as-node", {
     "a.test.mjs": `

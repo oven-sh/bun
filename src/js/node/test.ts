@@ -3205,17 +3205,36 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   return hookError;
 }
 
+// Settles an async describe body once and records a rejection on the node the
+// same way addSuite records a sync throw, so pruning and runStandaloneEntry
+// can both read node.error. Clearing entry.build makes a second call a no-op.
+async function settleSuiteBuild(entry: StandaloneEntry): Promise<void> {
+  const { build, node } = entry;
+  if (build === undefined) return;
+  entry.build = undefined;
+  try {
+    await build;
+  } catch (err) {
+    // A todo suite's failure is advisory, like in the run() child.
+    if (node.todoFlag || hasTodoAncestor(node)) return;
+    node.childrenFailed++;
+    node.error ??= err ?? makeTestFailure("suite failed");
+  }
+}
+
 async function awaitSuiteBuilds(entries: StandaloneEntry[]): Promise<void> {
   for (const entry of entries) {
-    const { build } = entry;
-    if (build !== undefined) {
-      try {
-        await build;
-      } catch {}
-    }
+    await settleSuiteBuild(entry);
     const children = entry.node.standaloneChildren;
     if (children !== undefined) await awaitSuiteBuilds(children);
   }
+}
+
+// A suite whose body already failed (sync throw in addSuite, or a rejection
+// recorded by settleSuiteBuild) and a file that failed to import must survive
+// every prune: node still reports them, with any declared children cancelled.
+function entryAlreadyFailed(entry: StandaloneEntry): boolean {
+  return entry.importError !== undefined || entry.node.error != null;
 }
 
 function entryHasOnly(entry: StandaloneEntry): boolean {
@@ -3233,7 +3252,7 @@ function standaloneQueueHasOnly(entries: StandaloneEntry[]): boolean {
 function pruneToOnly(entries: StandaloneEntry[]): StandaloneEntry[] {
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
-    if (entry.importError !== undefined) {
+    if (entryAlreadyFailed(entry)) {
       kept.push(entry);
       continue;
     }
@@ -3267,8 +3286,12 @@ function tagsMatchFilters(tags: string[], filters: string[]): boolean {
 function pruneStandaloneEntries(entries: StandaloneEntry[], filters: string[]): StandaloneEntry[] {
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
+    if (entryAlreadyFailed(entry)) {
+      kept.push(entry);
+      continue;
+    }
     if (!entry.isSuite) {
-      if (entry.importError !== undefined || tagsMatchFilters(entry.node.tags, filters)) kept.push(entry);
+      if (tagsMatchFilters(entry.node.tags, filters)) kept.push(entry);
       continue;
     }
     const keptChildren = pruneStandaloneEntries(entry.node.standaloneChildren ?? [], filters);
@@ -3472,19 +3495,10 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
   }
   node.startedAtMs = performance.now();
   const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
+  // Normally settled by awaitSuiteBuilds before pruning; this covers an entry
+  // registered during execution.
+  await settleSuiteBuild(entry);
   let setupFailed = !isTodoSuite && node.error != null;
-  const { build } = entry;
-  if (build !== undefined) {
-    try {
-      await build;
-    } catch (err) {
-      if (!isTodoSuite) {
-        node.childrenFailed++;
-        node.error ??= err ?? makeTestFailure("suite failed");
-        setupFailed = true;
-      }
-    }
-  }
   if (!setupFailed) {
     for (const hook of node.hooks.before) {
       try {

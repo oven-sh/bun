@@ -1059,9 +1059,7 @@ pub mod bv2_impl {
                 pub(crate) import_record_index: u32,
                 pub(crate) range: bun_ast::Range,
                 pub(crate) original_target: Target,
-                /// Set for the html file of a dev server route: the loader the
-                /// file gets when the plugins leave it to the bundler, see
-                /// `BundleV2::requested_file_loader`.
+                /// Set for the html file of a dev server route, see `BundleV2::requested_file_loader`.
                 pub(crate) loader: Option<Loader>,
             }
 
@@ -2630,11 +2628,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// The loader of a file the dev server or the build asks for by path.
-        /// `loader` overrides the one the file's extension selects: the dev
-        /// server passes `Loader::Html` for the html file of a route, which the
-        /// runtime may have loaded as html through an import attribute or a
-        /// bunfig `[loader]` entry that the bundler's loader table does not have.
+        /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
         fn requested_file_loader(&self, path: &Fs::Path<'_>, loader: Option<Loader>) -> Loader {
             loader.unwrap_or_else(|| {
                 path.loader(&self.transpiler.options.loaders)
@@ -4756,9 +4750,7 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            // The record's loader is for the record's own file.
-                            // A plugin that resolves it to another file gets
-                            // that file's loader.
+                            // A file that a plugin resolved the record to instead keeps its own loader.
                             let loader = this.requested_file_loader(
                                 &path,
                                 resolve

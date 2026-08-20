@@ -131,10 +131,7 @@ impl HTMLBundle {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
 
-    /// The error a route reports when a build of its file finishes without an
-    /// html page in its output. `Route::on_complete` and the dev server's
-    /// `finalize_bundle` both reach this state, for example when a plugin
-    /// resolves or loads the file as something other than html.
+    /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.
     pub(crate) fn no_html_page_log(&self) -> Log {
         let mut log = Log::init();
         log.add_error_fmt(
@@ -443,14 +440,10 @@ impl Route {
         self.server.get().expect("server set").on_request_complete();
     }
 
-    /// Production says nothing about why a route failed to build, see
-    /// `resume_pending_responses`.
+    /// Production keeps the reason to itself, see `resume_pending_responses`.
     fn set_build_error(&self, server: AnyServer, log: Log) {
         if server.config().is_development() {
-            // `Output.errorWriterBuffered()` → process-global writer;
-            // `Log::print` accepts it via the `*mut io::Writer`
-            // `IntoLogWrite` adapter and dispatches on
-            // `enable_ansi_colors_stderr` internally.
+            // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
             let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
             let _ = log.print(writer);
             bun_output::flush();
@@ -474,10 +467,7 @@ impl Route {
         // `Config` owns its fields and
         // drops on early-return.
         config.entry_points.insert(&self.bundle.path)?;
-        // The runtime made this file an HTMLBundle, possibly through an import
-        // attribute or a bunfig `[loader]` entry. The build picks loaders by
-        // extension, so map the file's extension (the same key `Path::loader`
-        // looks up, `""` for no extension) to html for this build.
+        // An import attribute or a bunfig `[loader]` entry may have made this html. `ext` is `""` without one.
         config.loaders = Some(bun_options_types::schema::api::LoaderMap {
             extensions: vec![Box::from(
                 bun_paths::fs::PathName::init(&self.bundle.path).ext,
@@ -645,8 +635,7 @@ impl Route {
                     bun_output::flush();
                 }
 
-                // The build succeeds without an html page when a plugin resolves
-                // or loads the entry point as something else.
+                // A plugin can resolve or load the entry point as something other than html.
                 let Some(html_index) = output_files.iter().position(|output_file| {
                     output_file.output_kind == bundler_options::OutputKind::EntryPoint
                         && output_file.loader == Loader::Html

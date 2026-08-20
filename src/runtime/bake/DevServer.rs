@@ -2764,8 +2764,7 @@ impl DevServer {
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
         debug_assert!(html.html_bundle.dev_server_id.get() == Some(route_bundle_index));
         debug_assert!(html.cached_response.is_none());
-        // `report_html_routes_without_html` keeps a route without these out of
-        // the loaded state.
+        // `report_html_routes_without_html` keeps a route without these out of the loaded state.
         let script_injection_offset = html
             .script_injection_offset
             .expect("loaded html route has no script injection offset")
@@ -3337,11 +3336,7 @@ impl DevServer {
         Ok(())
     }
 
-    /// An html route is rendered from the html chunk `finalize_bundle` stores
-    /// on its route bundle. A bundle can finish without one and without an
-    /// error for the file, for example when a plugin resolves the html file to
-    /// a different file. Such a route must not reach the loaded state: record
-    /// a failure on its html file so the requests get the build failure page.
+    /// A route that a bundle left without html must not reach the loaded state: fail its file instead.
     fn report_html_routes_without_html(&mut self) -> crate::Result<()> {
         for route_bundle in &self.route_bundles {
             let route_bundle::Data::Html(html) = &route_bundle.data else {
@@ -3361,17 +3356,13 @@ impl DevServer {
                 route_bundle::State::Unqueued | route_bundle::State::DeferredToNextBundle => {
                     continue;
                 }
-                // This bundle was for the route. `finalize_bundle` answers its
-                // requests with the failures this bundle added, so a failure
-                // left over from an earlier bundle has to be added again.
+                // `finalize_bundle` answers this bundle's requests from the failures it added: re-add an older one.
                 route_bundle::State::Bundling => self
                     .incremental_result
                     .failures_added
                     .iter()
                     .any(failed_in_this_bundle),
-                // The route is not served until its earlier failure is gone.
-                // That failure is only a problem if this bundle cleared it by
-                // delivering something other than html for the file.
+                // An earlier failure still gates the route, unless this bundle cleared it without delivering html.
                 route_bundle::State::PossibleBundlingFailures | route_bundle::State::Loaded => {
                     self.client_graph.bundled_files.values()[file_index.get() as usize].failed
                 }
@@ -5297,10 +5288,7 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
-        // `server.reload()` registers a new `HTMLBundleRoute` for an html file
-        // the dev server may already have a route bundle for. The graph file
-        // delivers bundled html to one route bundle only, so a second one for
-        // the same file would never receive any.
+        // A file delivers its html to one route bundle only: a route `server.reload()` re-registers reuses it.
         if let route_bundle::UnresolvedIndex::Html(html) = route {
             // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed
             // allocation; single-threaded (uws JS-thread callback).
@@ -6171,9 +6159,7 @@ impl EntryPointList {
         )
     }
 
-    /// The html file of a route is bundled as html whatever its extension is.
-    /// The runtime made it an `HTMLBundle`, so its loader may have come from an
-    /// import attribute or a bunfig `[loader]` entry the bundler does not see.
+    /// The html file of a route: an import attribute or a bunfig `[loader]` entry may have made it html.
     pub(crate) fn append_html(&mut self, abs_path: &[u8]) -> crate::Result<()> {
         self.append(
             abs_path,

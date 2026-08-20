@@ -1586,8 +1586,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// The html file of a route is bundled as html whatever its extension is.
-    /// Every other client file is bundled with the loader of its extension.
+    /// See `EntryPointList::append_html`.
     fn append_client_entry_point(
         &self,
         entry_points: &mut EntryPointList,

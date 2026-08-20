@@ -302,11 +302,14 @@ function buildScriptCoverageList(
     }
 
     // Outer functions before nested ones, so a stack-based sweep below sees
-    // enclosing ranges first.
+    // enclosing ranges first. Zero-width entries (JSC emits them, e.g. for an
+    // `export function` declaration) are dropped: V8 never produces
+    // startOffset === endOffset, and @bcoe/v8-coverage's range-tree merge
+    // recurses forever on one.
     const functions = script.functions
-      .filter(([start, end]) => start >= 0 && end >= start)
+      .filter(([start, end]) => start >= 0 && end > start)
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
+    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end > start).sort((a, b) => a[0] - b[0]);
 
     // Assign each basic block to the innermost function range containing it.
     const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);

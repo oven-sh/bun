@@ -580,6 +580,7 @@ it("setTimeout propagates an error thrown while emitting a timeout warning", asy
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("threw boom\nsurvived");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

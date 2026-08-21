@@ -1503,11 +1503,13 @@ impl ServerConfig {
                     global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
                 );
             }
-        } else if args.webtransport {
+        } else if args.webtransport && !opts.is_reload {
             // A session arrives over HTTP/3 or not at all, so handlers on a
             // server without it could never fire. Refusing is the only way the
             // caller finds out; the listener would otherwise come up looking
-            // healthy and never call them.
+            // healthy and never call them. Not on a reload: `http3` is a
+            // property of the listener that is already bound, and a reload
+            // config does not restate it.
             return Err(global.throw_invalid_arguments(format_args!(
                 "'webtransport' requires 'http3' to be set"
             )));
@@ -1704,6 +1706,10 @@ pub struct FromJSOptions {
     /// reload, so they count for nothing here. Both are false for `Bun.serve()`.
     pub(crate) previous_fetch: bool,
     pub(crate) previous_routes: bool,
+    /// A `reload()` rather than a `Bun.serve()`. The listener is already bound
+    /// by then, so options that decide how it was bound cannot be validated
+    /// against a config that never carried them.
+    pub(crate) is_reload: bool,
 }
 
 pub struct UserRouteBuilder {

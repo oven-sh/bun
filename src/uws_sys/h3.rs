@@ -565,6 +565,9 @@ bun_opaque::opaque_ffi! { pub struct WebTransport; }
 /// What `send_datagram` did with the payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatagramResult {
+    /// Queued, carrying the bytes that will go on the wire — the payload plus
+    /// the session's quarter-stream-id prefix. Counting the prefix is what
+    /// keeps an empty payload's success apart from `Dropped`.
     Sent(usize),
     /// The connection's queue is full. Nothing is retained — the caller drops
     /// it, which is the right answer on a path with no retransmission.
@@ -587,9 +590,7 @@ impl WebTransport {
         };
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
         match unsafe { c::uws_h3_wt_send_datagram(self, data.as_ptr(), len) } {
-            // The C side counts the quarter-stream-id prefix, so a positive
-            // answer means queued and `data.len()` is what the caller sent.
-            n if n > 0 => DatagramResult::Sent(data.len()),
+            n if n > 0 => DatagramResult::Sent(n as usize),
             0 => DatagramResult::Dropped,
             _ => DatagramResult::TooLarge,
         }

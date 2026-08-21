@@ -29,9 +29,13 @@ namespace uWS {
  * error, which is what lets the draft add them. */
 static constexpr uint64_t WT_CLOSE_SESSION = 0x2843;
 
-/* The draft caps a close reason at 1024 bytes. One more than the largest
- * legal capsule body, so "did not fit" and "not yet arrived" stay distinct. */
+/* The draft caps a close reason at 1024 bytes; the four in front of it are the
+ * error code. Anything claiming more than this is refused rather than
+ * buffered. */
 static constexpr size_t WT_MAX_CAPSULE_BODY = 1024 + 4;
+
+/* Two varints, each at most eight bytes. */
+static constexpr size_t WT_CAPSULE_HEADER_MAX = 16;
 
 struct Http3WebTransportSession {
 
@@ -115,80 +119,90 @@ struct Http3WebTransportSession {
 
     /* Feed CONNECT-stream bytes through the capsule parser. Returns false once
      * the session has been closed, after which the caller must not touch it. */
+    /* How many bytes a capsule header needs, given the `have` of it already in
+     * hand. Each varint says its own length in its top two bits, so this is
+     * exact rather than a guess, and nothing beyond the header is ever
+     * speculatively buffered. */
+    static size_t headerNeed(const unsigned char *p, size_t have) {
+        if (!have) return 1;
+        size_t tn = 1u << (p[0] >> 6);
+        if (have < tn + 1) return tn + 1;
+        return tn + (1u << (p[tn] >> 6));
+    }
+
+    /* Feed CONNECT-stream bytes through the capsule parser. Returns false once
+     * the session has been closed, after which the caller must not touch it.
+     *
+     * Only a close capsule is ever buffered. Everything else is skipped
+     * against the arriving bytes, so an unknown capsule with a megabyte of
+     * body — which the draft requires be ignored, not treated as an error —
+     * costs a header's worth of buffer and nothing more. */
     template <typename OnClose>
     bool feedCapsules(const char *data, size_t len, OnClose &&onClose) {
         Http3ResponseData *rd = getData();
-
-        /* An uninteresting capsule's body is spent against the arriving bytes
-         * before any of them reach the buffer, so it is never stored. */
-        if (rd->wtSkip) {
-            size_t n = rd->wtSkip < len ? (size_t) rd->wtSkip : len;
-            rd->wtSkip -= n;
-            data += n;
-            len -= n;
-        }
-        if (!len) return true;
-
-        /* A capsule can split anywhere, including inside either varint, so
-         * whatever has not been parsed is kept whole. The buffer only ever
-         * holds a header plus at most one close body — a longer body is
-         * refused below and an unknown one is skipped rather than stored — so
-         * running out of room means the peer sent something malformed. */
-        size_t room = WT_MAX_CAPSULE_BODY + 16 - rd->wtCapsule.size();
-        if (len > room) {
-            onClose((uint32_t) 0, std::string_view{});
-            return false;
-        }
-        rd->wtCapsule.append(std::span<const char>(data, len));
-
-        /* Parse every whole capsule the buffer now holds, rather than one per
-         * arriving chunk: the close that ends a session usually shares a read
-         * with whatever came before it. */
-        size_t at = 0;
         for (;;) {
-            const unsigned char *p = (const unsigned char *) rd->wtCapsule.span().data() + at;
-            size_t have = rd->wtCapsule.size() - at;
-            uint64_t type, blen;
-            unsigned tn = readVarint(p, have, &type);
-            if (!tn) break;
-            unsigned ln = readVarint(p + tn, have - tn, &blen);
-            if (!ln) break;
+            if (rd->wtSkip) {
+                size_t n = rd->wtSkip < len ? (size_t) rd->wtSkip : len;
+                rd->wtSkip -= n;
+                data += n;
+                len -= n;
+                if (rd->wtSkip) return true;
+            }
 
-            if (type == WT_CLOSE_SESSION) {
-                if (blen > WT_MAX_CAPSULE_BODY || blen < 4) {
-                    /* Longer than the draft allows, or too short to hold a
-                     * code. Neither is recoverable, so the session ends
-                     * without one. */
-                    onClose((uint32_t) 0, std::string_view{});
-                    return false;
-                }
-                if (have - tn - ln < blen) break; /* body still arriving */
-                const unsigned char *body = p + tn + ln;
-                uint32_t code = ((uint32_t) body[0] << 24) | ((uint32_t) body[1] << 16) |
-                                ((uint32_t) body[2] << 8) | (uint32_t) body[3];
-                onClose(code, std::string_view{(const char *) body + 4, (size_t) blen - 4});
+            /* Take exactly the header, never more: what follows it is either a
+             * body to skip or a close body, and the two are handled apart. */
+            size_t need = headerNeed(
+                (const unsigned char *) rd->wtCapsule.span().data(), rd->wtCapsule.size());
+            while (rd->wtCapsule.size() < need && len) {
+                size_t take = need - rd->wtCapsule.size();
+                if (take > len) take = len;
+                rd->wtCapsule.append(std::span<const char>(data, take));
+                data += take;
+                len -= take;
+                need = headerNeed(
+                    (const unsigned char *) rd->wtCapsule.span().data(), rd->wtCapsule.size());
+            }
+            if (rd->wtCapsule.size() < need) return true; /* header still arriving */
+
+            const unsigned char *p = (const unsigned char *) rd->wtCapsule.span().data();
+            uint64_t type, blen;
+            unsigned tn = readVarint(p, rd->wtCapsule.size(), &type);
+            unsigned ln = readVarint(p + tn, rd->wtCapsule.size() - tn, &blen);
+
+            if (type != WT_CLOSE_SESSION) {
+                rd->wtCapsule.shrink(0);
+                rd->wtSkip = blen;
+                if (!len && rd->wtSkip) return true;
+                continue;
+            }
+
+            if (blen > WT_MAX_CAPSULE_BODY || blen < 4) {
+                /* Longer than the draft allows, or too short to hold a code.
+                 * Neither is recoverable, so the session ends without one. */
+                onClose((uint32_t) 0, std::string_view{});
                 return false;
             }
 
-            size_t buffered = have - tn - ln;
-            size_t consumed = blen < buffered ? (size_t) blen : buffered;
-            rd->wtSkip = blen - consumed;
-            at += tn + ln + consumed;
-            if (rd->wtSkip) break; /* the rest of this body has not arrived */
-        }
-
-        /* Drop what was parsed. What is left is the head of a capsule still on
-         * its way, moved down rather than copied over itself. */
-        if (at) {
-            size_t rest = rd->wtCapsule.size() - at;
-            if (rest) {
-                memmove(rd->wtCapsule.mutableSpan().data(),
-                        rd->wtCapsule.span().data() + at, rest);
+            size_t header = (size_t) tn + ln;
+            size_t bodyHave = rd->wtCapsule.size() - header;
+            if (bodyHave < blen) {
+                size_t take = blen - bodyHave;
+                if (take > len) take = len;
+                rd->wtCapsule.append(std::span<const char>(data, take));
+                data += take;
+                len -= take;
+                if (rd->wtCapsule.size() - header < blen) return true; /* body still arriving */
             }
-            rd->wtCapsule.shrink(rest);
+
+            const unsigned char *body =
+                (const unsigned char *) rd->wtCapsule.span().data() + header;
+            uint32_t code = ((uint32_t) body[0] << 24) | ((uint32_t) body[1] << 16) |
+                            ((uint32_t) body[2] << 8) | (uint32_t) body[3];
+            onClose(code, std::string_view{(const char *) body + 4, (size_t) blen - 4});
+            return false;
         }
-        return true;
     }
+
 };
 
 }

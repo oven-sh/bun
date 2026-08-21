@@ -880,8 +880,11 @@ int us_quic_stream_accept_webtransport(us_quic_stream_t *s) {
         if (!qs->wt_dgram_ring) return -1;
     }
 
-    /* Tells lsquic to keep the CONNECT stream's read side open for capsules
-     * and to route client-opened WebTransport streams to it. */
+    /* Marks the stream as a session for lsquic_stream_is_webtransport_session,
+     * which nothing here reads — the routing of client-opened WebTransport
+     * streams is gated on es_webtransport_server rather than on this flag.
+     * It is set because it is the documented way to say what this stream is,
+     * and a WebTransport streams implementation would need it. */
     lsquic_stream_set_webtransport_session(s->stream);
     s->wt_qsid = lsquic_stream_id(s->stream) / 4;
     s->wt_conn = qs;

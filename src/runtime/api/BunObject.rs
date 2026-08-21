@@ -1451,6 +1451,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 is_fetch_required: true,
                 previous_fetch: false,
                 previous_routes: false,
+                is_reload: false,
             },
         )?;
 

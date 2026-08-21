@@ -383,67 +383,6 @@ declare module "bun" {
    * });
    * ```
    */
-  /**
-   * One WebTransport session over HTTP/3, as
-   * {@link Serve.WebTransportHandler} sees it.
-   *
-   * Only datagrams. WebTransport streams are a second, reliable channel with
-   * their own backpressure story; the reason to reach for WebTransport over a
-   * WebSocket in the first place is the unreliable half.
-   *
-   * @experimental
-   */
-  interface WebTransportSession<T = unknown> {
-    /**
-     * Send one datagram.
-     *
-     * Returns the number of bytes sent, `0` when the connection's queue had no
-     * room for it — drop it; this path has no retransmission and the next
-     * datagram is worth more than a late one — or `-1` when the payload is
-     * larger than the peer will accept.
-     */
-    sendDatagram(data: string | BufferSource): number;
-
-    /**
-     * Close the session with a `CLOSE_WEBTRANSPORT_SESSION` capsule. The
-     * `close` handler still runs afterwards.
-     */
-    close(code?: number, reason?: string): void;
-
-    /** Arbitrary data attached to this session. */
-    data: T;
-
-    /** The largest payload {@link sendDatagram} will accept. */
-    readonly maxDatagramSize: number;
-
-    /** Whether the session has ended. */
-    readonly closed: boolean;
-  }
-
-  /**
-   * Handlers for WebTransport sessions on a {@link Serve.Options.http3}
-   * server.
-   *
-   * @experimental
-   */
-  interface WebTransportHandler<T = unknown> {
-    /** A session was accepted. */
-    open?(session: WebTransportSession<T>): void | Promise<void>;
-
-    /**
-     * A datagram arrived. `data` is a fresh `Uint8Array` per datagram — the
-     * receive buffer underneath it is reused before the next turn of the event
-     * loop, so it is copied rather than viewed.
-     */
-    datagram?(session: WebTransportSession<T>, data: Uint8Array): void | Promise<void>;
-
-    /**
-     * The session ended. `code` and `reason` come from the peer's close
-     * capsule, and are `0` and `""` when the session went away without one.
-     */
-    close?(session: WebTransportSession<T>, code: number, reason: string): void | Promise<void>;
-  }
-
   interface WebSocketHandler<T> {
     /**
      * Specify the type for the {@link ServerWebSocket.data} property on
@@ -578,6 +517,67 @@ declare module "bun" {
            */
           decompress?: WebSocketCompressor | boolean;
         };
+  }
+
+  /**
+   * One WebTransport session over HTTP/3, as
+   * {@link WebTransportHandler} sees it.
+   *
+   * Only datagrams. WebTransport streams are a second, reliable channel with
+   * their own backpressure story; the reason to reach for WebTransport over a
+   * WebSocket in the first place is the unreliable half.
+   *
+   * @experimental
+   */
+  interface WebTransportSession<T = unknown> {
+    /**
+     * Send one datagram.
+     *
+     * Returns the number of bytes sent, `0` when the connection's queue had no
+     * room for it — drop it; this path has no retransmission and the next
+     * datagram is worth more than a late one — or `-1` when the payload is
+     * larger than the peer will accept.
+     */
+    sendDatagram(data: string | BufferSource): number;
+
+    /**
+     * Close the session with a `CLOSE_WEBTRANSPORT_SESSION` capsule. The
+     * `close` handler still runs afterwards.
+     */
+    close(code?: number, reason?: string): void;
+
+    /** Arbitrary data attached to this session. */
+    data: T;
+
+    /** The largest payload {@link sendDatagram} will accept. */
+    readonly maxDatagramSize: number;
+
+    /** Whether the session has ended. */
+    readonly closed: boolean;
+  }
+
+  /**
+   * Handlers for WebTransport sessions on a {@link Serve.Options.http3}
+   * server.
+   *
+   * @experimental
+   */
+  interface WebTransportHandler<T = unknown> {
+    /** A session was accepted. */
+    open?(session: WebTransportSession<T>): void | Promise<void>;
+
+    /**
+     * A datagram arrived. `data` is a fresh `Uint8Array` per datagram — the
+     * receive buffer underneath it is reused before the next turn of the event
+     * loop, so it is copied rather than viewed.
+     */
+    datagram?(session: WebTransportSession<T>, data: Uint8Array): void | Promise<void>;
+
+    /**
+     * The session ended. `code` and `reason` come from the peer's close
+     * capsule, and are `0` and `""` when the session went away without one.
+     */
+    close?(session: WebTransportSession<T>, code: number, reason: string): void | Promise<void>;
   }
 
   namespace Serve {

@@ -75,8 +75,6 @@ impl WebTransportSession {
         self.this_value.get().try_get()
     }
 
-
-
     /// Answer an extended CONNECT by opening a session, and run the `open`
     /// handler. Anything else on the route — a plain CONNECT, or a session the
     /// connection cannot support because it never negotiated the extension —
@@ -103,7 +101,8 @@ impl WebTransportSession {
         let this = Self::init(global, handler, session, JSValue::UNDEFINED);
         // The native session is what every later callback arrives holding, so
         // it carries the pointer back to this object.
-        // SAFETY: `session` is live; `this` outlives it — `detach` runs first.
+        // SAFETY: `session` is live, and `this` outlives it — the wrapper is
+        // only collectable once `dispatch_close` has released it.
         unsafe { session.as_ptr().as_mut().unwrap_unchecked() }
             .set_user_data(this.cast::<c_void>());
 
@@ -195,8 +194,8 @@ impl WebTransportSession {
         let Some(mut session) = self.session.get() else {
             return Ok(JSValue::js_number(0.0));
         };
-        // SAFETY: non-null while the cell is `Some`; `detach` clears it before
-        // the stream that owns the native session frees it.
+        // SAFETY: non-null while the cell is `Some`; `dispatch_close` clears
+        // it before the stream that owns the native session is freed.
         let session = unsafe { session.as_mut() };
 
         let value = callframe.argument(0);
@@ -279,10 +278,12 @@ impl WebTransportSession {
     }
 }
 
-/// `sendDatagram` reports bytes sent, `0` for a datagram the connection's
-/// queue had no room for, and `-1` for one the peer will not accept — the same
-/// three-way answer `ws.send()` gives, so a caller can branch on it the same
-/// way.
+/// `sendDatagram` reports the bytes queued, `0` for a datagram the
+/// connection's queue had no room for, and `-1` for one the peer will not
+/// accept — the same three-way answer `ws.send()` gives, so a caller can
+/// branch on it the same way. The count includes the session's frame prefix,
+/// which is what lets an empty payload report success rather than colliding
+/// with the `0` that means dropped.
 fn datagram_result_to_js(result: DatagramResult) -> JSValue {
     match result {
         DatagramResult::Sent(n) => JSValue::js_number(n as f64),
@@ -335,6 +336,6 @@ unsafe fn session_from<'a>(wt: *mut WebTransport) -> Option<&'a WebTransportSess
         return None;
     }
     // SAFETY: `accept` stored a `*mut WebTransportSession` here, and the JS
-    // wrapper keeps it alive until `detach` + finalize.
+    // wrapper keeps it alive until `dispatch_close` releases it.
     Some(unsafe { &*ud.cast::<WebTransportSession>() })
 }

@@ -1708,6 +1708,56 @@ describe("Bun.serve WebTransport", () => {
     }
   });
 
+  test("an unknown capsule larger than the buffer is ignored, not fatal", async () => {
+    const closes: number[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+        close() {
+          closes.push(Date.now());
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      // A capsule of an unregistered type with a 64 KB body. The draft requires
+      // an unknown capsule be ignored rather than treated as an error, and
+      // this one is far larger than anything the parser is willing to buffer,
+      // so the only way to honour it is to skip the body against the arriving
+      // bytes. (It does not reproduce the bounds bug an earlier parser had:
+      // reads on this path arrive packet-shaped, always under that parser's
+      // limit. It asserts the requirement, not the old failure.)
+      const bodyLen = 65536;
+      // Type 0x1234 as a two-byte varint, then 65536 as a four-byte one; the
+      // top bits of each say how long it is.
+      const header = Buffer.from([0x52, 0x34, 0x80, 0x01, 0x00, 0x00]);
+      const capsule = Buffer.concat([header, Buffer.alloc(bodyLen, 0x5a)]);
+      // A stream that enqueues and never closes: closing it would FIN the
+      // CONNECT stream, which ends the session and is the other test.
+      wt.stream.setBody(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(capsule));
+          },
+        }),
+      );
+
+      // The session must still be carrying datagrams afterwards.
+      wt.send("after the capsule");
+      expect(await wt.until(() => wt.datagrams.length >= 1, 3000)).toBe(true);
+      expect(wt.text()).toEqual(["after the capsule"]);
+    } finally {
+      await wt.close();
+    }
+  });
+
   test("a peer that ends the CONNECT stream ends the session", async () => {
     const closes: number[] = [];
     await using server = Bun.serve({

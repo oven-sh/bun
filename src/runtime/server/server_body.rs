@@ -2375,6 +2375,7 @@ where
                 is_fetch_required: true,
                 previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
                 previous_routes: !self.user_routes.is_empty(),
+                is_reload: true,
             },
         )?;
         if global.has_exception() {

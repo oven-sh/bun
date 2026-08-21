@@ -8370,15 +8370,6 @@ pub mod net {
             }
         }
     }
-    impl Default for Address {
-        // SAFETY: POD, zero-valid — sockaddr union of integer fields.
-        fn default() -> Self {
-            Self {
-                // SAFETY: `sockaddr_storage` is POD; all-zeros is a valid value.
-                any: unsafe { bun_core::ffi::zeroed_unchecked() },
-            }
-        }
-    }
     impl fmt::Debug for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             fmt::Display::fmt(self, f)

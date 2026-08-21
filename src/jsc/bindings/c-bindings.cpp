@@ -301,19 +301,11 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
-// The thread that is about to execve. Set by on_before_reload_process_posix.
 static pthread_t reloading_thread;
 
-// Handler for the crash signals between on_before_reload_process_posix and execve.
-//
-// The other threads keep running until execve passes its point of no return, and while the
-// reloading thread is inside execve the kernel fails every clone() they make with EAGAIN
-// (kernel/fork.c copy_fs(), while fs->in_exec is set). A GC that starts its marker threads in
-// that window aborts in WTF::Thread::create. Park the thread instead: execve tears it down with
-// the rest of the old image and the reload goes through. The crash handler gets its threads out
-// of the way too (maybe_handle_panic_during_process_reload), but ASAN builds install no crash
-// handler, and SA_RESETHAND limits it to one thread. A crash on the reloading thread itself is
-// fatal as usual: parking it would hang the reload.
+// While reloading_thread is inside execve, the kernel fails clone() on every other thread with
+// EAGAIN, and WTF::Thread::create aborts on that. Such a thread parks here until the execve tears
+// it down. A crash on reloading_thread itself stays fatal.
 static void park_thread_crashing_during_reload(int sig)
 {
     if (pthread_equal(pthread_self(), reloading_thread)) {
@@ -321,8 +313,7 @@ static void park_thread_crashing_during_reload(int sig)
         dfl.sa_handler = SIG_DFL;
         sigemptyset(&dfl.sa_mask);
         sigaction(sig, &dfl, nullptr);
-        // The signal is blocked while its handler runs, so this is delivered, with the default
-        // action, as soon as the handler returns.
+        // Blocked until this handler returns, then delivered with the default action.
         raise(sig);
         return;
     }
@@ -353,9 +344,7 @@ extern "C" void on_before_reload_process_posix()
             unset_cloexec(static_cast<int>(fd));
     }
 
-    // See park_thread_crashing_during_reload. SIGSEGV and SIGBUS are not parked: JSC's handlers
-    // for them stay installed (see below) and chain to the crash handler, which steps aside on
-    // its own during a reload.
+    // The crash handler's signals, minus SIGSEGV and SIGBUS, which JSC's handlers below keep.
     static const int parked_crash_signals[] = { SIGABRT, SIGILL, SIGTRAP, SIGFPE };
     reloading_thread = pthread_self();
     struct sigaction park {};

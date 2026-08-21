@@ -2901,14 +2901,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) mode: Mode,
     }
-    impl Default for Chmod {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                mode: 0x777,
-            }
-        }
-    }
     fs_args_path_forwarders!(Chmod; path);
     impl Chmod {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
@@ -2935,14 +2927,6 @@ pub mod args {
     pub struct FChmod {
         pub(crate) fd: FD,
         pub(crate) mode: Mode,
-    }
-    impl Default for FChmod {
-        fn default() -> Self {
-            Self {
-                fd: FD::INVALID,
-                mode: 0x777,
-            }
-        }
     }
     impl FChmod {
         pub(crate) fn to_thread_safe(&self) {}
@@ -2996,15 +2980,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) big_int: bool,
         pub(crate) throw_if_no_entry: bool,
-    }
-    impl Default for Stat {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                big_int: false,
-                throw_if_no_entry: true,
-            }
-        }
     }
     fs_args_path_forwarders!(Stat; path);
     impl Stat {
@@ -3263,17 +3238,6 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) retry_delay: c_uint,
     }
-    impl Default for RmDir {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                force: false,
-                max_retries: 0,
-                recursive: false,
-                retry_delay: 100,
-            }
-        }
-    }
     fs_args_path_forwarders!(RmDir; path);
     impl RmDir {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<RmDir> {
@@ -3418,18 +3382,6 @@ pub mod args {
         pub(crate) prefix: PathLike,
         pub(crate) encoding: Encoding,
     }
-    impl Default for MkdirTemp {
-        fn default() -> Self {
-            Self {
-                prefix: PathLike::Buffer(Buffer {
-                    buffer: bun_jsc::ArrayBuffer::EMPTY,
-                    owns_buffer: false,
-                    pinned: false,
-                }),
-                encoding: Encoding::Utf8,
-            }
-        }
-    }
     fs_args_path_forwarders!(MkdirTemp; prefix);
     impl MkdirTemp {
         pub fn from_js(
@@ -3518,15 +3470,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) flags: FileSystemFlags,
         pub(crate) mode: Mode,
-    }
-    impl Default for Open {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                flags: FileSystemFlags::R,
-                mode: DEFAULT_PERMISSION,
-            }
-        }
     }
     fs_args_path_forwarders!(Open; path);
     impl Open {

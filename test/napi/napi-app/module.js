@@ -1614,6 +1614,64 @@ nativeTests.test_threadsafe_function_orphan_leak = async () => {
   }
 };
 
+// Items still queued on a threadsafe function when the process exits are
+// dropped: node's process.exit() never gets back to the function, and an
+// addon's call_js usually cannot take a null env.
+nativeTests.test_threadsafe_function_queued_items_at_process_exit = () => {
+  nativeTests.queue_threadsafe_function_items(() => {}, 3, /* print_finalize */ false);
+  require("node:fs").writeSync(1, "exiting with 3 items queued\n");
+  process.exit(0);
+};
+
+// The same from inside the function's own callback: the items behind the one
+// that is running must not be delivered into the callback's frame.
+nativeTests.test_threadsafe_function_process_exit_inside_callback = () => {
+  nativeTests.queue_threadsafe_function_items(() => process.exit(0), 3, /* print_finalize */ false);
+  // Returning a pending promise keeps main.js quiet; the first item's callback
+  // exits the process.
+  return new Promise(() => {});
+};
+
+// A worker that exits (process.exit()) or is terminated with items queued: the
+// addon gets each item through call_js with the live env (calling into JS is
+// refused), then the finalizer, as when node's env cleanup turns the loop.
+async function runQueuedItemsWorker(how) {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "tsfn-queued-items-worker.js"), { workerData: { how } });
+  const code = await new Promise((resolve, reject) => {
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+    if (how === "terminate") {
+      worker.on("message", () => worker.terminate());
+    }
+  });
+  console.log("worker exited with", code);
+}
+
+nativeTests.test_threadsafe_function_queued_items_at_worker_exit = () => runQueuedItemsWorker("exit");
+nativeTests.test_threadsafe_function_queued_items_at_worker_terminate = () => runQueuedItemsWorker("terminate");
+
+// napi_tsfn_abort with items queued: none of them runs; each goes back to
+// call_js with a null env and js_callback so the addon can free it, and then
+// the function finalizes.
+nativeTests.test_threadsafe_function_abort_hands_queued_items_back = async () => {
+  // writeSync: these interleave with the addon's printf lines, so they must
+  // reach stdout synchronously.
+  const { writeSync } = require("node:fs");
+  nativeTests.queue_threadsafe_function_items(
+    () => writeSync(1, "js callback ran after abort\n"),
+    3,
+    /* print_finalize */ true,
+  );
+  writeSync(1, `abort: ${nativeTests.abort_threadsafe_function_with_queued_items()}\n`);
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.threadsafe_function_with_queued_items_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  writeSync(1, `finalized: ${nativeTests.threadsafe_function_with_queued_items_finalized()}\n`);
+};
+
 // When napi_create_threadsafe_function is given no JS func, the call_js
 // callback receives a null js_callback (addons test `if (js_callback != NULL)`).
 nativeTests.test_tsfn_null_js_callback_driver = async () => {

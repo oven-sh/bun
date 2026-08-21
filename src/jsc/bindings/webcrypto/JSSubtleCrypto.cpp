@@ -54,7 +54,6 @@
 #include "JSJsonWebKey.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "WebCoreOpaqueRoot.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
@@ -126,7 +125,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSSubtleCryptoPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSSubtleCryptoPrototype* ptr = new (NotNull, JSC::allocateCell<JSSubtleCryptoPrototype>(vm)) JSSubtleCryptoPrototype(vm, globalObject, structure);
+        JSSubtleCryptoPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSSubtleCryptoPrototype))) JSSubtleCryptoPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -140,7 +139,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -165,11 +164,7 @@ template<> JSValue JSSubtleCryptoDOMConstructor::prototypeForStructure(JSC::VM& 
 
 template<> void JSSubtleCryptoDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "SubtleCrypto"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSSubtleCrypto::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "SubtleCrypto"_s, JSSubtleCrypto::prototype(vm, globalObject));
     putDirect(vm, JSC::Identifier::fromString(vm, "supports"_s), JSC::JSFunction::create(vm, &globalObject, 2, "supports"_s, jsSubtleCryptoConstructorFunction_supports, JSC::ImplementationVisibility::Public), static_cast<unsigned>(JSC::PropertyAttribute::Function));
 }
 
@@ -201,8 +196,8 @@ const ClassInfo JSSubtleCryptoPrototype::s_info = { "SubtleCrypto"_s, &Base::s_i
 void JSSubtleCryptoPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSSubtleCrypto::info(), JSSubtleCryptoPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSSubtleCrypto::info(), JSSubtleCryptoPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSSubtleCrypto::s_info = { "SubtleCrypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSubtleCrypto) };
@@ -802,12 +797,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports, (JSGlobalOb
 
 JSC::GCClient::IsoSubspace* JSSubtleCrypto::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSSubtleCrypto, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForSubtleCrypto.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubtleCrypto = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForSubtleCrypto.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForSubtleCrypto = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSSubtleCrypto, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForSubtleCrypto, m_subspaceForSubtleCrypto));
 }
 
 void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -819,38 +809,8 @@ void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7SubtleCrypto@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore12SubtleCryptoE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<SubtleCrypto>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<SubtleCrypto>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7SubtleCrypto@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore12SubtleCryptoE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // SubtleCrypto has subclasses. If SubtleCrypto has subclasses that get passed
-        // to toJS() we currently require SubtleCrypto you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<SubtleCrypto>(globalObject, WTF::move(impl));
 }
 

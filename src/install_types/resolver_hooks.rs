@@ -863,19 +863,46 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 pub struct Libc(pub u8);
 
 impl Libc {
+    /// "unspecified" — the package did not declare a `libc` field (or the lockfile
+    /// predates the field). Matches every host.
     pub const NONE: Self = Self(0);
-    pub(crate) const ALL: Self = Self(Self::ALL_VALUE);
+    pub const ALL: Self = Self(Self::ALL_VALUE);
 
-    pub(crate) const GLIBC: u8 = 1 << 1;
-    pub(crate) const MUSL: u8 = 1 << 2;
+    pub const GLIBC: u8 = 1 << 1;
+    pub const MUSL: u8 = 1 << 2;
 
-    pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
+    pub const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    // TODO: runtime libc detection
+    /// The host's libc family. Only meaningful on Linux (npm's `libc` field is
+    /// ignored elsewhere); a musl-targeted bun build is a musl host.
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    pub const CURRENT: Self = Self(Self::MUSL);
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+    pub const CURRENT: Self = Self(Self::GLIBC);
+    #[cfg(not(target_os = "linux"))]
+    pub const CURRENT: Self = Self::NONE;
 
     #[inline]
-    pub(crate) fn has(self, other: u8) -> bool {
+    pub const fn none() -> Self {
+        Self::NONE
+    }
+    #[inline]
+    pub const fn all() -> Self {
+        Self::ALL
+    }
+    #[inline]
+    pub fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
+    }
+    /// Does a package declaring `self` install on a host whose libc is `target`?
+    /// Unspecified on either side matches (non-Linux hosts pass `NONE`).
+    #[inline]
+    pub fn is_match(self, target: Self) -> bool {
+        self.0 == 0 || target.0 == 0 || (self.0 & target.0) != 0
+    }
+    #[inline]
+    pub fn negatable(self) -> Negatable<Self> {
+        NegatableExt::negatable(self)
     }
 }
 

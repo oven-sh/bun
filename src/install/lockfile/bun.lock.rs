@@ -1178,14 +1178,15 @@ impl Stringifier {
             writer.write_all(b" \"bundled\": true")?;
         }
 
-        // TODO(dylan-conway)
-        // if (meta.libc != .all) {
-        //     try writer.writeAll(
-        //         \\"libc": [
-        //     );
-        //     try Negatable(Npm.Libc).toJson(meta.libc, writer);
-        //     try writer.writeAll("], ");
-        // }
+        if meta.libc != Npm::Libc::NONE && meta.libc != Npm::Libc::ALL {
+            if any {
+                writer.write_byte(b',')?;
+            } else {
+                any = true;
+            }
+            writer.write_all(b" \"libc\": ")?;
+            Negatable::<Npm::Libc>::to_json(meta.libc, &mut AsFmt::new(writer))?;
+        }
 
         if meta.os != Npm::OperatingSystem::ALL {
             if any {
@@ -2844,10 +2845,9 @@ pub(crate) fn parse_into_binary_lockfile(
                                 pkg.meta.arch =
                                     Npm::negatable_from_json_value::<Npm::Architecture>(arch);
                             }
-                            // TODO(dylan-conway)
-                            // if (os_cpu_libc_obj.get("libc")) |libc| {
-                            //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
-                            // }
+                            if let Some(libc) = deps_os_cpu_libc_bin_bundle_obj.get(b"libc") {
+                                pkg.meta.libc = Npm::negatable_from_json_value::<Npm::Libc>(libc);
+                            }
                         }
                     }
                     ResolutionTag::Root => {

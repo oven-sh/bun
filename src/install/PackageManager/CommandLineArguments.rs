@@ -125,6 +125,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)"
     ),
+    clap::param!(
+        "--libc <STR>...                       Override libc for optional dependencies (glibc, musl, * for all)"
+    ),
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
@@ -593,6 +596,7 @@ pub struct CommandLineArguments {
 
     // CPU and OS overrides for optional dependencies
     pub(crate) cpu: Npm::Architecture,
+    pub(crate) libc: Npm::Libc,
     pub(crate) os: Npm::OperatingSystem,
 }
 
@@ -687,6 +691,7 @@ impl Default for CommandLineArguments {
             audit_ignore_list: &[],
 
             cpu: Npm::Architecture::CURRENT,
+            libc: Npm::Libc::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
         }
     }
@@ -1568,6 +1573,28 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 }
             }
             cli.os = os_negatable.combine();
+        }
+
+        let libc_values = args.options(b"--libc");
+        if !libc_values.is_empty() {
+            let mut libc_negatable = Npm::Libc::NONE.negatable();
+            for libc_str in libc_values {
+                libc_negatable.apply(libc_str);
+                if *libc_str == *b"*" {
+                    libc_negatable.had_wildcard = true;
+                    libc_negatable.had_unrecognized_values = false;
+                } else if libc_negatable.had_unrecognized_values
+                    && *libc_str != *b"any"
+                    && *libc_str != *b"none"
+                {
+                    Output::err_generic(
+                        "Invalid libc: '{}'. Valid values are: *, any, glibc, musl. Use !name to negate.",
+                        (bstr::BStr::new(libc_str),),
+                    );
+                    Global::crash();
+                }
+            }
+            cli.libc = libc_negatable.combine();
         }
 
         if matches!(subcommand, Subcommand::Add | Subcommand::Install) {

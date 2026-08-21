@@ -604,4 +604,135 @@ describe("bun install --cpu and --os flags", () => {
     // Should skip x64 dep and install other CPU deps
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-arm64", "dep-ppc64"]);
   });
+
+  it("should filter dependencies by libc (glibc/musl)", async () => {
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "1.0.0": {
+          os: ["linux"],
+          libc: ["musl"],
+        },
+      }),
+    );
+
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-libc-filter",
+        version: "1.0.0",
+        dependencies: {
+          "dep-linux-only": "1.0.0",
+        },
+      }),
+    );
+
+    // glibc host (forced) - should skip the musl-only dependency
+    let { exited } = spawn({
+      cmd: [bunExe(), "install", "--os", "linux", "--libc", "glibc"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache"]);
+
+    // musl host (forced) - should install it
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true });
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--os", "linux", "--libc", "musl"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    }));
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-linux-only"]);
+
+    // wildcard - always install
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true });
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--os", "linux", "--libc", "*"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    }));
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-linux-only"]);
+  });
+
+  it("libc does not matter for packages that do not declare it, and the host default applies on Linux", async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "1.0.0": { os: ["linux"] } }));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "test-libc-none", version: "1.0.0", dependencies: { "dep-linux-only": "1.0.0" } }),
+    );
+    const { exited } = spawn({
+      cmd: [bunExe(), "install", "--os", "linux", "--libc", "musl"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-linux-only"]);
+
+    if (process.platform === "linux") {
+      // without --libc, the host's libc family decides
+      const { familySync, MUSL } = require("detect-libc");
+      const hostIsMusl = familySync() === MUSL;
+      setHandler(dummyRegistry([], { "1.0.0": { os: ["linux"], libc: [hostIsMusl ? "glibc" : "musl"] } }));
+      await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+      await rm(join(package_dir, "bun.lockb"), { force: true });
+      const { exited: exited2 } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: package_dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exited2).toBe(0);
+      expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache"]);
+    }
+  });
+
+  it("records libc in bun.lock and honours it when installing from the lockfile", async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "1.0.0": { os: ["linux"], libc: ["glibc"] } }));
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      (await Bun.file(join(package_dir, "bunfig.toml")).text()).replace("saveTextLockfile = false", "saveTextLockfile = true"),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "test-libc-lock", version: "1.0.0", optionalDependencies: { "dep-linux-only": "1.0.0" } }),
+    );
+    let { exited } = spawn({
+      cmd: [bunExe(), "install", "--os", "linux", "--libc", "glibc"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exited).toBe(0);
+    const lock = await Bun.file(join(package_dir, "bun.lock")).text();
+    expect(lock).toMatch(/"dep-linux-only": \[[^\n]*"libc": "(glibc|!musl)"/);
+
+    // from the lockfile alone (manifest not consulted), a musl host skips it
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile", "--os", "linux", "--libc", "musl"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    }));
+    expect(await exited).toBe(0);
+    expect((await readdirSorted(join(package_dir, "node_modules"))).filter(x => x !== ".cache")).toEqual([]);
+  });
 });

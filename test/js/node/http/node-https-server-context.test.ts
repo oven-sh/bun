@@ -85,11 +85,19 @@ async function requestOutcome(port: number, extra: https.RequestOptions = {}) {
 // `agent: false` so every call opens a fresh connection and therefore a fresh
 // SNI lookup; a pooled keep-alive socket would keep serving the cert (and
 // router) selected when it was first opened.
-async function httpsGetViaSNI(port: number, servername: string) {
+async function httpsGetViaSNI(port: number, servername: string, extra: https.RequestOptions = {}) {
   const { promise, resolve, reject } = Promise.withResolvers<{ cn: string | undefined; body: string }>();
   https
     .get(
-      { host: "127.0.0.1", port, servername, headers: { Host: servername }, rejectUnauthorized: false, agent: false },
+      {
+        host: "127.0.0.1",
+        port,
+        servername,
+        headers: { Host: servername },
+        rejectUnauthorized: false,
+        agent: false,
+        ...extra,
+      },
       res => {
         const cn = (res.socket as tls.TLSSocket).getPeerCertificate().subject?.CN;
         res.setEncoding("utf8");
@@ -641,6 +649,37 @@ describe("https.Server", () => {
     }
   });
 
+  test("socket.authorized follows the SNI context's requestCert, not only the default context's", async () => {
+    const server = https.createServer({ key: agent2Key, cert: agent2Cert }, (req, res) =>
+      res.end(JSON.stringify({ authorized: req.socket.authorized, authorizationError: req.socket.authorizationError })),
+    );
+    try {
+      const port = await listen(server);
+      server.addContext("mtls.example.com", {
+        key: agent1Key,
+        cert: agent1Cert,
+        ca: privateCA,
+        requestCert: true,
+        rejectUnauthorized: false,
+      });
+      const verdict = async (servername: string, extra?: https.RequestOptions) =>
+        JSON.parse((await httpsGetViaSNI(port, servername, extra)).body);
+      expect({
+        mtlsWithCert: await verdict("mtls.example.com", privateCAClient),
+        mtlsWithoutCert: await verdict("mtls.example.com"),
+        // The default context never asked, so a certificate offered anyway is not consulted.
+        defaultWithCert: await verdict("other.example.com", privateCAClient),
+      }).toEqual({
+        mtlsWithCert: { authorized: true, authorizationError: null },
+        mtlsWithoutCert: { authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+        defaultWithCert: { authorized: false, authorizationError: null },
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  // Last on purpose: setDefaultCACertificates() can only be replaced, never removed, so later servers would inherit it.
   test("an mTLS server without `ca` verifies clients against tls.setDefaultCACertificates(), like tls.Server", async () => {
     const mtls = { key: agent2Key, cert: agent2Cert, requestCert: true, rejectUnauthorized: true };
     const handler: https.RequestListener = (req, res) => res.end("ok");

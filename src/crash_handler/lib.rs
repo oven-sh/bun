@@ -543,6 +543,12 @@ mod draft {
             MAIN_THREAD_ID.load(Ordering::Relaxed) == bun_threading::current_thread_id()
         }
 
+        /// False until `set_main_thread_id` runs, so a crash during startup does not count as one on another thread.
+        pub(crate) fn is_off_main_thread() -> bool {
+            let main_thread_id = MAIN_THREAD_ID.load(Ordering::Relaxed);
+            main_thread_id != 0 && main_thread_id != bun_threading::current_thread_id()
+        }
+
         /// Zig: `Cli.cmd = command` (cli.zig `createContextData`). `bun_runtime`
         /// stores `Command.Tag.char()` here at dispatch so crash-report trace
         /// strings encode which subcommand was running instead of `_` (pre-init).
@@ -2648,8 +2654,12 @@ mod draft {
         writer.write_all(VERSION_CHAR.as_bytes())?;
         writer.write_all(GIT_SHA.as_bytes())?;
 
-        let packed_features: u64 = bun_analytics::packed_features().bits();
-        write_u64_as_two_vlqs(writer, packed_features as usize)?;
+        let mut packed_features = bun_analytics::packed_features();
+        // The crash header on stderr says "(main thread)" or not; the uploaded string has only this bit to tell the two apart.
+        if cli_state::is_off_main_thread() {
+            packed_features |= bun_analytics::PackedFeatures::crash_off_main_thread;
+        }
+        write_u64_as_two_vlqs(writer, packed_features.bits() as usize)?;
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
         let mut frames = BoundedArray::<u8, FRAMES_CAPACITY>::default();

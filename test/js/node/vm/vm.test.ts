@@ -1944,3 +1944,62 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
     expect(position).toBeLessThanOrEqual(INT32_MAX);
   });
 });
+
+test.concurrent("a context nothing references is collected, including the most recently created one", async () => {
+  // Every NodeVMGlobalObject used to be created from one Structure cached on the main global.
+  // JSGlobalObject::finishCreation records the global as that structure's realm, and the GC marks a
+  // structure's realm, so the cached structure kept whichever context was created last alive until the
+  // next one replaced it. Each case below is measured while its context is the most recent one.
+  const fixture = String.raw`
+    const vm = require("node:vm");
+    const { heapStats, releaseWeakRefs } = require("bun:jsc");
+    // Each case creates a context in its own call and only returns a WeakRef, so no frame of this
+    // program holds the sandbox while the collections below run.
+    const cases = {
+      createContext() {
+        const sandbox = {};
+        vm.createContext(sandbox);
+        return new WeakRef(sandbox);
+      },
+      createContextDontContextify() {
+        return new WeakRef(vm.createContext(vm.constants.DONT_CONTEXTIFY));
+      },
+      runInNewContext() {
+        const sandbox = {};
+        vm.runInNewContext("1", sandbox);
+        return new WeakRef(sandbox);
+      },
+      scriptRunInNewContext() {
+        const sandbox = {};
+        new vm.Script("1").runInNewContext(sandbox);
+        return new WeakRef(sandbox);
+      },
+    };
+    const results = {};
+    for (const name in cases) {
+      const ref = cases[name]();
+      let collected = false;
+      for (let attempt = 0; attempt < 5 && !collected; attempt++) {
+        // Come back from the event loop first: the call that created the context can leave pointers
+        // to it on the part of the stack the collector scans conservatively. new WeakRef() and
+        // deref() also keep their target alive until the current job ends.
+        await new Promise(resolve => setImmediate(resolve));
+        releaseWeakRefs();
+        Bun.gc(true);
+        collected = ref.deref() === undefined;
+      }
+      results[name] = { collected, contextsAlive: heapStats().objectTypeCounts.NodeVMGlobalObject ?? 0 };
+    }
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    createContext: { collected: true, contextsAlive: 0 },
+    createContextDontContextify: { collected: true, contextsAlive: 0 },
+    runInNewContext: { collected: true, contextsAlive: 0 },
+    scriptRunInNewContext: { collected: true, contextsAlive: 0 },
+  });
+  expect(exitCode).toBe(0);
+});

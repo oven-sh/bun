@@ -1414,6 +1414,18 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
     global.bun_vm().event_loop_mut().exit();
 }
 
+/// `this` is the loop's `internal_loop_data.parent_ptr` (uSockets' libuv
+/// backend brackets `uv_run` with these).
+// HOST_EXPORT(Bun__JSEventLoop__enter, c)
+pub fn js_event_loop_enter(this: &mut crate::event_loop::EventLoop) {
+    this.enter();
+}
+
+// HOST_EXPORT(Bun__JSEventLoop__exit, c)
+pub fn js_event_loop_exit(this: &mut crate::event_loop::EventLoop) {
+    this.exit();
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_event_loop::any_event_loop::js` extern impls
 //

@@ -326,6 +326,29 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 
+extern void Bun__JSEventLoop__enter(void *event_loop);
+extern void Bun__JSEventLoop__exit(void *event_loop);
+
+/* The jsc::EventLoop this loop belongs to (parent_tag 1; 2 is a MiniEventLoop,
+ * which runs no JS), while its VM is alive (jsc_vm is cleared at teardown). */
+static void *us_internal_js_event_loop(struct us_loop_t *loop) {
+  return loop->data.parent_tag == 1 && loop->data.jsc_vm ? loop->data.parent_ptr : NULL;
+}
+
+/* Every uv_run of a JS thread's loop is one event-loop scope (EventLoop::enter
+ * / exit). libuv dispatches its callbacks from inside uv_run, so each JS
+ * callback they run is a nested scope whose exit is not the outermost one and
+ * therefore not a microtask checkpoint: the nextTicks and promise reactions a
+ * callback queues run here, once uv_run has returned, instead of on libuv's
+ * dispatch frame - where a continuation that drives the loop again
+ * (waitForPromise) would nest uv_run inside the callback. */
+static void us_internal_uv_run(struct us_loop_t *loop, uv_run_mode mode) {
+  void *js_event_loop = us_internal_js_event_loop(loop);
+  if (js_event_loop) Bun__JSEventLoop__enter(js_event_loop);
+  uv_run(loop->uv_loop, mode);
+  if (js_event_loop) Bun__JSEventLoop__exit(js_event_loop);
+}
+
 void us_loop_pump(struct us_loop_t *loop) {
   /* POSIX parity: us_loop_run_bun_tick polls epoll/kqueue and dispatches
    * regardless of ref state (it only early-outs on num_polls == 0). libuv's
@@ -335,7 +358,7 @@ void us_loop_pump(struct us_loop_t *loop) {
    * bun:test) supply their own keep-going predicate, so force exactly one
    * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
   loop->uv_loop->active_handles++;
-  uv_run(loop->uv_loop, UV_RUN_NOWAIT);
+  us_internal_uv_run(loop, UV_RUN_NOWAIT);
   loop->uv_loop->active_handles--;
 }
 
@@ -414,7 +437,7 @@ void us_loop_run(struct us_loop_t *loop) {
     Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
   }
 
-  uv_run(loop->uv_loop, UV_RUN_ONCE);
+  us_internal_uv_run(loop, UV_RUN_ONCE);
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

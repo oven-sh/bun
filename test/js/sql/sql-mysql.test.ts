@@ -1002,9 +1002,7 @@ if (isDockerEnabled()) {
           return expect(await promise).toEqual([{ x: 0 }]);
         });
 
-        // Same contract as the .execute() case above, but via .then(): the query
-        // was handed to the pool one microtask late, so a same-tick end() ran
-        // first and rejected it with ERR_MYSQL_CONNECTION_CLOSED.
+        // https://github.com/oven-sh/bun/pull/33740
         test("Connection end does not cancel a query awaited in the same tick", async () => {
           const sql = new SQL({ ...getOptions(), max: 1 });
           await sql`select 1 as x`;

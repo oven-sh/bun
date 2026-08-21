@@ -2053,9 +2053,7 @@ describe("Connection management", () => {
     }
   });
 
-  // Query.then() used to defer the pool hand-off by one microtask, so a
-  // close() in the same synchronous block ran first, saw zero pending
-  // queries, and rejected the already-awaited query with "Connection closed".
+  // https://github.com/oven-sh/bun/pull/33740
   test("close() drains a query awaited in the same tick", async () => {
     const sql = new SQL("sqlite://:memory:");
     await sql`SELECT 1 AS x`;

@@ -195,17 +195,15 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
 });
 
 // https://github.com/oven-sh/bun/issues/32038
-//
-// close({ timeout }) used to be gated on `if (timeout)`, so the documented
-// `close({ timeout: 0 })` ("close now") fell into the graceful-drain branch and
-// waited for in-flight queries forever. The tests above sidestep that with the
-// truthy string "0"; these use the number. `timeout: null` must still mean
-// "no timeout" (drain), not "timeout of 0".
-//
-// Each mock completes the handshake and hands the first command it receives to
-// `onCommand`; by default it never answers, leaving the query in flight.
+// `timeout: null` is outside the declared option type; it must drain like an omitted timeout, not force-close like 0.
 
 type CommandMock = { port: number; server: Server; commandReceived: Promise<void> };
+
+// After the command arrives `received` is settled, so the reset caused by a forced close() is ignored.
+function failUntilCommand(socket: Socket, received: PromiseWithResolvers<void>) {
+  socket.on("error", received.reject);
+  socket.on("close", () => received.reject(new Error("the client disconnected before it sent a command")));
+}
 
 async function pgReadyServer(onCommand?: (socket: Socket, type: number) => void): Promise<CommandMock> {
   const received = Promise.withResolvers<void>();
@@ -223,7 +221,7 @@ async function pgReadyServer(onCommand?: (socket: Socket, type: number) => void)
         received.resolve();
       });
     });
-    socket.on("error", () => {});
+    failUntilCommand(socket, received);
   });
   return { port, server, commandReceived: received.promise };
 }
@@ -247,7 +245,7 @@ async function mysqlReadyServer(
         received.resolve();
       });
     });
-    socket.on("error", () => {});
+    failUntilCommand(socket, received);
   });
   return { port, server, commandReceived: received.promise };
 }

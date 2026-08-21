@@ -454,54 +454,6 @@ reason = "external code table: weak-ref type numbering shared with JSC"
 
 [[override]]
 lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::PointsOfInterest"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::Dynamicity"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::SizeAndThroughput"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::TimeProfile"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::SystemReporting"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::UserCustom"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
 crate = "bun_runtime"
 item = "bake::dev_server::serialized_failure::ErrorKind::JsError"
 kind = "enum_variant"

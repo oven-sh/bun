@@ -48,7 +48,6 @@ public:
     LazyProperty<JSX509Certificate, JSString> m_fingerprint512;
     LazyProperty<JSX509Certificate, JSUint8Array> m_raw;
     LazyProperty<JSX509Certificate, JSString> m_subjectAltName;
-    LazyProperty<JSX509Certificate, JSString> m_infoAccess;
     LazyProperty<JSX509Certificate, JSCell> m_publicKey;
 
     JSString* subject();
@@ -60,7 +59,6 @@ public:
     JSString* fingerprint256();
     JSString* fingerprint512();
     JSUint8Array* raw();
-    JSString* infoAccess();
     JSString* subjectAltName();
     JSValue publicKey();
 
@@ -120,12 +118,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSX509Certificate, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSX509Certificate.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSX509Certificate = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSX509Certificate.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSX509Certificate = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSX509Certificate, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSX509Certificate, m_subspaceForJSX509Certificate));
     }
 
     static JSValue computeSubject(ncrypto::X509View view, JSGlobalObject*, bool legacy);
@@ -138,7 +131,7 @@ public:
     static JSString* computeFingerprint512(ncrypto::X509View view, JSGlobalObject*);
     static JSUint8Array* computeRaw(ncrypto::X509View view, JSGlobalObject*);
     static bool computeIsCA(ncrypto::X509View view, JSGlobalObject*);
-    static JSValue computeInfoAccess(ncrypto::X509View view, JSGlobalObject*, bool legacy);
+    static JSValue computeInfoAccess(ncrypto::X509View view, JSGlobalObject*);
     static JSString* computeSubjectAltName(ncrypto::X509View view, JSGlobalObject*);
     static JSValue computePublicKey(ncrypto::X509View view, JSGlobalObject*);
 

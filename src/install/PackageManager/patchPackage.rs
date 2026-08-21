@@ -22,13 +22,28 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, buntaghashbuf_make, initialize_store,
-    invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
+    initialize_store, invalid_package_id,
 };
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
     bun_semver::semver_string::Builder::string_hash(s)
+}
+
+/// Formats `resolution` as the version half of a `name@version` patch key into
+/// `label` (cleared first, so one allocation serves a whole candidate loop).
+/// Tarball, folder and git resolutions repeat a user-supplied path or URL, so
+/// the label has no length bound.
+fn print_resolution_label<'a>(
+    label: &'a mut Vec<u8>,
+    resolution: &Resolution,
+    string_buf: &[u8],
+) -> &'a [u8] {
+    label.clear();
+    write!(label, "{}", resolution.fmt(string_buf, PathSep::Posix))
+        .expect("formatting into a Vec is infallible");
+    label
 }
 
 #[derive(Default)]
@@ -144,181 +159,134 @@ pub fn do_patch_commit(
     };
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
-    let mut resolution_buf = [0u8; 1024];
-    // reshaped for borrowck — `compute_cache_dir_and_subpath` borrows
-    // `manager` mutably while the package name/resolution borrow `lockfile`
-    // (which itself sometimes aliases `manager.lockfile`). Clone the slice/
-    // resolution out first, then compute, then assemble the result tuple.
-    let (cache_dir, cache_dir_subpath, changes_dir, pkg): (Fd, &ZStr, Vec<u8>, Package) =
-        match arg_kind {
-            PatchArgKind::Path => 'result: {
-                let package_json_path =
-                    resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
-                let package_json_source: bun_ast::Source =
-                    match bun_ast::to_source(package_json_path, Default::default()) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            Output::err(
-                                e,
-                                "failed to read {f}",
-                                (bun_fmt::quote(package_json_path.as_bytes()),),
-                            );
-                            Global::crash();
-                        }
-                    };
-
-                initialize_store();
-                let log = manager.log_mut();
-                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                        bun_core::pretty_errorln!(
-                            "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
-                            err.name(),
-                            bstr::BStr::new(package_json_source.path.pretty_dir()),
+    let (changes_dir, pkg): (Vec<u8>, Package) = match arg_kind {
+        PatchArgKind::Path => 'result: {
+            let package_json_path =
+                resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
+            let package_json_source: bun_ast::Source =
+                match bun_ast::to_source(package_json_path, Default::default()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        Output::err(
+                            e,
+                            "failed to read {f}",
+                            (bun_fmt::quote(package_json_path.as_bytes()),),
                         );
                         Global::crash();
                     }
                 };
-                let json = parsed.root;
 
-                let version: &[u8] = 'version: {
-                    if let Some(v) = json.get(b"version") {
-                        if let bun_ast::ExprData::EString(s) = &v.data {
-                            let s = s.data.slice();
-                            break 'version s;
+            initialize_store();
+            let log = manager.log_mut();
+            let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
+                Ok(p) => p,
+                Err(err) => {
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    bun_core::pretty_errorln!(
+                        "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
+                        err.name(),
+                        bstr::BStr::new(package_json_source.path.pretty_dir()),
+                    );
+                    Global::crash();
+                }
+            };
+            let json = parsed.root;
+
+            let version: &[u8] = 'version: {
+                if let Some(v) = json.get(b"version") {
+                    if let bun_ast::ExprData::EString(s) = &v.data {
+                        let s = s.data.slice();
+                        break 'version s;
+                    }
+                }
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {}<r>\n",
+                    bstr::BStr::new(package_json_source.path.text()),
+                );
+                Global::crash();
+            };
+
+            let mut resolver: () = ();
+            let mut package = Package::default();
+            let log = manager.log_mut();
+            package.parse_with_json::<()>(
+                &mut lockfile,
+                manager,
+                log,
+                &package_json_source,
+                json,
+                &mut resolver,
+                Features::FOLDER,
+            )?;
+
+            let actual_package = match lockfile.package_index.get(&package.name_hash) {
+                None => {
+                    bun_core::pretty_error!(
+                        "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
+                    );
+                    Global::crash();
+                }
+                Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
+                Some(PackageIndexEntry::Ids(ids)) => 'brk: {
+                    let mut resolution_label = Vec::new();
+                    for &id in ids.as_slice() {
+                        let pkg = *lockfile.packages.get(id as usize);
+                        if print_resolution_label(
+                            &mut resolution_label,
+                            &pkg.resolution,
+                            lockfile.buffers.string_bytes.as_slice(),
+                        ) == version
+                        {
+                            break 'brk pkg;
                         }
                     }
                     bun_core::pretty_error!(
-                        "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {}<r>\n",
-                        bstr::BStr::new(package_json_source.path.text()),
+                        "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
+                        bstr::BStr::new(
+                            package.name.slice(lockfile.buffers.string_bytes.as_slice())
+                        ),
                     );
                     Global::crash();
-                };
+                }
+            };
 
-                let mut resolver: () = ();
-                let mut package = Package::default();
-                let log = manager.log_mut();
-                package.parse_with_json::<()>(
-                    &mut lockfile,
-                    manager,
-                    log,
-                    &package_json_source,
-                    json,
-                    &mut resolver,
-                    Features::FOLDER,
-                )?;
+            break 'result (argument.to_vec(), actual_package);
+        }
+        PatchArgKind::NameAndVersion => 'brk: {
+            let (name, version) = Dependency::split_name_and_maybe_version(argument);
+            let (pkg_id, node_modules_relative_path) =
+                pkg_info_for_name_and_version(&lockfile, &mut iterator, argument, name, version);
 
-                let actual_package = match lockfile.package_index.get(&package.name_hash) {
-                    None => {
-                        bun_core::pretty_error!(
-                            "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                        );
-                        Global::crash();
-                    }
-                    Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
-                    Some(PackageIndexEntry::Ids(ids)) => 'brk: {
-                        for &id in ids.as_slice() {
-                            let pkg = *lockfile.packages.get(id as usize);
-                            let total = resolution_buf.len();
-                            let mut cursor: &mut [u8] = &mut resolution_buf[..];
-                            write!(
-                                &mut cursor,
-                                "{}",
-                                pkg.resolution
-                                    .fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)
-                            )
-                            .expect("unreachable");
-                            let written = total - cursor.len();
-                            let resolution_label = &resolution_buf[..written];
-                            if resolution_label == version {
-                                break 'brk pkg;
-                            }
-                        }
-                        bun_core::pretty_error!(
-                            "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
-                            bstr::BStr::new(
-                                package.name.slice(lockfile.buffers.string_bytes.as_slice())
-                            ),
-                        );
-                        Global::crash();
-                    }
-                };
-
-                let name = lockfile.str(&package.name).to_vec();
-                let resolution_clone = actual_package.resolution;
-                let cache_result = compute_cache_dir_and_subpath(
-                    manager,
-                    &name,
-                    &resolution_clone,
-                    &mut folder_path_buf,
-                    None,
-                );
-                let cache_dir = cache_result.cache_dir;
-                let cache_dir_subpath = cache_result.cache_dir_subpath;
-
-                let changes_dir = argument.to_vec();
-
-                break 'result (cache_dir, cache_dir_subpath, changes_dir, actual_package);
-            }
-            PatchArgKind::NameAndVersion => 'brk: {
-                let (name, version) = Dependency::split_name_and_maybe_version(argument);
-                let (pkg_id, node_modules_relative_path) = pkg_info_for_name_and_version(
-                    &lockfile,
-                    &mut iterator,
-                    argument,
-                    name,
-                    version,
-                );
-
-                let changes_dir = resolve_path::join_z_buf::<platform::Auto>(
-                    &mut pathbuf[..],
-                    &[&node_modules_relative_path, name],
-                )
-                .as_bytes()
-                .to_vec();
-                let pkg = *lockfile.packages.get(pkg_id as usize);
-
-                let pkg_name_slice = pkg
-                    .name
-                    .slice(lockfile.buffers.string_bytes.as_slice())
-                    .to_vec();
-                let resolution_clone = pkg.resolution;
-                let cache_result = compute_cache_dir_and_subpath(
-                    manager,
-                    &pkg_name_slice,
-                    &resolution_clone,
-                    &mut folder_path_buf,
-                    None,
-                );
-                let cache_dir = cache_result.cache_dir;
-                let cache_dir_subpath = cache_result.cache_dir_subpath;
-                break 'brk (cache_dir, cache_dir_subpath, changes_dir, pkg);
-            }
-        };
-
-    // zls
-    let cache_dir: Fd = cache_dir;
-    let cache_dir_subpath: &ZStr = cache_dir_subpath;
-    let changes_dir: &[u8] = &changes_dir;
-    let pkg: Package = pkg;
-
-    let name = pkg.name.slice(lockfile.buffers.string_bytes.as_slice());
-    let resolution_label_len = {
-        let total = resolution_buf.len();
-        let mut cursor: &mut [u8] = &mut resolution_buf[..];
-        write!(
-            &mut cursor,
-            "{}@{}",
-            bstr::BStr::new(name),
-            pkg.resolution
-                .fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)
-        )
-        .expect("unreachable");
-        total - cursor.len()
+            let changes_dir = resolve_path::join_z_buf::<platform::Auto>(
+                &mut pathbuf[..],
+                &[&node_modules_relative_path, name],
+            )
+            .as_bytes()
+            .to_vec();
+            break 'brk (changes_dir, *lockfile.packages.get(pkg_id as usize));
+        }
     };
-    let resolution_label = &resolution_buf[..resolution_label_len];
+
+    // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
+    manager.lockfile = lockfile;
+    let name = manager.lockfile.str(&pkg.name).to_vec();
+    let cache_result =
+        compute_cache_dir_and_subpath(manager, &name, &pkg.resolution, &mut folder_path_buf, None);
+    let cache_dir: Fd = cache_result.cache_dir;
+    let cache_dir_subpath: &ZStr = cache_result.cache_dir_subpath;
+    let changes_dir: &[u8] = &changes_dir;
+    let lockfile: &Lockfile = &manager.lockfile;
+
+    let name = name.as_slice();
+    let mut patch_key = Vec::new();
+    write!(
+        &mut patch_key,
+        "{}@{}",
+        bstr::BStr::new(name),
+        pkg.resolution
+            .fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)
+    )
+    .expect("formatting into a Vec is infallible");
 
     let patchfile_contents: Vec<u8> = 'brk: {
         let new_folder = changes_dir;
@@ -402,7 +370,7 @@ pub fn do_patch_commit(
         // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
         // we need to rename this out and back too.
         let bun_patch_tag: Option<&[u8]> = 'has_bun_patch_tag: {
-            let name_and_version_hash = string_hash(resolution_label);
+            let name_and_version_hash = string_hash(&patch_key);
             let patch_tag: &[u8] = 'patch_tag: {
                 if let Some(patchdep) = lockfile.patched_dependencies.get(&name_and_version_hash) {
                     if let Some(hash) = patchdep.patchfile_hash() {
@@ -585,17 +553,11 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    resolution_buf[resolution_label_len..resolution_label_len + b".patch".len()]
-        .copy_from_slice(b".patch");
-    let mut patch_filename: &[u8] = &resolution_buf[0..resolution_label_len + b".patch".len()];
-    let escaped_owned: Option<Box<[u8]>>;
-    if let Some(escaped) = escape_patch_filename(patch_filename) {
-        escaped_owned = Some(escaped);
-        patch_filename = escaped_owned.as_deref().unwrap();
-    } else {
-        escaped_owned = None;
-    }
-    let _ = &escaped_owned;
+    let unescaped_patch_filename = [patch_key.as_slice(), b".patch"].concat();
+    let escaped_patch_filename = escape_patch_filename(&unescaped_patch_filename);
+    let patch_filename: &[u8] = escaped_patch_filename
+        .as_deref()
+        .unwrap_or(&unescaped_patch_filename);
 
     let patches_dir: &[u8] = match &manager.options.patch_features {
         PatchFeatures::Commit { patches_dir } => patches_dir,
@@ -632,16 +594,6 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    let mut patch_key = Vec::new();
-    // re-slice instead of reusing `resolution_label` so its borrow ends
-    // before the `.patch` suffix write above; the prefix bytes are unchanged.
-    write!(
-        &mut patch_key,
-        "{}",
-        bstr::BStr::new(&resolution_buf[..resolution_label_len])
-    )
-    .expect("infallible: in-memory write");
-    let patch_key: Box<[u8]> = patch_key.into_boxed_slice();
     let patchfile_path: Box<[u8]> = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
     let _ = sys::unlink(resolve_path::join_z::<platform::Auto>(&[
         changes_dir,
@@ -649,7 +601,7 @@ pub fn do_patch_commit(
     ]));
 
     Ok(Some(PatchCommitResult {
-        patch_key,
+        patch_key: patch_key.into_boxed_slice(),
         patchfile_path,
         not_in_workspace_root,
     }))
@@ -665,6 +617,14 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
         Newline,
         CarriageReturn,
         Tab,
+        // NTFS-reserved; escaped on every OS so a committed patches/ dir checks out on Windows.
+        Colon,
+        Question,
+        Asterisk,
+        Quote,
+        LessThan,
+        GreaterThan,
+        Pipe,
         // Dot,
         Other,
     }
@@ -678,6 +638,13 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
                 EscapeVal::Newline => Some(b"%0A"),
                 EscapeVal::CarriageReturn => Some(b"%0D"),
                 EscapeVal::Tab => Some(b"%09"),
+                EscapeVal::Colon => Some(b"%3A"),
+                EscapeVal::Question => Some(b"%3F"),
+                EscapeVal::Asterisk => Some(b"%2A"),
+                EscapeVal::Quote => Some(b"%22"),
+                EscapeVal::LessThan => Some(b"%3C"),
+                EscapeVal::GreaterThan => Some(b"%3E"),
+                EscapeVal::Pipe => Some(b"%7C"),
                 // EscapeVal::Dot => Some(b"%2E"),
                 EscapeVal::Other => None,
             }
@@ -693,6 +660,13 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
         table[b'\n' as usize] = EscapeVal::Newline;
         table[b'\r' as usize] = EscapeVal::CarriageReturn;
         table[b'\t' as usize] = EscapeVal::Tab;
+        table[b':' as usize] = EscapeVal::Colon;
+        table[b'?' as usize] = EscapeVal::Question;
+        table[b'*' as usize] = EscapeVal::Asterisk;
+        table[b'"' as usize] = EscapeVal::Quote;
+        table[b'<' as usize] = EscapeVal::LessThan;
+        table[b'>' as usize] = EscapeVal::GreaterThan;
+        table[b'|' as usize] = EscapeVal::Pipe;
         table
     };
     let mut count: usize = 0;
@@ -729,7 +703,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
 
     let mut folder_path_buf = PathBuffer::uninit();
-    let mut resolution_buf = [0u8; 1024];
 
     #[cfg(windows)]
     let mut win_normalizer = PathBuffer::uninit();
@@ -840,19 +813,15 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     }
                     Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
                     Some(PackageIndexEntry::Ids(ids)) => 'id: {
+                        let mut resolution_label = Vec::new();
                         for &id in ids.as_slice() {
                             let pkg = *lockfile.packages.get(id as usize);
-                            let total = resolution_buf.len();
-                            let mut cursor: &mut [u8] = &mut resolution_buf[..];
-                            write!(
-                                &mut cursor,
-                                "{}",
-                                pkg.resolution.fmt(strbuf, PathSep::Posix)
-                            )
-                            .expect("unreachable");
-                            let written = total - cursor.len();
-                            let resolution_label = &resolution_buf[..written];
-                            if resolution_label == version {
+                            if print_resolution_label(
+                                &mut resolution_label,
+                                &pkg.resolution,
+                                strbuf,
+                            ) == version
+                            {
                                 break 'id pkg;
                             }
                         }
@@ -1295,7 +1264,7 @@ fn pkg_info_for_name_and_version(
 
     let strbuf = lockfile.buffers.string_bytes.as_slice();
 
-    let mut buf = [0u8; 1024];
+    let mut resolution_label = Vec::new();
     let dependencies = lockfile.buffers.dependencies.as_slice();
 
     for (dep_id, dep) in dependencies.iter().enumerate() {
@@ -1308,19 +1277,7 @@ fn pkg_info_for_name_and_version(
         }
         let pkg = *lockfile.packages.get(pkg_id as usize);
         if let Some(v) = version {
-            let written = {
-                let total = buf.len();
-                let mut cursor: &mut [u8] = &mut buf[..];
-                write!(
-                    &mut cursor,
-                    "{}",
-                    pkg.resolution.fmt(strbuf, PathSep::Posix)
-                )
-                .expect("Resolution name too long");
-                total - cursor.len()
-            };
-            let label = &buf[..written];
-            if label == v {
+            if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == v {
                 pairs.push((dep_id as DependencyID, pkg_id));
             }
         } else {

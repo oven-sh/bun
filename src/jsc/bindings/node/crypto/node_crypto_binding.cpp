@@ -4,17 +4,6 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "ZigGlobalObject.h"
-#include "webcrypto/JSCryptoKey.h"
-#include "webcrypto/JSSubtleCrypto.h"
-#include "webcrypto/CryptoKeyOKP.h"
-#include "webcrypto/CryptoKeyEC.h"
-#include "webcrypto/CryptoKeyRSA.h"
-#include "webcrypto/CryptoKeyAES.h"
-#include "webcrypto/CryptoKeyHMAC.h"
-#include "webcrypto/CryptoKeyRaw.h"
-#include "webcrypto/CryptoKeyUsage.h"
-#include "webcrypto/JsonWebKey.h"
-#include "webcrypto/JSJsonWebKey.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "headers-handwritten.h"
@@ -24,16 +13,6 @@
 #include <openssl/pem.h>
 #include <openssl/curve25519.h>
 #include "JSBuffer.h"
-#include "CryptoAlgorithmHMAC.h"
-#include "CryptoAlgorithmEd25519.h"
-#include "CryptoAlgorithmRSA_OAEP.h"
-#include "CryptoAlgorithmRSA_PSS.h"
-#include "CryptoAlgorithmRSASSA_PKCS1_v1_5.h"
-#include "CryptoAlgorithmECDSA.h"
-#include "CryptoAlgorithmEcdsaParams.h"
-#include "CryptoAlgorithmRsaOaepParams.h"
-#include "CryptoAlgorithmRsaPssParams.h"
-#include "CryptoAlgorithmRegistry.h"
 #include "wtf/ForbidHeapAllocation.h"
 #include "wtf/Noncopyable.h"
 #include "ncrypto.h"
@@ -303,26 +282,26 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     JSObject* result = JSC::constructEmptyObject(lexicalGlobalObject);
 
     if (!modeLabel.isEmpty()) {
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "mode"_s), jsString(vm, String::fromUTF8(modeLabel)));
+        Bun::putDirectNamed(vm, result, "mode"_s, jsString(vm, String::fromUTF8(modeLabel)));
     }
 
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), jsString(vm, name.convertToASCIILowercase()));
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "nid"_s), jsNumber(cipher.getNid()));
+    Bun::putDirectNamed(vm, result, "name"_s, jsString(vm, name.convertToASCIILowercase()));
+    Bun::putDirectNamed(vm, result, "nid"_s, jsNumber(cipher.getNid()));
 
     if (!cipher.isStreamMode()) {
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "blockSize"_s), jsNumber(blockSize));
+        Bun::putDirectNamed(vm, result, "blockSize"_s, jsNumber(blockSize));
     }
 
     if (ivLength != 0) {
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "ivLength"_s), jsNumber(ivLength));
+        Bun::putDirectNamed(vm, result, "ivLength"_s, jsNumber(ivLength));
     }
 
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "keyLength"_s), jsNumber(keyLength));
+    Bun::putDirectNamed(vm, result, "keyLength"_s, jsNumber(keyLength));
 
     return JSValue::encode(result);
 }
 
-JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
+__attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     JSObject* obj = constructEmptyObject(globalObject);

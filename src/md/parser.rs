@@ -117,9 +117,9 @@ impl Default for BlockHeader {
     }
 }
 
-/// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
+/// `Parser`'s error type: the union of `{ OutOfMemory, JSError }`
 /// with the parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
-// (`bun_jsc::JsError` covers the first three, but the md crate sits below
+// (`bun_jsc::JsError` covers the first two, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
 pub(crate) type Error = ParserError;
 
@@ -127,7 +127,6 @@ pub(crate) type Error = ParserError;
 pub enum ParserError {
     OutOfMemory,
     JSError,
-    JSTerminated,
     StackOverflow,
     /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
     /// offset arithmetic cannot address it.

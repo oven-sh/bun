@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- fixture for the .xml loader -->
+<config framework="next">
+  <bundle>
+    <package name="@emotion/react" enabled="true"/>
+    <package name="lodash" enabled="false"/>
+  </bundle>
+  <dev port="3000">watch <b>on</b></dev>
+  <empty/>
+</config>

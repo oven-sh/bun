@@ -514,6 +514,19 @@ pub mod bv2_impl {
         /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
         pub(crate) type HmrRuntimeSide = Side;
 
+        /// `bake.client.js`, the dev-server client runtime. It is shipped to the
+        /// browser rather than run by Bun, so release builds embed it compressed;
+        /// this is the one place it is inflated (`bake` reads it through here too).
+        pub fn bake_client_js() -> &'static [u8] {
+            let with_nul = bake_client_js_with_nul();
+            &with_nul[..with_nul.len() - 1]
+        }
+
+        /// [`bake_client_js`] followed by a NUL byte.
+        pub fn bake_client_js_with_nul() -> &'static [u8] {
+            bun_zstd::embed_compressed!(codegen_nul "bake.client.js")
+        }
+
         /// MOVE_DOWN bake→bundler:
         /// the codegen'd `bake.client.js` / `bake.server.js` are loaded via
         /// `bun_core::runtime_embed_file!` (same per-site `OnceLock<String>` cache
@@ -528,11 +541,7 @@ pub mod bv2_impl {
             static CLIENT: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
             static SERVER: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
             match side {
-                Side::Client => *CLIENT.get_or_init(|| {
-                    HmrRuntime::init(
-                        bun_core::runtime_embed_file!(CodegenEager, "bake.client.js").as_bytes(),
-                    )
-                }),
+                Side::Client => *CLIENT.get_or_init(|| HmrRuntime::init(bake_client_js())),
                 // Server runtime is loaded once; non-eager.
                 Side::Server => *SERVER.get_or_init(|| {
                     HmrRuntime::init(

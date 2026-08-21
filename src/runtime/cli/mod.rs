@@ -545,7 +545,7 @@ pub mod cli {
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     /// `#[inline(never)]`: this is the first Rust call after `main()` (see
-    /// `src/bun_bin/lib.rs`) and the head of the `bun <file>` / `bun run`
+    /// `src/runtime/bin_entry/mod.rs`) and the head of the `bun <file>` / `bun run`
     /// startup chain. It must stay a concrete symbol so lld's
     /// `--symbol-ordering-file` (`src/startup.order`) can cluster it — and the
     /// callees it walks (`Command::start` → `which` → `create_context_data` →
@@ -568,7 +568,7 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
-        // (The panic hook is installed by `bun_crash_handler::init()` in bun_bin.)
+        // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
@@ -1362,7 +1362,7 @@ pub mod command {
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
-            // The entry point (`bun_bin::main`) defers argv
+            // The entry point (`bin_entry::main`) defers argv
             // init to `bun_core::argv()`'s lazy `Once`, so force that init
             // now — otherwise `bun_options_argc()` reads 0 here and the
             // standalone executable silently drops `BUN_OPTIONS` flags.

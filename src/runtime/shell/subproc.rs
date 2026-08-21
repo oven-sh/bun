@@ -1845,7 +1845,7 @@ impl PipeReader {
                 reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
                 StdioResult::BufferFd(fd)
             }
-            StdioResult::Unavailable => panic!("Shouldn't happen."),
+            StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
         };
 
         // Allocate directly into the Arc so the address is stable BEFORE we

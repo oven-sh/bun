@@ -1621,6 +1621,13 @@ mod draft {
     static SIGALTSTACK: bun_core::RacyCell<[u8; 512 * 1024]> =
         bun_core::RacyCell::new([0; 512 * 1024]);
 
+    /// `process.kill()` (BunProcess.cpp) gives a self-sent one of these its default action first.
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__isCrashSignal(signal: c_int) -> bool {
+        bun_core::CRASH_HANDLER_SIGNALS.contains(&signal)
+    }
+
     #[cfg(unix)]
     fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> crate::Result<()> {
         if let Some(act_) = act.as_deref_mut() {
@@ -1645,23 +1652,24 @@ mod draft {
         let act_ptr: *const libc::sigaction = act
             .map(|a| std::ptr::from_ref(a))
             .unwrap_or(core::ptr::null());
-        // SAFETY: valid sigaction pointer or null; null oldact is permitted.
-        unsafe {
-            libc::sigaction(libc::SIGSEGV, act_ptr, core::ptr::null_mut());
-            libc::sigaction(libc::SIGILL, act_ptr, core::ptr::null_mut());
-            libc::sigaction(libc::SIGBUS, act_ptr, core::ptr::null_mut());
-            libc::sigaction(libc::SIGFPE, act_ptr, core::ptr::null_mut());
-            // abort() (mimalloc/glibc heap corruption, std::terminate) and
-            // __builtin_trap()/WTF CRASH()/`brk` on aarch64 raise these; without
-            // handlers they bypass bun.report entirely.
-            libc::sigaction(libc::SIGABRT, act_ptr, core::ptr::null_mut());
-            libc::sigaction(libc::SIGTRAP, act_ptr, core::ptr::null_mut());
-            #[cfg(target_env = "ohos")]
-            {
-                let mut sigsys: libc::sigaction = bun_core::ffi::zeroed();
-                sigsys.sa_sigaction = handle_sigsys_posix as *const () as usize;
-                sigsys.sa_flags = libc::SA_SIGINFO;
-                let _ = libc::sigemptyset(&raw mut sigsys.sa_mask);
+        for signal in bun_core::CRASH_HANDLER_SIGNALS {
+            // SAFETY: valid sigaction pointer or null; null oldact is permitted.
+            unsafe {
+                libc::sigaction(signal, act_ptr, core::ptr::null_mut());
+            }
+        }
+        #[cfg(target_env = "ohos")]
+        {
+            // OHOS seccomp blocks unimplemented syscalls with uncatchable
+            // SIGSYS; the handler skips the SVC and returns -ENOSYS (see
+            // handle_sigsys_posix). Not in CRASH_HANDLER_SIGNALS — that list
+            // is the crash-report set, and SIGSYS here is a recoverable trap.
+            let mut sigsys: libc::sigaction = bun_core::ffi::zeroed();
+            sigsys.sa_sigaction = handle_sigsys_posix as *const () as usize;
+            sigsys.sa_flags = libc::SA_SIGINFO;
+            let _ = libc::sigemptyset(&raw mut sigsys.sa_mask);
+            // SAFETY: null oldact is permitted; single-threaded at setup.
+            unsafe {
                 libc::sigaction(libc::SIGSYS, &raw const sigsys, core::ptr::null_mut());
             }
         }
@@ -2367,8 +2375,10 @@ mod draft {
 
     /// Each platform is encoded as a single character. It is placed right after the
     /// slash after the version, so someone just reading the trace string can tell
-    /// what platform it came from. L, M, and W are for Linux, macOS, and Windows,
-    /// with capital letters indicating aarch64, lowercase indicating x86_64.
+    /// what platform it came from. L, M, W and F are Linux (glibc), macOS, Windows
+    /// and FreeBSD, U is Linux (musl) and A is Android, with capital letters
+    /// indicating aarch64, lowercase indicating x86_64. bun.report picks the debug
+    /// file by this character, so each separately linked binary needs its own.
     ///
     /// eg: 'https://bun.report/1.1.3/we04c...
     ///                               ^ this tells you it is windows x86_64
@@ -2380,21 +2390,29 @@ mod draft {
     impl Platform {
         // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
         const CURRENT: u8 = {
-            // Android folds into the Linux variants. bun.report decodes the same
-            // single-char codes; introducing new ones would break older decoders.
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android"),
-                target_arch = "x86_64"
-            ))]
+            #[cfg(all(target_os = "linux", not(target_env = "musl"), target_arch = "x86_64"))]
             {
                 b'l'
             }
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android"),
-                target_arch = "aarch64"
-            ))]
+            #[cfg(all(target_os = "linux", not(target_env = "musl"), target_arch = "aarch64"))]
             {
                 b'L'
+            }
+            #[cfg(all(target_os = "linux", target_env = "musl", target_arch = "x86_64"))]
+            {
+                b'u'
+            }
+            #[cfg(all(target_os = "linux", target_env = "musl", target_arch = "aarch64"))]
+            {
+                b'U'
+            }
+            #[cfg(all(target_os = "android", target_arch = "x86_64"))]
+            {
+                b'a'
+            }
+            #[cfg(all(target_os = "android", target_arch = "aarch64"))]
+            {
+                b'A'
             }
             #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
             {

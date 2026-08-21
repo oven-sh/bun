@@ -1769,6 +1769,85 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
   });
 });
 
+// A socket over a Windows named pipe frees its native context from a task
+// that is queued when the socket closes. A handler can close the socket and
+// then spin the event loop before it returns (`expect().resolves` blocks on
+// the promise and runs queued tasks), so the context is gone by the time the
+// libuv read callback that invoked the handler gets control back. The
+// callback must keep the context alive until it is done with it.
+describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
+  // `trigger` is the server handler that tears the socket down: "end" runs
+  // from the EOF read callback, "data" from the data read callback.
+  function fixture(trigger: "end" | "data") {
+    return /* js */ `
+      import { expect } from "bun:test";
+
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-${trigger}-teardown-" + Math.random().toString(36).slice(2);
+      const serverOpened = Promise.withResolvers();
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+
+      function closeAndSpinEventLoop(socket) {
+        socket.end();
+        // Blocks until the promise settles. Every queued task, including the
+        // one that frees the native context of this socket, runs before this returns.
+        expect(new Promise(resolve => setImmediate(resolve))).resolves.toBeUndefined();
+      }
+
+      using server = Bun.listen({
+        unix: pipe,
+        socket: {
+          open() { serverOpened.resolve(); },
+          data(socket) { ${trigger === "data" ? "closeAndSpinEventLoop(socket);" : ""} },
+          end(socket) { ${trigger === "end" ? "closeAndSpinEventLoop(socket);" : ""} },
+          close() { serverClosed.resolve(); },
+          error() {},
+        },
+      });
+
+      const client = await Bun.connect({
+        unix: pipe,
+        socket: {
+          open() {},
+          data() {},
+          close() { clientClosed.resolve(); },
+          error() {},
+        },
+      });
+      await serverOpened.promise;
+
+      ${trigger === "data" ? 'client.write("x");' : "client.end();"}
+
+      await serverClosed.promise;
+      await clientClosed.promise;
+      console.log("OK");
+    `;
+  }
+
+  it.each(["end", "data"] as const)("%s handler", async trigger => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(trigger)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
   // socket.reload() reads the new callbacks off the user object property by
   // property, so a getter can run arbitrary JS — including terminating the

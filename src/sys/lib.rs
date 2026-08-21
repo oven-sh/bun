@@ -7799,7 +7799,7 @@ pub fn environ() -> &'static [*const c_char] {
     #[cfg(windows)]
     {
         // Populated by `windows::env::convert_env_to_wtf8()` at startup
-        // (bun_bin/lib.rs). The slice is NUL-terminated WTF-8
+        // (bun_runtime::bin_entry). The slice is NUL-terminated WTF-8
         // C strings; the underlying allocation is `Box::leak`'d for the
         // process lifetime so `'static` here is sound.
         // SAFETY: written exactly once at startup before any reader runs.

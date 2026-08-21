@@ -9,6 +9,13 @@
 pub mod error;
 pub use error::{Error, Result};
 
+/// The process entry point (`main`) and the handful of C-ABI symbols that must
+/// be direct link inputs of the final binary. This crate is built as the
+/// staticlib the native build links against; the unit-test harness brings its
+/// own `main` and allocator.
+#[cfg(not(test))]
+mod bin_entry;
+
 /// `crate::jsc` is now a thin re-export of the real `bun_jsc` crate. Draft
 /// modules that imported `crate::jsc::…` (instead of `bun_jsc::…`) continue to
 /// resolve unchanged.

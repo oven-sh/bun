@@ -1189,3 +1189,73 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
     expect(exitCode).toBe(0);
   });
 });
+
+describe("symbols[name].ptr", () => {
+  // `.ptr` used to be the bits of the TinyCC wrapper's address reinterpreted as
+  // a double (a denormal like 6e-310), so CFunction/linkSymbols rejected it and
+  // a C function receiving it as a function pointer called NULL. The fixture
+  // runs in a child process because that NULL call takes the process down.
+  it("is the address of the compiled C function and is accepted wherever bun:ffi takes a pointer", async () => {
+    using dir = tempDir("bun-ffi-cc-symbol-ptr", {
+      "symbols.c": /* c */ `
+        int forty_two(void) { return 42; }
+        int add(int a, int b) { return a + b; }
+        const char* greeting(void) { return "hi"; }
+        typedef int (*binop)(int, int);
+        int apply(binop f, int a, int b) { return f(a, b); }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, CFunction, linkSymbols } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "symbols.c"),
+          symbols: {
+            forty_two: { args: [], returns: "i32" },
+            add: { args: ["i32", "i32"], returns: "i32" },
+            // returns: "cstring" symbols are wrapped in JS; the wrapper copies .ptr
+            greeting: { args: [], returns: "cstring" },
+            apply: { args: ["function", "i32", "i32"], returns: "i32" },
+          },
+        });
+
+        const shape = value => [typeof value, Number.isInteger(value) && value > 0];
+        const results = {
+          forty_two_ptr: shape(symbols.forty_two.ptr),
+          add_ptr: shape(symbols.add.ptr),
+          greeting_ptr: shape(symbols.greeting.ptr),
+          distinct_addresses: new Set([symbols.forty_two.ptr, symbols.add.ptr, symbols.greeting.ptr]).size,
+          cfunction: new CFunction({ ptr: symbols.forty_two.ptr, args: [], returns: "i32" })(),
+          cfunction_cstring: new CFunction({ ptr: symbols.greeting.ptr, args: [], returns: "cstring" })(),
+          link_symbols: linkSymbols({ add: { ptr: symbols.add.ptr, args: ["i32", "i32"], returns: "i32" } }).symbols.add(40, 2),
+          function_argument: symbols.apply(symbols.add.ptr, 20, 22),
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        forty_two_ptr: ["number", true],
+        add_ptr: ["number", true],
+        greeting_ptr: ["number", true],
+        distinct_addresses: 3,
+        cfunction: 42,
+        cfunction_cstring: "hi",
+        link_symbols: 42,
+        function_argument: 42,
+      },
+      exitCode: 0,
+    });
+  });
+});

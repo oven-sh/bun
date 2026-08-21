@@ -138,8 +138,7 @@ function normalizeData(data, opts) {
   return data;
 }
 
-// The native sockets apply binaryType to ping and pong payloads, npm ws emits them as a Buffer.
-// Only an ArrayBuffer can be wrapped synchronously, a Blob is emitted as is.
+// npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
 function controlPayload(binaryType, data) {
   return binaryType === "arraybuffer" ? Buffer.from(data) : data;
 }

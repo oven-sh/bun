@@ -892,7 +892,6 @@ impl Interpreter {
         self.free_list.with_mut(|f| f.push(id.0));
     }
 
-    #[inline]
     /// A child that a Ctrl+C we left to it killed marks its node `interrupted`;
     /// the mark flows up through every parent except a pipeline the child is
     /// not the rightmost member of (bash judges a pipeline by its last member).
@@ -901,6 +900,10 @@ impl Interpreter {
     /// ended the child, so `a; b` and `a || b` stop at `a`.
     fn propagate_interrupt(&self, parent: NodeId, child: NodeId) {
         if !self.node(child).base().is_some_and(|b| b.interrupted) {
+            if bun_spawn::ctrl_c::Child::alive() == 0 {
+                // A Ctrl+C the job handled is used up with the job (bash resets it per wait).
+                bun_spawn::ctrl_c::take_received();
+            }
             return;
         }
         if parent != NodeId::INTERPRETER {
@@ -939,6 +942,7 @@ impl Interpreter {
         false
     }
 
+    #[inline]
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes.get()[id.idx()]
     }

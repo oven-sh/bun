@@ -75,6 +75,22 @@ impl ZigStackFrame {
         jsc_stack_frame_index: -1,
     };
 
+    /// Whether `source_url` names a source the user can open. False for JSC's
+    /// JS builtins (no URL, or `native`/`unknown` once parsed back out of
+    /// `error.stack`), for Bun's own `bun:`/`node:` modules, and for sources
+    /// JSC could not attribute. The code frame and the GitHub Actions
+    /// annotation point at the first frame for which this is true.
+    pub(crate) fn has_user_source(&self) -> bool {
+        let url = &self.source_url;
+        !(url.is_empty()
+            || url.has_prefix_comptime(b"bun:")
+            || url.has_prefix_comptime(b"node:")
+            || url.eql_comptime("native")
+            || url.eql_comptime("unknown")
+            || url.eql_comptime("[unknown]")
+            || url.has_prefix_comptime(b"[source:"))
+    }
+
     pub fn name_formatter(&self, enable_color: bool) -> NameFormatter {
         NameFormatter {
             function_name: self.function_name,

@@ -5,8 +5,6 @@
 
 #include "JavaScriptCore/SyntheticModuleRecord.h"
 
-#include "../vm/SigintReceiver.h"
-
 namespace Bun {
 
 class NodeVMSyntheticModule final : public NodeVMModule {

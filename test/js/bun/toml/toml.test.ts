@@ -1,5 +1,7 @@
 import { TOML } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // Hand-written coverage beyond the official conformance suite
 // (toml-test-suite.test.ts): the JS-facing API surface, JS value mapping,
@@ -225,23 +227,29 @@ describe("numbers", () => {
   });
 });
 
-describe("date/times return their source text", () => {
-  test("all four kinds", () => {
+describe("date/times return Temporal objects", () => {
+  test("all four kinds map to their Temporal type", () => {
     const o = TOML.parse(
       ["odt = 1979-05-27T07:32:00Z", "ldt = 1979-05-27T07:32:00", "ld = 1979-05-27", "lt = 07:32:00"].join("\n"),
     ) as any;
-    expect(o).toEqual({
-      odt: "1979-05-27T07:32:00Z",
-      ldt: "1979-05-27T07:32:00",
-      ld: "1979-05-27",
-      lt: "07:32:00",
-    });
-    for (const key of ["odt", "ldt", "ld", "lt"]) {
-      expect(typeof o[key]).toBe("string");
-    }
+    expect(o.odt).toBeInstanceOf(Temporal.Instant);
+    expect(o.ldt).toBeInstanceOf(Temporal.PlainDateTime);
+    expect(o.ld).toBeInstanceOf(Temporal.PlainDate);
+    expect(o.lt).toBeInstanceOf(Temporal.PlainTime);
+    expect(o.odt.toString()).toBe("1979-05-27T07:32:00Z");
+    expect(o.ldt.toString()).toBe("1979-05-27T07:32:00");
+    expect(o.ld.toString()).toBe("1979-05-27");
+    expect(o.lt.toString()).toBe("07:32:00");
   });
 
-  test("source spelling is preserved verbatim", () => {
+  test("an offset date-time specifies an instant; the written offset normalizes away", () => {
+    const o = TOML.parse("a = 1979-05-27T00:32:00-07:00\nb = 1979-05-27T07:32:00Z") as any;
+    expect(o.a.epochMilliseconds).toBe(296638320000);
+    expect(o.a.toString()).toBe("1979-05-27T07:32:00Z");
+    expect(o.a.equals(o.b)).toBe(true);
+  });
+
+  test("TOML spellings Temporal does not print survive losslessly", () => {
     const o = TOML.parse(
       [
         "lower = 1979-05-27t07:32:00.500z",
@@ -249,18 +257,97 @@ describe("date/times return their source text", () => {
         "frac = 07:32:00.999999999",
         "noseconds = 07:32",
         "datenoseconds = 1979-05-27T07:32Z",
+        "leap = 1990-12-31T23:59:60Z", // RFC 3339 leap second; Temporal clamps to :59
       ].join("\n"),
     ) as any;
-    expect(o.lower).toBe("1979-05-27t07:32:00.500z");
-    expect(o.space).toBe("1979-05-27 07:32:00+13:00");
-    expect(o.frac).toBe("07:32:00.999999999");
-    expect(o.noseconds).toBe("07:32");
-    expect(o.datenoseconds).toBe("1979-05-27T07:32Z");
+    expect(o.lower.toString()).toBe("1979-05-27T07:32:00.5Z");
+    expect(o.space.toString()).toBe("1979-05-26T18:32:00Z");
+    expect(o.frac.toString()).toBe("07:32:00.999999999");
+    expect(o.noseconds.toString()).toBe("07:32:00");
+    expect(o.datenoseconds.toString()).toBe("1979-05-27T07:32:00Z");
+    expect(o.leap.toString()).toBe("1990-12-31T23:59:59Z");
   });
 
-  test("offset date-times feed directly into Date and Temporal-style consumers", () => {
-    const odt = (TOML.parse("a = 1979-05-27T00:32:00-07:00") as any).a;
-    expect(new Date(odt).getTime()).toBe(296638320000);
+  test("fractional seconds past Temporal's 9 digits are truncated, not rounded", () => {
+    // TOML: "excess precision should be truncated, not rounded".
+    const o = TOML.parse("a = 07:32:00.123456789999\nb = 1979-05-27T07:32:00.999999999999Z") as any;
+    expect(o.a.toString()).toBe("07:32:00.123456789");
+    expect(o.b.toString()).toBe("1979-05-27T07:32:00.999999999Z");
+  });
+
+  test("date/times nest in arrays and inline tables", () => {
+    const o = TOML.parse("arr = [ 1979-05-27, 07:32:00 ]\ntbl = { d = 1979-05-27T07:32:00 }") as any;
+    expect(o.arr[0]).toBeInstanceOf(Temporal.PlainDate);
+    expect(o.arr[1]).toBeInstanceOf(Temporal.PlainTime);
+    expect(o.tbl.d).toBeInstanceOf(Temporal.PlainDateTime);
+  });
+
+  test("parse throws when Temporal is disabled", async () => {
+    // The Temporal mapping cannot exist without Temporal; a date/time value
+    // is then an error rather than a silently different type.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { Bun.TOML.parse("a = 1979-05-27"); console.log("no error"); } catch (e) { console.log(e.constructor.name + ": " + e.message); }` +
+          `console.log(JSON.stringify(Bun.TOML.parse("b = 'still works'")));`,
+      ],
+      env: { ...bunEnv, BUN_JSC_useTemporal: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      'TypeError: Date/time values require Temporal, which is disabled in this process\n{"b":"still works"}\n',
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("deep dotted headers bundle without crashing", async () => {
+    // Dotted headers nest objects beyond safe recursion depth (the TOML
+    // parser builds them iteratively); the bundler's date/time lowering and
+    // the transform path's scan walk the tree iteratively too. A clean
+    // bundler error is acceptable; death by stack overflow is not.
+    using dir = tempDir("toml-deep-header", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1979-05-27\n",
+    });
+    const entry = join(String(dir), "deep.toml");
+    for (const args of [
+      ["build", entry],
+      ["build", "--no-bundle", entry],
+    ]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      // Drain stderr concurrently so the child cannot block on a full pipe.
+      // Exit 0 is today's behavior and a clean diagnostic exit would also be
+      // fine; death by signal (stack overflow) is neither.
+      const [exitCode] = await Promise.all([proc.exited, proc.stderr.text()]);
+      expect([0, 1]).toContain(exitCode);
+    }
+  });
+
+  test("importing a TOML module with date/times throws when Temporal is disabled", async () => {
+    // The import path converts the same way; the load must fail with the
+    // TypeError, not crash.
+    using dir = tempDir("toml-dates-no-temporal", {
+      "config.toml": "a = 1979-05-27\n",
+      "index.ts": `try { await import("./config.toml"); console.log("no error"); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: { ...bunEnv, BUN_JSC_useTemporal: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("TypeError: Date/time values require Temporal, which is disabled in this process\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -441,12 +528,13 @@ describe("robustness", () => {
     // Parsing these is iterative (every segment is processed before the limit
     // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
     // stay small enough to be fast in debug builds while still overflowing
-    // the JS-conversion recursion at release frame sizes.
+    // the JS-conversion recursion at release frame sizes. The two parses
+    // take ~7s under debug+ASAN on slow machines, past the 5s default.
     const depth = 250_000;
     const path = Buffer.alloc(depth * 2 - 1, "a.").toString();
     expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
     expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
-  });
+  }, 60_000);
 
   test("a very long string value round-trips", () => {
     const long = Buffer.alloc(1 << 20, "x").toString();
@@ -465,13 +553,15 @@ describe("robustness", () => {
 
   test("values survive garbage collection", () => {
     const doc = 'a = "héllo wörld 🌍"\nb = [1, 2.5, true, "x"]\n[t]\nc = 1979-05-27\n';
-    const results: unknown[] = [];
+    const results: any[] = [];
     for (let i = 0; i < 100; i++) {
       results.push(TOML.parse(doc));
     }
     Bun.gc(true);
     for (const o of results) {
-      expect(o).toEqual({ a: "héllo wörld 🌍", b: [1, 2.5, true, "x"], t: { c: "1979-05-27" } });
+      expect(o).toEqual({ a: "héllo wörld 🌍", b: [1, 2.5, true, "x"], t: { c: expect.anything() } });
+      expect(o.t.c).toBeInstanceOf(Temporal.PlainDate);
+      expect(o.t.c.toString()).toBe("1979-05-27");
     }
   });
 });
@@ -549,7 +639,29 @@ describe("TOML.stringify", () => {
   });
 
   test("nested tables emit dotted headers", () => {
-    expect(TOML.stringify({ a: { b: { c: 1 } } })).toBe("[a]\n\n[a.b]\nc = 1\n");
+    expect(TOML.stringify({ a: { x: 1, b: { c: 2 } } })).toBe("[a]\nx = 1\n\n[a.b]\nc = 2\n");
+  });
+
+  test("super-tables with no keyvals of their own are implied, not written", () => {
+    // toml-rs, tomli_w, tomlkit, smol-toml and @iarna/toml all omit the
+    // pass-through headers; `[a.b]` alone implies `[a]`.
+    expect(TOML.stringify({ a: { b: { c: 1 } } })).toBe("[a.b]\nc = 1\n");
+    expect(TOML.stringify({ t: { arr: [{ q: 1 }] } })).toBe("[[t.arr]]\nq = 1\n");
+    expect(TOML.stringify({ x: 1, a: { b: { c: 1 } } })).toBe("x = 1\n\n[a.b]\nc = 1\n");
+    // Skipped (undefined/function/symbol) properties are not keyvals.
+    expect(TOML.stringify({ a: { u: undefined, b: { c: 1 } } })).toBe("[a.b]\nc = 1\n");
+    // A nested empty table still needs the one header that materializes it.
+    expect(TOML.stringify({ a: { b: {} } })).toBe("[a.b]\n");
+    expect(TOML.stringify({ a: { b: {}, c: {} } })).toBe("[a.b]\n\n[a.c]\n");
+    // An array-of-tables element header always appears (each one creates the
+    // element), even when the element body itself starts with a sub-table.
+    expect(TOML.stringify({ arr: [{ sub: { x: 1 } }] })).toBe("[[arr]]\n\n[arr.sub]\nx = 1\n");
+  });
+
+  test("pyproject/Cargo-shaped documents round-trip without gaining headers", () => {
+    const doc =
+      '[tool.poetry]\nname = "pkg"\n\n[tool.ruff.lint]\nselect = ["E"]\n\n[profile.release.package.foo]\nopt-level = 3\n';
+    expect(TOML.stringify(TOML.parse(doc))).toBe(doc);
   });
 
   test("round-trips through TOML.parse", () => {
@@ -607,11 +719,17 @@ describe("TOML.stringify", () => {
   test("Date becomes a TOML offset date-time", () => {
     const d = new Date(Date.UTC(1979, 4, 27, 7, 32, 0, 999));
     expect(TOML.stringify({ d })).toBe("d = 1979-05-27T07:32:00.999Z\n");
-    // parse returns datetimes as source-text strings.
-    expect(TOML.parse(TOML.stringify({ d }))).toEqual({ d: "1979-05-27T07:32:00.999Z" });
-    expect(TOML.stringify({ d: new Date(0) })).toBe("d = 1970-01-01T00:00:00.000Z\n");
+    // It reads back as the Temporal.Instant of the same moment.
+    expect(TOML.parse(TOML.stringify({ d })).d.epochMilliseconds).toBe(d.getTime());
+    // Fraction uses auto precision (trailing zeros trimmed), so a Date and a
+    // Temporal.Instant spell the same instant identically.
+    expect(TOML.stringify({ d: new Date(0) })).toBe("d = 1970-01-01T00:00:00Z\n");
+    expect(TOML.stringify({ d: new Date(500) })).toBe("d = 1970-01-01T00:00:00.5Z\n");
+    expect(TOML.stringify({ a: new Date(0), b: Temporal.Instant.fromEpochMilliseconds(0) })).toBe(
+      "a = 1970-01-01T00:00:00Z\nb = 1970-01-01T00:00:00Z\n",
+    );
     // The 4-digit-year bounds (`Date.UTC(0, ...)` remaps year 0 to 1900, so raw ms).
-    expect(TOML.stringify({ d: new Date(-62167219200000) })).toBe("d = 0000-01-01T00:00:00.000Z\n");
+    expect(TOML.stringify({ d: new Date(-62167219200000) })).toBe("d = 0000-01-01T00:00:00Z\n");
     expect(TOML.stringify({ d: new Date(Date.UTC(9999, 11, 31, 23, 59, 59, 999)) })).toBe(
       "d = 9999-12-31T23:59:59.999Z\n",
     );
@@ -626,6 +744,117 @@ describe("TOML.stringify", () => {
     expect(stringifyError({ d: new Date(Date.UTC(10000, 0, 1)) }).message).toBe(
       "TOML.stringify cannot serialize a Date outside years 0000-9999",
     );
+  });
+
+  test("the four Temporal date/time types become unquoted TOML literals", () => {
+    expect(
+      TOML.stringify({
+        odt: Temporal.Instant.from("1979-05-27T00:32:00-07:00"),
+        ldt: Temporal.PlainDateTime.from("1979-05-27T07:32:00"),
+        ld: Temporal.PlainDate.from("1979-05-27"),
+        lt: Temporal.PlainTime.from("07:32:00"),
+      }),
+    ).toBe(
+      [
+        "odt = 1979-05-27T07:32:00Z", // an Instant prints in UTC
+        "ldt = 1979-05-27T07:32:00",
+        "ld = 1979-05-27",
+        "lt = 07:32:00",
+      ].join("\n") + "\n",
+    );
+  });
+
+  test("Temporal values keep sub-second precision with trailing zeros trimmed", () => {
+    expect(
+      TOML.stringify({
+        half: Temporal.Instant.from("1979-05-27T07:32:00.500Z"),
+        nanos: Temporal.PlainTime.from("07:32:00.123456789"),
+      }),
+    ).toBe("half = 1979-05-27T07:32:00.5Z\nnanos = 07:32:00.123456789\n");
+  });
+
+  test("ZonedDateTime emits its offset and drops the time-zone annotation", () => {
+    const zdt = Temporal.ZonedDateTime.from("2024-06-15T12:34:56+02:00[Europe/Berlin]");
+    expect(TOML.stringify({ zdt })).toBe("zdt = 2024-06-15T12:34:56+02:00\n");
+    // The same instant comes back, as an Instant.
+    expect(TOML.parse(TOML.stringify({ zdt })).zdt.equals(zdt.toInstant())).toBe(true);
+  });
+
+  test("a ZonedDateTime with a sub-minute offset falls back to the UTC instant form", () => {
+    // Pre-standard-time zones use LMT: Europe/Berlin in 1800 is +00:53:28,
+    // which TOML's HH:MM offset grammar cannot carry.
+    const zdt = Temporal.ZonedDateTime.from("1800-01-01T00:00[Europe/Berlin]");
+    expect(zdt.offsetNanoseconds % 60_000_000_000).not.toBe(0);
+    expect(TOML.stringify({ zdt })).toBe(`zdt = ${zdt.toInstant().toString()}\n`);
+    expect(TOML.parse(TOML.stringify({ zdt })).zdt.equals(zdt.toInstant())).toBe(true);
+  });
+
+  test("a non-ISO calendar date emits its ISO fields without the calendar annotation", () => {
+    const hebrew = Temporal.PlainDate.from("2024-01-01[u-ca=hebrew]");
+    expect(hebrew.toString()).toBe("2024-01-01[u-ca=hebrew]"); // what TOML cannot carry
+    expect(TOML.stringify({ d: hebrew })).toBe("d = 2024-01-01\n");
+  });
+
+  test("Temporal values in arrays stay inline instead of becoming [[table]] sections", () => {
+    expect(TOML.stringify({ a: [Temporal.PlainDate.from("1979-05-27"), Temporal.PlainTime.from("07:32:00")] })).toBe(
+      "a = [1979-05-27, 07:32:00]\n",
+    );
+  });
+
+  test("Temporal types with no TOML representation throw", () => {
+    expect(stringifyError({ x: Temporal.PlainYearMonth.from("2024-01") }).message).toBe(
+      "TOML.stringify cannot serialize Temporal.PlainYearMonth (it has no TOML representation)",
+    );
+    expect(stringifyError({ x: Temporal.PlainMonthDay.from("01-01") }).message).toBe(
+      "TOML.stringify cannot serialize Temporal.PlainMonthDay (it has no TOML representation)",
+    );
+    expect(stringifyError({ x: Temporal.Duration.from("PT1H") }).message).toBe(
+      "TOML.stringify cannot serialize Temporal.Duration (it has no TOML representation)",
+    );
+  });
+
+  test("Temporal values outside years 0000-9999 throw like Date does", () => {
+    expect(stringifyError({ d: Temporal.PlainDate.from({ year: 10000, month: 1, day: 1 }) }).message).toBe(
+      "TOML.stringify cannot serialize a Temporal.PlainDate outside years 0000-9999",
+    );
+    expect(stringifyError({ d: Temporal.PlainDate.from({ year: -1, month: 12, day: 31 }) }).message).toBe(
+      "TOML.stringify cannot serialize a Temporal.PlainDate outside years 0000-9999",
+    );
+    // An instant a day or more outside the range has no `±HH:MM` spelling with a 4-digit year.
+    expect(stringifyError({ i: Temporal.Instant.from("+010000-01-02T00:00:00Z") }).message).toBe(
+      "TOML.stringify cannot serialize a Temporal.Instant outside years 0000-9999",
+    );
+    expect(stringifyError({ i: Temporal.Instant.from("-000001-12-31T00:00:00Z") }).message).toBe(
+      "TOML.stringify cannot serialize a Temporal.Instant outside years 0000-9999",
+    );
+    // The boundary years themselves are fine.
+    expect(TOML.stringify({ d: Temporal.PlainDate.from("0000-01-01") })).toBe("d = 0000-01-01\n");
+    expect(TOML.stringify({ d: Temporal.PlainDate.from("9999-12-31") })).toBe("d = 9999-12-31\n");
+  });
+
+  test("an instant whose UTC year is outside 0000-9999 is spelled with an offset that keeps the year in range", () => {
+    // These are what `TOML.parse` produces for valid offset date-times at the
+    // year edges; the same instant must stringify, and to the same nanosecond.
+    const cases: [string, string][] = [
+      ["0000-01-01T00:00:00+01:00", "0000-01-01T00:00:00+01:00"],
+      ["0000-01-01T00:20:00.5+01:00", "0000-01-01T00:20:00.5+01:00"],
+      ["0000-01-01T00:00:00+23:59", "0000-01-01T00:00:00+23:59"],
+      ["0000-01-01T00:00:30+23:59", "0000-01-01T00:00:30+23:59"],
+      ["9999-12-31T23:30:00-01:00", "9999-12-31T23:30:00-01:00"],
+      ["9999-12-31T23:59:59.999999999-23:59", "9999-12-31T23:59:59.999999999-23:59"],
+      // In range as UTC: `Z` is preferred over the written offset.
+      ["0000-01-01T01:00:00+01:00", "0000-01-01T00:00:00Z"],
+      ["9999-12-31T23:59:59.999999999+00:00", "9999-12-31T23:59:59.999999999Z"],
+    ];
+    for (const [source, printed] of cases) {
+      const i = TOML.parse(`i = ${source}`).i as Temporal.Instant;
+      expect(TOML.stringify({ i })).toBe(`i = ${printed}\n`);
+      expect((TOML.parse(`i = ${printed}`).i as Temporal.Instant).epochNanoseconds).toBe(i.epochNanoseconds);
+    }
+    // A ZonedDateTime keeps its own offset when that spelling fits, else the same rule applies.
+    const zdt = Temporal.Instant.from("+010000-01-01T00:00:00Z").toZonedDateTimeISO("+02:00");
+    expect(TOML.stringify({ zdt })).toBe("zdt = 9999-12-31T23:00:00-01:00\n");
+    expect((TOML.parse(TOML.stringify({ zdt })).zdt as Temporal.Instant).epochNanoseconds).toBe(zdt.epochNanoseconds);
   });
 
   test("null values throw with the offending key", () => {
@@ -656,6 +885,7 @@ describe("TOML.stringify", () => {
     expect(stringifyError("str").message).toBe(msg);
     expect(stringifyError(5).message).toBe(msg);
     expect(stringifyError(new Date(0)).message).toBe(msg);
+    expect(stringifyError(Temporal.PlainDate.from("1979-05-27")).message).toBe(msg);
     expect(TOML.stringify(undefined)).toBeUndefined();
   });
 
@@ -700,30 +930,32 @@ describe("TOML.stringify", () => {
 
 // The TOML.stringify suite above covers parse(stringify(jsValue)). These cover
 // the other direction, stringify of a value produced by parse (read, modify,
-// write back), where the four date/time types lose their TOML type.
+// write back).
 describe("stringify(parse) round-trips", () => {
-  test("all four date/time types become quoted strings on the way back out", () => {
-    // parse returns a date/time literal as the string of its source text, so
-    // stringify sees a plain string and must quote it. The TOML type changes,
-    // but the JS value is a fixed point after one stringify/parse lap.
+  test("all four date/time types come back out as the same TOML type", () => {
+    // parse maps a date/time literal to its Temporal type, and stringify maps
+    // each Temporal type back to the literal it came from: the TOML type
+    // survives the lap (the spelling normalizes to canonical ISO form).
     const cases: [string, string][] = [
-      ["d = 1979-05-27T07:32:00Z", 'd = "1979-05-27T07:32:00Z"\n'],
-      ["d = 1979-05-27T07:32:00", 'd = "1979-05-27T07:32:00"\n'],
-      ["d = 1979-05-27", 'd = "1979-05-27"\n'],
-      ["d = 07:32:00", 'd = "07:32:00"\n'],
+      ["d = 1979-05-27T07:32:00Z", "d = 1979-05-27T07:32:00Z\n"],
+      ["d = 1979-05-27T00:32:00-07:00", "d = 1979-05-27T07:32:00Z\n"], // instant; offset normalizes
+      ["d = 1979-05-27T07:32:00", "d = 1979-05-27T07:32:00\n"],
+      ["d = 1979-05-27", "d = 1979-05-27\n"],
+      ["d = 07:32:00", "d = 07:32:00\n"],
+      ["d = 07:32", "d = 07:32:00\n"], // TOML 1.1 omitted seconds
     ];
-    for (const [doc, requoted] of cases) {
-      const once = TOML.parse(doc);
-      expect(TOML.stringify(once)).toBe(requoted);
-      expect(TOML.parse(TOML.stringify(once))).toEqual(once as any);
+    for (const [doc, out] of cases) {
+      const once = TOML.parse(doc) as any;
+      expect(TOML.stringify(once)).toBe(out);
+      expect((TOML.parse(TOML.stringify(once)) as any).d.toString()).toBe(once.d.toString());
     }
   });
 
-  test("a date literal and a string of the same text are indistinguishable after parse", () => {
-    // This is why the previous test cannot preserve the TOML type: both
-    // documents produce the identical JS value, so stringify has nothing to go on.
-    expect(TOML.parse("a = 1979-05-27")).toEqual({ a: "1979-05-27" });
-    expect(TOML.parse('a = "1979-05-27"')).toEqual({ a: "1979-05-27" });
+  test("a date literal and a string of the same text stay distinct", () => {
+    expect((TOML.parse("a = 1979-05-27") as any).a).toBeInstanceOf(Temporal.PlainDate);
+    expect((TOML.parse('a = "1979-05-27"') as any).a).toBe("1979-05-27");
+    expect(TOML.stringify(TOML.parse("a = 1979-05-27"))).toBe("a = 1979-05-27\n");
+    expect(TOML.stringify(TOML.parse('a = "1979-05-27"'))).toBe('a = "1979-05-27"\n');
   });
 
   test("nan, inf, -inf, and signed zero round-trip as values, not just as text", () => {

@@ -41,12 +41,6 @@ var promisify = function promisify(original) {
           }
 
           if (callbackArgs !== undefined) {
-            // if (!Array.isArray(callbackArgs)) {
-            //   throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
-            // }
-            // if (callbackArgs.length !== values.length) {
-            //   throw new Error("Mismatched length in promisify callback args");
-            // }
             const result = {};
             for (let i = 0; i < callbackArgs.length; i++) {
               result[callbackArgs[i]] = values[i];
@@ -100,7 +94,6 @@ promisify.custom = kCustomPromisifiedSymbol;
 }
 
 export default {
-  defineCustomPromisify,
   defineCustomPromisifyArgs,
   promisify,
 };

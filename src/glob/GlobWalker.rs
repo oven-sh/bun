@@ -225,7 +225,7 @@ impl Accessor for SyscallAccessor {
 // include a trailing NUL byte when `SENTINEL == true`.
 pub type MatchedPath = Box<[u8]>;
 
-pub type IgnoreFilterFn = fn(&[u8]) -> bool;
+type IgnoreFilterFn = fn(&[u8]) -> bool;
 
 /// Set of active component indices during traversal. At `**/X`
 /// boundaries the walker needs to both advance past X and keep the
@@ -290,7 +290,7 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
 // while its stored keys come from `dupe_z` (NUL included), so in SENTINEL
 // mode symlink-match probes never hit and symlink dedupe silently misses —
 // a known quirk deliberately left as-is.
-pub type MatchedMap = bun_collections::StringArrayHashMap<()>;
+type MatchedMap = bun_collections::StringArrayHashMap<()>;
 
 /// The glob walker references the .directory.path so its not safe to
 /// copy/move this

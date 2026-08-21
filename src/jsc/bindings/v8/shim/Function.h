@@ -38,7 +38,7 @@ private:
     JSC::WriteBarrier<FunctionTemplate> m_functionTemplate;
 
     Function(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, FunctionTemplate::functionCall)
+        : Base(vm, structure, FunctionTemplate::functionCall, FunctionTemplate::functionConstruct)
     {
     }
 

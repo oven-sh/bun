@@ -29,6 +29,12 @@ pub trait StaticPipeWriterProcess {
 
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
 /// `P` must expose `fn on_close_io(&mut self, kind: StdioKind)`.
+///
+/// Two refs: `create()`'s, held in the owner's stdin slot and released by its
+/// `on_close_io`, and `start()`'s, held while the write is in flight. `started`
+/// is the token for the latter: whoever swaps it to `false` releases the ref,
+/// which is `on_write` on completion, `on_close` after a failed write (the one
+/// ending with no completion report), or an owner closing the writer itself.
 // Cleanup lives in `impl Drop` below; the final Box free is
 // the derive's default destructor (`drop(heap::take(this))`).
 #[derive(bun_ptr::RefCounted)]
@@ -41,7 +47,7 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// BACKREF: parent process is notified on close; never owned/destroyed here.
     pub(crate) process: *mut P,
     pub(crate) event_loop: EventLoopHandle,
-    /// True while `start()`'s `+1` ref is outstanding.
+    /// True while `start()`'s `+1` ref is outstanding (see the type docs).
     pub started: bool,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
     ///
@@ -214,21 +220,22 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         );
         let len = self.buffer.len();
         self.buffer = RawSlice::new(&self.buffer.slice()[amount.min(len)..]);
-        if status == WriteStatus::EndOfFile || self.buffer.is_empty() {
-            // `started` is the token for start()'s outstanding +1. Clearing it
-            // before the deref makes this release mutually exclusive with the
-            // owner's close-time release (`Subprocess::take_pending_start_writer`,
-            // which also clears `started`). On POSIX, `writer.close()` →
-            // `Parent::on_close` may drop `create()`'s +1, so keep start()'s +1
-            // across it. `EndOfFile` is skipped because `PosixBufferedWriter::
-            // _on_write` still touches `self` after this returns on that status.
-            let release_start_ref = self.started && status != WriteStatus::EndOfFile;
-            if release_start_ref {
-                self.started = false;
+        if status == WriteStatus::EndOfFile {
+            // The buffered writer closes itself (-> `on_close`) after this
+            // returns, so don't close here.
+            if core::mem::replace(&mut self.started, false) {
+                // SAFETY: token taken above; not the final ref, the owner's slot
+                // still holds one until that `on_close`.
+                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
             }
+            return;
+        }
+        if self.buffer.is_empty() {
+            // Token taken before `close()` so start()'s ref outlives the owner's.
+            let release_start_ref = core::mem::replace(&mut self.started, false);
             self.writer.close();
             if release_start_ref {
-                // SAFETY: start()'s +1 was still outstanding; `started` cleared above so no other site re-derefs.
+                // SAFETY: token taken above; may be the final ref, last use of `self`.
                 unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
             }
         }
@@ -241,14 +248,11 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             std::ptr::from_ref(self) as usize,
             err
         );
-        // Clear the buffer before detaching: `buffer` aliases `self.source`'s
-        // storage, and `detach()` frees it. `drain_buffered_data` calls
-        // on_error() then Parent::on_write(), which would otherwise re-slice
-        // the freed allocation.
+        // `buffer` aliases `self.source`'s storage, which `detach()` frees.
+        // start()'s ref is released by the `on_close` the writer pairs with
+        // every error.
         self.buffer = RawSlice::EMPTY;
         self.source.detach();
-        // Can't release start()'s +1 here: `drain_buffered_data` calls on_error() then
-        // Parent::on_write(); freeing here would UAF.
     }
 
     pub(crate) fn on_close(&mut self) {
@@ -257,14 +261,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             "StaticPipeWriter(0x{:x}) onClose()",
             std::ptr::from_ref(self) as usize
         );
-        // On Windows the error arm of `WindowsBufferedWriter::on_write_complete`
-        // reaches here via `close()` without ever calling `Parent::on_write`, so
-        // this is the last point `started` can be claimed for that path.
-        // `write()`'s +1 (held by that callback's scopeguard) keeps `self` live
-        // past the deref. POSIX must not release here: `drain_buffered_data`
-        // may call `on_error()` -> `close()` -> here and then `on_write()` on
-        // the same object, with no extra ref held.
-        #[cfg(windows)]
+        // Still set only after a failed write (every other path takes the token
+        // before closing). Must be taken before `on_close_io` empties the slot:
+        // nothing can reach this writer afterwards.
         let release_start_ref = core::mem::replace(&mut self.started, false);
         // `buffer` aliases `self.source`'s storage; clear it before detach()
         // frees that storage so no dangling slice survives the close.
@@ -273,10 +272,10 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // SAFETY: `process` is a backref to the owning process, guaranteed alive
         // for the lifetime of this writer (the process owns/outlives its stdio writers).
         unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
-        #[cfg(windows)]
         if release_start_ref {
-            // SAFETY: `started` was the token for start()'s outstanding +1;
-            // cleared above so no other site re-derefs. Last use of `self`.
+            // SAFETY: token taken above. On POSIX this frees `self`: it is the
+            // last use here, and the writer's `close()` frames below do nothing
+            // after this callback. On Windows the in-flight write's ref outlives it.
             unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
         }
     }

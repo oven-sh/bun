@@ -294,21 +294,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 }
             }
         } else if args[0].is_object() {
-            let r = color_int_from_js(
-                global,
-                args[0].get(global, b"r")?.unwrap_or(JSValue::ZERO),
-                "r",
-            )?;
-            let g = color_int_from_js(
-                global,
-                args[0].get(global, b"g")?.unwrap_or(JSValue::ZERO),
-                "g",
-            )?;
-            let b = color_int_from_js(
-                global,
-                args[0].get(global, b"b")?.unwrap_or(JSValue::ZERO),
-                "b",
-            )?;
+            let r = color_int_from_js(global, args[0].get(global, b"r")?.unwrap_or_default(), "r")?;
+            let g = color_int_from_js(global, args[0].get(global, b"g")?.unwrap_or_default(), "g")?;
+            let b = color_int_from_js(global, args[0].get(global, b"b")?.unwrap_or_default(), "b")?;
 
             let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
                 'brk2: {

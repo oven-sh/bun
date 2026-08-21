@@ -11,10 +11,17 @@
 // port and the synchronous-failure scenario never dials, so those run
 // everywhere. Each scenario runs in a subprocess because the throwing
 // callback is reported as a process-level uncaughtException.
+//
+// The AsyncLocalStorage section at the end of the file covers the other
+// property of the same two callback invocations: they run in the async
+// context the SQL instance was created in (see that section's comment).
 
+import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
+import { closedPort } from "./wire-frames";
 
 // Fixtures that need closedPort() / neverAnsweringServer() run them in the
 // spawned subprocess (not the test process) by importing ./wire-frames via
@@ -275,6 +282,110 @@ for (const [adapter, closedCode] of [
         `onclose: ${closedCode}\nuncaught: boom from onclose\nclosed\nquery rejected: ${closedCode}\n`,
       );
       expect(exitCode).toBe(0);
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AsyncLocalStorage. onconnect/onclose used to run in whatever context the
+// native callback happened to fire in: none for a socket event (onconnect, a
+// refused or dropped connection), or the close() caller's when a plaintext
+// connection closes synchronously inside close(). They now run in the context
+// the SQL instance was created in: pool connections are opened by whichever
+// query happens to need one (and re-opened on retry) and closed by close(),
+// idle timeouts or the server, so no other context is well defined. Every
+// pool below is driven from a context other than the one it was created in,
+// so an implementation that inherits the caller's context fails these too.
+// ---------------------------------------------------------------------------
+
+const als = new AsyncLocalStorage<string>();
+
+type HookEvent = [hook: "onconnect" | "onclose", store: string | undefined];
+
+/**
+ * `new SQL(...)` inside `als.run(createdIn)` (outside any store when `createdIn` is
+ * undefined), recording the store each hook observes when it fires.
+ */
+function poolCreatedIn(createdIn: string | undefined, url: string) {
+  const events: HookEvent[] = [];
+  const options = {
+    url,
+    max: 1,
+    onconnect() {
+      events.push(["onconnect", als.getStore()]);
+    },
+    onclose() {
+      events.push(["onclose", als.getStore()]);
+    },
+  };
+  const create = () => new SQL(options);
+  const sql = createdIn === undefined ? als.exit(create) : als.run(createdIn, create);
+  return { sql, events };
+}
+
+// describeWithContainer skips itself when no postgres service is reachable, so
+// this block needs no isDockerEnabled() guard.
+describeWithContainer("postgres: AsyncLocalStorage", { image: "postgres_plain" }, container => {
+  test("onconnect and onclose observe the store each pool was created in, not the caller's", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    const a = poolCreatedIn("created-a", url);
+    const b = poolCreatedIn("created-b", url);
+    try {
+      await als.run("caller", () => Promise.all([a.sql.connect(), b.sql.connect()]));
+    } finally {
+      await als.run("caller", () => Promise.all([a.sql.close(), b.sql.close()]));
+    }
+    expect({ a: a.events, b: b.events }).toStrictEqual({
+      a: [
+        ["onconnect", "created-a"],
+        ["onclose", "created-a"],
+      ],
+      b: [
+        ["onconnect", "created-b"],
+        ["onclose", "created-b"],
+      ],
+    });
+  });
+
+  test("a pool created outside any store does not inherit the caller's store", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    const { sql, events } = poolCreatedIn(undefined, url);
+    try {
+      await als.run("caller", () => sql.connect());
+    } finally {
+      await als.run("caller", () => sql.close());
+    }
+    expect(events).toStrictEqual([
+      ["onconnect", undefined],
+      ["onclose", undefined],
+    ]);
+  });
+});
+
+// Fault-injection test (a refused connection), see the DO NOT COPY THIS PATTERN
+// note above: anything a real server can produce belongs in describeWithContainer.
+// A refused connection reaches onclose through the connect-failure path rather
+// than through close(), and since nothing has to be listening it also covers
+// the mysql adapter.
+for (const [adapter, scheme, refusedCode] of [
+  ["postgres", "postgres://postgres@127.0.0.1:", "ERR_POSTGRES_CONNECTION_REFUSED"],
+  ["mysql", "mysql://root@127.0.0.1:", "ERR_MYSQL_CONNECTION_REFUSED"],
+] as const) {
+  test.concurrent(
+    `${adapter}: onclose for a refused connection observes the store the pool was created in`,
+    async () => {
+      const { sql, events } = poolCreatedIn("created-in", `${scheme}${await closedPort()}/db`);
+      let code: string | undefined;
+      try {
+        await als.run("caller", () => sql.connect());
+      } catch (err) {
+        code = (err as { code?: string }).code;
+      } finally {
+        await sql.close();
+      }
+      expect({ code, events }).toStrictEqual({ code: refusedCode, events: [["onclose", "created-in"]] });
     },
   );
 }

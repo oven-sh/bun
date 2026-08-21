@@ -792,9 +792,11 @@ describe.concurrent("unref()/pause() around connect()", () => {
   // open re-armed reads, so backpressure could never pause it again and the buffer grew unbounded.
   it("pause() while the connect is in flight still lets backpressure stop reads", async () => {
     const chunk = Buffer.alloc(64 * 1024, "x");
+    let serverBackedUp = false;
     await using server = createServer(c => {
       const pump = () => {
         while (!c.destroyed && c.write(chunk)) {}
+        serverBackedUp = !c.destroyed;
       };
       c.on("drain", pump);
       c.on("error", () => {});
@@ -813,12 +815,13 @@ describe.concurrent("unref()/pause() around connect()", () => {
         ),
       );
       await once(s, "connect");
-      // Once the buffer passes the high-water mark reads must stop. Unpatched, every loop turn
-      // delivered another recv; allow at most a couple that were already in flight.
+      // Once the client stops reading (buffer past the high-water mark, or never started) the
+      // server backs up; from then on bytesRead must stay put. Unpatched, every loop turn
+      // delivered another recv; allow a couple that were already in flight.
       const deadline = performance.now() + 5000;
-      while (performance.now() < deadline && s.readableLength < s.readableHighWaterMark)
+      while (performance.now() < deadline && !serverBackedUp && s.readableLength < s.readableHighWaterMark)
         await new Promise(r => setTimeout(r, 1));
-      expect(s.readableLength).toBeGreaterThanOrEqual(s.readableHighWaterMark);
+      expect(serverBackedUp || s.readableLength >= s.readableHighWaterMark).toBeTrue();
       const settled = s.bytesRead;
       for (let i = 0; i < 100; i++) await new Promise(r => setTimeout(r, 0));
       const recvBuffer = 512 * 1024;

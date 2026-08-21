@@ -6,25 +6,8 @@ import { SimpleRegistry } from "./simple-dummy-registry";
 const CI_SAMPLE_PERCENT = 10; // only 10% of tests will run in CI because this matrix generates so many tests
 
 function getTestName(testId: string, hasExistingNodeModules: boolean) {
-  return `${testId} (${hasExistingNodeModules ? "with modules" : "without modules"})` as const;
+  return `${testId} (${hasExistingNodeModules ? "with modules" : "without modules"})`;
 }
-type TestName = ReturnType<typeof getTestName>;
-
-// prettier-ignore
-// These tests are failing for other reasons outside of the security scanner.
-// You should leave a comment above pointing to a GitHub issue for reference, so these
-// don't get totally lost.
-const TESTS_TO_SKIP: Set<string> = new Set<TestName>([
-  // https://github.com/oven-sh/bun/issues/22255
-  // remove "is-even"
-  "0481 (without modules)", "0486 (without modules)", "0491 (without modules)", "0496 (without modules)", "0511 (without modules)", "0516 (without modules)", "0521 (without modules)", "0526 (without modules)",
-  // remove "left-pad,is-even"
-  "0541 (without modules)", "0546 (without modules)", "0551 (without modules)", "0556 (without modules)", "0571 (without modules)", "0576 (without modules)", "0581 (without modules)", "0586 (without modules)",
-  // uninstall "is-even"
-  "0601 (without modules)", "0606 (without modules)", "0611 (without modules)", "0616 (without modules)", "0631 (without modules)", "0636 (without modules)", "0641 (without modules)", "0646 (without modules)",
-  // uninstall "left-pad,is-even"
-  "0661 (without modules)", "0666 (without modules)", "0671 (without modules)", "0676 (without modules)", "0691 (without modules)", "0696 (without modules)", "0701 (without modules)", "0706 (without modules)",
-]);
 
 interface SecurityScannerTestOptions {
   command: "install" | "update" | "add" | "remove" | "uninstall";
@@ -263,8 +246,8 @@ function expectationsFor(options: SecurityScannerTestOptions): { before: Project
     // The isolated linker only unlinks a removed package, its store entry stays behind.
     installedAfter = installedBefore;
   } else {
-    // For remove without node_modules this includes a removed package that something else still depends on,
-    // see https://github.com/oven-sh/bun/issues/22255.
+    // `remove is-even` without node_modules installs is-even: it is still a dependency of is-odd. This is what
+    // https://github.com/oven-sh/bun/issues/22255 describes, its reproduction has the same dependency graph.
     installedAfter = tree;
   }
 
@@ -524,7 +507,6 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                 const testName = getTestName(String(++i).padStart(4, "0"), hasExistingNodeModules);
 
                 const skip =
-                  TESTS_TO_SKIP.has(testName) ||
                   // PTY not supported on Windows
                   (hasTTY && isWindows) ||
                   // `uninstall` is the same as `remove`, optimising for CI time here

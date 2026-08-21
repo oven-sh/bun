@@ -285,7 +285,7 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
   let active: RunState | null = null;
 
   async function run(...caseArgs: unknown[]) {
-    const state: RunState = { context: {}, teardowns: [], resolved: [] };
+    const state: RunState = { context: { __proto__: null }, teardowns: [], resolved: [] };
     active = state;
 
     const { length } = fixtures;

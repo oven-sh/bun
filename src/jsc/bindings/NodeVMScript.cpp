@@ -571,7 +571,7 @@ public:
 
     static NodeVMScriptPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
-        NodeVMScriptPrototype* ptr = new (NotNull, allocateCell<NodeVMScriptPrototype>(vm)) NodeVMScriptPrototype(vm, structure);
+        NodeVMScriptPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(NodeVMScriptPrototype))) NodeVMScriptPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -585,7 +585,7 @@ public:
     }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
     }
 
 private:
@@ -612,8 +612,8 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
 void NodeVMScriptPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, NodeVMScript::info(), scriptPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, NodeVMScript::info(), scriptPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSObject* NodeVMScript::createPrototype(VM& vm, JSGlobalObject* globalObject)

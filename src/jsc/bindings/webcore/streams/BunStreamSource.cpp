@@ -72,17 +72,12 @@ JSNativeStreamSourceAdapter* JSNativeStreamSourceAdapter::create(VM& vm, Structu
 
 Structure* JSNativeStreamSourceAdapter::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSNativeStreamSourceAdapter::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSNativeStreamSourceAdapter, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNativeStreamSourceAdapter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNativeStreamSourceAdapter = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNativeStreamSourceAdapter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNativeStreamSourceAdapter = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSNativeStreamSourceAdapter, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNativeStreamSourceAdapter, m_subspaceForNativeStreamSourceAdapter));
 }
 
 template<typename Visitor>
@@ -117,17 +112,12 @@ JSDirectSinkCloseState* JSDirectSinkCloseState::create(VM& vm, Structure* struct
 
 Structure* JSDirectSinkCloseState::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSDirectSinkCloseState::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDirectSinkCloseState, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDirectSinkCloseState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDirectSinkCloseState = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDirectSinkCloseState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDirectSinkCloseState = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDirectSinkCloseState, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDirectSinkCloseState, m_subspaceForDirectSinkCloseState));
 }
 
 template<typename Visitor>
@@ -175,17 +165,12 @@ JSReadStreamIntoSinkOperation* JSReadStreamIntoSinkOperation::create(VM& vm, Str
 
 Structure* JSReadStreamIntoSinkOperation::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSReadStreamIntoSinkOperation::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadStreamIntoSinkOperation, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadStreamIntoSinkOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadStreamIntoSinkOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadStreamIntoSinkOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadStreamIntoSinkOperation = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadStreamIntoSinkOperation, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadStreamIntoSinkOperation, m_subspaceForReadStreamIntoSinkOperation));
 }
 
 template<typename Visitor>

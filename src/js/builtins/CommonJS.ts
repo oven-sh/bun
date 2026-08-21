@@ -117,10 +117,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     // If we can pull out a ModuleNamespaceObject, let's do it.
     const namespace = $esmNamespaceForCjs(id);
     if (namespace !== undefined) {
-      // Node adds an own enumerable `__esModule: true` to the namespace returned from
-      // require(esm) when the module has a `default` export, so that transpiler interop
-      // helpers (Babel/TypeScript `_interopRequireDefault`) don't double-wrap.
-      // https://github.com/oven-sh/bun/issues/14411
+      // Matches Node: require(esm) marks the namespace with __esModule only when it has a default export.
       if (namespace.__esModule === undefined && "default" in namespace) {
         try {
           namespace.__esModule = true;
@@ -335,10 +332,7 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
   // If we can pull out a ModuleNamespaceObject, let's do it.
   const namespace = $esmNamespaceForCjs(id);
   if (namespace !== undefined) {
-    // Node adds an own enumerable `__esModule: true` to the namespace returned from
-    // require(esm) when the module has a `default` export, so that transpiler interop
-    // helpers (Babel/TypeScript `_interopRequireDefault`) don't double-wrap.
-    // https://github.com/oven-sh/bun/issues/14411
+    // Matches Node: require(esm) marks the namespace with __esModule only when it has a default export.
     if (namespace.__esModule === undefined && "default" in namespace) {
       try {
         namespace.__esModule = true;

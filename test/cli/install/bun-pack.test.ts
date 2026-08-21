@@ -3,6 +3,7 @@ import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
 import fs from "node:fs/promises";
 import { join } from "path";
 
@@ -1467,23 +1468,31 @@ describe(".gitignore/.npmignore", () => {
   }
 
   for (const ignoreFile of [".gitignore", ".npmignore"]) {
-    test(`reports which ${ignoreFile} could not be read`, async () => {
-      await Promise.all([
-        write(
-          join(packageDir, "package.json"),
-          JSON.stringify({
-            name: "pack-ignore-unreadable",
-            version: "1.0.0",
-          }),
-        ),
-        write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
-        // a directory where the ignore file is expected: opening it succeeds, reading it fails
-        mkdir(join(packageDir, "subdir", ignoreFile), { recursive: true }),
-      ]);
+    // Only a regular file is accepted where an ignore file is expected. A FIFO
+    // there used to block the pack forever in open().
+    for (const [kind, errno, create] of [
+      ["a directory", "EISDIR", (path: string) => mkdir(path, { recursive: true })],
+      ["a FIFO", "ENODEV", async (path: string) => mkfifo(path)],
+    ] as const) {
+      test.skipIf(isWindows && kind === "a FIFO")(`reports which ${ignoreFile} is ${kind}`, async () => {
+        await Promise.all([
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "pack-ignore-unreadable",
+              version: "1.0.0",
+            }),
+          ),
+          write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
+        ]);
+        await create(join(packageDir, "subdir", ignoreFile));
 
-      const { err } = await packExpectError(packageDir, bunEnv);
-      expect(err).toContain(`EISDIR: failed to read ${ignoreFile} at: "${join(packageDir, "subdir", ignoreFile)}"\n`);
-    });
+        const { err } = await packExpectError(packageDir, bunEnv);
+        expect(err).toContain(
+          `${errno}: failed to open ${ignoreFile} at: "${join(packageDir, "subdir", ignoreFile)}"\n`,
+        );
+      });
+    }
   }
 
   test("excludes files recursively", async () => {

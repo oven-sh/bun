@@ -165,11 +165,11 @@ impl NodeModulesFolder {
     ) -> bun_sys::Result<bun_sys::File> {
         let mut path_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
-        root_node_modules_dir.open_file(
+        bun_sys::File::open_regular_at(
+            root_node_modules_dir,
             join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
-            bun_sys::O::RDONLY,
-            0,
         )
+        .map(|(file, _)| file)
     }
 
     pub(crate) fn read_small_file(
@@ -212,8 +212,9 @@ impl NodeModulesFolder {
         }
 
         let dir = self.open_dir(root_node_modules_dir)?;
-        let res = dir.open_file(file_path, bun_sys::O::RDONLY, 0);
-        res.map_err(|e| e.to_zig_err().into())
+        bun_sys::File::open_regular_at(&dir, file_path)
+            .map(|(file, _)| file)
+            .map_err(|e| e.to_zig_err().into())
     }
 
     pub(crate) fn open_dir(&self, root: &Dir) -> crate::Result<Dir> {

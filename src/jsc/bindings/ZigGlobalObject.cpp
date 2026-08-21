@@ -3701,10 +3701,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         // The lexical referrer of this import() has no asyncEvaluationOrder,
         // but the call can still run synchronously inside the body of a module
         // that is mid top-level-await (a helper module's function invoked from
-        // that body). Waiting on that module at innerModuleEvaluation 12.b.v
-        // is the same guaranteed deadlock the referrerAsyncOrder skip exists
-        // for, so take the order from the nearest caller frame whose module
-        // has one. #39831.
+        // that body). If that module awaits the import() result, even
+        // transitively, waiting on it at innerModuleEvaluation 12.b.v is the
+        // same deadlock the referrerAsyncOrder skip exists for, so take the
+        // order from the nearest caller frame whose module has one. #39831.
+        // Whether the caller will await the result is not observable here, so
+        // the skip also fires for a fire-and-forget import() whose target
+        // cycles back: that target then sees the caller's partial bindings,
+        // the same as when the import() is written in the caller directly.
         auto* moduleLoader = globalObject->moduleLoader();
         JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
             // Only module body frames matter: a module's asyncEvaluationOrder

@@ -240,6 +240,55 @@ test("dynamic import through a helper module whose target imports the TLA awaite
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/39831
+// The import() is not awaited directly: the entry awaits a separate promise
+// that the import's settlement resolves. Awaitedness is not observable at the
+// import() call, so the stack-walk fallback must treat this the same as a
+// direct await. Without the skip this graph deadlocks (chunk waits on the
+// entry at 12.b.v, the entry waits on `settled`, `settled` waits on chunk).
+// The chunk runs against the entry's partial bindings, so reading the
+// post-await binding throws. Node deadlocks here by design (exit 13).
+test("dynamic import through a helper awaited transitively via separate promise plumbing does not deadlock", async () => {
+  using dir = tempDir("dyn-tla-cycle-transitive", {
+    "entry.mjs": `
+      import { preload, settled } from "./helper.mjs";
+      export const early = 1;
+      preload();
+      await settled;
+      export const late = 2;
+      console.log("entry done");
+    `,
+    "helper.mjs": `
+      const w = Promise.withResolvers();
+      export const settled = w.promise;
+      export function preload() {
+        import("./chunk.mjs").then(
+          m => { console.log("chunk:", m.result); w.resolve(); },
+          e => { console.log("chunk error:", e.constructor.name); w.resolve(); },
+        );
+      }
+    `,
+    "chunk.mjs": `
+      import { early, late } from "./entry.mjs";
+      export const result = early + late;
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("chunk error: ReferenceError\nentry done");
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/30634
 test("sibling dynamic imports sharing a TLA wrapper wait for its post-await exports", async () => {
   using dir = tempDir("dyn-tla-shared-wrapper", {

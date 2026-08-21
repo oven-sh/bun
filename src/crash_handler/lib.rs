@@ -711,10 +711,7 @@ mod draft {
         Print(&'static [u8]),
         Resolver,
         Dlopen(&'static [u8]),
-        /// `JSC::initialize()` (`bun_jsc::initialize`). Its address space
-        /// reservations fail with a `RELEASE_ASSERT`, so a crash here is
-        /// checked for an exhausted address space first: see
-        /// [`exit_if_jsc_initialization_ran_out_of_address_space`].
+        /// Inside `JSC::initialize()`. See `exit_if_jsc_initialization_ran_out_of_address_space`.
         InitializeJsc,
     }
 
@@ -1255,22 +1252,16 @@ mod draft {
         crash(reason);
     }
 
-    /// The address space that the smallest reservation `JSC::initialize()` can
-    /// start with needs. JSC halves its 4 GB Structure heap request while the
-    /// reservation fails (`StructureAlignedMemoryAllocator.cpp`). 64 MB is the
-    /// last size mimalloc accepts as an arena, and `OSAllocator::
-    /// tryReserveUncommittedAligned` maps twice that to align it.
+    /// The smallest Structure heap JSC starts with is 64 MB (the last rung of
+    /// `StructureAlignedMemoryAllocator.cpp` that mimalloc accepts as an arena),
+    /// reserved as size + alignment.
     #[cfg(unix)]
     const JSC_MINIMUM_RESERVATION_MB: usize = 128;
 
-    /// JSC crashes with a `RELEASE_ASSERT` when it cannot reserve the address
-    /// space for its heaps (`ulimit -v`, a container limit, strict overcommit).
-    /// That is not a bug to report: when the process cannot reserve
-    /// [`JSC_MINIMUM_RESERVATION_MB`] at the time of the crash, this prints
-    /// what is wrong and exits. Otherwise it returns and the crash is reported.
-    ///
-    /// Windows limits commit charge, not address space, so a crash there is
-    /// always reported.
+    /// `JSC::initialize()` hits a `RELEASE_ASSERT` when its reservations fail.
+    /// If the process cannot reserve [`JSC_MINIMUM_RESERVATION_MB`] now, that is
+    /// the cause: print it and exit instead of reporting a crash. Unix only,
+    /// Windows limits commit charge rather than address space.
     fn exit_if_jsc_initialization_ran_out_of_address_space() {
         #[cfg(unix)]
         {

@@ -32,28 +32,37 @@ describe.concurrent("node-module-module", () => {
   test("Module._initPaths() rebuilds globalPaths from HOME/USERPROFILE, NODE_PATH and execPath", async () => {
     const delimiter = isWindows ? ";" : ":";
     const home = isWindows ? "C:\\Users\\someone" : "/home/someone";
+    // Node's layout is $PREFIX/bin/node, or $PREFIX\node.exe on Windows.
+    const fakePrefix = isWindows ? "C:\\fake-prefix" : "/fake-prefix";
+    const fakeExecPath = isWindows ? path.join(fakePrefix, "node.exe") : path.join(fakePrefix, "bin", "node");
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const M = require("module");
-         const path = require("path");
+         const execPath = process.execPath;
          M._initPaths();
          const first = M.globalPaths;
          process.env.NODE_PATH = ["", "/a", "", "rel", ""].join(${JSON.stringify(delimiter)});
          process.env.HOME = process.env.USERPROFILE = "";
          M._initPaths();
-         const prefix = ${isWindows} ? path.resolve(process.execPath, "..") : path.resolve(process.execPath, "..", "..");
-         console.log(JSON.stringify({ first, second: M.globalPaths, sameObject: first === M.globalPaths, expectedLib: path.resolve(prefix, "lib", "node") }));`,
+         const second = M.globalPaths;
+         process.execPath = ${JSON.stringify(fakeExecPath)};
+         M._initPaths();
+         console.log(JSON.stringify({ execPath, first, second, third: M.globalPaths, sameObject: first === second }));`,
       ],
       env: { ...bunEnv, HOME: home, USERPROFILE: home, NODE_PATH: "" },
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const { first, second, sameObject, expectedLib } = JSON.parse(stdout);
-    expect(first).toEqual([path.resolve(home, ".node_modules"), path.resolve(home, ".node_libraries"), expectedLib]);
-    expect(second).toEqual(["/a", "rel", expectedLib]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { execPath, first, second, third, sameObject } = JSON.parse(stdout);
+    const prefix = isWindows ? path.dirname(execPath) : path.dirname(path.dirname(execPath));
+    const lib = path.join(prefix, "lib", "node");
+    expect(first).toEqual([path.join(home, ".node_modules"), path.join(home, ".node_libraries"), lib]);
+    expect(second).toEqual(["/a", "rel", lib]);
+    expect(third).toEqual(["/a", "rel", path.join(fakePrefix, "lib", "node")]);
     expect(sameObject).toBe(false);
     expect(exitCode).toBe(0);
   });

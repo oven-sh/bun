@@ -1799,6 +1799,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_throwValue, (JSGlobalObject * globalObject, 
     return {};
 }
 
+#if !OS(WINDOWS)
+static void restoreDefaultSignalDisposition(int signalNumber)
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sigaction(signalNumber, &sa, nullptr);
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
 #if OS(WINDOWS)
@@ -1808,11 +1819,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
 #else
     // process.abort() is user-requested; bypass the crash handler so it does
     // not print "Bun has crashed" or upload a report.
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = SIG_DFL;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGABRT, &sa, nullptr);
+    restoreDefaultSignalDisposition(SIGABRT);
     abort();
 #endif
 }
@@ -4642,6 +4649,30 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
+#if !OS(WINDOWS)
+extern "C" bool CrashHandler__isCrashSignal(int signalNumber);
+
+// kill(2) delivers to the calling process for its own pid, for 0 (its process group) and for the
+// negated id of its process group. -1 skips the caller on Linux and on the BSDs.
+static bool killReachesThisProcess(int pid, int ownPid)
+{
+    return pid == ownPid || pid == 0 || pid == -getpgrp();
+}
+
+// A crash-handler signal the process sends to itself asks for that signal's default action.
+// Dying from it is not a Bun crash, so it must not print a crash report or upload one, the same
+// as process.abort(). A JS listener for the signal keeps receiving it, as in node.
+static void bypassCrashHandlerForSelfSentSignal(int signalNumber)
+{
+    if (!CrashHandler__isCrashSignal(signalNumber))
+        return;
+    struct sigaction current;
+    if (sigaction(signalNumber, nullptr, &current) != 0 || current.sa_handler == forwardSignal)
+        return;
+    restoreDefaultSignalDisposition(signalNumber);
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -4671,8 +4702,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     }
 
 #if !OS(WINDOWS)
-    if (pid == ownPid) {
+    if (killReachesThisProcess(pid, ownPid)) {
         Bun__suppressCrashOnProcessKillSelfIfDesired();
+        bypassCrashHandlerForSelfSentSignal(signal);
     }
     int result = kill(pid, signal);
     if (result < 0)

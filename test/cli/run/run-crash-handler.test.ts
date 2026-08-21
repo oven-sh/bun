@@ -652,8 +652,8 @@ function decodeUploadedPanicMessage(payload: string): string {
 // module it was: a line under the panic locally, and a suffix on the uploaded
 // message. bun.report's fingerprint for a panic includes the message, so Sentry
 // groups these per module. The suffix carries the path from the last
-// node_modules on, never the user's directories. The hook stands in for a
-// callback of a module at the given path.
+// node_modules directory on, never the user's directories. The hook stands in
+// for a callback of a module at the given path.
 test("a panic inside a native module names the module locally and in the uploaded message", async () => {
   const uploaded = Promise.withResolvers<string>();
   using server = Bun.serve({
@@ -663,7 +663,9 @@ test("a panic inside a native module names the module locally and in the uploade
       return new Response("OK");
     },
   });
-  const modulePath = "/home/someone/app/node_modules/@scope/pkg/build/Release/pkg.node";
+  // `old_node_modules` is a user directory that merely ends in the word; the
+  // real `node_modules` before it is the one the uploaded name starts after.
+  const modulePath = "/home/someone/app/node_modules/@scope/pkg/old_node_modules/pkg.node";
 
   await using proc = Bun.spawn({
     cmd: [
@@ -692,7 +694,7 @@ test("a panic inside a native module names the module locally and in the uploade
   const payload = pathname.match(/^\/[^/]+\/(.*)\/ack$/)?.[1];
   expect(payload, pathname).toBeDefined();
   expect(decodeUploadedPanicMessage(payload!)).toBe(
-    "invoked crashByPanic() handler (running native module @scope/pkg/build/Release/pkg.node)",
+    "invoked crashByPanic() handler (running native module @scope/pkg/old_node_modules/pkg.node)",
   );
 });
 

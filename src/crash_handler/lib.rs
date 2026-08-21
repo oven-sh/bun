@@ -649,14 +649,19 @@ mod draft {
             ))
         }
 
-        /// What goes into the uploaded report: the part after the last `node_modules`, else the basename. Never the user's directories.
+        /// What goes into the uploaded report: the part after the last `node_modules` directory, else the basename. Never the user's directories.
         fn report_name(name: &[u8]) -> &[u8] {
             const NODE_MODULES: &[u8] = b"node_modules";
-            if let Some(index) = strings::last_index_of(name, NODE_MODULES) {
+            let is_separator = |byte: &u8| matches!(byte, b'/' | b'\\');
+            let mut end = name.len();
+            while let Some(index) = strings::last_index_of(&name[..end], NODE_MODULES) {
                 let rest = &name[index + NODE_MODULES.len()..];
-                if matches!(rest.first(), Some(b'/' | b'\\')) && rest.len() > 1 {
+                let whole_component = (index == 0 || is_separator(&name[index - 1]))
+                    && rest.first().is_some_and(is_separator);
+                if whole_component && rest.len() > 1 {
                     return &rest[1..];
                 }
+                end = index;
             }
             bun_paths::basename(name)
         }

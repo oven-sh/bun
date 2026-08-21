@@ -1,5 +1,8 @@
 #include "root.h"
 #include "headers-handwritten.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
@@ -943,6 +946,24 @@ static WTF::String generateHeapSnapshotV8(JSC::VM& vm)
 
     JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
     return builder.json();
+}
+
+// JSC has no allocation-site sampling heap profiler; emit V8's SamplingHeapProfile
+// shape with the live-heap size on the (root) frame and no samples.
+// https://chromedevtools.github.io/devtools-protocol/tot/HeapProfiler/#type-SamplingHeapProfile
+static WTF::String generateSamplingHeapProfileV8(JSC::VM& vm)
+{
+    WTF::StringBuilder output;
+    output.append("{\"head\":{\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"selfSize\":"_s);
+    output.append(WTF::String::number(vm.heap.size()));
+    output.append(",\"id\":1,\"children\":[]},\"samples\":[]}"_s);
+    return output.toString();
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_takeSamplingHeapProfile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    return JSC::JSValue::encode(JSC::jsString(vm, generateSamplingHeapProfileV8(vm)));
 }
 
 } // namespace Bun

@@ -96,9 +96,7 @@ public:
     // Called by the pipe on this port's context thread with one dequeued message.
     void dispatchOneMessage(ScriptExecutionContext&, MessageWithMessagePorts&&);
 
-    // On the stack while a loop delivers this port's inbox. A close() made under it only
-    // marks the port: the loop delivers the rest at depth 1 and the scope closes the port
-    // when it ends, like node, whose close callback runs after OnMessage() returns.
+    // Held by a loop that delivers this port's inbox. close() under it waits for the loop to end.
     class DispatchScope {
         WTF_MAKE_NONCOPYABLE(DispatchScope);
 
@@ -166,7 +164,7 @@ private:
     bool m_started { false };
     bool m_isDetached { false };
     bool m_isClosing { false };
-    // True while a DispatchScope is on the stack; close() then defers to it.
+    // True while a DispatchScope is on the stack. close() then defers to it.
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
     bool m_hasMessageEventListener { false };

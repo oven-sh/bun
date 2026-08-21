@@ -183,8 +183,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     }
 
     // Budget spent with messages left. We are on `context`'s thread: continue on
-    // its next loop iteration (after I/O and timers), not in this drain. A closing
-    // port is not continued. dispatchScope drops the rest (node: TriggerAsync() no-ops).
+    // its next loop iteration (after I/O and timers), not in this drain.
     if (rescheduleCtx && !port->isClosing()) {
         context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
             pipe->drainAndDispatch(side, rescheduleCtx);

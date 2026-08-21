@@ -12,7 +12,31 @@ const {
   validateOneOf,
   validateString,
 } = require("internal/validators");
+const { uncurryThis } = require("internal/primordials");
+const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
+const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
+  "NodeV8.cpp",
+  "Bun::createNodeV8Binding",
+);
+
+const DateNow = Date.now;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const Uint8ArrayCtor = Uint8Array;
+const BufferAllocUnsafe = Buffer.allocUnsafe;
+const TypedArrayProto = Object.getPrototypeOf(Uint8ArrayCtor.prototype);
+const TypedArrayPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "buffer").get);
+const TypedArrayPrototypeGetByteOffset = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteOffset").get);
+const TypedArrayPrototypeGetByteLength = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteLength").get);
+const TypedArrayPrototypeSet = uncurryThis(TypedArrayProto.set);
+const DataViewPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(DataView.prototype, "buffer").get);
+const DataViewPrototypeGetByteOffset = uncurryThis(
+  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteOffset").get,
+);
+const DataViewPrototypeGetByteLength = uncurryThis(
+  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteLength").get,
+);
+const Uint8ArrayPrototypeSubarray = uncurryThis(Uint8ArrayCtor.prototype.subarray);
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -30,85 +54,90 @@ class Serializer {
 }
 class DefaultDeserializer extends Deserializer {}
 class DefaultSerializer extends Serializer {}
-const startGCProfile = $newCppFunction("BunHeapProfiler.cpp", "jsFunction_startGCProfile", 0);
-const stopGCProfile = $newCppFunction("BunHeapProfiler.cpp", "jsFunction_stopGCProfile", 0);
-
-// One heapStatistics snapshot in GCProfiler's camelCase key set. `usedHeapSize`
-// comes from the per-GC native entry; the rest are current-process values (JSC
-// does not record them per collection).
-function gcProfileHeapStatistics(usedHeapSize: number) {
-  const stats = jsc.heapStats();
-  const memory = jsc.memoryUsage();
-  const total = require("node:os").totalmem();
+// JSC manages one undivided heap, so a record carries a single space instead
+// of V8's thirteen, and counters JSC does not track are reported as 0 rather
+// than invented.
+function gcHeapSnapshot(used, capacity, external) {
+  const available = capacity > used ? capacity - used : 0;
   return {
-    totalHeapSize: stats.heapCapacity,
-    totalHeapSizeExecutable: stats.heapCapacity >> 1,
-    totalPhysicalSize: memory.peak,
-    totalAvailableSize: total > usedHeapSize ? total - usedHeapSize : 0,
-    totalGlobalHandlesSize: 8192,
-    usedGlobalHandlesSize: 2208,
-    usedHeapSize,
-    heapSizeLimit: Math.min(memory.peak * 10, total),
-    mallocedMemory: stats.heapSize,
-    externalMemory: stats.extraMemorySize,
-    peakMallocedMemory: memory.peak,
-  };
-}
-
-function gcProfileHeapSpaceStatistics(usedHeapSize: number) {
-  const stats = jsc.heapStats();
-  const size = stats.heapCapacity;
-  return [
-    {
-      spaceName: "old_space",
-      spaceSize: size,
-      spaceUsedSize: usedHeapSize,
-      spaceAvailableSize: size > usedHeapSize ? size - usedHeapSize : 0,
-      physicalSpaceSize: size,
+    heapStatistics: {
+      totalHeapSize: capacity,
+      totalHeapSizeExecutable: 0,
+      totalPhysicalSize: capacity,
+      totalAvailableSize: available,
+      usedHeapSize: used,
+      heapSizeLimit: 0,
+      mallocedMemory: 0,
+      peakMallocedMemory: 0,
+      externalMemory: external,
+      totalGlobalHandlesSize: 0,
+      usedGlobalHandlesSize: 0,
     },
-  ];
-}
-
-function gcProfileSide(usedHeapSize: number) {
-  return {
-    heapStatistics: gcProfileHeapStatistics(usedHeapSize),
-    heapSpaceStatistics: gcProfileHeapSpaceStatistics(usedHeapSize),
+    heapSpaceStatistics: [
+      {
+        spaceName: "heap",
+        spaceSize: capacity,
+        spaceUsedSize: used,
+        spaceAvailableSize: available,
+        physicalSpaceSize: capacity,
+      },
+    ],
   };
 }
 
-// Deviation from node: the native recorder is one-per-JS-thread, so two
-// concurrently-started GCProfiler instances share it and the first stop()
-// wins; node registers per-instance isolate callbacks.
+const kGCProfilerSession = Symbol("kGCProfilerSession");
+const kGCProfilerStartTime = Symbol("kGCProfilerStartTime");
+
+// A profiler that is started and then dropped without stop() would otherwise
+// leave its native session open for the life of the VM; the registry releases
+// it when the wrapper is collected, matching node's BaseObject finalizer.
+let gcProfilerRegistry: FinalizationRegistry<number> | undefined;
+
 class GCProfiler {
-  #startTime: number | undefined;
+  constructor() {
+    this[kGCProfilerSession] = null;
+    this[kGCProfilerStartTime] = 0;
+  }
 
   start() {
-    if (this.#startTime !== undefined) return;
-    this.#startTime = Date.now();
-    startGCProfile();
+    if (this[kGCProfilerSession] !== null) return;
+    this[kGCProfilerStartTime] = DateNow();
+    const id = startGCProfiler();
+    this[kGCProfilerSession] = id;
+    (gcProfilerRegistry ??= new FinalizationRegistry(discardGCProfiler)).register(this, id, this);
   }
 
   stop() {
-    if (this.#startTime === undefined) return;
-    const entries = JSON.parse(stopGCProfile());
-    const startTime = this.#startTime;
-    this.#startTime = undefined;
-    const statistics = new Array(entries.length);
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      statistics[i] = {
-        gcType: entry.full ? "MarkSweepCompact" : "Scavenge",
-        beforeGC: gcProfileSide(entry.beforeSize),
-        cost: entry.cost,
-        afterGC: gcProfileSide(entry.afterSize),
-      };
+    const session = this[kGCProfilerSession];
+    if (session === null) return undefined;
+    this[kGCProfilerSession] = null;
+    gcProfilerRegistry!.unregister(this);
+
+    const events = stopGCProfiler(session);
+    const statistics = [];
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
+      $arrayPush(statistics, {
+        // A JavaScriptCore eden collection only scans newly allocated objects,
+        // and a full collection sweeps the whole heap, so they line up with
+        // V8's minor and major collection types.
+        gcType: event.isFullCollection ? "MarkSweepCompact" : "Scavenge",
+        cost: event.cost,
+        beforeGC: gcHeapSnapshot(event.usedBefore, event.capacityBefore, event.externalBefore),
+        afterGC: gcHeapSnapshot(event.usedAfter, event.capacityAfter, event.externalAfter),
+      });
     }
+
     return {
       version: 1,
-      startTime,
+      startTime: this[kGCProfilerStartTime],
+      endTime: DateNow(),
       statistics,
-      endTime: Date.now(),
     };
+  }
+
+  [Symbol.dispose]() {
+    this.stop();
   }
 }
 
@@ -252,7 +281,9 @@ function getCppHeapStatistics(type = "detailed") {
 const kBufferEnvelopeMagic = [0xff, 0x42, 0x55, 0x4e, 0x01]; // 0xFF "BUN" v1
 
 function hasBufferEnvelopeMagic(view) {
-  if (view.byteLength < kBufferEnvelopeMagic.length) return false;
+  // In-bounds integer-indexed reads on a typed array never consult the
+  // prototype chain, so the indexing is tamper-proof as-is.
+  if (TypedArrayPrototypeGetByteLength(view) < kBufferEnvelopeMagic.length) return false;
   for (let i = 0; i < kBufferEnvelopeMagic.length; i++) {
     if (view[i] !== kBufferEnvelopeMagic[i]) return false;
   }
@@ -261,16 +292,28 @@ function hasBufferEnvelopeMagic(view) {
 
 function deserialize(value) {
   let view;
-  if (ArrayBuffer.isView(value)) {
-    view = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  } else if (value instanceof ArrayBuffer || value instanceof SharedArrayBuffer) {
-    view = new Uint8Array(value);
+  if ($isTypedArrayView(value)) {
+    view = new Uint8ArrayCtor(
+      TypedArrayPrototypeGetBuffer(value),
+      TypedArrayPrototypeGetByteOffset(value),
+      TypedArrayPrototypeGetByteLength(value),
+    );
+  } else if (isDataView(value)) {
+    // $isTypedArrayView excludes DataView, whose accessors live on its own
+    // prototype rather than %TypedArray%.prototype.
+    view = new Uint8ArrayCtor(
+      DataViewPrototypeGetBuffer(value),
+      DataViewPrototypeGetByteOffset(value),
+      DataViewPrototypeGetByteLength(value),
+    );
+  } else if (isAnyArrayBuffer(value)) {
+    view = new Uint8ArrayCtor(value);
   } else {
     // Let jsc.deserialize validate and reject non-buffer input itself.
     return jsc.deserialize(value);
   }
   if (hasBufferEnvelopeMagic(view)) {
-    const envelope = jsc.deserialize(view.subarray(kBufferEnvelopeMagic.length));
+    const envelope = jsc.deserialize(Uint8ArrayPrototypeSubarray(view, kBufferEnvelopeMagic.length));
     return require("internal/serialization_buffers").restoreBuffers(envelope);
   }
   return jsc.deserialize(value);
@@ -286,9 +329,9 @@ function serialize(arg1) {
     return jsc.serialize(arg1, { binaryType: "nodebuffer" });
   }
   const payload = jsc.serialize(tagged, { binaryType: "nodebuffer" });
-  const framed = Buffer.allocUnsafe(kBufferEnvelopeMagic.length + payload.byteLength);
+  const framed = BufferAllocUnsafe(kBufferEnvelopeMagic.length + TypedArrayPrototypeGetByteLength(payload));
   for (let i = 0; i < kBufferEnvelopeMagic.length; i++) framed[i] = kBufferEnvelopeMagic[i];
-  payload.copy(framed, kBufferEnvelopeMagic.length);
+  TypedArrayPrototypeSet(framed, payload, kBufferEnvelopeMagic.length);
   return framed;
 }
 
@@ -488,6 +531,8 @@ const promiseHooks = {
 
 export default {
   cachedDataVersionTag,
+  GCProfiler,
+  isStringOneByteRepresentation,
   getHeapSnapshot,
   getHeapStatistics,
   getHeapSpaceStatistics,
@@ -508,7 +553,6 @@ export default {
   Serializer,
   DefaultDeserializer,
   DefaultSerializer,
-  GCProfiler,
 };
 
 hideFromStack(
@@ -531,9 +575,6 @@ hideFromStack(
   startHeapProfile,
   Deserializer,
   Serializer,
-  DefaultDeserializer,
-  DefaultSerializer,
-  GCProfiler,
   DefaultDeserializer,
   DefaultSerializer,
 );

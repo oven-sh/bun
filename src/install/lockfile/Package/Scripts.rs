@@ -402,7 +402,6 @@ impl Scripts {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PrintFormat {
     Completed,
-    Info,
     Untrusted,
 }
 
@@ -456,11 +455,6 @@ impl List {
                     ),
                     PrintFormat::Untrusted => bun_core::pretty!(
                         " <yellow>»<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
-                        BStr::new(name),
-                        BStr::new(script),
-                    ),
-                    PrintFormat::Info => bun_core::pretty!(
-                        " [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
                         BStr::new(script),
                     ),

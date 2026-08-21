@@ -48,7 +48,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -83,11 +83,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Performance*)
 {
     static NeverDestroyed<JSPerformanceOwner> owner;
     return &owner.get();
-}
-
-inline void* wrapperKey(Performance* wrappableObject)
-{
-    return wrappableObject;
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Performance&);

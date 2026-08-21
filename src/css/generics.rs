@@ -191,11 +191,6 @@ pub trait CssEql {
 pub use bun_css_derive::CssEql;
 
 #[inline]
-pub fn implement_eql<T: CssEql>(this: &T, other: &T) -> bool {
-    this.eql(other)
-}
-
-#[inline]
 pub(crate) fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
     lhs.eql(rhs)
 }
@@ -1203,11 +1198,6 @@ pub fn parse_with_options<T: ParseWithOptions>(
     options: &ParserOptions,
 ) -> CssResult<T> {
     T::parse_with_options(input, options)
-}
-
-#[inline]
-pub fn parse<T: Parse>(input: &mut Parser) -> CssResult<T> {
-    T::parse(input)
 }
 
 // ── container / primitive Parse impls ────────────────────────────────────────

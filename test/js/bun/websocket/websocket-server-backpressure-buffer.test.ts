@@ -235,3 +235,131 @@ describe("BackPressure buffer", () => {
     expect(hash.digest("hex")).toBe(expectedHash);
   });
 });
+
+// Once a socket is over backpressureLimit, uws drops every further frame. The
+// Close frame must not be one of them: it has to go out behind the buffered
+// data, and the TCP FIN only after that buffer has drained. Skipped on Windows
+// like the tests above: the loopback there never builds up backpressure.
+describe.skipIf(isWindows)("close while over backpressureLimit", () => {
+  const FRAME = 1024 * 1024;
+  const LIMIT = 2 * FRAME;
+  // Server frame: FIN + binary, 64-bit extended length, no mask.
+  const frameHeader = Buffer.from([0x82, 0x7f, 0, 0, 0, 0, 0, 0x10, 0, 0]);
+
+  function closeFrame(code: number, reason: string): Buffer {
+    return Buffer.concat([Buffer.from([0x88, 2 + reason.length, code >> 8, code & 0xff]), Buffer.from(reason)]);
+  }
+
+  // The client side of a Close frame must be masked.
+  function maskedCloseFrame(code: number, reason: string): Buffer {
+    const payload = closeFrame(code, reason).subarray(2);
+    const mask = [0x12, 0x34, 0x56, 0x78];
+    return Buffer.from([0x88, 0x80 | payload.length, ...mask, ...Array.from(payload, (byte, i) => byte ^ mask[i & 3])]);
+  }
+
+  // Counts the intact 1 MiB frames at the front of what the client read and
+  // returns whatever follows them, so a failure shows where the stream ends.
+  function splitStream(bytes: Buffer) {
+    const perFrame = frameHeader.length + FRAME;
+    let dataFrames = 0;
+    while (
+      bytes.length - dataFrames * perFrame >= perFrame &&
+      bytes.subarray(dataFrames * perFrame, dataFrames * perFrame + frameHeader.length).equals(frameHeader)
+    ) {
+      dataFrames++;
+    }
+    const rest = bytes.subarray(dataFrames * perFrame);
+    return { dataFrames, rest: rest.length <= 16 ? rest.toString("hex") : `${rest.length} bytes` };
+  }
+
+  // Upgrades a paused client and sends 1 MiB frames to it until uws reports a
+  // drop (0). Frames reported as sent (> 0) or buffered (-1) were accepted and
+  // have to reach the client.
+  async function fillPastLimit(server: { port: number }, opened: Promise<import("bun").ServerWebSocket<unknown>>) {
+    const { sock, initial } = await pausedClient(server.port);
+    const ws = await opened;
+    const payload = Buffer.alloc(FRAME);
+    let accepted = 0;
+    for (;;) {
+      if (accepted === 64) throw new Error("send() never reported a drop");
+      if (ws.sendBinary(payload) === 0) break;
+      accepted++;
+    }
+    // The client reads nothing until readToEnd(), so the socket stays over the
+    // limit until the test closes it.
+    expect(ws.getBufferedAmount()).toBeGreaterThan(LIMIT);
+    return {
+      ws,
+      sock,
+      accepted,
+      async readToEnd() {
+        const chunks = [initial];
+        const finished = new Promise<void>(resolve => {
+          sock.once("end", resolve);
+          sock.once("close", resolve);
+        });
+        sock.on("data", chunk => chunks.push(chunk));
+        sock.resume();
+        await finished;
+        sock.destroy();
+        return Buffer.concat(chunks);
+      },
+    };
+  }
+
+  function serveWithLimit() {
+    const opened = Promise.withResolvers<import("bun").ServerWebSocket<unknown>>();
+    const closed = Promise.withResolvers<{ code: number; reason: string }>();
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("no", { status: 500 });
+      },
+      websocket: {
+        backpressureLimit: LIMIT,
+        open(ws) {
+          opened.resolve(ws);
+        },
+        message() {},
+        close(_ws, code, reason) {
+          closed.resolve({ code, reason });
+        },
+      },
+    });
+    return { server, opened: opened.promise, closed: closed.promise };
+  }
+
+  it("ws.close() delivers the buffered frames and then the Close frame", async () => {
+    const { server, opened, closed } = serveWithLimit();
+    await using _server = server;
+    const { ws, accepted, readToEnd } = await fillPastLimit(server, opened);
+
+    ws.close(1000, "bye");
+
+    const bytes = await readToEnd();
+    expect({ ...splitStream(bytes), closeEvent: await closed }).toEqual({
+      dataFrames: accepted,
+      rest: closeFrame(1000, "bye").toString("hex"),
+      closeEvent: { code: 1000, reason: "bye" },
+    });
+  });
+
+  it("a Close frame from the client is answered behind the buffered frames", async () => {
+    const { server, opened, closed } = serveWithLimit();
+    await using _server = server;
+    const { sock, accepted, readToEnd } = await fillPastLimit(server, opened);
+
+    // The client's read side is paused, but it can still write. uws answers
+    // the peer's Close frame with end() while the socket is still over the limit.
+    sock.write(maskedCloseFrame(4001, "peer"));
+    const closeEvent = await closed;
+
+    const bytes = await readToEnd();
+    expect({ ...splitStream(bytes), closeEvent }).toEqual({
+      dataFrames: accepted,
+      rest: closeFrame(4001, "peer").toString("hex"),
+      closeEvent: { code: 4001, reason: "peer" },
+    });
+  });
+});

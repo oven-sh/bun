@@ -23,9 +23,7 @@
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
-#include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/ArgList.h>
-#include <JavaScriptCore/ErrorType.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSBoundFunction.h>

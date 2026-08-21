@@ -54,7 +54,7 @@ pub struct PostgresSQLQuery {
     pub(crate) flags: Cell<Flags>,
 
     /// Native OpenTelemetry client span for this query; `None` when off.
-    pub(crate) otel: Cell<Option<bun_telemetry::Span>>,
+    pub(crate) otel: Cell<bun_telemetry::NativeSpan>,
 }
 
 // On drop: deref the statement (if any), then deref query/cursor_name.
@@ -80,7 +80,7 @@ impl Default for PostgresSQLQuery {
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
             flags: Cell::new(Flags::default()),
-            otel: Cell::new(None),
+            otel: Cell::new(bun_telemetry::NativeSpan::NONE),
         }
     }
 }
@@ -204,14 +204,18 @@ impl PostgresSQLQuery {
     }
 
     fn otel_end_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
-        let Some(span) = self.otel.take() else { return };
+        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
+        if !span.is_some() {
+            return;
+        }
         let q = self.query.to_utf8();
         crate::shared::otel::end_with_js_error(span, q.slice(), global_object, err);
     }
 
     /// Finish the telemetry span (first call wins).
     pub(crate) fn otel_end(&self, error: Option<(&[u8], &[u8])>) {
-        if let Some(span) = self.otel.take() {
+        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
             let q = self.query.to_utf8();
             bun_telemetry::db::end(span, q.slice(), None, error);
         }

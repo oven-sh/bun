@@ -186,7 +186,7 @@ pub struct Promise {
     pub(crate) meta: Meta,
     pub(crate) promise: jsc::JSPromiseStrong,
     /// Native OpenTelemetry client span for this command; `None` when off.
-    pub(crate) otel: Option<bun_telemetry::Span>,
+    pub(crate) otel: bun_telemetry::NativeSpan,
 }
 
 impl Promise {
@@ -195,7 +195,7 @@ impl Promise {
         Promise {
             meta,
             promise,
-            otel: None,
+            otel: bun_telemetry::NativeSpan::NONE,
         }
     }
 
@@ -215,7 +215,7 @@ impl Promise {
         } else {
             bun_core::fmt::itoa(&mut dbbuf, database)
         };
-        let Some(span) = bun_telemetry::db::begin(
+        let span = bun_telemetry::db::begin(
             global_object.as_ptr().cast(),
             bun_telemetry::db::System::Redis,
             &bun_telemetry::db::ConnectionInfo {
@@ -223,18 +223,22 @@ impl Promise {
                 port,
                 namespace: ns,
             },
-        ) else {
+        );
+        if !span.is_some() {
             return;
-        };
-        if span.stub.is_recording() {
+        }
+        bun_telemetry::pool::with(span, |s| {
+            if !s.is_recording() {
+                return;
+            }
             let mut name = [0u8; 24];
             let n = command.command.len().min(24);
             for (i, c) in command.command[..n].iter().enumerate() {
                 name[i] = c.to_ascii_uppercase();
             }
-            span.set_name(&name[..n]);
-            let l = &bun_telemetry::data::DEFAULT_LIMITS;
-            span.set_attribute(
+            s.set_name(&name[..n]);
+            let l = &bun_telemetry::DEFAULT_LIMITS;
+            s.push_attribute(
                 b"db.operation.name",
                 &bun_telemetry::Value::Str(&name[..n]),
                 l,
@@ -257,21 +261,23 @@ impl Promise {
                         text.extend_from_slice(b" ...");
                     }
                 }
-                span.set_attribute(b"db.query.text", &bun_telemetry::Value::Str(&text), l);
+                s.push_attribute(b"db.query.text", &bun_telemetry::Value::Str(&text), l);
             }
-        }
-        self.otel = Some(span);
+        });
+        self.otel = span;
     }
 
     #[inline]
     fn otel_end(&mut self, error: Option<(&[u8], &[u8])>) {
-        if let Some(span) = self.otel.take() {
-            let name = span.with_name(|n| {
+        let span = core::mem::take(&mut self.otel);
+        if span.is_some() {
+            let name = bun_telemetry::pool::with_ref(span, |s| {
                 let mut b = [0u8; 24];
-                let l = n.len().min(24);
-                b[..l].copy_from_slice(&n[..l]);
+                let l = s.name.len().min(24);
+                b[..l].copy_from_slice(&s.name[..l]);
                 (b, l)
-            });
+            })
+            .unwrap_or(([0u8; 24], 0));
             bun_telemetry::db::end(span, b"", Some(&name.0[..name.1]), error);
         }
     }

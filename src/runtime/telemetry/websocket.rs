@@ -1,12 +1,9 @@
 //! WebSocket spans: server message handling and client connect.
 
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_telemetry::data::DEFAULT_LIMITS;
-use bun_telemetry::{
-    Instrument, ScopeId, Span, SpanContext, SpanKind, SpanStub, StatusCode, Value, clock,
-};
+use bun_telemetry::pool::{self, NativeSpan};
+use bun_telemetry::{DEFAULT_LIMITS, Instrument, ScopeId, SpanContext, SpanKind, SpanStub, StatusCode, Value, clock};
 
-use super::span::TelemetrySpan;
 use super::{Entered, state};
 
 /// Start a span for one incoming WebSocket message and make it active for
@@ -17,7 +14,7 @@ pub fn begin_message(
     binary: bool,
     size: usize,
     server: bool,
-) -> Option<(Span, Entered)> {
+) -> Option<(NativeSpan, Entered)> {
     if !bun_telemetry::enabled(Instrument::WebSocket) {
         return None;
     }
@@ -26,41 +23,61 @@ pub fn begin_message(
         return None;
     }
     let stub = SpanStub::start(parent.as_ref(), &state().sampler, clock::now_unix_nanos());
-    let span = Span::new(
-        stub,
-        ScopeId::from(Instrument::WebSocket),
-        b"websocket.message",
-        if server {
-            SpanKind::Server
-        } else {
-            SpanKind::Client
-        },
-    );
+    let kind = if server { SpanKind::Server } else { SpanKind::Client };
+    let span = pool::begin(stub, ScopeId::from(Instrument::WebSocket), b"websocket.message", kind);
     if stub.is_recording() {
         let l = &DEFAULT_LIMITS;
-        span.set_attribute(
-            b"websocket.opcode",
-            &Value::Str(if binary { b"binary" } else { b"text" }),
-            l,
-        );
-        span.set_attribute(b"messaging.message.body.size", &Value::Int(size as i64), l);
-        if link.is_valid() {
-            span.add_link(link, b"", &[], l);
-        }
+        pool::with(span, |s| {
+            s.push_attribute(b"websocket.opcode", &Value::Str(if binary { b"binary" } else { b"text" }), l);
+            s.push_attribute(b"messaging.message.body.size", &Value::Int(size as i64), l);
+            if link.is_valid() {
+                bun_telemetry::otlp::encode_link(&mut s.extra, link, b"", &[]);
+            }
+        });
     }
-    let js = TelemetrySpan::create(global, span.clone());
+    let js = super::create_native_cell(global, &stub, ScopeId::from(Instrument::WebSocket), kind, span);
     Some((span, Entered::new(global, js)))
 }
 
 /// End a message span after the handler returned `result`.
-pub fn end_message(span: Span, global: &JSGlobalObject, result: JSValue) {
+pub fn end_message(span: NativeSpan, global: &JSGlobalObject, result: JSValue) {
     if result.to_error().is_some() {
-        let _ = super::span::record_exception_value(&span, global, result, 0);
-        span.set_status(StatusCode::Error, b"");
+        record_exception_value(span, global, result);
     } else if let Some(p) = result.as_any_promise() {
         if p.status() == bun_jsc::js_promise::Status::Rejected {
-            span.set_status(StatusCode::Error, b"");
+            pool::with(span, |s| s.set_status(StatusCode::Error, b""));
         }
     }
-    super::end_span(&span, 0, |_| {});
+    super::end_native(span, 0, |_| {});
+}
+
+/// Record a thrown JS value as an `exception` event and set Error status.
+pub fn record_exception_value(span: NativeSpan, global: &JSGlobalObject, err: JSValue) {
+    let mut ty_s = None;
+    let mut msg_s = None;
+    let mut stack_s = None;
+    if err.is_object() {
+        for (key, out) in [("name", &mut ty_s), ("message", &mut msg_s), ("stack", &mut stack_s)] {
+            if let Ok(Some(v)) = err.get(global, key) {
+                if v.is_string() {
+                    *out = v.to_slice(global).ok();
+                }
+            }
+        }
+    } else if err.is_string() {
+        msg_s = err.to_slice(global).ok();
+    }
+    let ty = ty_s.as_ref().map(|s| s.slice()).unwrap_or(b"Error");
+    let msg = msg_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
+    let stack = stack_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
+    let attrs: [(&[u8], Value<'_>); 3] = [
+        (b"exception.type", Value::Str(ty)),
+        (b"exception.message", Value::Str(msg)),
+        (b"exception.stacktrace", Value::Str(stack)),
+    ];
+    let n = if stack.is_empty() { 2 } else { 3 };
+    pool::with(span, |s| {
+        s.add_event(b"exception", 0, &attrs[..n]);
+        s.set_status(StatusCode::Error, b"");
+    });
 }

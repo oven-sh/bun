@@ -183,6 +183,22 @@ pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>)
     write_any_value_body(out, v);
 }
 
+/// Locate the encoded `KeyValue` for `key` in a buffer of concatenated
+/// `Span.attributes` entries: `(offset, total_len)` of the whole entry.
+pub fn find_attribute(attrs: &[u8], key: &[u8]) -> Option<(usize, usize)> {
+    let mut r = proto::Reader::new(attrs);
+    loop {
+        let start = r.pos;
+        let (_, entry) = r.next().ok()??;
+        let mut kv = proto::Reader::new(entry.as_bytes());
+        if let Ok(Some((f::KV_KEY, k))) = kv.next() {
+            if k.as_bytes() == key {
+                return Some((start, r.pos - start));
+            }
+        }
+    }
+}
+
 /// Streams one `Span` as a `ScopeSpans.spans` entry into `out`.
 pub struct SpanWriter<'a> {
     out: &'a mut Vec<u8>,

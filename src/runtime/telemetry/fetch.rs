@@ -16,10 +16,7 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
         return SpanStub::NONE;
     }
     let st = state();
-    let parent = super::active(global);
-    let parent_ctx = parent
-        .map(|p| *p.context())
-        .filter(bun_telemetry::SpanContext::is_valid);
+    let parent_ctx = super::active_context(global);
     if parent_ctx.is_none() && !bun_telemetry::allows_root(Instrument::HttpClient) {
         return SpanStub::NONE;
     }
@@ -32,8 +29,8 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
         let mut tp = [0u8; propagation::TRACEPARENT_LEN];
         propagation::format_traceparent(&stub.ctx, &mut tp);
         headers.append(b"traceparent", &tp);
-        if let Some(p) = parent {
-            p.with_propagation(|trace_state, baggage| {
+        if parent_ctx.is_some() {
+            super::with_active_propagation(global, |trace_state, baggage| {
                 if !trace_state.is_empty() && headers.get(b"tracestate").is_none() {
                     headers.append(b"tracestate", trace_state);
                 }
@@ -67,7 +64,7 @@ pub fn end(stub: &SpanStub, method: Method, url: &[u8], status: u16, error: Opti
         let authority_end = bun_core::strings::index_of_any(&url[scheme_end..], b"/?#")
             .map(|i| i + scheme_end)
             .unwrap_or(url.len());
-        match bun_core::strings::index_of_char_usize(&url[scheme_end..authority_end], b'@') {
+        match url[scheme_end..authority_end].iter().rposition(|&c| c == b'@') {
             None => {
                 w.attr("url.full", url);
             }

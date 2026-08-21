@@ -13,7 +13,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_telemetry::config::{self, Compression, OtlpExporterConfig};
 use bun_telemetry::processor::{self, Processor};
-use bun_telemetry::{Instrument, Limits, Sampler, ScopeId, SpanContext, propagation};
+use bun_telemetry::{Instrument, Limits, Sampler, SpanContext, propagation};
 
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerTag};
 
@@ -28,8 +28,10 @@ pub mod sqlite;
 pub mod websocket;
 
 pub use span::{
-    ContextScope, Entered, TelemetrySpan, active, active_context, active_js, active_ref, end_span,
+    ContextScope, Entered, active, active_context, active_js, active_native, create_native_cell,
+    end_native, with_active_propagation,
 };
+pub use bun_telemetry::pool::{self, NativeSpan};
 
 /// Process-wide, immutable after `configure()`. Read on hot paths without
 /// locking via `state()`.
@@ -200,6 +202,11 @@ pub(crate) fn after_record() {
 
 fn read_env_config(vm: &VirtualMachine) -> config::EnvConfig {
     let loader = vm.env_loader();
+    if let Some(v) = loader.get(b"BUN_OTEL_EXP") {
+        if let Ok(n) = core::str::from_utf8(v).unwrap_or("0").parse::<u32>() {
+            bun_telemetry::EXP.store(n, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
     config::from_env(&|k: &str| loader.get(k.as_bytes()).map(|v| v.to_vec()))
 }
 
@@ -728,91 +735,12 @@ pub fn create_scope(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     Ok(JSValue::js_number_from_int32(id.0 as i32))
 }
 
-/// `startSpan(scopeId, name, kind, parent, startTime, root)` → TelemetrySpan.
-/// `parent`: undefined = active span; null = none (root); Span or SpanContext object = that.
-#[bun_jsc::host_fn]
-pub fn start_span(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let scope_v = frame.argument(0);
-    let scope = if scope_v.is_number() {
-        ScopeId(scope_v.as_number() as u16)
-    } else {
-        ScopeId::from(Instrument::User)
-    };
-    let name_v = frame.argument(1);
-    let name = if name_v.is_string() {
-        Some(name_v.to_slice(global)?)
-    } else {
-        None
-    };
-    let kind = span::kind_from_js(frame.argument(2));
-    let parent_v = frame.argument(3);
-    let parent = if parent_v.is_undefined() {
-        active_context(global)
-    } else if parent_v.is_null() {
-        None
-    } else {
-        span::span_context_from_js(global, parent_v)?
-    };
-    let start_ns = span::time_from_js(global, frame.argument(4))?;
-    let (span, js) = TelemetrySpan::start(
-        global,
-        scope,
-        name.as_ref().map(|s| s.slice()).unwrap_or(b""),
-        kind,
-        parent.as_ref(),
-        start_ns,
-    );
-    if parent.is_some() {
-        let source = if parent_v.is_undefined() {
-            active(global)
-        } else {
-            span::js::from_js(parent_v).map(|p| unsafe { p.as_ref() }.data())
-        };
-        if let Some(src) = source {
-            src.with_propagation(|ts, bg| {
-                if !ts.is_empty() {
-                    span.set_trace_state(ts);
-                }
-                if !bg.is_empty() {
-                    span.set_baggage(bg);
-                }
-            });
-        }
-    }
-    Ok(js)
-}
-
 /// `activeSpan()` → TelemetrySpan | undefined
 #[bun_jsc::host_fn]
 pub fn active_span(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     match active(global) {
-        Some(s) if s.context().is_valid() => Ok(active_js(global)),
+        Some(s) if s.ctx.is_valid() => Ok(active_js(global)),
         _ => Ok(JSValue::UNDEFINED),
-    }
-}
-
-/// `wrapSpanContext({traceId, spanId, traceFlags, isRemote})` → non-recording TelemetrySpan
-#[bun_jsc::host_fn]
-pub fn wrap_span_context(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arg = frame.argument(0);
-    if arg.is_null() {
-        // Placeholder header for an api Context with values but no span.
-        return Ok(TelemetrySpan::non_recording(global, SpanContext::default()));
-    }
-    match span::span_context_from_js(global, arg)? {
-        Some(ctx) => {
-            let js = TelemetrySpan::non_recording(global, ctx);
-            if let Some(ts) = arg.get(global, "traceState")? {
-                if ts.is_string() {
-                    let ts = ts.to_slice(global)?;
-                    if let Some(span) = span::js::from_js(js) {
-                        unsafe { span.as_ref() }.data().set_trace_state(ts.slice());
-                    }
-                }
-            }
-            Ok(js)
-        }
-        None => Ok(JSValue::UNDEFINED),
     }
 }
 
@@ -831,7 +759,7 @@ pub fn with_context(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     for i in 3..n {
         args.push(frame.argument(i));
     }
-    if span::js::from_js(value).is_some() {
+    if span::is_span(value) {
         let _g = Entered::new(global, value);
         return f.call(global, this, &args);
     }
@@ -967,42 +895,3 @@ pub fn http_client_enabled(global: &JSGlobalObject, _frame: &CallFrame) -> JsRes
     ))
 }
 
-/// `startLeafSpan(instrument, name, kind)` — start a span for a built-in
-/// instrumentation implemented in JS (node:http client). Honors the
-/// instrumentation's enable/root policy; returns `undefined` when it should
-/// not record. Inherits `tracestate`/`baggage` from the active span.
-#[bun_jsc::host_fn]
-pub fn start_leaf_span(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let idx = frame.argument(0);
-    let Some(instrument) = (if idx.is_number() {
-        Instrument::ALL.get(idx.as_number() as usize).copied()
-    } else {
-        None
-    }) else {
-        return Ok(JSValue::UNDEFINED);
-    };
-    let stub = start_leaf(global, instrument);
-    if !stub.is_some() {
-        return Ok(JSValue::UNDEFINED);
-    }
-    let name_v = frame.argument(1);
-    let name = if name_v.is_string() { Some(name_v.to_slice(global)?) } else { None };
-    let kind = span::kind_from_js(frame.argument(2));
-    let span = bun_telemetry::Span::new(
-        stub,
-        ScopeId::from(instrument),
-        name.as_ref().map(|s| s.slice()).unwrap_or(b""),
-        kind,
-    );
-    if let Some(parent) = active(global) {
-        parent.with_propagation(|ts, bg| {
-            if !ts.is_empty() {
-                span.set_trace_state(ts);
-            }
-            if !bg.is_empty() {
-                span.set_baggage(bg);
-            }
-        });
-    }
-    Ok(TelemetrySpan::create(global, span))
-}

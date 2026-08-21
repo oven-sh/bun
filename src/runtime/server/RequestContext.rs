@@ -189,7 +189,7 @@ pub struct RequestContext<
 
     /// Native OpenTelemetry server span (`bun_telemetry::Span`), ended in
     /// `finalize_without_deinit`. `None` when telemetry is off.
-    pub(crate) otel_span: Cell<Option<bun_telemetry::Span>>,
+    pub(crate) otel_span: Cell<bun_telemetry::NativeSpan>,
     /// Status line written for this request, for the span.
     pub(crate) otel_status: Cell<u16>,
     // TODO: support builtin compression
@@ -1384,7 +1384,7 @@ where
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
-                otel_span: Cell::new(None),
+                otel_span: Cell::new(bun_telemetry::NativeSpan::NONE),
                 otel_status: Cell::new(0),
             });
         }
@@ -1412,16 +1412,15 @@ where
             resp,
             SSL_ENABLED,
         )?;
-        self.otel_span.set(Some(span));
-        Some(entered)
+        self.otel_span.set(span);
+        entered
     }
 
     pub(crate) fn otel_set_route(&self, route: &[u8]) {
-        let span = self.otel_span.take();
-        if let Some(s) = &span {
-            crate::telemetry::server::set_route(s, self.method, route);
+        let span = self.otel_span.get();
+        if span.is_some() {
+            crate::telemetry::server::set_route(span, self.method, route);
         }
-        self.otel_span.set(span);
     }
 
     fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
@@ -1546,7 +1545,8 @@ where
     // so it's important that we can safely do that
     pub(crate) fn finalize_without_deinit(&self) {
         ctx_log!("finalizeWithoutDeinit<d> ({:p})<r>", self);
-        if let Some(span) = self.otel_span.take() {
+        let span = self.otel_span.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
             crate::telemetry::server::end(span, self.otel_status.get(), self.flags.aborted());
         }
         self.blob.with_mut(|b| b.detach());

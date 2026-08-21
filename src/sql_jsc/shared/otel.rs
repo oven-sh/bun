@@ -3,7 +3,7 @@ use bun_jsc::{JSGlobalObject, JSValue};
 /// End `span` for a query that failed with the JS error `err`
 /// (`PostgresError`/`MySQLError`: `errno` is the SQLSTATE / server error
 /// number, `code` the `ERR_*` name).
-pub fn end_with_js_error(span: bun_telemetry::Span, statement: &[u8], global: &JSGlobalObject, err: JSValue) {
+pub fn end_with_js_error(span: bun_telemetry::NativeSpan, statement: &[u8], global: &JSGlobalObject, err: JSValue) {
     let mut code: Option<Vec<u8>> = None;
     let mut message = None;
     if err.is_object() {

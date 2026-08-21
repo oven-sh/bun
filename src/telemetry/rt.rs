@@ -4,13 +4,12 @@
 use core::ffi::c_void;
 use std::sync::OnceLock;
 
-use crate::{
-    Instrument, ScopeId, SpanContext, SpanData, SpanKind, SpanStub, SpanWriter, batch, clock,
-};
+use crate::{Instrument, ScopeId, SpanContext, SpanKind, SpanStub, SpanWriter, batch, clock};
 
 pub struct Hooks {
-    /// The active span for `global` (a `JSGlobalObject*`), or null.
-    pub active_span: fn(global: *mut c_void) -> *const SpanData,
+    /// The active span's identity for `global` (a `JSGlobalObject*`), or null.
+    /// Points into the JS cell; valid until the caller next runs JS.
+    pub active_span: fn(global: *mut c_void) -> *const SpanStub,
     /// Called after a span is recorded on this thread (arms the flush timer).
     pub after_record: fn(),
     pub sampler: fn() -> crate::Sampler,
@@ -28,9 +27,9 @@ pub fn hooks() -> Option<&'static Hooks> {
     HOOKS.get()
 }
 
-/// The active span's record. Valid until the caller next runs JS.
+/// The active span's identity. Valid until the caller next runs JS.
 #[inline]
-pub fn active_span<'a>(global: *mut c_void) -> Option<&'a SpanData> {
+pub fn active_span<'a>(global: *mut c_void) -> Option<&'a SpanStub> {
     let h = HOOKS.get()?;
     let p = (h.active_span)(global);
     if p.is_null() {
@@ -43,7 +42,7 @@ pub fn active_span<'a>(global: *mut c_void) -> Option<&'a SpanData> {
 #[inline]
 pub fn active_context(global: *mut c_void) -> Option<SpanContext> {
     active_span(global)
-        .map(|s| *s.context())
+        .map(|s| s.ctx)
         .filter(SpanContext::is_valid)
 }
 

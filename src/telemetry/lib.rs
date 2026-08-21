@@ -12,6 +12,7 @@ pub mod data;
 pub mod db;
 pub mod otlp;
 pub mod otlp_json;
+pub mod pool;
 pub mod processor;
 pub mod propagation;
 pub mod proto;
@@ -23,8 +24,9 @@ pub mod span;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 pub use config::Config;
-pub use data::{Limits, Span, SpanData};
+pub use data::{DEFAULT_LIMITS, Limits};
 pub use otlp::{SpanWriter, Value};
+pub use pool::NativeSpan;
 pub use processor::{ExportPayload, Exporter, Processor};
 pub use sampler::Sampler;
 pub use span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId};
@@ -186,6 +188,13 @@ pub fn allows_root(i: Instrument) -> bool {
 pub fn set_enabled_mask(enabled: u32, roots: u32) {
     ROOTS.store(roots, Ordering::Relaxed);
     ENABLED.store(enabled, Ordering::Release);
+}
+
+/// TEMPORARY benchmark experiment knobs (BUN_OTEL_EXP bitmask).
+pub static EXP: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[inline]
+pub fn exp(bit: u32) -> bool {
+    EXP.load(core::sync::atomic::Ordering::Relaxed) & bit != 0
 }
 
 pub fn enabled_mask() -> u32 {

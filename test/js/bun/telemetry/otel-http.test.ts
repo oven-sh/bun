@@ -260,9 +260,11 @@ describe("fetch", () => {
   test("credentials in URL are redacted", async () => {
     using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
     await (await fetch(`http://user:secret@localhost:${server.port}/p`)).text();
-    const [client] = byName(await collect(), "bun.http.client");
-    expect(client.attributes["url.full"]).toBe(`http://REDACTED:REDACTED@localhost:${server.port}/p`);
-    expect(JSON.stringify(client)).not.toContain("secret");
+    await (await fetch(`http://user:p%40ss@localhost:${server.port}/q?x=@y`)).text();
+    const [a, b] = byName(await collect(), "bun.http.client");
+    expect(a.attributes["url.full"]).toBe(`http://REDACTED:REDACTED@localhost:${server.port}/p`);
+    expect(b.attributes["url.full"]).toBe(`http://REDACTED:REDACTED@localhost:${server.port}/q?x=@y`);
+    expect(JSON.stringify([a, b])).not.toMatch(/secret|p%40ss/);
   });
 
   test("4xx marks the client span as error", async () => {

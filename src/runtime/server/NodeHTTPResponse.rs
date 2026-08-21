@@ -62,7 +62,7 @@ pub struct NodeHTTPResponse {
     /// one; delivering through it loses the body. Kept alive by req[kHandle]; cleared on finalize.
     pub(crate) armed_this_value: Cell<JSValue>,
     /// Native OpenTelemetry server span, ended in `on_request_complete`/`deinit`.
-    pub(crate) otel_span: Cell<Option<bun_telemetry::Span>>,
+    pub(crate) otel_span: Cell<bun_telemetry::NativeSpan>,
     pub(crate) otel_status: Cell<u16>,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
@@ -2562,7 +2562,8 @@ impl NodeHTTPResponse {
 
     /// Called by intrusive RefCount when count reaches zero.
     pub(crate) fn otel_end(&self) {
-        if let Some(span) = self.otel_span.take() {
+        let span = self.otel_span.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
             let flags = self.flags.get();
             let aborted = flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED);
             crate::telemetry::server::end(span, self.otel_status.get(), aborted);
@@ -2738,7 +2739,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
-        otel_span: Cell::new(None),
+        otel_span: Cell::new(bun_telemetry::NativeSpan::NONE),
         otel_status: Cell::new(0),
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),

@@ -119,6 +119,7 @@
 #include "JSMessageEvent.h"
 #include "JSMessagePort.h"
 #include "JSNextTickQueue.h"
+#include "JSTelemetrySpan.h"
 #include "JSSocketHandlers.h"
 #include "JSPerformance.h"
 #include "JSPerformanceEntry.h"
@@ -2296,6 +2297,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSSocketAddressDTOStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSTelemetrySpanStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(Bun::JSTelemetrySpan::createStructure(init.vm, init.owner));
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSReactElementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
          } },
@@ -2940,6 +2944,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
         { BuiltinName::k_makeAbortError, 1, jsFunctionMakeAbortError },
         { BuiltinName::k_checkBufferRead, 1, jsFunctionCheckBufferRead },
+        { BuiltinName::k_telemetryNativeSpanOp, 4, Bun::jsTelemetryNativeSpanOp },
     };
     Vector<GlobalPropertyInfo, 32> staticGlobals;
     staticGlobals.append(GlobalPropertyInfo { builtinNames.lazyPrivateName(),

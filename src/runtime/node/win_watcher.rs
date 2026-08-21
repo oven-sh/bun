@@ -276,8 +276,9 @@ impl PathWatcher {
             && event_type == WatchEventKind::Rename
             && bun_paths::is_absolute(path.as_bytes())
         {
-            Self::emit_unsuppressed(this, bun_paths::basename(path.as_bytes()), event_type);
             Self::retire(this);
+            // `path` is libuv's own copy of the name; stopping the handle does not free it.
+            Self::emit_unsuppressed(this, bun_paths::basename(path.as_bytes()), event_type);
             Self::maybe_deinit(this);
             return;
         }

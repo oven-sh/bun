@@ -624,39 +624,42 @@ describe("fs.watch", () => {
   // whose filename is the directory's own absolute path, and keeps re-arming
   // the watch, which fails the same way on every tick of the event loop
   // (nodejs/node#61398). Bun reports it once, as basename(watched path) like
-  // the Linux backend, and stops the watch. The second watcher proves that no
-  // further event arrives from the first one (the re-armed watch reported
-  // again on every tick) and that a new watch of the same path watches the
-  // recreated directory instead of joining the dead watch.
+  // the Linux backend, and stops the watch; the FSWatcher stays open until it is
+  // closed. The removal callback recreates the directory and watches it again:
+  // that must start a new watch instead of joining the stopped one, and its
+  // first event bounds the first watcher's list (the re-armed watch used to
+  // report again on every tick before it).
   for (const recursive of [false, true]) {
     test.skipIf(!isWindows)(
       `removing the watched directory is reported once, by basename (windows, recursive: ${recursive})`,
       async () => {
         using dir = tempDir("fs-watch-rmdir-self-win", { "watched-dir": {} });
         const target = path.join(String(dir), "watched-dir");
-        const events: [string, string | null][] = [];
-        // The first watcher must not report an error at any point: it stays
-        // open, silent, until it is closed. Both waits race against this.
-        const failure = Promise.withResolvers<never>();
-        const removed = Promise.withResolvers<void>();
+        // Everything the first watcher reports, in order.
+        const events: unknown[][] = [];
+        const seenByNewWatch = Promise.withResolvers<[string, string | null]>();
+        let again: FSWatcher | undefined;
         const watcher = fs.watch(target, { recursive }, (eventType, filename) => {
           events.push([eventType, filename]);
-          removed.resolve();
+          if (again) return;
+          try {
+            fs.mkdirSync(target);
+            again = fs.watch(target, { recursive }, (...event) => seenByNewWatch.resolve(event));
+            again.once("error", seenByNewWatch.reject);
+            fs.writeFileSync(path.join(target, "created-after.txt"), "x");
+          } catch (err) {
+            seenByNewWatch.reject(err);
+          }
         });
-        watcher.once("error", failure.reject);
-        let again: FSWatcher | undefined;
+        watcher.on("error", (err: NodeJS.ErrnoException) => {
+          events.push(["error", err.code]);
+          seenByNewWatch.reject(err);
+        });
+        watcher.on("close", () => events.push(["close"]));
         try {
           fs.rmdirSync(target);
-          await Promise.race([removed.promise, failure.promise]);
-
-          fs.mkdirSync(target);
-          const seen = Promise.withResolvers<[string, string | null]>();
-          again = fs.watch(target, { recursive }, (eventType, filename) => seen.resolve([eventType, filename]));
-          again.once("error", failure.reject);
-          fs.writeFileSync(path.join(target, "created-after.txt"), "x");
-          const [, filename] = await Promise.race([seen.promise, failure.promise]);
+          const [, filename] = await seenByNewWatch.promise;
           expect(filename).toBe("created-after.txt");
-
           expect(events).toEqual([["rename", "watched-dir"]]);
         } finally {
           again?.close();

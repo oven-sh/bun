@@ -102,7 +102,7 @@ var access = function access(path, mode, callback) {
     callback = ensureCallback(callback);
 
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    (options?.recursive ? promises.rm(path, options) : fs.rmdir(path, options)).then(nullcallback(callback), callback);
+    (options?.recursive ? require("node:fs/promises").rm(path, options) : fs.rmdir(path, options)).then(nullcallback(callback), callback);
   },
   copyFile = function copyFile(src, dest, mode, callback) {
     if ($isCallable(mode)) {

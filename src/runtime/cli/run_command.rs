@@ -2157,10 +2157,7 @@ impl RunCommand {
                     }
 
                     SpawnStatus::Signaled(signal) => {
-                        // The print is gated on a valid signal code (1..=31 ⇔
-                        // `signal_code.is_some()`); the re-raise is NOT — it
-                        // forwards the raw byte unconditionally so the parent
-                        // observes the real termination signal (incl. RT 32-64).
+                        // Only the print needs a table entry; the re-raise below forwards any signal.
                         if let Some(sc) = signal_code {
                             if sc != bun_core::SignalCode::SIGINT && !silent {
                                 pretty_errorln!(
@@ -2183,7 +2180,6 @@ impl RunCommand {
 
                     SpawnStatus::Exited(exit_code) => {
                         // A process can be both signaled and exited.
-                        // Gated on a valid signal code (1..=31).
                         if let Some(sc) = signal_code {
                             if !silent {
                                 pretty_errorln!(

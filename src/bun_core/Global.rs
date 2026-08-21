@@ -255,8 +255,7 @@ macro_rules! for_each_signal {
 
 macro_rules! __define_signal_code {
     ($($name:ident = $n:literal),* $(,)?) => {
-        /// Signal name table. Index = enum discriminant; `[0]` is "" sentinel
-        /// (callers range-check `1..=31`). Generated from `for_each_signal!`.
+        /// Signal name per enum discriminant; `[0]` is a "" sentinel. Generated from `for_each_signal!`.
         pub const SIGNAL_NAMES: [&str; 32] = ["", $(stringify!($name),)*];
 
         /// Closed `#[repr(u8)]` enum over `1..=31` (the open newtype lives in

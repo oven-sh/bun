@@ -5,6 +5,7 @@
 // must not reach `std.posix.sigaction`'s `else => unreachable`.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
+import { constants } from "os";
 
 test.skipIf(!isPosix)("bun run propagates SIGKILL from a child without hitting unreachable", async () => {
   using dir = tempDir("run-sigkill", {
@@ -32,12 +33,23 @@ test.skipIf(!isPosix)("bun run propagates SIGKILL from a child without hitting u
   expect(exitCode).not.toBe(0);
 });
 
-// Signal 40 is a Linux real-time signal. Bun's signal table has no name for
-// it, so `bun run` prints nothing about it, but it must still die from the
-// same signal instead of exiting 1. (macOS has no signal 40.)
-test.skipIf(!isLinux)("bun run re-raises a signal its table has no name for", async () => {
-  using dir = tempDir("run-rt-signal", {
-    "package.json": JSON.stringify({ name: "t", scripts: { go: "kill -40 $$" } }),
+// The message names the signal with the OS's name for its number (SIGUSR1 is
+// 30 on macOS, which the Linux table called SIGPWR; 16 on Linux is SIGSTKFLT,
+// which was printed as "code 16"), and bun run then dies from the same signal.
+// Signal 40 is a Linux real-time signal with no name at all: nothing is
+// printed, and bun run used to exit 1 instead of dying from it.
+const signaled: [number, string][] = [
+  [constants.signals.SIGUSR1, "terminated by signal SIGUSR1"],
+  ...(isLinux
+    ? ([
+        [constants.signals.SIGSTKFLT, "terminated by signal SIGSTKFLT"],
+        [40, ""],
+      ] as [number, string][])
+    : []),
+];
+test.skipIf(!isPosix).each(signaled)("bun run reports and re-raises signal %d", async (signal, message) => {
+  using dir = tempDir("run-signaled-script", {
+    "package.json": JSON.stringify({ name: "t", scripts: { go: `kill -${signal} $$` } }),
   });
 
   await using proc = Bun.spawn({
@@ -49,7 +61,10 @@ test.skipIf(!isLinux)("bun run re-raises a signal its table has no name for", as
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("$ kill -40 $$\n");
+  const lines = stderr.trim().split("\n");
+  expect(lines[0]).toBe(`$ kill -${signal} $$`);
+  if (message) expect(lines[1]).toContain(message);
+  else expect(lines).toHaveLength(1);
   expect(stdout).toBe("");
-  expect(exitCode).toBe(128 + 40);
+  expect(exitCode).toBe(128 + signal);
 });

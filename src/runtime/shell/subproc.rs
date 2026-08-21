@@ -981,7 +981,7 @@ impl ShellSubprocess {
                 // TODO: handle error
             }
 
-            if let Some(code) = status.signal().and_then(|signal| signal.to_exit_code()) {
+            if let Some(code) = status.signal().map(|signal| signal.to_exit_code()) {
                 break 'brk Some(code);
             }
 

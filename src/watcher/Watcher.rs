@@ -233,6 +233,15 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
+        // Windows reports no change made before the first ReadDirectoryChangesW
+        // on the handle. Issue it here, before the caller goes on to run the
+        // entry point, instead of on the watcher thread, which under load can
+        // get scheduled after the first write the user makes. inotify and
+        // kqueue queue events from the moment a file is added to the watchlist.
+        // `self` is the boxed watcher here, so the buffers the read writes into
+        // do not move.
+        #[cfg(windows)]
+        self.platform.arm()?;
         self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.

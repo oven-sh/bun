@@ -22,6 +22,10 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
+    /// A `ReadDirectoryChangesW` is outstanding on `watcher.overlapped` and
+    /// `watcher.buf`. Set by [`Self::arm`], cleared when [`Self::next`]
+    /// dequeues its completion.
+    read_pending: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -35,6 +39,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            read_pending: false,
         }
     }
 }
@@ -299,9 +304,30 @@ impl WindowsWatcher {
         Ok(())
     }
 
+    /// Issue the `ReadDirectoryChangesW` that [`Self::next`] waits on, unless
+    /// one is already outstanding.
+    ///
+    /// The kernel records changes to the directory only while a read has been
+    /// issued on the handle: changes made before the first call are never
+    /// reported, changes made between a completion and the next call are held
+    /// in the kernel's buffer. `Watcher::start` calls this on the starting
+    /// thread before the watcher thread exists, so a file written while that
+    /// thread is still being scheduled (for example right after the entry
+    /// point's first evaluation under `--hot`) is not lost. Must only be
+    /// called once `self` is at its final address: the outstanding read writes
+    /// into `watcher.buf` and `watcher.overlapped`.
+    pub(crate) fn arm(&mut self) -> bun_sys::Result<()> {
+        if self.read_pending {
+            return Ok(());
+        }
+        self.watcher.prepare()?;
+        self.read_pending = true;
+        Ok(())
+    }
+
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        if let Err(err) = self.watcher.prepare() {
+        if let Err(err) = self.arm() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
@@ -320,6 +346,11 @@ impl WindowsWatcher {
                     timeout as w::DWORD,
                 )
             };
+            if overlapped == &raw mut self.watcher.overlapped {
+                // Our read completed (with or without an error); `buf` and
+                // `overlapped` are free to reuse.
+                self.read_pending = false;
+            }
             if rc == 0 {
                 let err = w::Win32Error::get();
                 // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
@@ -339,7 +370,7 @@ impl WindowsWatcher {
 
             if !overlapped.is_null() {
                 // ignore possible spurious events
-                if overlapped != &mut self.watcher.overlapped as *mut w::OVERLAPPED {
+                if overlapped != &raw mut self.watcher.overlapped {
                     continue;
                 }
                 if nbytes == 0 {
@@ -356,9 +387,7 @@ impl WindowsWatcher {
                         watcher,
                         "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
                     );
-                    if let Err(err) = self.watcher.prepare() {
-                        return Err(err);
-                    }
+                    self.arm()?;
                     continue;
                 }
                 return Ok(Some(EventIterator {

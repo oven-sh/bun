@@ -4910,14 +4910,8 @@ impl<'a> HTTPClient<'a> {
             print_response(response);
         }
 
-        // According to RFC 7230 section 3.3.3:
-        //   1. Any response to a HEAD request and any response with a 1xx (Informational),
-        //      204 (No Content), or 304 (Not Modified) status code
-        //      [...] cannot contain a message body or trailer section.
-        // Therefore in these cases set content-length to 0 and drop any Transfer-Encoding,
-        // so the response body is always ignored and is not waited for (which could cause a timeout).
-        // This applies regardless of whether we're using a proxy tunnel or not,
-        // since these status codes NEVER have a body per the HTTP spec.
+        // RFC 9112 §6.3: 1xx/204/304 responses end at the header block regardless of
+        // any Content-Length or Transfer-Encoding header, so neither may select a body reader.
         if (response.status_code >= 100 && response.status_code < 200)
             || response.status_code == 204
             || response.status_code == 304

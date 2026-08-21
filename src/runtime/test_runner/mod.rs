@@ -278,6 +278,12 @@ pub mod expect {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
+    /// Byte cap for each value rendered into a matcher failure message.
+    /// Wide object graphs (e.g. a DOM tree) can expand to gigabytes, and past
+    /// `WTF::String::MaxLength` the assertion error cannot be created at all,
+    /// losing the throw (#37310).
+    pub(crate) const MAX_MATCHER_OUTPUT_BYTES: usize = 1024 * 1024;
+
     /// `super::make_formatter(global_this)`
     /// is the universal matcher pattern; `Formatter` has no `Default` (it
     /// borrows `global_this`), so provide the constructor every matcher
@@ -286,6 +292,7 @@ pub mod expect {
     pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
+        f.max_output_bytes = MAX_MATCHER_OUTPUT_BYTES;
         f
     }
 
@@ -420,13 +427,18 @@ pub mod expect {
     /// Builder-style `.with_quote_strings(bool)` shim — `bun_jsc::Formatter`
     /// exposes `quote_strings` as a public field, not a chained setter. A
     /// handful of matcher modules write
-    /// `Formatter::new(g).with_quote_strings(true)`.
+    /// `Formatter::new(g).with_quote_strings(true)`; it is the other spelling
+    /// of [`make_formatter`], so it also applies the matcher output cap.
     pub trait FormatterTestExt: Sized {
         fn with_quote_strings(self, b: bool) -> Self;
     }
     impl<'a> FormatterTestExt for Formatter<'a> {
         #[inline]
-        fn with_quote_strings(mut self, b: bool) -> Self { self.quote_strings = b; self }
+        fn with_quote_strings(mut self, b: bool) -> Self {
+            self.quote_strings = b;
+            self.max_output_bytes = MAX_MATCHER_OUTPUT_BYTES;
+            self
+        }
     }
 
     // ── matcher modules ───────────────────────────────────────────────

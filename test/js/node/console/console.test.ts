@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { Console } from "node:console";
 
 import { Writable } from "node:stream";
@@ -86,5 +87,63 @@ test("console._stderr", () => {
     writable: true,
     enumerable: false,
     configurable: true,
+  });
+});
+
+// Node performs every console write through process.stdout.write /
+// process.stderr.write, so replacing those methods has to be observed by the
+// global console too — that is what test/common/hijackstdio.js relies on.
+test("the global console writes through a replaced process.stdout.write", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const out = [];
+       const err = [];
+       const realOut = process.stdout.write.bind(process.stdout);
+       process.stdout.write = s => { out.push(s); return true; };
+       process.stderr.write = s => { err.push(s); return true; };
+       console.log("to stdout", 1);
+       console.error("to stderr");
+       console.warn("also stderr");
+       console.count();
+       delete process.stdout.write;
+       delete process.stderr.write;
+       realOut(JSON.stringify({ out, err }));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { out: ["to stdout 1\n", "default: 1\n"], err: ["to stderr\n", "also stderr\n"] },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L379-L385
+test("console.assert prefixes the message with 'Assertion failed: '", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.assert(false, "%s should", "console.assert", "not throw");
+       console.assert(false);
+       console.assert(true, "not printed");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: "Assertion failed: console.assert should not throw\nAssertion failed\n",
+    exitCode: 0,
   });
 });

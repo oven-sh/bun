@@ -14,14 +14,44 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
+#include "NodeAsyncHooks.h"
 
 namespace Bun {
 using namespace JSC;
+
+enum class PendingException : uint8_t {
+    None,
+    // Handed to the unhandled error path; JS may be entered again.
+    Reported,
+    // A termination, handed to the VM's stop path; nothing may enter JS again.
+    Terminated,
+};
+
+template<typename Scope>
+static PendingException takePendingException(JSGlobalObject* globalObject, VM& vm, Scope& scope)
+{
+    auto* exception = scope.exception();
+    if (!exception) [[likely]] {
+        return PendingException::None;
+    }
+    (void)scope.tryClearException();
+    if (vm.isTerminationException(exception)) {
+        Bun__VM__takeTerminationOutsideScript(globalObject);
+        return PendingException::Terminated;
+    }
+    Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    return PendingException::Reported;
+}
 
 static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::Before);
+    if (takePendingException(globalObject, vm, scope) != PendingException::None) [[unlikely]] {
+        return true;
+    }
 
     JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
@@ -59,16 +89,19 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
     }
 
-    bool hadException = false;
+    auto pending = takePendingException(globalObject, vm, scope);
+    bool hadException = pending != PendingException::None;
 
-    if (scope.exception()) [[unlikely]] {
-        auto* exception = scope.exception();
-        (void)scope.tryClearException();
-        if (vm.isTerminationException(exception))
-            Bun__VM__takeTerminationOutsideScript(globalObject);
-        else
-            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
-        hadException = true;
+    // Take any pending exception between the two: entering JS again with one
+    // still set is illegal, and after a termination nothing may enter JS at all.
+    if (pending != PendingException::Terminated) {
+        emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::After);
+        pending = takePendingException(globalObject, vm, scope);
+        hadException |= pending != PendingException::None;
+    }
+    if (pending != PendingException::Terminated) {
+        emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::Destroy);
+        hadException |= takePendingException(globalObject, vm, scope) != PendingException::None;
     }
 
     if (asyncContextData) {

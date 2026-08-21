@@ -3,15 +3,8 @@ use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
 use super::node_assert;
 
-/// ```ts
-/// const enum DiffType {
-///     Insert = 0,
-///     Delete = 1,
-///     Equal  = 2,
-/// }
-/// type Diff = { operation: DiffType, text: string };
-/// declare function myersDiff(actual: string, expected: string): Diff[];
-/// ```
+/// `myersDiff(actual: string | string[], expected: string | string[]): Diff[]` where
+/// `Diff = { operation: 0|1|2, text: string }` (Insert=0, Delete=1, Equal=2).
 #[bun_jsc::host_fn]
 fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let nargs = frame.arguments_count();
@@ -27,6 +20,26 @@ fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         3 => (frame.argument(2).is_truthy(), false),
         _ => (frame.argument(2).is_truthy(), frame.argument(3).is_truthy()),
     };
+
+    // `util.diff()` also diffs arrays of strings, one element per line.
+    if actual_arg.is_array() || expected_arg.is_array() {
+        if !actual_arg.is_array() {
+            return Err(global.throw_invalid_argument_type_value("actual", "array", actual_arg));
+        }
+        if !expected_arg.is_array() {
+            return Err(global.throw_invalid_argument_type_value(
+                "expected",
+                "array",
+                expected_arg,
+            ));
+        }
+        return node_assert::myers_diff_arrays(
+            global,
+            actual_arg,
+            expected_arg,
+            check_comma_disparity,
+        );
+    }
 
     if !actual_arg.is_string() {
         return Err(global.throw_invalid_argument_type_value("actual", "string", actual_arg));

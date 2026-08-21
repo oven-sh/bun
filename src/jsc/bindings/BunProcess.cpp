@@ -2903,6 +2903,22 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     return result;
 }
 
+// Resolves `name` via getDirect() along the prototype chain: never invokes accessors,
+// Proxy traps or other user code. An exotic chain yields no direct slot and compares
+// unequal to the recorded pristine value, routing the caller through the JS path.
+static JSValue directPropertyValue(JSC::VM& vm, JSObject* object, const JSC::Identifier& name)
+{
+    for (JSObject* current = object; current;) {
+        if (JSValue value = current->getDirect(vm, name))
+            return value;
+        JSValue proto = current->getPrototypeDirect();
+        if (!proto.isObject())
+            return {};
+        current = asObject(proto);
+    }
+    return {};
+}
+
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2951,7 +2967,51 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
         Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
     }
 
-    return resultObject->getIndex(globalObject, 0);
+    JSValue stream = resultObject->getIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (JSObject* streamObject = stream.getObject()) {
+        JSValue write = streamObject->get(globalObject, WebCore::builtinNames(vm).writePublicName());
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
+        uncheckedDowncast<Process>(processObject)->setStdioWriteStream(vm, fd, streamObject, write);
+    }
+    return stream;
+}
+
+extern "C" void Bun__Console__onStdioWriteStreamCreated();
+
+void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream, JSValue pristineWrite)
+{
+    ASSERT(fd == 1 || fd == 2);
+    Bun__Console__onStdioWriteStreamCreated();
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    m_stdioWriteStream[slot].set(vm, this, stream);
+    m_pristineStdioWrite[slot].set(vm, this, pristineWrite);
+    // The console's per-write check uses getDirect() so it never runs user code; that
+    // only agrees with the get() above while `write` is a plain data property on the
+    // chain, which is how Bun's stream classes declare it.
+    ASSERT(directPropertyValue(vm, stream, WebCore::builtinNames(vm).writePublicName()) == pristineWrite);
+}
+
+// Console write path (src/jsc/ConsoleObject.rs). Returns null when the stream is
+// uncreated or still has Bun's own `write` (signal to use the native writer).
+// No throw scope: the caller is Rust and nothing here can run user code.
+extern "C" JSC::EncodedJSValue Bun__Process__stdioStreamWithReplacedWrite(Zig::GlobalObject* globalObject, int32_t fd)
+{
+    if (!globalObject->hasProcessObject())
+        return JSValue::encode({});
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(globalObject->processObject()->stdioStreamWithReplacedWrite(vm, fd));
+}
+
+JSObject* Process::stdioStreamWithReplacedWrite(JSC::VM& vm, int fd)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    JSObject* stream = m_stdioWriteStream[slot].get();
+    if (!stream)
+        return nullptr;
+    JSValue current = directPropertyValue(vm, stream, WebCore::builtinNames(vm).writePublicName());
+    return current == m_pristineStdioWrite[slot].get() ? nullptr : stream;
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -3686,6 +3746,10 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
+    for (unsigned i = 0; i < 2; ++i) {
+        visitor.append(thisObject->m_stdioWriteStream[i]);
+        visitor.append(thisObject->m_pristineStdioWrite[i]);
+    }
     visitor.append(thisObject->m_onWarning);
 
     thisObject->m_cpuUsageStructure.visit(visitor);

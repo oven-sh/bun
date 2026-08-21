@@ -55,6 +55,7 @@ where
         .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
     if otel.is_some() {
         crate::telemetry::fs::end(
+            global,
             &otel,
             F.otel_name(true),
             args.otel_path(),

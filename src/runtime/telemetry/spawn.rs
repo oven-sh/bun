@@ -2,6 +2,7 @@
 
 use core::ffi::{CStr, c_char};
 
+use bun_jsc::JSGlobalObject;
 use bun_telemetry::pool::{self, NativeSpan, Slot};
 use bun_telemetry::{DEFAULT_LIMITS, Instrument, ScopeId, SpanKind, SpanStub, StatusCode, Value};
 
@@ -30,43 +31,62 @@ fn set_command_attrs(s: &mut Slot, argv: &[*const c_char]) {
 }
 
 /// Wrap the pre-spawn `stub` into a span once the child exists.
-pub fn begin(stub: SpanStub, argv: &[*const c_char], pid: i64) -> NativeSpan {
-    let span = pool::begin(
+pub fn begin(
+    global: &JSGlobalObject,
+    stub: SpanStub,
+    argv: &[*const c_char],
+    pid: i64,
+) -> NativeSpan {
+    let Some(mut l) = super::local(global) else {
+        return NativeSpan::NONE;
+    };
+    pool::begin_with(
+        &mut l.pool,
         stub,
         ScopeId::from(Instrument::ChildProcess),
         b"spawn",
         SpanKind::Internal,
-    );
-    if stub.is_recording() {
-        pool::with(span, |s| {
-            set_command_attrs(s, argv);
-            s.push_attribute(b"process.pid", &Value::Int(pid), &DEFAULT_LIMITS);
-        });
-    }
-    span
+        |s| {
+            if stub.is_recording() {
+                set_command_attrs(s, argv);
+                s.push_attribute(b"process.pid", &Value::Int(pid), &DEFAULT_LIMITS);
+            }
+        },
+    )
 }
 
 /// The spawn itself failed.
-pub fn failed(stub: &SpanStub, argv: &[*const c_char], error: &[u8]) {
+pub fn failed(global: &JSGlobalObject, stub: &SpanStub, argv: &[*const c_char], error: &[u8]) {
     if !stub.is_recording() {
         return;
     }
-    let span = pool::begin(
+    let Some(mut l) = super::local(global) else {
+        return;
+    };
+    let span = pool::begin_with(
+        &mut l.pool,
         *stub,
         ScopeId::from(Instrument::ChildProcess),
         b"spawn",
         SpanKind::Internal,
+        |s| set_command_attrs(s, argv),
     );
-    pool::with(span, |s| set_command_attrs(s, argv));
-    super::end_native(span, 0, |w| {
+    drop(l);
+    super::end_native(global, span, 0, |w| {
         w.attr("error.type", error);
         w.status(StatusCode::Error, error);
     });
 }
 
 /// The child exited. `signal` is the terminating signal number, if any.
-pub fn exited(span: NativeSpan, exit_code: Option<i32>, signal: Option<u8>, error: Option<&str>) {
-    super::end_native(span, 0, |w| {
+pub fn exited(
+    global: &JSGlobalObject,
+    span: NativeSpan,
+    exit_code: Option<i32>,
+    signal: Option<u8>,
+    error: Option<&str>,
+) {
+    super::end_native(global, span, 0, |w| {
         if let Some(c) = exit_code {
             w.attr("process.exit.code", c as i64);
             if c != 0 {

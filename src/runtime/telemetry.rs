@@ -80,10 +80,11 @@ pub fn processor() -> &'static Processor {
     processor::global_or_init()
 }
 
-/// Per-VM (per JS thread) state.
+/// Per-VM (per JS thread) state, stored erased in `RareData::telemetry`.
 pub struct VmState {
     /// Rebound when `bun test --isolate` swaps the global.
     global: Cell<*const JSGlobalObject>,
+    pub(crate) local: RefCell<bun_telemetry::Local>,
     pub(crate) event_loop_timer: bun_ptr::JsCell<EventLoopTimer>,
     timer_armed: Cell<bool>,
     /// JS function exporters registered from this VM.
@@ -96,27 +97,30 @@ pub struct VmState {
 
 bun_event_loop::impl_timer_owner!(VmState; from_timer_ptr => event_loop_timer);
 
-thread_local! {
-    static VM_STATE: Cell<*mut VmState> = const { Cell::new(core::ptr::null_mut()) };
+fn vm_state_of(vm: &VirtualMachine) -> Option<&'static VmState> {
+    let p = vm.rare_data.as_ref()?.telemetry?;
+    // SAFETY: the slot only ever holds the `VmState` leaked by `vm_state_or_init`; cleared before free.
+    Some(unsafe { &*p.as_ptr().cast::<VmState>() })
 }
 
-pub(crate) fn vm_state() -> Option<&'static VmState> {
-    let p = VM_STATE.with(|c| c.get());
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: set only by `vm_state_or_init` (Box::leak) on this thread; cleared before free.
-        Some(unsafe { &*p })
-    }
+#[inline]
+pub(crate) fn vm_state(global: &JSGlobalObject) -> Option<&'static VmState> {
+    vm_state_of(global.bun_vm())
+}
+
+/// For event-loop tasks that run without a global in hand.
+pub(crate) fn current_vm_state() -> Option<&'static VmState> {
+    vm_state_of(VirtualMachine::get())
 }
 
 fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
-    if let Some(s) = vm_state() {
+    if let Some(s) = vm_state(global) {
         s.rebind_global(global);
         return s;
     }
     let s = Box::leak(Box::new(VmState {
         global: Cell::new(core::ptr::from_ref(global)),
+        local: RefCell::new(bun_telemetry::Local::new()),
         event_loop_timer: bun_ptr::JsCell::new(EventLoopTimer::init_paused(
             EventLoopTimerTag::TelemetryFlush,
         )),
@@ -126,9 +130,10 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
         flush_hook_installed: Cell::new(false),
         api_installed: Cell::new(false),
     }));
-    VM_STATE.with(|c| c.set(s));
+    let rare = global.bun_vm().as_mut().rare_data();
+    rare.telemetry = Some(core::ptr::NonNull::from(&mut *s).cast());
     // Flush this VM's spans (and, on the main thread, drain exporters) at exit.
-    global.bun_vm().as_mut().rare_data().push_cleanup_hook(
+    rare.push_cleanup_hook(
         global,
         core::ptr::from_mut::<VmState>(s).cast::<c_void>(),
         on_vm_exit,
@@ -136,10 +141,34 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
     s
 }
 
+/// `global`'s per-VM telemetry state (span pool, batch, scratch). `None`
+/// once the VM has run its exit hooks. Hold the borrow only around pure-Rust
+/// telemetry work; never across JS.
+#[inline]
+pub fn local(global: &JSGlobalObject) -> Option<core::cell::RefMut<'static, bun_telemetry::Local>> {
+    local_cell(global).map(RefCell::borrow_mut)
+}
+
+fn local_cell(global: &JSGlobalObject) -> Option<&'static RefCell<bun_telemetry::Local>> {
+    let s = match vm_state(global) {
+        Some(s) => s,
+        None if global.bun_vm().has_run_cleanup_hooks() => return None,
+        None => vm_state_or_init(global),
+    };
+    Some(&s.local)
+}
+
+fn local_hook(global: *mut c_void) -> *const RefCell<bun_telemetry::Local> {
+    match local_cell(JSGlobalObject::opaque_ref(global.cast::<JSGlobalObject>())) {
+        Some(c) => c,
+        None => core::ptr::null(),
+    }
+}
+
 impl VmState {
     #[inline]
     fn global(&self) -> &JSGlobalObject {
-        // SAFETY: the VmState is thread-local to its VM's thread; `rebind_global` keeps this the live global.
+        // SAFETY: the VmState belongs to one VM; `rebind_global` keeps this the live global.
         unsafe { &*self.global.get() }
     }
 
@@ -180,6 +209,7 @@ impl VmState {
     /// Timer callback (unref'd; never keeps the loop alive).
     pub(crate) fn on_timer(&self) {
         self.timer_armed.set(false);
+        bun_telemetry::batch::flush_local(&mut self.local.borrow_mut().batch);
         processor().tick();
         if bun_telemetry::any_enabled() || processor().pending_count() > 0 {
             self.arm_timer();
@@ -191,7 +221,7 @@ extern "C" fn on_vm_exit(ctx: *mut c_void) {
     // SAFETY: `ctx` is the leaked VmState registered in `vm_state_or_init`.
     let s = unsafe { &*ctx.cast::<VmState>() };
     s.disarm_timer();
-    bun_telemetry::batch::flush_local();
+    bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
     let global = s.global();
     // JS exporters belonging to this VM get their final batch synchronously.
     if global.bun_vm().worker_ref().is_none() {
@@ -203,17 +233,17 @@ extern "C" fn on_vm_exit(ctx: *mut c_void) {
     exporter::JsExporter::detach_all_for_vm(s);
     if global.bun_vm().worker_ref().is_some() {
         // The worker thread is going away; nothing can reach this VmState again.
-        VM_STATE.with(|c| c.set(core::ptr::null_mut()));
-        // SAFETY: allocated by `vm_state_or_init` via Box::leak on this thread;
-        // the thread-local that published it was just cleared.
+        global.bun_vm().as_mut().rare_data().telemetry = None;
+        // SAFETY: allocated by `vm_state_or_init` via Box::leak; the RareData
+        // slot that published it was just cleared.
         drop(unsafe { Box::from_raw(ctx.cast::<VmState>()) });
     }
 }
 
-/// After a span was recorded on this thread: make sure a flush is scheduled.
+/// After a span was recorded on `global`'s VM: make sure a flush is scheduled.
 #[inline]
-pub(crate) fn after_record() {
-    if let Some(s) = vm_state() {
+pub(crate) fn after_record(global: &JSGlobalObject) {
+    if let Some(s) = vm_state(global) {
         if !s.timer_armed.get() {
             s.arm_timer();
         }
@@ -231,7 +261,7 @@ fn read_env_config(vm: &VirtualMachine) -> config::EnvConfig {
 /// telemetry is not enabled: one env lookup.
 pub fn init_for_vm(global: &JSGlobalObject) {
     let vm = global.bun_vm();
-    if let Some(s) = vm_state() {
+    if let Some(s) = vm_state(global) {
         s.rebind_global(global);
     }
     if configured() {
@@ -308,7 +338,8 @@ pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry::Config) -> Result
     }
     bun_telemetry::rt::install(bun_telemetry::rt::Hooks {
         active_span: |g| span::active_ptr(g),
-        after_record,
+        local: local_hook,
+        after_record: |g| after_record(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>())),
         release_cell: span::release_cell,
         sampler: || state().sampler,
         limits: || state().limits,
@@ -324,7 +355,7 @@ pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry::Config) -> Result
 /// Pre-populate `globalThis[Symbol.for("opentelemetry.js.api.1")]` so any
 /// copy of `@opentelemetry/api` resolves to the native provider.
 fn install_api_global(global: &JSGlobalObject) {
-    let Some(s) = vm_state() else { return };
+    let Some(s) = vm_state(global) else { return };
     if s.api_installed.replace(true) {
         return;
     }
@@ -355,7 +386,18 @@ pub fn start_leaf(global: &JSGlobalObject, i: Instrument) -> bun_telemetry::Span
     bun_telemetry::rt::start_leaf(global.as_ptr().cast(), i)
 }
 
-pub use bun_telemetry::rt::end_leaf;
+/// End a leaf span started with [`start_leaf`]; `write` adds attributes.
+#[inline]
+pub fn end_leaf(
+    global: &JSGlobalObject,
+    i: Instrument,
+    stub: &bun_telemetry::SpanStub,
+    name: &[u8],
+    kind: bun_telemetry::SpanKind,
+    write: impl FnMut(&mut bun_telemetry::SpanWriter<'_>),
+) {
+    bun_telemetry::rt::end_leaf(global.as_ptr().cast(), i, stub, name, kind, write)
+}
 
 pub use propagation::{format_traceparent, parse_traceparent};
 
@@ -611,7 +653,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // to duplicate destinations.
     if replaces_exporters {
         processor().clear_exporters();
-        if let Some(s) = vm_state() {
+        if let Some(s) = vm_state(global) {
             exporter::JsExporter::detach_all_for_vm(s);
         }
     }
@@ -838,6 +880,7 @@ pub fn current_context(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<
 #[bun_jsc::host_fn]
 pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let s = vm_state_or_init(global);
+    bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
     processor().export();
     processor().retry_now();
     if processor().inflight() == 0 && processor().pending_retries() == 0 {
@@ -863,7 +906,7 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 }
 
 pub(crate) fn resolve_flush_waiters() {
-    let Some(s) = vm_state() else { return };
+    let Some(s) = current_vm_state() else { return };
     if processor().pending_retries() != 0 {
         // A flush is waiting on a payload that got parked: retry it now
         // rather than after its backoff.
@@ -884,7 +927,9 @@ pub(crate) fn resolve_flush_waiters() {
 #[bun_jsc::host_fn]
 pub fn stats(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     use core::sync::atomic::Ordering::Relaxed;
-    bun_telemetry::batch::flush_local();
+    if let Some(s) = vm_state(global) {
+        bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
+    }
     let p = processor();
     let o = JSValue::create_empty_object(global, 6);
     o.put(

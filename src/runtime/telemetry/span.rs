@@ -7,9 +7,11 @@ use core::ffi::c_void;
 use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult};
 use bun_telemetry::pool::{self, NativeSpan};
 use bun_telemetry::{
-    Flags, Limits, ScopeId, SpanContext, SpanId, SpanKind, SpanStub, SpanWriter, StatusCode,
+    Flags, Limits, Local, ScopeId, SpanContext, SpanId, SpanKind, SpanStub, SpanWriter, StatusCode,
     TraceId, Value, batch, clock,
 };
+
+use super::local;
 
 unsafe extern "C" {
     safe fn Bun__Telemetry__activeSpanStub(global: &JSGlobalObject) -> *const SpanStub;
@@ -33,8 +35,7 @@ unsafe extern "C" {
 
 /// `rt::Hooks::active_span` — `global` is a `JSGlobalObject*`.
 pub(crate) fn active_ptr(global: *mut c_void) -> *const SpanStub {
-    // SAFETY: only ever called with a live JSGlobalObject pointer.
-    Bun__Telemetry__activeSpanStub(unsafe { &*global.cast::<JSGlobalObject>() })
+    Bun__Telemetry__activeSpanStub(JSGlobalObject::opaque_ref(global.cast::<JSGlobalObject>()))
 }
 
 /// The active span's identity. Valid until the caller next runs JS.
@@ -88,7 +89,13 @@ pub(crate) fn release_cell(js_cell: usize) {
 pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8], &[u8]) -> R) -> R {
     let native = active_native(global);
     let owned = if native.is_some() {
-        pool::with_ref(native, |s| [s.trace_state.clone(), s.baggage.clone()]).unwrap_or_default()
+        local(global)
+            .and_then(|l| {
+                pool::with_ref(&l.pool, native, |s| {
+                    [s.trace_state.clone(), s.baggage.clone()]
+                })
+            })
+            .unwrap_or_default()
     } else {
         // JS-owned spans keep inherited tracestate/baggage in their `extra`
         // object; read through C++.
@@ -247,31 +254,54 @@ pub(crate) fn for_each_attribute(
     Ok(())
 }
 
-/// End a native-owned span into this thread's batch.
+/// End a native-owned span into the VM's batch.
 #[inline]
-pub fn end_native(span: NativeSpan, end_ns: u64, mut extra: impl FnMut(&mut SpanWriter<'_>)) {
-    end_native_with(span, end_ns, &mut |_: &mut pool::Slot| {}, &mut extra)
+pub fn end_native(
+    global: &JSGlobalObject,
+    span: NativeSpan,
+    end_ns: u64,
+    mut extra: impl FnMut(&mut SpanWriter<'_>),
+) {
+    end_native_with(
+        global,
+        span,
+        end_ns,
+        &mut |_: &mut pool::Slot| {},
+        &mut extra,
+    )
 }
 
 /// [`end_native`] with a closure that updates the slot first (one pool borrow).
 #[inline]
 pub fn end_native_with(
+    global: &JSGlobalObject,
     span: NativeSpan,
     end_ns: u64,
     prep: &mut dyn FnMut(&mut pool::Slot),
     extra: &mut dyn FnMut(&mut SpanWriter<'_>),
 ) {
-    if let Some(e) = pool::end_with(span, end_ns, prep, extra) {
+    let Some(mut l) = local(global) else { return };
+    let ended = pool::end_with(&mut l, span, end_ns, prep, extra);
+    drop(l);
+    finish_ended(global, ended);
+}
+
+#[inline]
+fn finish_ended(global: &JSGlobalObject, ended: Option<pool::Ended>) {
+    if let Some(e) = ended {
         release_cell(e.js_cell);
         if e.recorded {
-            super::after_record();
+            super::after_record(global);
         }
     }
 }
 
 /// Drop a native-owned span without recording it.
-pub fn discard_native(span: NativeSpan) {
-    release_cell(pool::discard(span));
+pub fn discard_native(global: &JSGlobalObject, span: NativeSpan) {
+    let Some(mut l) = local(global) else { return };
+    let cell = pool::discard(&mut l.pool, span);
+    drop(l);
+    release_cell(cell);
 }
 
 // ───────────────────── ABI for JSTelemetrySpan.cpp ─────────────────────
@@ -437,11 +467,6 @@ impl StrRef {
     }
 }
 
-thread_local! {
-    /// Reused transcoding buffers: [key, value, name/misc].
-    static SCRATCH: core::cell::RefCell<[Vec<u8>; 3]> = const { core::cell::RefCell::new([Vec::new(), Vec::new(), Vec::new()]) };
-}
-
 /// Decode `attrs[..n]` and hand each `(key, value)` to `emit`. No allocation
 /// unless a string needs transcoding or a value is an array.
 fn with_attrs(
@@ -511,6 +536,7 @@ fn with_attrs(
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__Telemetry__stubStart(
+    global: &JSGlobalObject,
     out: &mut SpanStub,
     parent: *const SpanStub,
     start_ns: u64,
@@ -519,15 +545,20 @@ pub extern "C" fn Bun__Telemetry__stubStart(
         None
     } else {
         // SAFETY: C++ passes null or a live stub.
-        Some(unsafe { &(*parent).ctx })
+        Some(unsafe { (*parent).ctx })
     };
     let now = if start_ns == 0 {
         clock::now_unix_nanos()
     } else {
         start_ns
     };
+    let Some(mut l) = local(global) else {
+        *out = SpanStub::NONE;
+        return;
+    };
     *out = SpanStub::start(
-        parent.filter(|c| c.is_valid()),
+        &mut l.rng,
+        parent.as_ref().filter(|c| c.is_valid()),
         &super::state().sampler,
         now,
     );
@@ -585,9 +616,9 @@ fn status_from_u8(s: u8) -> StatusCode {
     }
 }
 
-/// Encode a JS-owned span that just ended into this thread's batch.
+/// Encode a JS-owned span that just ended into the VM's batch.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
+pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &EndDesc) {
     // SAFETY: `desc` is built on the C++ stack from a live JSTelemetrySpan.
     let stub = unsafe { &*desc.stub };
     if !stub.is_recording() {
@@ -600,12 +631,14 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
         .min((l.attributes as u32).saturating_sub(desc.n_encoded_attrs));
     let n_events = desc.n_events.min(l.events as u32);
     let n_links = desc.n_links.min(l.links as u32);
-    SCRATCH.with(|sc| {
-        let mut sc = sc.borrow_mut();
-        let sc = &mut *sc;
+    {
+        let Some(mut lo) = local(global) else { return };
+        let Local {
+            batch, scratch: sc, ..
+        } = &mut *lo;
         let mut name_buf = core::mem::take(&mut sc[2]);
         let name = desc.name.utf8(&mut name_buf);
-        batch::record(scope, &mut |buf: &mut Vec<u8>| {
+        batch::record(batch, scope, &mut |buf: &mut Vec<u8>| {
             let mut w = SpanWriter::begin(buf, stub, name, kind_from_u8(desc.kind), desc.end_ns);
             if desc.trace_state.len != 0 {
                 w.trace_state(&desc.trace_state.to_vec());
@@ -684,8 +717,8 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
             w.finish();
         });
         sc[2] = name_buf;
-    });
-    super::after_record();
+    }
+    super::after_record(global);
 }
 
 /// Flat owned attribute value for the (rare) event/link paths.
@@ -719,28 +752,36 @@ impl OwnedFlat {
 // ─────────────── native-owned span mutations from JS ───────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeIsLive(handle: u64) -> bool {
-    pool::with_ref(NativeSpan(handle), |_| ()).is_some()
+pub extern "C" fn Bun__Telemetry__nativeIsLive(global: &JSGlobalObject, handle: u64) -> bool {
+    local(global).is_some_and(|l| pool::is_live(&l.pool, NativeSpan(handle)))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeEnd(handle: u64, end_ns: u64) -> bool {
-    match pool::end(NativeSpan(handle), end_ns, |_| {}) {
-        Some(e) => {
-            release_cell(e.js_cell);
-            if e.recorded {
-                super::after_record();
-            }
-            true
-        }
-        None => false,
-    }
+pub extern "C" fn Bun__Telemetry__nativeEnd(
+    global: &JSGlobalObject,
+    handle: u64,
+    end_ns: u64,
+) -> bool {
+    let Some(mut l) = local(global) else {
+        return false;
+    };
+    let ended = pool::end(&mut l, NativeSpan(handle), end_ns, |_| {});
+    drop(l);
+    let live = ended.is_some();
+    finish_ended(global, ended);
+    live
 }
 
 /// Identity of a pooled span (tolerates ended-but-not-reused slots), or null.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__poolStub(handle: u64) -> *const SpanStub {
-    pool::stub_ptr(NativeSpan(handle))
+pub extern "C" fn Bun__Telemetry__poolStub(
+    global: &JSGlobalObject,
+    handle: u64,
+) -> *const SpanStub {
+    match local(global) {
+        Some(l) => pool::stub_ptr(&l.pool, NativeSpan(handle)),
+        None => core::ptr::null(),
+    }
 }
 
 /// The JS cell for a pooled span, creating (and pinning) it on first use.
@@ -749,69 +790,102 @@ pub extern "C" fn Bun__Telemetry__poolStub(handle: u64) -> *const SpanStub {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handle: u64) -> JSValue {
     let native = NativeSpan(handle);
-    if let Some((cell, stub, scope, kind)) =
-        pool::with(native, |s| (s.js_cell, s.stub, s.scope, s.kind))
-    {
+    let Some(mut l) = local(global) else {
+        return JSValue::UNDEFINED;
+    };
+    let live = pool::with(&mut l.pool, native, |s| {
+        (s.js_cell, s.stub, s.scope, s.kind)
+    });
+    if let Some((cell, stub, scope, kind)) = live {
+        drop(l);
         if cell != 0 {
             return JSValue::from_encoded(cell);
         }
         let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind as u8 - 1, native.0);
         v.protect();
-        pool::with(native, |s| s.js_cell = v.0);
+        if let Some(mut l) = local(global) {
+            pool::with(&mut l.pool, native, |s| s.js_cell = v.0);
+        }
         return v;
     }
-    let p = pool::stub_ptr(native);
+    let p = pool::stub_ptr(&l.pool, native);
     if p.is_null() {
         return JSValue::UNDEFINED;
     }
-    // SAFETY: non-null `stub_ptr` points at a live pool slot; copied immediately on the JS thread.
+    // SAFETY: non-null `stub_ptr` points at a pool slot; copied while the pool is borrowed.
     let mut stub = unsafe { *p };
+    drop(l);
     stub.ctx.flags = Flags(stub.ctx.flags.0 | Flags::NON_RECORDING);
     Bun__TelemetrySpan__createNative(global, &stub, 0, 0, 0)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeSetAttribute(handle: u64, attr: &AttrRef) {
-    let l = limits();
-    SCRATCH.with(|sc| {
-        with_attrs(attr, 1, &mut sc.borrow_mut(), |k, v| {
-            pool::with(NativeSpan(handle), |s| s.set_attribute(k, v, l));
-        });
+pub extern "C" fn Bun__Telemetry__nativeSetAttribute(
+    global: &JSGlobalObject,
+    handle: u64,
+    attr: &AttrRef,
+) {
+    let lim = limits();
+    let Some(mut l) = local(global) else { return };
+    let Local { pool, scratch, .. } = &mut *l;
+    with_attrs(attr, 1, scratch, |k, v| {
+        pool::with(pool, NativeSpan(handle), |s| s.set_attribute(k, v, lim));
     });
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeSetName(handle: u64, name: &StrRef) {
+pub extern "C" fn Bun__Telemetry__nativeSetName(
+    global: &JSGlobalObject,
+    handle: u64,
+    name: &StrRef,
+) {
     let n = name.to_vec();
-    pool::with(NativeSpan(handle), |s| s.set_name(&n));
+    if let Some(mut l) = local(global) {
+        pool::with(&mut l.pool, NativeSpan(handle), |s| s.set_name(&n));
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeSetStatus(handle: u64, code: u8, message: &StrRef) {
+pub extern "C" fn Bun__Telemetry__nativeSetStatus(
+    global: &JSGlobalObject,
+    handle: u64,
+    code: u8,
+    message: &StrRef,
+) {
     let m = message.to_vec();
-    pool::with(NativeSpan(handle), |s| {
-        s.set_status(status_from_u8(code), &m)
-    });
+    if let Some(mut l) = local(global) {
+        pool::with(&mut l.pool, NativeSpan(handle), |s| {
+            s.set_status(status_from_u8(code), &m)
+        });
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeAddEvent(handle: u64, event: &EventRef) {
+pub extern "C" fn Bun__Telemetry__nativeAddEvent(
+    global: &JSGlobalObject,
+    handle: u64,
+    event: &EventRef,
+) {
     let name = event.name.to_vec();
     let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
-    SCRATCH.with(|sc| {
-        with_attrs(event.attrs, event.n_attrs, &mut sc.borrow_mut(), |k, v| {
-            pairs.push((k.to_vec(), OwnedFlat::from(v)))
-        })
+    let Some(mut l) = local(global) else { return };
+    let Local { pool, scratch, .. } = &mut *l;
+    with_attrs(event.attrs, event.n_attrs, scratch, |k, v| {
+        pairs.push((k.to_vec(), OwnedFlat::from(v)))
     });
     let borrowed: Vec<(&[u8], Value<'_>)> =
         pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
-    pool::with(NativeSpan(handle), |s| {
+    pool::with(pool, NativeSpan(handle), |s| {
         s.add_event(&name, event.time_ns, &borrowed, limits())
     });
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeAddLink(handle: u64, link: &LinkRef) {
+pub extern "C" fn Bun__Telemetry__nativeAddLink(
+    global: &JSGlobalObject,
+    handle: u64,
+    link: &LinkRef,
+) {
     let (Some(t), Some(sid)) = (
         TraceId::from_hex(&link.trace_id.to_vec()),
         SpanId::from_hex(&link.span_id.to_vec()),
@@ -824,14 +898,14 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(handle: u64, link: &LinkRef) {
         flags: Flags(link.flags & Flags::SAMPLED),
     };
     let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
-    SCRATCH.with(|sc| {
-        with_attrs(link.attrs, link.n_attrs, &mut sc.borrow_mut(), |k, v| {
-            pairs.push((k.to_vec(), OwnedFlat::from(v)))
-        })
+    let Some(mut l) = local(global) else { return };
+    let Local { pool, scratch, .. } = &mut *l;
+    with_attrs(link.attrs, link.n_attrs, scratch, |k, v| {
+        pairs.push((k.to_vec(), OwnedFlat::from(v)))
     });
     let borrowed: Vec<(&[u8], Value<'_>)> =
         pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
-    pool::with(NativeSpan(handle), |s| {
+    pool::with(pool, NativeSpan(handle), |s| {
         s.add_link(&ctx, &borrowed, limits())
     });
 }
@@ -840,8 +914,14 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(handle: u64, link: &LinkRef) {
 /// `cap` bytes and returns the full length.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn Bun__Telemetry__nativeName(handle: u64, out: *mut u8, cap: usize) -> usize {
-    pool::with_ref(NativeSpan(handle), |s| {
+pub extern "C" fn Bun__Telemetry__nativeName(
+    global: &JSGlobalObject,
+    handle: u64,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    let Some(l) = local(global) else { return 0 };
+    pool::with_ref(&l.pool, NativeSpan(handle), |s| {
         let n = s.name.len().min(cap);
         // SAFETY: caller provides `cap` writable bytes at `out`.
         unsafe { core::ptr::copy_nonoverlapping(s.name.as_ptr(), out, n) };
@@ -872,14 +952,14 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
     }
     let n = name.to_vec();
     let kind = kind_from_u8(kind);
-    let native = pool::begin(stub, ScopeId::from(i), &n, kind);
-    with_active_propagation(global, |ts, bg| {
-        if !ts.is_empty() || !bg.is_empty() {
-            pool::with(native, |s| {
-                s.trace_state.extend_from_slice(ts);
-                s.baggage.extend_from_slice(bg);
-            });
-        }
+    let native = with_active_propagation(global, |ts, bg| {
+        let Some(mut l) = local(global) else {
+            return NativeSpan::NONE;
+        };
+        pool::begin_with(&mut l.pool, stub, ScopeId::from(i), &n, kind, |s| {
+            s.trace_state.extend_from_slice(ts);
+            s.baggage.extend_from_slice(bg);
+        })
     });
     create_native_cell(global, &stub, ScopeId::from(i), kind, native)
 }
@@ -889,12 +969,14 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__Telemetry__nativePropagation(
+    global: &JSGlobalObject,
     handle: u64,
     which: u8,
     out: *mut u8,
     cap: usize,
 ) -> usize {
-    pool::with_ref(NativeSpan(handle), |s| {
+    let Some(l) = local(global) else { return 0 };
+    pool::with_ref(&l.pool, NativeSpan(handle), |s| {
         let src = if which == b't' {
             &s.trace_state
         } else {

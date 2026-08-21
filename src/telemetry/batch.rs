@@ -1,9 +1,7 @@
-//! Per-thread span buffers. Integrations end spans into the calling thread's
-//! `LocalBatch` with no synchronisation; the batch is handed to the global
-//! [`Processor`](crate::Processor) every `LOCAL_FLUSH_SPANS` spans, on the
-//! owning event loop's telemetry tick, and at thread/VM exit.
-
-use core::cell::RefCell;
+//! Per-VM span buffers. Integrations end spans into their VM's `LocalBatch`
+//! (see [`crate::Local`]) with no synchronisation; the batch is handed to the
+//! global [`Processor`](crate::Processor) every `LOCAL_FLUSH_SPANS` spans, on
+//! the owning event loop's telemetry tick, and at VM exit.
 
 use crate::ScopeId;
 
@@ -12,7 +10,6 @@ use crate::ScopeId;
 pub const LOCAL_FLUSH_SPANS: u32 = 16;
 pub const LOCAL_FLUSH_BYTES: usize = 32 * 1024;
 
-#[derive(Default)]
 pub struct LocalBatch {
     /// Indexed by `ScopeId`. Each holds concatenated `ScopeSpans.spans` entries.
     pub(crate) scopes: Vec<Vec<u8>>,
@@ -21,6 +18,14 @@ pub struct LocalBatch {
 }
 
 impl LocalBatch {
+    pub const fn new() -> LocalBatch {
+        LocalBatch {
+            scopes: Vec::new(),
+            count: 0,
+            bytes: 0,
+        }
+    }
+
     #[inline]
     pub fn buffer(&mut self, scope: ScopeId) -> &mut Vec<u8> {
         let i = scope.0 as usize;
@@ -55,48 +60,31 @@ impl LocalBatch {
     }
 }
 
-thread_local! {
-    static LOCAL: RefCell<LocalBatch> = const { RefCell::new(LocalBatch { scopes: Vec::new(), count: 0, bytes: 0 }) };
-}
-
-/// Run `f` with this thread's batch. Re-entrancy (ending a span from inside
-/// `f`) is a bug in the caller; `RefCell` panics on it.
-#[inline]
-pub fn with_local<R>(f: impl FnOnce(&mut LocalBatch) -> R) -> R {
-    LOCAL.with(|l| f(&mut l.borrow_mut()))
-}
-
-/// Write one span for `scope` via `write` and hand the local batch to the
+/// Write one span for `scope` via `write` and hand the batch to the
 /// processor if it crossed the threshold. This is the function every
 /// integration's end path funnels through.
 #[inline]
-pub fn record(scope: ScopeId, write: &mut dyn FnMut(&mut Vec<u8>)) {
-    let full = with_local(|l| {
-        let buf = l.buffer(scope);
-        let start = buf.len();
-        write(buf);
-        if buf.len() == start {
-            return false;
-        }
-        l.committed(scope, start)
-    });
-    if full {
-        flush_local();
+pub fn record(l: &mut LocalBatch, scope: ScopeId, write: &mut dyn FnMut(&mut Vec<u8>)) {
+    let buf = l.buffer(scope);
+    let start = buf.len();
+    write(buf);
+    if buf.len() == start {
+        return;
+    }
+    if l.committed(scope, start) {
+        flush_local(l);
     }
 }
 
-/// Move this thread's buffered spans to the global processor.
-pub fn flush_local() {
+/// Move the VM's buffered spans to the global processor.
+pub fn flush_local(l: &mut LocalBatch) {
+    if l.is_empty() {
+        return;
+    }
     // The processor copies the buffers under its lock and we keep ours
     // (and their capacity); it must not call back into the batch.
-    let export = with_local(|l| {
-        if l.is_empty() {
-            return None;
-        }
-        let r = crate::processor::global().map(|p| (p, p.accept(l)));
-        l.clear();
-        r
-    });
+    let export = crate::processor::global().map(|p| (p, p.accept(l)));
+    l.clear();
     if let Some((p, true)) = export {
         p.export();
     }

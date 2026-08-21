@@ -1,10 +1,8 @@
 //! HTTP server spans: the request path captures raw facts (a few copies) and
-//! the span is encoded at `end()` from a per-thread template. Consecutive
+//! the span is encoded at `end()` from a per-VM template. Consecutive
 //! requests usually differ only in ids, times and path, so the
 //! encoding of everything else is cached and a hit is one copy plus
 //! fixed-offset patches and a short per-request tail.
-
-use core::cell::RefCell;
 
 use crate::StatusCode;
 use crate::data::Limits;
@@ -207,12 +205,17 @@ impl Template {
 
 const TEMPLATES: usize = 4;
 
-struct Cache {
+/// Most-recently-used encoded span templates (see [`crate::Local`]).
+pub struct Cache {
     entries: Vec<Template>,
 }
 
-thread_local! {
-    static CACHE: RefCell<Cache> = const { RefCell::new(Cache { entries: Vec::new() }) };
+impl Cache {
+    pub const fn new() -> Cache {
+        Cache {
+            entries: Vec::new(),
+        }
+    }
 }
 
 // Byte offsets inside an encoded span (see SpanWriter::begin): tag, two
@@ -232,7 +235,7 @@ fn off_start(has_parent: bool) -> usize {
 
 /// Encode one server span into `out` (a scope span buffer).
 #[inline]
-pub fn encode(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limits: &Limits) {
+pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limits: &Limits) {
     if limits.attributes < 16 {
         return encode_untemplated(out, facts, p, limits);
     }
@@ -246,14 +249,13 @@ pub fn encode(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limits: &Limi
         p.name_override,
         p.status_message,
     ];
-    let hit = CACHE.with(|c| {
-        let mut c = c.borrow_mut();
+    let hit = 'hit: {
         let Some(i) = c
             .entries
             .iter()
             .position(|t| t.matches(facts, p, has_parent, &pieces))
         else {
-            return false;
+            break 'hit false;
         };
         if i != 0 {
             c.entries.swap(0, i);
@@ -274,9 +276,9 @@ pub fn encode(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limits: &Limi
         out[st + 19..st + 23].copy_from_slice(&p.stub.ctx.flags.otlp().to_le_bytes());
         append_tail(out, s, url, facts, limits);
         true
-    });
+    };
     if !hit {
-        encode_miss(out, facts, p, limits, has_parent);
+        encode_miss(c, out, facts, p, limits, has_parent);
     }
 }
 
@@ -292,6 +294,7 @@ fn encode_untemplated(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limit
 #[cold]
 #[inline(never)]
 fn encode_miss(
+    c: &mut Cache,
     out: &mut Vec<u8>,
     facts: &Facts,
     p: &SpanParts<'_>,
@@ -346,13 +349,10 @@ fn encode_miss(
         piece_len,
         bytes,
     };
-    CACHE.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.entries.len() >= TEMPLATES {
-            c.entries.pop();
-        }
-        c.entries.insert(0, t);
-    });
+    if c.entries.len() >= TEMPLATES {
+        c.entries.pop();
+    }
+    c.entries.insert(0, t);
 }
 
 /// Per-request attributes after the templated part, then the span length.

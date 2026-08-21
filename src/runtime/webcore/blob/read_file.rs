@@ -129,6 +129,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 ReadFileResultType::Result(_) => (b"", b""),
             };
             crate::telemetry::end_leaf(
+                global_this,
                 bun_telemetry::Instrument::Fs,
                 &otel,
                 b"Bun.file read",

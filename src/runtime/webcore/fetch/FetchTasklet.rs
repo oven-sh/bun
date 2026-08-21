@@ -495,7 +495,14 @@ impl FetchTasklet {
         };
         let url =
             &self.url_proxy_buffer[..(self.otel_url_len as usize).min(self.url_proxy_buffer.len())];
-        crate::telemetry::fetch::end(&stub, self.otel_method, url, status, error);
+        crate::telemetry::fetch::end(
+            &self.global_this,
+            &stub,
+            self.otel_method,
+            url,
+            status,
+            error,
+        );
     }
 
     fn clear_data(&mut self) {

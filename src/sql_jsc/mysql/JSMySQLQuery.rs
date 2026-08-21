@@ -84,7 +84,13 @@ impl JSMySQLQuery {
         let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
             let q = self.query.get().query_text();
-            bun_telemetry::db::end(span, q.slice(), None, error);
+            bun_telemetry::db::end(
+                self.global_object().as_ptr().cast(),
+                span,
+                q.slice(),
+                None,
+                error,
+            );
         }
     }
 

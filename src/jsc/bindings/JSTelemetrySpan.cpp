@@ -87,22 +87,22 @@ struct BunEndDesc {
     uint32_t nLinks;
 };
 
-extern "C" void Bun__Telemetry__stubStart(Bun::SpanStub* out, const Bun::SpanStub* parent, uint64_t startNs);
+extern "C" void Bun__Telemetry__stubStart(JSC::JSGlobalObject*, Bun::SpanStub* out, const Bun::SpanStub* parent, uint64_t startNs);
 extern "C" void Bun__Telemetry__stubWrap(Bun::SpanStub* out, const uint8_t* traceId, const uint8_t* spanId, uint8_t w3cFlags, bool remote);
 extern "C" uint64_t Bun__Telemetry__nowNs();
 extern "C" uint16_t Bun__Telemetry__userScope();
 extern "C" uint32_t Bun__Telemetry__attributeLimits(uint32_t* valueLengthLimit);
 extern "C" uint32_t Bun__Telemetry__propagationFlags();
-extern "C" void Bun__Telemetry__encodeSpan(const BunEndDesc*);
-extern "C" bool Bun__Telemetry__nativeIsLive(uint64_t);
-extern "C" bool Bun__Telemetry__nativeEnd(uint64_t, uint64_t endNs);
-extern "C" void Bun__Telemetry__nativeSetAttribute(uint64_t, const BunAttrRef*);
-extern "C" void Bun__Telemetry__nativeSetName(uint64_t, const BunStrRef*);
-extern "C" void Bun__Telemetry__nativeSetStatus(uint64_t, uint8_t code, const BunStrRef*);
-extern "C" void Bun__Telemetry__nativeAddEvent(uint64_t, const BunEventRef*);
-extern "C" void Bun__Telemetry__nativeAddLink(uint64_t, const BunLinkRef*);
-extern "C" size_t Bun__Telemetry__nativeName(uint64_t, uint8_t* out, size_t cap);
-extern "C" size_t Bun__Telemetry__nativePropagation(uint64_t, uint8_t which, uint8_t* out, size_t cap);
+extern "C" void Bun__Telemetry__encodeSpan(JSC::JSGlobalObject*, const BunEndDesc*);
+extern "C" bool Bun__Telemetry__nativeIsLive(JSC::JSGlobalObject*, uint64_t);
+extern "C" bool Bun__Telemetry__nativeEnd(JSC::JSGlobalObject*, uint64_t, uint64_t endNs);
+extern "C" void Bun__Telemetry__nativeSetAttribute(JSC::JSGlobalObject*, uint64_t, const BunAttrRef*);
+extern "C" void Bun__Telemetry__nativeSetName(JSC::JSGlobalObject*, uint64_t, const BunStrRef*);
+extern "C" void Bun__Telemetry__nativeSetStatus(JSC::JSGlobalObject*, uint64_t, uint8_t code, const BunStrRef*);
+extern "C" void Bun__Telemetry__nativeAddEvent(JSC::JSGlobalObject*, uint64_t, const BunEventRef*);
+extern "C" void Bun__Telemetry__nativeAddLink(JSC::JSGlobalObject*, uint64_t, const BunLinkRef*);
+extern "C" size_t Bun__Telemetry__nativeName(JSC::JSGlobalObject*, uint64_t, uint8_t* out, size_t cap);
+extern "C" size_t Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, uint64_t, uint8_t which, uint8_t* out, size_t cap);
 extern "C" const Bun::SpanStub* Bun__Telemetry__activeSpanStub(Zig::GlobalObject*);
 extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Telemetry__startInstrumentSpan(Zig::GlobalObject*, uint32_t instrument, const BunStrRef* name, uint8_t kind);
@@ -698,10 +698,10 @@ static void inheritNativePropagation(VM& vm, Zig::GlobalObject* globalObject, JS
     for (uint8_t which : { 't', 'b' }) {
         if (buf.size() < 512)
             buf.grow(512);
-        size_t n = Bun__Telemetry__nativePropagation(native, which, buf.begin(), buf.size());
+        size_t n = Bun__Telemetry__nativePropagation(globalObject, native, which, buf.begin(), buf.size());
         if (n > buf.size()) {
             buf.grow(n);
-            n = Bun__Telemetry__nativePropagation(native, which, buf.begin(), buf.size());
+            n = Bun__Telemetry__nativePropagation(globalObject, native, which, buf.begin(), buf.size());
         }
         if (n)
             (which == 't' ? ts : bg) = String::fromUTF8(std::span(buf.begin(), n));
@@ -749,7 +749,7 @@ static ALWAYS_INLINE JSTelemetrySpan* createSpanFast(Zig::GlobalObject* globalOb
     auto& vm = globalObject->vm();
     const SpanStub* parent = Bun__Telemetry__activeSpanStub(globalObject);
     SpanStub stub;
-    Bun__Telemetry__stubStart(&stub, parent, 0);
+    Bun__Telemetry__stubStart(globalObject, &stub, parent, 0);
     auto* span = JSTelemetrySpan::create(vm, globalObject, stub, static_cast<uint16_t>(scopeKind >> 3), static_cast<uint8_t>(scopeKind & 7), name, 0);
     if (parent) {
         if (uint64_t native = Bun__Telemetry__activeNativeHandle(globalObject))
@@ -905,7 +905,7 @@ static JSTelemetrySpan* tracerStartSpan(Zig::GlobalObject* globalObject, JSTelem
     const SpanStub* parentStub = resolveParent(globalObject, parent, storage, parentCell);
     RETURN_IF_EXCEPTION(scope, nullptr);
     SpanStub stub;
-    Bun__Telemetry__stubStart(&stub, parentStub, startNs);
+    Bun__Telemetry__stubStart(globalObject, &stub, parentStub, startNs);
     auto* span = JSTelemetrySpan::create(vm, globalObject, stub, tracer->m_scope, kind, name, 0);
     inheritPropagation(vm, globalObject, span, parentCell);
 
@@ -1083,10 +1083,10 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
                 continue;
             if (tmp.size() < 256)
                 tmp.grow(256);
-            size_t n = Bun__Telemetry__nativePropagation(span->m_native, which, tmp.begin(), tmp.size());
+            size_t n = Bun__Telemetry__nativePropagation(globalObject, span->m_native, which, tmp.begin(), tmp.size());
             if (n > tmp.size()) {
                 tmp.grow(n);
-                n = Bun__Telemetry__nativePropagation(span->m_native, which, tmp.begin(), tmp.size());
+                n = Bun__Telemetry__nativePropagation(globalObject, span->m_native, which, tmp.begin(), tmp.size());
             }
             if (n)
                 out->putDirectIndex(globalObject, 1 + i, jsString(vm, String::fromUTF8(std::span(tmp.begin(), n))));
@@ -1131,7 +1131,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryStartSpan, (JSGlobalObject * lexicalGlobalOb
     RETURN_IF_EXCEPTION(scope, {});
     uint64_t startNs = timeInputToNs(globalObject, callFrame->argument(4));
     SpanStub stub;
-    Bun__Telemetry__stubStart(&stub, parent, startNs);
+    Bun__Telemetry__stubStart(globalObject, &stub, parent, startNs);
     auto* span = JSTelemetrySpan::create(vm, globalObject, stub, scopeId, kind, name, 0);
     inheritPropagation(vm, globalObject, span, parentCell);
     return JSValue::encode(span);
@@ -1217,20 +1217,20 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryNativeSpanOp, (JSGlobalObject * lexicalGloba
         ref.setKey(strRef(implOf(globalObject, asString(a))));
         if (ref.kind == 4)
             ref.u.array.items = sc.arrayItems.begin() + reinterpret_cast<size_t>(ref.u.array.items);
-        Bun__Telemetry__nativeSetAttribute(span->m_native, &ref);
+        Bun__Telemetry__nativeSetAttribute(globalObject, span->m_native, &ref);
         break;
     }
     case 1: { // setName(name)
         auto str = a.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         BunStrRef r = strRef(str);
-        Bun__Telemetry__nativeSetName(span->m_native, &r);
+        Bun__Telemetry__nativeSetName(globalObject, span->m_native, &r);
         break;
     }
     case 2: { // setStatus(code, message)
         auto m = b.isString() ? asString(b)->value(globalObject) : String();
         BunStrRef r = strRef(m);
-        Bun__Telemetry__nativeSetStatus(span->m_native, a.isInt32() ? static_cast<uint8_t>(a.asInt32()) : 0, &r);
+        Bun__Telemetry__nativeSetStatus(globalObject, span->m_native, a.isInt32() ? static_cast<uint8_t>(a.asInt32()) : 0, &r);
         break;
     }
     case 3: { // addEvent(name, flatAttrs | null, time)
@@ -1243,7 +1243,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryNativeSpanOp, (JSGlobalObject * lexicalGloba
             patchArrays(sc, attrs);
         }
         BunEventRef ev { strRef(n), timeInputToNs(globalObject, c), attrs.begin(), static_cast<uint32_t>(attrs.size()) };
-        Bun__Telemetry__nativeAddEvent(span->m_native, &ev);
+        Bun__Telemetry__nativeAddEvent(globalObject, span->m_native, &ev);
         break;
     }
     case 4: { // addLink(ctx, flatAttrs | null)
@@ -1267,7 +1267,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryNativeSpanOp, (JSGlobalObject * lexicalGloba
             patchArrays(sc, attrs);
         }
         BunLinkRef link { strRef(ts), strRef(ss), static_cast<uint8_t>(f.isNumber() ? f.asNumber() : 0), attrs.begin(), static_cast<uint32_t>(attrs.size()) };
-        Bun__Telemetry__nativeAddLink(span->m_native, &link);
+        Bun__Telemetry__nativeAddLink(globalObject, span->m_native, &link);
         break;
     }
     default:
@@ -1286,7 +1286,7 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
         return;
     span->setState(vm, (state | JSTelemetrySpan::StateEnded) & ~JSTelemetrySpan::StateRecording);
     if (span->m_native) {
-        Bun__Telemetry__nativeEnd(span->m_native, endNs);
+        Bun__Telemetry__nativeEnd(globalObject, span->m_native, endNs);
         return;
     }
     if (!(state & JSTelemetrySpan::StateRecording))
@@ -1337,7 +1337,7 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
         patchArrays(sc, attrs);
         desc.attrs = attrs.begin();
         desc.nAttrs = attrs.size();
-        Bun__Telemetry__encodeSpan(&desc);
+        Bun__Telemetry__encodeSpan(globalObject, &desc);
         span->field(JSTelemetrySpan::Field::Attributes).setWithoutWriteBarrier(jsNull());
         return;
     }
@@ -1444,7 +1444,7 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
     desc.nEvents = events.size();
     desc.links = links.begin();
     desc.nLinks = links.size();
-    Bun__Telemetry__encodeSpan(&desc);
+    Bun__Telemetry__encodeSpan(globalObject, &desc);
     span->field(JSTelemetrySpan::Field::Attributes).setWithoutWriteBarrier(jsNull());
     span->field(JSTelemetrySpan::Field::Extra).setWithoutWriteBarrier(jsNull());
 }
@@ -1559,10 +1559,10 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncSpanContext, (JSGlobalObject * 
         ts = JSValue();
         Vector<uint8_t, 256> buf;
         buf.grow(256);
-        size_t n = Bun__Telemetry__nativePropagation(span->m_native, 't', buf.begin(), buf.size());
+        size_t n = Bun__Telemetry__nativePropagation(globalObject, span->m_native, 't', buf.begin(), buf.size());
         if (n > buf.size()) {
             buf.grow(n);
-            n = Bun__Telemetry__nativePropagation(span->m_native, 't', buf.begin(), buf.size());
+            n = Bun__Telemetry__nativePropagation(globalObject, span->m_native, 't', buf.begin(), buf.size());
         }
         if (n)
             ts = jsString(vm, String::fromUTF8(std::span(buf.begin(), n)));
@@ -1633,10 +1633,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsTelemetrySpanGetter_name, (JSGlobalObject * globalObj
     if (span->m_native) {
         Vector<uint8_t, 128> buf;
         buf.grow(128);
-        size_t len = Bun__Telemetry__nativeName(span->m_native, buf.begin(), buf.size());
+        size_t len = Bun__Telemetry__nativeName(globalObject, span->m_native, buf.begin(), buf.size());
         if (len > buf.size()) {
             buf.grow(len);
-            len = Bun__Telemetry__nativeName(span->m_native, buf.begin(), buf.size());
+            len = Bun__Telemetry__nativeName(globalObject, span->m_native, buf.begin(), buf.size());
         }
         return JSValue::encode(jsString(globalObject->vm(), String::fromUTF8(std::span(buf.begin(), std::min(len, buf.size())))));
     }
@@ -1649,7 +1649,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTelemetrySpanGetter_kind, (JSGlobalObject*, JSC::Enco
         return JSValue::encode(jsUndefined());
     return JSValue::encode(jsNumber(span->m_kind));
 }
-JSC_DEFINE_CUSTOM_GETTER(jsTelemetrySpanGetter_ended, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTelemetrySpanGetter_ended, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto* span = toTelemetrySpan(JSValue::decode(thisValue));
     if (!span)
@@ -1657,7 +1657,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTelemetrySpanGetter_ended, (JSGlobalObject*, JSC::Enc
     if (span->ended())
         return JSValue::encode(jsBoolean(true));
     if (span->m_native)
-        return JSValue::encode(jsBoolean(!Bun__Telemetry__nativeIsLive(span->m_native)));
+        return JSValue::encode(jsBoolean(!Bun__Telemetry__nativeIsLive(globalObject, span->m_native)));
     return JSValue::encode(jsBoolean(false));
 }
 

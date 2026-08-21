@@ -201,7 +201,7 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 // ── Native OpenTelemetry (see src/runtime/telemetry/sqlite.rs) ───────────────
 extern "C" uint32_t Bun__Telemetry__enabled;
 extern "C" uint64_t Bun__Telemetry__sqliteBegin(JSC::JSGlobalObject*, const char* file, size_t fileLen);
-extern "C" void Bun__Telemetry__sqliteEnd(uint64_t span, const char* sql, size_t sqlLen, int errcode, const char* errmsg);
+extern "C" void Bun__Telemetry__sqliteEnd(JSC::JSGlobalObject*, uint64_t span, const char* sql, size_t sqlLen, int errcode, const char* errmsg);
 
 namespace Bun {
 
@@ -245,6 +245,7 @@ private:
     NEVER_INLINE void begin(JSC::JSGlobalObject* globalObject)
     {
         const char* file = m_db ? sqlite3_db_filename(m_db, "main") : nullptr;
+        m_globalObject = globalObject;
         m_span = Bun__Telemetry__sqliteBegin(globalObject, file, file ? strlen(file) : 0);
     }
 
@@ -268,7 +269,7 @@ private:
         const char* msg = nullptr;
         if (failed)
             msg = !m_errmsg.isNull() ? m_errmsg.data() : (m_db ? sqlite3_errmsg(m_db) : nullptr);
-        Bun__Telemetry__sqliteEnd(m_span, sql, len, rc, msg);
+        Bun__Telemetry__sqliteEnd(m_globalObject, m_span, sql, len, rc, msg);
         m_span = 0;
     }
 
@@ -279,6 +280,7 @@ private:
     size_t m_sqlLen { 0 };
     int m_rc { SQLITE_OK };
     CString m_errmsg;
+    JSC::JSGlobalObject* m_globalObject { nullptr };
     uint64_t m_span { 0 };
 };
 

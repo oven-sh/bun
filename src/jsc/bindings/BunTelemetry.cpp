@@ -63,7 +63,7 @@ static ALWAYS_INLINE JSValue activeHeaderFromSlot(JSValue slot)
 
 } // namespace Bun
 
-extern "C" const Bun::SpanStub* Bun__Telemetry__poolStub(uint64_t handle);
+extern "C" const Bun::SpanStub* Bun__Telemetry__poolStub(JSC::JSGlobalObject*, uint64_t handle);
 extern "C" JSC::EncodedJSValue Bun__Telemetry__poolMaterialize(Zig::GlobalObject*, uint64_t handle);
 
 /// The active span as a JS cell (materializing one for a pooled span), or undefined.
@@ -107,7 +107,7 @@ extern "C" const Bun::SpanStub* Bun__Telemetry__activeSpanStub(Zig::GlobalObject
     if (!h)
         return nullptr;
     if (h.isNumber())
-        return Bun__Telemetry__poolStub(Bun::handleFromNumber(h));
+        return Bun__Telemetry__poolStub(globalObject, Bun::handleFromNumber(h));
     return &Bun::asSpan(h)->m_stub;
 }
 

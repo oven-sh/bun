@@ -1419,7 +1419,12 @@ where
     pub(crate) fn otel_set_route(&self, route: &[u8]) {
         let span = self.otel_span.get();
         if span.is_some() {
-            crate::telemetry::server::set_route(span, self.method, route);
+            crate::telemetry::server::set_route(
+                self.server().global_this(),
+                span,
+                self.method,
+                route,
+            );
         }
     }
 
@@ -1547,7 +1552,12 @@ where
         ctx_log!("finalizeWithoutDeinit<d> ({:p})<r>", self);
         let span = self.otel_span.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
-            crate::telemetry::server::end(span, self.otel_status.get(), self.flags.aborted());
+            crate::telemetry::server::end(
+                self.server().global_this(),
+                span,
+                self.otel_status.get(),
+                self.flags.aborted(),
+            );
         }
         self.blob.with_mut(|b| b.detach());
         debug_assert!(self.server.get().is_some());

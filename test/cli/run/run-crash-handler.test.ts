@@ -698,6 +698,53 @@ test("a panic inside a native module names the module locally and in the uploade
   );
 });
 
+// process.dlopen can run inside another crash handler action: with
+// --install=fallback, resolving a package that is not installed holds the
+// resolver action while bun waits for the registry, and that wait runs the
+// event loop, microtasks included. The module being loaded used to go into the
+// same slot as that action, asserting it was empty on the way in and clearing
+// it on the way out. It is a slot of its own now, restored to what it replaced,
+// so a dlopen in that position neither asserts nor costs a later crash its
+// `Crashed while resolving a module` line.
+test("process.dlopen inside the resolver action leaves that action in place", async () => {
+  using dir = tempDir("crash-handler-dlopen-inside-resolver", {
+    "package.json": JSON.stringify({ name: "box", version: "0.0.0" }),
+    "index.ts": `
+      import { crash_handler } from "bun:internal-for-testing";
+      Promise.resolve().then(() => {
+        try {
+          process.dlopen({ exports: {} }, "/nonexistent-addon.node");
+        } catch {}
+        crash_handler.panic();
+      });
+      try {
+        import.meta.resolve("some-package-that-is-not-installed-xyz", import.meta.url);
+      } catch {}
+      console.log("the microtask did not run inside the resolver");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--install=fallback", "--debug-crash-handler-use-trace-string", "index.ts"],
+    cwd: String(dir),
+    // Nothing listens there: auto-install queues the request, runs the event
+    // loop while it waits (which is when the microtask runs), then gives up.
+    env: { ...noReportEnv, BUN_CONFIG_REGISTRY: "http://127.0.0.1:1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The microtask's own panic is the crash, so dlopen itself did not assert,
+  // and the script never got past the resolve, so the microtask ran inside it.
+  expect(stderr).toContain("invoked crashByPanic() handler");
+  expect(stdout).toBe("");
+  // The resolver action is only recorded by builds with assertions on.
+  if (isDebug || isASAN) {
+    expect(stderr).toContain("Crashed while resolving a module\n");
+  }
+  expect(exitCode).not.toBe(0);
+});
+
 test.if(isWindows)(
   "Windows: crash report upload runs the system PowerShell, not a powershell.exe in the working directory",
   async () => {

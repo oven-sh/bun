@@ -1,32 +1,20 @@
-//! Starting the daemon threads bun creates on first use: the HTTP client
-//! thread, the bundle thread behind `Bun.build()`, the POSIX IO thread.
-//!
-//! The OS can refuse a thread. `pthread_create` returns `EAGAIN` when the
-//! process is at a thread or pid limit, or cannot map the stack; `CreateThread`
-//! fails with `ERROR_COMMITMENT_LIMIT` when the machine cannot commit the
-//! stack (bun commits 2 MB per thread, see the `/STACK:` flag in
-//! scripts/build/flags.ts). That is a limit of the machine, not a bug in bun,
-//! so the callers report it like any other error instead of crashing.
+//! Starting the threads bun creates on first use (the HTTP client thread, the
+//! bundle thread, the POSIX IO thread). A refused thread (`EAGAIN` at a thread
+//! limit, `ERROR_COMMITMENT_LIMIT` at the commit limit of the machine) is an
+//! error for the caller to report, not a crash.
 
 use core::fmt;
 use std::time::Duration;
 
 use bun_sys::SystemErrno;
 
-/// The schedule of the Go runtime (`_cgo_try_pthread_create`,
-/// `runtime.createThread`): 20 attempts, and a pause of n ms after the n-th
-/// failure. The limit is often gone a moment later, when the threads of an
-/// exiting process are reaped or Windows has grown the paging file. A limit
-/// that stays costs about 190 ms per call before the caller reports it.
+/// The schedule of the Go runtime: 20 attempts, n ms of sleep after the n-th
+/// failure, about 190 ms in total when the limit stays.
 const MAX_ATTEMPTS: u64 = 20;
 
-/// Calls `spawn` until it succeeds, per [`MAX_ATTEMPTS`]. Every error is
-/// retried: the OS reports the same limit under several codes (`EAGAIN`,
-/// `ERROR_ACCESS_DENIED`, `ERROR_COMMITMENT_LIMIT`), and the threads bun starts
-/// this way have fixed, valid attributes, so there is no other kind of error to
-/// fail fast on. `spawn` builds the thread again on every call, because
-/// `std::thread::Builder::spawn` consumes the closure even when it fails.
-/// `thread_name` names the thread in the error message.
+/// Calls `spawn` until it succeeds, per [`MAX_ATTEMPTS`]. `spawn` has to build
+/// the thread again on each call: `std::thread::Builder::spawn` consumes the
+/// closure even when it fails. `thread_name` goes into the error message.
 pub fn spawn_with_retry<T>(
     thread_name: &'static str,
     mut spawn: impl FnMut() -> std::io::Result<T>,
@@ -45,10 +33,8 @@ pub fn spawn_with_retry<T>(
     }
 }
 
-/// Every attempt of [`spawn_with_retry`] failed. `Display` gives the full
-/// message, with the text of the OS for the last error:
-/// `Failed to start the HTTP client thread: The paging file is too small for
-/// this operation to complete. (os error 1455)`.
+/// Every attempt of [`spawn_with_retry`] failed. `Display` is the message for
+/// the user, with the text of the OS for the last error.
 #[derive(Debug)]
 pub struct SpawnError {
     thread_name: &'static str,
@@ -56,9 +42,8 @@ pub struct SpawnError {
 }
 
 impl SpawnError {
-    /// The errno for `error.code` and for the error enums that wrap a
-    /// `SystemErrno`. A Windows code without an errno of its own, such as
-    /// `ERROR_COMMITMENT_LIMIT`, maps to `ENOMEM`.
+    /// A Windows code without an errno of its own (`ERROR_COMMITMENT_LIMIT`)
+    /// maps to `ENOMEM`.
     pub fn errno(&self) -> SystemErrno {
         #[cfg(windows)]
         const FALLBACK: SystemErrno = SystemErrno::ENOMEM;
@@ -78,8 +63,7 @@ impl SpawnError {
         <&'static str>::from(self.errno())
     }
 
-    /// What the user can do about the error. `None` when the text of the OS
-    /// already says it.
+    /// What the user can do about it, when the text of the OS does not say.
     pub fn hint(&self) -> Option<&'static str> {
         #[cfg(windows)]
         const HINT: (SystemErrno, &str) = (
@@ -95,8 +79,7 @@ impl SpawnError {
         (self.errno() == HINT.0).then_some(HINT.1)
     }
 
-    /// Prints the error and its hint to stderr, for the commands that cannot
-    /// continue without the thread.
+    /// Prints the error and its hint to stderr.
     pub fn print(&self) {
         bun_core::err_generic!("{}", self);
         if let Some(hint) = self.hint() {

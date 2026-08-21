@@ -14,9 +14,8 @@ pub enum Error {
     VersionSpecifierNotAllowedHere,
     #[error("ParseErrorAlreadyLogged")]
     ParseErrorAlreadyLogged,
-    /// The auto-installer could not start the HTTP client thread it downloads
-    /// with: the OS refused the thread with this errno. Kept apart from `Sys`,
-    /// which on that path means the top-level directory could not be read.
+    /// The OS refused the auto-installer's HTTP client thread. Not `Sys`, which
+    /// on that path means the top-level directory could not be read.
     #[error("{0}")]
     HttpThread(bun_errno::SystemErrno),
     #[error(transparent)]

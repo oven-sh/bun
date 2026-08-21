@@ -888,9 +888,8 @@ impl IoRequestLoop {
                 .spawn(Self::on_spawn_io_thread)
         });
         if let Err(err) = spawned {
-            // The callers of `schedule` are in the middle of a read or write
-            // that cannot be failed from here, so the process reports the
-            // limit and exits, rather than filing a crash report for it.
+            // `schedule` has no way to fail the read or write that needs the
+            // thread, so this exits instead.
             err.print();
             bun_core::Global::exit(1);
         }

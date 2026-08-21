@@ -360,9 +360,8 @@ impl From<bun_uws::ConnectError> for Error {
     }
 }
 
-/// The HTTP client thread could not be started for a request
-/// (`AsyncHTTP::send_sync`). Only the errno fits in this `Copy` enum; the
-/// callers that report the failure to the user take the `SpawnError` itself.
+/// `AsyncHTTP::send_sync` could not start the HTTP client thread. Only the
+/// errno fits in this `Copy` enum.
 impl From<bun_threading::SpawnError> for Error {
     fn from(e: bun_threading::SpawnError) -> Self {
         Error::Sys(e.errno())

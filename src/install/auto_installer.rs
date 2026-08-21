@@ -454,13 +454,11 @@ unsafe fn __bun_resolver_init_package_manager(
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader>,
 ) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_resolver::Error> {
-    // ABI: the resolver-side `extern "Rust"` declaration names this same
-    // `bun_resolver::Error`, so both sides have one `Result` layout by
-    // construction. `Sys` carries the real errno name (resolve.test.ts sees
-    // `EACCES`, not `Unexpected`); `HttpThread` selects the resolver's message.
+    // ABI: the resolver-side `extern "Rust"` declaration names the same
+    // `bun_resolver::Error`. `Sys` keeps the errno name (resolve.test.ts sees
+    // `EACCES`); `HttpThread` selects the resolver's message.
     //
-    // Started before the sticky init below: a refused thread leaves the
-    // manager uncreated, and the next resolve tries both again.
+    // Before the sticky init below, so that the next resolve tries again.
     bun_http::http_thread::init(&Default::default())
         .map_err(|err| bun_resolver::Error::HttpThread(err.errno()))?;
 

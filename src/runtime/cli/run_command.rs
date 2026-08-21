@@ -841,8 +841,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if preconnect.is_empty() {
             return;
         }
-        // A preconnect is only a hint: without the thread the URLs are still
-        // validated, and the script's own requests report the refused thread.
+        // A refused thread still validates the URLs; the script's own requests report it.
         let http_thread_started = bun_http::http_thread::init(&Default::default()).is_ok();
 
         for url_str in preconnect {
@@ -3169,8 +3168,6 @@ impl RunCommand {
             return;
         }
 
-        // Silent like every other download failure here: the images render
-        // as their alt text.
         if bun_http::http_thread::init(&Default::default()).is_err() {
             return;
         }

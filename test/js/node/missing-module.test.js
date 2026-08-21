@@ -29,7 +29,7 @@ test("not implemented yet module throws an error", () => {
     code: "MODULE_NOT_FOUND",
   });
   assert.rejects(() => import(missingBun), {
-    message: /^Cannot find package 'bun:missing' imported from /,
+    message: /^Cannot find module 'bun:missing' imported from /,
     code: "ERR_MODULE_NOT_FOUND",
   });
 

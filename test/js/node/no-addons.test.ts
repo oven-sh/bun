@@ -42,5 +42,5 @@ test("--no-addons throws an error on process.dlopen", () => {
   const out = stdout.toString();
   expect(exitCode).toBe(1);
   expect(out).toBeEmpty();
-  expect(err).toContain("\nerror: Cannot load native addon because loading addons is disabled.");
+  expect(err).toContain("\nError: Cannot load native addon because loading addons is disabled.");
 });

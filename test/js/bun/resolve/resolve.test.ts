@@ -1265,7 +1265,7 @@ describe("wildcard exports with extensionless target", () => {
 
     const result = await runWildcardScript(String(dir), "index.ts");
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("Cannot find module");
+    expect(result.stderr).toMatch(/Cannot find (?:module|package) 'wildcard-pkg/);
   });
 
   test.concurrent("CJS require of extensionless wildcard target also resolves", async () => {
@@ -1304,7 +1304,7 @@ describe("wildcard exports with extensionless target", () => {
 
     const result = await runWildcardScript(String(dir), "index.ts");
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("Cannot find module");
+    expect(result.stderr).toMatch(/Cannot find (?:module|package) 'explicit-pkg/);
   });
 
   test.concurrent("resolves sibling `.js` when a same-named directory exists", async () => {
@@ -1547,7 +1547,7 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
+  expect(stdout).toBe("Error ERR_MODULE_NOT_FOUND\n");
   expect(exitCode).toBe(0);
 });
 

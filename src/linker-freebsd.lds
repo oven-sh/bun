@@ -9,6 +9,10 @@ BUN_1.2 {
 	environ;
 	__progname;
 
+	# Debugger helpers called by name from lldb (misctools/lldb). Listed in
+	# src/symbols.txt too; the second one is JSC::CallFrame::describeFrame().
+	dumpBtjsTrace;
+	_ZN3JSC9CallFrame13describeFrameEv;
 
   uv_accept;
   uv_async_init;

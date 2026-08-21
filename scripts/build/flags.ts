@@ -1377,14 +1377,13 @@ export const linkerFlags: Flag[] = [
     desc: "Exported symbol list",
   },
   {
-    flag: c => [
-      "-Wl,-Bsymbolic-functions",
-      "-rdynamic",
-      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
-      `-Wl,--version-script=${c.cwd}/src/linker.lds`,
-    ],
+    // src/linker.lds is the whole ELF export list (the counterpart of
+    // symbols.txt / symbols.def): its `local: *` hides every symbol it does
+    // not name, and lld keeps a symbol the version script made local out of
+    // .dynsym even when a --dynamic-list names it. So there is no second list.
+    flag: c => ["-Wl,-Bsymbolic-functions", "-rdynamic", `-Wl,--version-script=${c.cwd}/src/linker.lds`],
     when: c => c.linux,
-    desc: "Dynamic symbol list + version script",
+    desc: "Version script (the ELF export list)",
   },
   // ─── FreeBSD ───
   {
@@ -1438,14 +1437,10 @@ export const linkerFlags: Flag[] = [
     desc: "Garbage-collect unused sections",
   },
   {
-    flag: c => [
-      "-Wl,-Bsymbolic-functions",
-      "-rdynamic",
-      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
-      `-Wl,--version-script=${c.cwd}/src/linker-freebsd.lds`,
-    ],
+    // Same as the linux entry above; the script adds environ/__progname.
+    flag: c => ["-Wl,-Bsymbolic-functions", "-rdynamic", `-Wl,--version-script=${c.cwd}/src/linker-freebsd.lds`],
     when: c => c.freebsd,
-    desc: "Dynamic symbol list + version script (FreeBSD adds environ/__progname)",
+    desc: "Version script (the ELF export list; FreeBSD adds environ/__progname)",
   },
 ];
 
@@ -1531,12 +1526,12 @@ export function linkerMapOutputs(cfg: Config): string[] {
  * only relink.
  */
 export function linkDepends(cfg: Config): string[] {
-  if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
+  if (cfg.freebsd) return [join(cfg.cwd, "src/linker-freebsd.lds")];
   const depends = cfg.windows
     ? [join(cfg.cwd, "src/symbols.def")]
     : cfg.darwin
       ? [join(cfg.cwd, "src/symbols.txt")]
-      : [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")]; // linux: ELF dynamic-list + version script
+      : [join(cfg.cwd, "src/linker.lds")];
   if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
   return depends;
 }

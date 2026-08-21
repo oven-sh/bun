@@ -4,6 +4,10 @@ BUN_1.2 {
 	node_api_*;
 	node_module_register;
 
+	# Debugger helpers called by name from lldb (misctools/lldb). Listed in
+	# src/symbols.txt too; the second one is JSC::CallFrame::describeFrame().
+	dumpBtjsTrace;
+	_ZN3JSC9CallFrame13describeFrameEv;
 
   uv_accept;
   uv_async_init;

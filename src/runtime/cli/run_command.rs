@@ -2921,27 +2921,40 @@ impl RunCommand {
                 .to_vec()
                 .into_boxed_slice();
 
-            let mut contents = sys::File::openat(Fd::cwd(), &abs, sys::O::RDONLY, 0)
-                .and_then(|file| file.read_to_end());
+            let read_file = |path: &[u8]| {
+                sys::File::openat(Fd::cwd(), path, sys::O::RDONLY, 0)
+                    .and_then(|file| file.read_to_end())
+            };
+            // Node resolves the --check target like require(): only a path that
+            // is not a file falls back to "<path>.js" and then to "Cannot find
+            // module"; any other failure (EACCES, ...) is reported as is.
+            let is_not_a_file =
+                |err: &sys::Error| matches!(err.get_errno(), sys::E::ENOENT | sys::E::EISDIR);
+
+            let mut contents = read_file(&abs);
             let mut resolved = abs;
-            if contents.is_err() && !resolved.ends_with(b".js") {
-                // Node resolves the --check target like require(): an
-                // extensionless path falls back to "<path>.js".
+            if contents.as_ref().is_err_and(is_not_a_file) && !resolved.ends_with(b".js") {
                 let mut with_js = resolved.to_vec();
                 with_js.extend_from_slice(b".js");
                 let with_js: Box<[u8]> = with_js.into_boxed_slice();
-                if let Ok(bytes) = sys::File::openat(Fd::cwd(), &with_js, sys::O::RDONLY, 0)
-                    .and_then(|file| file.read_to_end())
-                {
-                    contents = Ok(bytes);
-                    resolved = with_js;
+                match read_file(&with_js) {
+                    Err(err) if is_not_a_file(&err) => {}
+                    result => {
+                        contents = result;
+                        resolved = with_js;
+                    }
                 }
             }
             let bytes = match contents {
                 Ok(bytes) => bytes,
-                Err(_) => {
+                Err(err) if is_not_a_file(&err) => {
                     // Same first line as Node's loader for a missing --check target.
                     pretty_errorln!("Error: Cannot find module '{}'", bstr::BStr::new(&resolved));
+                    Output::flush();
+                    Global::exit(1);
+                }
+                Err(err) => {
+                    pretty_errorln!("Error: {}", err.with_path(&resolved));
                     Output::flush();
                     Global::exit(1);
                 }

@@ -1,6 +1,6 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { rmSync, writeFileSync } from "fs";
+import { chmodSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
@@ -512,6 +512,47 @@ describe("--check / -c (syntax check)", () => {
     expect(stdout.toString("utf8")).toBe("");
     expect(exitCode).toBe(1);
   });
+
+  // Node resolves the target like require(): a path that is not a file falls
+  // back to "<path>.js". Windows has no mode bits and maps directory opens
+  // differently, so both resolution tests are POSIX-only.
+  test.skipIf(isWindows)("a directory falls back to <path>.js like require()", () => {
+    using dir = tempDir("check-dir-fallback", {
+      "lib": {},
+      "lib.js": "var foo bar;\n",
+    });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check", join(String(dir), "lib")],
+      env: bunEnv,
+    });
+    const errorOutput = stderr.toString("utf8");
+    expect(errorOutput.startsWith(join(String(dir), "lib.js"))).toBe(true);
+    expect(errorOutput).toMatch(/^SyntaxError: /m);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(isWindows || process.getuid?.() === 0)(
+    "an unreadable file reports its own error instead of falling back or saying Cannot find module",
+    () => {
+      using dir = tempDir("check-unreadable", {
+        "secret": "var foo bar;\n",
+        "secret.js": "var ok = 1;\n",
+      });
+      const file = join(String(dir), "secret");
+      chmodSync(file, 0o000);
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "--check", file],
+        env: bunEnv,
+      });
+      const errorOutput = stderr.toString("utf8");
+      expect(errorOutput).toContain("EACCES");
+      expect(errorOutput).toContain(file);
+      expect(errorOutput).not.toContain("Cannot find module");
+      expect(stdout.toString("utf8")).toBe("");
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test("--check with --eval is rejected with exit code 9", () => {
     const { stdout, stderr, exitCode } = Bun.spawnSync({

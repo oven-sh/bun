@@ -99,8 +99,7 @@ pub fn begin(
             }
         }
     });
-    let js = super::create_native_cell(global, &stub, ScopeId::from(Instrument::HttpServer), SpanKind::Server, span);
-    Some((span, Entered::new(global, js)))
+    Some((span, Entered::new(global, super::native_context_value(span))))
 }
 
 /// Refine the span name to `METHOD /route` once the matched route is known.

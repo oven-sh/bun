@@ -27,7 +27,8 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__TelemetrySpan__fromJS(value: JSValue) -> *mut c_void;
     safe fn Bun__TelemetrySpan__stub(cell: *mut c_void) -> *const SpanStub;
-    safe fn Bun__TelemetrySpan__native(cell: *mut c_void) -> u64;
+    safe fn Bun__Telemetry__activeNativeHandle(global: &JSGlobalObject) -> u64;
+    safe fn Bun__TelemetrySpan__nativeEnded(cell: JSValue);
 }
 
 /// `rt::Hooks::active_span` — `global` is a `JSGlobalObject*`.
@@ -54,15 +55,28 @@ pub fn active_js(global: &JSGlobalObject) -> JSValue {
     Bun__Telemetry__activeSpanCell(global)
 }
 
-/// The active span's pool handle if it is native-owned.
+/// The active span's pool handle if it is native-owned (slot holds either
+/// the bare handle as a number or a materialized cell).
 #[inline]
 pub fn active_native(global: &JSGlobalObject) -> NativeSpan {
-    let cell = Bun__TelemetrySpan__fromJS(active_js(global));
-    if cell.is_null() {
-        NativeSpan::NONE
-    } else {
-        NativeSpan(Bun__TelemetrySpan__native(cell))
+    NativeSpan(Bun__Telemetry__activeNativeHandle(global))
+}
+
+/// The async-context slot value for a native-owned span: the pool handle as
+/// a JS number. No cell is allocated unless JS asks for the active span.
+#[inline]
+pub fn native_context_value(native: NativeSpan) -> JSValue {
+    JSValue::js_number(native.0 as f64)
+}
+
+/// Release the JS cell a pooled span materialized (see `pool::Ended`).
+pub(crate) fn release_cell(js_cell: usize) {
+    if js_cell == 0 {
+        return;
     }
+    let v = JSValue::from_encoded(js_cell);
+    Bun__TelemetrySpan__nativeEnded(v);
+    v.unprotect();
 }
 
 /// `f(trace_state, baggage)` for the active span (W3C headers to forward).
@@ -219,9 +233,15 @@ pub(crate) fn for_each_attribute(
 /// End a native-owned span into this thread's batch.
 #[inline]
 pub fn end_native(span: NativeSpan, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'_>)) {
-    if pool::end(span, end_ns, extra) {
+    if let Some(e) = pool::end(span, end_ns, extra) {
+        release_cell(e.js_cell);
         super::after_record();
     }
+}
+
+/// Drop a native-owned span without recording it.
+pub fn discard_native(span: NativeSpan) {
+    release_cell(pool::discard(span));
 }
 
 // ───────────────────── ABI for JSTelemetrySpan.cpp ─────────────────────
@@ -604,11 +624,44 @@ pub extern "C" fn Bun__Telemetry__nativeIsLive(handle: u64) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativeEnd(handle: u64, end_ns: u64) -> bool {
-    let ended = pool::end(NativeSpan(handle), end_ns, |_| {});
-    if ended {
-        super::after_record();
+    match pool::end(NativeSpan(handle), end_ns, |_| {}) {
+        Some(e) => {
+            release_cell(e.js_cell);
+            super::after_record();
+            true
+        }
+        None => false,
     }
-    ended
+}
+
+/// Identity of a pooled span (tolerates ended-but-not-reused slots), or null.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__poolStub(handle: u64) -> *const SpanStub {
+    pool::stub_ptr(NativeSpan(handle))
+}
+
+/// The JS cell for a pooled span, creating (and pinning) it on first use.
+/// After the span has ended this yields a fresh non-recording carrier of its
+/// identity, or undefined once the slot was reused.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handle: u64) -> JSValue {
+    let native = NativeSpan(handle);
+    if let Some((cell, stub, scope, kind)) = pool::with(native, |s| (s.js_cell, s.stub, s.scope, s.kind)) {
+        if cell != 0 {
+            return JSValue::from_encoded(cell);
+        }
+        let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind as u8 - 1, native.0);
+        v.protect();
+        pool::with(native, |s| s.js_cell = v.0);
+        return v;
+    }
+    let p = pool::stub_ptr(native);
+    if p.is_null() {
+        return JSValue::UNDEFINED;
+    }
+    let mut stub = unsafe { *p };
+    stub.ctx.flags = Flags(stub.ctx.flags.0 | Flags::NON_RECORDING);
+    Bun__TelemetrySpan__createNative(global, &stub, 0, 0, 0)
 }
 
 #[unsafe(no_mangle)]

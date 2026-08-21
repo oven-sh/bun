@@ -35,8 +35,7 @@ pub fn begin_message(
             }
         });
     }
-    let js = super::create_native_cell(global, &stub, ScopeId::from(Instrument::WebSocket), kind, span);
-    Some((span, Entered::new(global, js)))
+    Some((span, Entered::new(global, super::native_context_value(span))))
 }
 
 /// End a message span after the handler returned `result`.

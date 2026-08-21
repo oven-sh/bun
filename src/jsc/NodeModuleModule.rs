@@ -117,7 +117,6 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     if frame.arguments_count() == 0 {
         return Err(global.throw_missing_arguments_value(&["specifier"]));
     }
-    // Like Node, any other value is used as `${specifier}`.
     let specifier_value = frame.argument(0);
     if specifier_value.is_symbol() {
         return Err(global.throw_invalid_argument_type_value(
@@ -126,22 +125,20 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             specifier_value,
         ));
     }
-    let specifier = OwnedString::new(specifier_value.to_bun_string(global)?);
+    let specifier = Location::from_js(global, specifier_value)?;
     let base_value = frame.argument(1);
     let base = if base_value.is_undefined() {
         None
     } else if base_value.is_string() || jsc::DOMURL::cast_(base_value, global.vm()).is_some() {
-        Some(OwnedString::new(base_value.to_bun_string(global)?))
+        Some(Location::from_js(global, base_value)?)
     } else {
         return Err(global.throw_invalid_argument_type_value("base", "string", base_value));
     };
 
-    let specifier = location_to_path(global, specifier.get())?;
+    let specifier = specifier.into_path(global)?;
     let specifier_utf8 = specifier.get().to_utf8();
     let specifier = specifier_utf8.slice();
-    let base = base
-        .map(|base| location_to_path(global, base.get()))
-        .transpose()?;
+    let base = base.map(|base| base.into_path(global)).transpose()?;
     let base_utf8 = base.as_ref().map(|base| base.get().to_utf8());
 
     let top_level_dir = global.bun_vm().top_level_dir();
@@ -214,15 +211,36 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     }
 }
 
-/// Both arguments accept either a path or a URL (`import.meta.url`,
-/// `import.meta.resolve()`, or a `URL`, which arrives here as its href). A URL
-/// is converted, and rejected, exactly as `Bun.fileURLToPath()` would.
-fn location_to_path(global: &JSGlobalObject, location: BunString) -> JsResult<OwnedString> {
-    if !has_url_scheme(location.to_utf8().slice()) {
-        return Ok(OwnedString::new(location.dupe_ref()));
+/// The `specifier` or `base` argument: a path or a URL, the latter as a `URL`
+/// or as a string (`import.meta.url`, `import.meta.resolve()`).
+enum Location {
+    Url(JSValue),
+    /// Like Node, any value that is not a `URL` is used as `${value}`.
+    Text(OwnedString),
+}
+
+impl Location {
+    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        if jsc::DOMURL::cast_(value, global.vm()).is_some() {
+            return Ok(Self::Url(value));
+        }
+        Ok(Self::Text(OwnedString::new(value.to_bun_string(global)?)))
     }
-    let path = jsc::URL::file_url_to_path_from_js(location.to_js(global)?, global)?;
-    Ok(OwnedString::new(path))
+
+    /// A URL is converted, and rejected, exactly as `Bun.fileURLToPath()` would.
+    fn into_path(self, global: &JSGlobalObject) -> JsResult<OwnedString> {
+        let url = match self {
+            Self::Url(url) => url,
+            Self::Text(text) => {
+                if !has_url_scheme(text.get().to_utf8().slice()) {
+                    return Ok(text);
+                }
+                text.get().to_js(global)?
+            }
+        };
+        let path = jsc::URL::file_url_to_path_from_js(url, global)?;
+        Ok(OwnedString::new(path))
+    }
 }
 
 /// `file:`, `https://`, `node:` and the like. A scheme must be at least two

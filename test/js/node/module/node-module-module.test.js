@@ -294,6 +294,10 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       expect(() => findPackageJSON("dep", "https://example.com/app.js")).toThrow(notFile);
       expect(() => findPackageJSON("node:fs", import.meta.path)).toThrow(notFile);
       expect(() => findPackageJSON("data:text/javascript,export{}")).toThrow(notFile);
+      // A URL object is a URL even when, as a string, "x:" would be read as a
+      // (Windows drive letter style) path.
+      expect(() => findPackageJSON("dep", new URL("x:y"))).toThrow(notFile);
+      expect(() => findPackageJSON(new URL("x:y"), import.meta.path)).toThrow(notFile);
       const encodedSeparator = pathToFileURL(import.meta.path).href.replace(/\/([^/]+)$/, "%2F$1");
       expect(() => findPackageJSON(encodedSeparator)).toThrow(
         expect.objectContaining({ code: "ERR_INVALID_FILE_URL_PATH" }),

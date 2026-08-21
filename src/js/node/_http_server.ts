@@ -3580,8 +3580,6 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   if (handle && this[kPipelinedQueuedState] === undefined) {
     handle.abort();
   }
-  // Like Node.js's OutgoingMessage#destroy: the socket's close path (#onClose /
-  // onServerResponseClose) emits 'close'; without a socket it is deferred a tick.
   const socket = this[kSocket];
   if (socket) {
     socket.destroy(err);

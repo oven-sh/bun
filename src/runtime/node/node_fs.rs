@@ -6375,9 +6375,7 @@ impl NodeFS {
         Ok(())
     }
 
-    /// The subdirectory went away, or cannot be entered, since its parent listed
-    /// it. Checked after its open and after each read: `getdents64` reports a
-    /// directory removed after it was opened as ENOENT.
+    /// Gone or not enterable since the parent listed it. Reading a gone directory gives ENOENT too.
     fn readdir_recursive_skips_subdir(errno: E) -> bool {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }

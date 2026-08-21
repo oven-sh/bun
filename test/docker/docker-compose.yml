@@ -162,6 +162,16 @@ services:
         protocol: tcp
     tmpfs:
       - /data
+    healthcheck:
+      # Without a healthcheck `up --wait` returns as soon as the container is
+      # running, i.e. before redis-server has bound its ports (same window as
+      # squid below, just shorter). ensure() callers connect immediately.
+      test: ["CMD", "redis-cli", "-e", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+      start_interval: 1s
 
   redis_unified:
     build:
@@ -180,6 +190,18 @@ services:
     volumes:
       - redis-unix:/tmp/redis
       - redis-data:/data
+    healthcheck:
+      # redis-server binds 6379 and the 6380 TLS port in the same step, so a
+      # plain ping covers both listeners. -e: /data is a volume with appendonly
+      # on and the ports are bound before the AOF is replayed; without -e
+      # redis-cli exits 0 on the -LOADING error reply and the replay window
+      # would count as healthy.
+      test: ["CMD", "redis-cli", "-e", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+      start_interval: 1s
 
   # MinIO (S3) Service
   minio:
@@ -247,7 +269,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "pgrep squid > /dev/null"]
+      # Prove 3128 is accepting, not merely that a squid process exists: the
+      # image's entrypoint runs `squid -Nz` (cache init) before the real server,
+      # which binds last, so `pgrep squid` went healthy before anything listened
+      # and ensure() callers hit docker-proxy's accept-then-close ("Connection
+      # ended"). The image has no nc/curl and /bin/sh is dash, hence bash /dev/tcp.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
       interval: 5s
       timeout: 5s
       retries: 30

@@ -84,6 +84,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
     constexpr int32_t SKIP_STRINGS = 1 << 3;
     constexpr int32_t SKIP_SYMBOLS = 1 << 4;
 
+    if ((filter & SKIP_STRINGS) && (filter & SKIP_SYMBOLS))
+        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr)));
     PropertyNameMode propertyNameMode = PropertyNameMode::StringsAndSymbols;
     if (filter & SKIP_STRINGS)
         propertyNameMode = PropertyNameMode::Symbols;
@@ -92,29 +94,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
     DontEnumPropertiesMode dontEnumMode = (filter & ONLY_ENUMERABLE) ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include;
 
     PropertyNameArrayBuilder propertyNames(vm, propertyNameMode, PrivateSymbolMode::Exclude);
-    // Arrays and typed arrays only add their indices on top of the ordinary path, so skip
-    // straight to the non-index part. Anything else that customizes [[OwnPropertyKeys]]
-    // (Proxy, module namespace, String objects, arguments, ...) goes through the method table
-    // and has index-looking keys filtered out below.
-    JSC::JSType type = object->type();
-    bool onlyAddsIndices = type == ArrayType || type == DerivedArrayType || isTypedArrayType(type)
-        || object->methodTable()->getOwnPropertyNames == JSObject::getOwnPropertyNames;
-    if (onlyAddsIndices) {
+    // The ordinary [[OwnPropertyKeys]] (Array included) and the typed array one are both "the
+    // indices, then getOwnNonIndexPropertyNames()", so for those the indices are never produced.
+    // Anything else that overrides it (Proxy, String objects, arguments, module namespaces, ...)
+    // has to be asked for all of its keys, and the loop below drops the indices again.
+    if (isTypedArrayType(object->type()) || !object->structure()->typeInfo().overridesGetOwnPropertyNames())
         object->getOwnNonIndexPropertyNames(globalObject, propertyNames, dontEnumMode);
-    } else {
+    else
         object->methodTable()->getOwnPropertyNames(object, globalObject, propertyNames, dontEnumMode);
-    }
     RETURN_IF_EXCEPTION(scope, {});
 
     MarkedArgumentBuffer keys;
-    for (auto& propertyName : propertyNames) {
-        if (propertyName.isSymbol()) {
+    for (const auto& propertyName : propertyNames) {
+        if (propertyName.isSymbol())
             keys.append(Symbol::create(vm, static_cast<SymbolImpl&>(*propertyName.impl())));
-            continue;
-        }
-        if (!onlyAddsIndices && parseIndex(propertyName))
-            continue;
-        keys.append(jsOwnedString(vm, propertyName.string()));
+        else if (!parseIndex(propertyName))
+            keys.append(jsOwnedString(vm, propertyName.string()));
+    }
+    if (keys.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys)));
 }

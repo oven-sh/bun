@@ -275,6 +275,18 @@ thread_local! {
 
 /// Claim a slot for a span that has started. Returns `NONE` for `SpanStub::NONE`.
 pub fn begin(stub: SpanStub, scope: ScopeId, name: &[u8], kind: SpanKind) -> NativeSpan {
+    begin_with(stub, scope, name, kind, |_| {})
+}
+
+/// [`begin`] plus an initializer run on the fresh slot under the same borrow.
+#[inline]
+pub fn begin_with(
+    stub: SpanStub,
+    scope: ScopeId,
+    name: &[u8],
+    kind: SpanKind,
+    init: impl FnOnce(&mut Slot),
+) -> NativeSpan {
     if !stub.is_some() {
         return NativeSpan::NONE;
     }
@@ -296,6 +308,7 @@ pub fn begin(stub: SpanStub, scope: ScopeId, name: &[u8], kind: SpanKind) -> Nat
         slot.scope = scope;
         slot.kind = kind;
         slot.name.extend_from_slice(name);
+        init(slot);
         NativeSpan::pack(index, slot.generation)
     })
 }
@@ -342,6 +355,18 @@ pub fn end(
     end_ns: u64,
     extra: impl FnOnce(&mut SpanWriter<'_>),
 ) -> Option<Ended> {
+    end_with(handle, end_ns, |_| {}, extra)
+}
+
+/// [`end`] plus a closure that runs on the slot (under the same borrow)
+/// right before it is written.
+#[inline]
+pub fn end_with(
+    handle: NativeSpan,
+    end_ns: u64,
+    prep: impl FnOnce(&mut Slot),
+    extra: impl FnOnce(&mut SpanWriter<'_>),
+) -> Option<Ended> {
     if !handle.is_some() {
         return None;
     }
@@ -361,6 +386,7 @@ pub fn end(
         if !slot.live || slot.generation != handle.generation() {
             return None;
         }
+        prep(slot);
         let mut full = false;
         let js_cell = slot.js_cell;
         if slot.is_recording() {

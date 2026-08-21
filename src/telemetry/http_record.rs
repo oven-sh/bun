@@ -1,6 +1,6 @@
 //! HTTP server spans: the request path captures raw facts (a few copies) and
 //! the span is encoded at `end()` from a per-thread template. Consecutive
-//! requests usually differ only in ids, times, path and client port, so the
+//! requests usually differ only in ids, times and path, so the
 //! encoding of everything else is cached and a hit is one copy plus
 //! fixed-offset patches and a short per-request tail.
 
@@ -33,7 +33,6 @@ pub struct Facts {
     pub ip: [u8; 16],
     pub ip_len: u8,
     pub flags: u8,
-    pub client_port: u16,
     pub status: u16,
     /// This slot holds an HTTP server span rather than a generic one.
     pub active: bool,
@@ -49,7 +48,6 @@ impl Facts {
             ip: [0; 16],
             ip_len: 0,
             flags: 0,
-            client_port: 0,
             status: 0,
             active: false,
         }
@@ -352,40 +350,10 @@ fn append_tail(out: &mut Vec<u8>, span_start: usize, url: &[u8], facts: &Facts, 
     let pl = (facts.path_len as usize).min(url.len());
     let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
     let path = otlp::truncate_utf8(path, max);
-    // client.port (fixed shape, 3-byte padded varint) + url.path header in
-    // one piece, then the path bytes; url.query only when present.
-    let mut head = [0u8; 40];
-    let mut n = 0;
-    if facts.ip_len != 0 && facts.client_port > 0 {
-        let v = facts.client_port as u32;
-        head[..21].copy_from_slice(&[
-            (f::ATTRIBUTES << 3 | 2) as u8,
-            19,
-            (f::KV_KEY << 3 | 2) as u8,
-            11,
-            b'c',
-            b'l',
-            b'i',
-            b'e',
-            b'n',
-            b't',
-            b'.',
-            b'p',
-            b'o',
-            b'r',
-            b't',
-            (f::KV_VALUE << 3 | 2) as u8,
-            4,
-            (f::AV_INT << 3) as u8,
-            (v as u8 & 0x7f) | 0x80,
-            ((v >> 7) as u8 & 0x7f) | 0x80,
-            (v >> 14) as u8,
-        ]);
-        n = 21;
-    }
+    // url.path header and bytes in one reserve; url.query only when present.
     if path.len() < 128 - 16 {
         let kv = 2 + 8 + 2 + 2 + path.len();
-        head[n..n + 16].copy_from_slice(&[
+        let head: [u8; 16] = [
             (f::ATTRIBUTES << 3 | 2) as u8,
             kv as u8,
             (f::KV_KEY << 3 | 2) as u8,
@@ -402,13 +370,11 @@ fn append_tail(out: &mut Vec<u8>, span_start: usize, url: &[u8], facts: &Facts, 
             (2 + path.len()) as u8,
             (f::AV_STRING << 3 | 2) as u8,
             path.len() as u8,
-        ]);
-        n += 16;
-        out.reserve(n + path.len() + 8);
-        out.extend_from_slice(&head[..n]);
+        ];
+        out.reserve(16 + path.len() + 8);
+        out.extend_from_slice(&head);
         out.extend_from_slice(path);
     } else {
-        out.extend_from_slice(&head[..n]);
         otlp::write_key_value(out, f::ATTRIBUTES, b"url.path", &Value::Str(path));
     }
     if !query.is_empty() {
@@ -505,8 +471,8 @@ fn encode_head(
         budget,
     };
     a.put("http.request.method", Value::Str(method));
-    // url.path / url.query / client.port are appended per request (tail).
-    a.n += 3;
+    // url.path / url.query are appended per request (tail).
+    a.n += 2;
     a.put(
         "url.scheme",
         Value::Str(if flags & FLAG_HTTPS != 0 {

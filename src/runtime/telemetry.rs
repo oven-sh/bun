@@ -30,7 +30,7 @@ pub mod websocket;
 pub use bun_telemetry::pool::{self, NativeSpan};
 pub use span::{
     ContextScope, Entered, active, active_context, active_js, active_native, create_native_cell,
-    discard_native, end_native, native_context_value, with_active_propagation,
+    discard_native, end_native, end_native_with, native_context_value, with_active_propagation,
 };
 
 /// Process-wide, immutable after `configure()`. Read on hot paths without

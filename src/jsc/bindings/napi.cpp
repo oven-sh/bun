@@ -2362,8 +2362,7 @@ extern "C" napi_status napi_create_buffer_copy(napi_env env, size_t length,
 // if the env is torn down first (a Worker exiting while the addon still holds the buffer) —
 // from NapiEnv::cleanup() together with the other bound finalizers, as Node's env teardown
 // finalizes every remaining reference (test_worker_buffer_callback/test-free-called).
-// Neither works once the contents have been transferred to another thread, so the wrapper is
-// marked untransferable, as in Node: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L484-L490
+// Neither survives a transfer to another thread, hence the untransferable mark, as in Node: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L484-L490
 class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
     NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)

@@ -23,7 +23,7 @@ extern "C" fn Timer_enableEventLoopDelayMonitoring(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Timer_disableEventLoopDelayMonitoring(_vm: *mut VirtualMachine) {
+extern "C" fn Timer_disableEventLoopDelayMonitoring() {
     let state = crate::jsc_hooks::runtime_state();
     // SAFETY: see `Timer_enableEventLoopDelayMonitoring`.
     unsafe { (*state).timer.event_loop_delay.disable() };

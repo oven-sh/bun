@@ -6375,6 +6375,18 @@ impl NodeFS {
         Ok(())
     }
 
+    /// Whether an error on a subdirectory of a recursive readdir ends that
+    /// subdirectory instead of the whole call. The parent listed the
+    /// subdirectory a moment ago, so these errors mean it was removed or
+    /// replaced in the meantime, or that it cannot be entered at all. Node
+    /// fails the entire operation in these cases. Linux reports a directory
+    /// that was removed after it was opened as ENOENT from `getdents64`, so
+    /// the reads of a subdirectory get the same treatment as its open. Errors
+    /// on the root directory are always returned.
+    fn readdir_recursive_skips_subdir(errno: E) -> bool {
+        matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
+    }
+
     pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
         buf: &mut PathBuffer,
         async_task: &mut AsyncReaddirRecursiveTask,
@@ -6416,13 +6428,8 @@ impl NodeFS {
         let fd = match open_res {
             Err(err) => {
                 if !is_root {
-                    match err.get_errno() {
-                        // These things can happen and there's nothing we can do about it.
-                        //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
-                        _ => {}
+                    if Self::readdir_recursive_skips_subdir(err.get_errno()) {
+                        return Ok(());
                     }
                     if root_basename.len() + 1 + basename.as_bytes().len() + 1
                         < paths::MAX_PATH_BYTES
@@ -6456,6 +6463,9 @@ impl NodeFS {
         loop {
             let current = match iterator.next() {
                 Err(err) => {
+                    if !is_root && Self::readdir_recursive_skips_subdir(err.get_errno()) {
+                        break;
+                    }
                     dirent_path_prev.deref();
                     if !is_root
                         && root_basename.len() + 1 + basename.as_bytes().len() + 1
@@ -6623,11 +6633,7 @@ impl NodeFS {
                         return Err(err.with_path(args.path.slice()));
                     }
                     match err.get_errno() {
-                        // These things can happen and there's nothing we can do about it.
-                        //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => continue,
+                        errno if Self::readdir_recursive_skips_subdir(errno) => continue,
                         _ => {
                             // TODO: propagate file path (removed previously because it leaked the path)
                             return Err(err);
@@ -6651,6 +6657,9 @@ impl NodeFS {
             loop {
                 let current = match iterator.next() {
                     Err(err) => {
+                        if !is_root && Self::readdir_recursive_skips_subdir(err.get_errno()) {
+                            break;
+                        }
                         dirent_path_prev.deref();
                         return Err(err.with_path(args.path.slice()));
                     }

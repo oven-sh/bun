@@ -974,6 +974,17 @@ impl VirtualMachine {
         unsafe { EventLoop::enter_scope(self.event_loop) }
     }
 
+    /// `event_loop().enter()` now, `.exit_without_checkpoint()` on drop, for a
+    /// dispatcher that drains microtasks itself: see
+    /// [`EventLoop::enter_scope_without_checkpoint`].
+    #[inline]
+    pub fn enter_event_loop_scope_without_checkpoint(
+        &self,
+    ) -> crate::event_loop::EventLoopEnterNoCheckpointGuard {
+        // SAFETY: as `enter_event_loop_scope`.
+        unsafe { EventLoop::enter_scope_without_checkpoint(self.event_loop) }
+    }
+
     /// Safe shared-reference accessor for the process-lifetime dotenv loader
     /// (`vm.transpiler.env`). The loader is allocated once during VM init and
     /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
@@ -5104,6 +5115,10 @@ impl VirtualMachine {
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
         self.unhandled_error_counter = 0;
+        // The finished file's plugins are dropped with its global; the next
+        // `Bun.plugin()` call reinstalls the runner against the new global.
+        self.transpiler.linker.plugin_runner = None;
+        self.plugin_runner = None;
 
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);

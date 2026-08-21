@@ -117,6 +117,7 @@ public:
     void onFlush(JSC::JSGlobalObject*);
     // handleDirectStreamError.
     void handleError(JSC::JSGlobalObject*, JSC::JSValue error);
+    void finishClose(JSC::JSGlobalObject*, JSC::JSValue flushed);
 
 private:
     JSDirectStreamController(JSC::VM&, JSC::Structure*, Bun::WebStreams::DirectSinkKind);

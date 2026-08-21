@@ -644,13 +644,25 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
         return;
     // No "Closing" stream state exists: m_closed set here is what blocks re-entry.
     m_closed = true;
-
-    callUnderlyingSourceClose(vm, globalObject, m_underlyingSource.get(), reason);
-    RETURN_IF_EXCEPTION(scope, );
+    JSObject* underlyingSource = m_underlyingSource.get();
     directStreamControllerClearSource(this);
 
     JSValue flushed = endDirectSink(vm, globalObject, this);
     RETURN_IF_EXCEPTION(scope, );
+    finishClose(globalObject, flushed);
+    RETURN_IF_EXCEPTION(scope, );
+    // The user's close(reason) hook runs once the stream is fully closed, so a throw from it
+    // propagates to whoever closed with nothing left half-done.
+    RELEASE_AND_RETURN(scope, callUnderlyingSourceClose(vm, globalObject, underlyingSource, reason));
+}
+
+// The rest of close(): hand end()'s final chunk to whoever is reading (or arm it for the next read),
+// then close the stream.
+void JSDirectStreamController::finishClose(JSGlobalObject* globalObject, JSValue flushed)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = m_stream.get();
 
     if (byteLengthOf(flushed)) {
         if (auto* pendingRead = m_pendingRead.get()) {

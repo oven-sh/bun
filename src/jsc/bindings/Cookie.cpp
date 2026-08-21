@@ -51,25 +51,6 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
 
-String Cookie::serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies)
-{
-    if (cookies.empty())
-        return emptyString();
-
-    StringBuilder builder;
-    bool first = true;
-
-    for (const auto& cookie : cookies) {
-        if (!first)
-            builder.append("; "_s);
-
-        cookie->appendTo(vm, builder);
-        first = false;
-    }
-
-    return builder.toString();
-}
-
 ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
 {
     // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.

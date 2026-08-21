@@ -153,6 +153,16 @@ struct AsyncSocketData {
     bool isAuthorized = false; // per-socket TLS authorization status
     bool peerCertVerified = false;
     const char *peerCertVerifyErrorCode = nullptr;
+    /* Whether this socket has fired the context filter with +1. onClose and
+     * upgrade only fire -1 for sockets that did, so the filter stays balanced
+     * across every open/close path (TLS sockets that RST before the handshake,
+     * rejectUnauthorized failures, etc. never fire +1). */
+    bool filteredOpen = false;
+    /* Whether it has fired the filter with +2 ("accepted": at TCP accept for
+     * both transports, i.e. before a TLS handshake); -2 balances it on the
+     * same paths that balance +1. A filter that must account for every socket
+     * that can still reach a handler counts these. */
+    bool filteredAccept = false;
 };
 
 }

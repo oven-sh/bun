@@ -500,6 +500,208 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     await promise;
     gc();
   });
+
+  // The tunnel's TLS engine decrypts into a 64 KiB buffer and hands the frame
+  // parser one buffer at a time. A write issued while the parser is still inside
+  // the first buffer (the automatic pong for a ping, or send() from a message
+  // handler) used to pump the engine again from inside that callback, so the rest
+  // of the burst reached the parser re-entrantly and mid-frame: payload bytes
+  // were read as frame headers and the connection failed.
+  //
+  // Getting more than one engine buffer into a single read takes two steps: the
+  // server first streams a warm-up message so the client's TCP receive window
+  // grows past 64 KiB, then the proxy holds the burst and releases it in one
+  // write.
+  describe.each([
+    { reply: "automatic pong for a server ping", lead: "ping" },
+    { reply: "send() from the message handler", lead: "message" },
+  ])("burst larger than the TLS read buffer while the client replies with $reply", ({ lead }) => {
+    test("every frame is delivered intact and the reply reaches the server", async () => {
+      const payload = Buffer.alloc(128 * 1024, Buffer.from(Array.from({ length: 256 }, (_, i) => i)));
+      // 64 KiB of plaintext plus a whole 16 KiB TLS record of slack, so the
+      // released write always decrypts to more than one engine buffer.
+      const releaseAt = 96 * 1024;
+
+      // "got reply" is only sent once the client's pong/ack arrived, and the
+      // client writes nothing else after replying, so receiving it proves the
+      // reply reached the wire on its own instead of riding along with a later
+      // write. The server-side close code checks the other write made from
+      // inside a message handler: ws.close() writes the close frame and shuts
+      // the tunnel down in the same callback, so the frame has to be flushed
+      // immediately or the server only ever sees the TCP connection drop (1006).
+      const serverClosed = Promise.withResolvers<number>();
+      using server = Bun.serve({
+        port: 0,
+        tls: { key: tlsCerts.key, cert: tlsCerts.cert },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("Expected WebSocket", { status: 400 });
+        },
+        websocket: {
+          open(ws) {
+            ws.send(payload); // warm-up
+          },
+          message(ws, message) {
+            if (message === "go") {
+              if (lead === "ping") ws.ping();
+              else ws.send("first");
+              ws.send(payload);
+              ws.send("marker");
+            } else if (message === "ack") {
+              ws.send("got reply");
+            }
+          },
+          pong(ws) {
+            ws.send("got reply");
+          },
+          close(_ws, code) {
+            serverClosed.resolve(code);
+          },
+        },
+      });
+
+      let held: Buffer[] | null = null;
+      const burstProxy = createConnectProxy({
+        onTargetData(chunk, forward) {
+          if (held === null) {
+            forward(chunk);
+            return;
+          }
+          held.push(chunk);
+          if (held.reduce((total, part) => total + part.length, 0) >= releaseAt) {
+            const burst = Buffer.concat(held);
+            held = null;
+            forward(burst);
+          }
+        },
+      });
+      const burstProxyPort = await startProxy(burstProxy);
+
+      const received: string[] = [];
+      const clientClosed = Promise.withResolvers<number>();
+      const ws = new WebSocket(`wss://127.0.0.1:${server.port}`, {
+        proxy: `http://127.0.0.1:${burstProxyPort}`,
+        tls: { rejectUnauthorized: false },
+        // Keep the payload at its full size on the wire.
+        perMessageDeflate: false,
+      });
+      ws.binaryType = "arraybuffer";
+      try {
+        ws.onmessage = event => {
+          if (typeof event.data === "string") {
+            received.push(event.data);
+            if (event.data === "first") ws.send("ack");
+            if (event.data === "got reply") ws.close(1000);
+            return;
+          }
+          const data = Buffer.from(event.data as ArrayBuffer);
+          received.push(data.equals(payload) ? "payload" : `corrupt payload (${data.length} bytes)`);
+          if (received.length === 1) {
+            // Warm-up consumed; hold the burst that "go" provokes.
+            held = [];
+            ws.send("go");
+          }
+        };
+        ws.onclose = event => clientClosed.resolve(event.code);
+
+        const closeCode = await clientClosed.promise;
+        // A client that failed the connection itself never tells the server
+        // anything, so the server's close is only awaited after a clean close.
+        const serverCloseCode = closeCode === 1000 ? await serverClosed.promise : "client did not close cleanly";
+        expect({ received, closeCode, serverCloseCode }).toEqual({
+          received:
+            lead === "ping"
+              ? ["payload", "payload", "marker", "got reply"]
+              : ["payload", "first", "payload", "marker", "got reply"],
+          closeCode: 1000,
+          serverCloseCode: 1000,
+        });
+      } finally {
+        ws.close();
+        burstProxy.close();
+      }
+    });
+  });
+
+  // The upgrade client keeps owning the proxy socket after the 101 and forwards
+  // whatever arrives on it into the tunnel. It used to flip into that forwarding
+  // mode only after the open event had been dispatched, so bytes read off the
+  // proxy socket while an open handler spins the event loop (expect().resolves
+  // here; a debugger pause does the same) were taken for a response to an
+  // upgrade that no longer had a WebSocket attached: the upgrade client failed
+  // itself and closed the proxy connection, and the WebSocket that had just
+  // fired open stayed OPEN forever without ever receiving a message or a close.
+  test("frames read off the proxy socket while the open handler spins the event loop are delivered", async () => {
+    const serverClosed = Promise.withResolvers<number>();
+    using server = Bun.serve({
+      port: 0,
+      tls: { key: tlsCerts.key, cert: tlsCerts.cert },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Expected WebSocket", { status: 400 });
+      },
+      websocket: {
+        message(ws, message) {
+          if (message === "go") ws.send("hello");
+        },
+        close(_ws, code) {
+          serverClosed.resolve(code);
+        },
+      },
+    });
+
+    // Once the client is inside its open handler, everything the server still
+    // sends is the reply to "go". setImmediate runs at the start of the next
+    // loop iteration and the expect().resolves spin below only re-checks its
+    // promise after that iteration has also polled I/O, so by the time the spin
+    // ends the client has read the forwarded reply off the proxy socket.
+    let inOpenHandler = false;
+    const replyReadByClient = Promise.withResolvers<void>();
+    const spinProxy = createConnectProxy({
+      onTargetData(chunk, forward) {
+        forward(chunk);
+        if (inOpenHandler) setImmediate(replyReadByClient.resolve);
+      },
+    });
+    const spinProxyPort = await startProxy(spinProxy);
+
+    const received: string[] = [];
+    const openReturned = Promise.withResolvers<void>();
+    const clientClosed = Promise.withResolvers<number>();
+    const ws = new WebSocket(`wss://127.0.0.1:${server.port}`, {
+      proxy: `http://127.0.0.1:${spinProxyPort}`,
+      tls: { rejectUnauthorized: false },
+    });
+    try {
+      ws.onopen = () => {
+        inOpenHandler = true;
+        ws.send("go");
+        expect(replyReadByClient.promise).resolves.toBeUndefined();
+        inOpenHandler = false;
+        openReturned.resolve();
+      };
+      ws.onmessage = event => {
+        received.push(String(event.data));
+        ws.close(1000);
+      };
+      ws.onclose = event => clientClosed.resolve(event.code);
+
+      await openReturned.promise;
+      // A client that dropped the proxy connection never closes the WebSocket,
+      // so only wait for its close event once the server saw a clean close.
+      const serverCloseCode = await serverClosed.promise;
+      const clientCloseCode =
+        serverCloseCode === 1000 ? await clientClosed.promise : "client never closed (server saw the connection drop)";
+      expect({ received, serverCloseCode, clientCloseCode }).toEqual({
+        received: ["hello"],
+        serverCloseCode: 1000,
+        clientCloseCode: 1000,
+      });
+    } finally {
+      ws.terminate();
+      spinProxy.close();
+    }
+  });
 });
 
 describe("WebSocket through HTTPS proxy (TLS proxy)", () => {

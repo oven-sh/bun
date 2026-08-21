@@ -147,8 +147,9 @@ fn bun_revoke_object_url(
     }
     // `to_bun_string` returns a +1 ref; `bun_core::String` is `Copy` (no Drop),
     // so wrap in `OwnedString` for scope-exit `deref()`.
-    let str =
-        bun_core::OwnedString::new(url_arg.to_bun_string(global_object).expect("unreachable"));
+    // `is_string()` is `is_string_like()` and admits `StringObject`, so
+    // `to_bun_string` can still observe a user `toString` that throws.
+    let str = bun_core::OwnedString::new(url_arg.to_bun_string(global_object)?);
     if !str.has_prefix_comptime(b"blob:") {
         return Ok(JSValue::UNDEFINED);
     }

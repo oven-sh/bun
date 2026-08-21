@@ -699,9 +699,9 @@ it("unref should exit when no more work pending", async () => {
   expect(await process.exited).toBe(0);
 });
 
-// An unref() applied while lookup is pending must survive the autoSelectFamily handle reinit.
-it("unref survives an autoSelectFamily retry", async () => {
-  // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; unref() runs mid-lookup.
+// IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; the call runs mid-lookup
+// and must carry over to the retry handle. The pending connect holds the loop by itself; once connected it lets go.
+it.concurrent.each(["s.unref()", "s.pause()"])("%s survives an autoSelectFamily retry", async call => {
   const server = createServer(() => {});
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -714,25 +714,70 @@ it("unref survives an autoSelectFamily retry", async () => {
           const lookup = (host, opts, cb) =>
             setTimeout(() => cb(null, [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }]), 10);
           const s = net.connect({ host: "localhost", port: ${server.address().port}, autoSelectFamily: true, lookup });
-          s.on("data", () => {});
           s.on("error", e => process.stdout.write("error " + e.code + "\\n"));
           s.on("connect", () => process.stdout.write("connected " + s.remoteAddress + "\\n"));
-          s.unref();
-          // Sentinel keeping the loop alive across the refuse + retry.
-          setTimeout(() => process.stdout.write("timer\\n"), 500);
+          ${call};
         `,
       ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
     });
-    // After the sentinel timer only the unref'd socket remains, so the process must exit.
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim().split("\n").sort()).toEqual(["connected 127.0.0.1", "timer"]);
+    expect(stdout).toBe("connected 127.0.0.1\n");
     expect(exitCode).toBe(0);
   } finally {
     server.close();
   }
+});
+
+// https://github.com/oven-sh/bun/issues/37086 — node's pending uv_connect_t keeps the loop alive even on an
+// unref'd/non-reading handle, so unref()/pause() issued before or while connecting only take effect once connected.
+describe.concurrent("unref()/pause() around connect()", () => {
+  async function run(client: string, onConnection = "c => c.unref()") {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = net.createServer(${onConnection});
+          server.listen(0, "127.0.0.1", () => {
+            const port = server.address().port;
+            const s = new net.Socket();
+            s.on("connect", () => process.stdout.write("connected\\n"));
+            s.on("close", () => { process.stdout.write("closed\\n"); server.close(); });
+            ${client}
+          });
+          server.unref();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  it.each([
+    ["unref() before connect()", `s.unref(); s.connect(port, "127.0.0.1");`],
+    ["unref() while connecting", `s.connect(port, "127.0.0.1"); s.unref();`],
+    ["pause() while connecting", `s.connect(port, "127.0.0.1"); s.pause();`],
+  ])("%s waits for the connection, then lets the process exit", async (_, client) => {
+    const { stdout, exitCode } = await run(client);
+    expect(stdout).toBe("connected\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("ref() after unref() while connecting keeps holding the loop", async () => {
+    const { stdout, exitCode } = await run(
+      `s.connect(port, "127.0.0.1"); s.unref(); s.ref(); s.resume();`,
+      "c => { c.unref(); c.end(); }",
+    );
+    expect(stdout).toBe("connected\nclosed\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("socket should keep process alive if unref is not called", async () => {

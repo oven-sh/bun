@@ -396,7 +396,7 @@ pub(crate) struct ParallelHoistedTask {
     pub(crate) package_name: String,
 
     pub(crate) result: package_install::InstallResult,
-    /// Cache ENOENT; `complete_parallel_installs()` reroutes to the download path.
+    /// Entry absent or missing its marker; `complete_parallel_installs()` re-downloads it.
     pub(crate) missing_from_cache: bool,
 }
 
@@ -414,9 +414,15 @@ impl ParallelHoistedTask {
         // before touching it.
         let this = unsafe { &mut *Self::from_task_ptr(task) };
         this.result = this.run();
-        // SAFETY: BACKREF; `PackageInstaller` outlives every task (Drop
-        // waits on the wait group). `WaitGroup::finish()` is `&self`.
-        unsafe { (*this.installer).parallel_wait_group.finish() };
+        // SAFETY: BACKREF. The group is live with this task counted: its owner frees it only
+        // after `wait()` returns, which is what this call permits, so this is `finish_raw`'s
+        // contract, not `finish()`'s. `addr_of!` keeps the worker from forming a reference into
+        // the `PackageInstaller` the main thread holds `&mut` to.
+        unsafe {
+            bun_threading::WaitGroup::finish_raw(core::ptr::addr_of!(
+                (*this.installer).parallel_wait_group
+            ))
+        };
     }
 
     fn run(&mut self) -> package_install::InstallResult {
@@ -429,6 +435,27 @@ impl ParallelHoistedTask {
         let root_node_modules_folder: &Dir =
             unsafe { &*core::ptr::addr_of!((*self.installer).root_node_modules_folder) };
 
+        // SAFETY: `cache_dir_subpath` was copied with its trailing NUL at enqueue time.
+        let cache_z = unsafe {
+            ZStr::from_raw(
+                self.cache_dir_subpath.as_ptr(),
+                self.cache_dir_subpath.len() - 1,
+            )
+        };
+        // The serial cache check, moved here: an entry missing its marker is re-downloaded.
+        if !crate::package_manager::directories::is_package_in_cache_at(
+            self.cache_dir,
+            cache_z,
+            self.resolution_tag,
+        ) {
+            self.missing_from_cache = true;
+            return package_install::InstallResult::fail(
+                crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                package_install::Step::OpeningCacheDir,
+                None,
+            );
+        }
+
         // Root tree reuses the open fd; nested trees open (creating if needed) their own.
         let owned_dir: Option<Dir> = if self.tree_id == 0 {
             None
@@ -437,6 +464,7 @@ impl ParallelHoistedTask {
             let opened = match Dir::borrow(&Fd::cwd()).open_at(path) {
                 Ok(d) => d,
                 Err(_) => {
+                    // May pre-create the parent's dir, costing it macOS's whole-dir clonefile.
                     let _ = bun_sys::make_path::make_path(Dir::borrow(&Fd::cwd()), path);
                     match Dir::borrow(&Fd::cwd()).open_at(path) {
                         Ok(d) => d,
@@ -462,17 +490,8 @@ impl ParallelHoistedTask {
         let dest_len = self.destination_dir_subpath.len();
         subpath_buf.as_mut_slice()[..dest_len].copy_from_slice(&self.destination_dir_subpath);
 
-        // SAFETY: `destination_dir_subpath` was copied with its trailing NUL
-        // at enqueue time; len-1 is the NUL, so bytes[..len-1] + \0.
+        // SAFETY: `destination_dir_subpath` was copied with its trailing NUL at enqueue time.
         let dest_z = unsafe { ZStr::from_raw(self.destination_dir_subpath.as_ptr(), dest_len - 1) };
-        // SAFETY: same for `cache_dir_subpath`.
-        let cache_z = unsafe {
-            ZStr::from_raw(
-                self.cache_dir_subpath.as_ptr(),
-                self.cache_dir_subpath.len() - 1,
-            )
-        };
-
         let mut pi = PackageInstall {
             progress: None,
             cache_dir: self.cache_dir,

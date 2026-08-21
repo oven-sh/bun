@@ -421,6 +421,32 @@ describe.concurrent.skipIf(!isPosix)("parallel hoisted install: rerouted downloa
   });
 
   /**
+   * The serial path treats a cache entry without its completion marker
+   * (package.json for npm) as a miss. The worker must too, rather than
+   * linking whatever partial contents the entry holds.
+   */
+  test("an entry missing its completion marker is re-downloaded, not linked", async () => {
+    using fx = await scriptsFixture();
+    const expected = await fx.warmThenEvict();
+    // Keep lib's entry but strip its marker, leaving the rest of its files in place.
+    let stripped = 0;
+    for await (const entry of new Glob("lib@*").scan({ cwd: fx.cacheDir, onlyFiles: false })) {
+      await rm(join(fx.cacheDir, entry, "package.json"));
+      stripped++;
+    }
+    expect(stripped).toBeGreaterThan(0);
+
+    await using proc = spawnInstall(fx.dir, fx.env, ["--frozen-lockfile"]);
+    const out = await finish(proc);
+    expect(out.stderr).not.toContain("error:");
+    expect(out.exitCode).toBe(0);
+    expect(parallelTaskCount(out.stderr)).toBe(4);
+    // Re-downloaded: the installed copy has the file the cache entry lacked.
+    expect(await file(join(fx.dir, "node_modules", "lib", "package.json")).exists()).toBe(true);
+    expect(installedCount(out.stdout)).toBe(expected);
+  });
+
+  /**
    * Misses in two trees. The nested package downloads first but cannot
    * install until root is complete, so it parks in pending_installs; when
    * `lib` lands and completes root, the drain re-enters it with

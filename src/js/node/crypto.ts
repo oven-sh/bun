@@ -1,7 +1,6 @@
 // Hardcoded module "node:crypto"
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
-const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
@@ -51,7 +50,7 @@ const {
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
-  pbkdf2: _pbkdf2,
+  pbkdf2,
   pbkdf2Sync,
   timingSafeEqual,
   randomInt,
@@ -142,26 +141,6 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
 };
 
 // TODO: move this to zig
-function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  if (typeof digest === "function") {
-    callback = digest;
-    digest = undefined;
-  }
-
-  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
-  if (callback) {
-    // Guarded so a throw inside the callback is an uncaughtException, as in node.
-    const cb = guardCallback(callback);
-    promise.then(
-      result => cb(null, result),
-      err => cb(err),
-    );
-    return;
-  }
-
-  promise.then(() => {});
-}
-
 crypto_exports.pbkdf2 = pbkdf2;
 crypto_exports.pbkdf2Sync = pbkdf2Sync;
 

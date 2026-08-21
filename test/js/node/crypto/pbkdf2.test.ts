@@ -227,3 +227,23 @@ test("pbkdf2Sync reads the salt buffer only after every argument has been coerce
   expect(salt.byteLength).toBe(0);
   expect(key).toStrictEqual(crypto.pbkdf2Sync("password", new Uint8Array(0), 1, 32, "sha256"));
 });
+
+test("pbkdf2 callback gets (null, Buffer), keeps AsyncLocalStorage context, and validates like Node", async () => {
+  const { AsyncLocalStorage } = require("node:async_hooks");
+  const als = new AsyncLocalStorage();
+  const { promise, resolve } = Promise.withResolvers<unknown[]>();
+  const returned = als.run("ctx", () =>
+    crypto.pbkdf2("pw", "salt", 1, 8, "sha256", function (...args) {
+      resolve([args.length, args[0], Buffer.isBuffer(args[1]), args[1].toString("hex"), als.getStore()]);
+    }),
+  );
+  expect(returned).toBeUndefined();
+  expect(await promise).toEqual([2, null, true, "6f4ad8c78ec365c0", "ctx"]);
+  // digest omitted: the callback shifts into the digest slot and digest is reported as undefined
+  expect(() => crypto.pbkdf2("pw", "salt", 1, 8, (() => {}) as any)).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining('"digest"') }),
+  );
+  expect(() => (crypto.pbkdf2 as any)("pw", "salt", 1, 8, "sha256")).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining('"callback"') }),
+  );
+});

@@ -1143,8 +1143,14 @@ mod _impl {
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let data = PBKDF2::from_js(global_this, call_frame, Flavor::Async)?;
-
-        Ok(pbkdf2::create_job(global_this, data))
+        // `from_js` accepted the callback in either the 5th or 6th position.
+        let callback = if call_frame.argument(4).is_function() {
+            call_frame.argument(4)
+        } else {
+            call_frame.argument(5)
+        };
+        pbkdf2::create_job(global_this, data, callback);
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]

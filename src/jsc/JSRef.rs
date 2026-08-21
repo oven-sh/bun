@@ -259,17 +259,22 @@ impl Default for JsRef {
 /// Forwarding accessors for the common `JsCell<JsRef>` field shape, so call
 /// sites read `field.try_get()` / `field.get_or_undefined()` instead of the
 /// double-step `field.get().try_get()` / `field.get().get()`.
-impl crate::JsCell<JsRef> {
+pub trait JsCellRefExt {
     /// [`JsRef::try_get`] on the contained ref: the live `JSValue`, or `None`
     /// if empty/finalized.
+    fn try_get(&self) -> Option<JSValue>;
+    /// [`JsRef::get`] on the contained ref: `try_get().unwrap_or(UNDEFINED)`.
+    fn get_or_undefined(&self) -> JSValue;
+}
+
+impl JsCellRefExt for crate::JsCell<JsRef> {
     #[inline]
-    pub fn try_get(&self) -> Option<JSValue> {
+    fn try_get(&self) -> Option<JSValue> {
         self.get().try_get()
     }
 
-    /// [`JsRef::get`] on the contained ref: `try_get().unwrap_or(UNDEFINED)`.
     #[inline]
-    pub fn get_or_undefined(&self) -> JSValue {
+    fn get_or_undefined(&self) -> JSValue {
         self.get().get()
     }
 }

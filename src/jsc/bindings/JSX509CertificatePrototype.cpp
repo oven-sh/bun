@@ -93,8 +93,8 @@ const ClassInfo JSX509CertificatePrototype::s_info = { "X509Certificate"_s, &Bas
 void JSX509CertificatePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSX509Certificate::info(), JSX509CertificatePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSX509Certificate::info(), JSX509CertificatePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * globalObject, CallFrame* callFrame))

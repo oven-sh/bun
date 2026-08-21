@@ -789,8 +789,7 @@ public:
             strongRef.set(globalObject->vm(), value);
         }
 
-        // In NAPI non-experimental, types other than object, function and symbol can't be used as values for references.
-        // In NAPI experimental, they can be, but we must not store weak references to them.
+        // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
         if (can_be_weak) {
             weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
         }
@@ -865,12 +864,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiClass = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiClass = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNapiClass, m_subspaceForNapiClass));
     }
 
     DECLARE_EXPORT_INFO;
@@ -885,7 +879,7 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         ASSERT(globalObject);
-        return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
     inline napi_callback constructor() const { return m_constructor; }
@@ -938,7 +932,7 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         ASSERT(globalObject);
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
     }
 
     NapiPrototype* subclass(JSC::JSGlobalObject* globalObject, JSC::JSObject* newTarget)

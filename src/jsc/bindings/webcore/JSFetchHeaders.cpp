@@ -86,7 +86,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSFetchHeadersPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSFetchHeadersPrototype* ptr = new (NotNull, JSC::allocateCell<JSFetchHeadersPrototype>(vm)) JSFetchHeadersPrototype(vm, globalObject, structure);
+        JSFetchHeadersPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSFetchHeadersPrototype))) JSFetchHeadersPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -100,7 +100,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -173,11 +173,7 @@ template<> JSValue JSFetchHeadersDOMConstructor::prototypeForStructure(JSC::VM& 
 
 template<> void JSFetchHeadersDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "Headers"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSFetchHeaders::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "Headers"_s, JSFetchHeaders::prototype(vm, globalObject));
 }
 
 /**
@@ -322,9 +318,9 @@ const ClassInfo JSFetchHeadersPrototype::s_info = { "Headers"_s, &Base::s_info, 
 void JSFetchHeadersPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSFetchHeaders::info(), JSFetchHeadersPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSFetchHeaders::info(), JSFetchHeadersPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSFetchHeaders::s_info = { "Headers"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFetchHeaders) };
@@ -526,17 +522,12 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<FetchHeadersIterator, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForFetchHeadersIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFetchHeadersIterator = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForFetchHeadersIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForFetchHeadersIterator = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<FetchHeadersIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForFetchHeadersIterator, m_subspaceForFetchHeadersIterator));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static FetchHeadersIterator* create(JSC::VM& vm, JSC::Structure* structure, JSFetchHeaders& iteratedObject, IterationKind kind)
@@ -638,12 +629,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_forEach, (JSC::JSGlobal
 
 JSC::GCClient::IsoSubspace* JSFetchHeaders::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSFetchHeaders, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForFetchHeaders.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFetchHeaders = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForFetchHeaders.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForFetchHeaders = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSFetchHeaders, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForFetchHeaders, m_subspaceForFetchHeaders));
 }
 
 void JSFetchHeaders::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

@@ -3106,13 +3106,14 @@ const MAX_DEPTH: usize = 100_000;
 /// Checks the grammar and the structural well-formedness constraints over
 /// the scanner's tokens (and, in the document entity, its fast paths),
 /// applies DTD information to attributes, and drives a `Sink`.
+/// `repr(C)` with `sink` last: everything the sink-independent methods (the
+/// DTD parser) touch sits at the same offset for every `S`, so those
+/// instantiations are identical and the linker folds them.
+#[repr(C)]
 struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
     scanner: Scanner<'a, 'log, U>,
-    /// Inside the document type declaration, for diagnostics.
-    in_dtd: bool,
     /// For the content-model parser, which does recurse.
     stack_check: StackCheck,
-    sink: S,
     attlists: HashMap<&'a [U], AttList<'a, U>>,
     /// The open elements: name and the input frame the start tag was in.
     open: Vec<(&'a [U], u32)>,
@@ -3121,6 +3122,9 @@ struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
     attribute_first: [&'a [U]; LINEAR_ATTRIBUTE_LIMIT],
     attribute_names: HashMap<&'a [U], ()>,
     attribute_count: usize,
+    /// Inside the document type declaration, for diagnostics.
+    in_dtd: bool,
+    sink: S,
 }
 
 impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {

@@ -5365,9 +5365,7 @@ impl DevServer {
         let post = "</script></body></html>";
 
         buf.extend_from_slice(pre.as_bytes());
-        buf.extend_from_slice(
-            bun_core::runtime_embed_file!(CodegenEager, "bake.error.js").as_bytes(),
-        );
+        buf.extend_from_slice(bun_zstd::embed_compressed!(codegen "bake.error.js"));
         buf.extend_from_slice(post.as_bytes());
 
         match resp {

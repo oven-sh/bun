@@ -1054,19 +1054,19 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 
     static JSBunObject* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
         auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
-        auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, structure);
+        auto* object = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBunObject))) JSBunObject(vm, structure);
         object->finishCreation(vm);
         return object;
     }

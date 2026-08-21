@@ -46,7 +46,7 @@ pub fn begin_message(
             );
             s.push_attribute(b"messaging.message.body.size", &Value::Int(size as i64), l);
             if link.is_valid() {
-                bun_telemetry::otlp::encode_link(&mut s.extra, link, b"", &[]);
+                s.add_link(link, &[], l);
             }
         });
     }
@@ -110,7 +110,7 @@ pub fn record_exception_value(
     ];
     let n = if stack.is_empty() { 2 } else { 3 };
     pool::with(span, |s| {
-        s.add_event(b"exception", 0, &attrs[..n]);
+        s.add_event(b"exception", 0, &attrs[..n], super::span::limits());
         s.set_status(StatusCode::Error, b"");
     });
     Ok(())

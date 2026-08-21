@@ -1655,6 +1655,7 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_threading",
+ "bun_url",
 ]
 
 [[package]]

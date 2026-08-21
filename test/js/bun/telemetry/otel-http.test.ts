@@ -202,9 +202,17 @@ describe("Bun.serve", () => {
         return new Response("b");
       },
     });
+    let seenTraceState: any;
     using front = Bun.serve({
       port: 0,
       async fetch() {
+        const ts = Bun.otel.activeSpan()!.spanContext().traceState as Bun.otel.TraceState;
+        seenTraceState = {
+          vendor: ts.get("vendor"),
+          serialized: ts.serialize(),
+          updated: ts.set("other", "2").unset("vendor").serialize(),
+          original: ts.serialize(),
+        };
         await fetch(`http://localhost:${backend.port}/`);
         return new Response("f");
       },
@@ -227,6 +235,13 @@ describe("Bun.serve", () => {
     expect(frontSrv).toBeDefined();
     expect(frontSrv.traceId).toBe(traceId);
     expect(frontSrv.traceState).toBe("vendor=abc,other=1");
+    // spanContext().traceState is an api-shaped, immutable TraceState
+    expect(seenTraceState).toEqual({
+      vendor: "abc",
+      serialized: "vendor=abc,other=1",
+      updated: "other=2",
+      original: "vendor=abc,other=1",
+    });
     // every span downstream of the front server shares the incoming trace id
     // (the test's own outer fetch carries a user-supplied traceparent, so its
     // client span is deliberately left out of that trace)

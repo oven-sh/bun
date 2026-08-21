@@ -1469,7 +1469,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket: SocketHandler<SSL>,
     ) -> JsResult<()> {
         let this_ptr = this.as_ptr();
-        this.otel_connect_end(None);
+        if !SSL || this.acts_as_tls_server() {
+            this.otel_connect_end(None);
+        }
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1840,6 +1842,23 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let verify_failed = SSL && ssl_error.error_no != 0;
+
+        if SSL && !this.acts_as_tls_server() && this.otel_connect.get().is_some() {
+            this.otel_connect_end(if authorized && !verify_failed {
+                None
+            } else if verify_failed {
+                Some(
+                    core::str::from_utf8(ssl_error.code_bytes())
+                        .ok()
+                        .filter(|c| !c.is_empty())
+                        .unwrap_or("handshake_failed"),
+                )
+            } else if hostname_mismatch {
+                Some("ERR_TLS_CERT_ALTNAME_INVALID")
+            } else {
+                Some("handshake_failed")
+            });
+        }
 
         this.verify_error.set(if verify_failed {
             Some(StoredVerifyError {

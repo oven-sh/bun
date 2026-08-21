@@ -513,11 +513,11 @@ pub struct ScopeChunk<'a> {
 /// Build an `ExportTraceServiceRequest` around pre-encoded pieces. All sizes
 /// are known so this is a single allocation and straight-line writes.
 pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>]) -> Vec<u8> {
-    let total: usize = 16
+    let total: usize = 17
         + resource.len()
         + scopes
             .iter()
-            .map(|s| 12 + s.scope.len() + s.spans.len())
+            .map(|s| 13 + s.scope.len() + s.spans.len())
             .sum::<usize>();
     let mut out = Vec::with_capacity(total);
     let rs = Padded::begin(&mut out, f::RESOURCE_SPANS);
@@ -534,7 +534,7 @@ pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>]) -> Vec<u8> {
     out
 }
 
-/// A nested message with a 4-byte padded varint length (bodies up to 256 MiB).
+/// A nested message with a 5-byte padded varint length (bodies up to 2^35).
 struct Padded {
     len_at: usize,
 }
@@ -543,16 +543,17 @@ impl Padded {
     fn begin(out: &mut Vec<u8>, field: u32) -> Padded {
         proto::write_tag(out, field, proto::WireType::Len);
         let len_at = out.len();
-        out.extend_from_slice(&[0x80, 0x80, 0x80, 0x00]);
+        out.extend_from_slice(&[0x80, 0x80, 0x80, 0x80, 0x00]);
         Padded { len_at }
     }
     fn finish(self, out: &mut [u8]) {
-        let n = out.len() - self.len_at - 4;
-        debug_assert!(n < (1 << 28));
+        let n = (out.len() - self.len_at - 5) as u64;
+        debug_assert!(n < (1 << 35));
         out[self.len_at] = (n as u8 & 0x7f) | 0x80;
         out[self.len_at + 1] = ((n >> 7) as u8 & 0x7f) | 0x80;
         out[self.len_at + 2] = ((n >> 14) as u8 & 0x7f) | 0x80;
-        out[self.len_at + 3] = (n >> 21) as u8;
+        out[self.len_at + 3] = ((n >> 21) as u8 & 0x7f) | 0x80;
+        out[self.len_at + 4] = (n >> 28) as u8 & 0x7f;
     }
 }
 

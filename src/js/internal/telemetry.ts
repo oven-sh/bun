@@ -370,6 +370,66 @@ async function shutdown() {
   nativeSetEnabled(0, 0);
 }
 
+
+// W3C tracestate as an @opentelemetry/api `TraceState` (immutable; set/unset
+// return new instances). Parsed lazily; `serialize()` of an untouched instance
+// returns the header as received.
+class TraceState {
+  #raw: string;
+  #map: Map<string, string> | undefined;
+  constructor(raw?: string) {
+    this.#raw = typeof raw === "string" ? raw : "";
+  }
+  #entries(): Map<string, string> {
+    let m = this.#map;
+    if (m === undefined) {
+      m = new Map();
+      const raw = this.#raw;
+      if (raw.length) {
+        const parts = raw.split(",");
+        // Right-most duplicate loses; cap at 32 members (spec).
+        for (let i = 0; i < parts.length && m.size < 32; i++) {
+          const part = parts[i].trim();
+          const eq = part.indexOf("=");
+          if (eq <= 0) continue;
+          const k = part.slice(0, eq);
+          if (!m.has(k)) m.set(k, part.slice(eq + 1));
+        }
+      }
+      this.#map = m;
+    }
+    return m;
+  }
+  get(key: string): string | undefined {
+    return this.#entries().get(key);
+  }
+  set(key: string, value: string): TraceState {
+    const next = new TraceState();
+    const m = new Map<string, string>();
+    m.set(key, value); // a modified key moves to the front
+    for (const [k, v] of this.#entries()) if (k !== key) m.set(k, v);
+    next.#map = m;
+    return next;
+  }
+  unset(key: string): TraceState {
+    const next = new TraceState();
+    const m = new Map(this.#entries());
+    m.delete(key);
+    next.#map = m;
+    return next;
+  }
+  serialize(): string {
+    if (this.#map === undefined) return this.#raw;
+    let out = "";
+    for (const [k, v] of this.#map) out += (out ? "," : "") + k + "=" + v;
+    return out;
+  }
+}
+
+function makeTraceState(raw: string) {
+  return new TraceState(raw);
+}
+
 export default {
   start,
   tracer: getTracer,
@@ -401,6 +461,8 @@ export default {
   startClientSpan,
   propagationHeaders,
   unpackContext,
+  makeTraceState,
+  TraceState,
   [Symbol.for("nodejs.util.inspect.custom")]() {
     return `Bun.otel { enabled: ${nativeIsEnabled()} }`;
   },

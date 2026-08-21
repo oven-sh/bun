@@ -206,7 +206,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
             e
         }
         // Local Collector / Jaeger / Tempo.
-        "otlp" | "collector" | "jaeger" | "tempo" => join(
+        "otlp" => join(
             p.endpoint.as_deref().unwrap_or("http://localhost:4318"),
             "/v1/traces",
         ),

@@ -1555,9 +1555,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncSpanContext, (JSGlobalObject * 
     if (span->m_stub.flags & SpanStub::Remote)
         ctx->putDirect(vm, Identifier::fromString(vm, "isRemote"_s), jsBoolean(true));
     JSValue ts = JSValue::decode(Bun__TelemetrySpan__extraString(globalObject, JSValue::encode(span), 't'));
-    if (ts.isObject() || (ts.isString() && asString(ts)->length()))
-        ctx->putDirect(vm, Identifier::fromString(vm, "traceState"_s), ts);
-    else if (span->m_native) {
+    if (!ts.isObject() && !(ts.isString() && asString(ts)->length()) && span->m_native) {
+        ts = JSValue();
         Vector<uint8_t, 256> buf;
         buf.grow(256);
         size_t n = Bun__Telemetry__nativePropagation(span->m_native, 't', buf.begin(), buf.size());
@@ -1566,8 +1565,21 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncSpanContext, (JSGlobalObject * 
             n = Bun__Telemetry__nativePropagation(span->m_native, 't', buf.begin(), buf.size());
         }
         if (n)
-            ctx->putDirect(vm, Identifier::fromString(vm, "traceState"_s), jsString(vm, String::fromUTF8(std::span(buf.begin(), n))));
+            ts = jsString(vm, String::fromUTF8(std::span(buf.begin(), n)));
     }
+    if (ts && ts.isString() && asString(ts)->length()) {
+        // Hand out an api-shaped TraceState (get/set/unset/serialize), not the raw header.
+        JSValue make = internalTelemetryHelper(globalObject, "makeTraceState"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (make.isCallable()) {
+            MarkedArgumentBuffer args;
+            args.append(ts);
+            ts = call(globalObject, make, jsUndefined(), args, "makeTraceState"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    if (ts && (ts.isObject() || (ts.isString() && asString(ts)->length())))
+        ctx->putDirect(vm, Identifier::fromString(vm, "traceState"_s), ts);
     span->field(JSTelemetrySpan::Field::Context).set(vm, span, ctx);
     return JSValue::encode(ctx);
 }

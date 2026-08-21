@@ -40,10 +40,22 @@ declare module "bun" {
       /** Present and `true` when the context arrived via a `traceparent` header. */
       isRemote?: boolean;
       /**
-       * The `tracestate` header to forward, if any. This is the raw header
-       * string, not an `@opentelemetry/api` `TraceState` object.
+       * The W3C `tracestate` carried with this span, if any, as an
+       * `@opentelemetry/api`-compatible `TraceState`. When constructing a
+       * `SpanContext` to pass in, a raw header string is also accepted.
        */
-      traceState?: string;
+      traceState?: TraceState | string;
+    }
+
+    /** Immutable view of a W3C `tracestate` header (`@opentelemetry/api` `TraceState`). */
+    interface TraceState {
+      get(key: string): string | undefined;
+      /** Returns a new TraceState with `key` set (moved to the front). */
+      set(key: string, value: string): TraceState;
+      /** Returns a new TraceState without `key`. */
+      unset(key: string): TraceState;
+      /** The header value. */
+      serialize(): string;
     }
 
     interface Link {

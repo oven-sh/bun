@@ -23,9 +23,10 @@ const {
   Symbol,
 } = primordials;
 
-// Lazy: don't destructure — the vm.Script parse of acorn's ~122 KB source
-// stays deferred until isRecoverableError/isValidSyntax first runs.
-const acorn = require("internal/repl/acorn");
+const {
+  isRecoverableError,
+  isValidSyntax: nativeIsValidSyntax,
+} = require("internal/repl/native-parse");
 
 const { sendInspectorCommand, getBuiltinLibs } = require("internal/repl/node-shims");
 
@@ -55,74 +56,8 @@ const previewOptions = {
 
 const { REPL_MODE_SLOPPY, REPL_MODE_STRICT } = require("internal/repl/mode");
 
-// If the error is that we've unexpectedly ended the input,
-// then let the user try to recover by adding more input.
-// Note: `e` (the original exception) is not used by the current implementation,
-// but may be needed in the future.
-function isRecoverableError(e, code) {
-  // For similar reasons as `defaultEval`, wrap expressions starting with a
-  // curly brace with parenthesis.  Note: only the open parenthesis is added
-  // here as the point is to test for potentially valid but incomplete
-  // expressions.
-  if (RegExpPrototypeExec(/^\s*\{/, code) !== null && isRecoverableError(e, `(${code}`)) return true;
-
-  let recoverable = false;
-
-  // Determine if the point of any error raised is at the end of the input.
-  // There are two cases to consider:
-  //
-  //   1.  Any error raised after we have encountered the 'eof' token.
-  //       This prevents us from declaring partial tokens (like '2e') as
-  //       recoverable.
-  //
-  //   2.  Three cases where tokens can legally span lines.  This is
-  //       template, comment, and strings with a backslash at the end of
-  //       the line, indicating a continuation.  Note that we need to look
-  //       for the specific errors of 'unterminated' kind (not, for example,
-  //       a syntax error in a ${} expression in a template), and the only
-  //       way to do that currently is to look at the message.  Should Acorn
-  //       change these messages in the future, this will lead to a test
-  //       failure, indicating that this code needs to be updated.
-  //
-  const RecoverableParser = acorn.Parser.extend(Parser => {
-    return class extends Parser {
-      nextToken() {
-        super.nextToken();
-        if (this.type === acorn.tokTypes.eof) recoverable = true;
-      }
-      raise(pos, message) {
-        switch (message) {
-          case "Unterminated template":
-          case "Unterminated comment":
-            recoverable = true;
-            break;
-
-          case "Unterminated string constant": {
-            const token = StringPrototypeSlice(this.input, this.lastTokStart, this.pos);
-            // See https://www.ecma-international.org/ecma-262/#sec-line-terminators
-            if (RegExpPrototypeExec(/\\(?:\r\n?|\n|\u2028|\u2029)$/, token) !== null) {
-              recoverable = true;
-            }
-          }
-        }
-        super.raise(pos, message);
-      }
-    };
-  });
-
-  // Try to parse the code with acorn.  If the parse fails, ignore the acorn
-  // error and return the recoverable status.
-  try {
-    RecoverableParser.parse(code, { ecmaVersion: "latest" });
-
-    // Odd case: the underlying JS engine (V8, Chakra) rejected this input
-    // but Acorn detected no issue.  Presume that additional text won't
-    // address this issue.
-    return false;
-  } catch {
-    return recoverable;
-  }
-}
+// isRecoverableError is imported from internal/repl/native-parse (backed by
+// Bun's own bun_js_parser instead of a vendored acorn).
 
 function setupPreview(repl, contextSymbol, bufferSymbol, active) {
   // Simple terminals can't handle previews.
@@ -313,10 +248,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
             ) {
               callback(null, null);
             } else if (result.objectId) {
-              // The writer options might change and have influence on the inspect
-              // output. The user might change e.g., `showProxy`, `getters` or
-              // `showHidden`. Use `inspect` instead of `JSON.stringify` to keep
-              // `Infinity` and similar intact.
+              // Use `inspect` (not JSON.stringify) so writer.options and non-JSON values round-trip.
               const inspectOptions = inspect(
                 {
                   ...repl.writer.options,
@@ -459,10 +391,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
     wrapped = false;
   };
 
-  // -------------------------------------------------------------------------//
-  // Replace multiple interface functions. This is required to fully support  //
-  // previews without changing readlines behavior.                            //
-  // -------------------------------------------------------------------------//
+  // Replace multiple interface functions so previews work without changing readline behavior.
 
   // Refresh prints the whole screen again and the preview will be removed
   // during that procedure. Print the preview again. This also makes sure
@@ -602,28 +531,8 @@ function setupReverseSearch(repl) {
   }
 
   function print(outputLine, inputLine, cursor = repl.cursor) {
-    // upstream-todo(BridgeAR): Resizing the terminal window hides the overlay. To fix
-    // that, readline must be aware of this information. It's probably best to
-    // add a couple of properties to readline that allow to do the following:
-    // 1. Add arbitrary data to the end of the current line while not counting
-    //    towards the line. This would be useful for the completion previews.
-    // 2. Add arbitrary extra lines that do not count towards the regular line.
-    //    This would be useful for both, the input preview and the reverse
-    //    search. It might be combined with the first part?
-    // 3. Add arbitrary input that is "on top" of the current line. That is
-    //    useful for the reverse search.
-    // 4. To trigger the line refresh, functions should be used to pass through
-    //    the information. Alternatively, getters and setters could be used.
-    //    That might even be more elegant.
-    // The data would then be accounted for when calling `_refreshLine()`.
-    // This function would then look similar to:
-    //   repl.overlay(outputLine);
-    //   repl.addTrailingLine(inputLine);
-    //   repl.setCursor(cursor);
-    // More potential improvements: use something similar to stream.cork().
-    // Multiple cursor moves on the same tick could be prevented in case all
-    // writes from the same tick are combined and the cursor is moved at the
-    // tick end instead of after each operation.
+    // upstream-todo(BridgeAR): terminal resize hides the overlay; see print() in
+    // https://github.com/nodejs/node/blob/main/lib/internal/repl/utils.js
     let rows = 0;
     if (lastMatch !== -1) {
       const line = StringPrototypeSlice(repl.history[lastMatch], 0, lastCursor);
@@ -737,23 +646,7 @@ function setupReverseSearch(repl) {
 const startsWithBraceRegExp = /^\s*{/;
 const endsWithSemicolonRegExp = /;\s*$/;
 function isValidSyntax(input) {
-  try {
-    acorn.Parser.parse(input, {
-      ecmaVersion: "latest",
-      allowAwaitOutsideFunction: true,
-    });
-    return true;
-  } catch {
-    try {
-      acorn.Parser.parse(`_=${input}`, {
-        ecmaVersion: "latest",
-        allowAwaitOutsideFunction: true,
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  return nativeIsValidSyntax(input) || nativeIsValidSyntax(`_=${input}`);
 }
 
 /**
@@ -804,11 +697,8 @@ const globalBuiltins = new SafeSet(vm.runInNewContext("Object.getOwnPropertyName
 // `undici`, `ws`) so completion doesn't offer e.g. `node:undici`.
 let _builtinLibs = getBuiltinLibs().slice();
 
-// Note: the `getReplBuiltinLibs` and `setReplBuiltinLibs` are functions used to provide getters and
-//       setters for the `builtinModules` and `_builtinLibs` properties of the repl module and for making
-//       sure that all internal repl modules share the same value, which can potentially be updated by users.
-//       Also note that both `repl.builtinModules` and `repl._builtinLibs` are deprecated, once such properties
-//       are removed these two functions should also be removed as no longer necessary.
+// Shared getter/setter so all repl modules see user mutations to the deprecated
+// `repl.builtinModules`/`repl._builtinLibs`; remove once those properties are dropped.
 
 function getReplBuiltinLibs() {
   return _builtinLibs;

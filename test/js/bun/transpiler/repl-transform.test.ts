@@ -170,13 +170,21 @@ describe("Bun.Transpiler replMode", () => {
         "new Counter()",
       ]);
 
-      // The class is returned in the result's value
-      expect(typeof results[0]).toBe("function");
-      expect(results[0].name).toBe("Counter");
+      // A trailing declaration has no completion value (Node prints `undefined`).
+      expect(results[0]).toBeUndefined();
 
       // The class should be accessible in subsequent REPL lines
       expect(results[1]).toBeInstanceOf(context.Counter);
       expect(typeof context.Counter).toBe("function");
+    });
+
+    test("trailing declaration after await evaluates to undefined, not its initializer", async () => {
+      // Node: `await 1; let z = 5` → undefined. The lowered `z = 5` assignment
+      // must not be captured as the REPL result.
+      const { results, context } = await runReplSession(["await 1; let z = 5", "z"]);
+      expect(results[0]).toBeUndefined();
+      expect(results[1]).toBe(5);
+      expect(context.z).toBe(5);
     });
   });
 

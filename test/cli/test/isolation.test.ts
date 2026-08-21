@@ -643,6 +643,9 @@ describe.concurrent("--isolate experimental global reuse", () => {
     using dir = tempDir("isolate-reuse-default", reuseFixtures("", `expect(pkg.slot).toBe(null);`));
     const { stderr, stats, exitCode } = await runIsolate(String(dir));
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    // Both counters stay 0 because they only record reuse-path outcomes; with
+    // the flag unset the reuse path never runs. `pkg.slot` being null in b is
+    // what proves the full swap happened.
     expect(stats).toEqual({ reuse: 0, swap: 0 });
     expect(exitCode).toBe(0);
   });

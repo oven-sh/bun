@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isDockerEnabled } from "harness";
+import { isArm64, isDockerServiceEnabled, isLinux } from "harness";
 import * as dockerCompose from "../../../docker/index.ts";
 
 let url: string = "";
@@ -28,10 +28,11 @@ async function load() {
   return true;
 }
 
-// isDockerEnabled(), not isDockerServiceEnabled("autobahn"): the autobahn image
-// is amd64-only, and the Linux arm64 early return in isDockerEnabled() is what
-// keeps this suite off the native arm64 CI agents, which run a coordinator too.
-describe.skipIf(!isDockerEnabled())("autobahn", () => {
+// crossbario/autobahn-testsuite is published for amd64 only. The Linux arm64
+// agents run a docker coordinator, so without the todoIf the suite would be
+// defined there and fail with "exec format error". The darwin arm64 agents run
+// the image under emulation.
+describe.skipIf(!isDockerServiceEnabled("autobahn")).todoIf(isLinux && isArm64)("autobahn", () => {
   let wsOptions: any;
 
   beforeAll(async () => {

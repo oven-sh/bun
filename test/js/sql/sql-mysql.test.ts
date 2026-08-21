@@ -65,8 +65,8 @@ async function assertComputedDecimalsAreStrings(sql: SQL) {
   const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
   expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
 }
-// Each describeWithContainer below checks its own image; this only skips the
-// file when the baseline image is unavailable.
+// Redundant with the per-image check inside describeWithContainer(); it is only
+// kept so the 1100 lines below keep their indentation. New files do not need it.
 if (isDockerServiceEnabled("mysql_plain")) {
   // Ordered so the suites whose containers become healthy quickly (mysql_plain,
   // mysql:9) run first; the slow-to-start mysql_tls container warms up in the

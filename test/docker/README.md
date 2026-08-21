@@ -259,7 +259,7 @@ Control behavior with environment variables:
 
 ### Skipping When No Service Is Available
 
-`describeWithContainer()` from `harness` skips itself when the service cannot be provided. A suite that calls `ensure()` directly must use `isDockerServiceEnabled("<service>")` from `harness` as its gate:
+`describeWithContainer()` from `harness` skips itself when the service cannot be provided. Do not wrap it in a gate. A suite that calls `ensure()` directly uses `isDockerServiceEnabled("<service>")` from `harness` as its gate:
 
 ```typescript
 if (isDockerServiceEnabled("postgres_plain")) {
@@ -268,7 +268,9 @@ if (isDockerServiceEnabled("postgres_plain")) {
 }
 ```
 
-`isDockerEnabled()` only checks for a docker daemon, and it is always false on Linux arm64. It ignores `BUN_TEST_SERVICE_*` and the CI coordinator, so use it only for tests that need docker itself, or for a service whose image is amd64-only (`autobahn`). The CI coordinator also runs on the Linux arm64 agents, so a suite gated with `isDockerServiceEnabled()` or `describeWithContainer()` runs there.
+Both gates are true on the Linux arm64 CI agents, which run the coordinator. A service whose image exists for one architecture only adds its own condition, see `test/js/web/websocket/autobahn.test.ts`.
+
+`isDockerEnabled()` only checks for a docker daemon. It ignores `BUN_TEST_SERVICE_*` and the coordinator. Use it only for tests that run docker themselves (`docker build`, `docker run`).
 
 ## Migration Guide
 

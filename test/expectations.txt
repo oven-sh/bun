@@ -42,3 +42,4 @@
 # getMaxFD() reads /proc/self/fd and is fooled by the stale entry, so the
 # "didn't leak any fds" assertion fails 100% deterministically. Not a real bun fd leak.
 [ OPENHARMONY ] test/js/bun/spawn/spawn-streaming-stdin.test.ts [ Skip ] # getMaxFD leak check is a false positive (OHOS kernel stale /proc/self/fd entry after close)
+[ OPENHARMONY ] test/js/web/fetch/fetch-tcp-keepalive.test.ts [ Skip ] # /proc/self/net/tcp blocked by OHOS app sandbox (EACCES); the LD_PRELOAD shim half already verifies SO_KEEPALIVE is set, but the /proc/net/tcp timer-state half cannot run

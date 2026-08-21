@@ -776,6 +776,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     if (!resultValue.isEmpty() && !scope.exception() && (!strongExports || resultValue != strongExports.get())) {
         PutPropertySlot slot(strongModule.get(), false);
         strongModule->put(strongModule.get(), globalObject, builtinNames(vm).exportsPublicName(), resultValue, slot);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSValue::encode(resultValue);

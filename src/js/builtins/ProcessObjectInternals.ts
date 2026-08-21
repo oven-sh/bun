@@ -351,6 +351,7 @@ export function getStdinStream(
   // Called from GlobalObject::reload(); the stream outlives each `--hot` load.
   stream.$resetStdioForHotReload = function () {
     disown();
+    forceUnref = false;
     if (stream.isRaw) stream.setRawMode?.(false);
     // node:readline is not re-evaluated on reload, and emitKeypressEvents() is a
     // no-op while the marker from the previous load is still on the stream. Its

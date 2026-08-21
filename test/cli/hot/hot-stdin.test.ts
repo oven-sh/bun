@@ -99,9 +99,7 @@ it(
     };
 
     // Wait until a LISTENERS line with a load count strictly greater than
-    // `afterLoad` appears, then return its load number. Asserts every
-    // LISTENERS line seen along the way reports exactly one listener per
-    // event (the core invariant of this fix).
+    // `afterLoad` appears, then return the highest load number seen.
     const waitForLoadAfter = async (afterLoad: number): Promise<number> => {
       let newest = afterLoad;
       await waitForLine(l => {

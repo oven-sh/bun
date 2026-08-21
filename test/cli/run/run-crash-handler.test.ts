@@ -1,3 +1,4 @@
+import { dlopen, ptr } from "bun:ffi";
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
@@ -607,6 +608,139 @@ describe.if(isWindows)("Windows: aborts and traps are reported, exit status refl
     expect(exitCode).toBe(expectedExitCode);
   });
 });
+
+// JSC::initialize() fails with a RELEASE_ASSERT, an abort() (above), when it
+// cannot get the memory it needs. Out of memory is the machine's problem, so
+// that case ends with an error message; anything else that goes wrong in there
+// is still a crash.
+describe.if(isWindows)("Windows: crash while initializing JavaScriptCore", () => {
+  const outOfMemory = "Bun ran out of memory while initializing JavaScriptCore";
+
+  // structureHeapSizeInKB must be a power of two: 3072 trips a RELEASE_ASSERT
+  // in the constructor that reserves the Structure heap. Memory is fine, so
+  // the report says where it happened instead of blaming memory.
+  test.concurrent("a crash that memory does not explain is reported", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "1", "--debug-crash-handler-use-trace-string"],
+      env: { ...noReportEnv, BUN_JSC_structureHeapSizeInKB: "3072" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("abort() called");
+    expect(stderr).toContain("Crashed while initializing JavaScriptCore");
+    expect(stderr).not.toContain(outOfMemory);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // Runs `bun -e 1` in a job object with a per-process memory limit, which is
+  // what containers and CI runners use. Windows charges committed memory
+  // against it. The limits under which JSC's initialization is what runs
+  // into it span the 10.5 MB that JSC commits for the Structure heap, and
+  // they start at whatever bun has committed by then, which depends on the
+  // build: 5 MB more than `bun --version` peaks at on a release build, 8 MB
+  // more on a debug build. So start 8 MB above that peak and walk up in steps
+  // smaller than the span. The run that lands in the span must end with the
+  // error message, not with a crash report and not silently. A run below the
+  // span dies of an ordinary allocation failure, a __fastfail, which Windows
+  // Error Reporting holds for over a second, so every step matters.
+  test.concurrent("out of memory during initialization exits with an error", async () => {
+    const kernel32 = openJobObjectApi();
+    const calibration = await runInJob(kernel32, undefined, [bunExe(), "--version"]);
+    expect(calibration.exitCode).toBe(0);
+    const startMiB = Math.floor(calibration.peakCommitMiB) + 8;
+
+    const outcomes: string[] = [];
+    for (let limitMiB = startMiB; limitMiB < startMiB + 256; limitMiB += 4) {
+      const { stderr, exitCode } = await runInJob(kernel32, limitMiB, [bunExe(), "-e", "1"]);
+      if (stderr.includes(outOfMemory)) {
+        expect(stderr).toContain(`Job object limit: ${limitMiB} MB per process`);
+        expect(stderr).not.toContain("panic");
+        expect(stderr).not.toContain("Bun has crashed");
+        expect(exitCode).toBe(1);
+        return;
+      }
+      const summary = stderr.split("\n").find(line => line.includes("panic") || line.includes("error")) ?? "";
+      outcomes.push(`${limitMiB} MiB: exit ${exitCode} ${summary}`.trimEnd());
+      // It ran, so every larger limit works too.
+      if (exitCode === 0) break;
+    }
+    throw new Error(
+      `bun --version peaked at ${calibration.peakCommitMiB.toFixed(1)} MiB, and no limit from ${startMiB} MiB up ended with the out of memory error:\n${outcomes.join("\n")}`,
+    );
+  });
+});
+
+function openJobObjectApi() {
+  return dlopen("kernel32.dll", {
+    CreateJobObjectW: { args: ["ptr", "ptr"], returns: "ptr" },
+    SetInformationJobObject: { args: ["ptr", "i32", "ptr", "u32"], returns: "i32" },
+    QueryInformationJobObject: { args: ["ptr", "i32", "ptr", "u32", "ptr"], returns: "i32" },
+    OpenProcess: { args: ["u32", "i32", "u32"], returns: "ptr" },
+    AssignProcessToJobObject: { args: ["ptr", "ptr"], returns: "i32" },
+    CloseHandle: { args: ["ptr"], returns: "i32" },
+    GetLastError: { args: [], returns: "u32" },
+  }).symbols;
+}
+
+// Starts `cmd.exe`, moves it into a new job object (with a per-process memory
+// limit of `limitMiB`, if given) while it waits for its stdin, then has it run
+// `argv`, which inherits the job. Returns what `argv` wrote to stderr, its exit
+// code, and the peak commit charge of a process in the job, which is `argv`'s
+// (cmd.exe stays far below it).
+async function runInJob(kernel32: ReturnType<typeof openJobObjectApi>, limitMiB: number | undefined, argv: string[]) {
+  const JobObjectExtendedLimitInformation = 9;
+  const JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x100;
+  const PROCESS_SET_QUOTA = 0x0100;
+  const PROCESS_TERMINATE = 0x0001;
+  // JOBOBJECT_EXTENDED_LIMIT_INFORMATION is 144 bytes. Field offsets:
+  const LimitFlags = 16;
+  const ProcessMemoryLimit = 112;
+  const PeakProcessMemoryUsed = 128;
+  const info = new DataView(new ArrayBuffer(144));
+
+  const job = kernel32.CreateJobObjectW(null, null);
+  if (!job) throw new Error(`CreateJobObjectW failed: ${kernel32.GetLastError()}`);
+  try {
+    if (limitMiB !== undefined) {
+      info.setUint32(LimitFlags, JOB_OBJECT_LIMIT_PROCESS_MEMORY, true);
+      info.setBigUint64(ProcessMemoryLimit, BigInt(limitMiB) * 1024n * 1024n, true);
+      if (!kernel32.SetInformationJobObject(job, JobObjectExtendedLimitInformation, ptr(info.buffer), 144)) {
+        throw new Error(`SetInformationJobObject failed: ${kernel32.GetLastError()}`);
+      }
+    }
+
+    // /Q: do not echo the commands. /D: skip the AutoRun registry entries.
+    await using shell = Bun.spawn({
+      cmd: ["cmd.exe", "/Q", "/D"],
+      env: noReportEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const shellProcess = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, shell.pid);
+    if (!shellProcess) throw new Error(`OpenProcess failed: ${kernel32.GetLastError()}`);
+    try {
+      if (!kernel32.AssignProcessToJobObject(job, shellProcess)) {
+        throw new Error(`AssignProcessToJobObject failed: ${kernel32.GetLastError()}`);
+      }
+    } finally {
+      kernel32.CloseHandle(shellProcess);
+    }
+
+    shell.stdin.write(`${argv.map(arg => `"${arg}"`).join(" ")}\r\nexit %ERRORLEVEL%\r\n`);
+    await shell.stdin.end();
+    const [stderr, exitCode] = await Promise.all([shell.stderr.text(), shell.exited, shell.stdout.text()]);
+
+    if (!kernel32.QueryInformationJobObject(job, JobObjectExtendedLimitInformation, ptr(info.buffer), 144, null)) {
+      throw new Error(`QueryInformationJobObject failed: ${kernel32.GetLastError()}`);
+    }
+    const peakCommitMiB = Number(info.getBigUint64(PeakProcessMemoryUsed, true)) / (1024 * 1024);
+    return { stderr, exitCode, peakCommitMiB };
+  } finally {
+    kernel32.CloseHandle(job);
+  }
+}
 
 describe("automatic crash reporter", () => {
   for (const approach of ["panic", "segfault", "outOfMemory", "abort"]) {

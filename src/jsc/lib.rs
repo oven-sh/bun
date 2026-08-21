@@ -501,6 +501,7 @@ pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
     // any long-running event loop; tell JSC to skip the worker threads it
     // otherwise spawns eagerly at VM creation (see `JSCInitialize`).
     let one_shot = is_one_shot_eval_invocation();
+    let _action = bun_crash_handler::scoped_action(bun_crash_handler::Action::InitializeJsc);
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.

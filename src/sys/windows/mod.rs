@@ -1316,6 +1316,8 @@ pub use bun_windows_sys::externs::ResizePseudoConsole;
 pub use bun_windows_sys::externs::ClosePseudoConsole;
 
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x2000;
+pub(crate) const JOB_OBJECT_LIMIT_PROCESS_MEMORY: DWORD = 0x100;
+pub(crate) const JOB_OBJECT_LIMIT_JOB_MEMORY: DWORD = 0x200;
 pub(crate) const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x400;
 pub(crate) const JOB_OBJECT_LIMIT_BREAKAWAY_OK: DWORD = 0x800;
 pub(crate) const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x00001000;
@@ -1496,7 +1498,8 @@ pub struct PROCESS_MEMORY_COUNTERS {
     pub(crate) QuotaPagedPoolUsage: usize,
     pub(crate) QuotaPeakNonPagedPoolUsage: usize,
     pub(crate) QuotaNonPagedPoolUsage: usize,
-    pub(crate) PagefileUsage: usize,
+    /// The commit charge of the process ("Commit size" in Task Manager).
+    pub PagefileUsage: usize,
     pub(crate) PeakPagefileUsage: usize,
 }
 
@@ -1522,6 +1525,127 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
     }
     Ok(out)
 }
+
+/// Commits `bytes` of fresh memory and releases it again. `false` means this
+/// process cannot commit that much anymore: the commit limit of the machine
+/// (physical memory plus page file) or the memory limit of its job object is
+/// used up.
+pub fn can_commit(bytes: usize) -> bool {
+    use kernel32::{MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE};
+    unsafe extern "system" {
+        fn VirtualAlloc(
+            lpAddress: *mut c_void,
+            dwSize: usize,
+            flAllocationType: DWORD,
+            flProtect: DWORD,
+        ) -> *mut c_void;
+        fn VirtualFree(lpAddress: *mut c_void, dwSize: usize, dwFreeType: DWORD) -> BOOL;
+    }
+    // SAFETY: a null address asks for a fresh region, so no memory in use is
+    // affected. The region is released right away (`MEM_RELEASE` takes a size
+    // of 0) and nothing reads or writes it in between.
+    unsafe {
+        let region = VirtualAlloc(
+            ptr::null_mut(),
+            bytes,
+            MEM_RESERVE | MEM_COMMIT,
+            PAGE_READWRITE,
+        );
+        if region.is_null() {
+            return false;
+        }
+        VirtualFree(region, 0, MEM_RELEASE);
+    }
+    true
+}
+
+/// The commit charge of the whole machine (`GlobalMemoryStatusEx`), in bytes.
+#[derive(Clone, Copy)]
+pub struct CommitCharge {
+    /// Physical memory plus the current size of the page file.
+    pub limit: u64,
+    /// How much of `limit` is not committed yet.
+    pub available: u64,
+}
+
+pub fn commit_charge() -> Option<CommitCharge> {
+    /// `MEMORYSTATUSEX` (`sysinfoapi.h`).
+    #[repr(C)]
+    #[derive(Default)]
+    struct MEMORYSTATUSEX {
+        dwLength: DWORD,
+        dwMemoryLoad: DWORD,
+        ullTotalPhys: u64,
+        ullAvailPhys: u64,
+        ullTotalPageFile: u64,
+        ullAvailPageFile: u64,
+        ullTotalVirtual: u64,
+        ullAvailVirtual: u64,
+        ullAvailExtendedVirtual: u64,
+    }
+    unsafe extern "system" {
+        // safe: the out-param is a `&mut` to a struct whose `dwLength` says
+        // how much of it the kernel may write.
+        safe fn GlobalMemoryStatusEx(lpBuffer: &mut MEMORYSTATUSEX) -> BOOL;
+    }
+    let mut status = MEMORYSTATUSEX {
+        dwLength: size_of::<MEMORYSTATUSEX>() as DWORD,
+        ..Default::default()
+    };
+    if GlobalMemoryStatusEx(&mut status) == 0 {
+        return None;
+    }
+    Some(CommitCharge {
+        limit: status.ullTotalPageFile,
+        available: status.ullAvailPageFile,
+    })
+}
+
+/// The memory limits of the job object this process runs in, in bytes. Both
+/// are `None` when the process is not in a job or the job does not limit
+/// memory. Windows charges committed memory against these limits, so a
+/// process that hits one fails to commit memory like a machine whose commit
+/// limit is used up. Containers and CI runners set them.
+#[derive(Clone, Copy, Default)]
+pub struct JobMemoryLimits {
+    /// `JOB_OBJECT_LIMIT_PROCESS_MEMORY`: the limit for each process in the job.
+    pub per_process: Option<usize>,
+    /// `JOB_OBJECT_LIMIT_JOB_MEMORY`: the limit for all processes in the job together.
+    pub whole_job: Option<usize>,
+}
+
+pub fn job_memory_limits() -> JobMemoryLimits {
+    unsafe extern "system" {
+        // safe: a null `hJob` is documented to mean the job of the calling
+        // process (a process outside of every job gets `FALSE`); the out-param
+        // is a `&mut` to the struct that `cbJobObjectInformationLength` sizes.
+        safe fn QueryInformationJobObject(
+            hJob: HANDLE,
+            JobObjectInformationClass: DWORD,
+            lpJobObjectInformation: &mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            cbJobObjectInformationLength: DWORD,
+            lpReturnLength: Option<&mut DWORD>,
+        ) -> BOOL;
+    }
+    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
+    if QueryInformationJobObject(
+        ptr::null_mut(),
+        JobObjectExtendedLimitInformation,
+        &mut info,
+        size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as DWORD,
+        None,
+    ) == 0
+    {
+        return JobMemoryLimits::default();
+    }
+    let flags = info.BasicLimitInformation.LimitFlags;
+    JobMemoryLimits {
+        per_process: (flags & JOB_OBJECT_LIMIT_PROCESS_MEMORY != 0)
+            .then_some(info.ProcessMemoryLimit),
+        whole_job: (flags & JOB_OBJECT_LIMIT_JOB_MEMORY != 0).then_some(info.JobMemoryLimit),
+    }
+}
+
 pub use bun_windows_sys::externs::GetConsoleMode;
 pub use bun_windows_sys::externs::SetConsoleMode;
 

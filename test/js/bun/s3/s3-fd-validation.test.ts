@@ -1,4 +1,24 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+
+// The S3 client sends through an ambient HTTP_PROXY even for loopback endpoints,
+// so the upload below would never reach the local server in an environment that
+// sets one. Same approach as test/js/bun/http/proxy.test.ts: assign "" (a delete
+// does not reach the native env) for the duration of this file.
+const PROXY_ENV_KEYS = ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"];
+const savedProxyEnv: Record<string, string | undefined> = {};
+
+beforeAll(() => {
+  for (const key of PROXY_ENV_KEYS) {
+    savedProxyEnv[key] = process.env[key];
+    process.env[key] = "";
+  }
+});
+
+afterAll(() => {
+  for (const key of PROXY_ENV_KEYS) {
+    process.env[key] = savedProxyEnv[key] ?? "";
+  }
+});
 
 test("S3Client.write does not crash with out-of-range float as path", () => {
   expect(() => Bun.S3Client.write(-1.5379890021597998e308, "data")).toThrow();

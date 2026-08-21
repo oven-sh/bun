@@ -641,11 +641,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     lockfile.buffers.hoisted_dependencies.len(),
                 ));
                 let string_bytes = lockfile.buffers.string_bytes.as_slice();
-                let mut sorted_dependencies: Vec<DependencyID> =
-                    Vec::with_capacity(root_deps.len as usize);
-                for i in 0..root_deps.len {
-                    sorted_dependencies.push((root_deps.off + i) as DependencyID);
-                }
+                // The root's dependency list has one entry per declaration, so a
+                // workspace the root also declares as a dependency is in it twice.
+                // The tree has one entry per `node_modules/<name>`: list its root
+                // folder minus the hoisted transitive dependencies.
+                let mut sorted_dependencies: Vec<DependencyID> = first_directory
+                    .dependencies
+                    .iter()
+                    .copied()
+                    .filter(|&dep_id| root_deps.contains(dep_id))
+                    .collect();
                 let by_name = ByName {
                     dependencies,
                     buf: string_bytes,

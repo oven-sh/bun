@@ -13,7 +13,7 @@ import {
   nodeExeMatchingAbi,
   tempDir,
 } from "harness";
-import { join } from "path";
+import { join, resolve } from "path";
 
 // The napi-app addons don't link against bun, so existing binaries stay valid
 // across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
@@ -1564,7 +1564,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("while loading it", async () => {
       const onLoadAddon = join(__dirname, "napi-app/build/Debug/crash_report_on_load_addon.node");
       const stderr = await crashReport(`require(${JSON.stringify(onLoadAddon)})`, "register");
-      expect(stderr).toContain(`Crashed while loading native module: ${onLoadAddon}\n`);
+      // The line carries the path as require() handed it to dlopen; resolve() evens out the separators.
+      const named = stderr.match(/Crashed while loading native module: (.*)\n/)?.[1];
+      expect(named && resolve(named)).toBe(resolve(onLoadAddon));
     });
 
     it("in one of its methods", async () => {

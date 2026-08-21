@@ -106,7 +106,14 @@ for (let i = 0; i < 3; i++) {
   );
 }
 
-for (let batch = 0; batch < 8; batch++) {
+// Churn until the stalled handshakes settle (on_timeout at ~4-8s, or the 10s
+// AbortSignal) so their teardown lands while the HTTP thread is busy.
+let stallsSettled = false;
+Promise.all(stallJobs).then(() => {
+  stallsSettled = true;
+});
+
+for (let batch = 0; batch < 8 || !stallsSettled; batch++) {
   const jobs: Promise<void>[] = [];
 
   // Plain mismatched-cert fetches: must reject with the altname error.
@@ -183,9 +190,9 @@ for (let batch = 0; batch < 8; batch++) {
 }
 
 // Stalled handshakes run concurrently with the batches above (launched before
-// the loop, awaited here); BUN_CONFIG_HTTP_IDLE_TIMEOUT=1 fails each through
-// on_timeout mid-handshake, the AbortSignal keeps the fixture bounded either
-// way.
+// the loop, which churns until they settle); BUN_CONFIG_HTTP_IDLE_TIMEOUT=1
+// fails each through on_timeout mid-handshake, the AbortSignal keeps the
+// fixture bounded either way.
 await Promise.all(stallJobs);
 
 mismatchServer.close();

@@ -165,15 +165,13 @@ it(
   timeout,
 );
 
-// Terminal-mode variant of the same regression, driven through a PTY so
-// readline goes down the emitKeypressEvents/raw-mode path (the setup in the
-// original #15027 report). node:readline is cached in the
-// InternalModuleRegistry and is not re-evaluated on reload, so its
-// module-local keypress-decoder state persists on process.stdin; the reset
-// has to clear it so the fresh interface re-installs the data→keypress
-// bridge. Before the fix every line is echoed once per leaked interface;
-// with an incomplete reset (listeners stripped but decoder state kept) the
-// interface goes silent instead.
+// Terminal-mode variant of the same regression, run inside a PTY so readline
+// takes the emitKeypressEvents/raw-mode path from the original #15027 report.
+// node:readline is not re-evaluated on reload, so the keypress-decoder marker
+// it leaves on process.stdin survives; unless the reset clears it, the fresh
+// interface never re-installs its data -> keypress bridge. Before the fix every
+// line is echoed once per leaked interface (READY shows keypress=2); with the
+// listeners stripped but the marker kept, readline goes silent (data=0).
 it.skipIf(isWindows)(
   "should keep terminal readline working across --hot reloads without duplicating input",
   async () => {
@@ -194,51 +192,76 @@ it.skipIf(isWindows)(
       `,
     });
     const fixture = join(String(dir), "index.js");
-    const driver = join(import.meta.dir, "hot-stdin-pty.py");
-    const python = Bun.which("python3") ?? Bun.which("python") ?? "python";
 
-    await using proc = spawn({
-      cmd: [python, driver, bunExe(), "--hot", "run", fixture],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+    // The PTY echoes our keystrokes back mixed with program output; keep only
+    // the fixture's own READY/ECHO lines.
+    let output = "";
+    const lines: string[] = [];
+    const waiters: Array<{ test: (line: string) => boolean; resolve: (line: string) => void }> = [];
+    const decoder = new TextDecoder();
+    await using terminal = new Bun.Terminal({
+      data(_terminal, chunk) {
+        output += decoder.decode(chunk, { stream: true });
+        let nl: number;
+        while ((nl = output.indexOf("\n")) !== -1) {
+          const line = Bun.stripANSI(output.slice(0, nl)).trim();
+          output = output.slice(nl + 1);
+          if (!line.startsWith("READY ") && !line.startsWith("ECHO ")) continue;
+          lines.push(line);
+          for (let i = waiters.length - 1; i >= 0; i--) {
+            if (waiters[i].test(line)) waiters.splice(i, 1)[0].resolve(line);
+          }
+        }
+      },
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "run", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      terminal,
+    });
+
+    // A child that dies must fail the pending wait instead of hanging it.
+    const exited = proc.exited.then(code => {
+      throw new Error(`bun --hot exited early with code ${code}; lines so far: ${JSON.stringify(lines)}`);
+    });
+    exited.catch(() => {});
+    const waitForLine = (test: (line: string) => boolean): Promise<string> => {
+      const already = lines.find(test);
+      if (already !== undefined) return Promise.resolve(already);
+      return Promise.race([new Promise<string>(resolve => waiters.push({ test, resolve })), exited]);
+    };
 
     try {
-      // PTY echoes our keystrokes back mixed with program output; strip
-      // control sequences and keep the program's own ECHO/READY lines.
-      const lines = stdout
-        .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
-        .split(/\r?\n/)
-        .map(l => l.trim())
-        .filter(l => l.startsWith("ECHO ") || l.startsWith("READY "));
+      expect(await waitForLine(l => l.startsWith("READY 1 "))).toBe("READY 1 data=1 keypress=1 resize=1");
+      terminal.write("hello\r");
+      expect(await waitForLine(l => /^ECHO \d+ hello$/.test(l))).toBe("ECHO 1 hello");
 
-      // Both loads came up with exactly one stdin data listener (the
-      // keypress bridge), one keypress listener, and one stdout resize
-      // listener — i.e. nothing was duplicated or lost after the reload.
-      const readyLines = lines.filter(l => l.startsWith("READY "));
-      expect(readyLines.length).toBeGreaterThanOrEqual(2);
-      for (const l of readyLines) {
+      // Trigger a reload (the watcher may report one write as more than one).
+      writeFileSync(fixture, readFileSync(fixture, "utf-8"));
+      const ready = await waitForLine(l => /^READY ([2-9]|\d{2,}) /.test(l));
+      // The new interface must have exactly the listeners of a first load:
+      // nothing leaked from the old one and nothing missing.
+      expect(ready).toMatch(/^READY \d+ data=1 keypress=1 resize=1$/);
+
+      terminal.write("world\r");
+      const world = await waitForLine(l => /^ECHO \d+ world$/.test(l));
+      expect(Number(/^ECHO (\d+) /.exec(world)![1])).toBeGreaterThan(1);
+      // A leaked interface would have echoed "world" in the same dispatch as the
+      // line above. Typing another line and waiting for its echo flushes that out.
+      terminal.write("done\r");
+      await waitForLine(l => /^ECHO \d+ done$/.test(l));
+
+      expect(lines.filter(l => /^ECHO \d+ world$/.test(l))).toEqual([world]);
+      for (const l of lines.filter(l => l.startsWith("READY "))) {
         expect(l).toMatch(/^READY \d+ data=1 keypress=1 resize=1$/);
       }
-
-      // "hello" (before reload) and "world" (after reload) were each handled
-      // exactly once, and "world" by a post-reload interface.
-      const helloEchoes = lines.filter(l => /^ECHO \d+ hello$/.test(l));
-      expect(helloEchoes).toEqual(["ECHO 1 hello"]);
-      const worldEchoes = lines.filter(l => /^ECHO \d+ world$/.test(l));
-      expect(worldEchoes).toHaveLength(1);
-      const worldLoad = Number(/^ECHO (\d+) world$/.exec(worldEchoes[0])![1]);
-      expect(worldLoad).toBeGreaterThan(1);
-
-      expect(exitCode).toBe(0);
     } catch (e) {
-      console.error("pty stdout:", JSON.stringify(stdout));
-      console.error("pty stderr:", stderr);
+      console.error("pty lines:", lines);
       throw e;
+    } finally {
+      proc.kill();
     }
   },
   timeout,

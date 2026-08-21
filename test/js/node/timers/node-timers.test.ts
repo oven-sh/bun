@@ -47,39 +47,42 @@ it("node.js util.promisify(setInterval) works", async () => {
 
 it("timers expose util.promisify.custom as a lazy accessor without loading node:util first", async () => {
   // Matches Node's lib/timers.js: an enumerable, non-configurable, getter-only accessor that resolves to
-  // timers/promises. A strict-mode write and Object.assign throw, a sloppy-mode write is a no-op. The shape
-  // is read before any module is loaded, in the main thread and in a worker.
-  const shape = `const shape = fn => {
-    const d = Object.getOwnPropertyDescriptor(fn, Symbol.for("nodejs.util.promisify.custom"));
-    return d && { get: typeof d.get, set: typeof d.set, enumerable: d.enumerable, configurable: d.configurable };
+  // the timers/promises export of the same realm. A strict-mode write and Object.assign throw, a sloppy-mode
+  // write is a no-op. The same probe runs in the main thread and in a worker, before either loads a module.
+  const probe = `const probe = () => {
+    const sym = Symbol.for("nodejs.util.promisify.custom");
+    const timers = [setTimeout, setInterval, setImmediate];
+    const shape = fn => {
+      const d = Object.getOwnPropertyDescriptor(fn, sym);
+      return d && { get: typeof d.get, set: typeof d.set, enumerable: d.enumerable, configurable: d.configurable };
+    };
+    const before = timers.map(shape);
+    // new Function so that the directive is compiled as written, instead of going through the transpiler.
+    const write = (fn, body) => { try { new Function("fn", "sym", body)(fn, sym); return "no throw"; } catch (e) { return e.constructor.name; } };
+    const writes = timers.map(fn => ({
+      strict: write(fn, '"use strict"; fn[sym] = 1;'),
+      sloppy: write(fn, 'fn[sym] = 1;'),
+      assign: write(fn, 'Object.assign(fn, { [sym]: 1 });'),
+    }));
+    // Read after the writes, so this also proves they changed nothing.
+    const tp = require("node:timers/promises");
+    const same = [setTimeout[sym] === tp.setTimeout, setInterval[sym] === tp.setInterval, setImmediate[sym] === tp.setImmediate];
+    return { before, writes, same };
   };`;
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
-      `${shape}
-       const sym = Symbol.for("nodejs.util.promisify.custom");
-       const timers = [setTimeout, setInterval, setImmediate];
-       const before = timers.map(shape);
-       // new Function so that the directive is compiled as written, instead of going through the transpiler.
-       const write = (fn, body) => { try { new Function("fn", "sym", body)(fn, sym); return "no throw"; } catch (e) { return e.constructor.name; } };
-       const writes = timers.map(fn => ({
-         strict: write(fn, '"use strict"; fn[sym] = 1;'),
-         sloppy: write(fn, 'fn[sym] = 1;'),
-         assign: write(fn, 'Object.assign(fn, { [sym]: 1 });'),
-       }));
-       const tp = require("node:timers/promises");
-       // Also proves the writes above changed nothing.
-       const same = [setTimeout[sym] === tp.setTimeout, setInterval[sym] === tp.setInterval, setImmediate[sym] === tp.setImmediate];
+      `${probe}
+       const main = probe();
        const { Worker } = require("node:worker_threads");
-       const worker = new Worker(
-         ${JSON.stringify(shape)} + 'require("node:worker_threads").parentPort.postMessage([setTimeout, setInterval, setImmediate].map(shape));',
-         { eval: true },
-       );
+       const worker = new Worker(${JSON.stringify(probe)} + 'require("node:worker_threads").parentPort.postMessage(probe());', {
+         eval: true,
+       });
        let inWorker;
-       worker.once("message", message => { inWorker = message; });
+       worker.once("message", result => { inWorker = result; });
        worker.once("exit", workerExitCode => {
-         console.log(JSON.stringify({ before, writes, same, inWorker, workerExitCode }));
+         console.log(JSON.stringify({ main, inWorker, workerExitCode }));
        });`,
     ],
     env: bunEnv,
@@ -90,13 +93,12 @@ it("timers expose util.promisify.custom as a lazy accessor without loading node:
   expect(stderr).toBe("");
   const accessor = { get: "function", set: "undefined", enumerable: true, configurable: false };
   const rejected = { strict: "TypeError", sloppy: "no throw", assign: "TypeError" };
-  expect(JSON.parse(stdout)).toEqual({
+  const expected = {
     before: [accessor, accessor, accessor],
     writes: [rejected, rejected, rejected],
     same: [true, true, true],
-    inWorker: [accessor, accessor, accessor],
-    workerExitCode: 0,
-  });
+  };
+  expect(JSON.parse(stdout)).toEqual({ main: expected, inWorker: expected, workerExitCode: 0 });
   expect(exitCode).toBe(0);
 });
 

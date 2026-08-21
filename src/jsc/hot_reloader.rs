@@ -382,9 +382,8 @@ static WATCH_RESTART_PRINTED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 pub fn set_watch_command_display(entry: &[u8], script_args: &[Box<[u8]>]) {
-    let mut joined: Vec<u8> = Vec::with_capacity(
-        entry.len() + script_args.iter().map(|a| a.len() + 1).sum::<usize>(),
-    );
+    let mut joined: Vec<u8> =
+        Vec::with_capacity(entry.len() + script_args.iter().map(|a| a.len() + 1).sum::<usize>());
     joined.extend_from_slice(entry);
     for arg in script_args {
         joined.push(b' ');
@@ -784,9 +783,8 @@ fn arm_watch_reload_grace_timer() {
         // runs on its own worker VM).
         crate::node_compile_cache::persist_now();
         Output::flush();
-        let clear_screen = print_watch_restart_message(
-            CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-        );
+        let clear_screen =
+            print_watch_restart_message(CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed));
         bun_core::reload_process(clear_screen, false);
         unreachable!();
     };

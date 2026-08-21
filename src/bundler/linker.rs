@@ -632,32 +632,32 @@ impl Linker {
             ImportPathFormat::Relative => {
                 let relative_name = bun_paths::resolve_path::relative(source_dir, source_path);
 
+                let text: &'static [u8];
                 let pretty: &'static [u8];
-                let relative_name_out: &'static [u8];
                 if use_hashed_name {
                     let basepath = PFs::Path::init(source_path);
                     let basename = self.get_hashed_filename(&basepath, None)?;
                     let name = basepath.name();
                     let dir = name.dir_with_trailing_slash();
-                    let mut _pretty: Vec<u8> =
+                    let mut hashed: Vec<u8> =
                         Vec::with_capacity(dir.len() + basename.len() + name.ext.len());
-                    _pretty.extend_from_slice(dir);
-                    _pretty.extend_from_slice(basename);
-                    _pretty.extend_from_slice(name.ext);
-                    pretty = intern(_pretty);
-                    relative_name_out = dupe(relative_name);
+                    hashed.extend_from_slice(dir);
+                    hashed.extend_from_slice(basename);
+                    hashed.extend_from_slice(name.ext);
+                    text = intern(hashed);
+                    pretty = dupe(relative_name);
                 } else {
                     if relative_name.len() > 1
                         && !(relative_name[0] == SEP || relative_name[0] == b'.')
                     {
-                        pretty = dupe(&strings::concat(&[b"./", relative_name]));
+                        text = dupe(&strings::concat(&[b"./", relative_name]));
                     } else {
-                        pretty = dupe(relative_name);
+                        text = dupe(relative_name);
                     }
-                    relative_name_out = pretty;
+                    pretty = text;
                 }
 
-                Ok(PFs::Path::init_with_pretty(pretty, relative_name_out))
+                Ok(PFs::Path::init_with_pretty(text, pretty))
             }
 
             ImportPathFormat::AbsoluteUrl => {

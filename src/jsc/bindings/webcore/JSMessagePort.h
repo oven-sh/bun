@@ -85,11 +85,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, MessagePort*)
     return &owner.get();
 }
 
-inline void* wrapperKey(MessagePort* wrappableObject)
-{
-    return wrappableObject;
-}
-
 WEBCORE_EXPORT JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, MessagePort&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<MessagePort>&&);

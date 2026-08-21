@@ -52,7 +52,7 @@ JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * global
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto thisVal = callFrame->thisValue();
+    auto thisVal = callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::strict());
 
     auto name = thisVal.get(globalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
@@ -206,17 +206,26 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     }
 
     auto* structure = uncheckedDowncast<Structure>(cache->internalField(static_cast<unsigned>(code)).get());
-    auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+
+    // Convert the message and `cause` here rather than in ErrorInstance::create(JSGlobalObject*, ...),
+    // which hands back nullptr when that conversion is interrupted: every caller throws or rejects with
+    // what we return, so an object is always made. Whatever interrupted the conversion is dealt with
+    // below.
+    String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
+    JSValue cause;
+    if (options.isObject() && !scope.exception())
+        cause = asObject(options)->getIfPropertyExists(globalObject, vm.propertyNames->cause);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return created_error;
-        // TODO investigate what can throw here and whether it will throw non-objects
-        // (this is better than before where we would have returned nullptr from createError if any
-        // exception were thrown by ErrorInstance::create)
-        return uncheckedDowncast<JSObject>(thrown_exception->value());
+        // A stopped worker's TerminationException stays pending for the caller's frame to report; the
+        // (message-less) error is still made. Anything else thrown while building the message (an
+        // OOM resolving a rope, a throwing `cause` getter) becomes the error, as before.
+        if (!vm.isTerminationException(thrown_exception)) {
+            (void)scope.tryClearException();
+            if (auto* object = thrown_exception->value().getObject())
+                return object;
+        }
     }
-    return created_error;
+    return JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
 JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
@@ -240,7 +249,11 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
     auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
-    return JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
+    if (scope.exception() && !vm.hasPendingTerminationException())
+        (void)scope.tryClearException();
+    return JSC::ErrorInstance::create(vm, structure, messageString, JSValue(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
 }
 
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
@@ -259,7 +272,53 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
     return createError(vm, globalObject, code, message);
 }
 
-extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
+// `Bun.inspect` with `single_line` + `quote_strings` — the same renderer
+// JSBuffer uses to inline a value into an error message; it renders objects
+// on one line ("Received { abc: 123 }") the way Node does.
+extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSValue value);
+
+// util.inspect's quoted-string escaping (https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
+// strEscape). Bun.inspect double-quotes; Node's messages use single quotes.
+template<typename CharType>
+static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, char quote)
+{
+    switch (c) {
+    case '\b':
+        builder.append("\\b"_s);
+        return;
+    case '\t':
+        builder.append("\\t"_s);
+        return;
+    case '\n':
+        builder.append("\\n"_s);
+        return;
+    case '\f':
+        builder.append("\\f"_s);
+        return;
+    case '\r':
+        builder.append("\\r"_s);
+        return;
+    case '\\':
+        builder.append("\\\\"_s);
+        return;
+    default:
+        if (c == static_cast<CharType>(quote)) {
+            builder.append('\\');
+            builder.append(quote);
+            return;
+        }
+        // Node escapes C0 (0x00-0x1F), DEL, and the C1 range (0x80-0x9F);
+        // its meta table runs through index 0x9F.
+        if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
+            static constexpr char hex[] = "0123456789abcdef";
+            builder.append("\\x"_s);
+            builder.append(hex[(c >> 4) & 0xf]);
+            builder.append(hex[c & 0xf]);
+            return;
+        }
+        builder.append(c);
+    }
+}
 
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
 {
@@ -278,34 +337,16 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
         auto str = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, );
         if (quotesLikeInspect) {
-            if (str->contains('\'')) {
-                builder.append('"');
-                if (str->is8Bit()) {
-                    const auto span = str->span<Latin1Character>();
-                    for (const auto c : span) {
-                        if (c == '"') {
-                            builder.append("\\\""_s);
-                        } else {
-                            builder.append(c);
-                        }
-                    }
-                } else {
-                    const auto span = str->span<char16_t>();
-                    for (const auto c : span) {
-                        if (c == '"') {
-                            builder.append("\\\""_s);
-                        } else {
-                            builder.append(c);
-                        }
-                    }
-                }
-                builder.append('"');
-                return;
+            const char quote = str->contains('\'') ? '"' : '\'';
+            builder.append(quote);
+            if (str->is8Bit()) {
+                for (const auto c : str->span<Latin1Character>())
+                    appendEscapedQuotedChar(builder, c, quote);
+            } else {
+                for (const auto c : str->span<char16_t>())
+                    appendEscapedQuotedChar(builder, c, quote);
             }
-
-            builder.append('\'');
-            builder.append(str);
-            builder.append('\'');
+            builder.append(quote);
             return;
         }
         builder.append(str);
@@ -340,9 +381,8 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     }
     }
 
-    auto bstring = Bun__inspect(globalObject, arg);
-    auto&& str = bstring.transferToWTFString();
-    builder.append(str);
+    // Node renders objects inline in error messages ("Received { abc: 123 }").
+    builder.append(Bun__inspect_singleline(globalObject, arg).transferToWTFString());
 }
 
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value)
@@ -800,6 +840,19 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     return {};
 }
 
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, std::span<const WTF::ASCIILiteral> expected_types, JSC::JSValue val_actual_value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::MarkedArgumentBuffer types;
+    for (const auto& type : expected_types)
+        types.append(JSC::jsString(vm, WTF::String(type)));
+    auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, JSC::ArgList(types), val_actual_value);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
+    throwScope.release();
+    return {};
+}
+
 JSC::EncodedJSValue INVALID_ARG_TYPE_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, WTF::ASCIILiteral expected_type, WTF::ASCIILiteral expected_instance_types, JSC::JSValue val_actual_value)
 {
     JSC::VM& vm = globalObject->vm();
@@ -1027,11 +1080,16 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 // for validateOneOf
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, WTF::ASCIILiteral reason, JSC::JSArray* oneOf)
 {
-    WTF::StringBuilder builder;
-    builder.append("The argument '"_s);
-    JSValueToStringSafe(globalObject, builder, name);
+    WTF::StringBuilder nameBuilder;
+    JSValueToStringSafe(globalObject, nameBuilder, name);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto nameString = nameBuilder.toString();
 
+    WTF::StringBuilder builder;
+    builder.append("The "_s);
+    // Node treats dotted names ('options.diff') as properties, plain names as arguments.
+    builder.append(nameString.contains('.') ? "property '"_s : "argument '"_s);
+    builder.append(nameString);
     builder.append("' "_s);
     builder.append(reason);
     unsigned length = oneOf->length();
@@ -1212,15 +1270,12 @@ JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlo
     return {};
 }
 
-JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal, bool triedUppercase)
+JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal)
 {
     WTF::StringBuilder builder;
     builder.append("Unknown signal: "_s);
     JSValueToStringSafe(globalObject, builder, signal);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
-    if (triedUppercase) {
-        builder.append(" (signals must use all capital letters)"_s);
-    }
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_SIGNAL, builder.toString()));
     throwScope.release();
     return {};
@@ -1419,20 +1474,6 @@ JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::J
 {
     auto message = "No key provided to sign"_s;
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_SIGN_KEY_REQUIRED, message));
-    throwScope.release();
-    return {};
-}
-
-JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue received, WTF::ASCIILiteral expected)
-{
-    WTF::StringBuilder builder;
-    builder.append("Invalid key object type "_s);
-    JSValueToStringSafe(globalObject, builder, received);
-    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
-
-    builder.append(". Expected "_s);
-    builder.append(expected);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
     throwScope.release();
     return {};
 }
@@ -1751,6 +1792,9 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, co
 
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
+    if (!thisValue.isEmpty())
+        thisValue = thisValue.toThis(globalObject, JSC::ECMAMode::strict());
+
     if (thisValue.isEmpty() || thisValue.isUndefined()) {
         return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName));
     }

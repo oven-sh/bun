@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSCellButterfly.h"
@@ -68,8 +69,9 @@
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
+#include "NodeV8.h"
 #include "ProcessIdentifier.h"
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 #include "CallSite.h"
 #include "CallSitePrototype.h"
 #include "FormatStackTraceForJS.h"
@@ -84,12 +86,11 @@
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
-#include "JSCompressionStream.h"
-#include "JSDecompressionStream.h"
+#include "streams/JSCompressionStream.h"
+#include "streams/JSDecompressionStream.h"
 #include "JSBroadcastChannel.h"
 #include "JSBuffer.h"
 #include "JSBufferList.h"
-#include "webcore/JSMIMEBindings.h"
 #include "streams/JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
 #include "JSCommonJSExtensions.h"
@@ -233,9 +234,6 @@
 using namespace Bun;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
-BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
-BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
-BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_assertSettings);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
@@ -284,12 +282,18 @@ extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 #endif
 
+// bun_icu_default_locale.cpp
+extern "C" void Bun__ensureICUDefaultLocale();
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
     std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, envp, envc, onCrash]() {
+        Bun__ensureICUDefaultLocale();
         JSC::Config::enableRestrictedOptions();
+        // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
+        JSC::Config::disableEnvironmentOptions();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
@@ -323,10 +327,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useAsyncStackTrace() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
-            // Upstream enabled Temporal by default; keep it off in Bun until
-            // the remaining integration work lands. BUN_JSC_useTemporal=1
-            // re-enables it for opt-in testing.
-            JSC::Options::useTemporal() = false;
+            JSC::Options::useTemporal() = true;
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
@@ -516,7 +517,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     // Every JS VM's RunLoop should use Bun's RunLoop implementation
     ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
 
-    WebCore::JSVMClientData::create(&vm, Bun__getVM());
+    WebCore::JSVMClientData::create(&vm, Bun__getVM(), static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr));
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1) [[unlikely]] {
@@ -577,10 +578,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     });
 
     if (executionContextId > -1) {
-        const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
+        const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {
             auto& options = worker.options();
 
             if (options.env.has_value()) {
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
                 auto size = map.size();
 
@@ -592,12 +594,23 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     strings.append(jsString(vm, value));
                 }
 
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+#if OS(WINDOWS)
+                JSC::JSObject* env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+#else
+                // Same exotic object as the main thread so writes inside the
+                // worker coerce to string, reject symbol keys, and validate
+                // defineProperty like Node's EnvSetter/EnvDefiner.
+                auto* envStructure = Bun::JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+                JSC::JSObject* env = Bun::JSEnvironmentVariableMap::create(vm, envStructure);
+#endif
                 size_t i = 0;
                 for (auto k : map) {
-                    // They can have environment variables with numbers as keys.
-                    // So we must use putDirectMayBeIndex to handle that.
+                    // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
+                    // ThrowScope). Seeded values are JSStrings, so this throws only on OOM
+                    // or under a termination already requested for this starting worker.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+                    if (scope.exception()) [[unlikely]]
+                        break;
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {
@@ -613,12 +626,14 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             // that we can request their termination from another thread. For the main thread, we
             // can delay this until we are actually requesting termination (until and unless we ever
             // do need to request termination from another thread).
+            //
+            // Execution is forbidden by the exit path (GlobalObject::forbidExecution), not by any
+            // TerminationException: node:vm {timeout} and breakOnSigint terminate transiently and the
+            // worker keeps running afterwards.
             vm.ensureTerminationException();
-            // Make the VM stop sooner once terminated (e.g. microtasks won't run)
-            vm.forbidExecutionOnTermination();
         };
 
-        if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
+        if (auto* worker = static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr)) {
             initializeWorker(*worker);
         }
     }
@@ -646,10 +661,14 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // gcProtect()'d and the old one is cleanly unprotected.
     JSC::DeferGC deferGC(vm);
 
+    // The old global's workers, ports, channels and sockets were stopped by the runtime
+    // (Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation) before its sweeps and before this.
+    auto* oldContext = oldGlobal->scriptExecutionContext();
+    ASSERT(oldContext->activeDOMObjectsAreStopped());
+
     // The new global must inherit the old one's ScriptExecutionContext identifier so that
     // `Bun.isMainThread` (identifier == 1) and cross-thread task dispatch keep working.
     // Move the old context to a fresh identifier first to free the slot.
-    auto* oldContext = oldGlobal->scriptExecutionContext();
     const auto inheritedId = oldContext->identifier();
     oldContext->removeFromContextsMap();
     oldContext->regenerateIdentifier();
@@ -930,7 +949,7 @@ namespace Zig {
 
 using namespace WebCore;
 
-static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
+JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     // Same reasoning as Zig__GlobalObject__createForTestIsolation: keep the
@@ -984,7 +1003,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
-        &Zig::deriveShadowRealmGlobalObject,
+        &deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
@@ -1012,7 +1031,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
-        &Zig::deriveShadowRealmGlobalObject,
+        &deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
@@ -1028,7 +1047,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
-    , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
+    , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
@@ -1043,7 +1062,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
-    , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
+    , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
@@ -1052,22 +1071,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
-    // Break the Performance <-> PerformanceObserver reference cycle before the
-    // ScriptExecutionContext is torn down. Performance holds RefPtr<PerformanceObserver>
-    // in its registered-observer list and each PerformanceObserver holds RefPtr<Performance>,
-    // so neither is released unless the cycle is explicitly broken. WebKit does this from
-    // WorkerGlobalScope / LocalDOMWindow on removeAllEventListeners(); Bun has no equivalent
-    // hook, so this is the last point where the context is still fully alive. Doing it in
-    // Performance::contextDestroyed() instead is too late: dropping the last observer ref
-    // there cascades into ~ContextDestructionObserver() unregistering from the context while
-    // the context is already iterating observers in its own destructor.
-    if (m_performance)
-        m_performance->removeAllObservers();
-
-    if (auto* ctx = scriptExecutionContext()) {
-        ctx->removeFromContextsMap();
-        ctx->deref();
-    }
+    m_scriptExecutionContext->globalObjectDestroyed();
+    m_scriptExecutionContext->deref();
 }
 
 void GlobalObject::destroy(JSCell* cell)
@@ -1155,11 +1160,21 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 #pragma mark - Globals
 
+// onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
+// with the property receiver as thisValue, which is not necessarily the global
+// object: `new Proxy(globalThis, {}).onmessage = fn` passes the Proxy.
+static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
+{
+    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))
+        return globalObject;
+    return defaultGlobalObject(lexicalGlobalObject);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(globalOnMessage,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().messageEvent, thisObject->world()));
 }
 
@@ -1167,7 +1182,7 @@ JSC_DEFINE_CUSTOM_GETTER(globalOnError,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().errorEvent, thisObject->world()));
 }
 
@@ -1177,7 +1192,7 @@ JSC_DEFINE_CUSTOM_SETTER(setGlobalOnMessage,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().messageEvent, value, *thisObject);
     vm.writeBarrier(thisObject, value);
     ensureStillAliveHere(value);
@@ -1190,7 +1205,7 @@ JSC_DEFINE_CUSTOM_SETTER(setGlobalOnError,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
     setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().errorEvent, value, *thisObject);
     vm.writeBarrier(thisObject, value);
     ensureStillAliveHere(value);
@@ -1419,6 +1434,11 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
 // Windows doesn't have mmap
 // This code should pretty much only be called on Linux.
 #if !OS(WINDOWS)
+    // Empty makes the caller fall back to the copying path, which throws for this length.
+    if (byteLength > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
     auto ptr = mmap(nullptr, totalLength, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 
     if (ptr == MAP_FAILED) {
@@ -1514,6 +1534,9 @@ extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobal
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
+        return {};
+
     auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);
     }));
@@ -1527,6 +1550,9 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
+        return {};
 
     auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);
@@ -1759,9 +1785,9 @@ JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globa
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto interfaceName = callFrame->uncheckedArgument(0).getString(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     auto attributeName = callFrame->uncheckedArgument(1).getString(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto error = static_cast<ErrorInstance*>(createTypeError(globalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(interfaceName.utf8().data(), attributeName)));
     error->setNativeGetterTypeError();
@@ -1778,10 +1804,10 @@ JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject * globalOb
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto codeValue = callFrame->uncheckedArgument(0).getString(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto message = callFrame->uncheckedArgument(1).getString(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
     ExceptionCode code { TypeError };
     if (codeValue == "AbortError"_s)
@@ -2005,7 +2031,6 @@ void GlobalObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     m_commonStrings.initialize();
-    m_http2CommonStrings.initialize();
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();
 
@@ -2636,6 +2661,14 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcSerializeCodeGenerator(init.vm), init.owner));
     });
 
+    m_ipcTagAdvancedBuffersFunction.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
+        init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcTagAdvancedBuffersCodeGenerator(init.vm), init.owner));
+    });
+
+    m_ipcRestoreAdvancedBuffersFunction.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
+        init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcRestoreAdvancedBuffersCodeGenerator(init.vm), init.owner));
+    });
+
     m_JSFileSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
@@ -2691,6 +2724,16 @@ void GlobalObject::finishCreation(VM& vm)
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FetchRequestBodySink);
             auto* structure = JSFetchRequestBodySink::createStructure(init.vm, init.global, prototype);
             auto* constructor = JSFetchRequestBodySinkConstructor::create(init.vm, init.global, JSFetchRequestBodySinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSHTMLRewriterSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTMLRewriterSink);
+            auto* structure = JSHTMLRewriterSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSHTMLRewriterSinkConstructor::create(init.vm, init.global, JSHTMLRewriterSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
@@ -3031,13 +3074,15 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(stream);
     if (!readableStream) [[unlikely]]
         return JSC::JSValue::encode(JSC::Exception::create(vm, createTypeError(this, "Expected a ReadableStream"_s)));
-    // The generated `${Sink}__assignToStream` caller expects any failure returned as the
+    // The native caller (JSSinkController__assignToStream) expects any failure returned as the
     // encoded Exception cell, never left pending on the VM.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue result = Bun::WebStreams::assignToStream(this, readableStream, controller);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        // Hand the Exception cell back to the native caller; a termination stays pending by design.
+        // Hand the Exception cell back to the native caller. A termination that has left script is
+        // taken (the caller stands down on the cell); beneath script it stays for JSC to unwind.
         scope.clearExceptionExceptTermination();
+        Bun__VM__takeTerminationOutsideScript(this);
         return JSC::JSValue::encode(exception);
     }
     return JSC::JSValue::encode(result);
@@ -3080,9 +3125,6 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
 }
 
-// This is like `putDirectBuiltinFunction` but for the global static list.
-#define globalBuiltinFunction(vm, globalObject, identifier, function, attributes) JSC::JSGlobalObject::GlobalPropertyInfo(identifier, JSFunction::create(vm, function, globalObject), attributes)
-
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3117,7 +3159,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
-        GlobalPropertyInfo(builtinNames.TextEncoderStreamEncoderPrivateName(), JSTextEncoderStreamEncoderConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
         GlobalPropertyInfo(builtinNames.makeErrorWithCodePrivateName(), JSFunction::create(vm, this, 2, String(), jsFunctionMakeErrorWithCode, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.toClassPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionToClass, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.inheritsPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionInherits, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
@@ -3247,8 +3288,16 @@ uint8_t GlobalObject::drainMicrotasks()
     auto& vm = this->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // A stopped VM has no checkpoint to run: whether or not its termination is still pending here (the
+    // landing frame may already have taken it), nothing queued may execute any more.
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
+        Bun__VM__takeTerminationOutsideScript(this);
+        return 1;
+    }
+
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (vm.isTerminationException(exception)) [[unlikely]] {
+            Bun__VM__takeTerminationOutsideScript(this);
             return 1;
         }
 
@@ -3271,6 +3320,7 @@ uint8_t GlobalObject::drainMicrotasks()
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
             if (vm.isTerminationException(exception)) {
+                Bun__VM__takeTerminationOutsideScript(this);
                 return 1;
             }
             (void)scope.tryClearException();
@@ -3281,6 +3331,7 @@ uint8_t GlobalObject::drainMicrotasks()
     vm.drainMicrotasks();
     if (auto* exception = scope.exception()) {
         if (vm.isTerminationException(exception)) {
+            Bun__VM__takeTerminationOutsideScript(this);
             return 1;
         }
         (void)scope.tryClearException();
@@ -3290,18 +3341,22 @@ uint8_t GlobalObject::drainMicrotasks()
     return 0;
 }
 
+// The Rust event loop's entry to drainMicrotasks() (`EventLoop::exit()` and the
+// drains between queued items): 0 drained, 1 the VM is terminating.
+//
+// One case is answered here instead: a Rust frame can be leaving through
+// `exit()` with a (non-termination) exception pending that the dispatcher above
+// it will take and report. For drainMicrotasks() an exception pending on entry
+// is a caller bug (its C++ callers are top-level loops); for this caller it only
+// means "not a checkpoint yet" - so say so (2) without draining or reporting,
+// and the fold checkpoints once it has taken the exception.
 extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
 {
+    auto& vm = globalObject->vm();
+    auto* pending = vm.exceptionForInspection();
+    if (pending && !vm.isTerminationException(pending)) [[unlikely]]
+        return 2;
     return globalObject->drainMicrotasks();
-}
-
-extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)
-{
-    auto value = globalObject->http2CommonStrings().getStringFromHPackIndex(hpack_index, globalObject);
-    if (value != nullptr) {
-        return JSValue::encode(value);
-    }
-    return JSValue::encode(JSValue::JSUndefined);
 }
 
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, T& anything)
@@ -3339,12 +3394,12 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
+    for (auto& structure : thisObject->m_domStructures)
+        visitor.append(structure);
+
     {
         // The GC thread has to grab the GC lock even though it is not mutating the containers.
         Locker locker { thisObject->m_gcLock };
-
-        for (auto& structure : thisObject->m_structures.values())
-            visitor.append(structure);
 
         for (auto& guarded : thisObject->m_guardedObjects)
             guarded->visitAggregate(visitor);
@@ -3374,19 +3429,11 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     auto& vm = JSC::getVM(globalObject);
 
     if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
-        WTF::timeZoneDidChange();
-        vm.dateCache.clearForTimeZoneChange();
+        Bun::resetDateCachesAfterTimeZoneChange(vm);
         return true;
     }
 
     return false;
-}
-
-extern "C" void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    vm.ensureTerminationException();
-    vm.setHasTerminationRequest();
 }
 
 extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
@@ -3405,8 +3452,6 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     }
 }
 
-extern "C" void Bun__queueTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
-extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
     task->performTask(*globalObject->scriptExecutionContext());
@@ -3430,16 +3475,6 @@ RefPtr<Performance> GlobalObject::performance()
     }
 
     return m_performance;
-}
-
-void GlobalObject::queueTask(WebCore::EventLoopTask* task)
-{
-    Bun__queueTask(this, task);
-}
-
-void GlobalObject::queueTaskConcurrently(WebCore::EventLoopTask* task)
-{
-    Bun__queueTaskConcurrently(this, task);
 }
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
@@ -3892,11 +3927,37 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     return Zig::ImportMetaObject::create(globalObject, key);
 }
 
+extern "C" bool Bun__VM__entryEvaluationStarted(void*);
+extern "C" void Bun__VM__entryRootKey(void*, BunString*);
+extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
+
+// A module body is about to run. That means "the entry's graph is linked and executing" only if it is
+// part of the entry root's own evaluation — the root's record is Evaluating (or beyond) from the moment
+// linkAndEvaluateModule() enters it, and its dependencies run inside that (post-order). A module that
+// evaluates before then is some other root: a preload's un-awaited import() finishing while the entry is
+// still fetching.
+static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
+{
+    void* bunVM = globalObject->bunVM();
+    if (Bun__VM__entryEvaluationStarted(bunVM))
+        return;
+    BunString rootKey;
+    Bun__VM__entryRootKey(bunVM, &rootKey);
+    auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
+    if (!entry)
+        return;
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+    if (!cyclic || cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating)
+        return;
+    Bun__VM__noteEntryEvaluationStarted(bunVM);
+}
+
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
+    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
     return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
 }
@@ -3913,6 +3974,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    noteModuleEvaluation(globalObject, moduleLoader);
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of
@@ -4062,10 +4124,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
     } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
-    } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
-    } else if (handler == Bun__BodyValueBufferer__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onRejectStream;
+    } else if (handler == Bun__HTMLRewriter__onHandlerResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerResolve;
+    } else if (handler == Bun__HTMLRewriter__onHandlerReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerReject;
     } else if (handler == Bun__onResolveEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {
@@ -4110,6 +4172,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onResolveStream;
     } else if (handler == Bun__S3UploadStream__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onRejectStream;
+    } else if (handler == Bun__HTMLRewriter__onResolveInputStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onResolveInputStream;
+    } else if (handler == Bun__HTMLRewriter__onRejectInputStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -4170,6 +4236,7 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
+void GlobalObject::setNodeWorkerStdioPorts(JSObject* ports) { m_nodeWorkerStdioPorts.set(vm(), this, ports); }
 void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
 {
     if (hook)
@@ -4180,55 +4247,158 @@ void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
 
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
 
+void GlobalObject::setNodeParentPort(WebCore::MessagePort* port)
+{
+    m_nodeParentPort = port;
+}
+
+void GlobalObject::nodeWorkerEntryDidSettle()
+{
+    m_nodeWorkerEntrySettled = true;
+    if (m_nodeParentPort)
+        m_nodeParentPort->entrySettled();
+}
+
+void GlobalObject::prepareForDestruction()
+{
+    auto& vm = this->vm();
+    auto* context = m_scriptExecutionContext;
+
+    // Whatever was queued before exit began does not resurrect during teardown: process.exit()
+    // runs 'exit' handlers and nothing after them (Node), and a worker's stop phase dispatches
+    // close events, not stale microtasks. Anything the stop phase itself queues drains with it.
+    vm.defaultMicrotaskQueue().clear();
+    if (auto* nextTickQueue = m_nextTickQueue.get())
+        nextTickQueue->discard(vm);
+
+    // Tell cross-thread posters not to bother from here (what still lands is queued and released
+    // unrun by the teardown, or refused once the VM handle closes). DeferredWorkTimer is fenced
+    // separately because finalizers during the final collection and ~VM both reach scheduleWorkSoon().
+    context->markTerminating();
+    WebCore::clientData(vm)->deferredWorkTimer.markShuttingDown();
+
+    // WorkerOrWorkletGlobalScope::prepareForDestruction(): stop every ActiveDOMObject (workers are
+    // asked to terminate, ports/channels/sockets close without dispatching) and strip listeners,
+    // while script can still run.
+    context->prepareForDestruction();
+}
+
+void GlobalObject::clearDOMGuardedObjects()
+{
+    // No lock: clear() takes the GC lock itself when it removes the entry (JSDOMGlobalObject).
+    auto guardedObjectsCopy = m_guardedObjects;
+    for (auto& guarded : guardedObjectsCopy)
+        guarded->clear();
+}
+
+void GlobalObject::forbidExecution()
+{
+    auto& vm = this->vm();
+
+    // MicrotaskQueue references Heap.
+    vm.defaultMicrotaskQueue().clear();
+
+    // Drop the module registry and require() cache so module-level bindings become unreachable
+    // for the final collection (their ExternalStringImpl deallocators must run before ~VM).
+    {
+        auto* moduleLoader = this->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread under cellLock().
+        WTF::Locker locker { moduleLoader->cellLock() };
+        moduleLoader->clearAll();
+    }
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        requireMap()->clear(this);
+        scope.clearException();
+    }
+
+    // WorkerOrWorkletScriptController::forbidExecution() + scheduleExecutionTermination(): no script
+    // past this point. executionForbidden is what the native→JS boundary (Bun__JSValue__call,
+    // JSEventListener via isJSExecutionForbidden) and JSC's microtask drain consult; the
+    // termination request unwinds anything JSC enters internally, which needs the exception
+    // object to exist (a main-thread VM never materialized it before this).
+    vm.ensureTerminationException();
+    vm.setExecutionForbidden();
+    vm.setHasTerminationRequest();
+}
+
+extern "C" void Bun__GlobalObject__clearExceptionsForExit(Zig::GlobalObject* globalObject)
+{
+    // Whatever unwound script to reach the exit sequence — the stop trap (a termination
+    // request/exception) or an ordinary exception thrown across process.exit() — is spent;
+    // the native teardown that follows must not trip over it (Node's EmitProcessExit runs
+    // under a TryCatch for the same reason).
+    auto& vm = globalObject->vm();
+    vm.clearHasTerminationRequest();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (scope.exception())
+        scope.clearException();
+}
+
+static void destroyVM(JSC::VM& vm)
+{
+    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    // Every JSLockHolder still on the native stack (process.exit() from inside a JS callback,
+    // the worker thread's manual API lock) holds a RefPtr<VM> that will never destruct because
+    // this path does not return through them; release on their behalf so ~VM — and with it
+    // Heap::lastChanceToFinalize — actually runs here.
+    for (uint32_t n = vm.refCount(); n > 1; --n)
+        vm.derefSuppressingSaferCPPChecking();
+    vm.derefSuppressingSaferCPPChecking();
+}
+
+extern "C" void Zig__GlobalObject__prepareForDestruction(Zig::GlobalObject* globalObject)
+{
+    globalObject->prepareForDestruction();
+}
+
+extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObject)
+{
+    globalObject->forbidExecution();
+}
+
+// `bun test --isolate`: the file that just finished is being retired on a live VM. Its context's
+// workers, ports, channels and sockets are stopped before anything else of the file is swept.
+extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
+{
+    globalObject->scriptExecutionContext()->prepareForDestruction();
+}
+
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (vm.entryScope) {
-        vm.entryScope = nullptr;
-    }
-    // Mirror WebWorker__teardownJSCVM: mark this context terminating so late
-    // worker→parent posts (scheduleDrain/notifyPeerClosed) return false instead
-    // of enqueueing a ConcurrentTask that leaks past the last drain.
-    if (auto* ctx = globalObject->scriptExecutionContext())
-        ctx->markTerminating();
-    if (auto* clientData = WebCore::clientData(vm))
-        clientData->deferredWorkTimer.markShuttingDown();
-    Bun__InspectorConnection__disconnectAllOnExit(globalObject);
-    // Hold a Ref so the RunLoop is guaranteed to outlive the VM teardown below.
+    ASSERT(globalObject->scriptExecutionContext()->activeDOMObjectsAreStopped());
+    vm.entryScope = nullptr;
+    Ref context = *globalObject->scriptExecutionContext();
     Ref<WTF::RunLoop> runLoop = vm.runLoop();
-    {
-        // Drop the module loader's registry and the require() cache before
-        // collecting, so module-level bindings become unreachable. Without
-        // this, every value stored in a module top-level binding (e.g. the
-        // `tmpdirs[]` array in test/harness.ts that keeps mkdtempSync paths)
-        // is rooted through the registry and survives collectNow(), so the
-        // ExternalStringImpl deallocators never run and LSan reports the
-        // backing buffers as leaked. Mirrors WebWorker__teardownJSCVM.
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        {
-            auto* moduleLoader = globalObject->moduleLoader();
-            WTF::Locker locker { moduleLoader->cellLock() };
-            moduleLoader->clearAll();
-        }
-        globalObject->requireMap()->clear(globalObject);
-        scope.exception(); // mirror WebWorker__teardownJSCVM — leave any pending exception in place
-    }
+
+    Bun__InspectorConnection__disconnectAllOnExit(globalObject);
+    // Deferred promises / callbacks (DOMGuardedObject) hold JSC::Weak handles and observe the
+    // context; the context outlives ~VM here, so their handles are cleared now, with the heap
+    // alive — WebCore's ~WorkerOrWorkletScriptController does the same right before its VM goes.
+    globalObject->clearDOMGuardedObjects();
     gcUnprotect(globalObject);
     globalObject = nullptr;
-    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-    // The two refs that exist when this runs at event-loop top level are
-    // Zig__GlobalObject__create's manual ref and the boot-scope JSLockHolder.
-    // When process.exit() is called from inside a JS callback, every nested
-    // JSLockHolder still on the native stack (e.g. JSEventListener::handleEvent)
-    // holds a RefPtr<VM>, so a fixed two derefs leave the count > 0 and ~VM
-    // (and with it Heap::lastChanceToFinalize, which clears all marks and
-    // sweeps every cell) is skipped. Those holders never destruct because this
-    // path never returns, so release on their behalf.
-    for (uint32_t n = vm.refCount(); n > 1; --n)
-        vm.derefSuppressingSaferCPPChecking();
-    // refCount 1 -> 0 runs ~VM; `vm` is dead past this line.
-    vm.derefSuppressingSaferCPPChecking();
+
+    destroyVM(vm);
     runLoop->threadWillExit();
+    // `context` is released here, after ~VM: contextDestroyed() reaches observers at a defined
+    // point on this thread instead of from inside a GC destructor.
+}
+
+extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    ASSERT(globalObject->scriptExecutionContext()->activeDOMObjectsAreStopped());
+    Ref context = *globalObject->scriptExecutionContext();
+
+    vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+    // See Zig__GlobalObject__destructOnExit.
+    globalObject->clearDOMGuardedObjects();
+    gcUnprotect(globalObject);
+    globalObject = nullptr;
+
+    destroyVM(vm);
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
@@ -4251,9 +4421,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined, (JS
     auto& vm = JSC::getVM(leixcalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto name = callFrame->argument(0).toWTFString(leixcalGlobalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     auto count = callFrame->argument(1).toNumber(leixcalGlobalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     auto* func = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, leixcalGlobalObject, count, name, jsFunctionNotImplemented);
     return JSC::JSValue::encode(func);
 }

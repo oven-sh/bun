@@ -17,7 +17,7 @@ interface BundlerPlugin {
   /** Binding to `JSBundlerPlugin__onResolveAsync` */
   onResolveAsync(internalID, a, b, c): void;
   /** Binding to `JSBundlerPlugin__addError` */
-  addError(internalID: number, error: any, which: number): void;
+  addError(internalID: number, error: any): void;
   addFilter(filter, namespace, number): void;
   generateDeferPromise(id: number): Promise<void>;
   promises: Array<Promise<any>> | undefined;
@@ -491,7 +491,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     promiseResult.then(
       () => {},
       e => {
-        this.addError(internalID, e, 0);
+        this.addError(internalID, e);
       },
     );
   }
@@ -583,7 +583,7 @@ export function runOnLoadPlugins(
     promiseResult.then(
       () => {},
       e => {
-        this.addError(internalID, e, 1);
+        this.addError(internalID, e);
       },
     );
   }

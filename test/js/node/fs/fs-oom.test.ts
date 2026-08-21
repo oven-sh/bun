@@ -1,7 +1,8 @@
 import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { closeSync, readFileSync, writeFileSync, writeSync } from "fs";
+import { closeSync, readFileSync, truncateSync, writeFileSync, writeSync } from "fs";
 import { bunEnv, bunExe, isASAN, isLinux, isPosix, tempDir } from "harness";
+import os from "node:os";
 import { join } from "path";
 setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
 
@@ -47,6 +48,56 @@ if (isLinux) {
     });
   });
 }
+
+// Files in [2^31, 2^32) bytes used to abort the process when decoded to a
+// string: the guards in front of WTF string construction only checked the
+// synthetic allocation limit (2^32 - 1 by default) and missed
+// WTF::StringImpl::MaxLength (2^31 - 1), tripping a RELEASE_ASSERT in
+// StringImplShape. The fs layer reports the dead string as ENOMEM (it speaks
+// errno), matching the existing >= 2^32 and /dev/zero behavior above.
+// 2^31 - 1 is the largest length WTF accepts and must keep working. The file
+// is sparse so only the in-memory read costs 2 GiB; each case runs in a
+// subprocess to keep the peak away from the test runner, and the block skips
+// on small machines (same gate as buffer.test.js's 4 GiB case).
+describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("readFileSync at the 2 GiB string limit", () => {
+  const spawnRead = async (size: number) => {
+    using dir = tempDir("readfile-2gib", {});
+    const file = join(String(dir), "big.txt");
+    writeFileSync(file, "x");
+    truncateSync(file, size);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        try {
+          const s = require("fs").readFileSync(${JSON.stringify(file)}, "utf8");
+          console.log(JSON.stringify({ length: s.length }));
+        } catch (e) {
+          console.log(JSON.stringify({ name: e.name, code: e.code }));
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode })), exitCode };
+  };
+
+  test("2^31 bytes throws ENOMEM instead of aborting", async () => {
+    const { result, exitCode } = await spawnRead(2 ** 31);
+    expect(result).toEqual({ name: "Error", code: "ENOMEM" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("2^31 - 1 bytes still decodes", async () => {
+    const { result, exitCode } = await spawnRead(2 ** 31 - 1);
+    expect(result).toEqual({ length: 2 ** 31 - 1 });
+    expect(exitCode).toBe(0);
+  });
+});
 
 // The UTF-8 -> UTF-16 converters behind `fs.readFile*(.., "utf8")`,
 // `Buffer.prototype.toString("utf8")` and `TextDecoder.decode` must surface a

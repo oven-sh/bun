@@ -414,13 +414,7 @@ fn consume_watch_trigger() -> Option<StringSet> {
         let _ = sys::unlink(&trigger_path);
 
         let mut set = StringSet::new();
-        for path in contents
-            .split(|b| *b == b'\r' || *b == b'\n')
-            .filter(|s| !s.is_empty())
-        {
-            if path.is_empty() {
-                continue;
-            }
+        for path in strings::tokenize_any(&contents, b"\r\n") {
             // The watcher may see a file disappear (delete/rename). A path
             // that no longer exists cannot appear in the module graph this
             // run, so drop it; its importers will still be picked up if the
@@ -641,10 +635,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
 /// with the repository root, and insert existing files into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
     let mut buf = PathBuffer::uninit();
-    for line in stdout
-        .split(|b| *b == b'\r' || *b == b'\n')
-        .filter(|s| !s.is_empty())
-    {
+    for line in strings::tokenize_any(stdout, b"\r\n") {
         let rel = strings::trim(line, b" \t");
         if rel.is_empty() {
             continue;

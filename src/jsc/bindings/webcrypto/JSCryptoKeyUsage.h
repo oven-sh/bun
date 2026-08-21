@@ -31,7 +31,6 @@ String convertEnumerationToString(CryptoKeyUsage);
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, CryptoKeyUsage);
 
 template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> ASCIILiteral expectedEnumerationValues<CryptoKeyUsage>();
 
 } // namespace WebCore
 

@@ -35,40 +35,4 @@ String TextEncoder::encoding() const
     return "utf-8"_s;
 }
 
-RefPtr<Uint8Array> TextEncoder::encode(String&& input) const
-{
-    // THIS CODE SHOULD NEVER BE REACHED IN BUN
-    RELEASE_ASSERT(1);
-    return nullptr;
-}
-
-auto TextEncoder::encodeInto(String&& input, Ref<Uint8Array>&& array) -> EncodeIntoResult
-{
-    // THIS CODE SHOULD NEVER BE REACHED IN BUN
-    RELEASE_ASSERT(1);
-
-    auto* destinationBytes = static_cast<uint8_t*>(array->baseAddress());
-    auto capacity = array->byteLength();
-
-    uint64_t read = 0;
-    uint64_t written = 0;
-
-    for (auto token : StringView(input).codePoints()) {
-        if (written >= capacity) {
-            ASSERT(written == capacity);
-            break;
-        }
-        UBool sawError = false;
-        U8_APPEND(destinationBytes, written, capacity, token, sawError);
-        if (sawError)
-            break;
-        if (U_IS_BMP(token))
-            read++;
-        else
-            read += 2;
-    }
-
-    return { read, written };
-}
-
 }

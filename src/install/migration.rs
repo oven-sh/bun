@@ -38,7 +38,7 @@ pub fn detect_and_load_other_lockfile<'a>(
 
     'npm: {
         let timer = std::time::Instant::now();
-        let Ok((lockfile, _)) = File::open_regular_at(dir, b"package-lock.json") else {
+        let Ok((lockfile, size)) = File::open_regular_at(dir, b"package-lock.json") else {
             break 'npm;
         };
         // file closes on Drop
@@ -48,7 +48,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             break 'npm;
         };
         let lockfile_path: &[u8] = &*lockfile_path;
-        let Ok(data) = lockfile.read_to_end() else {
+        let Ok(data) = lockfile.read_to_end_sized(size) else {
             break 'npm;
         };
         let migrate_result =

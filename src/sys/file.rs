@@ -191,8 +191,8 @@ impl File {
         self.read_to_end_with_array_list(&mut v, SizeHint::ProbablySmall)?;
         Ok(v)
     }
-    /// [`File::read_to_end`] presized from the caller's own `fstat()`.
-    fn read_to_end_sized(&self, size: u64) -> Maybe<Vec<u8>> {
+    /// [`File::read_to_end`] presized from the size [`File::open_regular_at`] returned, so the file is not `fstat`ed again.
+    pub fn read_to_end_sized(&self, size: u64) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();
         self.read_to_end_with_array_list(&mut v, SizeHint::Known(size))?;
         Ok(v)

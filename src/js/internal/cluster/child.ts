@@ -1,9 +1,10 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
+const { kClusterOwner: owner_symbol, kInternalSendOptions } = require("internal/shared");
 
-const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
+const closeRawHandle = $newRustFunction("node_cluster_binding.rs", "clusterCloseHandle", 1);
 
 const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -15,7 +16,22 @@ const indexes = new Map();
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
-const owner_symbol = Symbol("owner_symbol");
+let seq = 0;
+const callbacks = new Map();
+
+function makeConnectionHandle(fd) {
+  let closed = false;
+  return {
+    fd,
+    close(cb?) {
+      if (!closed) {
+        closed = true;
+        closeRawHandle(fd);
+      }
+      if (typeof cb === "function") process.nextTick(cb);
+    },
+  };
+}
 
 export default cluster;
 
@@ -52,8 +68,30 @@ cluster._setupWorker = function () {
   send({ act: "online" });
 
   function onmessage(message, handle) {
-    if (message.act === "newconn") onconnection(message, handle);
-    else if (message.act === "disconnect") worker._disconnect(true);
+    const ack = message.ack;
+    if (ack !== undefined) {
+      const callback = callbacks.$get(ack);
+      if (callback !== undefined) {
+        callbacks.$delete(ack);
+        callback.$call(this, message, handle);
+        return;
+      }
+    }
+    if (message.act === "newconn" && typeof handle === "number" && handle >= 0) {
+      handle = makeConnectionHandle(handle);
+    }
+    try {
+      process.emit("internalMessage", message, handle);
+    } catch (e) {
+      process.nextTick(() => {
+        throw e;
+      });
+    }
+    if (message.act === "newconn") {
+      onconnection(message, handle);
+    } else if (message.act === "disconnect") {
+      worker._disconnect(true);
+    }
   }
 };
 
@@ -87,8 +125,13 @@ cluster._getServer = function (obj, options, cb) {
   // Set custom data on handle (i.e. tls tickets key)
   if (obj._getServerData) message.data = obj._getServerData();
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L105-L115
   send(message, (reply, handle) => {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
+
+    if (typeof handle === "number" && handle >= 0) {
+      handle = makeSharedHandle(handle);
+    }
 
     if (handle) {
       // Shared listen socket
@@ -124,28 +167,49 @@ function removeIndexesKey(indexesKey, index) {
   }
 }
 
+function makeSharedHandle(fd) {
+  let fdOpen = true;
+  const handle = {
+    sharedFd: fd,
+    adopted: false,
+    close(cb?) {
+      // A close() that ran while `adopted` was set leaves the fd to the adopter; a later release (adopted cleared) still closes it.
+      if (fdOpen && !handle.adopted) {
+        fdOpen = false;
+        closeRawHandle(fd);
+      }
+      if (typeof cb === "function") process.nextTick(cb);
+    },
+  };
+  return handle;
+}
+
 // Shared listen socket.
 function shared(message, { handle, indexesKey, index }, cb) {
   const key = message.key;
   // Monkey-patch the close() method so we can keep track of when it's
   // closed. Avoids resource leaks when the handle is short-lived.
   const close = handle.close;
+  let released = false;
 
   handle.close = function () {
-    send({ act: "close", key });
-    handles.delete(key);
-    removeIndexesKey(indexesKey, index);
+    if (!released) {
+      released = true;
+      send({ act: "close", key });
+      handles.delete(key);
+      removeIndexesKey(indexesKey, index);
+    }
     return close.$apply(handle, arguments);
   };
   $assert(handles.has(key) === false);
   handles.set(key, handle);
-  cb(message.errno, handle);
+  cb(message.errno, handle, message);
 }
 
 // Round-robin. Master distributes handles across workers.
 function rr(message, { indexesKey, index }, cb) {
   const errno = message.errno;
-  if (errno) return cb(errno, null);
+  if (errno) return cb(errno, null, message);
 
   let key = message.key;
 
@@ -205,7 +269,7 @@ function rr(message, { indexesKey, index }, cb) {
 
   $assert(handles.has(key) === false);
   handles.set(key, handle);
-  cb(0, handle);
+  cb(0, handle, message);
 }
 
 // Round-robin connection.
@@ -216,7 +280,7 @@ function onconnection(message, handle) {
 
   if (accepted && server[owner_symbol]) {
     const self = server[owner_symbol];
-    if (self.maxConnections != null && self._connections >= self.maxConnections) {
+    if (self.maxConnections != null && self._connections >= self.maxConnections && !self.dropMaxConnection) {
       accepted = false;
     }
   }
@@ -228,7 +292,11 @@ function onconnection(message, handle) {
 }
 
 function send(message, cb?) {
-  return sendHelper(message, null, cb);
+  if (!process.connected) return false;
+  const wire = { __proto__: null, cmd: "NODE_CLUSTER", ...message, seq };
+  if (typeof cb === "function") callbacks.$set(seq, cb);
+  seq += 1;
+  return process.send(wire, undefined, kInternalSendOptions);
 }
 
 // Extend generic Worker with methods specific to worker processes.
@@ -254,9 +322,11 @@ Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?)
       // it's primary initiated there's no need to send the
       // exitedAfterDisconnect message
       if (primaryInitiated) {
-        process.disconnect();
+        if (process.connected) process.disconnect();
       } else {
-        send({ act: "exitedAfterDisconnect" }, () => process.disconnect());
+        send({ act: "exitedAfterDisconnect" }, () => {
+          if (process.connected) process.disconnect();
+        });
       }
     }
   }

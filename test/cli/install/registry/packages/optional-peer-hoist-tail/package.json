@@ -1,0 +1,29 @@
+{
+  "_id": "optional-peer-hoist-tail",
+  "name": "optional-peer-hoist-tail",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "optional-peer-hoist-tail",
+      "version": "1.0.0",
+      "_id": "optional-peer-hoist-tail@1.0.0",
+      "dist": {
+        "integrity": "sha512-i21/HNGwoNAh9tByxH1LSqDKZWZ/4NGrCkr3agBtULedm7OSBSBSjMGZXl1IrKlkKPxfnjRZleppc4GJioFlMA==",
+        "shasum": "2690a02f19b910b38e36d350e1b896b4413948ea",
+        "tarball": "http://localhost:4873/optional-peer-hoist-tail/-/optional-peer-hoist-tail-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "optional-peer-hoist-tail",
+      "version": "2.0.0",
+      "_id": "optional-peer-hoist-tail@2.0.0",
+      "dist": {
+        "integrity": "sha512-kpgMHe5pfRAlvKcEQxStwpcwccS84yEPlOOL11rPETiBCpiXb7raFnCCpVlfHY4vUBjIj7qdszdsOhFoHcMvfQ==",
+        "shasum": "8d81a1d0f565a303d3b972886e345eee836981ca",
+        "tarball": "http://localhost:4873/optional-peer-hoist-tail/-/optional-peer-hoist-tail-2.0.0.tgz"
+      }
+    }
+  }
+}

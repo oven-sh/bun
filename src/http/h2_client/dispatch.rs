@@ -5,7 +5,7 @@
 
 use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
-use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
+use super::{LOCAL_MAX_CONTINUATIONS, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use crate::h2_frame_parser as wire;
 use bun_picohttp as picohttp;
 
@@ -293,6 +293,7 @@ fn dispatch_frame(
             }
         }
         FT_HEADERS => {
+            session.continuation_count = 0;
             let mut fragment = payload;
             let maybe_stream = session.streams.get(&stream_id).copied();
             if maybe_stream.is_none() {
@@ -378,6 +379,11 @@ fn dispatch_frame(
         FT_CONTINUATION => {
             if session.expecting_continuation == 0 || stream_id != session.expecting_continuation {
                 session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
+                return;
+            }
+            session.continuation_count += 1;
+            if session.continuation_count > LOCAL_MAX_CONTINUATIONS {
+                session.fatal_error = Some(crate::Error::HTTP2EnhanceYourCalm);
                 return;
             }
             if let Some(&stream_ptr) = session.streams.get(&session.expecting_continuation) {
@@ -776,7 +782,7 @@ pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
 /// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
 /// enabling header injection when values are forwarded downstream.
 pub(crate) fn is_malformed_response_value(value: &[u8]) -> bool {
-    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
+    bun_core::strings::contains_any(value, b"\0\r\n")
 }
 
 pub(crate) fn error_code_for(err: crate::Error) -> wire::ErrorCode {

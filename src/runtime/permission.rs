@@ -5,10 +5,10 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::ZigString;
-use bun_threading::RwLock;
 use bun_jsc::{
     CallFrame, ErrorCode, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _,
 };
+use bun_threading::RwLock;
 
 unsafe extern "C" {
     safe fn Bun__Permission__requireInternalPermissionModule(global: &JSGlobalObject) -> JSValue;
@@ -557,10 +557,15 @@ fn publish_permission_event(
     resource: &[u8],
     dropped: bool,
 ) -> JsResult<()> {
-    let module = Bun__Permission__requireInternalPermissionModule(global);
-    if global.has_exception() {
-        return Err(JsError::Thrown);
-    }
+    // `requireId` owns a ThrowScope whose dtor simulates a throw; observe it
+    // through a local scope so the next `has_exception()`/scope ctor doesn't
+    // trip `verifyExceptionCheckNeedIsSatisfied`.
+    let module = {
+        bun_jsc::top_scope!(exc, global);
+        let module = Bun__Permission__requireInternalPermissionModule(global);
+        exc.return_if_exception()?;
+        module
+    };
     let Some(publish) = module.get(global, b"publishPermissionEvent")? else {
         return Ok(());
     };

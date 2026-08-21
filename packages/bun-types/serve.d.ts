@@ -910,12 +910,28 @@ declare module "bun" {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
-     * By default, it does not cancel in-flight requests or websockets. That means it may take some time before all network activity stops.
+     * By default, it does not cancel in-flight requests or websockets. Idle
+     * keep-alive connections are closed right away, and connections with a
+     * request in flight close as soon as their response completes. That means
+     * it may take some time before all network activity stops.
+     *
+     * The returned promise resolves once every connection is closed.
      *
      * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
      * @default false
      */
     stop(closeActiveConnections?: boolean): Promise<void>;
+
+    /**
+     * Close every connection that is not currently sending a request or
+     * waiting for a response, without stopping the server.
+     *
+     * In-flight requests and open WebSockets are untouched, and the server
+     * keeps accepting new connections.
+     *
+     * @returns The number of connections that were closed.
+     */
+    closeIdleConnections(): number;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.

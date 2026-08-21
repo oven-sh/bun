@@ -178,21 +178,6 @@ void HTTPHeaderMap::add(const String& name, const String& value)
         m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
-void HTTPHeaderMap::append(const String& name, const String& value)
-{
-    ASSERT(!contains(name));
-
-    HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName)) {
-        if (headerName == HTTPHeaderName::SetCookie)
-            m_setCookieHeaders.append(value);
-        else
-            m_commonHeaders.append(CommonHeader { headerName, value });
-    } else {
-        m_uncommonHeaders.append(UncommonHeader { name, value });
-    }
-}
-
 bool HTTPHeaderMap::contains(const StringView name) const
 {
     HTTPHeaderName headerName;

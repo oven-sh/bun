@@ -53,9 +53,11 @@ function toZigNamespace(name: string): string {
   return result;
 }
 
+/** Must name every file generate() writes: the build declares these as the outputs of the generate step. */
 function listOutputs(): void {
   const outputs: string[] = [];
   for (const type of getNamedExports()) {
+    if (type.hasCppHeader) outputs.push(cppHeaderPath(type));
     if (type.hasCppSource) outputs.push(cppSourcePath(type));
   }
   process.stdout.write(outputs.join(";"));

@@ -79,7 +79,7 @@ pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -
     // that keeps decoding past the '='. Apply the rule up front in that case
     // so both strategies agree.
     let source = if destination.len() < decode_lenient_len(source.len()) {
-        match source.iter().position(|&c| c == b'=') {
+        match bun_core::strings::index_of_char_usize(source, b'=') {
             Some(index) => &source[..index],
             None => source,
         }
@@ -106,22 +106,41 @@ pub enum DecodeAllocError {
 }
 
 pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
-    let mut dest = vec![0u8; decode_len(input)];
-    let result = decode(&mut dest, input);
+    let len = decode_len(input);
+    let mut dest: Vec<u8> = Vec::with_capacity(len);
+    // SAFETY: both decoders behind `decode` only write the destination, never read it.
+    let destination = unsafe { bun_core::vec::spare_bytes_mut(&mut dest) };
+    let result = decode(&mut destination[..len], input);
     if !result.is_successful() {
         return Err(DecodeAllocError::DecodingFailed);
     }
-    dest.truncate(result.count);
+    // SAFETY: on success the decoder wrote the first `result.count` (<= `len`) bytes of the spare.
+    unsafe { bun_core::vec::commit_spare(&mut dest, result.count) };
     Ok(dest)
 }
 
 pub use bun_core::base64::encode;
 
+/// [`encode`] appended to `out` (reserving the room itself); returns the number of bytes appended.
+pub fn encode_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
+    encode_append_impl(out, source, false)
+}
+
+fn encode_append_impl(out: &mut Vec<u8>, source: &[u8], is_urlsafe: bool) -> usize {
+    let len = simdutf::base64::encode_len(source.len(), is_urlsafe);
+    // SAFETY: `encode_raw` writes exactly `len` bytes into the `len` spare bytes reserved here.
+    unsafe {
+        bun_core::vec::fill_spare(out, len, |spare| {
+            let written = simdutf::base64::encode_raw(source, spare.as_mut_ptr(), is_urlsafe);
+            debug_assert_eq!(written, len);
+            (written, written)
+        })
+    }
+}
+
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
-    let len = encode_len(source);
-    let mut destination = vec![0u8; len];
-    let encoded_len = encode(&mut destination, source);
-    destination.truncate(encoded_len);
+    let mut destination = Vec::new();
+    encode_append(&mut destination, source);
     destination
 }
 
@@ -139,14 +158,10 @@ pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
     simdutf::base64::encode(source, dest, true)
 }
 
-/// `encode_url_safe` into a freshly-allocated `Vec<u8>` sized exactly via
-/// `simdutf_encode_len_url_safe` (simdutf computes the exact no-padding length, so
-/// the trailing `truncate` is a no-op kept for symmetry with `encode_alloc`).
+/// [`encode_url_safe`] into a freshly-allocated `Vec<u8>`.
 pub fn simdutf_encode_url_safe_alloc(source: &[u8]) -> Vec<u8> {
-    let len = simdutf_encode_len_url_safe(source.len());
-    let mut destination = vec![0u8; len];
-    let encoded_len = encode_url_safe(&mut destination, source);
-    destination.truncate(encoded_len);
+    let mut destination = Vec::new();
+    encode_append_impl(&mut destination, source, true);
     destination
 }
 
@@ -189,7 +204,7 @@ pub const fn url_safe_encode_len(source: &[u8]) -> usize {
 // base64-alphabet bit-packing with zero sourcemap-specific deps; bun_sourcemap
 // re-exports this for its own consumers.
 // ──────────────────────────────────────────────────────────────────────────
-pub use vlq::{VLQ, VLQResult};
+pub use vlq::VLQ;
 
 /// Variable-length quantity encoding, limited to i32 as per source map spec.
 /// https://en.wikipedia.org/wiki/Variable-length_quantity

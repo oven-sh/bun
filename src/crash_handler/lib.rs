@@ -1667,9 +1667,9 @@ mod draft {
             let mut sigsys: libc::sigaction = bun_core::ffi::zeroed();
             sigsys.sa_sigaction = handle_sigsys_posix as *const () as usize;
             sigsys.sa_flags = libc::SA_SIGINFO;
-            let _ = libc::sigemptyset(&raw mut sigsys.sa_mask);
             // SAFETY: null oldact is permitted; single-threaded at setup.
             unsafe {
+                let _ = libc::sigemptyset(&raw mut sigsys.sa_mask);
                 libc::sigaction(libc::SIGSYS, &raw const sigsys, core::ptr::null_mut());
             }
         }

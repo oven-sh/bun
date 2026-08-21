@@ -539,12 +539,17 @@ declare module "bun" {
      * retransmission and the next datagram is worth more than a late one), or
      * `-1` when the payload is larger than {@link maxDatagramSize} or than the
      * peer will accept.
+     *
+     * A send on a session that has already ended reports `0` rather than
+     * throwing: a datagram is allowed not to arrive, and racing the peer's
+     * close is exactly the case where an exception would be noise.
      */
     sendDatagram(data: string | BufferSource): number;
 
     /**
-     * Close the session with a `CLOSE_WEBTRANSPORT_SESSION` capsule. The
-     * `close` handler still runs afterwards.
+     * Close the session with a `CLOSE_WEBTRANSPORT_SESSION` capsule, then end
+     * the session's stream. The `close` handler runs before this returns,
+     * with the `code` and `reason` given here.
      */
     close(code?: number, reason?: string): void;
 
@@ -582,8 +587,13 @@ declare module "bun" {
     datagram?(session: WebTransportSession<T>, data: Uint8Array): void | Promise<void>;
 
     /**
-     * The session ended. `code` and `reason` come from the peer's close
-     * capsule, and are `0` and `""` when the session went away without one.
+     * The session ended. `code` and `reason` are the peer's, from its close
+     * capsule — or this server's, when {@link WebTransportSession.close} was
+     * what ended it. Both are `0` and `""` when the session went away without
+     * a capsule at all, which is what a connection dropping looks like.
+     *
+     * The session is already closed by the time this runs: `sendDatagram`
+     * reports `0` and `closed` is `true`.
      */
     close?(session: WebTransportSession<T>, code: number, reason: string): void | Promise<void>;
   }
@@ -926,6 +936,19 @@ declare module "bun" {
        * Setting this changes the `SETTINGS` the HTTP/3 listener advertises, so
        * it has to be given up front; it cannot be added by a later `reload()`
        * that had none.
+       *
+       * For a typed {@link WebTransportSession.data}, declare the handler
+       * separately — there is no server-level type parameter for it, since a
+       * session is not an upgraded request and shares nothing with
+       * {@link websocket}:
+       *
+       * ```ts
+       * const webtransport: Bun.WebTransportHandler<{ seen: number }> = {
+       *   open(session) { session.data = { seen: 0 }; },
+       *   datagram(session, data) { session.data.seen += data.length; },
+       * };
+       * Bun.serve({ port: 0, tls, http3: true, webtransport, fetch: () => new Response() });
+       * ```
        *
        * @experimental
        */

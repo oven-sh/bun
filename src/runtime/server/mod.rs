@@ -3337,8 +3337,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The `wtOn*` counterpart of [`Self::write_ws_handler_slots`]. Same
-    /// contract: writes every slot, so a reload that drops the handler block
-    /// drops the previous roots with it.
+    /// contract: every slot is written, so a reload whose handler block leaves
+    /// one out drops the previous root rather than keeping it live under a
+    /// handler that no longer mentions it.
     pub(crate) fn write_wt_handler_slots(&mut self, server_js: JSValue, global: &JSGlobalObject) {
         let mut zeros = [JSValue::ZERO; 3];
         let [open, datagram, close] = match self.config.webtransport_handler.as_mut() {

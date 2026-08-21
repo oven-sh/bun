@@ -1633,7 +1633,8 @@ describe("Bun.serve WebTransport", () => {
           opened.push(session.maxDatagramSize);
         },
         datagram(session, bytes) {
-          session.sendDatagram(Buffer.from(`echo:${Buffer.from(bytes).toString()}`));
+          const { id } = session.data as { id: number };
+          session.sendDatagram(Buffer.from(`echo:${id}:${Buffer.from(bytes).toString()}`));
         },
       },
       fetch: () => new Response("plain http/3"),
@@ -1644,7 +1645,9 @@ describe("Bun.serve WebTransport", () => {
       expect(wt.status).toBe("200");
       for (const message of ["one", "two", "three"]) wt.send(message);
       expect(await wt.until(() => wt.datagrams.length >= 3)).toBe(true);
-      expect(wt.text()).toEqual(["echo:one", "echo:two", "echo:three"]);
+      // The `0:` is `session.data` read back through the cached slot it was
+      // written to in `open`.
+      expect(wt.text()).toEqual(["echo:0:one", "echo:0:two", "echo:0:three"]);
       expect(opened.length).toBe(1);
       expect(opened[0]).toBeGreaterThan(0);
     } finally {
@@ -1771,6 +1774,39 @@ describe("Bun.serve WebTransport", () => {
       // peer's answering FIN: a peer that never sends one would otherwise hold
       // the handler back until the idle timeout.
       expect(closes).toEqual([{ code: 7, reason: "done here", closedFlag: true, sendAfter: 0 }]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("sendDatagram reports queued, refused and dropped apart", async () => {
+    const results: number[] = [];
+    let max = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session) {
+          max = session.maxDatagramSize;
+          // An empty payload still reports the frame prefix, which is what
+          // keeps its success apart from the 0 that means dropped.
+          results.push(session.sendDatagram(new Uint8Array(0)));
+          // Larger than this server will queue.
+          results.push(session.sendDatagram(new Uint8Array(max + 1)));
+          // The largest it will.
+          results.push(session.sendDatagram(new Uint8Array(max)));
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("go");
+      expect(await wt.until(() => results.length >= 3, 3000)).toBe(true);
+      expect(max).toBeGreaterThan(0);
+      expect(results).toEqual([1, -1, max + 1]);
     } finally {
       await wt.close();
     }

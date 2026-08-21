@@ -3152,6 +3152,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         const clientOpen = Promise.withResolvers();
         const echoed = Promise.withResolvers();
         const closed = Promise.withResolvers();
+        const serverClosed = Promise.withResolvers();
 
         // Scope server so the only post-stop root is the connected websocket.
         // Assign client directly to the outer var rather than returning it —
@@ -3167,6 +3168,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
               open() { opened.resolve(); },
               // Closes over server — the cycle through wsHandlers.
               message(ws, m) { ws.send(server.port + ":" + m); },
+              close() { serverClosed.resolve(); },
             },
           });
           client = new WebSocket(server.url.href.replace("http", "ws"));
@@ -3190,6 +3192,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
 
         client.close();
         await closed.promise;
+        await serverClosed.promise; // the client's onclose can fire before the server side has torn down
         client = null;
         // The last ws closing triggers on_websocket_closed → deinit_if_we_can,
         // which downgrades the wrapper without an explicit stop(true) — that's

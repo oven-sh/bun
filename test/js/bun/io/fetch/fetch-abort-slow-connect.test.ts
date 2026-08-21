@@ -1,13 +1,16 @@
 import { expect, test } from "bun:test";
 
-test.concurrent("fetch aborts when connect() returns EINPROGRESS but never completes", async () => {
-  // Use TEST-NET-1 (192.0.2.0/24) from RFC 5737
-  // These IPs are reserved for documentation and testing.
-  // Connecting to them will cause connect() to return EINPROGRESS
-  // but the connection will never complete because there's no route.
-  const nonRoutableIP = "192.0.2.1";
-  const port = 80;
+// TEST-NET-1 (192.0.2.0/24, RFC 5737) is unrouted: connect() returns EINPROGRESS and never completes.
+const nonRoutableIP = "192.0.2.1";
+const port = 80;
 
+// A host with no default route fails the connect at once, so it cannot exercise the EINPROGRESS path.
+const blackholed = await fetch(`http://${nonRoutableIP}:${port}/`, { signal: AbortSignal.timeout(250) }).then(
+  () => false,
+  (e: any) => e.name === "TimeoutError",
+);
+
+test.skipIf(!blackholed).concurrent("fetch aborts when connect() returns EINPROGRESS but never completes", async () => {
   const start = performance.now();
   try {
     await fetch(`http://${nonRoutableIP}:${port}/`, {
@@ -21,10 +24,7 @@ test.concurrent("fetch aborts when connect() returns EINPROGRESS but never compl
   }
 });
 
-test.concurrent("fetch aborts immediately during EINPROGRESS connect", async () => {
-  const nonRoutableIP = "192.0.2.1";
-  const port = 80;
-
+test.skipIf(!blackholed).concurrent("fetch aborts immediately during EINPROGRESS connect", async () => {
   // Start the fetch
   const fetchPromise = fetch(`http://${nonRoutableIP}:${port}/`, {
     signal: AbortSignal.timeout(1),
@@ -42,9 +42,6 @@ test.concurrent("fetch aborts immediately during EINPROGRESS connect", async () 
 });
 
 test.concurrent("pre-aborted signal prevents connection attempt", async () => {
-  const nonRoutableIP = "192.0.2.1";
-  const port = 80;
-
   const start = performance.now();
   try {
     await fetch(`http://${nonRoutableIP}:${port}/`, {

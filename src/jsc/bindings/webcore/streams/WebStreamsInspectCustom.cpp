@@ -111,8 +111,9 @@ void installInspectCustom(VM& vm, JSObject* prototype, NativeFunction nativeFunc
     // Node names this method "[nodejs.util.inspect.custom]" (V8's symbol-keyed
     // method naming); user code and node's own tests read fn.name.
     auto* function = JSFunction::create(vm, globalObject, 2, "[nodejs.util.inspect.custom]"_s, nativeFunction, ImplementationVisibility::Public);
+    // Matches Node: { writable: true, enumerable: false, configurable: true }.
     prototype->putDirect(vm, WebCore::builtinNames(vm).inspectCustomPublicName(), function,
-        static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum));
+        static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 }
 
 } // namespace WebStreams

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import v8 from "node:v8";
 
 // Buffer identity through v8.serialize/deserialize, matching node v26.3.0's
@@ -57,5 +58,59 @@ describe("v8 serialize/deserialize Buffer identity", () => {
     const out = v8.deserialize(v8.serialize(obj));
     expect(out.self).toBe(out);
     expect(Buffer.isBuffer(out.buf)).toBe(true);
+  });
+
+  test("round-trip survives tampered globals and prototypes", async () => {
+    // Everything the envelope framing touches is captured at module load, so
+    // tampering after the module loads must not reach serialize/deserialize.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const v8 = require("node:v8");
+        ArrayBuffer.isView = () => false;
+        Buffer.allocUnsafe = () => { throw new Error("tampered allocUnsafe"); };
+        Buffer.prototype.copy = () => { throw new Error("tampered copy"); };
+        const TAProto = Object.getPrototypeOf(Uint8Array.prototype);
+        for (const k of ["buffer", "byteOffset", "byteLength"]) {
+          Object.defineProperty(TAProto, k, { get() { throw new Error("tampered " + k); } });
+        }
+        Uint8Array.prototype.subarray = () => { throw new Error("tampered subarray"); };
+        globalThis.Uint8Array = function Poisoned() { throw new Error("tampered ctor"); };
+        const out = v8.deserialize(v8.serialize({ b: Buffer.from("hi") }));
+        console.log(Buffer.isBuffer(out.b), out.b.toString());`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true hi\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("DataView and ArrayBuffer inputs survive tampered brand checks", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const v8 = require("node:v8");
+        const bytes = v8.serialize({ b: Buffer.from("dv") });
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        ArrayBuffer.isView = () => false;
+        Object.defineProperty(ArrayBuffer, Symbol.hasInstance, { value: () => false });
+        Object.defineProperty(SharedArrayBuffer, Symbol.hasInstance, { value: () => false });
+        const a = v8.deserialize(dv);
+        const b = v8.deserialize(ab);
+        console.log(Buffer.isBuffer(a.b), Buffer.isBuffer(b.b));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true true\n");
+    expect(exitCode).toBe(0);
   });
 });

@@ -75,7 +75,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -89,8 +89,8 @@ private:
     void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
-        reifyStaticProperties(vm, JSDirentPrototype::info(), JSDirentPrototypeTableValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::reifyStaticPropertyTable(vm, JSDirentPrototype::info(), JSDirentPrototypeTableValues, *this);
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
 
@@ -117,7 +117,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -136,7 +136,7 @@ private:
 JSC::Structure* createJSDirentObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto* prototype = JSDirentPrototype::create(vm, globalObject, JSDirentPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 4);
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 4);
 
     // Add property transitions for all dirent fields
     PropertyOffset offset = 0;

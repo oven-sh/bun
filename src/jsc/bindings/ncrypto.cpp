@@ -55,11 +55,6 @@ ClearErrorOnReturn::~ClearErrorOnReturn()
     ERR_clear_error();
 }
 
-int ClearErrorOnReturn::peekError()
-{
-    return ERR_peek_error();
-}
-
 MarkPopErrorOnReturn::MarkPopErrorOnReturn(CryptoErrorList* errors)
     : errors_(errors)
 {
@@ -473,11 +468,6 @@ int BignumPointer::GetBitCount(const BIGNUM* bn)
 int BignumPointer::GetByteCount(const BIGNUM* bn)
 {
     return BN_num_bytes(bn);
-}
-
-bool BignumPointer::isZero() const
-{
-    return bn_ && BN_is_zero(bn_.get());
 }
 
 bool BignumPointer::isOne() const
@@ -1529,13 +1519,6 @@ BIOPointer::BIOPointer(BIOPointer&& other) noexcept
 {
 }
 
-BIOPointer& BIOPointer::operator=(BIOPointer&& other) noexcept
-{
-    if (this == &other) return *this;
-    this->~BIOPointer();
-    return *new (this) BIOPointer(WTF::move(other));
-}
-
 BIOPointer::~BIOPointer()
 {
     reset();
@@ -2122,23 +2105,6 @@ EVPKeyPointer::PrivateKeyEncodingConfig::PrivateKeyEncodingConfig(
         memcpy(newPassphrase.get(), otherPassphrase.get(), otherPassphrase.size());
         passphrase = WTF::move(newPassphrase);
     }
-}
-
-EVPKeyPointer::AsymmetricKeyEncodingConfig::AsymmetricKeyEncodingConfig(
-    bool output_key_object, PKFormatType format, PKEncodingType type)
-    : output_key_object(output_key_object)
-    , format(format)
-    , type(type)
-{
-}
-
-EVPKeyPointer::PrivateKeyEncodingConfig&
-EVPKeyPointer::PrivateKeyEncodingConfig::operator=(
-    const PrivateKeyEncodingConfig& other)
-{
-    if (this == &other) return *this;
-    this->~PrivateKeyEncodingConfig();
-    return *new (this) PrivateKeyEncodingConfig(other);
 }
 
 EVPKeyPointer EVPKeyPointer::New()
@@ -3087,14 +3053,6 @@ CipherCtxPointer::CipherCtxPointer(CipherCtxPointer&& other) noexcept
 {
 }
 
-CipherCtxPointer& CipherCtxPointer::operator=(
-    CipherCtxPointer&& other) noexcept
-{
-    if (this == &other) return *this;
-    this->~CipherCtxPointer();
-    return *new (this) CipherCtxPointer(WTF::move(other));
-}
-
 CipherCtxPointer::~CipherCtxPointer()
 {
     reset();
@@ -3238,15 +3196,6 @@ ECDSASigPointer::ECDSASigPointer(ECDSASigPointer&& other) noexcept
     }
 }
 
-ECDSASigPointer& ECDSASigPointer::operator=(ECDSASigPointer&& other) noexcept
-{
-    sig_.reset(other.release());
-    if (sig_) {
-        ECDSA_SIG_get0(sig_.get(), &pr_, &ps_);
-    }
-    return *this;
-}
-
 ECDSASigPointer::~ECDSASigPointer()
 {
     reset();
@@ -3312,12 +3261,6 @@ ECGroupPointer::ECGroupPointer(ECGroupPointer&& other) noexcept
 {
 }
 
-ECGroupPointer& ECGroupPointer::operator=(ECGroupPointer&& other) noexcept
-{
-    group_.reset(other.release());
-    return *this;
-}
-
 ECGroupPointer::~ECGroupPointer()
 {
     reset();
@@ -3353,12 +3296,6 @@ ECPointPointer::ECPointPointer(EC_POINT* point)
 ECPointPointer::ECPointPointer(ECPointPointer&& other) noexcept
     : point_(other.release())
 {
-}
-
-ECPointPointer& ECPointPointer::operator=(ECPointPointer&& other) noexcept
-{
-    point_.reset(other.release());
-    return *this;
 }
 
 ECPointPointer::~ECPointPointer()
@@ -3823,26 +3760,6 @@ bool EVPKeyCtxPointer::verify(const Buffer<const unsigned char>& sig,
 {
     if (!ctx_) return false;
     return EVP_PKEY_verify(ctx_.get(), sig.data, sig.len, data.data, data.len) == 1;
-}
-
-DataPointer EVPKeyCtxPointer::sign(const Buffer<const unsigned char>& data)
-{
-    if (!ctx_) return {};
-    size_t len = 0;
-    if (EVP_PKEY_sign(ctx_.get(), nullptr, &len, data.data, data.len) != 1) {
-        return {};
-    }
-    auto buf = DataPointer::Alloc(len);
-    if (!buf) return {};
-    if (EVP_PKEY_sign(ctx_.get(),
-            static_cast<unsigned char*>(buf.get()),
-            &len,
-            data.data,
-            data.len)
-        != 1) {
-        return {};
-    }
-    return buf.resize(len);
 }
 
 bool EVPKeyCtxPointer::signInto(const Buffer<const unsigned char>& data,

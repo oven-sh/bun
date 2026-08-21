@@ -466,13 +466,12 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
-// A build that fails while it still has work on the thread pools has to join
-// that work before it tears the pools down. Whether a task is still running at
-// that point is a race, so each build is repeated and every run has to exit
-// with only the build error.
+// https://github.com/oven-sh/bun/pull/39855
+// Whether a task is still on the pool when the build fails is a race, so each
+// build is repeated and every run has to exit with only the build error.
 describe("a failing build exits cleanly while it still has tasks on the pool", () => {
-  // Each run is reported as its exit code followed by its normalized stderr, so
-  // a crash report (ASAN exits with 1 as well) fails the comparison too.
+  // Exit code plus normalized stderr: a crash report fails the comparison even
+  // when the process still exits with 1 (ASAN does).
   async function build(dir: string, args: string[], env: Record<string, string | undefined>): Promise<string> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", ...args],
@@ -485,11 +484,9 @@ describe("a failing build exits cleanly while it still has tasks on the pool", (
     return `exit ${exitCode}\n${normalizeBunSnapshot(stderr, dir)}`;
   }
 
-  // `link` puts one line offset task and one quoted contents task per file on
-  // the pool and then fails on the import. The pool threads are still creating
-  // their Worker for those tasks, or still running them, while the build tears
-  // the workers down. The runs are sequential: the pool threads have to get
-  // the CPU in time to be busy when the build fails.
+  // The source map tasks `link` scheduled are still starting on the pool
+  // threads when the import fails the build. Sequential: the threads have to
+  // get the CPU before that happens.
   test("link error with --sourcemap", async () => {
     using dir = tempDir("build-sourcemap-link-error", {
       "entry.js": `import { nope } from "./lib.js";\nconsole.log(nope);\n`,
@@ -514,12 +511,9 @@ describe("a failing build exits cleanly while it still has tasks on the pool", (
     );
   });
 
-  // With the IO pool (the default on macOS and Windows, forced here so every
-  // platform runs it) a file is read on an IO thread, which then hands the
-  // parse to the worker pool. 1.4.0 returned on the unresolvable entry point
-  // while the other entry points were still being read and crashed in
-  // `ThreadPool::schedule` or in the worker teardown. The reads only outlast
-  // the teardown on a busy machine, so these runs are concurrent.
+  // The IO pool (the default on macOS and Windows) is still reading the other
+  // entry points when the missing one fails the build. Concurrent: the reads
+  // only outlast the teardown on a busy machine.
   test("unresolvable entry point beside entry points that are still being read", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 200; i++) {

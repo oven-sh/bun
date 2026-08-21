@@ -134,3 +134,27 @@ describe("X509Certificate.prototype property descriptors", () => {
     expect(getTo.call(cert)).toEqual(cert.validToDate);
   });
 });
+
+describe("X509Certificate with an empty subject/issuer DN", () => {
+  // Self-signed, `openssl req -x509 -subj "/"`: both names are empty sequences.
+  const emptyDN = `-----BEGIN CERTIFICATE-----
+MIIBVjCB/aADAgECAhQuLsSmUr9yJhK85A6fr6KJxbEtYDAKBggqhkjOPQQDAjAA
+MCAXDTI2MDgyMTA2NDgzOVoYDzIxMjYwNzI4MDY0ODM5WjAAMFkwEwYHKoZIzj0C
+AQYIKoZIzj0DAQcDQgAEGcl07hz+Ga1M2lw9m8AcNiT3BtxyF0Yd4LNbAecfbGTy
+frdyY7uFQMgDJFcSRpuGxCKVBtL1Ba4OvyyHzK5lAKNTMFEwHQYDVR0OBBYEFE8M
+P5LabG8GsdSx97we9lwExHqZMB8GA1UdIwQYMBaAFE8MP5LabG8GsdSx97we9lwE
+xHqZMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIgVfqEVOsOI/6d
+hkcWEa9g5HIqxKTzvSMRYn6eH6gefDYCIQCAl55J4qfVTELr1B5REAw5LFnQRBGN
+vKS1+tUUY19gsw==
+-----END CERTIFICATE-----`;
+
+  test("subject/issuer are undefined and toLegacyObject() does not throw (matches Node)", () => {
+    const cert = new X509Certificate(emptyDN);
+    expect(cert.subject).toBeUndefined();
+    expect(cert.issuer).toBeUndefined();
+    const legacy = cert.toLegacyObject();
+    expect(legacy.subject).toEqual({});
+    expect(legacy.issuer).toEqual({});
+    expect(cert.checkIssued(cert)).toBe(true);
+  });
+});

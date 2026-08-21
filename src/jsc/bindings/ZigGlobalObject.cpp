@@ -1058,7 +1058,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         }
     }
 
-    JSPromise* loadPromise = loader->loadModule(globalObject, key, nullptr, nullptr, { });
+    JSPromise* loadPromise = loader->loadModule(globalObject, key, nullptr, nullptr, {});
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
     RETURN_IF_EXCEPTION(scope, {});

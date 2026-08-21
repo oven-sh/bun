@@ -315,10 +315,8 @@ struct BarrelWorkItem<'a> {
     is_star: bool,
 }
 
-/// Resolve the records (`un_deferred`, ascending indices) that the BFS just
-/// un-deferred in one barrel, schedule the modules they point at, and patch
-/// their source indices. The barrel's other records were handled when the
-/// barrel itself was resolved and are left alone.
+/// Resolve the records the BFS just un-deferred in one barrel (`un_deferred`,
+/// ascending indices), schedule their modules, and patch their source indices.
 fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u32]) -> i32 {
     let idx = barrel_idx as usize;
     let target = this.graph.ast.items_target()[idx];
@@ -365,12 +363,9 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
 /// After a new file's import records are patched with source_indices,
 /// record what this file requests from each target in requested_exports
 /// (eagerly, before barrels are known), then BFS through barrel chains
-/// to un-defer needed records. Each record is resolved through
-/// resolveImportRecords (same path as initial resolution) as soon as it is
-/// un-deferred, so the BFS can continue into the module it points at. Only
-/// the un-deferred records are resolved: a request for a record that was
-/// never deferred resolves nothing, whether or not that record has a
-/// source_index (external, unresolved, or onResolve plugin pending).
+/// to un-defer needed records. Each un-deferred record is resolved at once
+/// through resolveImportRecords (same path as initial resolution), so the BFS
+/// can continue into the module it points at.
 /// Returns the number of newly scheduled parse tasks.
 pub(crate) fn schedule_barrel_deferred_imports(
     this: &mut BundleV2,

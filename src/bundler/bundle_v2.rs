@@ -5947,20 +5947,17 @@ pub mod bv2_impl {
         pub(crate) last_error: Option<Error>,
     }
 
-    /// `only_records` is `None` when a file is resolved after it was parsed: every
-    /// record takes part. Barrel un-deferral passes the indices (ascending) of the
-    /// records it just un-deferred. The other records of the barrel were handled
-    /// when the barrel was parsed, and a record that is external, failed to
-    /// resolve, or waits for an onResolve plugin has no `source_index` to show it.
+    /// `only_records`: barrel un-deferral passes the ascending indices of the records
+    /// it just un-deferred. A missing `source_index` does not mean a record is still
+    /// unresolved (external, failed, or waiting for an onResolve plugin).
     #[inline]
     fn only_selected_record(only_records: Option<&[u32]>, record_index: usize) -> bool {
         only_records.is_none_or(|only| only.binary_search(&(record_index as u32)).is_ok())
     }
 
     impl<'a> BundleV2<'a> {
-        /// Resolve all unresolved import records for a module (or only
-        /// `ctx.only_records`). Skips records that are already resolved (valid
-        /// source_index), unused, or internal.
+        /// Resolve all unresolved import records for a module, or only `ctx.only_records`.
+        /// Skips records that are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
         /// Used by both initial parse resolution and barrel un-deferral.
         pub(crate) fn resolve_import_records(
@@ -6781,9 +6778,8 @@ pub mod bv2_impl {
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
         pub(crate) redirect_import_record_index: u32,
-        /// See `only_selected_record`. Barrel un-deferral (`Some`) always saves
-        /// the source indices of the records it passes, regardless of
-        /// dev_server/loader: the BFS follows them into the next barrel.
+        /// See `only_selected_record`. `Some` also saves the source indices regardless
+        /// of dev_server/loader: the barrel BFS follows them.
         pub(crate) only_records: Option<&'a [u32]>,
     }
 

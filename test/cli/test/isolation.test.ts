@@ -905,13 +905,17 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 
     // The fixture requests two full collections per file and nothing else:
     // these heaps never reach JSC's own allocation budget, so an eden
-    // collection was requested by Bun. The one permitted extra full collection
-    // is the VM teardown under BUN_DESTRUCT_VM_ON_EXIT, which the ASAN lanes set.
+    // collection was requested by Bun. The VM teardown under
+    // BUN_DESTRUCT_VM_ON_EXIT (set by the ASAN lanes, and parsed by bun as
+    // truthy unless it is one of these strings) runs one more full collection.
+    const destructsVm =
+      bunEnv.BUN_DESTRUCT_VM_ON_EXIT !== undefined &&
+      !["", "0", "false", "no", "off"].includes(bunEnv.BUN_DESTRUCT_VM_ON_EXIT.toLowerCase());
+    const expectedFull = 2 * LEAK_FILE_COUNT + (destructsVm ? 1 : 0);
     const full = stderr.match(/=> FullCollection/g)?.length ?? 0;
     const eden = stderr.match(/=> EdenCollection/g)?.length ?? 0;
-    const collections = `${full} full and ${eden} eden collections ran, the fixture requests ${2 * LEAK_FILE_COUNT} full`;
-    expect(full, collections).toBeGreaterThanOrEqual(2 * LEAK_FILE_COUNT);
-    expect(full, collections).toBeLessThanOrEqual(2 * LEAK_FILE_COUNT + 1);
+    const collections = `${full} full and ${eden} eden collections ran, expected ${expectedFull} full and 0 eden`;
+    expect(full, collections).toBe(expectedFull);
     expect(eden, collections).toBe(0);
 
     const counts = [...stdout.matchAll(/GLOBALS=(\d+)/g)].map(m => Number(m[1]));

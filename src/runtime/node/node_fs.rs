@@ -1204,6 +1204,10 @@ mod _async_tasks {
     impl FsArgument for args::AppendFile {
         const HAVE_ABORT_SIGNAL: bool = true;
         #[inline]
+        fn permission_denied(&self) -> Option<super::fs_perm::Denied> {
+            self.0.permission_denied()
+        }
+        #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             args::WriteFile::from_js_with_default_flag(ctx, arguments, FileSystemFlags::A)
                 .map(args::AppendFile)

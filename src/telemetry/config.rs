@@ -56,12 +56,21 @@ pub struct Config {
 
 impl Clone for Limits {
     fn clone(&self) -> Self {
-        Limits { attributes: self.attributes, events: self.events, links: self.links, attribute_value_length: self.attribute_value_length }
+        Limits {
+            attributes: self.attributes,
+            events: self.events,
+            links: self.links,
+            attribute_value_length: self.attribute_value_length,
+        }
     }
 }
 impl core::fmt::Debug for Limits {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Limits").field("attributes", &self.attributes).field("events", &self.events).field("links", &self.links).finish()
+        f.debug_struct("Limits")
+            .field("attributes", &self.attributes)
+            .field("events", &self.events)
+            .field("links", &self.links)
+            .finish()
     }
 }
 
@@ -103,7 +112,10 @@ pub struct EnvConfig {
 }
 
 fn truthy(v: &[u8]) -> bool {
-    matches!(v.trim_ascii(), b"1" | b"true" | b"TRUE" | b"True" | b"yes" | b"on")
+    matches!(
+        v.trim_ascii(),
+        b"1" | b"true" | b"TRUE" | b"True" | b"yes" | b"on"
+    )
 }
 
 fn s(v: &[u8]) -> String {
@@ -119,7 +131,9 @@ pub fn parse_kv_list(v: &[u8]) -> Vec<(String, String)> {
         if part.is_empty() {
             continue;
         }
-        let Some(eq) = part.iter().position(|&c| c == b'=') else { continue };
+        let Some(eq) = part.iter().position(|&c| c == b'=') else {
+            continue;
+        };
         let k = s(&part[..eq]);
         let val = percent_decode(part[eq + 1..].trim_ascii());
         if !k.is_empty() {
@@ -157,8 +171,12 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     let mut c = Config::default();
     let mut warnings = Vec::new();
 
-    let mut enabled = get("BUN_OTEL").map(|v| truthy(&v)).unwrap_or(false) || get("OTEL_BUN").map(|v| truthy(&v)).unwrap_or(false);
-    if get("OTEL_SDK_DISABLED").map(|v| truthy(&v)).unwrap_or(false) {
+    let mut enabled = get("BUN_OTEL").map(|v| truthy(&v)).unwrap_or(false)
+        || get("OTEL_BUN").map(|v| truthy(&v)).unwrap_or(false);
+    if get("OTEL_SDK_DISABLED")
+        .map(|v| truthy(&v))
+        .unwrap_or(false)
+    {
         enabled = false;
     }
 
@@ -171,7 +189,11 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     if let Some(v) = get("OTEL_RESOURCE_ATTRIBUTES") {
         c.resource_attributes = parse_kv_list(&v);
         if c.service_name.is_none() {
-            if let Some((_, v)) = c.resource_attributes.iter().find(|(k, _)| k == "service.name") {
+            if let Some((_, v)) = c
+                .resource_attributes
+                .iter()
+                .find(|(k, _)| k == "service.name")
+            {
                 c.service_name = Some(v.clone());
             }
         }
@@ -182,13 +204,19 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         let arg = get("OTEL_TRACES_SAMPLER_ARG");
         match Sampler::from_env(name.trim_ascii(), arg.as_deref()) {
             Some(sm) => c.sampler = sm,
-            None => warnings.push(format!("unknown OTEL_TRACES_SAMPLER {:?}; using parentbased_always_on", s(&name))),
+            None => warnings.push(format!(
+                "unknown OTEL_TRACES_SAMPLER {:?}; using parentbased_always_on",
+                s(&name)
+            )),
         }
     }
 
     let num = |k: &str, w: &mut Vec<String>| -> Option<u32> {
         let v = get(k)?;
-        match core::str::from_utf8(v.trim_ascii()).ok().and_then(|x| x.parse::<u32>().ok()) {
+        match core::str::from_utf8(v.trim_ascii())
+            .ok()
+            .and_then(|x| x.parse::<u32>().ok())
+        {
             Some(n) => Some(n),
             None => {
                 w.push(format!("{k} is not a non-negative integer; ignoring"));
@@ -208,10 +236,14 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     if let Some(n) = num("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", &mut warnings) {
         c.batch.max_export_batch_size = n.max(1).min(c.batch.max_queue_size);
     }
-    if let Some(n) = num("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", &mut warnings).or_else(|| num("OTEL_ATTRIBUTE_COUNT_LIMIT", &mut warnings)) {
+    if let Some(n) = num("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", &mut warnings)
+        .or_else(|| num("OTEL_ATTRIBUTE_COUNT_LIMIT", &mut warnings))
+    {
         c.limits.attributes = n.min(u16::MAX as u32) as u16;
     }
-    if let Some(n) = num("OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT", &mut warnings).or_else(|| num("OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT", &mut warnings)) {
+    if let Some(n) = num("OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT", &mut warnings)
+        .or_else(|| num("OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT", &mut warnings))
+    {
         c.limits.attribute_value_length = n;
     }
     if let Some(n) = num("OTEL_SPAN_EVENT_COUNT_LIMIT", &mut warnings) {
@@ -229,7 +261,10 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
                 b"tracecontext" => c.propagate_trace_context = true,
                 b"baggage" => c.propagate_baggage = true,
                 b"none" | b"" => {}
-                other => warnings.push(format!("OTEL_PROPAGATORS: {:?} is not supported; supported: tracecontext, baggage", s(other))),
+                other => warnings.push(format!(
+                    "OTEL_PROPAGATORS: {:?} is not supported; supported: tracecontext, baggage",
+                    s(other)
+                )),
             }
         }
     }
@@ -243,12 +278,20 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
                 b"otlp" => want_otlp = true,
                 b"console" => c.console_exporter = true,
                 b"none" | b"" => {}
-                other => warnings.push(format!("OTEL_TRACES_EXPORTER: {:?} is not supported", s(other))),
+                other => warnings.push(format!(
+                    "OTEL_TRACES_EXPORTER: {:?} is not supported",
+                    s(other)
+                )),
             }
         }
     }
     if want_otlp {
-        let protocol = match get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL").or_else(|| get("OTEL_EXPORTER_OTLP_PROTOCOL")).as_deref().map(|v| v.trim_ascii().to_vec()).as_deref() {
+        let protocol = match get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
+            .or_else(|| get("OTEL_EXPORTER_OTLP_PROTOCOL"))
+            .as_deref()
+            .map(|v| v.trim_ascii().to_vec())
+            .as_deref()
+        {
             None | Some(b"http/protobuf") => Protocol::HttpProtobuf,
             Some(b"http/json") => Protocol::HttpJson,
             Some(b"grpc") => {
@@ -256,7 +299,10 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
                 Protocol::HttpProtobuf
             }
             Some(other) => {
-                warnings.push(format!("unknown OTEL_EXPORTER_OTLP_PROTOCOL {:?}; using http/protobuf", s(other)));
+                warnings.push(format!(
+                    "unknown OTEL_EXPORTER_OTLP_PROTOCOL {:?}; using http/protobuf",
+                    s(other)
+                ));
                 Protocol::HttpProtobuf
             }
         };
@@ -265,30 +311,52 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             if v.is_empty() { None } else { Some(v) }
         } else if let Some(v) = get("OTEL_EXPORTER_OTLP_ENDPOINT") {
             let v = s(&v);
-            if v.is_empty() { None } else { Some(join_url(&v, "/v1/traces")) }
+            if v.is_empty() {
+                None
+            } else {
+                Some(join_url(&v, "/v1/traces"))
+            }
         } else if enabled {
             Some("http://localhost:4318/v1/traces".to_string())
         } else {
             None
         };
         if let Some(url) = url {
-            let mut headers = get("OTEL_EXPORTER_OTLP_HEADERS").map(|v| parse_kv_list(&v)).unwrap_or_default();
+            let mut headers = get("OTEL_EXPORTER_OTLP_HEADERS")
+                .map(|v| parse_kv_list(&v))
+                .unwrap_or_default();
             if let Some(v) = get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") {
                 for (k, val) in parse_kv_list(&v) {
                     headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(&k));
                     headers.push((k, val));
                 }
             }
-            let compression = match get("OTEL_EXPORTER_OTLP_TRACES_COMPRESSION").or_else(|| get("OTEL_EXPORTER_OTLP_COMPRESSION")).as_deref().map(|v| v.trim_ascii().to_vec()).as_deref() {
+            let compression = match get("OTEL_EXPORTER_OTLP_TRACES_COMPRESSION")
+                .or_else(|| get("OTEL_EXPORTER_OTLP_COMPRESSION"))
+                .as_deref()
+                .map(|v| v.trim_ascii().to_vec())
+                .as_deref()
+            {
                 Some(b"gzip") => Compression::Gzip,
                 None | Some(b"none") | Some(b"") => Compression::None,
                 Some(other) => {
-                    warnings.push(format!("unknown OTEL_EXPORTER_OTLP_COMPRESSION {:?}; using none", s(other)));
+                    warnings.push(format!(
+                        "unknown OTEL_EXPORTER_OTLP_COMPRESSION {:?}; using none",
+                        s(other)
+                    ));
                     Compression::None
                 }
             };
-            let timeout_ms = num("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", &mut warnings).or_else(|| num("OTEL_EXPORTER_OTLP_TIMEOUT", &mut warnings)).unwrap_or(10000);
-            c.otlp_exporters.push(OtlpExporterConfig { url, headers, protocol, compression, timeout_ms });
+            let timeout_ms = num("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", &mut warnings)
+                .or_else(|| num("OTEL_EXPORTER_OTLP_TIMEOUT", &mut warnings))
+                .unwrap_or(10000);
+            c.otlp_exporters.push(OtlpExporterConfig {
+                url,
+                headers,
+                protocol,
+                compression,
+                timeout_ms,
+            });
         }
     }
 
@@ -316,7 +384,10 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
                         None => {}
                     }
                 }
-                None => warnings.push(format!("BUN_OTEL_INSTRUMENTATIONS: unknown instrumentation {:?}", s(n))),
+                None => warnings.push(format!(
+                    "BUN_OTEL_INSTRUMENTATIONS: unknown instrumentation {:?}",
+                    s(n)
+                )),
             }
         }
         // User spans are always allowed.
@@ -330,7 +401,10 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             }
             match Instrument::from_name(n) {
                 Some(i) => c.instruments &= !i.bit(),
-                None => warnings.push(format!("BUN_OTEL_DISABLE: unknown instrumentation {:?}", s(n))),
+                None => warnings.push(format!(
+                    "BUN_OTEL_DISABLE: unknown instrumentation {:?}",
+                    s(n)
+                )),
             }
         }
     }
@@ -338,13 +412,25 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         c.capture_db_statement = truthy(&v);
     }
     if let Some(v) = get("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST") {
-        c.capture_request_headers = v.split(|&ch| ch == b',').map(|h| s(h).to_ascii_lowercase()).filter(|h| !h.is_empty()).collect();
+        c.capture_request_headers = v
+            .split(|&ch| ch == b',')
+            .map(|h| s(h).to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect();
     }
     if let Some(v) = get("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE") {
-        c.capture_response_headers = v.split(|&ch| ch == b',').map(|h| s(h).to_ascii_lowercase()).filter(|h| !h.is_empty()).collect();
+        c.capture_response_headers = v
+            .split(|&ch| ch == b',')
+            .map(|h| s(h).to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect();
     }
 
-    EnvConfig { enabled, config: c, warnings }
+    EnvConfig {
+        enabled,
+        config: c,
+        warnings,
+    }
 }
 
 #[cfg(test)]
@@ -353,7 +439,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<Vec<u8>> {
-        let m: HashMap<String, Vec<u8>> = pairs.iter().map(|(k, v)| (k.to_string(), v.as_bytes().to_vec())).collect();
+        let m: HashMap<String, Vec<u8>> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.as_bytes().to_vec()))
+            .collect();
         move |k: &str| m.get(k).cloned()
     }
 
@@ -363,24 +452,45 @@ mod tests {
         let r = from_env(&e);
         assert!(r.enabled);
         assert_eq!(r.config.otlp_exporters.len(), 1);
-        assert_eq!(r.config.otlp_exporters[0].url, "http://localhost:4318/v1/traces");
+        assert_eq!(
+            r.config.otlp_exporters[0].url,
+            "http://localhost:4318/v1/traces"
+        );
     }
 
     #[test]
     fn endpoint_and_headers() {
         let e = env(&[
             ("BUN_OTEL", "true"),
-            ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.example.com:4318/"),
-            ("OTEL_EXPORTER_OTLP_HEADERS", "x-api-key=secret%20key, other = v"),
-            ("OTEL_RESOURCE_ATTRIBUTES", "service.name=api,deployment.environment=prod"),
+            (
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "https://otel.example.com:4318/",
+            ),
+            (
+                "OTEL_EXPORTER_OTLP_HEADERS",
+                "x-api-key=secret%20key, other = v",
+            ),
+            (
+                "OTEL_RESOURCE_ATTRIBUTES",
+                "service.name=api,deployment.environment=prod",
+            ),
             ("BUN_OTEL_DISABLE", "fs, dns"),
         ]);
         let r = from_env(&e);
         let x = &r.config.otlp_exporters[0];
         assert_eq!(x.url, "https://otel.example.com:4318/v1/traces");
-        assert_eq!(x.headers, vec![("x-api-key".into(), "secret key".into()), ("other".into(), "v".into())]);
+        assert_eq!(
+            x.headers,
+            vec![
+                ("x-api-key".into(), "secret key".into()),
+                ("other".into(), "v".into())
+            ]
+        );
         assert_eq!(r.config.service_name.as_deref(), Some("api"));
-        assert_eq!(r.config.resource_attributes, vec![("deployment.environment".into(), "prod".into())]);
+        assert_eq!(
+            r.config.resource_attributes,
+            vec![("deployment.environment".into(), "prod".into())]
+        );
         assert_eq!(r.config.instruments & Instrument::Fs.bit(), 0);
         assert_eq!(r.config.instruments & Instrument::Dns.bit(), 0);
         assert_ne!(r.config.instruments & Instrument::HttpServer.bit(), 0);

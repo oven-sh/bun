@@ -18,10 +18,14 @@ use bun_telemetry::{Instrument, Limits, Sampler, ScopeId, SpanContext, SpanKind,
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerTag};
 
 pub mod exporter;
+pub mod fetch;
 pub mod http;
+pub mod server;
 pub mod span;
 
-pub use span::{ContextScope, Entered, TelemetrySpan, active, active_context, active_js, active_ref, end_span};
+pub use span::{
+    ContextScope, Entered, TelemetrySpan, active, active_context, active_js, active_ref, end_span,
+};
 
 /// Process-wide, immutable after `configure()`. Read on hot paths without
 /// locking via `state()`.
@@ -77,7 +81,11 @@ thread_local! {
 
 pub(crate) fn vm_state() -> Option<&'static VmState> {
     let p = VM_STATE.with(|c| c.get());
-    if p.is_null() { None } else { Some(unsafe { &*p }) }
+    if p.is_null() {
+        None
+    } else {
+        Some(unsafe { &*p })
+    }
 }
 
 fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
@@ -95,7 +103,11 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
     }));
     VM_STATE.with(|c| c.set(s));
     // Flush this VM's spans (and, on the main thread, drain exporters) at exit.
-    global.bun_vm().as_mut().rare_data().push_cleanup_hook(global, s as *mut VmState as *mut c_void, on_vm_exit);
+    global.bun_vm().as_mut().rare_data().push_cleanup_hook(
+        global,
+        s as *mut VmState as *mut c_void,
+        on_vm_exit,
+    );
     s
 }
 
@@ -106,11 +118,20 @@ impl VmState {
     }
 
     fn arm_timer(&self) {
-        let delay = processor().config.read().unwrap().scheduled_delay_ms.max(50);
-        let next = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).add_ms(delay as i64);
+        let delay = processor()
+            .config
+            .read()
+            .unwrap()
+            .scheduled_delay_ms
+            .max(50);
+        let next =
+            bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).add_ms(delay as i64);
         let elt = &self.event_loop_timer as *const EventLoopTimer as *mut EventLoopTimer;
         unsafe {
-            (*elt).next = ElTimespec { sec: next.sec, nsec: next.nsec };
+            (*elt).next = ElTimespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            };
             (*crate::jsc_hooks::timer_all()).insert(elt);
         }
         self.timer_armed.set(true);
@@ -207,13 +228,25 @@ pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<
             propagate_trace_context: cfg.propagate_trace_context,
             propagate_baggage: cfg.propagate_baggage,
             capture_db_statement: cfg.capture_db_statement,
-            capture_request_headers: cfg.capture_request_headers.iter().map(|s| s.as_bytes().into()).collect(),
-            capture_response_headers: cfg.capture_response_headers.iter().map(|s| s.as_bytes().into()).collect(),
+            capture_request_headers: cfg
+                .capture_request_headers
+                .iter()
+                .map(|s| s.as_bytes().into())
+                .collect(),
+            capture_response_headers: cfg
+                .capture_response_headers
+                .iter()
+                .map(|s| s.as_bytes().into())
+                .collect(),
         })
         .is_ok();
     if first {
         *p.config.write().unwrap() = cfg.batch;
-        let script = vm.main().rsplit(|&c| c == b'/' || c == b'\\').next().and_then(|s| core::str::from_utf8(s).ok());
+        let script = vm
+            .main()
+            .rsplit(|&c| c == b'/' || c == b'\\')
+            .next()
+            .and_then(|s| core::str::from_utf8(s).ok());
         let resource = bun_telemetry::resource::encode(&bun_telemetry::resource::ResourceInfo {
             service_name: cfg.service_name.as_deref(),
             extra: &cfg.resource_attributes,
@@ -277,12 +310,22 @@ pub fn start_leaf(global: &JSGlobalObject, i: Instrument) -> bun_telemetry::Span
     if parent.is_none() && !bun_telemetry::allows_root(i) {
         return bun_telemetry::SpanStub::NONE;
     }
-    bun_telemetry::SpanStub::start(parent.as_ref(), &state().sampler, bun_telemetry::clock::now_unix_nanos())
+    bun_telemetry::SpanStub::start(
+        parent.as_ref(),
+        &state().sampler,
+        bun_telemetry::clock::now_unix_nanos(),
+    )
 }
 
 /// End a leaf span: `write` adds name/attrs via the `SpanWriter`.
 #[inline]
-pub fn end_leaf(i: Instrument, stub: &bun_telemetry::SpanStub, name: &[u8], kind: SpanKind, write: impl FnOnce(&mut bun_telemetry::SpanWriter<'_>)) {
+pub fn end_leaf(
+    i: Instrument,
+    stub: &bun_telemetry::SpanStub,
+    name: &[u8],
+    kind: SpanKind,
+    write: impl FnOnce(&mut bun_telemetry::SpanWriter<'_>),
+) {
     if !stub.is_recording() {
         return;
     }
@@ -304,7 +347,9 @@ fn arg_string(global: &JSGlobalObject, v: JSValue) -> JsResult<Option<String>> {
         return Ok(None);
     }
     let s = OwnedString::new(BunString::from_js(v, global)?);
-    Ok(Some(String::from_utf8_lossy(s.to_utf8().slice()).into_owned()))
+    Ok(Some(
+        String::from_utf8_lossy(s.to_utf8().slice()).into_owned(),
+    ))
 }
 
 /// `start(options?)` — configure and enable. Options mirror the env vars:
@@ -355,13 +400,21 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             cfg.console_exporter = false;
         }
         if let Some(url) = endpoint {
-            let mut x = OtlpExporterConfig { url: normalize_traces_url(&url), headers: Vec::new(), protocol: config::Protocol::HttpProtobuf, compression: Compression::None, timeout_ms: 10000 };
+            let mut x = OtlpExporterConfig {
+                url: normalize_traces_url(&url),
+                headers: Vec::new(),
+                protocol: config::Protocol::HttpProtobuf,
+                compression: Compression::None,
+                timeout_ms: 10000,
+            };
             read_exporter_extras(global, opts, &mut x)?;
             cfg.otlp_exporters.push(x);
         }
         if let Some(list) = explicit_exporters {
             if !list.is_array() {
-                return Err(global.throw_invalid_arguments(format_args!("exporters must be an array")));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("exporters must be an array"))
+                );
             }
             let mut it = JSArrayIterator::init(list, global)?;
             while let Some(item) = it.next()? {
@@ -370,7 +423,13 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     if s == "console" {
                         cfg.console_exporter = true;
                     } else {
-                        cfg.otlp_exporters.push(OtlpExporterConfig { url: normalize_traces_url(&s), headers: Vec::new(), protocol: config::Protocol::HttpProtobuf, compression: Compression::None, timeout_ms: 10000 });
+                        cfg.otlp_exporters.push(OtlpExporterConfig {
+                            url: normalize_traces_url(&s),
+                            headers: Vec::new(),
+                            protocol: config::Protocol::HttpProtobuf,
+                            compression: Compression::None,
+                            timeout_ms: 10000,
+                        });
                     }
                     continue;
                 }
@@ -379,7 +438,9 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 }
                 if let Some(f) = item.get(global, "export")? {
                     if !f.is_callable() {
-                        return Err(global.throw_invalid_arguments(format_args!("exporter.export must be a function")));
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "exporter.export must be a function"
+                        )));
                     }
                     let format = match item.get(global, "format")? {
                         Some(v) => match arg_string(global, v)?.as_deref() {
@@ -401,9 +462,17 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     },
                 };
                 let Some(url) = url else {
-                    return Err(global.throw_invalid_arguments(format_args!("exporter needs a url or an export() function")));
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "exporter needs a url or an export() function"
+                    )));
                 };
-                let mut x = OtlpExporterConfig { url: normalize_traces_url(&url), headers: Vec::new(), protocol: config::Protocol::HttpProtobuf, compression: Compression::None, timeout_ms: 10000 };
+                let mut x = OtlpExporterConfig {
+                    url: normalize_traces_url(&url),
+                    headers: Vec::new(),
+                    protocol: config::Protocol::HttpProtobuf,
+                    compression: Compression::None,
+                    timeout_ms: 10000,
+                };
                 read_exporter_extras(global, item, &mut x)?;
                 cfg.otlp_exporters.push(x);
             }
@@ -412,7 +481,8 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             cfg.sampler = sampler_from_js(global, v, opts.get(global, "samplerArg")?)?;
         } else if let Some(v) = opts.get(global, "sampleRate")? {
             if v.is_number() {
-                cfg.sampler = Sampler::ParentBasedTraceIdRatio(Sampler::ratio_threshold(v.as_number()));
+                cfg.sampler =
+                    Sampler::ParentBasedTraceIdRatio(Sampler::ratio_threshold(v.as_number()));
             }
         }
         if let Some(v) = opts.get(global, "instrumentations")? {
@@ -420,10 +490,16 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
         if let Some(b) = opts.get(global, "batch")? {
             if b.is_object() {
-                if let Some(v) = b.get(global, "delayMs")?.or(b.get(global, "scheduledDelayMillis")?) {
+                if let Some(v) = b
+                    .get(global, "delayMs")?
+                    .or(b.get(global, "scheduledDelayMillis")?)
+                {
                     cfg.batch.scheduled_delay_ms = v.to_number(global)?.max(0.0) as u32;
                 }
-                if let Some(v) = b.get(global, "timeoutMs")?.or(b.get(global, "exportTimeoutMillis")?) {
+                if let Some(v) = b
+                    .get(global, "timeoutMs")?
+                    .or(b.get(global, "exportTimeoutMillis")?)
+                {
                     cfg.batch.export_timeout_ms = v.to_number(global)?.max(0.0) as u32;
                 }
                 if let Some(v) = b.get(global, "maxQueueSize")? {
@@ -486,18 +562,39 @@ fn normalize_traces_url(url: &str) -> String {
     // A bare collector base URL gets the traces path; anything with a path is used as-is.
     let trimmed = url.trim_end_matches('/');
     let after_scheme = trimmed.split_once("://").map(|(_, r)| r).unwrap_or(trimmed);
-    if after_scheme.contains('/') { url.to_string() } else { format!("{trimmed}/v1/traces") }
+    if after_scheme.contains('/') {
+        url.to_string()
+    } else {
+        format!("{trimmed}/v1/traces")
+    }
 }
 
-fn read_exporter_extras(global: &JSGlobalObject, obj: JSValue, x: &mut OtlpExporterConfig) -> JsResult<()> {
+fn read_exporter_extras(
+    global: &JSGlobalObject,
+    obj: JSValue,
+    x: &mut OtlpExporterConfig,
+) -> JsResult<()> {
     if let Some(h) = obj.get(global, "headers")? {
         if h.is_object() {
-            let Some(o) = h.get_object() else { return Ok(()) };
-            let mut iter = bun_jsc::JSPropertyIterator::init(global, o, bun_jsc::JSPropertyIteratorOptions { skip_empty_name: true, include_value: true, ..Default::default() })?;
+            let Some(o) = h.get_object() else {
+                return Ok(());
+            };
+            let mut iter = bun_jsc::JSPropertyIterator::init(
+                global,
+                o,
+                bun_jsc::JSPropertyIteratorOptions {
+                    skip_empty_name: true,
+                    include_value: true,
+                    ..Default::default()
+                },
+            )?;
             while let Some(name) = iter.next()? {
                 let v = iter.value;
                 if let Some(vs) = arg_string(global, v)? {
-                    x.headers.push((String::from_utf8_lossy(name.to_utf8().slice()).into_owned(), vs));
+                    x.headers.push((
+                        String::from_utf8_lossy(name.to_utf8().slice()).into_owned(),
+                        vs,
+                    ));
                 }
             }
         }
@@ -518,7 +615,9 @@ fn read_exporter_extras(global: &JSGlobalObject, obj: JSValue, x: &mut OtlpExpor
 
 fn sampler_from_js(global: &JSGlobalObject, v: JSValue, arg: Option<JSValue>) -> JsResult<Sampler> {
     if v.is_number() {
-        return Ok(Sampler::ParentBasedTraceIdRatio(Sampler::ratio_threshold(v.as_number())));
+        return Ok(Sampler::ParentBasedTraceIdRatio(Sampler::ratio_threshold(
+            v.as_number(),
+        )));
     }
     if let Some(name) = arg_string(global, v)? {
         let arg_s = match arg {
@@ -534,7 +633,11 @@ fn sampler_from_js(global: &JSGlobalObject, v: JSValue, arg: Option<JSValue>) ->
     Ok(Sampler::default())
 }
 
-fn read_instrumentations(global: &JSGlobalObject, v: JSValue, cfg: &mut bun_telemetry::Config) -> JsResult<()> {
+fn read_instrumentations(
+    global: &JSGlobalObject,
+    v: JSValue,
+    cfg: &mut bun_telemetry::Config,
+) -> JsResult<()> {
     if v.is_array() {
         // Allow-list form: ["http", "fetch"].
         let mut mask = Instrument::User.bit();
@@ -543,7 +646,11 @@ fn read_instrumentations(global: &JSGlobalObject, v: JSValue, cfg: &mut bun_tele
             if let Some(n) = arg_string(global, item)? {
                 match Instrument::from_name(n.as_bytes()) {
                     Some(i) => mask |= i.bit(),
-                    None => return Err(global.throw_invalid_arguments(format_args!("unknown instrumentation \"{n}\""))),
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "unknown instrumentation \"{n}\""
+                        )));
+                    }
                 }
             }
         }
@@ -553,13 +660,26 @@ fn read_instrumentations(global: &JSGlobalObject, v: JSValue, cfg: &mut bun_tele
     if !v.is_object() {
         return Ok(());
     }
-    let Some(o) = v.get_object() else { return Ok(()) };
-    let mut iter = bun_jsc::JSPropertyIterator::init(global, o, bun_jsc::JSPropertyIteratorOptions { skip_empty_name: true, include_value: true, ..Default::default() })?;
+    let Some(o) = v.get_object() else {
+        return Ok(());
+    };
+    let mut iter = bun_jsc::JSPropertyIterator::init(
+        global,
+        o,
+        bun_jsc::JSPropertyIteratorOptions {
+            skip_empty_name: true,
+            include_value: true,
+            ..Default::default()
+        },
+    )?;
     while let Some(name) = iter.next()? {
         let val = iter.value;
         let key = name.to_utf8();
         let Some(i) = Instrument::from_name(key.slice()) else {
-            return Err(global.throw_invalid_arguments(format_args!("unknown instrumentation \"{}\"", bstr::BStr::new(key.slice()))));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "unknown instrumentation \"{}\"",
+                bstr::BStr::new(key.slice())
+            )));
         };
         // false → off; true → on (default root policy); "always" → on + roots; "nested" → on, parent required.
         if val.is_boolean() {
@@ -608,9 +728,17 @@ pub fn create_scope(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 #[bun_jsc::host_fn]
 pub fn start_span(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let scope_v = frame.argument(0);
-    let scope = if scope_v.is_number() { ScopeId(scope_v.as_number() as u16) } else { ScopeId::from(Instrument::User) };
+    let scope = if scope_v.is_number() {
+        ScopeId(scope_v.as_number() as u16)
+    } else {
+        ScopeId::from(Instrument::User)
+    };
     let name_v = frame.argument(1);
-    let name = if name_v.is_string() { Some(name_v.to_slice(global)?) } else { None };
+    let name = if name_v.is_string() {
+        Some(name_v.to_slice(global)?)
+    } else {
+        None
+    };
     let kind = span::kind_from_js(frame.argument(2));
     let parent_v = frame.argument(3);
     let parent = if parent_v.is_undefined() {
@@ -621,7 +749,31 @@ pub fn start_span(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         span::span_context_from_js(global, parent_v)?
     };
     let start_ns = span::time_from_js(global, frame.argument(4))?;
-    let (_span, js) = TelemetrySpan::start(global, scope, name.as_ref().map(|s| s.slice()).unwrap_or(b""), kind, parent.as_ref(), start_ns);
+    let (span, js) = TelemetrySpan::start(
+        global,
+        scope,
+        name.as_ref().map(|s| s.slice()).unwrap_or(b""),
+        kind,
+        parent.as_ref(),
+        start_ns,
+    );
+    if parent.is_some() {
+        let source = if parent_v.is_undefined() {
+            active(global)
+        } else {
+            span::js::from_js(parent_v).map(|p| unsafe { p.as_ref() }.data())
+        };
+        if let Some(src) = source {
+            src.with_propagation(|ts, bg| {
+                if !ts.is_empty() {
+                    span.set_trace_state(ts);
+                }
+                if !bg.is_empty() {
+                    span.set_baggage(bg);
+                }
+            });
+        }
+    }
     Ok(js)
 }
 
@@ -695,7 +847,10 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     let s = vm_state_or_init(global);
     processor().export();
     if processor().inflight() == 0 {
-        return Ok(bun_jsc::JSPromise::resolved_promise_value(global, JSValue::UNDEFINED));
+        return Ok(bun_jsc::JSPromise::resolved_promise_value(
+            global,
+            JSValue::UNDEFINED,
+        ));
     }
     let strong = bun_jsc::JSPromiseStrong::init(global);
     let value = strong.value();
@@ -732,12 +887,36 @@ pub fn stats(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     bun_telemetry::batch::flush_local();
     let p = processor();
     let o = JSValue::create_empty_object(global, 6);
-    o.put(global, b"spansExported", JSValue::js_number(p.stats.spans_exported.load(Relaxed) as f64));
-    o.put(global, b"spansDropped", JSValue::js_number(p.stats.spans_dropped.load(Relaxed) as f64));
-    o.put(global, b"exportsSucceeded", JSValue::js_number(p.stats.exports_ok.load(Relaxed) as f64));
-    o.put(global, b"exportsFailed", JSValue::js_number(p.stats.exports_failed.load(Relaxed) as f64));
-    o.put(global, b"spansPending", JSValue::js_number(p.pending_count() as f64));
-    o.put(global, b"exportsInflight", JSValue::js_number(p.inflight() as f64));
+    o.put(
+        global,
+        b"spansExported",
+        JSValue::js_number(p.stats.spans_exported.load(Relaxed) as f64),
+    );
+    o.put(
+        global,
+        b"spansDropped",
+        JSValue::js_number(p.stats.spans_dropped.load(Relaxed) as f64),
+    );
+    o.put(
+        global,
+        b"exportsSucceeded",
+        JSValue::js_number(p.stats.exports_ok.load(Relaxed) as f64),
+    );
+    o.put(
+        global,
+        b"exportsFailed",
+        JSValue::js_number(p.stats.exports_failed.load(Relaxed) as f64),
+    );
+    o.put(
+        global,
+        b"spansPending",
+        JSValue::js_number(p.pending_count() as f64),
+    );
+    o.put(
+        global,
+        b"exportsInflight",
+        JSValue::js_number(p.inflight() as f64),
+    );
     Ok(o)
 }
 
@@ -757,7 +936,11 @@ pub fn set_enabled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let m = frame.argument(0);
     let r = frame.argument(1);
     if m.is_number() {
-        let roots = if r.is_number() { r.as_number() as u32 } else { m.as_number() as u32 };
+        let roots = if r.is_number() {
+            r.as_number() as u32
+        } else {
+            m.as_number() as u32
+        };
         bun_telemetry::set_enabled_mask(m.as_number() as u32, roots);
         if m.as_number() != 0.0 {
             vm_state_or_init(global).arm_timer();

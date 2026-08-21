@@ -45,9 +45,23 @@ impl LocalBatch {
     }
 
     pub(crate) fn take(&mut self) -> LocalBatch {
-        let out = LocalBatch { scopes: core::mem::take(&mut self.scopes), count: self.count, bytes: self.bytes };
+        let out = LocalBatch {
+            scopes: core::mem::take(&mut self.scopes),
+            count: self.count,
+            bytes: self.bytes,
+        };
         // Keep capacity vectors around for the common scopes.
-        self.scopes = out.scopes.iter().map(|v| Vec::with_capacity(if v.is_empty() { 0 } else { v.len().next_power_of_two().min(64 * 1024) })).collect();
+        self.scopes = out
+            .scopes
+            .iter()
+            .map(|v| {
+                Vec::with_capacity(if v.is_empty() {
+                    0
+                } else {
+                    v.len().next_power_of_two().min(64 * 1024)
+                })
+            })
+            .collect();
         self.count = 0;
         self.bytes = 0;
         out

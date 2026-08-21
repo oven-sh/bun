@@ -215,7 +215,11 @@ pub struct SpanStub {
 
 impl SpanStub {
     pub const NONE: SpanStub = SpanStub {
-        ctx: SpanContext { trace_id: TraceId::INVALID, span_id: SpanId::INVALID, flags: Flags(0) },
+        ctx: SpanContext {
+            trace_id: TraceId::INVALID,
+            span_id: SpanId::INVALID,
+            flags: Flags(0),
+        },
         parent: SpanId::INVALID,
         start_ns: 0,
     };
@@ -242,7 +246,14 @@ impl SpanStub {
             ctx: SpanContext {
                 trace_id,
                 span_id: SpanId::generate(),
-                flags: Flags((sampled as u8) | if parent_remote { Flags::PARENT_REMOTE } else { 0 }),
+                flags: Flags(
+                    (sampled as u8)
+                        | if parent_remote {
+                            Flags::PARENT_REMOTE
+                        } else {
+                            0
+                        },
+                ),
             },
             parent: parent_id,
             start_ns: now_ns,

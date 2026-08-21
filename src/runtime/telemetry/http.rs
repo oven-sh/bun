@@ -31,7 +31,11 @@ pub fn status_attrs(w: &mut SpanWriter<'_>, status: u16, is_server: bool) {
         return;
     }
     w.attr("http.response.status_code", status);
-    let is_error = if is_server { status >= 500 } else { status >= 400 };
+    let is_error = if is_server {
+        status >= 500
+    } else {
+        status >= 400
+    };
     if is_error {
         let mut buf = [0u8; 3];
         buf[0] = b'0' + ((status / 100) % 10) as u8;

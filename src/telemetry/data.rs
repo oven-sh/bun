@@ -16,7 +16,12 @@ pub struct Limits {
     pub attribute_value_length: u32,
 }
 
-pub const DEFAULT_LIMITS: Limits = Limits { attributes: 128, events: 128, links: 128, attribute_value_length: u32::MAX };
+pub const DEFAULT_LIMITS: Limits = Limits {
+    attributes: 128,
+    events: 128,
+    links: 128,
+    attribute_value_length: u32::MAX,
+};
 
 struct Mutable {
     name: Box<[u8]>,
@@ -36,6 +41,8 @@ struct Mutable {
     status: StatusCode,
     status_message: Box<[u8]>,
     trace_state: Box<[u8]>,
+    /// Incoming W3C `baggage` header to forward on outgoing calls.
+    baggage: Box<[u8]>,
     end_ns: u64,
 }
 
@@ -71,6 +78,7 @@ impl Span {
                 status: StatusCode::Unset,
                 status_message: Box::default(),
                 trace_state: Box::default(),
+                baggage: Box::default(),
                 end_ns: 0,
             }),
         });
@@ -187,7 +195,9 @@ impl SpanData {
         if !self.stub.ctx.flags.sampled() || key.is_empty() {
             return;
         }
-        let Ok(mut m) = self.m.try_borrow_mut() else { return };
+        let Ok(mut m) = self.m.try_borrow_mut() else {
+            return;
+        };
         if m.end_ns != 0 {
             return;
         }
@@ -209,7 +219,12 @@ impl SpanData {
         let off = m.attrs.len();
         match *v {
             Value::Str(s) if s.len() > limits.attribute_value_length as usize => {
-                otlp::write_key_value(&mut m.attrs, field::ATTRIBUTES, key, &Value::Str(&s[..limits.attribute_value_length as usize]))
+                otlp::write_key_value(
+                    &mut m.attrs,
+                    field::ATTRIBUTES,
+                    key,
+                    &Value::Str(&s[..limits.attribute_value_length as usize]),
+                )
             }
             _ => otlp::write_key_value(&mut m.attrs, field::ATTRIBUTES, key, v),
         }
@@ -217,11 +232,19 @@ impl SpanData {
         m.attr_index.push((h, off as u32, len as u32));
     }
 
-    pub fn add_event(&self, name: &[u8], time_ns: u64, attrs: &[(&[u8], Value<'_>)], limits: &Limits) {
+    pub fn add_event(
+        &self,
+        name: &[u8],
+        time_ns: u64,
+        attrs: &[(&[u8], Value<'_>)],
+        limits: &Limits,
+    ) {
         if !self.stub.ctx.flags.sampled() {
             return;
         }
-        let Ok(mut m) = self.m.try_borrow_mut() else { return };
+        let Ok(mut m) = self.m.try_borrow_mut() else {
+            return;
+        };
         if m.end_ns != 0 {
             return;
         }
@@ -230,7 +253,11 @@ impl SpanData {
             return;
         }
         m.n_events += 1;
-        let t = if time_ns == 0 { clock::now_unix_nanos() } else { time_ns };
+        let t = if time_ns == 0 {
+            clock::now_unix_nanos()
+        } else {
+            time_ns
+        };
         otlp::encode_event(&mut m.extra, name, t, attrs);
     }
 
@@ -244,11 +271,19 @@ impl SpanData {
         self.add_event(b"exception", 0, &attrs[..n], limits);
     }
 
-    pub fn add_link(&self, ctx: &SpanContext, trace_state: &[u8], attrs: &[(&[u8], Value<'_>)], limits: &Limits) {
+    pub fn add_link(
+        &self,
+        ctx: &SpanContext,
+        trace_state: &[u8],
+        attrs: &[(&[u8], Value<'_>)],
+        limits: &Limits,
+    ) {
         if !self.stub.ctx.flags.sampled() || !ctx.is_valid() {
             return;
         }
-        let Ok(mut m) = self.m.try_borrow_mut() else { return };
+        let Ok(mut m) = self.m.try_borrow_mut() else {
+            return;
+        };
         if m.end_ns != 0 {
             return;
         }
@@ -261,7 +296,9 @@ impl SpanData {
     }
 
     pub fn set_status(&self, code: StatusCode, message: &[u8]) {
-        let Ok(mut m) = self.m.try_borrow_mut() else { return };
+        let Ok(mut m) = self.m.try_borrow_mut() else {
+            return;
+        };
         if m.end_ns != 0 {
             return;
         }
@@ -270,7 +307,11 @@ impl SpanData {
             return;
         }
         m.status = code;
-        m.status_message = if code == StatusCode::Error { message.into() } else { Box::default() };
+        m.status_message = if code == StatusCode::Error {
+            message.into()
+        } else {
+            Box::default()
+        };
     }
 
     pub fn set_trace_state(&self, ts: &[u8]) {
@@ -279,14 +320,37 @@ impl SpanData {
         }
     }
 
+    pub fn set_baggage(&self, b: &[u8]) {
+        if let Ok(mut m) = self.m.try_borrow_mut() {
+            m.baggage = b.into();
+        }
+    }
+
+    /// `f(trace_state, baggage)` — the W3C headers to propagate downstream.
+    pub fn with_propagation<R>(&self, f: impl FnOnce(&[u8], &[u8]) -> R) -> R {
+        let m = self.m.borrow();
+        f(&m.trace_state, &m.baggage)
+    }
+
     /// End the span, letting the caller add final attributes, and write it to
     /// `out`. Returns false if it had already ended (nothing written).
-    pub fn end_into(&self, out: &mut Vec<u8>, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'_>)) -> bool {
-        let Ok(mut m) = self.m.try_borrow_mut() else { return false };
+    pub fn end_into(
+        &self,
+        out: &mut Vec<u8>,
+        end_ns: u64,
+        extra: impl FnOnce(&mut SpanWriter<'_>),
+    ) -> bool {
+        let Ok(mut m) = self.m.try_borrow_mut() else {
+            return false;
+        };
         if m.end_ns != 0 {
             return false;
         }
-        m.end_ns = if end_ns == 0 { clock::now_unix_nanos() } else { end_ns };
+        m.end_ns = if end_ns == 0 {
+            clock::now_unix_nanos()
+        } else {
+            end_ns
+        };
         if !self.stub.ctx.flags.sampled() {
             m.attrs = Vec::new();
             m.extra = Vec::new();

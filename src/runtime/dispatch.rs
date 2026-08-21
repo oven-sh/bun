@@ -991,7 +991,11 @@ pub(crate) unsafe fn __bun_fire_timer(
                 .run(&mut *vm))
         }
         EventLoopTimerTag::TelemetryFlush => {
-            timer_arm!(crate::telemetry::VmState, event_loop_timer, |c, _now, _vm| (*c).on_timer())
+            timer_arm!(
+                crate::telemetry::VmState,
+                event_loop_timer,
+                |c, _now, _vm| (*c).on_timer()
+            )
         }
         EventLoopTimerTag::EventLoopDelayMonitor => {
             timer_arm!(EventLoopDelayMonitor, event_loop_timer, |c, now, vm| {

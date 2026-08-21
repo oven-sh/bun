@@ -354,6 +354,9 @@ pub struct PreparedRequest<const SSL: bool, const DEBUG: bool> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut crate::webcore::Request,
     pub ctx: *mut ServerRequestContext<SSL, DEBUG>,
+    /// Keeps the request's telemetry span active while this frame dispatches
+    /// the handler; restores the previous async context on drop.
+    pub(crate) otel: Option<crate::telemetry::Entered>,
 }
 
 impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
@@ -901,6 +904,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             },
             request_object,
             ctx,
+            otel: ctx_ref.otel_begin(global),
         })
     }
 
@@ -957,6 +961,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     .ctx
                     .get::<ServerRequestContext<SSL, DEBUG>>()
                     .expect("ctx tag mismatch"),
+                otel: None,
             },
         };
         let ctx = prepared.ctx;
@@ -1167,6 +1172,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ) else {
             return;
         };
+        if prepared.otel.is_some() {
+            // SAFETY: `prepared.ctx` is live for this frame.
+            unsafe { &*prepared.ctx }.otel_set_route(&user_route.route.path);
+        }
 
         // SAFETY: `server` is the live backref stored in `user_route`.
         let server_ref = unsafe { &*server };

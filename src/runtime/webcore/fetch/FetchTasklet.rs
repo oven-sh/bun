@@ -132,6 +132,11 @@ pub struct FetchTasklet {
     /// sink that attaches unparks it.
     pub(crate) body_stream_parked: Cell<bool>,
     pub(crate) request_headers: Headers,
+    /// Native OpenTelemetry client span; `SpanStub::NONE` when telemetry is off.
+    pub(crate) otel: bun_telemetry::SpanStub,
+    /// Length of the URL prefix of `url_proxy_buffer` and the request method, for the span.
+    pub(crate) otel_url_len: u32,
+    pub(crate) otel_method: bun_http::Method,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
     /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
@@ -471,8 +476,31 @@ impl FetchTasklet {
         }
     }
 
+    /// Finish the telemetry span (first call wins). Called when the response
+    /// is fully received, or from `clear_data` if the request never got there.
+    fn otel_end(&mut self) {
+        if !self.otel.is_some() {
+            return;
+        }
+        let stub = core::mem::replace(&mut self.otel, bun_telemetry::SpanStub::NONE);
+        let status = self
+            .metadata
+            .as_ref()
+            .map(|m| m.response.status_code as u16)
+            .unwrap_or(0);
+        let error = match &self.result.fail {
+            Some(e) => Some(e.name()),
+            None if self.abort_reason.has() => Some("AbortError"),
+            None => None,
+        };
+        let url =
+            &self.url_proxy_buffer[..(self.otel_url_len as usize).min(self.url_proxy_buffer.len())];
+        crate::telemetry::fetch::end(&stub, self.otel_method, url, status, error);
+    }
+
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
+        self.otel_end();
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
         }
@@ -935,6 +963,9 @@ impl FetchTasklet {
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
+        if is_done {
+            self.otel_end();
+        }
 
         let vm = self.global_this.bun_vm();
         // teardown forbade script: we cannot touch JS
@@ -2028,6 +2059,9 @@ impl FetchTasklet {
             response_stream_source: Cell::new(None),
             body_stream_parked: Cell::new(false),
             request_headers: fetch_options.headers,
+            otel: bun_telemetry::SpanStub::NONE,
+            otel_url_len: fetch_options.url.href.len() as u32,
+            otel_method: fetch_options.method,
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: JsCell::new(KeepAlive::default()),
@@ -2056,6 +2090,8 @@ impl FetchTasklet {
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
 
         fetch_tasklet.tracker.did_schedule(global_this);
+        fetch_tasklet.otel =
+            crate::telemetry::fetch::begin(global_this, &mut fetch_tasklet.request_headers);
 
         // `body` is *moved* through `FetchOptions` into `request_body` (no
         // shallow alias, no post-queue detach), so the StoreRef already carries

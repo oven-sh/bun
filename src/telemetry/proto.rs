@@ -146,7 +146,10 @@ impl Nested {
         write_tag(out, field, WireType::Len);
         let len_at = out.len();
         out.extend_from_slice(&[0x80, 0x80, 0x80, 0x00]);
-        Nested { len_at, body_at: len_at + RESERVED }
+        Nested {
+            len_at,
+            body_at: len_at + RESERVED,
+        }
     }
 
     #[inline]
@@ -283,7 +286,17 @@ mod tests {
 
     #[test]
     fn varint_roundtrip() {
-        for &v in &[0u64, 1, 127, 128, 300, 16383, 16384, u32::MAX as u64, u64::MAX] {
+        for &v in &[
+            0u64,
+            1,
+            127,
+            128,
+            300,
+            16383,
+            16384,
+            u32::MAX as u64,
+            u64::MAX,
+        ] {
             let mut out = Vec::new();
             write_varint(&mut out, v);
             assert_eq!(out.len(), varint_len(v));

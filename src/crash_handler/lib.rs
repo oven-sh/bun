@@ -793,7 +793,7 @@ mod draft {
             Output::disable_scoped_debug_writer();
         }
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = TraceStringBuf::default();
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
@@ -1023,7 +1023,7 @@ mod draft {
                         }
                     }
 
-                    let mut addr_buf: [usize; 20] = [0; 20];
+                    let mut addr_buf: [usize; MAX_FRAMES] = [0; MAX_FRAMES];
                     let trace_buf: StackTrace;
 
                     let trace: &StackTrace = 'blk: {
@@ -1777,7 +1777,7 @@ mod draft {
         let reason =
             CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = TraceStringBuf::default();
         {
             let _panic_guard = PANIC_MUTEX.lock();
             let writer = &mut stderr_writer();
@@ -1813,7 +1813,7 @@ mod draft {
                 let _ = writeln!(writer, "Crashed while {}", action);
             }
 
-            let mut addr_buf: [usize; 20] = [0; 20];
+            let mut addr_buf: [usize; MAX_FRAMES] = [0; MAX_FRAMES];
             let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
             let trace = StackTrace {
                 index: idx,
@@ -2579,6 +2579,11 @@ mod draft {
             }
         }
 
+        /// A longer basename is cut; its start still identifies the image.
+        const MAX_NAME_LEN: usize = 64;
+        /// Marker VLQ, length VLQ, name, and an address VLQ of up to 7 digits.
+        const MAX_ENCODED_LEN: usize = 1 + 2 + Self::MAX_NAME_LEN + 7;
+
         fn write_encoded(self_: Option<&StackLine>, writer: &mut impl Write) -> crate::Result<()> {
             let Some(known) = self_ else {
                 writer.write_all(b"_")?;
@@ -2588,6 +2593,7 @@ mod draft {
             if let Some(object) = &known.object {
                 // The report carries the basename only, which bun.report shows as the frame's package.
                 let name = bun_paths::basename_posix(object);
+                let name = &name[..name.len().min(Self::MAX_NAME_LEN)];
                 writer.write_all(VLQ::encode(1).slice())?;
                 writer
                     .write_all(VLQ::encode(i32::try_from(name.len()).expect("int cast")).slice())?;
@@ -2635,6 +2641,14 @@ mod draft {
         }
     }
 
+    /// Frames a crash captures. An abort inside an addon routinely has more than 20 frames of its own before the first bun one.
+    const MAX_FRAMES: usize = 64;
+    /// The trace string is built in a buffer of this size; `report()` copies it into 4 KB command lines.
+    const TRACE_STRING_CAPACITY: usize = 2048;
+    /// Bytes of the trace string the frames may take; the rest holds the header and the reason, which for a panic is the compressed message.
+    const FRAMES_CAPACITY: usize = TRACE_STRING_CAPACITY / 2;
+    type TraceStringBuf = BoundedArray<u8, TRACE_STRING_CAPACITY>;
+
     struct TraceString<'a> {
         trace: &'a StackTrace<'a>,
         reason: CrashReason,
@@ -2672,11 +2686,17 @@ mod draft {
         write_u64_as_two_vlqs(writer, packed_features as usize)?;
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
-
+        let mut frames = BoundedArray::<u8, FRAMES_CAPACITY>::default();
         for &addr in &opts.trace.instruction_addresses[0..opts.trace.index] {
             let line = StackLine::from_address(addr, &mut name_bytes);
-            StackLine::write_encoded(line.as_ref(), writer)?;
+            let mut frame = BoundedArray::<u8, { StackLine::MAX_ENCODED_LEN }>::default();
+            StackLine::write_encoded(line.as_ref(), frame.writer())?;
+            // Frames past the budget are the outermost ones; dropping them keeps the string decodable.
+            if frames.append_slice(frame.const_slice()).is_err() {
+                break;
+            }
         }
+        writer.write_all(frames.const_slice())?;
 
         writer.write_all(VLQ::ZERO.slice())?;
 

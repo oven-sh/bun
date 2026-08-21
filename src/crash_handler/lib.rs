@@ -1601,9 +1601,7 @@ mod draft {
     static SIGALTSTACK: bun_core::RacyCell<[u8; 512 * 1024]> =
         bun_core::RacyCell::new([0; 512 * 1024]);
 
-    /// The signals `handle_segfault_posix` is installed for. abort() (mimalloc/glibc heap
-    /// corruption, std::terminate) raises SIGABRT and __builtin_trap()/WTF CRASH()/`brk` on
-    /// aarch64 raise SIGTRAP; without handlers they bypass bun.report entirely.
+    /// Signals the handler is installed for. SIGABRT/SIGTRAP cover abort() and traps (#34771).
     #[cfg(unix)]
     const HANDLED_SIGNALS: [c_int; 6] = [
         libc::SIGSEGV,
@@ -1614,9 +1612,7 @@ mod draft {
         libc::SIGTRAP,
     ];
 
-    /// `process.kill()` aimed at the process itself (BunProcess.cpp) restores the default
-    /// disposition of these signals before sending one, so that a signal the user asked for is
-    /// not reported as a crash.
+    /// `process.kill()` (BunProcess.cpp) gives a self-sent one of these its default action first.
     #[cfg(unix)]
     #[unsafe(no_mangle)]
     extern "C" fn CrashHandler__isCrashSignal(signal: c_int) -> bool {

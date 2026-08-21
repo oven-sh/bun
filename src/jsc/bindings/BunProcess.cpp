@@ -4652,17 +4652,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
 #if !OS(WINDOWS)
 extern "C" bool CrashHandler__isCrashSignal(int signalNumber);
 
-// kill(2) delivers to the calling process for its own pid, for 0 (its process group) and for the
-// negated id of its process group. -1 (broadcast) skips the caller on Linux and on the BSDs, also
-// when the caller's process group is 1, e.g. bun as PID 1 of a container.
+// kill(-1) never reaches the caller, not even when the caller's process group is 1, hence pid < -1.
 static bool killReachesThisProcess(int pid, int ownPid)
 {
     return pid == ownPid || pid == 0 || (pid < -1 && pid == -getpgrp());
 }
 
-// A crash-handler signal the process sends to itself asks for that signal's default action.
-// Dying from it is not a Bun crash, so it must not print a crash report or upload one, the same
-// as process.abort(). A JS listener for the signal keeps receiving it, as in node.
+// Same as process.abort(). forwardSignal as the disposition means a JS listener owns the signal.
 static void bypassCrashHandlerForSelfSentSignal(int signalNumber)
 {
     if (!CrashHandler__isCrashSignal(signalNumber))

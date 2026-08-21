@@ -47,20 +47,6 @@ pub struct Theme<'a> {
     pub image_base_dir: Option<&'a [u8]>,
 }
 
-impl<'a> Default for Theme<'a> {
-    fn default() -> Self {
-        Self {
-            light: false,
-            columns: 80,
-            colors: true,
-            hyperlinks: false,
-            kitty_graphics: false,
-            remote_image_paths: None,
-            image_base_dir: None,
-        }
-    }
-}
-
 /// Renderer that only collects image URLs — no output. Used by the CLI
 /// pre-scan pass to decide which remote images to download.
 #[derive(Default)]

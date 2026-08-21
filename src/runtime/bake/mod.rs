@@ -89,13 +89,6 @@ pub struct ServerComponents {
 pub struct ReactFastRefresh {
     pub(crate) import_source: Cow<'static, [u8]>,
 }
-impl Default for ReactFastRefresh {
-    fn default() -> Self {
-        Self {
-            import_source: Cow::Borrowed(b"react-refresh/runtime"),
-        }
-    }
-}
 
 /// `bake.Framework.FileSystemRouterType`. Full body (with `Style` enum and
 /// `from_js`) lives in the gated `bake_body.rs` draft; only the field set
@@ -128,17 +121,6 @@ pub struct Framework {
     pub(crate) server_components: Option<ServerComponents>,
     pub(crate) react_fast_refresh: Option<ReactFastRefresh>,
     pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-}
-impl Default for Framework {
-    fn default() -> Self {
-        Self {
-            is_built_in_react: false,
-            file_system_router_types: Vec::new(),
-            server_components: None,
-            react_fast_refresh: None,
-            built_in_modules: bun_collections::StringArrayHashMap::new(),
-        }
-    }
 }
 
 impl Framework {

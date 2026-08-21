@@ -972,10 +972,6 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     global->onLoadPlugins.clear();
     global->onResolvePlugins.clear();
 
-    delete global->onLoadPlugins.virtualModules;
-    global->onLoadPlugins.virtualModules = nullptr;
-    global->onLoadPlugins.mustDoExpensiveRelativeLookup = false;
-
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

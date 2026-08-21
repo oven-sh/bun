@@ -13,7 +13,7 @@ use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
-    LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
     update_package_json_and_install_with_manager,
 };
 use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
@@ -889,7 +889,6 @@ impl UpdateInteractiveCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;

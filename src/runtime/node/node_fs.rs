@@ -6376,7 +6376,7 @@ impl NodeFS {
     }
 
     /// Gone or not enterable since the parent listed it. Reading a gone directory gives ENOENT too.
-    fn readdir_recursive_skips_subdir(errno: E) -> bool {
+    fn readdir_skips_subdir(errno: E) -> bool {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }
 
@@ -6421,7 +6421,7 @@ impl NodeFS {
         let fd = match open_res {
             Err(err) => {
                 if !is_root {
-                    if Self::readdir_recursive_skips_subdir(err.get_errno()) {
+                    if Self::readdir_skips_subdir(err.get_errno()) {
                         return Ok(());
                     }
                     if root_basename.len() + 1 + basename.as_bytes().len() + 1
@@ -6455,10 +6455,10 @@ impl NodeFS {
 
         loop {
             let current = match iterator.next() {
+                Ok(Some(ent)) => ent,
+                Ok(None) => break,
+                Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => break,
                 Err(err) => {
-                    if !is_root && Self::readdir_recursive_skips_subdir(err.get_errno()) {
-                        break;
-                    }
                     dirent_path_prev.deref();
                     if !is_root
                         && root_basename.len() + 1 + basename.as_bytes().len() + 1
@@ -6472,8 +6472,6 @@ impl NodeFS {
                     }
                     return Err(err.with_path(root_basename));
                 }
-                Ok(None) => break,
-                Ok(Some(ent)) => ent,
             };
             let utf8_name = current.name.slice();
 
@@ -6626,7 +6624,7 @@ impl NodeFS {
                         return Err(err.with_path(args.path.slice()));
                     }
                     match err.get_errno() {
-                        errno if Self::readdir_recursive_skips_subdir(errno) => continue,
+                        errno if Self::readdir_skips_subdir(errno) => continue,
                         _ => {
                             // TODO: propagate file path (removed previously because it leaked the path)
                             return Err(err);
@@ -6649,15 +6647,13 @@ impl NodeFS {
 
             loop {
                 let current = match iterator.next() {
+                    Ok(Some(ent)) => ent,
+                    Ok(None) => break,
+                    Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => break,
                     Err(err) => {
-                        if !is_root && Self::readdir_recursive_skips_subdir(err.get_errno()) {
-                            break;
-                        }
                         dirent_path_prev.deref();
                         return Err(err.with_path(args.path.slice()));
                     }
-                    Ok(None) => break,
-                    Ok(Some(ent)) => ent,
                 };
                 let utf8_name = current.name.slice();
 

@@ -2,8 +2,8 @@ import { spawnSync } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, rmSync, writeFileSync } from "fs";
-import { join } from "path";
 import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import { join } from "path";
 
 let cwd: string;
 

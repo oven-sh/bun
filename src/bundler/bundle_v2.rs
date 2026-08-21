@@ -51,17 +51,14 @@ pub use bv2_impl::JSBundleCompletionTask;
 /// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
 pub use api::JSBundler::FileMap;
 
-/// An onResolve plugin answer for one import record of an importer whose
-/// records may not be on the graph yet (see
-/// `resolve_tasks_waiting_for_import_source_index`).
+/// An onResolve answer, queued in `resolve_tasks_waiting_for_import_source_index`.
 #[derive(Clone, Copy)]
 pub enum PendingImport {
     SourceIndex {
         import_record_index: u32,
         to_source_index: Index,
     },
-    /// `{ path, external: true }`: the record is printed with `path`, whose
-    /// bytes are parked on `BundleV2::free_list`.
+    /// `path` borrows bytes parked on `BundleV2::free_list`.
     ExternalPath {
         import_record_index: u32,
         path: bun_paths::fs::Path<'static>,
@@ -6992,9 +6989,7 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        /// Writes a plugin answer to the importer's record, or queues it for
-        /// `patch_import_record_source_indices` while the importer's records are
-        /// not on the graph yet.
+        /// Defers to `patch_import_record_source_indices` until the importer's records are on the graph.
         fn apply_or_defer_pending_import(&mut self, importer: IndexInt, pending: PendingImport) {
             let import_records = &mut self.graph.ast.items_import_records_mut()[importer as usize];
             if let Some(import_record) = import_records

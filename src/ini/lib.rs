@@ -1653,7 +1653,7 @@ mod draft {
     ) -> Result<PnpmMatcher, FromExprError> {
         let mut buf: Vec<u8> = Vec::new();
 
-        // bun.jsc.initialize(false) is performed lazily inside the regex vtable
+        // `jsc::initialize` is performed lazily inside the regex vtable
         // compile hook (tier-6 owns it).
 
         let mut matchers: Vec<PnpmMatcherEntry> = Vec::new();

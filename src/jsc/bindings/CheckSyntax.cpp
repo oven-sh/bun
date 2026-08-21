@@ -76,9 +76,11 @@ extern "C" int32_t Bun__checkSyntaxForCLI(Zig::GlobalObject* globalObject, const
     // The wrapper puts the source mid-program, where a shebang is a syntax
     // error; the CJS loader strips it before compiling, so do the same here.
     WTF::String body = source;
+    size_t strippedShebangLength = 0;
     if (body.startsWith("#!"_s)) {
         size_t newline = body.find('\n');
-        body = newline == WTF::notFound ? WTF::String(""_s) : body.substring(newline);
+        strippedShebangLength = newline == WTF::notFound ? body.length() : newline;
+        body = body.substring(strippedShebangLength);
     }
 
     JSC::ParserError commonJSError;
@@ -92,6 +94,19 @@ extern "C" int32_t Bun__checkSyntaxForCLI(Zig::GlobalObject* globalObject, const
         JSC::ParserError moduleError;
         if (checkAsModule(moduleError))
             return 0;
+
+        // Both parses failed. The parse that got further into the source was
+        // in the right mode (the other one tripped over `import`/`export` or
+        // over a top-level `return`), so its error is the one about the
+        // user's actual mistake. Offsets are compared in source coordinates:
+        // the CommonJS parse saw the wrapper prefix and not the shebang line.
+        int64_t commonJSErrorOffset = static_cast<int64_t>(commonJSError.token().m_startPosition.offset)
+            - static_cast<int64_t>(wrapperStart.length()) + static_cast<int64_t>(strippedShebangLength);
+        int64_t moduleErrorOffset = moduleError.token().m_startPosition.offset;
+        if (moduleErrorOffset > commonJSErrorOffset) {
+            printSyntaxError(filename, moduleError);
+            return 1;
+        }
     }
 
     printSyntaxError(filename, commonJSError);

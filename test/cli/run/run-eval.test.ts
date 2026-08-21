@@ -423,6 +423,26 @@ describe("--check / -c (syntax check)", () => {
     expect(exitCode).toBe(1);
   });
 
+  // A .js file is parsed as CommonJS and then as an ES module. When both fail,
+  // the error from the parse that got further is the one about the real
+  // mistake on line 3, not the one about line 1's `import` / `return`.
+  test.each([
+    ["ES module", "import x from 'y';\n\nvar foo bar;\n"],
+    ["CommonJS", "return;\n\nvar foo bar;\n"],
+  ])("a .js file with %s syntax reports the error from that parse", (_, contents) => {
+    using dir = tempDir("check-detect", { "bad.js": contents });
+    const file = join(String(dir), "bad.js");
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check", file],
+      env: bunEnv,
+    });
+    const errorOutput = stderr.toString("utf8");
+    expect(errorOutput.startsWith(`${file}:3\n`)).toBe(true);
+    expect(errorOutput).toMatch(/^SyntaxError: Unexpected identifier\b/m);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   test("checks stdin as [stdin]", () => {
     const { stdout, stderr, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "--check"],

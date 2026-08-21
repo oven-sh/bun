@@ -21,6 +21,10 @@ namespace Bun {
 
 using namespace JSC;
 
+// What `require("module").wrapper` reports and every CommonJS module body is wrapped in unless that is overridden.
+static constexpr ASCIILiteral commonJSDefaultWrapperStart = "(function(exports,require,module,__filename,__dirname){"_s;
+static constexpr ASCIILiteral commonJSDefaultWrapperEnd = "})"_s;
+
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);

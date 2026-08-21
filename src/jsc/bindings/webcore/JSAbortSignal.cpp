@@ -129,18 +129,6 @@ template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMG
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSAbortSignal::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalConstructorTableValues, *this);
-    // if (!((&globalObject)->inherits<JSDOMWindowBase>() || (&globalObject)->inherits<JSWorkerGlobalScopeBase>())) {
-    //     auto propertyName = Identifier::fromString(vm, "timeout"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
-    // if (!uncheckedDowncast<JSDOMGlobalObject>(&globalObject)->scriptExecutionContext()->settingsValues().abortSignalAnyOperationEnabled) {
-    //     auto propertyName = Identifier::fromString(vm, "any"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
 }
 
 /* Hash table for prototype */

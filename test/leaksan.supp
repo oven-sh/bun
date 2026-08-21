@@ -85,7 +85,6 @@ leak:JSC::stringProtoFuncReplaceUsingRegExp
 leak:WebCore::parseTypeAndSubtype
 leak:runtime.node.util.parse_args.parseArgs
 leak:JSC::IntlDateTimeFormat::initializeDateTimeFormat
-leak:JSC::TemporalCore::withTimeZone
 leak:WebCore__DOMURL__fileSystemPath
 leak:runtime.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:jsc.web_worker.create
@@ -129,3 +128,23 @@ leak:bun_runtime::cli::multi_run::run
 # NAPI weak finalizers which enqueue Box<NapiFinalizerTask> into the event
 # loop; the loop is already exiting so they never drain.
 leak:napi_internal_enqueue_finalizer
+# test/js/web/temporal/temporal.test.ts
+# TemporalCore::withTimeZone keeps up to 8 open UCalendars in a process-
+# lifetime LazyNeverDestroyed TinyLRUCache, one per time zone ID; LRU
+# eviction ucal_closes them. The TimeZoneCacheEntry that owns each UCalendar
+# is WTF_MAKE_TZONE_ALLOCATED (bmalloc), which LSAN does not scan as a root
+# region, so the libc-allocated UCalendar it holds is reported as a direct
+# leak even though it is reachable and bounded.
+leak:TemporalCore::withTimeZone
+# test/js/bun/bun-object/deep-equals-temporal.test.ts
+# The calendar twin of withTimeZone above: up to 8 open UCalendars in a
+# process-lifetime LazyNeverDestroyed TinyLRUCache, one per calendar ID
+# (non-ISO arithmetic, plus pure-ISO PlainDateTime.prototype.with); LRU
+# eviction ucal_closes them. The CalendarCacheEntry that owns each UCalendar
+# is WTF_MAKE_TZONE_ALLOCATED (bmalloc), which LSAN does not scan as a root
+# region, so the libc-allocated UCalendar (and the ICU TimeZone inside it)
+# is reported as a direct leak even though it is reachable and bounded.
+# Anchored on the builder frame, not withCalendar itself, so a real leak in
+# one of the op lambdas withCalendar runs would still be reported
+# (withTimeZone has no builder frame; its ucal_open is inline).
+leak:TemporalCore::buildCalendarTemplate

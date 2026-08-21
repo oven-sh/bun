@@ -20,6 +20,7 @@
 
 #include "config.h"
 #include "JSDOMURL.h"
+#include "BunClientData.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -166,7 +167,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     // An empty base string must still be parsed (and fail) per the URL spec.
-    auto object = base.isNull() ? DOMURL::create(WTF::move(url)) : DOMURL::create(WTF::move(url), WTF::move(base));
+    auto object = base.isNull() ? DOMURL::create(WTF::move(url)) : DOMURL::create(WTF::move(url), WTF::move(base), &WebCore::clientData(vm)->urlBaseCache());
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
@@ -177,6 +178,12 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
     RETURN_IF_EXCEPTION(throwScope, {});
     auto* jsDOMURL = uncheckedDowncast<JSDOMURL>(jsValue.asCell());
     vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
+    if (argument0.value().isString()) {
+        // An already-canonical URL parses to the argument's own StringImpl; hand that JSString back from href.
+        JSString* input = asString(argument0.value());
+        if (input->tryGetValueImpl() == jsDOMURL->wrapped().href().string().impl())
+            jsDOMURL->m_href.set(vm, jsDOMURL, input);
+    }
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSDOMURLDOMConstructorConstruct, JSDOMURLDOMConstructor::construct);
@@ -271,12 +278,20 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMURLConstructor, (JSGlobalObject * lexicalGlobalObj
     return JSValue::encode(JSDOMURL::getConstructor(vm, prototype->globalObject()));
 }
 
-static inline JSValue jsDOMURL_hrefGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
+JSString* JSDOMURL::href(JSGlobalObject& lexicalGlobalObject) const
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.href())));
+    const String& href = wrapped().href().string();
+    if (JSString* cached = m_href.get(); cached && cached->tryGetValueImpl() == href.impl()) [[likely]]
+        return cached;
+    JSString* string = JSC::jsString(vm, href);
+    m_href.set(vm, this, string);
+    return string;
+}
+
+static inline JSValue jsDOMURL_hrefGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
+{
+    return thisObject.href(lexicalGlobalObject);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_href, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -692,9 +707,20 @@ static JSObject* jsDOMURLMakeURLContext(JSGlobalObject* lexicalGlobalObject, DOM
     unsigned hostEnd = position + (hasCredentials ? 1 : 0) + hostname.length();
     uint32_t portNumber = portStr.isEmpty() ? kOmittedComponent : WTF::parseInteger<uint32_t>(portStr).value_or(kOmittedComponent);
     unsigned pathnameStart = hostEnd + (portStr.isEmpty() ? 0 : 1 + portStr.length());
+    // URL Standard section 4.5 step 3: null host + empty first path segment
+    // serializes with a /. guard that the pathname getter omits, shifting
+    // everything from the pathname on by 2.
+    if (!hasSlashes && pathname.startsWith("//"_s) && StringView(href).substring(protocolEnd).startsWith("/."_s))
+        pathnameStart += 2;
     unsigned pathnameEnd = pathnameStart + pathname.length();
-    uint32_t searchStart = search.isEmpty() ? kOmittedComponent : pathnameEnd;
-    uint32_t hashStart = hash.isEmpty() ? kOmittedComponent : pathnameEnd + search.length();
+    // .search/.hash return "" for both a null and an empty-string component,
+    // but the href serializer emits the bare "?"/"#" for empty-but-present;
+    // derive presence from the href (a raw '?'/'#' is always the delimiter
+    // there) so the offsets match ada's.
+    size_t hashAt = href.find('#');
+    uint32_t hashStart = hashAt == notFound ? kOmittedComponent : static_cast<uint32_t>(hashAt);
+    size_t queryEnd = hashAt == notFound ? href.length() : hashAt;
+    uint32_t searchStart = (queryEnd > pathnameEnd && href[pathnameEnd] == '?') ? pathnameEnd : kOmittedComponent;
 
     // inspect() prints `URLContext { ... }` via getConstructorName, which
     // requires `ctx instanceof ctor`, so ctor.prototype must be the object
@@ -786,7 +812,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_parseBody(JSC::JSG
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLInterface<DOMURL>>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, DOMURL::parse(WTF::move(url), WTF::move(base)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLInterface<DOMURL>>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, DOMURL::parse(WTF::move(url), WTF::move(base), &WebCore::clientData(vm)->urlBaseCache()))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_parse, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -808,7 +834,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_canParseBody(JSC::
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, DOMURL::canParse(WTF::move(url), WTF::move(base)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, DOMURL::canParse(WTF::move(url), WTF::move(base), &WebCore::clientData(vm)->urlBaseCache()))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_canParse, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -822,8 +848,7 @@ static inline JSC::EncodedJSValue jsDOMURLPrototypeFunction_toJSONBody(JSC::JSGl
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUSVString>(*lexicalGlobalObject, throwScope, impl.toJSON())));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis->href(*lexicalGlobalObject)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -843,8 +868,7 @@ static inline JSC::EncodedJSValue jsDOMURLPrototypeFunction_toStringBody(JSC::JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUSVString>(*lexicalGlobalObject, throwScope, impl.href())));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis->href(*lexicalGlobalObject)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -869,6 +893,7 @@ void JSDOMURL::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_searchParams);
+    visitor.append(thisObject->m_href);
     visitor.reportExtraMemoryVisited(thisObject->protectedWrapped()->memoryCostForGC());
 }
 
@@ -881,25 +906,6 @@ void JSDOMURL::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
-}
-
-JSDOMURLOwner::~JSDOMURLOwner()
-{
-}
-
-bool JSDOMURLOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSDOMURLOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsDOMURL = static_cast<JSDOMURL*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsDOMURL->wrapped(), jsDOMURL);
 }
 
 #if ENABLE(BINDING_INTEGRITY)

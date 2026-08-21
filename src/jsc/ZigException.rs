@@ -2,7 +2,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::MaybeUninit;
 use core::ptr;
 
-use crate::schema_api as api;
+use crate::exception_list;
 use bun_core::String;
 use bun_url::URL as ZigURL;
 
@@ -86,45 +86,24 @@ impl ZigException {
 
     pub(crate) fn add_to_error_list(
         &mut self,
-        error_list: &mut Vec<api::JsException>,
+        error_list: &mut Vec<exception_list::JsException>,
         root_path: &[u8],
         origin: Option<&ZigURL>,
-    ) -> Result<(), bun_alloc::AllocError> {
-        let name_slice = self.name.to_utf8();
-        let message_slice = self.message.to_utf8();
+    ) {
+        let name = self.name.to_utf8();
+        let message = self.message.to_utf8();
 
-        let name = name_slice.slice();
-        let message = message_slice.slice();
-
-        let mut is_empty = true;
-        let mut api_exception = api::JsException {
-            // JSRuntimeType/JSErrorCode are transparent newtypes over u16/u8
-            // (non-exhaustive enums).
-            runtime_type: self.runtime_type.0,
-            code: u16::from(self.r#type.0),
-            ..Default::default()
-        };
-
-        if !name.is_empty() {
-            api_exception.name = Box::<[u8]>::from(name);
-            is_empty = false;
+        if name.slice().is_empty() && message.slice().is_empty() && self.stack.frames_len == 0 {
+            return;
         }
 
-        if !message.is_empty() {
-            api_exception.message = Box::<[u8]>::from(message);
-            is_empty = false;
-        }
-
-        if self.stack.frames_len > 0 {
-            api_exception.stack = self.stack.to_api(root_path, origin)?;
-            is_empty = false;
-        }
-
-        if !is_empty {
-            error_list.push(api_exception);
-        }
-
-        Ok(())
+        error_list.push(exception_list::JsException {
+            name: Box::from(name.slice()),
+            message: Box::from(message.slice()),
+            runtime_type: self.runtime_type,
+            code: self.r#type,
+            stack: self.stack.snapshot(root_path, origin),
+        });
     }
 }
 

@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
 import fs from "node:fs/promises";
 import { join } from "path";
 
@@ -331,6 +331,31 @@ describe("flags", () => {
     });
   }
 
+  // The destination directory ends `headroom` bytes short of the path buffer, so it still fits,
+  // but the longer "/<name>-<version>.tgz" appended to it does not. Windows command lines cannot
+  // carry an argument anywhere near its path buffer size.
+  test.skipIf(isWindows)("--destination with no room left for the tarball name", async () => {
+    const pathMax = isLinux ? 4096 : 1024;
+    const headroom = 100;
+    const name = `pack-dest-too-long-${Buffer.alloc(2 * headroom, "n").toString()}`;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name,
+          version: "1.0.0",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    // packageDir + "/" + filler is `headroom` bytes short of the buffer
+    const filler = Buffer.alloc(pathMax - headroom - Buffer.byteLength(packageDir) - 1, "d").toString();
+    const dest = join(packageDir, filler);
+    const { err } = await packExpectError(packageDir, bunEnv, `--destination=${dest}`);
+    expect(err).toContain(`error: archive destination name too long: "${dest}/${name}-1.0.0.tgz"\n`);
+  });
+
   const filenameTests = [
     {
       filename: "test.tgz",
@@ -394,7 +419,12 @@ describe("flags", () => {
       write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
     ]);
 
-    expect(async () => await pack(packageDir, bunEnv, "--filename=test.tgz", "--destination=packed")).toThrowError();
+    const { err } = await packExpectError(packageDir, bunEnv, "--filename=test.tgz", "--destination=packed");
+    expect(err).toContain(
+      'error: cannot use both filename and destination at the same time with tarball: filename "test.tgz" and destination "packed"',
+    );
+    expect(await exists(join(packageDir, "test.tgz"))).toBeFalse();
+    expect(await exists(join(packageDir, "packed"))).toBeFalse();
   });
 
   test("--ignore-scripts", async () => {
@@ -1056,6 +1086,37 @@ describe("bundledDependnecies", () => {
     ]);
   });
 
+  test("scoped names match on scope and name together", async () => {
+    // `bundled` exists unscoped, in @scope and in @other; only the first two are bundled.
+    // @scope/not-bundled shares its scope directory with a bundled dep.
+    const packages = ["bundled", "@scope/bundled", "@scope/not-bundled", "@other/bundled"];
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bundled-same-name-across-scopes",
+          version: "1.0.0",
+          dependencies: Object.fromEntries(packages.map(name => [name, "1.0.0"])),
+          bundledDependencies: ["@scope/bundled", "bundled"],
+        }),
+      ),
+      ...packages.map(name =>
+        write(join(packageDir, "node_modules", name, "package.json"), JSON.stringify({ name, version: "1.0.0" })),
+      ),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv);
+    expect(out).toContain("Total files: 3");
+    expect(out).toContain("Bundled deps: 2");
+
+    const tarball = readTarball(join(packageDir, "pack-bundled-same-name-across-scopes-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/node_modules/@scope/bundled/package.json" },
+      { "pathname": "package/node_modules/bundled/package.json" },
+    ]);
+  });
+
   test("ignore deps that aren't directories", async () => {
     await Promise.all([
       write(
@@ -1405,6 +1466,26 @@ describe(".gitignore/.npmignore", () => {
     });
   }
 
+  for (const ignoreFile of [".gitignore", ".npmignore"]) {
+    test(`reports which ${ignoreFile} could not be read`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-ignore-unreadable",
+            version: "1.0.0",
+          }),
+        ),
+        write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
+        // a directory where the ignore file is expected: opening it succeeds, reading it fails
+        mkdir(join(packageDir, "subdir", ignoreFile), { recursive: true }),
+      ]);
+
+      const { err } = await packExpectError(packageDir, bunEnv);
+      expect(err).toContain(`EISDIR: failed to read ${ignoreFile} at: "${join(packageDir, "subdir", ignoreFile)}"\n`);
+    });
+  }
+
   test("excludes files recursively", async () => {
     await Promise.all([
       write(
@@ -1631,14 +1712,14 @@ test("$npm_command is accurate", async () => {
   expect(p.out.split("\n")).toEqual([
     `bun pack ${Bun.version_with_sha}`,
     ``,
-    `packed 94B package.json`,
+    `packed 106B package.json`,
     ``,
     `pack-command-1.1.1.tgz`,
     ``,
     `Total files: 1`,
     expect.stringContaining(`Shasum: `),
     expect.stringContaining(`Integrity: sha512-`),
-    `Unpacked size: 94B`,
+    `Unpacked size: 106B`,
     expect.stringContaining(`Packed size: `),
     ``,
     `pack`,
@@ -1662,14 +1743,14 @@ test("$npm_lifecycle_event is accurate", async () => {
   expect(p.out.split("\n")).toEqual([
     `bun pack ${Bun.version_with_sha}`,
     ``,
-    `packed 104B package.json`,
+    `packed 116B package.json`,
     ``,
     `pack-lifecycle-1.1.1.tgz`,
     ``,
     `Total files: 1`,
     expect.stringContaining(`Shasum: `),
     expect.stringContaining(`Integrity: sha512-`),
-    `Unpacked size: 104B`,
+    `Unpacked size: 116B`,
     expect.stringContaining(`Packed size: `),
     ``,
     `postpack`,

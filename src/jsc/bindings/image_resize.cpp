@@ -25,6 +25,7 @@
 #define HWY_TARGET_INCLUDE "image_resize.cpp"
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
+#include "highway_dispatch.h"
 // clang-format on
 
 #include <cmath>
@@ -527,8 +528,8 @@ int bun_image_resize_rgba8(const uint8_t* src, int32_t src_w, int32_t src_h,
     buildWeights(filter_kind, src_w, dst_w, xspans, xw, static_cast<int32_t>(L.wsx));
     buildWeights(filter_kind, src_h, dst_h, yspans, yw, static_cast<int32_t>(L.wsy));
 
-    HWY_DYNAMIC_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans, xw, L.wsx);
-    HWY_DYNAMIC_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans, yw, L.wsy);
+    BUN_HWY_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans, xw, L.wsx);
+    BUN_HWY_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans, yw, L.wsy);
     return 0;
 }
 
@@ -537,13 +538,13 @@ void bun_image_rotate_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* d
 {
     switch (degrees) {
     case 90:
-        HWY_DYNAMIC_DISPATCH(Rotate90Impl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(Rotate90Impl)(src, w, h, dst);
         break;
     case 180:
-        HWY_DYNAMIC_DISPATCH(Rotate180Impl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(Rotate180Impl)(src, w, h, dst);
         break;
     case 270:
-        HWY_DYNAMIC_DISPATCH(Rotate270Impl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(Rotate270Impl)(src, w, h, dst);
         break;
     default:
         std::memcpy(dst, src, static_cast<size_t>(w) * h * 4);
@@ -553,20 +554,20 @@ void bun_image_rotate_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* d
 void bun_image_flip_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* dst, int32_t horizontal)
 {
     if (horizontal)
-        HWY_DYNAMIC_DISPATCH(FlipHImpl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(FlipHImpl)(src, w, h, dst);
     else
-        HWY_DYNAMIC_DISPATCH(FlipVImpl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(FlipVImpl)(src, w, h, dst);
 }
 
 void bun_image_modulate_rgba8(uint8_t* buf, size_t len, float brightness, float saturation)
 {
-    HWY_DYNAMIC_DISPATCH(ModulateImpl)(buf, len, brightness, saturation);
+    BUN_HWY_DISPATCH(ModulateImpl)(buf, len, brightness, saturation);
 }
 
 uint32_t bun_image_nearest_palette(const uint8_t* palette, uint32_t k,
     int32_t r, int32_t g, int32_t b, int32_t a)
 {
-    return HWY_DYNAMIC_DISPATCH(NearestPaletteImpl)(palette, k, r, g, b, a);
+    return BUN_HWY_DISPATCH(NearestPaletteImpl)(palette, k, r, g, b, a);
 }
 
 } // extern "C"

@@ -12,7 +12,6 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQue
 
 pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
 pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
-use bun_sql::shared::column_identifier::ColumnIdentifier;
 
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
@@ -21,12 +20,20 @@ bun_core::declare_scope!(PostgresDataCell, visible);
 
 fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     let len = hex.len() / 2;
-    let mut buf = vec![0u8; len].into_boxed_slice();
-    // errdefer free(buf) → Box drops on `?`
-
-    let written = bun_core::decode_hex_to_bytes(&mut buf, hex)
-        .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-    let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
+    let mut buf: Vec<u8> = Vec::new();
+    buf.try_reserve_exact(len)
+        .map_err(|_| AnyPostgresError::OutOfMemory)?;
+    // SAFETY: the decoder only writes into the spare bytes and returns how many it filled.
+    let written = unsafe {
+        bun_core::vec::fill_spare(&mut buf, 0, |spare| {
+            match bun_core::decode_hex_to_bytes(&mut spare[..len], hex) {
+                Ok(written) => (written, Ok(written)),
+                Err(_) => (0, Err(AnyPostgresError::InvalidByteSequence)),
+            }
+        })
+    }?;
+    // `SQLDataCell::deinit` frees this as a `Box<[u8]>` of exactly `written` bytes.
+    let ptr = bun_core::heap::into_raw(buf.into_boxed_slice()).cast::<u8>();
 
     Ok(SQLDataCell {
         tag: Tag::Bytea,
@@ -1272,20 +1279,10 @@ impl<'a> Putter<'a> {
             };
         }
         self.count += 1;
-        cell.index = match &field.name_or_index {
-            // The indexed columns can be out of order.
-            ColumnIdentifier::Index(i) => *i,
-            _ => index,
-        };
-
         // TODO: when duplicate and we know the result will be an object
         // and not a .values() array, we can discard the data
         // immediately.
-        cell.is_indexed_column = match &field.name_or_index {
-            ColumnIdentifier::Duplicate => 2,
-            ColumnIdentifier::Index(_) => 1,
-            ColumnIdentifier::Name(_) => 0,
-        };
+        cell.set_column(index, &field.name_or_index);
         Ok(true)
     }
 

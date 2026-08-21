@@ -56,10 +56,12 @@ class CryptoAlgorithmParameters;
 class CryptoKey;
 class DeferredPromise;
 
-enum class CryptoAlgorithmIdentifier : uint8_t;
-
-class SubtleCrypto : public ContextDestructionObserver, public RefCounted<SubtleCrypto>, public CanMakeWeakPtr<SubtleCrypto> {
+class SubtleCrypto : public ContextDestructionObserver, public RefCounted<SubtleCrypto> {
 public:
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     static Ref<SubtleCrypto> create(ScriptExecutionContext* context) { return adoptRef(*new SubtleCrypto(context)); }
     ~SubtleCrypto();
 
@@ -99,7 +101,6 @@ public:
 private:
     explicit SubtleCrypto(ScriptExecutionContext*);
 
-    void addAuthenticatedEncryptionWarningIfNecessary(CryptoAlgorithmIdentifier);
     inline friend RefPtr<DeferredPromise> getPromise(DeferredPromise*, WeakPtr<SubtleCrypto>);
 
     Ref<WorkQueue> m_workQueue;

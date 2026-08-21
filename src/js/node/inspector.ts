@@ -423,6 +423,25 @@ class Session extends EventEmitter {
   // JSC has no counter-reset API, so subtract the previous take instead.
   #coverageBaseline: Map<string, number> = new Map();
 
+  // Report each block's count relative to the baseline, and make the raw
+  // counts the new baseline.
+  #rebaseCoverage(scripts: any[]) {
+    const baseline = this.#coverageBaseline;
+    for (const script of scripts) {
+      for (const block of script.blocks) {
+        const key = `${script.scriptId}:${block[0]}:${block[1]}`;
+        const raw = block[2];
+        block[2] = Math.max(0, raw - (baseline.$get(key) ?? 0));
+        baseline.$set(key, raw);
+      }
+    }
+  }
+
+  #snapshotCoverageBaseline() {
+    const scripts = collectCoverageScripts();
+    if (!(scripts instanceof Error)) this.#rebaseCoverage(scripts);
+  }
+
   connect() {
     if (this.#connected) {
       throw $ERR_INSPECTOR_ALREADY_CONNECTED();
@@ -571,7 +590,12 @@ class Session extends EventEmitter {
         }
         this.#preciseCoverageCallCount = !!(params as any)?.callCount;
         this.#preciseCoverageDetailed = !!(params as any)?.detailed;
+        // Counts start from zero here: the VM's profiler is never torn down once
+        // enabled (see JSInspectorProfiler.cpp), so whatever it accumulated
+        // before this start — an earlier session, or the window since a
+        // stopPreciseCoverage — becomes the baseline the next take subtracts.
         this.#coverageBaseline.$clear();
+        this.#snapshotCoverageBaseline();
         // CDP: monotonic seconds since an arbitrary origin (V8 uses TimeTicks).
         return { timestamp: performance.now() / 1000 };
       }
@@ -595,15 +619,7 @@ class Session extends EventEmitter {
         // second take reports the delta. JSC has no counter reset, so subtract
         // the previous take's raw block counts (function-level call counts are
         // derived from the entry block, so they follow automatically).
-        const baseline = this.#coverageBaseline;
-        for (const script of scripts) {
-          for (const block of script.blocks) {
-            const key = `${script.scriptId}:${block[0]}:${block[1]}`;
-            const raw = block[2];
-            block[2] = Math.max(0, raw - (baseline.$get(key) ?? 0));
-            baseline.$set(key, raw);
-          }
-        }
+        this.#rebaseCoverage(scripts);
         return {
           result: buildScriptCoverageList(scripts, this.#preciseCoverageCallCount, this.#preciseCoverageDetailed),
           timestamp: performance.now() / 1000,

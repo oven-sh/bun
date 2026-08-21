@@ -206,18 +206,6 @@ void JSWasmStreamingCompiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSWasmStreamingCompilerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor&, ASCIILiteral*)
-{
-    return false;
-}
-
-void JSWasmStreamingCompilerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsWasmStreamingCompiler = static_cast<JSWasmStreamingCompiler*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsWasmStreamingCompiler->wrapped(), jsWasmStreamingCompiler);
-}
-
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Wasm::StreamingCompiler>&& impl)
 {
     return createWrapper<Wasm::StreamingCompiler>(globalObject, WTF::move(impl));

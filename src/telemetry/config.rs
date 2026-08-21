@@ -9,8 +9,6 @@ use crate::{Instrument, Sampler};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Protocol {
     HttpProtobuf,
-    HttpJson,
-    Grpc,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -51,7 +49,6 @@ pub struct Config {
     pub capture_db_statement: bool,
     /// Request headers to record as `http.request.header.<name>` (lowercase).
     pub capture_request_headers: Vec<String>,
-    pub capture_response_headers: Vec<String>,
 }
 
 impl Default for Config {
@@ -78,7 +75,6 @@ impl Default for Config {
             limits: DEFAULT_LIMITS,
             capture_db_statement: true,
             capture_request_headers: Vec::new(),
-            capture_response_headers: Vec::new(),
         }
     }
 }
@@ -282,12 +278,14 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
 
     // Exporter selection.
     let mut want_otlp = true;
-    let preset = get("BUN_OTEL_EXPORTER").or_else(|| {
-        bunfig
-            .and_then(|b| b.exporter.clone())
-            .map(|s| s.into_bytes())
-    });
-    if let Some(v) = preset {
+    let preset = get("BUN_OTEL_EXPORTER")
+        .map(|v| ("BUN_OTEL_EXPORTER", v))
+        .or_else(|| {
+            bunfig
+                .and_then(|b| b.exporter.clone())
+                .map(|s| ("bunfig [telemetry] exporter", s.into_bytes()))
+        });
+    if let Some((source, v)) = preset {
         for name in bun_core::strings::split(&v, b",") {
             let name = name.trim_ascii();
             if name.is_empty() {
@@ -303,7 +301,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             };
             match crate::presets::resolve(&input, &|k| get(k).map(|v| s(&v))) {
                 Ok(x) => c.otlp_exporters.push(x),
-                Err(e) => warnings.push(format!("BUN_OTEL_EXPORTER: {e}")),
+                Err(e) => warnings.push(format!("{source}: {e}")),
             }
         }
     }
@@ -329,9 +327,11 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             .as_deref()
         {
             None | Some(b"" | b"http/protobuf") => Protocol::HttpProtobuf,
-            Some(b"http/json") => Protocol::HttpJson,
-            Some(b"grpc") => {
-                warnings.push("OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported yet; using http/protobuf on the same endpoint".into());
+            Some(v @ (b"http/json" | b"grpc")) => {
+                warnings.push(format!(
+                    "OTEL_EXPORTER_OTLP_PROTOCOL={} is not supported yet; using http/protobuf on the same endpoint",
+                    s(v)
+                ));
                 Protocol::HttpProtobuf
             }
             Some(other) => {
@@ -460,11 +460,8 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             .filter(|h| !h.is_empty())
             .collect();
     }
-    if let Some(v) = get("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE") {
-        c.capture_response_headers = bun_core::strings::split(&v, b",")
-            .map(|h| s(h).to_ascii_lowercase())
-            .filter(|h| !h.is_empty())
-            .collect();
+    if get("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE").is_some() {
+        warnings.push("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE is not supported yet; response headers are not recorded".into());
     }
 
     EnvConfig {

@@ -242,7 +242,8 @@ impl Processor {
                 // First batch for this scope since the last export: size for a
                 // full export batch so appends don't regrow.
                 let per_span = buf.len() / (batch.count.max(1) as usize) + 1;
-                dst.reserve(per_span * (cfg.max_export_batch_size as usize + LOCAL_FLUSH_HEADROOM));
+                let want = per_span * (cfg.max_export_batch_size as usize + LOCAL_FLUSH_HEADROOM);
+                dst.reserve(want.min(8 << 20));
             }
             dst.extend_from_slice(buf);
         }

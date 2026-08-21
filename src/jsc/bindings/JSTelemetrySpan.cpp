@@ -15,6 +15,7 @@
 #include <JavaScriptCore/Lookup.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/text/StringView.h>
+#include <limits>
 
 // ─── Rust ABI (src/runtime/telemetry/span.rs) ───
 
@@ -186,7 +187,9 @@ static inline const StringImpl* implOf(JSGlobalObject* globalObject, JSString* s
 {
     if (const StringImpl* impl = str->tryGetValueImpl())
         return impl;
-    return str->value(globalObject).data.impl();
+    // Null only when rope resolution threw OOM; callers never see nullptr.
+    const StringImpl* impl = str->value(globalObject).data.impl();
+    return impl ? impl : StringImpl::empty();
 }
 
 static const char hexDigits[] = "0123456789abcdef";
@@ -219,24 +222,28 @@ static bool parseHex(StringView s, uint8_t* out, size_t n)
     return anySet;
 }
 
-// OTel-API `TimeInput` (epoch-ms number, Date, or [sec, ns]) → epoch ns; 0 = now / invalid.
+static inline uint64_t msToNs(double ms)
+{
+    return ms > 0 && ms < 1.8e13 ? static_cast<uint64_t>(ms * 1e6) : 0;
+}
+
+// OTel-API `TimeInput` (epoch-ms number, Date, or [sec, ns]) → epoch ns; 0 = now / invalid (incl. non-finite / out of u64 range).
 static uint64_t timeInputToNs(JSGlobalObject* globalObject, JSValue v)
 {
-    if (v.isNumber()) {
-        double ms = v.asNumber();
-        return ms > 0 ? static_cast<uint64_t>(ms * 1e6) : 0;
-    }
+    if (v.isNumber())
+        return msToNs(v.asNumber());
     if (!v.isCell())
         return 0;
-    if (auto* date = dynamicDowncast<DateInstance>(v.asCell())) {
-        double ms = date->internalNumber();
-        return ms > 0 ? static_cast<uint64_t>(ms * 1e6) : 0;
-    }
+    if (auto* date = dynamicDowncast<DateInstance>(v.asCell()))
+        return msToNs(date->internalNumber());
     if (auto* arr = dynamicDowncast<JSArray>(v.asCell())) {
-        if (arr->length() >= 2) {
+        if (arr->length() >= 2 && arr->canGetIndexQuickly(0u) && arr->canGetIndexQuickly(1u)) {
             JSValue s = arr->getIndexQuickly(0), n = arr->getIndexQuickly(1);
-            if (s.isNumber() && n.isNumber())
-                return static_cast<uint64_t>(s.asNumber()) * 1000000000ull + static_cast<uint64_t>(n.asNumber());
+            if (s.isNumber() && n.isNumber()) {
+                double ds = s.asNumber(), dn = n.asNumber();
+                if (ds >= 0 && ds < 1.8e10 && dn >= 0 && dn < 1e12)
+                    return static_cast<uint64_t>(ds) * 1000000000ull + static_cast<uint64_t>(dn);
+            }
         }
     }
     (void)globalObject;
@@ -291,7 +298,8 @@ static bool fillValue(JSGlobalObject* globalObject, AttrScratch& sc, BunAttrRef&
         }
 #endif
         auto* big = v.asHeapBigInt();
-        if (big->length() <= 1) {
+        if (JSBigInt::compare(big, std::numeric_limits<int64_t>::min()) != JSBigInt::ComparisonResult::LessThan
+            && JSBigInt::compare(big, std::numeric_limits<int64_t>::max()) != JSBigInt::ComparisonResult::GreaterThan) {
             out.kind = 2;
             out.u.integer = JSBigInt::toBigInt64(big);
             return true;
@@ -312,7 +320,8 @@ static bool fillValue(JSGlobalObject* globalObject, AttrScratch& sc, BunAttrRef&
             sc.arrayItems.grow(start + n);
             unsigned w = 0;
             for (unsigned i = 0; i < n; ++i) {
-                JSValue item = arr->getIndex(globalObject, i);
+                // No getters: nothing may run JS (or GC away a returned string) while refs are raw pointers.
+                JSValue item = arr->canGetIndexQuickly(i) ? arr->getIndexQuickly(i) : JSValue();
                 BunAttrRef ref;
                 if (item && fillValue(globalObject, sc, ref, item, false))
                     sc.arrayItems[start + w++] = ref;
@@ -554,7 +563,7 @@ static unsigned gatherAttrsFast(JSGlobalObject* globalObject, AttrScratch& sc, J
         }
         for (unsigned j = 0; j < out.size(); ++j) {
             auto& e = out[j];
-            if (e.keyLen == key->length() && equalSmall(e.keyPtr, key->is8Bit() ? static_cast<const void*>(key->span8().data()) : static_cast<const void*>(key->span16().data()), key->is8Bit() ? key->length() : key->length() * 2)) {
+            if (e.keyLen == key->length() && e.keyIs16 == !key->is8Bit() && equalSmall(e.keyPtr, key->is8Bit() ? static_cast<const void*>(key->span8().data()) : static_cast<const void*>(key->span16().data()), key->is8Bit() ? key->length() : key->length() * 2)) {
                 out.removeAt(j);
                 break;
             }
@@ -687,7 +696,8 @@ static void inheritNativePropagation(VM& vm, Zig::GlobalObject* globalObject, JS
     String ts, bg;
     Vector<uint8_t, 256> buf;
     for (uint8_t which : { 't', 'b' }) {
-        buf.grow(512);
+        if (buf.size() < 512)
+            buf.grow(512);
         size_t n = Bun__Telemetry__nativePropagation(native, which, buf.begin(), buf.size());
         if (n > buf.size()) {
             buf.grow(n);
@@ -1071,7 +1081,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
             uint8_t which = i == 0 ? 't' : 'b';
             if (!(flags & (i == 0 ? 1u : 2u)))
                 continue;
-            tmp.grow(256);
+            if (tmp.size() < 256)
+                tmp.grow(256);
             size_t n = Bun__Telemetry__nativePropagation(span->m_native, which, tmp.begin(), tmp.size());
             if (n > tmp.size()) {
                 tmp.grow(n);
@@ -1339,6 +1350,7 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
     Vector<BunEventRef, 4> events;
     Vector<BunLinkRef, 4> links;
     Vector<Vector<BunAttrRef, 16>, 4> nestedAttrs;
+    Vector<size_t, 8> eventAttrIdx, linkAttrIdx;
     JSObject* extra = extraV.getObject();
     auto getField = [&](ASCIILiteral n) -> JSValue {
         JSValue v = extra->getDirect(vm, Identifier::fromString(vm, n));
@@ -1383,6 +1395,7 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
                 gatherAttrs(globalObject, sc, flat, na);
                 ref.nAttrs = na.size();
             }
+            eventAttrIdx.append(nestedAttrs.size() - n + i);
             events.append(ref);
         }
     }
@@ -1404,6 +1417,7 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
                 gatherAttrs(globalObject, sc, flat, na);
                 ref.nAttrs = na.size();
             }
+            linkAttrIdx.append(base + i);
             links.append(ref);
         }
     }
@@ -1412,16 +1426,15 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
 
     // All gathering done: vectors are stable, patch item pointers.
     patchArrays(sc, attrs);
-    {
-        size_t k = 0;
-        for (size_t ei = 0; k < nestedAttrs.size() && ei < events.size(); ++k, ++ei) {
-            patchArrays(sc, nestedAttrs[k]);
-            events[ei].attrs = nestedAttrs[k].begin();
-        }
-        for (size_t li = 0; k < nestedAttrs.size() && li < links.size(); ++k, ++li) {
-            patchArrays(sc, nestedAttrs[k]);
-            links[li].attrs = nestedAttrs[k].begin();
-        }
+    for (size_t ei = 0; ei < events.size(); ++ei) {
+        auto& na = nestedAttrs[eventAttrIdx[ei]];
+        patchArrays(sc, na);
+        events[ei].attrs = na.begin();
+    }
+    for (size_t li = 0; li < links.size(); ++li) {
+        auto& na = nestedAttrs[linkAttrIdx[li]];
+        patchArrays(sc, na);
+        links[li].attrs = na.begin();
     }
     desc.attrs = attrs.begin();
     desc.nAttrs = attrs.size();

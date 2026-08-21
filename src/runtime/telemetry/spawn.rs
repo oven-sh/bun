@@ -24,7 +24,7 @@ fn set_command_attrs(s: &mut Slot, argv: &[*const c_char]) {
     s.push_attribute(b"process.executable.path", &Value::Str(exe), l);
     let vals: Vec<Value<'_>> = owned
         .iter()
-        .map(|a| Value::Str(if a.len() > 256 { &a[..256] } else { a }))
+        .map(|a| Value::Str(bun_telemetry::otlp::truncate_utf8(a, 256)))
         .collect();
     s.push_attribute(b"process.command_args", &Value::Array(&vals), l);
 }
@@ -47,7 +47,7 @@ pub fn begin(stub: SpanStub, argv: &[*const c_char], pid: i64) -> NativeSpan {
 }
 
 /// The spawn itself failed.
-pub fn failed(stub: &SpanStub, argv: &[*const c_char], error: &str) {
+pub fn failed(stub: &SpanStub, argv: &[*const c_char], error: &[u8]) {
     if !stub.is_recording() {
         return;
     }
@@ -60,7 +60,7 @@ pub fn failed(stub: &SpanStub, argv: &[*const c_char], error: &str) {
     pool::with(span, |s| set_command_attrs(s, argv));
     super::end_native(span, 0, |w| {
         w.attr("error.type", error);
-        w.status(StatusCode::Error, error.as_bytes());
+        w.status(StatusCode::Error, error);
     });
 }
 

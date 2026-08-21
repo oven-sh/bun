@@ -191,13 +191,14 @@ impl JSMySQLQuery {
         }
         this.set_target(target);
         if bun_telemetry::enabled(bun_telemetry::Instrument::Sql) {
+            let conn = connection.connection.get();
             this.otel.set(bun_telemetry::db::begin(
                 global_object.as_ptr().cast(),
                 bun_telemetry::db::System::MySql,
                 &bun_telemetry::db::ConnectionInfo {
-                    host: &connection.connection.get().host,
-                    port: connection.connection.get().port,
-                    namespace: connection.connection.get().database_name(),
+                    host: &conn.host,
+                    port: conn.port,
+                    namespace: conn.database_name(),
                 },
             ));
         }

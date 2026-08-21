@@ -508,8 +508,16 @@ impl JSMySQLConnection {
             poll_ref: JsCell::new(KeepAlive::default()),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,
-                args.hostname_str.to_utf8().slice().into(),
-                u16::try_from(args.port).unwrap_or(0),
+                if path.is_empty() {
+                    args.hostname_str.to_utf8().slice().into()
+                } else {
+                    path.clone()
+                },
+                if path.is_empty() {
+                    u16::try_from(args.port).unwrap_or(0)
+                } else {
+                    0
+                },
                 username,
                 password,
                 tls_config,

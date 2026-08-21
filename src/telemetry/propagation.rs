@@ -90,14 +90,14 @@ pub fn tracestate_is_reasonable(h: &[u8]) -> bool {
     let h = trim(h);
     !h.is_empty()
         && h.len() <= 512
-        && h.iter().all(|&c| c >= 0x20 && c < 0x7f)
+        && h.iter().all(|&c| c == b'\t' || (c >= 0x20 && c < 0x7f))
         && bun_core::strings::split(h, b",").count() <= 32
 }
 
 /// Same idea for `baggage` (W3C Baggage): forward opaque, bounded, printable.
 pub fn baggage_is_reasonable(h: &[u8]) -> bool {
     let h = trim(h);
-    !h.is_empty() && h.len() <= 8192 && h.iter().all(|&c| c >= 0x20 && c < 0x7f)
+    !h.is_empty() && h.len() <= 8192 && h.iter().all(|&c| c == b'\t' || (c >= 0x20 && c < 0x7f))
 }
 
 #[cfg(test)]

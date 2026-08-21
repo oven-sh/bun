@@ -42,7 +42,6 @@ pub struct State {
     pub propagate_baggage: bool,
     pub capture_db_statement: bool,
     pub capture_request_headers: Vec<Box<[u8]>>,
-    pub capture_response_headers: Vec<Box<[u8]>>,
 }
 
 /// Replaced wholesale by `configure()`; the previous value is intentionally
@@ -58,7 +57,6 @@ static DEFAULT_STATE: State = State {
     propagate_baggage: true,
     capture_db_statement: true,
     capture_request_headers: Vec::new(),
-    capture_response_headers: Vec::new(),
 };
 
 #[inline]
@@ -84,8 +82,9 @@ pub fn processor() -> &'static Processor {
 
 /// Per-VM (per JS thread) state.
 pub struct VmState {
-    global: *const JSGlobalObject,
-    pub(crate) event_loop_timer: EventLoopTimer,
+    /// Rebound when `bun test --isolate` swaps the global.
+    global: Cell<*const JSGlobalObject>,
+    pub(crate) event_loop_timer: bun_ptr::JsCell<EventLoopTimer>,
     timer_armed: Cell<bool>,
     /// JS function exporters registered from this VM.
     js_exporters: RefCell<Vec<Arc<exporter::JsExporter>>>,
@@ -113,11 +112,14 @@ pub(crate) fn vm_state() -> Option<&'static VmState> {
 
 fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
     if let Some(s) = vm_state() {
+        s.rebind_global(global);
         return s;
     }
     let s = Box::leak(Box::new(VmState {
-        global: core::ptr::from_ref(global),
-        event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::TelemetryFlush),
+        global: Cell::new(core::ptr::from_ref(global)),
+        event_loop_timer: bun_ptr::JsCell::new(EventLoopTimer::init_paused(
+            EventLoopTimerTag::TelemetryFlush,
+        )),
         timer_armed: Cell::new(false),
         js_exporters: RefCell::new(Vec::new()),
         flush_waiters: RefCell::new(Vec::new()),
@@ -137,8 +139,15 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
 impl VmState {
     #[inline]
     fn global(&self) -> &JSGlobalObject {
-        // SAFETY: the VmState is thread-local to its VM's thread; the global outlives it.
-        unsafe { &*self.global }
+        // SAFETY: the VmState is thread-local to its VM's thread; `rebind_global` keeps this the live global.
+        unsafe { &*self.global.get() }
+    }
+
+    fn rebind_global(&self, global: &JSGlobalObject) {
+        if !core::ptr::eq(self.global.get(), global) {
+            self.global.set(core::ptr::from_ref(global));
+            self.api_installed.set(false);
+        }
     }
 
     fn arm_timer(&self) {
@@ -148,23 +157,21 @@ impl VmState {
         let delay = processor().config.read().scheduled_delay_ms.max(50);
         let next =
             bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).add_ms(delay as i64);
-        let elt = (&raw const self.event_loop_timer).cast_mut();
-        // SAFETY: JS thread only; the timer heap holds `elt` until `disarm_timer`/fire, and `self` is leaked.
-        unsafe {
-            (*elt).next = ElTimespec {
+        self.event_loop_timer.with_mut(|t| {
+            t.next = ElTimespec {
                 sec: next.sec,
                 nsec: next.nsec,
-            };
-            (*crate::jsc_hooks::timer_all()).insert(elt);
-        }
+            }
+        });
+        // SAFETY: JS thread only; the timer heap holds the pointer until `disarm_timer`/fire, and `self` is leaked.
+        unsafe { (*crate::jsc_hooks::timer_all()).insert(self.event_loop_timer.as_ptr()) };
         self.timer_armed.set(true);
     }
 
     fn disarm_timer(&self) {
         if self.timer_armed.replace(false) {
-            let elt = (&raw const self.event_loop_timer).cast_mut();
-            // SAFETY: JS thread only; `elt` was inserted by `arm_timer`.
-            unsafe { (*crate::jsc_hooks::timer_all()).remove(elt) };
+            // SAFETY: JS thread only; inserted by `arm_timer`.
+            unsafe { (*crate::jsc_hooks::timer_all()).remove(self.event_loop_timer.as_ptr()) };
         }
     }
 
@@ -222,6 +229,9 @@ fn read_env_config(vm: &VirtualMachine) -> config::EnvConfig {
 /// telemetry is not enabled: one env lookup.
 pub fn init_for_vm(global: &JSGlobalObject) {
     let vm = global.bun_vm();
+    if let Some(s) = vm_state() {
+        s.rebind_global(global);
+    }
     if configured() {
         // Already configured by another thread (worker inherits): just attach.
         if bun_telemetry::any_enabled() {
@@ -256,6 +266,10 @@ pub fn init_for_vm(global: &JSGlobalObject) {
 pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry::Config) -> Result<(), Vec<u8>> {
     let vm = global.bun_vm();
     let p = processor();
+    let mut otlp_exporters = Vec::with_capacity(cfg.otlp_exporters.len());
+    for x in &cfg.otlp_exporters {
+        otlp_exporters.push(Arc::new(exporter::OtlpHttpExporter::new(x)?));
+    }
     let new_state = Box::into_raw(Box::new(State {
         sampler: cfg.sampler,
         limits: cfg.limits,
@@ -264,11 +278,6 @@ pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry::Config) -> Result
         capture_db_statement: cfg.capture_db_statement,
         capture_request_headers: cfg
             .capture_request_headers
-            .iter()
-            .map(|s| s.as_bytes().into())
-            .collect(),
-        capture_response_headers: cfg
-            .capture_response_headers
             .iter()
             .map(|s| s.as_bytes().into())
             .collect(),
@@ -289,8 +298,8 @@ pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry::Config) -> Result
         script: core::str::from_utf8(script).ok(),
     });
     p.set_resource(resource);
-    for x in &cfg.otlp_exporters {
-        p.add_exporter(Arc::new(exporter::OtlpHttpExporter::new(x)?));
+    for x in otlp_exporters {
+        p.add_exporter(x);
     }
     if cfg.console_exporter {
         p.add_exporter(Arc::new(exporter::ConsoleExporter));

@@ -1203,8 +1203,16 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             path,
             options,
             options_buf,
-            host: args.hostname_str.to_utf8().slice().into(),
-            port: u16::try_from(args.port).unwrap_or(0),
+            host: if path_str.is_empty() {
+                args.hostname_str.to_utf8().slice().into()
+            } else {
+                path_str.to_utf8().slice().into()
+            },
+            port: if path_str.is_empty() {
+                u16::try_from(args.port).unwrap_or(0)
+            } else {
+                0
+            },
             authentication_state: JsCell::new(AuthenticationState::Pending),
             secure,
             tls_config,

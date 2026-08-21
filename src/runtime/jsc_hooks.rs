@@ -909,17 +909,20 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     Ok(ptr::null_mut())
 }
 
-/// `ensureDebugger(block_until_connected)` — no-op when no debugger.
+/// See `RuntimeHooks::before_entry_point`.
 ///
 /// # Safety
-/// `vm` is the live per-thread VM.
-/// See `RuntimeHooks::before_entry_point`.
+/// `vm` is the live per-thread VM with its global created.
 unsafe fn before_entry_point(vm: *mut VirtualMachine) {
-    // SAFETY: hook contract — `vm` is the live per-thread VM with its global created.
+    // SAFETY: per fn contract.
     let global = unsafe { (*vm).global() };
     crate::telemetry::init_for_vm(global);
 }
 
+/// `ensureDebugger(block_until_connected)` — no-op when no debugger.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
 unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) {
     // Note: `Debugger::create` / `wait_for_debugger_if_necessary` live in
     // `bun_jsc::debugger::Debugger` (Debugger.rs); the heavy bodies (futex

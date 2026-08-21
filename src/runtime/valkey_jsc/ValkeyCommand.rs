@@ -189,6 +189,12 @@ pub struct Promise {
     pub(crate) otel: bun_telemetry::NativeSpan,
 }
 
+impl Drop for Promise {
+    fn drop(&mut self) {
+        self.otel_end(None);
+    }
+}
+
 impl Promise {
     pub(crate) fn create(global_object: &JSGlobalObject, meta: Meta) -> Promise {
         let promise = jsc::JSPromiseStrong::init(global_object);
@@ -254,7 +260,7 @@ impl Promise {
                     Args::Args(a) => a.first().map(|s| s.slice()).unwrap_or(b""),
                     Args::Raw(a) => a.first().copied().unwrap_or(b""),
                 };
-                let first = &first[..first.len().min(256)];
+                let first = bun_telemetry::otlp::truncate_utf8(first, 256);
                 let mut text = Vec::with_capacity(n + 1 + first.len() + 4);
                 text.extend_from_slice(&name[..n]);
                 if !first.is_empty() {

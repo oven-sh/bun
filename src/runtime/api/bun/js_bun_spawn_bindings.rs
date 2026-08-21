@@ -1209,6 +1209,8 @@ fn spawn_maybe_sync(
         unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) };
     if otel_stub.is_some() {
         if let Err(err) = &spawn_result {
+            crate::telemetry::spawn::failed(&otel_stub, &argv, err.name().as_bytes());
+        } else if let Ok(sys::Result::Err(err)) = &spawn_result {
             crate::telemetry::spawn::failed(&otel_stub, &argv, err.name());
         }
     }
@@ -1469,6 +1471,9 @@ fn spawn_maybe_sync(
             }
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
+            crate::telemetry::discard_native(
+                subprocess.otel.replace(bun_telemetry::NativeSpan::NONE),
+            );
             if let Some(ipc_data) = subprocess.ipc_data.take() {
                 // SAFETY: owned ref from `SendQueue::new` above; nothing else
                 // holds it yet (no socket wired, no task scheduled).

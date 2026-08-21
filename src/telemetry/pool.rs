@@ -13,9 +13,13 @@ use crate::span::{SpanKind, SpanStub, StatusCode};
 use crate::{Limits, ScopeId, clock};
 
 /// `index | generation << 32`; 0 is the empty handle (generation starts at 1).
+/// The generation is kept below 2^21 so the handle round-trips through a JS
+/// number (f64) exactly.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct NativeSpan(pub u64);
+
+const GENERATION_MASK: u32 = (1 << 21) - 1;
 
 impl NativeSpan {
     pub const NONE: NativeSpan = NativeSpan(0);
@@ -302,7 +306,7 @@ pub fn begin_with(
         };
         p.live += 1;
         let slot = &mut p.slots[index];
-        slot.generation = slot.generation.wrapping_add(1).max(1);
+        slot.generation = (slot.generation.wrapping_add(1) & GENERATION_MASK).max(1);
         slot.live = true;
         slot.stub = stub;
         slot.scope = scope;
@@ -387,7 +391,8 @@ pub fn end_with(
         prep(slot);
         let mut full = false;
         let js_cell = slot.js_cell;
-        if slot.is_recording() {
+        let recording = slot.is_recording();
+        if recording {
             full = crate::batch::with_local(|l| {
                 let buf = l.buffer(slot.scope);
                 let start = buf.len();
@@ -398,16 +403,13 @@ pub fn end_with(
         slot.reset();
         p.free.push_back(handle.index() as u32);
         p.live -= 1;
-        Some((full, js_cell))
+        Some((recording, full, js_cell))
     });
-    let (full, js_cell) = recorded?;
+    let (recorded, full, js_cell) = recorded?;
     if full {
         crate::batch::flush_local();
     }
-    Some(Ended {
-        recorded: true,
-        js_cell,
-    })
+    Some(Ended { recorded, js_cell })
 }
 
 /// Release without recording (e.g. the owner was torn down mid-flight and

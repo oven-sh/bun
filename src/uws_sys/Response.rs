@@ -66,11 +66,6 @@ bun_opaque::opaque_ffi! {
     pub struct WebSocketUpgradeContext;
 }
 
-/// Opaque handle for `uws::Response<SSL>`.
-///
-/// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
-/// extern type (Nomicon pattern).
-#[repr(C)]
 /// A peer address as raw network-order bytes.
 #[derive(Clone, Copy)]
 pub enum RawIp {
@@ -137,6 +132,11 @@ impl RawIp {
     }
 }
 
+/// Opaque handle for `uws::Response<SSL>`.
+///
+/// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
+/// extern type (Nomicon pattern).
+#[repr(C)]
 pub struct Response<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,

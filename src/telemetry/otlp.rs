@@ -273,7 +273,8 @@ impl<'a> SpanWriter<'a> {
         out.reserve(128 + name.len());
         let nested = Nested::begin(out, f::SS_SPANS);
         // Fixed-shape prefix assembled on the stack, appended once.
-        let mut b = [0u8; 64];
+        const PREFIX_MAX: usize = 18 + 10 + 10 + 2 + 9 + 9 + 6;
+        let mut b = [0u8; PREFIX_MAX];
         let mut n = 0;
         b[n] = (f::TRACE_ID << 3 | 2) as u8;
         b[n + 1] = 16;

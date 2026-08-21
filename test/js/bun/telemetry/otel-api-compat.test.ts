@@ -1,7 +1,7 @@
 // `@opentelemetry/api` interop: when Bun.otel is enabled the api package's
 // global TracerProvider / ContextManager / propagator resolve to the native
 // implementation without any SDK being registered.
-import { context, propagation, ROOT_CONTEXT, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
+import { context, createContextKey, propagation, ROOT_CONTEXT, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -73,7 +73,7 @@ describe("@opentelemetry/api", () => {
   });
 
   test("custom context values ride along with the span", async () => {
-    const key = Symbol.for("test.key"); // createContextKey === Symbol.for
+    const key = createContextKey("test.key");
     const tracer = trace.getTracer("compat");
     const span = tracer.startSpan("carrier");
     const ctx = trace.setSpan(ROOT_CONTEXT, span).setValue(key, 42);

@@ -115,6 +115,29 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(c.spans().map((s: any) => s.name)).toEqual(["s"]);
   });
 
+  test("bun test --isolate: every file's global gets the api bridge and all spans export at exit", async () => {
+    using c = collector();
+    const file = (name: string) => `
+      import { test, expect } from "bun:test";
+      test("${name}", () => {
+        expect(globalThis[Symbol.for("opentelemetry.js.api.1")]?.trace).toBeDefined();
+        Bun.otel.tracer("t").startSpan("${name}").end();
+      });
+    `;
+    using dir = tempDir("otel-isolate", { "a.test.js": file("a"), "b.test.js": file("b") });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.js", "./b.test.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_OTEL: "1", OTEL_EXPORTER_OTLP_ENDPOINT: c.url },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("2 pass");
+    expect(exitCode).toBe(0);
+    expect(c.spans().map((s: any) => s.name).sort()).toEqual(["a", "b"]);
+  });
+
   test("not enabled without BUN_OTEL even if OTEL_* vars are present", async () => {
     using c = collector();
     const { stdout, exitCode } = await run(
@@ -190,9 +213,8 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       `
         Bun.otel.start({ endpoint: process.env.COLLECTOR, batch: { delayMs: 20 } });
         Bun.otel.tracer("t").startSpan("retried").end();
-        // First attempt gets a 503; the retry is driven by the batch timer.
-        const deadline = Date.now() + 10000;
-        while (Bun.otel.stats().spansExported === 0 && Date.now() < deadline) await Bun.sleep(20);
+        // First attempt gets a 503 and is parked; forceFlush retries it now and waits.
+        await Bun.otel.forceFlush();
         console.log(JSON.stringify(Bun.otel.stats()));
       `,
       { COLLECTOR: c.url },
@@ -309,7 +331,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
   test("multiple exporters receive the same batch", async () => {
     using a = collector();
     using b = collector();
-    const { stdout, exitCode } = await run(
+    const { stdout, stderr, exitCode } = await run(
       `
         let js = 0;
         Bun.otel.start({ exporters: [process.env.A, { url: process.env.B, headers: { "x-b": "yes" } }, { export(spans) { js += spans.length; } }, "console"] });
@@ -324,6 +346,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(a.spans().map((s: any) => s.name)).toEqual(["multi"]);
     expect(b.spans().map((s: any) => s.name)).toEqual(["multi"]);
     expect(b.received[0].headers["x-b"]).toBe("yes");
+    expect(stderr).toContain('"name":"multi"');
   });
 
   test("OTEL_TRACES_EXPORTER=console prints one OTLP/JSON document per batch to stderr", async () => {

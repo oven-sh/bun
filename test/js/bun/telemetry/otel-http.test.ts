@@ -41,7 +41,9 @@ describe("Bun.serve", () => {
       await res.text();
       expected.push({ i, traceId, path, status: res.status, ua: headers["user-agent"] });
     }
-    const got = byName(await collect(), "bun.http.server");
+    const all = await collect();
+    const got = byName(all, "bun.http.server");
+    const clients = byName(all, "bun.http.client");
     expect(got.length).toBe(N);
     const seen = new Set<string>();
     for (let k = 0; k < N; k++) {
@@ -58,7 +60,7 @@ describe("Bun.serve", () => {
         expect(s.parentSpanId).toBe("a".repeat(16));
       } else {
         // parented under this process's fetch CLIENT span
-        expect(s.parentSpanId).toEqual(expect.any(String));
+        expect(s.parentSpanId).toBe(clients.find(c => c.traceId === s.traceId)?.spanId);
       }
       expect(seen.has(s.spanId)).toBe(false);
       seen.add(s.spanId);
@@ -280,9 +282,12 @@ describe("Bun.serve", () => {
       },
     });
     const ws = new WebSocket(`ws://localhost:${server.port}/sock`);
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
     ws.onopen = () => resolve();
+    ws.onerror = () => reject(new Error("ws error"));
+    ws.onclose = e => reject(new Error(`ws closed ${e.code}`));
     await promise;
+    ws.onclose = null;
     ws.close();
     const [srv] = byName(await collect(), "bun.http.server");
     expect(srv.attributes["url.path"]).toBe("/sock");
@@ -384,12 +389,12 @@ describe("node:http", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // node:http currently answers 200 (empty body) when a handler throws with an
     // uncaughtException listener installed — pre-existing behaviour on main. What
     // this test pins is that the span is ERROR (2) and matches what was sent.
-    expect(stdout.trim()).toMatch(/^(200 200|500 500) 2 undefined$/);
-    expect(exitCode).toBe(0);
+    expect(stdout.trim(), stderr).toMatch(/^(200 200|500 500) 2 undefined$/);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("http.request injects traceparent/tracestate under a traced request and honours propagators: []", async () => {

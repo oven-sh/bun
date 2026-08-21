@@ -182,12 +182,12 @@ pub fn end(
             w.status(StatusCode::Error, msg);
         }
     });
-    if let Some(h) = rt::hooks() {
-        if let Some(e) = &ended {
-            if e.js_cell != 0 {
-                (h.release_cell)(e.js_cell);
-            }
+    if let (Some(h), Some(e)) = (rt::hooks(), &ended) {
+        if e.js_cell != 0 {
+            (h.release_cell)(e.js_cell);
         }
-        (h.after_record)();
+        if e.recorded {
+            (h.after_record)();
+        }
     }
 }

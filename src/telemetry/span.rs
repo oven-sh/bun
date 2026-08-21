@@ -66,16 +66,12 @@ impl TraceId {
     /// bytes as a uniform integer, which xoshiro provides.
     #[inline]
     pub fn generate() -> TraceId {
-        loop {
-            let a = next_id_u64();
-            let b = next_id_u64();
-            let mut id = [0u8; 16];
-            id[..8].copy_from_slice(&a.to_be_bytes());
-            id[8..].copy_from_slice(&b.to_be_bytes());
-            if b != 0 {
-                return TraceId(id);
-            }
-        }
+        let mut v = [0u64; 2];
+        next_ids(&mut v);
+        let mut id = [0u8; 16];
+        id[..8].copy_from_slice(&v[0].to_be_bytes());
+        id[8..].copy_from_slice(&v[1].to_be_bytes());
+        TraceId(id)
     }
     pub fn to_hex(&self, out: &mut [u8; 32]) {
         hex_encode(&self.0, out);
@@ -101,12 +97,7 @@ impl SpanId {
     }
     #[inline]
     pub fn generate() -> SpanId {
-        loop {
-            let a = next_id_u64();
-            if a != 0 {
-                return SpanId(a.to_be_bytes());
-            }
-        }
+        SpanId(next_id_u64().to_be_bytes())
     }
     pub fn to_hex(self, out: &mut [u8; 16]) {
         hex_encode(&self.0, out);

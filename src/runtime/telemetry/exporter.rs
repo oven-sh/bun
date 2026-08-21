@@ -129,7 +129,7 @@ impl OtlpHttpExporter {
             let http = AsyncHTTP::init(
                 Method::POST,
                 url,
-                self.headers.entries.clone().expect("OOM"),
+                bun_core::handle_oom(self.headers.entries.clone()),
                 headers_buf,
                 body,
                 HTTPClientResultCallback::new_with_release::<InflightExport>(
@@ -156,7 +156,7 @@ impl OtlpHttpExporter {
         let mut req = AsyncHTTP::init(
             Method::POST,
             url,
-            self.headers.entries.clone().expect("OOM"),
+            bun_core::handle_oom(self.headers.entries.clone()),
             self.headers.content.written_slice(),
             &p.body,
             HTTPClientResultCallback::new::<()>(core::ptr::null_mut(), noop_result_callback),
@@ -936,7 +936,7 @@ fn run_js_export_task(task: *mut JsExportTask) -> JsResult<()> {
 
 fn s_global(s: &super::VmState) -> &JSGlobalObject {
     // SAFETY: a live VmState's global outlives it (thread-local to the VM's thread).
-    unsafe { &*s.global }
+    unsafe { &*s.global.get() }
 }
 
 impl Exporter for JsExporter {
@@ -947,10 +947,8 @@ impl Exporter for JsExporter {
             Arc::increment_strong_count(ptr);
             Arc::from_raw(ptr)
         };
-        if std::thread::current().id() == self.thread {
-            // Same thread: still defer to a task so exporters never run
-            // re-entrantly inside whatever ended the span.
-        }
+        // Even on `self.thread`, defer to a task so exporters never run
+        // re-entrantly inside whatever ended the span.
         let task = Box::into_raw(Box::new(JsExportTask {
             exporter: me,
             processor,

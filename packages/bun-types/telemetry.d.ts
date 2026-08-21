@@ -39,7 +39,10 @@ declare module "bun" {
       traceFlags: number;
       /** Present and `true` when the context arrived via a `traceparent` header. */
       isRemote?: boolean;
-      /** The `tracestate` header to forward, if any. */
+      /**
+       * The `tracestate` header to forward, if any. This is the raw header
+       * string, not an `@opentelemetry/api` `TraceState` object.
+       */
       traceState?: string;
     }
 
@@ -177,7 +180,7 @@ declare module "bun" {
      * | `newrelic`  | `NEW_RELIC_LICENSE_KEY`                       | `site`: `"us"` \| `"eu"` \| `"fedramp"`               |
      * | `axiom`     | `AXIOM_TOKEN`                                 | `id`: `AXIOM_DATASET`; `site`: edge domain             |
      * | `dynatrace` | `DT_API_TOKEN`                                | `id`: environment id, or `endpoint`: `…/api/v2/otlp`   |
-     * | `sentry`    | DSN public key                                | `endpoint`: the project's OTLP traces URL (required)   |
+     * | `sentry`    | DSN public key (`SENTRY_PUBLIC_KEY`)          | `endpoint` (or `SENTRY_OTLP_TRACES_ENDPOINT`): the project's OTLP traces URL |
      * | `otlp`      | —                                             | `endpoint` (default `http://localhost:4318`)           |
      */
     interface PresetExporterOptions {

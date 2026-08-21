@@ -147,7 +147,8 @@ type Listing = Record<string, string[]>;
 // Everything prune can touch, by folder: the root node_modules, each workspace's, the nested ones, the isolated store
 // and its hidden hoist folder. Scope dirs and .bin are flattened into their folder's entries, so a scope dir or .bin
 // left behind empty lists as a bare entry, and an emptied folder lists as []. Links are marked, dangling ones as such.
-// On Windows a bin is a `<name>.exe` + `<name>.bunx` shim pair instead of a link; bins list by name everywhere.
+// On Windows a bin is a `<name>.exe` + `<name>.bunx` shim pair instead of a link: a complete pair lists as `.bin/<name>`
+// like the link does elsewhere, a shim without its partner lists under its file name.
 function tree(dir: string): Listing {
   const listing: Listing = {};
   const folders = ["node_modules"];
@@ -175,7 +176,8 @@ function listFolder(dir: string, folder: string, listing: Listing, scope = "") {
     } else if (!entry.isDirectory()) {
       entries.push(name);
     } else if (scope === "" && name === ".bin") {
-      const bins = new Set(readdirSync(path).map(bin => (isWindows ? bin.replace(/\.(exe|bunx)$/, "") : bin)));
+      const files = readdirSync(path);
+      const bins = new Set(files.map(bin => (isWindows ? shimPairName(files, bin) : bin)));
       entries.push(...(bins.size === 0 ? [".bin"] : [...bins].map(bin => `.bin/${bin}`)));
     } else if (scope === "" && name === ".bun") {
       const store = (listing[`${folder}/.bun`] = []);
@@ -199,6 +201,11 @@ function listFolder(dir: string, folder: string, listing: Listing, scope = "") {
       }
     }
   }
+}
+
+function shimPairName(files: string[], file: string) {
+  const name = file.replace(/\.(exe|bunx)$/, "");
+  return files.includes(`${name}.exe`) && files.includes(`${name}.bunx`) ? name : file;
 }
 
 function expectOk({ stderr, exitCode }: { stderr: string; exitCode: number }) {

@@ -48,9 +48,7 @@ pub fn top_level_dir() -> &'static [u8] {
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
 pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
-/// The signals `bun_crash_handler` installs its handler for, reset again by
-/// `raise_ignoring_panic_handler` and given back to the OS by a self-directed
-/// `process.kill()`. SIGABRT and SIGTRAP cover abort() and trap instructions (#34771).
+/// What `bun_crash_handler` catches. SIGABRT and SIGTRAP cover abort() and traps (#34771).
 #[cfg(unix)]
 pub const CRASH_HANDLER_SIGNALS: [c_int; 6] = [
     libc::SIGSEGV,

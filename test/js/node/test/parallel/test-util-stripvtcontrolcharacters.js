@@ -2,7 +2,7 @@
 
 require('../common');
 const util = require('util');
-const assert = require('node:assert');
+const { test } = require('node:test');
 
 // Ref: https://github.com/chalk/ansi-regex/blob/main/test.js
 const tests = [
@@ -21,6 +21,8 @@ for (const ST of ['\u0007', '\u001B\u005C', '\u009C']) {
   );
 }
 
-for (const [before, expected] of tests) {
-  assert.strictEqual(util.stripVTControlCharacters(before), expected);
-}
+test('util.stripVTControlCharacters', (t) => {
+  for (const [before, expected] of tests) {
+    t.assert.strictEqual(util.stripVTControlCharacters(before), expected);
+  }
+});

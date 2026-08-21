@@ -34,12 +34,12 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "ZigGlobalObject.h"
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
@@ -292,11 +292,21 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom, (JSG
     }
 
     // { ...options, depth: options.depth == null ? null : options.depth - 1 }
+    // Spread defines the copies, so not objectAssignGeneric: its [[Set]] would run a setter that
+    // userland put on Object.prototype under one of the option names.
     JSObject* innerOptions = constructEmptyObject(lexicalGlobalObject);
     JSValue innerDepth = jsNull();
     if (auto* optionsObject = dynamicDowncast<JSObject>(options)) {
-        objectAssignGeneric(lexicalGlobalObject, vm, innerOptions, optionsObject);
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        optionsObject->methodTable()->getOwnPropertyNames(optionsObject, lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, {});
+        for (const auto& name : names) {
+            JSValue value = optionsObject->get(lexicalGlobalObject, name);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            // util.inspect forwards unknown user options as-is, so a key here can be an array index.
+            innerOptions->putDirectMayBeIndex(lexicalGlobalObject, name, value);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
         JSValue optionsDepth = optionsObject->get(lexicalGlobalObject, Identifier::fromString(vm, "depth"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!optionsDepth.isUndefinedOrNull()) {
@@ -318,6 +328,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom, (JSG
     MarkedArgumentBuffer inspectArgs;
     inspectArgs.append(json);
     inspectArgs.append(innerOptions);
+    ASSERT(!inspectArgs.hasOverflowed());
     JSValue inspected = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, inspect, JSC::getCallData(inspect), jsUndefined(), inspectArgs);
     RETURN_IF_EXCEPTION(throwScope, {});
     auto inspectedString = inspected.toWTFString(lexicalGlobalObject);

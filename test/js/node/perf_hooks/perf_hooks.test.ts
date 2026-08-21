@@ -218,7 +218,7 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
        const json = [JSON.parse(JSON.stringify(mark)), JSON.parse(JSON.stringify(measure))];
        const { inspect } = require("node:util");
        const custom = Symbol.for("nodejs.util.inspect.custom");
-       console.log(JSON.stringify({
+       const result = {
          json,
          inspected: [inspect(mark), inspect(measure, { depth: 0 }), inspect(mark, { depth: -1 })],
          nativeInspected: Bun.inspect(mark),
@@ -234,7 +234,15 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
          descriptor: { ...Object.getOwnPropertyDescriptor(PerformanceEntry.prototype, custom), value: PerformanceEntry.prototype[custom].name },
          toJSONEnumerable: Object.getOwnPropertyDescriptor(PerformanceMark.prototype, "toJSON").enumerable,
          generic: PerformanceEntry.prototype[custom].call({ constructor: { name: "Fake" }, toJSON: () => ({ z: 1 }) }, 1, {}, inspect),
-       }));`,
+       };
+       // util.inspect forwards an option it does not know to the hook as-is, so the hook's copy
+       // of the options has to cope with an index key.
+       result.indexOption = inspect(mark, { 0: 1 }).split("\\n")[0];
+       // The hook copies the options the way { ...options } does: a setter that userland put on
+       // Object.prototype under one of the option names must not run.
+       Object.defineProperty(Object.prototype, "showHidden", { configurable: true, set() { throw new Error("setter ran"); } });
+       result.polluted = inspect(mark).split("\\n")[0];
+       console.log(JSON.stringify(result));`,
     ],
     env: bunEnv,
     stdout: "pipe",
@@ -266,5 +274,7 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
   });
   expect(result.toJSONEnumerable).toBe(false);
   expect(result.generic).toBe("Fake { z: 1 }");
+  expect(result.indexOption).toBe("PerformanceMark {");
+  expect(result.polluted).toBe("PerformanceMark {");
   expect(exitCode).toBe(0);
 });

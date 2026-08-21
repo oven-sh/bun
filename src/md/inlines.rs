@@ -304,10 +304,8 @@ impl Parser<'_> {
                     continue;
                 }
 
-                // Whitespace run (space/tab/CR are mark chars only when
-                // collapse_whitespace is set). md4c's MD_FLAG_COLLAPSEWHITESPACE
-                // replaces a non-trivial run (longer than one char, or not a
-                // plain space) with a single space.
+                // md4c's MD_FLAG_COLLAPSEWHITESPACE: a non-trivial whitespace
+                // run (longer than one char, or not a plain space) becomes one space.
                 if self.flags.collapse_whitespace && (c == b' ' || c == b'\t' || c == b'\r') {
                     let mut end = i + 1;
                     while end < content.len()
@@ -316,8 +314,7 @@ impl Parser<'_> {
                         end += 1;
                     }
                     if end < content.len() && content[end] == b'\n' {
-                        // Trailing run before a line break: the newline branch
-                        // above decides hard-break vs collapse.
+                        // The newline branch above handles a trailing run.
                         i = end;
                         continue;
                     }

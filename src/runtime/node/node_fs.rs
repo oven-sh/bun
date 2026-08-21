@@ -6244,12 +6244,11 @@ impl NodeFS {
             ),
         };
         match maybe {
-            Err(err) => Err(sys::Error {
-                syscall: sys::Tag::scandir,
-                errno: err.errno,
-                path: args.path.slice().into(),
-                ..Default::default()
-            }),
+            // Node's operation name; `err.path` already names the directory that failed.
+            Err(mut err) => {
+                err.syscall = sys::Tag::scandir;
+                Err(err)
+            }
             Ok(result) => Ok(result),
         }
     }
@@ -6375,6 +6374,14 @@ impl NodeFS {
         Ok(())
     }
 
+    /// Node names a failing subdirectory as `path.join(root argument, path relative to root)`.
+    fn readdir_subdir_error(err: &sys::Error, root: &[u8], relative: &[u8]) -> sys::Error {
+        let mut spill: Vec<u8> = Vec::new();
+        let joined =
+            paths::resolve_path::join_spill::<paths::platform::Auto>(&mut spill, &[root, relative]);
+        err.with_path(joined)
+    }
+
     pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
         buf: &mut PathBuffer,
         async_task: &mut AsyncReaddirRecursiveTask,
@@ -6424,15 +6431,11 @@ impl NodeFS {
                         E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
                         _ => {}
                     }
-                    if root_basename.len() + 1 + basename.as_bytes().len() + 1
-                        < paths::MAX_PATH_BYTES
-                    {
-                        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                            &mut buf[..],
-                            &[root_basename, basename.as_bytes()],
-                        );
-                        return Err(err.with_path(joined.as_bytes()));
-                    }
+                    return Err(Self::readdir_subdir_error(
+                        &err,
+                        root_basename,
+                        basename.as_bytes(),
+                    ));
                 }
                 return Err(err.with_path(root_basename));
             }
@@ -6457,15 +6460,12 @@ impl NodeFS {
             let current = match iterator.next() {
                 Err(err) => {
                     dirent_path_prev.deref();
-                    if !is_root
-                        && root_basename.len() + 1 + basename.as_bytes().len() + 1
-                            < paths::MAX_PATH_BYTES
-                    {
-                        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                            &mut buf[..],
-                            &[root_basename, basename.as_bytes()],
-                        );
-                        return Err(err.with_path(joined.as_bytes()));
+                    if !is_root {
+                        return Err(Self::readdir_subdir_error(
+                            &err,
+                            root_basename,
+                            basename.as_bytes(),
+                        ));
                     }
                     return Err(err.with_path(root_basename));
                 }
@@ -6629,8 +6629,11 @@ impl NodeFS {
                         // Node doesn't gracefully handle errors like these. It fails the entire operation.
                         E::ENOENT | E::ENOTDIR | E::EPERM => continue,
                         _ => {
-                            // TODO: propagate file path (removed previously because it leaked the path)
-                            return Err(err);
+                            return Err(Self::readdir_subdir_error(
+                                &err,
+                                args.path.slice(),
+                                basename_bytes,
+                            ));
                         }
                     }
                 }
@@ -6652,7 +6655,14 @@ impl NodeFS {
                 let current = match iterator.next() {
                     Err(err) => {
                         dirent_path_prev.deref();
-                        return Err(err.with_path(args.path.slice()));
+                        if is_root {
+                            return Err(err.with_path(args.path.slice()));
+                        }
+                        return Err(Self::readdir_subdir_error(
+                            &err,
+                            args.path.slice(),
+                            basename_bytes,
+                        ));
                     }
                     Ok(None) => break,
                     Ok(Some(ent)) => ent,

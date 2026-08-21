@@ -571,10 +571,9 @@ fn publish_permission_event(
     resource: &[u8],
     dropped: bool,
 ) -> JsResult<()> {
-    let module = Bun__Permission__requireInternalPermissionModule(global);
-    if global.has_exception() {
-        return Err(JsError::Thrown);
-    }
+    let module = bun_jsc::from_js_host_call(global, || {
+        Bun__Permission__requireInternalPermissionModule(global)
+    })?;
     let Some(publish) = module.get(global, b"publishPermissionEvent")? else {
         return Ok(());
     };

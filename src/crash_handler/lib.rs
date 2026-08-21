@@ -1252,16 +1252,13 @@ mod draft {
         crash(reason);
     }
 
-    /// The smallest Structure heap JSC starts with is 64 MB (the last rung of
-    /// `StructureAlignedMemoryAllocator.cpp` that mimalloc accepts as an arena),
-    /// reserved as size + alignment.
+    /// 64 MB is the smallest Structure heap rung that mimalloc accepts as an arena
+    /// (`StructureAlignedMemoryAllocator.cpp`). JSC reserves it as size + alignment.
     #[cfg(unix)]
     const JSC_MINIMUM_RESERVATION_MB: usize = 128;
 
-    /// `JSC::initialize()` hits a `RELEASE_ASSERT` when its reservations fail.
-    /// If the process cannot reserve [`JSC_MINIMUM_RESERVATION_MB`] now, that is
-    /// the cause: print it and exit instead of reporting a crash. Unix only,
-    /// Windows limits commit charge rather than address space.
+    /// A crash in `JSC::initialize()` while [`JSC_MINIMUM_RESERVATION_MB`] cannot be reserved
+    /// anymore is the environment's doing (`ulimit -v`): print that and exit instead of reporting it.
     fn exit_if_jsc_initialization_ran_out_of_address_space() {
         #[cfg(unix)]
         {

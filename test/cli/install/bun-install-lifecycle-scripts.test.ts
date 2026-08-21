@@ -4138,7 +4138,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           stderr: "pipe",
           env: testEnv,
         });
-        const [err, exited] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const [, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
         expect(err).toContain(message);
         expect(exited).toBe(128 + signal);

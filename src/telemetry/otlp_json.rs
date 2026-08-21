@@ -63,7 +63,14 @@ impl W {
         self.out.extend_from_slice(b"\":");
     }
     /// Emit `"name":[ ... ]` for every occurrence of `field` in `body`.
-    fn repeated(&mut self, first: &mut bool, body: &[u8], field: u32, name: &str, mut each: impl FnMut(&mut W, Value<'_>)) {
+    fn repeated(
+        &mut self,
+        first: &mut bool,
+        body: &[u8],
+        field: u32,
+        name: &str,
+        mut each: impl FnMut(&mut W, Value<'_>),
+    ) {
         let mut r = Reader::new(body);
         let mut opened = false;
         while let Ok(Some((fl, v))) = r.next() {
@@ -123,13 +130,21 @@ fn any_value(w: &mut W, body: &[u8]) {
             f::AV_ARRAY => {
                 w.raw("\"arrayValue\":{");
                 let mut first = true;
-                w.repeated(&mut first, v.as_bytes(), f::ARR_VALUES, "values", |w, item| any_value(w, item.as_bytes()));
+                w.repeated(
+                    &mut first,
+                    v.as_bytes(),
+                    f::ARR_VALUES,
+                    "values",
+                    |w, item| any_value(w, item.as_bytes()),
+                );
                 w.out.push(b'}');
             }
             f::AV_KVLIST => {
                 w.raw("\"kvlistValue\":{");
                 let mut first = true;
-                w.repeated(&mut first, v.as_bytes(), 1, "values", |w, item| key_value(w, item.as_bytes()));
+                w.repeated(&mut first, v.as_bytes(), 1, "values", |w, item| {
+                    key_value(w, item.as_bytes())
+                });
                 w.out.push(b'}');
             }
             f::AV_BYTES => {
@@ -148,12 +163,24 @@ fn any_value(w: &mut W, body: &[u8]) {
 fn base64(out: &mut Vec<u8>, data: &[u8]) {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(T[(n >> 18) as usize & 63]);
         out.push(T[(n >> 12) as usize & 63]);
-        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] } else { b'=' });
-        out.push(if chunk.len() > 2 { T[n as usize & 63] } else { b'=' });
+        out.push(if chunk.len() > 1 {
+            T[(n >> 6) as usize & 63]
+        } else {
+            b'='
+        });
+        out.push(if chunk.len() > 2 {
+            T[n as usize & 63]
+        } else {
+            b'='
+        });
     }
 }
 
@@ -216,7 +243,9 @@ fn event(w: &mut W, body: &[u8]) {
             _ => {}
         }
     }
-    w.repeated(&mut first, body, f::EV_ATTRIBUTES, "attributes", |w, v| key_value(w, v.as_bytes()));
+    w.repeated(&mut first, body, f::EV_ATTRIBUTES, "attributes", |w, v| {
+        key_value(w, v.as_bytes())
+    });
     w.out.push(b'}');
 }
 
@@ -249,7 +278,13 @@ fn link(w: &mut W, body: &[u8]) {
             _ => {}
         }
     }
-    w.repeated(&mut first, body, f::LINK_ATTRIBUTES, "attributes", |w, v| key_value(w, v.as_bytes()));
+    w.repeated(
+        &mut first,
+        body,
+        f::LINK_ATTRIBUTES,
+        "attributes",
+        |w, v| key_value(w, v.as_bytes()),
+    );
     w.out.push(b'}');
 }
 
@@ -314,9 +349,15 @@ fn span(w: &mut W, body: &[u8]) {
             _ => {}
         }
     }
-    w.repeated(&mut first, body, f::ATTRIBUTES, "attributes", |w, v| key_value(w, v.as_bytes()));
-    w.repeated(&mut first, body, f::EVENTS, "events", |w, v| event(w, v.as_bytes()));
-    w.repeated(&mut first, body, f::LINKS, "links", |w, v| link(w, v.as_bytes()));
+    w.repeated(&mut first, body, f::ATTRIBUTES, "attributes", |w, v| {
+        key_value(w, v.as_bytes())
+    });
+    w.repeated(&mut first, body, f::EVENTS, "events", |w, v| {
+        event(w, v.as_bytes())
+    });
+    w.repeated(&mut first, body, f::LINKS, "links", |w, v| {
+        link(w, v.as_bytes())
+    });
     w.out.push(b'}');
 }
 
@@ -337,7 +378,9 @@ fn scope(w: &mut W, body: &[u8]) {
             _ => {}
         }
     }
-    w.repeated(&mut first, body, 3, "attributes", |w, v| key_value(w, v.as_bytes()));
+    w.repeated(&mut first, body, 3, "attributes", |w, v| {
+        key_value(w, v.as_bytes())
+    });
     w.out.push(b'}');
 }
 
@@ -358,7 +401,9 @@ fn scope_spans(w: &mut W, body: &[u8]) {
             _ => {}
         }
     }
-    w.repeated(&mut first, body, f::SS_SPANS, "spans", |w, v| span(w, v.as_bytes()));
+    w.repeated(&mut first, body, f::SS_SPANS, "spans", |w, v| {
+        span(w, v.as_bytes())
+    });
     w.out.push(b'}');
 }
 
@@ -372,7 +417,13 @@ fn resource_spans(w: &mut W, body: &[u8]) {
                 w.key(&mut first, "resource");
                 w.out.push(b'{');
                 let mut f2 = true;
-                w.repeated(&mut f2, v.as_bytes(), f::RES_ATTRIBUTES, "attributes", |w, kv| key_value(w, kv.as_bytes()));
+                w.repeated(
+                    &mut f2,
+                    v.as_bytes(),
+                    f::RES_ATTRIBUTES,
+                    "attributes",
+                    |w, kv| key_value(w, kv.as_bytes()),
+                );
                 w.out.push(b'}');
             }
             f::RS_SCHEMA_URL => {
@@ -382,16 +433,26 @@ fn resource_spans(w: &mut W, body: &[u8]) {
             _ => {}
         }
     }
-    w.repeated(&mut first, body, f::RS_SCOPE_SPANS, "scopeSpans", |w, v| scope_spans(w, v.as_bytes()));
+    w.repeated(&mut first, body, f::RS_SCOPE_SPANS, "scopeSpans", |w, v| {
+        scope_spans(w, v.as_bytes())
+    });
     w.out.push(b'}');
 }
 
 /// `ExportTraceServiceRequest` protobuf → OTLP/JSON bytes.
 pub fn to_json(request: &[u8]) -> Vec<u8> {
-    let mut w = W { out: Vec::with_capacity(request.len() * 3) };
+    let mut w = W {
+        out: Vec::with_capacity(request.len() * 3),
+    };
     w.out.push(b'{');
     let mut first = true;
-    w.repeated(&mut first, request, f::RESOURCE_SPANS, "resourceSpans", |w, v| resource_spans(w, v.as_bytes()));
+    w.repeated(
+        &mut first,
+        request,
+        f::RESOURCE_SPANS,
+        "resourceSpans",
+        |w, v| resource_spans(w, v.as_bytes()),
+    );
     w.out.push(b'}');
     w.out
 }

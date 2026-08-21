@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex};
 use bun_core::MutableString;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_http::async_http::Options as HttpOptions;
-use bun_http::{AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HeaderBuilder, Method};
+use bun_http::{
+    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HeaderBuilder, Method,
+};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong, VmHandle, bun_string_jsc};
 use bun_telemetry::config::{Compression, OtlpExporterConfig};
 use bun_telemetry::otlp::field as f;
@@ -47,7 +49,11 @@ impl OtlpHttpExporter {
     pub fn new(cfg: &OtlpExporterConfig) -> Result<OtlpHttpExporter, Vec<u8>> {
         let url = URL::parse(cfg.url.as_bytes());
         if url.hostname.is_empty() || !(url.is_http() || url.is_https()) {
-            return Err(format!("invalid OTLP endpoint URL {:?} (expected http:// or https://)", cfg.url).into_bytes());
+            return Err(format!(
+                "invalid OTLP endpoint URL {:?} (expected http:// or https://)",
+                cfg.url
+            )
+            .into_bytes());
         }
         let mut headers = HeaderBuilder::default();
         let ct: &[u8] = b"application/x-protobuf";
@@ -76,7 +82,10 @@ impl OtlpHttpExporter {
         HttpOptions {
             idle_timeout_seconds: Some(self.timeout_seconds),
             compress: match self.compression {
-                Compression::Gzip => Some(bun_http::compress_body::CompressOption { encoding: bun_http::compress_body::CompressEncoding::Gzip, level: None }),
+                Compression::Gzip => Some(bun_http::compress_body::CompressOption {
+                    encoding: bun_http::compress_body::CompressEncoding::Gzip,
+                    level: None,
+                }),
                 Compression::None => None,
             },
             disable_keepalive: Some(false),
@@ -84,7 +93,12 @@ impl OtlpHttpExporter {
         }
     }
 
-    fn send(self: &Arc<Self>, processor: &'static Processor, payload: Arc<ExportPayload>, attempt: u32) {
+    fn send(
+        self: &Arc<Self>,
+        processor: &'static Processor,
+        payload: Arc<ExportPayload>,
+        attempt: u32,
+    ) {
         let task = Box::into_raw(Box::new(InflightExport {
             http: MaybeUninit::uninit(),
             exporter: self.clone(),
@@ -99,7 +113,8 @@ impl OtlpHttpExporter {
         unsafe {
             let t = &*task;
             let url = URL::parse(bun_ptr::detach_lifetime(&*self.url));
-            let headers_buf: &'static [u8] = bun_ptr::detach_lifetime(self.headers.content.written_slice());
+            let headers_buf: &'static [u8] =
+                bun_ptr::detach_lifetime(self.headers.content.written_slice());
             let body: &'static [u8] = bun_ptr::detach_lifetime(t.payload.body.as_slice());
             let http = AsyncHTTP::init(
                 Method::POST,
@@ -107,7 +122,11 @@ impl OtlpHttpExporter {
                 self.headers.entries.clone().expect("OOM"),
                 headers_buf,
                 body,
-                HTTPClientResultCallback::new_with_release::<InflightExport>(task, InflightExport::callback, InflightExport::release_at_shutdown),
+                HTTPClientResultCallback::new_with_release::<InflightExport>(
+                    task,
+                    InflightExport::callback,
+                    InflightExport::release_at_shutdown,
+                ),
                 FetchRedirect::Follow,
                 self.options(),
             );
@@ -120,8 +139,13 @@ impl OtlpHttpExporter {
     }
 
     fn warn_once(&self, args: core::fmt::Arguments<'_>) {
-        if !self.warned.swap(true, core::sync::atomic::Ordering::Relaxed) {
-            bun_core::Output::warn(format_args!("[otel] {args} (further export errors from this exporter are silenced; see Bun.otel.stats())"));
+        if !self
+            .warned
+            .swap(true, core::sync::atomic::Ordering::Relaxed)
+        {
+            bun_core::Output::warn(format_args!(
+                "[otel] {args} (further export errors from this exporter are silenced; see Bun.otel.stats())"
+            ));
             bun_core::Output::flush();
         }
     }
@@ -129,7 +153,11 @@ impl OtlpHttpExporter {
 
 fn noop_result_callback(_: *mut (), _: *mut AsyncHTTP<'static>, _: HTTPClientResult<'_>) {}
 
-const USER_AGENT: &str = const_format::concatcp!("Bun/", bun_core::Environment::VERSION_STRING, " OTLP-Exporter");
+const USER_AGENT: &str = const_format::concatcp!(
+    "Bun/",
+    bun_core::Environment::VERSION_STRING,
+    " OTLP-Exporter"
+);
 
 fn retryable_status(status: u32) -> bool {
     matches!(status, 408 | 429 | 502 | 503 | 504)
@@ -158,7 +186,11 @@ impl Drop for InflightExport {
 
 impl InflightExport {
     /// HTTP-thread callback.
-    fn callback(this: *mut Self, async_http: *mut AsyncHTTP<'static>, result: HTTPClientResult<'_>) {
+    fn callback(
+        this: *mut Self,
+        async_http: *mut AsyncHTTP<'static>,
+        result: HTTPClientResult<'_>,
+    ) {
         if result.has_more {
             return;
         }
@@ -190,11 +222,19 @@ impl InflightExport {
             Err((retryable, msg)) if retryable && attempt + 1 < MAX_ATTEMPTS => {
                 let backoff_ms = 1000u64 << attempt.min(4);
                 let due_ns = bun_telemetry::clock::now_unix_nanos() + backoff_ms * 1_000_000;
-                exporter.retry.lock().unwrap().push(Retry { payload, attempt: attempt + 1, due_ns });
+                exporter.retry.lock().unwrap().push(Retry {
+                    payload,
+                    attempt: attempt + 1,
+                    due_ns,
+                });
                 let _ = msg;
             }
             Err((_, msg)) => {
-                exporter.warn_once(format_args!("exporting {} span(s) to {} failed: {msg}", payload.span_count, bstr::BStr::new(&exporter.url)));
+                exporter.warn_once(format_args!(
+                    "exporting {} span(s) to {} failed: {msg}",
+                    payload.span_count,
+                    bstr::BStr::new(&exporter.url)
+                ));
                 processor.export_done(&payload, ExportResult::Failure);
             }
         }
@@ -234,7 +274,13 @@ impl Exporter for OtlpHttpExporter {
 
     fn export_blocking(&self, payload: Arc<ExportPayload>, deadline_ns: u64) -> ExportResult {
         // Retries still queued get this one last synchronous attempt too.
-        let mut payloads: Vec<Arc<ExportPayload>> = self.retry.lock().unwrap().drain(..).map(|r| r.payload).collect();
+        let mut payloads: Vec<Arc<ExportPayload>> = self
+            .retry
+            .lock()
+            .unwrap()
+            .drain(..)
+            .map(|r| r.payload)
+            .collect();
         payloads.push(payload);
         let mut all_ok = true;
         for p in payloads {
@@ -242,21 +288,44 @@ impl Exporter for OtlpHttpExporter {
                 return ExportResult::Failure;
             }
             let url = URL::parse(&self.url);
-            let mut req = AsyncHTTP::init(Method::POST, url, self.headers.entries.clone().expect("OOM"), self.headers.content.written_slice(), &p.body, HTTPClientResultCallback::new::<()>(core::ptr::null_mut(), noop_result_callback), FetchRedirect::Follow, self.options());
+            let mut req = AsyncHTTP::init(
+                Method::POST,
+                url,
+                self.headers.entries.clone().expect("OOM"),
+                self.headers.content.written_slice(),
+                &p.body,
+                HTTPClientResultCallback::new::<()>(core::ptr::null_mut(), noop_result_callback),
+                FetchRedirect::Follow,
+                self.options(),
+            );
             let mut response = MutableString::default();
             match req.send_sync(&mut response) {
                 Ok(meta) if (200..300).contains(&meta.response.status_code) => {}
                 Ok(meta) => {
                     all_ok = false;
-                    self.warn_once(format_args!("exporting {} span(s) to {} at exit failed: HTTP {}", p.span_count, bstr::BStr::new(&self.url), meta.response.status_code));
+                    self.warn_once(format_args!(
+                        "exporting {} span(s) to {} at exit failed: HTTP {}",
+                        p.span_count,
+                        bstr::BStr::new(&self.url),
+                        meta.response.status_code
+                    ));
                 }
                 Err(e) => {
                     all_ok = false;
-                    self.warn_once(format_args!("exporting {} span(s) to {} at exit failed: {}", p.span_count, bstr::BStr::new(&self.url), bstr::BStr::new(e.name())));
+                    self.warn_once(format_args!(
+                        "exporting {} span(s) to {} at exit failed: {}",
+                        p.span_count,
+                        bstr::BStr::new(&self.url),
+                        bstr::BStr::new(e.name())
+                    ));
                 }
             }
         }
-        if all_ok { ExportResult::Success } else { ExportResult::Failure }
+        if all_ok {
+            ExportResult::Success
+        } else {
+            ExportResult::Failure
+        }
     }
 
     fn pending_retries(&self) -> usize {
@@ -320,8 +389,16 @@ impl ConsoleExporter {
                 bstr::BStr::new(span.name),
                 bstr::BStr::new(&tid),
                 bstr::BStr::new(&sid),
-                if span.parent_span_id.is_empty() { "" } else { " parent=" },
-                bstr::BStr::new(if span.parent_span_id.is_empty() { &pid[..0] } else { &pid[..] }),
+                if span.parent_span_id.is_empty() {
+                    ""
+                } else {
+                    " parent="
+                },
+                bstr::BStr::new(if span.parent_span_id.is_empty() {
+                    &pid[..0]
+                } else {
+                    &pid[..]
+                }),
                 dur_us,
             );
             for (k, v) in span.attributes.iter() {
@@ -329,7 +406,11 @@ impl ConsoleExporter {
                 fmt_any_value(&mut out, v);
             }
             if span.status_code != 0 {
-                let _ = write!(out, " status={}", if span.status_code == 1 { "OK" } else { "ERROR" });
+                let _ = write!(
+                    out,
+                    " status={}",
+                    if span.status_code == 1 { "OK" } else { "ERROR" }
+                );
                 if !span.status_message.is_empty() {
                     let _ = write!(out, "({})", bstr::BStr::new(span.status_message));
                 }
@@ -469,7 +550,10 @@ fn parse_span(body: &[u8]) -> DecodedSpan<'_> {
 }
 
 /// Walk every span in an encoded `ExportTraceServiceRequest`.
-pub fn for_each_span<'a>(request: &'a [u8], mut each: impl FnMut(&DecodedScope<'a>, &DecodedSpan<'a>)) {
+pub fn for_each_span<'a>(
+    request: &'a [u8],
+    mut each: impl FnMut(&DecodedScope<'a>, &DecodedSpan<'a>),
+) {
     let mut r = Reader::new(request);
     while let Ok(Some((field, rs))) = r.next() {
         if field != f::RESOURCE_SPANS {
@@ -480,7 +564,10 @@ pub fn for_each_span<'a>(request: &'a [u8], mut each: impl FnMut(&DecodedScope<'
             if field != f::RS_SCOPE_SPANS {
                 continue;
             }
-            let mut scope = DecodedScope { name: b"", version: b"" };
+            let mut scope = DecodedScope {
+                name: b"",
+                version: b"",
+            };
             let mut sr = Reader::new(ss.as_bytes());
             // Scope precedes spans in our encoding; tolerate either order by two passes.
             while let Ok(Some((field, v))) = sr.next() {
@@ -515,7 +602,11 @@ fn any_value_to_js(global: &JSGlobalObject, body: &[u8]) -> JsResult<JSValue> {
             f::AV_BOOL => JSValue::from(v.as_u64() != 0),
             f::AV_INT => {
                 let i = v.as_u64() as i64;
-                if i.unsigned_abs() < (1u64 << 53) { JSValue::js_number(i as f64) } else { JSValue::js_number(i as f64) }
+                if i.unsigned_abs() < (1u64 << 53) {
+                    JSValue::js_number(i as f64)
+                } else {
+                    JSValue::js_number(i as f64)
+                }
             }
             f::AV_DOUBLE => JSValue::js_number(v.as_f64()),
             f::AV_BYTES => bun_jsc::JSUint8Array::from_bytes_copy(global, v.as_bytes()),
@@ -554,7 +645,11 @@ fn attributes_to_js(global: &JSGlobalObject, attrs: &[(&[u8], &[u8])]) -> JsResu
     Ok(obj)
 }
 
-fn attributes_field_to_js(global: &JSGlobalObject, body: &[u8], attr_field: u32) -> JsResult<JSValue> {
+fn attributes_field_to_js(
+    global: &JSGlobalObject,
+    body: &[u8],
+    attr_field: u32,
+) -> JsResult<JSValue> {
     let mut attrs = Vec::new();
     let mut r = Reader::new(body);
     while let Ok(Some((field, v))) = r.next() {
@@ -601,7 +696,11 @@ pub fn decode_to_js(global: &JSGlobalObject, request: &[u8]) -> JsResult<JSValue
             while let Ok(Some((field, v))) = rr.next() {
                 if field == f::RS_RESOURCE {
                     let o = JSValue::create_empty_object(global, 1);
-                    o.put(global, b"attributes", attributes_field_to_js(global, v.as_bytes(), f::RES_ATTRIBUTES)?);
+                    o.put(
+                        global,
+                        b"attributes",
+                        attributes_field_to_js(global, v.as_bytes(), f::RES_ATTRIBUTES)?,
+                    );
                     resource = o;
                 }
             }
@@ -617,22 +716,58 @@ pub fn decode_to_js(global: &JSGlobalObject, request: &[u8]) -> JsResult<JSValue
             let scope_key = scope.name.as_ptr() as usize;
             if last_scope.0 != scope_key {
                 let so = JSValue::create_empty_object(global, 2);
-                so.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, scope.name)?);
+                so.put(
+                    global,
+                    b"name",
+                    bun_string_jsc::create_utf8_for_js(global, scope.name)?,
+                );
                 if !scope.version.is_empty() {
-                    so.put(global, b"version", bun_string_jsc::create_utf8_for_js(global, scope.version)?);
+                    so.put(
+                        global,
+                        b"version",
+                        bun_string_jsc::create_utf8_for_js(global, scope.version)?,
+                    );
                 }
                 last_scope = (scope_key, so);
             }
             let o = JSValue::create_empty_object(global, 14);
             o.put(global, b"traceId", hex_js(global, span.trace_id)?);
             o.put(global, b"spanId", hex_js(global, span.span_id)?);
-            o.put(global, b"parentSpanId", if span.parent_span_id.is_empty() { JSValue::UNDEFINED } else { hex_js(global, span.parent_span_id)? });
-            o.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, span.name)?);
+            o.put(
+                global,
+                b"parentSpanId",
+                if span.parent_span_id.is_empty() {
+                    JSValue::UNDEFINED
+                } else {
+                    hex_js(global, span.parent_span_id)?
+                },
+            );
+            o.put(
+                global,
+                b"name",
+                bun_string_jsc::create_utf8_for_js(global, span.name)?,
+            );
             // OTLP kind (1..5) → API kind (0..4)
-            o.put(global, b"kind", JSValue::js_number_from_int32(span.kind.saturating_sub(1) as i32));
-            o.put(global, b"startTime", JSValue::js_number(ns_to_ms(span.start_ns)));
-            o.put(global, b"endTime", JSValue::js_number(ns_to_ms(span.end_ns)));
-            o.put(global, b"attributes", attributes_to_js(global, &span.attributes)?);
+            o.put(
+                global,
+                b"kind",
+                JSValue::js_number_from_int32(span.kind.saturating_sub(1) as i32),
+            );
+            o.put(
+                global,
+                b"startTime",
+                JSValue::js_number(ns_to_ms(span.start_ns)),
+            );
+            o.put(
+                global,
+                b"endTime",
+                JSValue::js_number(ns_to_ms(span.end_ns)),
+            );
+            o.put(
+                global,
+                b"attributes",
+                attributes_to_js(global, &span.attributes)?,
+            );
             let events = JSValue::create_empty_array(global, 0)?;
             for ev in &span.events {
                 let e = JSValue::create_empty_object(global, 3);
@@ -640,8 +775,14 @@ pub fn decode_to_js(global: &JSGlobalObject, request: &[u8]) -> JsResult<JSValue
                 let mut attrs = Vec::new();
                 while let Ok(Some((field, v))) = er.next() {
                     match field {
-                        f::EV_TIME => e.put(global, b"time", JSValue::js_number(ns_to_ms(v.as_u64()))),
-                        f::EV_NAME => e.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, v.as_bytes())?),
+                        f::EV_TIME => {
+                            e.put(global, b"time", JSValue::js_number(ns_to_ms(v.as_u64())))
+                        }
+                        f::EV_NAME => e.put(
+                            global,
+                            b"name",
+                            bun_string_jsc::create_utf8_for_js(global, v.as_bytes())?,
+                        ),
                         f::EV_ATTRIBUTES => attrs.push(parse_kv(v.as_bytes())),
                         _ => {}
                     }
@@ -657,9 +798,15 @@ pub fn decode_to_js(global: &JSGlobalObject, request: &[u8]) -> JsResult<JSValue
                 let mut attrs = Vec::new();
                 while let Ok(Some((field, v))) = lr.next() {
                     match field {
-                        f::LINK_TRACE_ID => lo.put(global, b"traceId", hex_js(global, v.as_bytes())?),
+                        f::LINK_TRACE_ID => {
+                            lo.put(global, b"traceId", hex_js(global, v.as_bytes())?)
+                        }
                         f::LINK_SPAN_ID => lo.put(global, b"spanId", hex_js(global, v.as_bytes())?),
-                        f::LINK_TRACE_STATE => lo.put(global, b"traceState", bun_string_jsc::create_utf8_for_js(global, v.as_bytes())?),
+                        f::LINK_TRACE_STATE => lo.put(
+                            global,
+                            b"traceState",
+                            bun_string_jsc::create_utf8_for_js(global, v.as_bytes())?,
+                        ),
                         f::LINK_ATTRIBUTES => attrs.push(parse_kv(v.as_bytes())),
                         _ => {}
                     }
@@ -669,23 +816,51 @@ pub fn decode_to_js(global: &JSGlobalObject, request: &[u8]) -> JsResult<JSValue
             }
             o.put(global, b"links", links);
             let st = JSValue::create_empty_object(global, 2);
-            st.put(global, b"code", JSValue::js_number_from_int32(span.status_code as i32));
+            st.put(
+                global,
+                b"code",
+                JSValue::js_number_from_int32(span.status_code as i32),
+            );
             if !span.status_message.is_empty() {
-                st.put(global, b"message", bun_string_jsc::create_utf8_for_js(global, span.status_message)?);
+                st.put(
+                    global,
+                    b"message",
+                    bun_string_jsc::create_utf8_for_js(global, span.status_message)?,
+                );
             }
             o.put(global, b"status", st);
-            o.put(global, b"traceFlags", JSValue::js_number_from_int32((span.flags & 0xff) as i32));
+            o.put(
+                global,
+                b"traceFlags",
+                JSValue::js_number_from_int32((span.flags & 0xff) as i32),
+            );
             if !span.trace_state.is_empty() {
-                o.put(global, b"traceState", bun_string_jsc::create_utf8_for_js(global, span.trace_state)?);
+                o.put(
+                    global,
+                    b"traceState",
+                    bun_string_jsc::create_utf8_for_js(global, span.trace_state)?,
+                );
             }
             if span.dropped_attributes != 0 {
-                o.put(global, b"droppedAttributesCount", JSValue::js_number_from_int32(span.dropped_attributes as i32));
+                o.put(
+                    global,
+                    b"droppedAttributesCount",
+                    JSValue::js_number_from_int32(span.dropped_attributes as i32),
+                );
             }
             if span.dropped_events != 0 {
-                o.put(global, b"droppedEventsCount", JSValue::js_number_from_int32(span.dropped_events as i32));
+                o.put(
+                    global,
+                    b"droppedEventsCount",
+                    JSValue::js_number_from_int32(span.dropped_events as i32),
+                );
             }
             if span.dropped_links != 0 {
-                o.put(global, b"droppedLinksCount", JSValue::js_number_from_int32(span.dropped_links as i32));
+                o.put(
+                    global,
+                    b"droppedLinksCount",
+                    JSValue::js_number_from_int32(span.dropped_links as i32),
+                );
             }
             o.put(global, b"scope", last_scope.1);
             o.put(global, b"resource", resource);
@@ -734,10 +909,18 @@ struct JsExportTask {
 }
 
 impl JsExporter {
-    pub fn new(global: &JSGlobalObject, f: JSValue, this: JSValue, format: JsFormat) -> Arc<JsExporter> {
+    pub fn new(
+        global: &JSGlobalObject,
+        f: JSValue,
+        this: JSValue,
+        format: JsFormat,
+    ) -> Arc<JsExporter> {
         let owner = super::vm_state_or_init(global) as *const super::VmState;
         Arc::new(JsExporter {
-            callback: RefCell::new(Some((Strong::create(f, global), Strong::create(this, global)))),
+            callback: RefCell::new(Some((
+                Strong::create(f, global),
+                Strong::create(this, global),
+            ))),
             format,
             vm: global.bun_vm().handle(),
             owner,
@@ -754,7 +937,9 @@ impl JsExporter {
 
     fn call(&self, global: &JSGlobalObject, payload: &ExportPayload) -> ExportResult {
         let cb = self.callback.borrow();
-        let Some((f, this)) = cb.as_ref() else { return ExportResult::Failure };
+        let Some((f, this)) = cb.as_ref() else {
+            return ExportResult::Failure;
+        };
         let (f, this) = (f.get(), this.get());
         drop(cb);
         let arg = match self.format {
@@ -792,7 +977,9 @@ fn run_js_export_task(task: *mut JsExportTask) -> JsResult<()> {
     // SAFETY: allocated in `export`; consumed here.
     let task = unsafe { Box::from_raw(task) };
     let result = match super::vm_state() {
-        Some(s) if core::ptr::eq(s, task.exporter.owner) => task.exporter.call(s_global(s), &task.payload),
+        Some(s) if core::ptr::eq(s, task.exporter.owner) => {
+            task.exporter.call(s_global(s), &task.payload)
+        }
         _ => ExportResult::Failure,
     };
     task.processor.export_done(&task.payload, result);
@@ -814,7 +1001,11 @@ impl Exporter for JsExporter {
             // Same thread: still defer to a task so exporters never run
             // re-entrantly inside whatever ended the span.
         }
-        let task = Box::into_raw(Box::new(JsExportTask { exporter: me, processor, payload: payload.clone() }));
+        let task = Box::into_raw(Box::new(JsExportTask {
+            exporter: me,
+            processor,
+            payload: payload.clone(),
+        }));
         let managed = ManagedTask::new(task, run_js_export_task);
         let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create(managed);
         match self.vm.post(bun_jsc::LoopKind::Regular, ct) {

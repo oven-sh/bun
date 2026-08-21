@@ -3,8 +3,14 @@
 //! `Bun__Telemetry__activeSpanPtr` hands native integrations the `SpanData`
 //! directly.
 
-use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, bun_string_jsc};
-use bun_telemetry::{Flags, Limits, ScopeId, Span, SpanContext, SpanData, SpanId, SpanKind, SpanStub, StatusCode, TraceId, Value, clock};
+use bun_jsc::{
+    CallFrame, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions,
+    JSValue, JsResult, bun_string_jsc,
+};
+use bun_telemetry::{
+    Flags, Limits, ScopeId, Span, SpanContext, SpanData, SpanId, SpanKind, SpanStub, StatusCode,
+    TraceId, Value, clock,
+};
 
 pub use crate::generated_classes::js_TelemetrySpan as js;
 
@@ -28,19 +34,29 @@ unsafe extern "C" {
 #[inline]
 pub fn active<'a>(global: &'a JSGlobalObject) -> Option<&'a SpanData> {
     let p = Bun__Telemetry__activeSpanPtr(global).cast::<SpanData>();
-    if p.is_null() { None } else { Some(unsafe { &*p }) }
+    if p.is_null() {
+        None
+    } else {
+        Some(unsafe { &*p })
+    }
 }
 
 /// A new owning reference to the active span.
 #[inline]
 pub fn active_ref(global: &JSGlobalObject) -> Option<Span> {
     let p = Bun__Telemetry__activeSpanPtr(global).cast::<SpanData>();
-    if p.is_null() { None } else { Some(unsafe { Span::ref_raw(p) }) }
+    if p.is_null() {
+        None
+    } else {
+        Some(unsafe { Span::ref_raw(p) })
+    }
 }
 
 #[inline]
 pub fn active_context(global: &JSGlobalObject) -> Option<SpanContext> {
-    active(global).map(|s| *s.context()).filter(SpanContext::is_valid)
+    active(global)
+        .map(|s| *s.context())
+        .filter(SpanContext::is_valid)
 }
 
 #[inline]
@@ -49,22 +65,29 @@ pub fn active_js(global: &JSGlobalObject) -> JSValue {
 }
 
 /// RAII activation of a span wrapper for the duration of a native → JS call.
-pub struct Entered<'a> {
-    global: &'a JSGlobalObject,
+/// Must live on the stack (the displaced slot value is kept alive by the
+/// conservative scan) and be dropped on the same JS thread.
+pub struct Entered {
+    global: *const JSGlobalObject,
     prev: JSValue,
 }
 
-impl<'a> Entered<'a> {
+impl Entered {
     #[inline]
-    pub fn new(global: &'a JSGlobalObject, span_js: JSValue) -> Entered<'a> {
-        Entered { global, prev: Bun__Telemetry__enter(global, span_js) }
+    pub fn new(global: &JSGlobalObject, span_js: JSValue) -> Entered {
+        Entered {
+            global: global as *const JSGlobalObject,
+            prev: Bun__Telemetry__enter(global, span_js),
+        }
     }
 }
 
-impl Drop for Entered<'_> {
+impl Drop for Entered {
     #[inline]
     fn drop(&mut self) {
-        Bun__Telemetry__exit(self.global, self.prev);
+        // SAFETY: created from a live `&JSGlobalObject` on this thread; the
+        // global outlives any request/callback frame.
+        Bun__Telemetry__exit(unsafe { &*self.global }, self.prev);
     }
 }
 
@@ -77,7 +100,10 @@ pub struct ContextScope<'a> {
 impl<'a> ContextScope<'a> {
     #[inline]
     pub fn enter(global: &'a JSGlobalObject, context: JSValue) -> ContextScope<'a> {
-        ContextScope { global, prev: Bun__Telemetry__swapContext(global, context) }
+        ContextScope {
+            global,
+            prev: Bun__Telemetry__swapContext(global, context),
+        }
     }
     #[inline]
     pub fn current(global: &JSGlobalObject) -> JSValue {
@@ -105,7 +131,11 @@ pub fn limits() -> &'static Limits {
 }
 
 /// Convert a JS attribute value. Strings borrow into `scratch`.
-pub(crate) fn with_attr_value<R>(global: &JSGlobalObject, v: JSValue, f: impl FnOnce(Option<Value<'_>>) -> R) -> JsResult<R> {
+pub(crate) fn with_attr_value<R>(
+    global: &JSGlobalObject,
+    v: JSValue,
+    f: impl FnOnce(Option<Value<'_>>) -> R,
+) -> JsResult<R> {
     if v.is_string() {
         let s = v.to_slice(global)?;
         return Ok(f(Some(Value::Str(s.slice()))));
@@ -211,7 +241,9 @@ pub(crate) fn time_from_js(global: &JSGlobalObject, v: JSValue) -> JsResult<u64>
         let s = v.get_index(global, 0)?;
         let n = v.get_index(global, 1)?;
         if s.is_number() && n.is_number() {
-            return Ok((s.as_number() as u64).saturating_mul(1_000_000_000).saturating_add(n.as_number() as u64));
+            return Ok((s.as_number() as u64)
+                .saturating_mul(1_000_000_000)
+                .saturating_add(n.as_number() as u64));
         }
         return Ok(0);
     }
@@ -237,21 +269,31 @@ fn hex_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
 
 /// Read a `SpanContext`-shaped JS object (`{traceId, spanId, traceFlags, isRemote?}`)
 /// or a TelemetrySpan.
-pub(crate) fn span_context_from_js(global: &JSGlobalObject, v: JSValue) -> JsResult<Option<SpanContext>> {
+pub(crate) fn span_context_from_js(
+    global: &JSGlobalObject,
+    v: JSValue,
+) -> JsResult<Option<SpanContext>> {
     if !v.is_object() {
         return Ok(None);
     }
     if let Some(span) = js::from_js(v) {
         return Ok(Some(*unsafe { span.as_ref() }.0.context()));
     }
-    let Some(tid) = v.get(global, "traceId")? else { return Ok(None) };
-    let Some(sid) = v.get(global, "spanId")? else { return Ok(None) };
+    let Some(tid) = v.get(global, "traceId")? else {
+        return Ok(None);
+    };
+    let Some(sid) = v.get(global, "spanId")? else {
+        return Ok(None);
+    };
     if !tid.is_string() || !sid.is_string() {
         return Ok(None);
     }
     let tid = tid.to_slice(global)?;
     let sid = sid.to_slice(global)?;
-    let (Some(trace_id), Some(span_id)) = (TraceId::from_hex(tid.slice()), SpanId::from_hex(sid.slice())) else {
+    let (Some(trace_id), Some(span_id)) = (
+        TraceId::from_hex(tid.slice()),
+        SpanId::from_hex(sid.slice()),
+    ) else {
         return Ok(None);
     };
     let mut flags = 0u8;
@@ -265,16 +307,34 @@ pub(crate) fn span_context_from_js(global: &JSGlobalObject, v: JSValue) -> JsRes
             flags |= Flags::REMOTE;
         }
     }
-    Ok(Some(SpanContext { trace_id, span_id, flags: Flags(flags) }))
+    Ok(Some(SpanContext {
+        trace_id,
+        span_id,
+        flags: Flags(flags),
+    }))
 }
 
 /// Collect `attributes` object entries and call `each(key, value)`.
-pub(crate) fn for_each_attribute(global: &JSGlobalObject, obj: JSValue, mut each: impl FnMut(&[u8], &Value<'_>)) -> JsResult<()> {
+pub(crate) fn for_each_attribute(
+    global: &JSGlobalObject,
+    obj: JSValue,
+    mut each: impl FnMut(&[u8], &Value<'_>),
+) -> JsResult<()> {
     if !obj.is_object() {
         return Ok(());
     }
-    let Some(o) = obj.get_object() else { return Ok(()) };
-    let mut iter = JSPropertyIterator::init(global, o, JSPropertyIteratorOptions { skip_empty_name: true, include_value: true, ..Default::default() })?;
+    let Some(o) = obj.get_object() else {
+        return Ok(());
+    };
+    let mut iter = JSPropertyIterator::init(
+        global,
+        o,
+        JSPropertyIteratorOptions {
+            skip_empty_name: true,
+            include_value: true,
+            ..Default::default()
+        },
+    )?;
     while let Some(name) = iter.next()? {
         let value = iter.value;
         if value.is_undefined_or_null() {
@@ -297,9 +357,20 @@ impl TelemetrySpan {
     }
 
     /// Start a span and return `(record, wrapper)`.
-    pub fn start(global: &JSGlobalObject, scope: ScopeId, name: &[u8], kind: SpanKind, parent: Option<&SpanContext>, start_ns: u64) -> (Span, JSValue) {
+    pub fn start(
+        global: &JSGlobalObject,
+        scope: ScopeId,
+        name: &[u8],
+        kind: SpanKind,
+        parent: Option<&SpanContext>,
+        start_ns: u64,
+    ) -> (Span, JSValue) {
         let st = super::state();
-        let now = if start_ns == 0 { clock::now_unix_nanos() } else { start_ns };
+        let now = if start_ns == 0 {
+            clock::now_unix_nanos()
+        } else {
+            start_ns
+        };
         let stub = SpanStub::start(parent, &st.sampler, now);
         let span = Span::new(stub, scope, name, kind);
         let js = Self::create(global, span.clone());
@@ -309,8 +380,20 @@ impl TelemetrySpan {
     /// A non-recording wrapper carrying only a (typically remote) context, so
     /// unsampled requests still propagate trace identity to outgoing calls.
     pub fn non_recording(global: &JSGlobalObject, ctx: SpanContext) -> JSValue {
-        let stub = SpanStub { ctx: SpanContext { flags: Flags(ctx.flags.0 & !Flags::SAMPLED), ..ctx }, parent: SpanId::INVALID, start_ns: 1 };
-        let span = Span::new(stub, ScopeId::from(bun_telemetry::Instrument::User), b"", SpanKind::Internal);
+        let stub = SpanStub {
+            ctx: SpanContext {
+                flags: Flags(ctx.flags.0 & !Flags::SAMPLED),
+                ..ctx
+            },
+            parent: SpanId::INVALID,
+            start_ns: 1,
+        };
+        let span = Span::new(
+            stub,
+            ScopeId::from(bun_telemetry::Instrument::User),
+            b"",
+            SpanKind::Internal,
+        );
         Self::create(global, span)
     }
 
@@ -351,7 +434,9 @@ impl TelemetrySpan {
             return Ok(this);
         }
         let l = limits();
-        for_each_attribute(global, frame.argument(0), |k, v| self.0.set_attribute(k, v, l))?;
+        for_each_attribute(global, frame.argument(0), |k, v| {
+            self.0.set_attribute(k, v, l)
+        })?;
         Ok(this)
     }
 
@@ -377,7 +462,10 @@ impl TelemetrySpan {
         let time = time_from_js(global, a2)?;
         let mut owned: Vec<(Vec<u8>, OwnedValue)> = Vec::new();
         collect_attributes(global, a1, &mut owned)?;
-        let borrowed: Vec<(&[u8], Value<'_>)> = owned.iter().map(|(k, v)| (k.as_slice(), v.borrow())).collect();
+        let borrowed: Vec<(&[u8], Value<'_>)> = owned
+            .iter()
+            .map(|(k, v)| (k.as_slice(), v.borrow()))
+            .collect();
         self.0.add_event(name.slice(), time, &borrowed, limits());
         Ok(this)
     }
@@ -408,12 +496,17 @@ impl TelemetrySpan {
         }
         // OTel API Link: { context: SpanContext, attributes? }. Also accept a Span or bare SpanContext.
         let ctx_v = link.get(global, "context")?.unwrap_or(link);
-        let Some(ctx) = span_context_from_js(global, ctx_v)? else { return Ok(()) };
+        let Some(ctx) = span_context_from_js(global, ctx_v)? else {
+            return Ok(());
+        };
         let mut owned: Vec<(Vec<u8>, OwnedValue)> = Vec::new();
         if let Some(attrs) = link.get(global, "attributes")? {
             collect_attributes(global, attrs, &mut owned)?;
         }
-        let borrowed: Vec<(&[u8], Value<'_>)> = owned.iter().map(|(k, v)| (k.as_slice(), v.borrow())).collect();
+        let borrowed: Vec<(&[u8], Value<'_>)> = owned
+            .iter()
+            .map(|(k, v)| (k.as_slice(), v.borrow()))
+            .collect();
         self.0.add_link(&ctx, b"", &borrowed, limits());
         Ok(())
     }
@@ -425,7 +518,10 @@ impl TelemetrySpan {
         let this = frame.this();
         let a0 = frame.argument(0);
         let (code_v, msg_v) = if a0.is_object() {
-            (a0.get(global, "code")?.unwrap_or(JSValue::UNDEFINED), a0.get(global, "message")?.unwrap_or(JSValue::UNDEFINED))
+            (
+                a0.get(global, "code")?.unwrap_or(JSValue::UNDEFINED),
+                a0.get(global, "message")?.unwrap_or(JSValue::UNDEFINED),
+            )
         } else {
             (a0, frame.argument(1))
         };
@@ -467,12 +563,21 @@ impl TelemetrySpan {
 
     /// `recordException(error, time?)`
     #[bun_jsc::host_fn(method)]
-    pub fn record_exception(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn record_exception(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let this = frame.this();
         if !self.0.is_recording() {
             return Ok(this);
         }
-        record_exception_value(&self.0, global, frame.argument(0), time_from_js(global, frame.argument(1))?)?;
+        record_exception_value(
+            &self.0,
+            global,
+            frame.argument(0),
+            time_from_js(global, frame.argument(1))?,
+        )?;
         Ok(this)
     }
 
@@ -494,7 +599,11 @@ impl TelemetrySpan {
         let obj = JSValue::create_empty_object(global, 4);
         obj.put(global, b"traceId", hex_js(global, &ctx.trace_id.0)?);
         obj.put(global, b"spanId", hex_js(global, &ctx.span_id.0)?);
-        obj.put(global, b"traceFlags", JSValue::js_number_from_int32(ctx.flags.w3c() as i32));
+        obj.put(
+            global,
+            b"traceFlags",
+            JSValue::js_number_from_int32(ctx.flags.w3c() as i32),
+        );
         if ctx.flags.remote() {
             obj.put(global, b"isRemote", JSValue::TRUE);
         }
@@ -529,7 +638,15 @@ impl TelemetrySpan {
         // Empty JSValue can't be stored; use the hole marker `null`? No —
         // `undefined` is a legitimate previous value. Store as-is; "not
         // entered" is represented by the slot being JSValue::ZERO (empty).
-        js::restore_set_cached(this, global, if prev.is_empty() { JSValue::UNDEFINED } else { prev });
+        js::restore_set_cached(
+            this,
+            global,
+            if prev.is_empty() {
+                JSValue::UNDEFINED
+            } else {
+                prev
+            },
+        );
         Ok(this)
     }
 
@@ -579,7 +696,9 @@ impl TelemetrySpan {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_trace_flags(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number_from_int32(this.0.context().flags.w3c() as i32))
+        Ok(JSValue::js_number_from_int32(
+            this.0.context().flags.w3c() as i32
+        ))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -589,7 +708,8 @@ impl TelemetrySpan {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_name(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.0.with_name(|n| bun_string_jsc::create_utf8_for_js(global, n))
+        this.0
+            .with_name(|n| bun_string_jsc::create_utf8_for_js(global, n))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -621,12 +741,26 @@ impl OwnedValue {
     }
 }
 
-pub(crate) fn collect_attributes(global: &JSGlobalObject, obj: JSValue, out: &mut Vec<(Vec<u8>, OwnedValue)>) -> JsResult<()> {
+pub(crate) fn collect_attributes(
+    global: &JSGlobalObject,
+    obj: JSValue,
+    out: &mut Vec<(Vec<u8>, OwnedValue)>,
+) -> JsResult<()> {
     if !obj.is_object() {
         return Ok(());
     }
-    let Some(o) = obj.get_object() else { return Ok(()) };
-    let mut iter = JSPropertyIterator::init(global, o, JSPropertyIteratorOptions { skip_empty_name: true, include_value: true, ..Default::default() })?;
+    let Some(o) = obj.get_object() else {
+        return Ok(());
+    };
+    let mut iter = JSPropertyIterator::init(
+        global,
+        o,
+        JSPropertyIteratorOptions {
+            skip_empty_name: true,
+            include_value: true,
+            ..Default::default()
+        },
+    )?;
     while let Some(name) = iter.next()? {
         let value = iter.value;
         let key = name.to_utf8().slice().to_vec();
@@ -647,7 +781,12 @@ pub(crate) fn collect_attributes(global: &JSGlobalObject, obj: JSValue, out: &mu
 }
 
 /// Record a JS exception value as an `exception` event and set Error status.
-pub(crate) fn record_exception_value(span: &SpanData, global: &JSGlobalObject, err: JSValue, time_ns: u64) -> JsResult<()> {
+pub(crate) fn record_exception_value(
+    span: &SpanData,
+    global: &JSGlobalObject,
+    err: JSValue,
+    time_ns: u64,
+) -> JsResult<()> {
     if !span.is_recording() {
         return Ok(());
     }
@@ -676,7 +815,11 @@ pub(crate) fn record_exception_value(span: &SpanData, global: &JSGlobalObject, e
     let ty = ty_s.as_ref().map(|s| s.slice()).unwrap_or(b"Error");
     let msg = msg_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
     let stack = stack_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
-    let attrs: [(&[u8], Value<'_>); 3] = [(b"exception.type", Value::Str(ty)), (b"exception.message", Value::Str(msg)), (b"exception.stacktrace", Value::Str(stack))];
+    let attrs: [(&[u8], Value<'_>); 3] = [
+        (b"exception.type", Value::Str(ty)),
+        (b"exception.message", Value::Str(msg)),
+        (b"exception.stacktrace", Value::Str(stack)),
+    ];
     let n = if stack.is_empty() { 2 } else { 3 };
     span.add_event(b"exception", time_ns, &attrs[..n], limits());
     Ok(())
@@ -684,7 +827,11 @@ pub(crate) fn record_exception_value(span: &SpanData, global: &JSGlobalObject, e
 
 /// End `span` into this thread's batch. `extra` adds integration attributes.
 #[inline]
-pub fn end_span(span: &SpanData, end_ns: u64, extra: impl FnOnce(&mut bun_telemetry::SpanWriter<'_>)) {
+pub fn end_span(
+    span: &SpanData,
+    end_ns: u64,
+    extra: impl FnOnce(&mut bun_telemetry::SpanWriter<'_>),
+) {
     let scope = span.scope;
     bun_telemetry::batch::record(scope, |buf| {
         span.end_into(buf, end_ns, extra);

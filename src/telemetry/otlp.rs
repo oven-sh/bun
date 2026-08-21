@@ -5,7 +5,10 @@
 //! fields straight into the thread's batch buffer as a length-delimited
 //! `ScopeSpans.spans` entry. Attributes are never materialised.
 
-use crate::proto::{self, Nested, WireType, len_field_len, tag_len, varint_len, write_len_prefix, write_tag, write_varint};
+use crate::proto::{
+    self, Nested, WireType, len_field_len, tag_len, varint_len, write_len_prefix, write_tag,
+    write_varint,
+};
 use crate::span::{SpanContext, SpanId, SpanKind, SpanStub, StatusCode};
 
 pub mod field {
@@ -191,7 +194,13 @@ impl<'a> SpanWriter<'a> {
     /// for callers that set it later via [`Self::end_time`], but every span
     /// must have one before `finish`.
     #[inline]
-    pub fn begin(out: &'a mut Vec<u8>, stub: &SpanStub, name: &[u8], kind: SpanKind, end_ns: u64) -> SpanWriter<'a> {
+    pub fn begin(
+        out: &'a mut Vec<u8>,
+        stub: &SpanStub,
+        name: &[u8],
+        kind: SpanKind,
+        end_ns: u64,
+    ) -> SpanWriter<'a> {
         out.reserve(128 + name.len());
         let nested = Nested::begin(out, f::SS_SPANS);
         proto::write_bytes(out, f::TRACE_ID, &stub.ctx.trace_id.0);
@@ -271,7 +280,13 @@ impl<'a> SpanWriter<'a> {
 
     /// `exception` event per semconv: exception.type / exception.message /
     /// exception.stacktrace.
-    pub fn exception(&mut self, time_ns: u64, ty: &[u8], message: &[u8], stack: &[u8]) -> &mut Self {
+    pub fn exception(
+        &mut self,
+        time_ns: u64,
+        ty: &[u8],
+        message: &[u8],
+        stack: &[u8],
+    ) -> &mut Self {
         let mut attrs: [(&[u8], Value<'_>); 3] = [
             (b"exception.type", Value::Str(ty)),
             (b"exception.message", Value::Str(message)),
@@ -294,8 +309,20 @@ impl<'a> SpanWriter<'a> {
             return self;
         }
         // Spec: description is only meaningful for Error.
-        let message = if code == StatusCode::Error { message } else { b"" };
-        let body = if message.is_empty() { 0 } else { len_field_len(f::STATUS_MESSAGE, message.len()) } + if code == StatusCode::Unset { 0 } else { tag_len(f::STATUS_CODE) + 1 };
+        let message = if code == StatusCode::Error {
+            message
+        } else {
+            b""
+        };
+        let body = if message.is_empty() {
+            0
+        } else {
+            len_field_len(f::STATUS_MESSAGE, message.len())
+        } + if code == StatusCode::Unset {
+            0
+        } else {
+            tag_len(f::STATUS_CODE) + 1
+        };
         write_len_prefix(self.out, f::STATUS, body);
         proto::write_bytes_opt(self.out, f::STATUS_MESSAGE, message);
         proto::write_uint(self.out, f::STATUS_CODE, code as u64);
@@ -320,7 +347,10 @@ fn attrs_len(field: u32, attrs: &[(&[u8], Value<'_>)]) -> usize {
 
 /// Append a `Span.events` entry.
 pub fn encode_event(out: &mut Vec<u8>, name: &[u8], time_ns: u64, attrs: &[(&[u8], Value<'_>)]) {
-    let body = tag_len(f::EV_TIME) + 8 + len_field_len(f::EV_NAME, name.len()) + attrs_len(f::EV_ATTRIBUTES, attrs);
+    let body = tag_len(f::EV_TIME)
+        + 8
+        + len_field_len(f::EV_NAME, name.len())
+        + attrs_len(f::EV_ATTRIBUTES, attrs);
     write_len_prefix(out, f::EVENTS, body);
     proto::write_fixed64(out, f::EV_TIME, time_ns);
     proto::write_bytes(out, f::EV_NAME, name);
@@ -330,11 +360,20 @@ pub fn encode_event(out: &mut Vec<u8>, name: &[u8], time_ns: u64, attrs: &[(&[u8
 }
 
 /// Append a `Span.links` entry.
-pub fn encode_link(out: &mut Vec<u8>, ctx: &SpanContext, trace_state: &[u8], attrs: &[(&[u8], Value<'_>)]) {
+pub fn encode_link(
+    out: &mut Vec<u8>,
+    ctx: &SpanContext,
+    trace_state: &[u8],
+    attrs: &[(&[u8], Value<'_>)],
+) {
     let flags = (ctx.flags.w3c() as u32) | 0x100 | if ctx.flags.remote() { 0x200 } else { 0 };
     let body = len_field_len(f::LINK_TRACE_ID, 16)
         + len_field_len(f::LINK_SPAN_ID, 8)
-        + if trace_state.is_empty() { 0 } else { len_field_len(f::LINK_TRACE_STATE, trace_state.len()) }
+        + if trace_state.is_empty() {
+            0
+        } else {
+            len_field_len(f::LINK_TRACE_STATE, trace_state.len())
+        }
         + attrs_len(f::LINK_ATTRIBUTES, attrs)
         + tag_len(f::LINK_FLAGS)
         + 4;

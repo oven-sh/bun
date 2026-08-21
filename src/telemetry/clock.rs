@@ -17,7 +17,10 @@ fn mono_now() -> u64 {
 }
 
 fn anchor() -> &'static Anchor {
-    ANCHOR.get_or_init(|| Anchor { epoch_ns: bun_core::time::nano_timestamp(), mono_ns: mono_now() })
+    ANCHOR.get_or_init(|| Anchor {
+        epoch_ns: bun_core::time::nano_timestamp(),
+        mono_ns: mono_now(),
+    })
 }
 
 /// Nanoseconds since the Unix epoch. Monotonic within the process.

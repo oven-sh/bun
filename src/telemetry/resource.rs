@@ -27,11 +27,25 @@ pub fn encode(info: &ResourceInfo<'_>) -> Vec<u8> {
     attrs.push((b"service.name", Value::Str(service_name.as_bytes())));
     attrs.push((b"telemetry.sdk.name", Value::Str(b"bun")));
     attrs.push((b"telemetry.sdk.language", Value::Str(b"bun")));
-    attrs.push((b"telemetry.sdk.version", Value::Str(info.runtime_version.as_bytes())));
+    attrs.push((
+        b"telemetry.sdk.version",
+        Value::Str(info.runtime_version.as_bytes()),
+    ));
     attrs.push((b"process.runtime.name", Value::Str(b"bun")));
-    attrs.push((b"process.runtime.version", Value::Str(info.runtime_version.as_bytes())));
+    attrs.push((
+        b"process.runtime.version",
+        Value::Str(info.runtime_version.as_bytes()),
+    ));
     attrs.push((b"process.pid", Value::Int(info.pid as i64)));
-    let builtin: [&[u8]; 7] = [b"service.name", b"telemetry.sdk.name", b"telemetry.sdk.language", b"telemetry.sdk.version", b"process.runtime.name", b"process.runtime.version", b"process.pid"];
+    let builtin: [&[u8]; 7] = [
+        b"service.name",
+        b"telemetry.sdk.name",
+        b"telemetry.sdk.language",
+        b"telemetry.sdk.version",
+        b"process.runtime.name",
+        b"process.runtime.version",
+        b"process.pid",
+    ];
     for (k, v) in info.extra {
         let k = k.as_bytes();
         // User-provided keys win over our defaults except the sdk identity.

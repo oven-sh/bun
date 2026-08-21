@@ -51,7 +51,12 @@ pub struct BatchConfig {
 
 impl Default for BatchConfig {
     fn default() -> Self {
-        BatchConfig { scheduled_delay_ms: 5000, export_timeout_ms: 30000, max_queue_size: 2048, max_export_batch_size: 512 }
+        BatchConfig {
+            scheduled_delay_ms: 5000,
+            export_timeout_ms: 30000,
+            max_queue_size: 2048,
+            max_export_batch_size: 512,
+        }
     }
 }
 
@@ -105,11 +110,18 @@ impl Processor {
         let mut scopes: Vec<Box<[u8]>> = Vec::with_capacity(Instrument::COUNT);
         let mut names: Vec<Box<[u8]>> = Vec::with_capacity(Instrument::COUNT);
         for i in Instrument::ALL {
-            scopes.push(otlp::encode_scope(i.scope_name().as_bytes(), version.as_bytes()).into_boxed_slice());
+            scopes.push(
+                otlp::encode_scope(i.scope_name().as_bytes(), version.as_bytes())
+                    .into_boxed_slice(),
+            );
             names.push(i.scope_name().as_bytes().into());
         }
         Processor {
-            pending: Mutex::new(Pending { scopes: Vec::new(), count: 0, oldest_ns: 0 }),
+            pending: Mutex::new(Pending {
+                scopes: Vec::new(),
+                count: 0,
+                oldest_ns: 0,
+            }),
             exporters: RwLock::new(Vec::new()),
             resource: RwLock::new(Arc::from(Vec::new())),
             scopes: RwLock::new(scopes),
@@ -154,7 +166,9 @@ impl Processor {
             let names = self.scope_names.read().unwrap();
             // Linear scan: a process has a handful of tracers.
             for (i, n) in names.iter().enumerate().skip(Instrument::COUNT) {
-                if &**n == name && &*self.scopes.read().unwrap()[i] == &*otlp::encode_scope(name, version) {
+                if &**n == name
+                    && &*self.scopes.read().unwrap()[i] == &*otlp::encode_scope(name, version)
+                {
                     return ScopeId(i as u16);
                 }
             }
@@ -170,7 +184,12 @@ impl Processor {
     }
 
     pub fn scope_name(&self, id: ScopeId) -> Box<[u8]> {
-        self.scope_names.read().unwrap().get(id.0 as usize).cloned().unwrap_or_default()
+        self.scope_names
+            .read()
+            .unwrap()
+            .get(id.0 as usize)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Take a thread's batch. Triggers an export if the batch-size threshold
@@ -181,7 +200,9 @@ impl Processor {
         {
             let mut p = self.pending.lock().unwrap();
             if p.count >= cfg.max_queue_size {
-                self.stats.spans_dropped.fetch_add(batch.count as u64, Ordering::Relaxed);
+                self.stats
+                    .spans_dropped
+                    .fetch_add(batch.count as u64, Ordering::Relaxed);
                 return;
             }
             if p.scopes.len() < batch.scopes.len() {
@@ -218,7 +239,9 @@ impl Processor {
         let cfg = *self.config.read().unwrap();
         let due = {
             let p = self.pending.lock().unwrap();
-            p.count > 0 && clock::now_unix_nanos().saturating_sub(p.oldest_ns) >= (cfg.scheduled_delay_ms as u64) * 1_000_000
+            p.count > 0
+                && clock::now_unix_nanos().saturating_sub(p.oldest_ns)
+                    >= (cfg.scheduled_delay_ms as u64) * 1_000_000
         };
         if due {
             self.export();
@@ -243,22 +266,34 @@ impl Processor {
             .iter()
             .enumerate()
             .filter(|(_, b)| !b.is_empty())
-            .map(|(i, b)| otlp::ScopeChunk { scope: scope_defs.get(i).map(|s| &**s).unwrap_or(&[]), spans: b })
+            .map(|(i, b)| otlp::ScopeChunk {
+                scope: scope_defs.get(i).map(|s| &**s).unwrap_or(&[]),
+                spans: b,
+            })
             .collect();
         let body = otlp::encode_request(&resource, &chunks);
-        Some(Arc::new(ExportPayload { body, span_count: count }))
+        Some(Arc::new(ExportPayload {
+            body,
+            span_count: count,
+        }))
     }
 
     /// Export everything pending now (non-blocking).
     pub fn export(&'static self) -> bool {
         crate::batch::flush_local();
-        let Some(payload) = self.take_payload() else { return false };
+        let Some(payload) = self.take_payload() else {
+            return false;
+        };
         let exporters = self.exporters.read().unwrap().clone();
         if exporters.is_empty() {
-            self.stats.spans_dropped.fetch_add(payload.span_count as u64, Ordering::Relaxed);
+            self.stats
+                .spans_dropped
+                .fetch_add(payload.span_count as u64, Ordering::Relaxed);
             return false;
         }
-        self.stats.last_export_ns.store(clock::now_unix_nanos(), Ordering::Relaxed);
+        self.stats
+            .last_export_ns
+            .store(clock::now_unix_nanos(), Ordering::Relaxed);
         self.inflight.fetch_add(exporters.len(), Ordering::AcqRel);
         for e in exporters {
             e.export(self, payload.clone());
@@ -271,11 +306,15 @@ impl Processor {
         match result {
             ExportResult::Success => {
                 self.stats.exports_ok.fetch_add(1, Ordering::Relaxed);
-                self.stats.spans_exported.fetch_add(payload.span_count as u64, Ordering::Relaxed);
+                self.stats
+                    .spans_exported
+                    .fetch_add(payload.span_count as u64, Ordering::Relaxed);
             }
             ExportResult::Failure => {
                 self.stats.exports_failed.fetch_add(1, Ordering::Relaxed);
-                self.stats.spans_dropped.fetch_add(payload.span_count as u64, Ordering::Relaxed);
+                self.stats
+                    .spans_dropped
+                    .fetch_add(payload.span_count as u64, Ordering::Relaxed);
             }
         }
         if self.inflight.fetch_sub(1, Ordering::AcqRel) == 1 {
@@ -296,7 +335,10 @@ impl Processor {
     /// Block until no exports are in flight or `timeout` elapses.
     pub fn wait_idle(&self, timeout: Duration) -> bool {
         let g = self.idle_lock.lock().unwrap();
-        let (_g, res) = self.idle.wait_timeout_while(g, timeout, |_| self.inflight.load(Ordering::Acquire) != 0).unwrap();
+        let (_g, res) = self
+            .idle
+            .wait_timeout_while(g, timeout, |_| self.inflight.load(Ordering::Acquire) != 0)
+            .unwrap();
         !res.timed_out()
     }
 
@@ -312,10 +354,14 @@ impl Processor {
             for e in exporters {
                 match e.export_blocking(payload.clone(), deadline) {
                     ExportResult::Success => {
-                        self.stats.spans_exported.fetch_add(payload.span_count as u64, Ordering::Relaxed);
+                        self.stats
+                            .spans_exported
+                            .fetch_add(payload.span_count as u64, Ordering::Relaxed);
                     }
                     ExportResult::Failure => {
-                        self.stats.spans_dropped.fetch_add(payload.span_count as u64, Ordering::Relaxed);
+                        self.stats
+                            .spans_dropped
+                            .fetch_add(payload.span_count as u64, Ordering::Relaxed);
                     }
                 }
             }

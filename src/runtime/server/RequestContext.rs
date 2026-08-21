@@ -186,6 +186,12 @@ pub struct RequestContext<
     /// field before the value can dangle. `on_abort` reclaims the ref through
     /// it so an aborted request is torn down without waiting for GC.
     promise_cell: Cell<JSValue>,
+
+    /// Native OpenTelemetry server span (`bun_telemetry::Span`), ended in
+    /// `finalize_without_deinit`. `None` when telemetry is off.
+    pub(crate) otel_span: Cell<Option<bun_telemetry::Span>>,
+    /// Status line written for this request, for the span.
+    pub(crate) otel_status: Cell<u16>,
     // TODO: support builtin compression
 }
 
@@ -1073,6 +1079,7 @@ where
             if !DEBUG_MODE {
                 if !ctx.flags.has_written_status() {
                     resp.write_status(b"204 No Content");
+                    ctx.otel_status.set(204);
                 }
                 ctx.flags.set_has_written_status(true);
                 ctx.end(b"", ctx.should_close_connection());
@@ -1086,6 +1093,7 @@ where
 
             if ctx.flags.is_web_browser_navigation() {
                 resp.write_status(b"200 OK");
+                ctx.otel_status.set(200);
                 ctx.flags.set_has_written_status(true);
 
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
@@ -1101,6 +1109,7 @@ where
             const MISSING_CONTENT: &[u8] =
                 b"Welcome to Bun! To get started, return a Response object.";
             resp.write_status(b"200 OK");
+            ctx.otel_status.set(200);
             resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
             resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
             ctx.flags.set_has_written_status(true);
@@ -1122,6 +1131,7 @@ where
             self.flags.set_has_written_status(true);
             if let Some(resp) = self.resp.get() {
                 resp.write_status(b"500 Internal Server Error");
+                self.otel_status.set(500);
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
             }
         }
@@ -1374,10 +1384,44 @@ where
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
+                otel_span: Cell::new(None),
+                otel_status: Cell::new(0),
             });
         }
 
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
+    }
+
+    /// Start the request's telemetry span (if enabled) and activate it. The
+    /// returned guard must live on the dispatching frame across the handler
+    /// call; the span itself is owned by this context and ended at finalize.
+    pub(crate) fn otel_begin(
+        &self,
+        global: &jsc::JSGlobalObject,
+    ) -> Option<crate::telemetry::Entered> {
+        if !bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
+            return None;
+        }
+        let (Some(req), Some(resp)) = (self.req.get(), self.resp.get()) else {
+            return None;
+        };
+        let (span, entered) = crate::telemetry::server::begin(
+            global,
+            self.method,
+            &Self::any_request(req),
+            resp,
+            SSL_ENABLED,
+        )?;
+        self.otel_span.set(Some(span));
+        Some(entered)
+    }
+
+    pub(crate) fn otel_set_route(&self, route: &[u8]) {
+        let span = self.otel_span.take();
+        if let Some(s) = &span {
+            crate::telemetry::server::set_route(s, self.method, route);
+        }
+        self.otel_span.set(span);
     }
 
     fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
@@ -1502,6 +1546,9 @@ where
     // so it's important that we can safely do that
     pub(crate) fn finalize_without_deinit(&self) {
         ctx_log!("finalizeWithoutDeinit<d> ({:p})<r>", self);
+        if let Some(span) = self.otel_span.take() {
+            crate::telemetry::server::end(span, self.otel_status.get(), self.flags.aborted());
+        }
         self.blob.with_mut(|b| b.detach());
         debug_assert!(self.server.get().is_some());
         let global_this = self.server().global_this();
@@ -3023,6 +3070,7 @@ where
                             self.flags.set_has_written_status(true);
                             if let Some(resp) = self.resp.get() {
                                 resp.write_status(b"500 Internal Server Error");
+                                self.otel_status.set(500);
                                 resp.write_header(
                                     b"content-type",
                                     &bun_http_types::MimeType::HTML.value,
@@ -3508,6 +3556,7 @@ where
                 404 => {
                     if !self.flags.has_written_status() {
                         resp.write_status(b"404 Not Found");
+                        self.otel_status.set(404);
                         self.flags.set_has_written_status(true);
                     }
                     self.end_without_body(self.should_close_connection());
@@ -3516,6 +3565,7 @@ where
                     const BODY: &[u8] = b"Something went wrong!";
                     if !self.flags.has_written_status() {
                         resp.write_status(b"500 Internal Server Error");
+                        self.otel_status.set(500);
                         resp.write_header(b"content-type", b"text/plain");
                         self.flags.set_has_written_status(true);
                     }
@@ -3888,6 +3938,7 @@ where
     fn do_write_status(&self, status: u16) {
         debug_assert!(!self.flags.has_written_status());
         self.flags.set_has_written_status(true);
+        self.otel_status.set(status);
 
         // `AnyResponse` is a `Copy` handle; methods take `self` by value.
         let Some(resp) = self.resp.get() else { return };
@@ -4087,6 +4138,7 @@ where
                         this.flags.set_has_written_status(true);
                         // SAFETY: FFI handle
                         resp.write_status(b"413 Payload Too Large");
+                        this.otel_status.set(413);
                     }
                 }
                 this.end_without_body(!HTTP3);
@@ -4193,6 +4245,7 @@ where
                         this.flags.set_has_written_status(true);
                         // SAFETY: FFI handle
                         resp.write_status(b"413 Payload Too Large");
+                        this.otel_status.set(413);
                     }
                 }
                 this.end_without_body(!HTTP3);

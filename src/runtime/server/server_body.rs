@@ -113,6 +113,8 @@ trait RequestCtxOps: RequestCtx {
     fn render_missing(&self);
     fn to_async(&self, req: &mut Self::Req, request_object: &mut Request);
     fn ctx_method(&self) -> http::Method;
+    fn otel_begin(&self, global: &JSGlobalObject) -> Option<crate::telemetry::Entered>;
+    fn otel_set_route(&self, route: &[u8]);
     fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>);
     fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>);
     #[allow(
@@ -190,6 +192,14 @@ where
     #[inline]
     fn ctx_method(&self) -> http::Method {
         self.method
+    }
+    #[inline]
+    fn otel_begin(&self, global: &JSGlobalObject) -> Option<crate::telemetry::Entered> {
+        Self::otel_begin(self, global)
+    }
+    #[inline]
+    fn otel_set_route(&self, route: &[u8]) {
+        Self::otel_set_route(self, route)
     }
     #[inline]
     fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>) {
@@ -1313,6 +1323,7 @@ pub(crate) struct PreparedRequestFor<Ctx> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut Request,
     pub ctx: *mut Ctx,
+    pub(crate) otel: Option<crate::telemetry::Entered>,
 }
 
 // `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
@@ -2948,6 +2959,10 @@ where
         ) else {
             return;
         };
+        if prepared.otel.is_some() {
+            // SAFETY: `prepared.ctx` is live for this frame.
+            RequestCtxOps::otel_set_route(unsafe { &*prepared.ctx }, &user_route.route.path);
+        }
 
         let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
@@ -3319,6 +3334,8 @@ where
             },
             request_object: request_object_ptr,
             ctx: ctx_slot,
+            // SAFETY: `ctx_slot` was fully initialised by `create_in` above.
+            otel: RequestCtxOps::otel_begin(unsafe { &*ctx_slot }, &server.global()),
         })
     }
 

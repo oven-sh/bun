@@ -41,7 +41,9 @@ impl Sampler {
             Sampler::AlwaysOn => true,
             Sampler::AlwaysOff => false,
             Sampler::TraceIdRatio(t) => Self::ratio_hit(t, trace_id),
-            Sampler::ParentBasedAlwaysOn | Sampler::ParentBasedAlwaysOff | Sampler::ParentBasedTraceIdRatio(_) => {
+            Sampler::ParentBasedAlwaysOn
+            | Sampler::ParentBasedAlwaysOff
+            | Sampler::ParentBasedTraceIdRatio(_) => {
                 if let Some(p) = parent.filter(|p| p.is_valid()) {
                     return p.sampled();
                 }

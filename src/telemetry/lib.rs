@@ -132,7 +132,14 @@ impl Instrument {
     /// Instrumentations that, by default, only record when a parent span is
     /// already active — a bare script shouldn't emit a root span per readFile.
     pub const fn requires_parent_by_default(self) -> bool {
-        matches!(self, Instrument::Fs | Instrument::Sqlite | Instrument::Net | Instrument::Dns | Instrument::ChildProcess)
+        matches!(
+            self,
+            Instrument::Fs
+                | Instrument::Sqlite
+                | Instrument::Net
+                | Instrument::Dns
+                | Instrument::ChildProcess
+        )
     }
 }
 

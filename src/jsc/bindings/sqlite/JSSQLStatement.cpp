@@ -233,8 +233,14 @@ public:
         m_sql = sql;
         m_sqlLen = len;
     }
-    /// The sqlite result code that made this query fail, when the caller has it.
-    void setError(int rc) { m_rc = rc; }
+    /// The sqlite result code that made this query fail. Captures the message
+    /// now: later sqlite3_* calls on the error path (reset/finalize) replace it.
+    void setError(int rc)
+    {
+        m_rc = rc;
+        if (m_span && m_db)
+            m_errmsg = sqlite3_errmsg(m_db);
+    }
 
 private:
     NEVER_INLINE void begin(JSC::JSGlobalObject* globalObject)
@@ -260,7 +266,10 @@ private:
             if (rc == SQLITE_OK || rc == SQLITE_ROW || rc == SQLITE_DONE)
                 rc = SQLITE_ERROR;
         }
-        Bun__Telemetry__sqliteEnd(m_span, sql, len, rc, failed && m_db ? sqlite3_errmsg(m_db) : nullptr);
+        const char* msg = nullptr;
+        if (failed)
+            msg = !m_errmsg.isNull() ? m_errmsg.data() : (m_db ? sqlite3_errmsg(m_db) : nullptr);
+        Bun__Telemetry__sqliteEnd(m_span, sql, len, rc, msg);
         m_span = 0;
     }
 
@@ -270,6 +279,7 @@ private:
     const char* m_sql { nullptr };
     size_t m_sqlLen { 0 };
     int m_rc { SQLITE_OK };
+    CString m_errmsg;
     uint64_t m_span { 0 };
 };
 

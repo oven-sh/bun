@@ -87,6 +87,46 @@ Consult your scanner's documentation for which environment variables to set and 
 For a complete example with tests and CI setup, see the official template:
 [github.com/oven-sh/security-scanner-template](https://github.com/oven-sh/security-scanner-template)
 
+A scanner is a module that exports a `scanner` object implementing `Bun.Security.Scanner`. Bun calls its `scan()` hook
+with every package it is about to install, including transitive dependencies, and cancels the install if any returned
+advisory is `fatal`:
+
+```ts scanner.ts icon="/icons/typescript.svg"
+export const scanner: Bun.Security.Scanner = {
+  version: "1",
+  async scan({ packages }) {
+    const advisories: Bun.Security.Advisory[] = [];
+
+    for (const pkg of packages) {
+      if (pkg.name === "event-stream" && Bun.semver.satisfies(pkg.version, ">=3.3.6 <4.0.0")) {
+        advisories.push({
+          level: "fatal",
+          package: pkg.name,
+          url: "https://blog.npmjs.org/post/180565383195/details-about-the-event-stream-incident",
+          description: "event-stream 3.3.6 shipped a compromised dependency",
+        });
+      }
+    }
+
+    return advisories;
+  },
+};
+```
+
+Each entry in `packages` describes one resolved package:
+
+| Field            | Description                                                                                                                                                                                                                                                                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`           | The package name.                                                                                                                                                                                                                                                                                                                             |
+| `version`        | What Bun resolved the dependency to. For registry packages this is the exact semver version (`4.1.2`). For other sources it is the resolved specifier as written to `bun.lock`, e.g. `github:user/repo#<commit>`, `git+https://host/repo.git#<commit>`, `https://example.com/pkg.tgz`, `./vendor/pkg.tgz`, `file:packages/pkg` or `link:pkg`. |
+| `requestedRange` | The range that was requested in `package.json` or on the command line, e.g. `^4.0.0`, `latest`, `github:user/repo` or `file:./pkg`.                                                                                                                                                                                                           |
+| `tarball`        | The URL of the tarball Bun downloads (or the path of a local tarball). For `github:` dependencies this is the GitHub API tarball URL for the resolved commit. Empty for packages that are not installed from a tarball, such as `git+` dependencies and local `file:` / `link:` directories.                                                  |
+
+Packages from every source are included — registry, git, GitHub, remote and local tarballs, and local directories — so a
+scanner can apply policy to dependencies that do not come from a registry. For those packages `version` is not a semver
+version, so compare it with `Bun.semver.satisfies()` (which returns `false` for such specifiers) rather than assuming it
+parses. Workspace packages are part of the project itself and are not included.
+
 ## Related
 
 - [Configuration (bunfig.toml)](/runtime/bunfig#install-security-scanner)

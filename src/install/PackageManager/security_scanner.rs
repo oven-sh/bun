@@ -13,10 +13,12 @@ use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
+use crate::repository_real::RepositoryExt as _;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_core::{self, Output};
 use bun_event_loop::EventLoopHandle;
+use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
@@ -445,6 +447,13 @@ pub(crate) fn prompt_for_warnings() -> bool {
     true
 }
 
+fn is_scannable_resolution(tag: ResolutionTag) -> bool {
+    !matches!(
+        tag,
+        ResolutionTag::Uninitialized | ResolutionTag::Root | ResolutionTag::Workspace
+    )
+}
+
 struct PackageCollector<'a> {
     manager: &'a PackageManager,
     dedupe: ArrayHashMap<PackageID, ()>,
@@ -477,7 +486,7 @@ impl<'a> PackageCollector<'a> {
         let root_pkg_id: PackageID = 0;
         let root_deps = pkg_dependencies[root_pkg_id as usize];
 
-        // collect all npm deps from the root package
+        // collect all deps from the root package
         for _dep_id in root_deps.begin()..root_deps.end() {
             let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
             let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
@@ -502,7 +511,7 @@ impl<'a> PackageCollector<'a> {
             });
         }
 
-        // and collect npm deps from workspace packages
+        // and collect deps from workspace packages
         for pkg_idx in 0..pkgs.len() {
             let pkg_id: PackageID = PackageID::try_from(pkg_idx).expect("int cast");
             if pkg_resolutions[pkg_id as usize].tag != bun_install::resolution::Tag::Workspace {
@@ -659,7 +668,7 @@ impl<'a> PackageCollector<'a> {
             let pkg_id = item.pkg_id;
             let _ = item.dep_id; // Could be useful in the future for dependency-specific processing
 
-            if pkg_resolutions[pkg_id as usize].tag == bun_install::resolution::Tag::Npm {
+            if is_scannable_resolution(pkg_resolutions[pkg_id as usize].tag) {
                 let pkg_path_copy: Box<[PackageID]> = item.pkg_path.clone().into_boxed_slice();
                 let dep_path_copy: Box<[DependencyID]> = item.dep_path.clone().into_boxed_slice();
 
@@ -725,6 +734,8 @@ impl<'a> JSONBuilder<'a> {
         json_buf.extend_from_slice(b"[\n");
 
         let mut first = true;
+        let mut version_buf: Vec<u8> = Vec::new();
+        let mut tarball_buf: Vec<u8> = Vec::new();
         // `ArrayHashMap::iterator()` takes `&mut self`, but we only
         // need shared access. Iterate by index over the parallel key/value
         // slices instead (insertion-ordered).
@@ -747,34 +758,58 @@ impl<'a> JSONBuilder<'a> {
                 json_buf.extend_from_slice(b",\n");
             }
 
-            // SAFETY: `PackageCollector::process_queue` only inserts packages
-            // whose resolution tag is `Tag::Npm` into `package_paths`, so the
-            // `npm` union variant is the active field here.
-            let npm = pkg_res.npm();
-            if dep_id == invalid_dependency_id {
-                write!(
-                    &mut json_buf,
-                    "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": \"{}\",\n    \"tarball\": {}\n  }}",
-                    bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
-                    npm.version.fmt(string_buf),
-                    npm.version.fmt(string_buf),
-                    bun_core::fmt::format_json_string_utf8(npm.url.slice(string_buf), json_opts),
-                )?;
-            } else {
-                let dep_version =
-                    &self.manager.lockfile.buffers.dependencies[dep_id as usize].version;
-                write!(
-                    &mut json_buf,
-                    "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": {},\n    \"tarball\": {}\n  }}",
-                    bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
-                    npm.version.fmt(string_buf),
-                    bun_core::fmt::format_json_string_utf8(
-                        dep_version.literal.slice(string_buf),
-                        json_opts
-                    ),
-                    bun_core::fmt::format_json_string_utf8(npm.url.slice(string_buf), json_opts),
-                )?;
+            version_buf.clear();
+            tarball_buf.clear();
+            match pkg_res.tag {
+                ResolutionTag::Npm => {
+                    let npm = pkg_res.npm();
+                    write!(&mut version_buf, "{}", npm.version.fmt(string_buf))?;
+                    tarball_buf.extend_from_slice(npm.url.slice(string_buf));
+                }
+                ResolutionTag::Github => {
+                    let repository = pkg_res.github();
+                    write!(&mut version_buf, "{}", pkg_res.fmt_url(string_buf))?;
+                    let commit = if repository.resolved.is_empty() {
+                        repository.committish.slice(string_buf)
+                    } else {
+                        repository.resolved_commit(string_buf)
+                    };
+                    tarball_buf = crate::package_manager_real::run_tasks::alloc_github_url_for_ref(
+                        self.manager,
+                        repository,
+                        commit,
+                    );
+                }
+                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                    write!(&mut version_buf, "{}", pkg_res.fmt_url(string_buf))?;
+                    tarball_buf.extend_from_slice(&version_buf);
+                }
+                ResolutionTag::Folder => {
+                    version_buf.extend_from_slice(b"file:");
+                    write!(&mut version_buf, "{}", pkg_res.fmt_url(string_buf))?;
+                }
+                _ => {
+                    write!(&mut version_buf, "{}", pkg_res.fmt_url(string_buf))?;
+                }
             }
+
+            let requested_range: &[u8] = if dep_id == invalid_dependency_id {
+                &version_buf
+            } else {
+                self.manager.lockfile.buffers.dependencies[dep_id as usize]
+                    .version
+                    .literal
+                    .slice(string_buf)
+            };
+
+            write!(
+                &mut json_buf,
+                "  {{\n    \"name\": {},\n    \"version\": {},\n    \"requestedRange\": {},\n    \"tarball\": {}\n  }}",
+                bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
+                bun_core::fmt::format_json_string_utf8(&version_buf, json_opts),
+                bun_core::fmt::format_json_string_utf8(requested_range, json_opts),
+                bun_core::fmt::format_json_string_utf8(&tarball_buf, json_opts),
+            )?;
 
             first = false;
         }

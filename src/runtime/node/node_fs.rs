@@ -6375,11 +6375,9 @@ impl NodeFS {
         Ok(())
     }
 
-    /// A subdirectory that fails with one of these ends that subdirectory
-    /// instead of the whole call: its parent listed it a moment ago, so it was
-    /// removed or replaced since, or cannot be entered. This applies to the
-    /// reads too. `getdents64` reports a directory removed after it was opened
-    /// as ENOENT, which libc's readdir(3) reports as the end of the directory.
+    /// The subdirectory went away, or cannot be entered, since its parent listed
+    /// it. Checked after its open and after each read: `getdents64` reports a
+    /// directory removed after it was opened as ENOENT.
     fn readdir_recursive_skips_subdir(errno: E) -> bool {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }

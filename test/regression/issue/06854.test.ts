@@ -33,6 +33,7 @@ test.concurrent('"use client" stays above the JSX runtime import with --no-bundl
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toStartWith('"use client";');
+  expect(stdout.indexOf('"use client"')).toBeLessThan(stdout.indexOf("react/jsx"));
   expect(exitCode).toBe(0);
 });
 

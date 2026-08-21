@@ -727,7 +727,7 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toContain('"use server"');
+      expect(api.readFile("/out.js")).toMatch(/(?:async\s+)?function\s+action\s*\(\)\s*\{\s*"use server";/);
     },
   });
   itBundled("edgecase/DirectiveMultipleDedup", {

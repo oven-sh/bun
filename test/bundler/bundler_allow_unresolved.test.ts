@@ -226,4 +226,55 @@ describe("bundler", () => {
     backend: "cli",
     allowUnresolved: ["./locales/*.json"],
   });
+
+  // 17-20. Constant folding turns the template head/tail into a rope of string
+  // segments. The shape must include every segment ("./locales/*.json"), not
+  // just the first one ("./loc*.json"), or a matching pattern is rejected.
+  itBundled("allow-unresolved/RopeHeadFromStringAddition", {
+    files: {
+      "/entry.js": /* js */ `
+        export function load(x) {
+          return import("./loc" + \`ales/\${x}.json\`);
+        }
+      `,
+    },
+    outdir: "/out",
+    allowUnresolved: ["./locales/*.json"],
+  });
+
+  itBundled("allow-unresolved/RopeHeadFromTemplateFolding", {
+    files: {
+      "/entry.js": /* js */ `
+        export function load(x) {
+          return import(\`./loc\${"ales"}/\${x}.json\`);
+        }
+      `,
+    },
+    outdir: "/out",
+    allowUnresolved: ["./locales/*.json"],
+  });
+
+  itBundled("allow-unresolved/RopeTailFromStringAddition", {
+    files: {
+      "/entry.js": /* js */ `
+        export function load(x) {
+          return import(\`./locales/\${x}\` + ".json");
+        }
+      `,
+    },
+    outdir: "/out",
+    allowUnresolved: ["./locales/*.json"],
+  });
+
+  itBundled("allow-unresolved/RequireResolveRopeHead", {
+    files: {
+      "/entry.js": /* js */ `
+        export function load(x) {
+          return require.resolve("./loc" + \`ales/\${x}.json\`);
+        }
+      `,
+    },
+    outdir: "/out",
+    allowUnresolved: ["./locales/*.json"],
+  });
 });

@@ -146,12 +146,12 @@ fn s(v: &[u8]) -> String {
 /// OTEL_EXPORTER_OTLP_HEADERS and OTEL_RESOURCE_ATTRIBUTES).
 pub fn parse_kv_list(v: &[u8]) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for part in v.split(|&c| c == b',') {
+    for part in bun_core::strings::split(v, b",") {
         let part = part.trim_ascii();
         if part.is_empty() {
             continue;
         }
-        let Some(eq) = part.iter().position(|&c| c == b'=') else {
+        let Some(eq) = bun_core::strings::index_of_char_usize(part, b'=') else {
             continue;
         };
         let k = s(&part[..eq]);
@@ -283,7 +283,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     if let Some(v) = get("OTEL_PROPAGATORS") {
         c.propagate_trace_context = false;
         c.propagate_baggage = false;
-        for p in v.split(|&ch| ch == b',') {
+        for p in bun_core::strings::split(&v, b",") {
             match p.trim_ascii() {
                 b"tracecontext" => c.propagate_trace_context = true,
                 b"baggage" => c.propagate_baggage = true,
@@ -300,7 +300,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     let mut want_otlp = true;
     if let Some(v) = get("OTEL_TRACES_EXPORTER") {
         want_otlp = false;
-        for e in v.split(|&ch| ch == b',') {
+        for e in bun_core::strings::split(&v, b",") {
             match e.trim_ascii() {
                 b"otlp" => want_otlp = true,
                 b"console" => c.console_exporter = true,
@@ -399,7 +399,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     // forces parent-required.
     if let Some(v) = get("BUN_OTEL_INSTRUMENTATIONS") {
         let mut mask = 0u32;
-        for n in v.split(|&ch| ch == b',') {
+        for n in bun_core::strings::split(&v, b",") {
             let n = n.trim_ascii();
             if n.is_empty() {
                 continue;
@@ -428,7 +428,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         c.instruments = mask | Instrument::User.bit();
     }
     if let Some(v) = get("BUN_OTEL_DISABLE") {
-        for n in v.split(|&ch| ch == b',') {
+        for n in bun_core::strings::split(&v, b",") {
             let n = n.trim_ascii();
             if n.is_empty() {
                 continue;
@@ -446,15 +446,13 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         c.capture_db_statement = truthy(&v);
     }
     if let Some(v) = get("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST") {
-        c.capture_request_headers = v
-            .split(|&ch| ch == b',')
+        c.capture_request_headers = bun_core::strings::split(&v, b",")
             .map(|h| s(h).to_ascii_lowercase())
             .filter(|h| !h.is_empty())
             .collect();
     }
     if let Some(v) = get("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE") {
-        c.capture_response_headers = v
-            .split(|&ch| ch == b',')
+        c.capture_response_headers = bun_core::strings::split(&v, b",")
             .map(|h| s(h).to_ascii_lowercase())
             .filter(|h| !h.is_empty())
             .collect();

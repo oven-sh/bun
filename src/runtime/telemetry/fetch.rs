@@ -64,7 +64,7 @@ pub fn end(stub: &SpanStub, method: Method, url: &[u8], status: u16, error: Opti
         let authority_end = bun_core::strings::index_of_any(&url[scheme_end..], b"/?#")
             .map(|i| i + scheme_end)
             .unwrap_or(url.len());
-        match url[scheme_end..authority_end].iter().rposition(|&c| c == b'@') {
+        match bun_core::strings::last_index_of_char(&url[scheme_end..authority_end], b'@') {
             None => {
                 w.attr("url.full", url);
             }

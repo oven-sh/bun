@@ -91,7 +91,7 @@ pub fn tracestate_is_reasonable(h: &[u8]) -> bool {
     !h.is_empty()
         && h.len() <= 512
         && h.iter().all(|&c| c >= 0x20 && c < 0x7f)
-        && h.split(|&c| c == b',').count() <= 32
+        && bun_core::strings::split(h, b",").count() <= 32
 }
 
 /// Same idea for `baggage` (W3C Baggage): forward opaque, bounded, printable.

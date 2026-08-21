@@ -9,7 +9,7 @@ use crate::proto::{
     self, Nested, WireType, len_field_len, tag_len, varint_len, write_len_prefix, write_tag,
     write_varint,
 };
-use crate::span::{SpanContext, SpanId, SpanKind, SpanStub, StatusCode};
+use crate::span::{SpanContext, SpanKind, SpanStub, StatusCode};
 
 pub mod field {
     // ExportTraceServiceRequest / TracesData
@@ -178,44 +178,30 @@ pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>)
     let kv = len_field_len(f::KV_KEY, key.len()) + len_field_len(f::KV_VALUE, av);
     out.reserve(len_field_len(field, kv));
     if kv < 128 && field < 16 {
-        // Everything is a one-byte varint: assemble the whole KeyValue on the
-        // stack and append it with a single copy.
-        let mut b = [0u8; 136];
-        b[0] = (field << 3 | 2) as u8;
-        b[1] = kv as u8;
-        b[2] = (f::KV_KEY << 3 | 2) as u8;
-        b[3] = key.len() as u8;
-        let mut n = 4;
-        b[n..n + key.len()].copy_from_slice(key);
-        n += key.len();
-        b[n] = (f::KV_VALUE << 3 | 2) as u8;
-        b[n + 1] = av as u8;
-        n += 2;
+        // One-byte varints throughout: header bytes are pushed inline and the
+        // key/value bytes copied straight into `out` (no staging buffer).
+        out.push((field << 3 | 2) as u8);
+        out.push(kv as u8);
+        out.push((f::KV_KEY << 3 | 2) as u8);
+        out.push(key.len() as u8);
+        out.extend_from_slice(key);
+        out.push((f::KV_VALUE << 3 | 2) as u8);
+        out.push(av as u8);
         match *v {
             Value::Str(s) => {
-                b[n] = (f::AV_STRING << 3 | 2) as u8;
-                b[n + 1] = s.len() as u8;
-                n += 2;
-                b[n..n + s.len()].copy_from_slice(s);
-                n += s.len();
-                out.extend_from_slice(&b[..n]);
+                out.push((f::AV_STRING << 3 | 2) as u8);
+                out.push(s.len() as u8);
+                out.extend_from_slice(s);
             }
             Value::Bool(x) => {
-                b[n] = (f::AV_BOOL << 3) as u8;
-                b[n + 1] = x as u8;
-                n += 2;
-                out.extend_from_slice(&b[..n]);
+                out.push((f::AV_BOOL << 3) as u8);
+                out.push(x as u8);
             }
             Value::Int(i) if (0..128).contains(&i) => {
-                b[n] = (f::AV_INT << 3) as u8;
-                b[n + 1] = i as u8;
-                n += 2;
-                out.extend_from_slice(&b[..n]);
+                out.push((f::AV_INT << 3) as u8);
+                out.push(i as u8);
             }
-            _ => {
-                out.extend_from_slice(&b[..n]);
-                write_any_value_body(out, v);
-            }
+            _ => write_any_value_body(out, v),
         }
         return;
     }
@@ -533,5 +519,3 @@ pub fn count_spans(mut spans: &[u8]) -> usize {
     n
 }
 
-#[allow(dead_code)]
-fn _unused(_: SpanId) {}

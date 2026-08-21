@@ -40,32 +40,33 @@ pub fn begin_message(
 }
 
 /// End a message span after the handler returned `result`.
-pub fn end_message(span: NativeSpan, global: &JSGlobalObject, result: JSValue) {
+pub fn end_message(span: NativeSpan, global: &JSGlobalObject, result: JSValue) -> bun_jsc::JsResult<()> {
     if result.to_error().is_some() {
-        record_exception_value(span, global, result);
+        record_exception_value(span, global, result)?;
     } else if let Some(p) = result.as_any_promise() {
         if p.status() == bun_jsc::js_promise::Status::Rejected {
             pool::with(span, |s| s.set_status(StatusCode::Error, b""));
         }
     }
     super::end_native(span, 0, |_| {});
+    Ok(())
 }
 
 /// Record a thrown JS value as an `exception` event and set Error status.
-pub fn record_exception_value(span: NativeSpan, global: &JSGlobalObject, err: JSValue) {
+pub fn record_exception_value(span: NativeSpan, global: &JSGlobalObject, err: JSValue) -> bun_jsc::JsResult<()> {
     let mut ty_s = None;
     let mut msg_s = None;
     let mut stack_s = None;
     if err.is_object() {
         for (key, out) in [("name", &mut ty_s), ("message", &mut msg_s), ("stack", &mut stack_s)] {
-            if let Ok(Some(v)) = err.get(global, key) {
+            if let Some(v) = err.get(global, key)? {
                 if v.is_string() {
-                    *out = v.to_slice(global).ok();
+                    *out = Some(v.to_slice(global)?);
                 }
             }
         }
     } else if err.is_string() {
-        msg_s = err.to_slice(global).ok();
+        msg_s = Some(err.to_slice(global)?);
     }
     let ty = ty_s.as_ref().map(|s| s.slice()).unwrap_or(b"Error");
     let msg = msg_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
@@ -80,4 +81,5 @@ pub fn record_exception_value(span: NativeSpan, global: &JSGlobalObject, err: JS
         s.add_event(b"exception", 0, &attrs[..n]);
         s.set_status(StatusCode::Error, b"");
     });
+    Ok(())
 }

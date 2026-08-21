@@ -94,7 +94,9 @@ impl JSMySQLQuery {
             return;
         }
         let q = self.query.get().query_text();
-        crate::shared::otel::end_with_js_error(span, q.slice(), self.global_object(), err);
+        if let Err(e) = crate::shared::otel::end_with_js_error(span, q.slice(), self.global_object(), err) {
+            let _ = bun_jsc::task::report_error_or_terminate(self.global_object(), e);
+        }
     }
 
     fn deinit(this: *mut Self) {

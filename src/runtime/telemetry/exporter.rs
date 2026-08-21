@@ -40,8 +40,8 @@ struct Retry {
 
 const MAX_ATTEMPTS: u32 = 5;
 
-// SAFETY: `HeaderBuilder` holds only owned byte buffers; the exporter is
-// immutable after construction except for the `Mutex`-guarded retry list.
+// SAFETY: VM-free: only owned byte buffers and the `Mutex`-guarded retry
+// list; nothing here references a VirtualMachine or JS heap.
 unsafe impl Send for OtlpHttpExporter {}
 unsafe impl Sync for OtlpHttpExporter {}
 
@@ -201,11 +201,10 @@ impl InflightExport {
         if result.has_more {
             return;
         }
-        // SAFETY: HTTP thread exclusively owns `this` during the callback.
-        let me = unsafe { &mut *this };
         // Take over the HTTP thread's bitwise copy of the client so its owned
         // buffers are dropped exactly once (see S3HttpSimpleTask::stage_http_result).
-        unsafe { core::ptr::write(me.http.as_mut_ptr(), core::ptr::read(async_http)) };
+        // SAFETY: HTTP thread exclusively owns `this` during the callback.
+        unsafe { core::ptr::write((*this).http.as_mut_ptr(), core::ptr::read(async_http)) };
         let outcome = match (&result.fail, &result.metadata) {
             (Some(err), _) => Err((true, format!("{}", bstr::BStr::new(err.name())))),
             (None, Some(meta)) => {
@@ -218,6 +217,8 @@ impl InflightExport {
             }
             (None, None) => Err((true, "no response".to_string())),
         };
+        // SAFETY: HTTP thread exclusively owns `this` during the callback.
+        let me = unsafe { &*this };
         let exporter = me.exporter.clone();
         let processor = me.processor;
         let payload = me.payload.clone();
@@ -904,8 +905,8 @@ pub struct JsExporter {
     thread: std::thread::ThreadId,
 }
 
-// SAFETY: `callback` is only touched on `thread` (checked); other fields are
-// immutable / thread-safe.
+// SAFETY: `vm` is a `VmHandle` (holds the VM's Ticket while tasks are in
+// flight); `callback` is only touched on `thread` (checked).
 unsafe impl Send for JsExporter {}
 unsafe impl Sync for JsExporter {}
 

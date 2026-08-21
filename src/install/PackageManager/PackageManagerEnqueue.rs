@@ -576,7 +576,8 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
 pub fn retry_backoff_ms(attempt: u16, retry_after_secs: Option<u32>) -> u64 {
     let base: u64 = 250u64.saturating_mul(1u64 << (attempt.saturating_sub(1).min(6) as u64));
     let base = base.min(10_000);
-    let jitter = (bun_core::fast_random() % (base / 5 + 1)) as i64 - (base / 10) as i64;
+    // uniform in [-base/5, +base/5]
+    let jitter = (bun_core::fast_random() % (2 * (base / 5) + 1)) as i64 - (base / 5) as i64;
     let ms = (base as i64 + jitter).max(50) as u64;
     match retry_after_secs {
         Some(s) => ms.max(u64::from(s).saturating_mul(1000).min(60_000)),

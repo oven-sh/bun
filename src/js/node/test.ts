@@ -3529,6 +3529,10 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
       await runStandaloneEntry(child);
     }
   }
+  // The children loop is over: a test()/describe() declared from an after()
+  // hook hits addTest's finished guard instead of bumping childrenCount and
+  // leaving the suite's verdict unemittable (node ignores it too).
+  node.finished = true;
   for (const hook of node.hooks.after) {
     try {
       await runHook(hook, node, node.getSuiteCtx(), "after");
@@ -3680,6 +3684,12 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
   return topLevelRunner;
 }
 
+// Directives are presence-based ({todo: ''} and {skip: ''} both apply), matching
+// the TestNode constructor; `mode` carries the .todo()/.skip() spellings.
+function declaresTodo(mode: string | undefined, options: TestOptions): boolean {
+  return mode === "todo" || (options.todo !== undefined && options.todo !== false);
+}
+
 function addTest(
   arg0: unknown,
   arg1: unknown,
@@ -3707,7 +3717,7 @@ function addTest(
         ));
         return chained.then(returnUndefined);
       }
-      const ownTodo = mode === "todo" || (options.todo !== undefined && options.todo !== false);
+      const ownTodo = declaresTodo(mode, options);
       if (ownTodo) child.todoFlag = true;
       return scheduleSubtest(runningNode, child, fn, ownTodo);
     }
@@ -3721,8 +3731,8 @@ function addTest(
 
   // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/test.js
   // node.skipped is presence-based ({skip: ''} is a directive), so gate on it
-  // rather than re-deriving truthily from options.skip.
-  const effectiveMode = mode === "skip" || node.skipped ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
+  // rather than re-deriving truthily from options.skip; declaresTodo likewise.
+  const effectiveMode = mode === "skip" || node.skipped ? "skip" : declaresTodo(mode, options) ? "todo" : undefined;
 
   if (inStandaloneMode()) {
     noteRunChildRegistered(parent);
@@ -3806,7 +3816,7 @@ function addSuite(
       ));
       return chained.then(returnUndefined);
     }
-    const ownTodo = mode === "todo" || (options.todo !== undefined && options.todo !== false);
+    const ownTodo = declaresTodo(mode, options);
     if (ownTodo) suite.todoFlag = true;
     const gate = Promise.withResolvers<void>();
     function awaitSuiteGate() {
@@ -3846,7 +3856,7 @@ function addSuite(
   // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/test.js
   // Presence-based like addTest: {skip: ''} means the callback never runs.
   const effectiveMode =
-    mode === "skip" || suiteNode.skipped ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
+    mode === "skip" || suiteNode.skipped ? "skip" : declaresTodo(mode, options) ? "todo" : undefined;
 
   if (inStandaloneMode()) {
     if (effectiveMode === "skip") {
@@ -3901,6 +3911,9 @@ function addSuite(
                 noteSuiteCollectionSettled(suiteNode);
                 Promise.resolve(undefined).then(done, done);
               }
+              // Same as runStandaloneEntry: a test() declared from an after()
+              // hook must not bump childrenCount once the children have run.
+              suiteNode.finished = true;
               const hooks = suiteNode.hooks.after;
               if (hooks.length === 0 || hasHookFailedAncestorSuite(suiteNode)) {
                 settleAndDone();

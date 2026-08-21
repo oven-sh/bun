@@ -136,6 +136,18 @@ describe("node:test", () => {
     });
   });
 
+  test("should treat { todo: '' } as a todo directive like node", async () => {
+    // The registration path read options.todo truthily, so an empty message
+    // registered an ordinary test and both failing bodies failed the file.
+    const { exitCode, stderr } = await runTests(["30-todo-empty-message.js"]);
+    expect(stderr).toContain("2 todo");
+    expect(stderr).toContain("1 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
   test("should forward Infinity and finite timeouts so they override the runner default", async () => {
     const { exitCode, stderr } = await runTests(["11-timeout-overrides.js"], {}, ["--timeout", "100"]);
     expect(stderr).toContain("2 pass");
@@ -949,6 +961,75 @@ test.concurrent.each([
         ],
         success: true,
       },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)(
+  "run() with %s isolation ignores a test() or describe() declared from a suite's after() like node",
+  async (_label, isolationArg) => {
+    // Node never runs or reports a child declared once its parent's children
+    // are done. The shim used to count it as a pending child of the suite, so
+    // neither suite ever reached its verdict and the run reported no suites.
+    using dir = tempDir("node-test-late-declaration-from-after", {
+      "f.test.mjs": `
+      import { describe, it, after } from 'node:test';
+      import { writeFileSync } from 'node:fs';
+      describe('outer', () => {
+        describe('s', () => {
+          after(() => {
+            it('late', () => {});
+            describe('late-suite', () => { it('late-nested', () => {}); });
+            writeFileSync(new URL('./after-ran.txt', import.meta.url), '1');
+          });
+          it('a', () => {});
+        });
+      });
+    `,
+      "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))]${isolationArg} });
+      const out = { events: [], suites: null, success: null };
+      stream.on('test:fail', t => out.events.push(['fail', t.name, t.details?.error?.failureType]));
+      stream.on('test:pass', t => out.events.push(['pass', t.name]));
+      stream.on('test:summary', t => { if (t.file === undefined) { out.suites = t.counts.suites; out.success = t.success; } });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The events are verbatim node v26.3.0 in both isolation modes; the suite
+    // count is node's under process isolation (in process, node's own counters
+    // also include the late declarations it never reports).
+    expect({
+      result: JSON.parse(stdout.trim() || "null"),
+      afterRan: existsSync(join(String(dir), "after-ran.txt")),
+      stderr,
+      exitCode,
+    }).toEqual({
+      result: {
+        events: [
+          ["pass", "a"],
+          ["pass", "s"],
+          ["pass", "outer"],
+        ],
+        suites: 2,
+        success: true,
+      },
+      afterRan: true,
       stderr: "",
       exitCode: 0,
     });

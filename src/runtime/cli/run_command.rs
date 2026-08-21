@@ -490,8 +490,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
 
             SpawnStatus::Signaled(raw_signal) => {
-                // Only the *print* needs a signal the table knows; the
-                // re-raise forwards whatever the child died from.
+                // Only the print needs a table entry; the re-raise below forwards any signal.
                 if let Some(sig) = spawn_result.status.signal_code() {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
                         pretty_errorln!(

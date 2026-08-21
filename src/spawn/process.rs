@@ -739,12 +739,11 @@ pub enum Status {
     #[default]
     Running,
     Exited(Exited),
-    /// Raw signal byte in the platform's numbering (`WTERMSIG`), i.e. a
-    /// `bun_sys::SignalCode` — any `u8` (incl. Linux RT signals 32..=64) is a
-    /// valid payload. `bun_core::SignalCode` is exhaustive and Linux-numbered,
+    /// Raw signal byte — any `u8` (incl. Linux RT signals 32..=64) is a valid
+    /// payload. `bun_core::SignalCode` is exhaustive 1..=31,
     /// so storing it here would force lossy `Signaled→Exited` rewrites for RT
     /// signals — observable as `{exitCode:0, signal:null}` in JS. Carry the raw
-    /// byte and convert in `signal_code()` instead.
+    /// byte and range-check in `signal_code()` instead.
     Signaled(u8),
     Err(bun_sys::Error),
 }
@@ -752,8 +751,9 @@ pub enum Status {
 #[derive(Clone, Copy, Default)]
 pub struct Exited {
     pub code: u8,
-    /// Raw signal number in the platform's numbering (see `Status::Signaled`).
-    /// `0` means "no signal". Convert via `Status::signal_code`.
+    /// Raw signal number. `0` means "no signal".
+    /// `SignalCode` discriminants are 1..=31; storing it as the
+    /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
     pub signal: u8,
     /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte.
     /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
@@ -815,9 +815,7 @@ impl Status {
         None
     }
 
-    /// The signal that terminated (or stopped) the process, as the platform
-    /// numbers it. `None` when the process exited on its own. This is the
-    /// number to re-raise or to turn into a `128 + n` exit code.
+    /// The terminating (or stopping) signal as the platform numbers it: re-raise it or add 128.
     pub fn signal(&self) -> Option<bun_sys::SignalCode> {
         let raw = match self {
             Status::Signaled(sig) => *sig,
@@ -827,9 +825,7 @@ impl Status {
         Some(bun_sys::SignalCode(raw))
     }
 
-    /// The table entry for [`Self::signal`], for naming or classifying it.
-    /// `None` also when the platform number has no entry (see
-    /// `Status::Signaled`).
+    /// The table entry for `signal()`, for naming it; `None` also when the number has no entry.
     pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
         self.signal()?.canonical()
     }

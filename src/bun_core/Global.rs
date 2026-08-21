@@ -238,14 +238,8 @@ pub fn sleep_forever_if_another_thread_is_crashing() {
 // ─── SignalCode — single source of truth ──────────────────────────────────
 // Rust has no enum reflection, so the 31
 // (name,number) pairs live in ONE X-macro below; every consumer — the closed
-// enum here, `SIGNAL_NAMES`, `ALL`, `from_name` — is generated from it. Never
-// re-spell a signal pair elsewhere.
-//
-// The numbers are Linux's and serve only as discriminants. macOS/BSD number
-// many of these signals differently (SIGUSR1 is 10 here and 30 there), so a
-// number that came from or goes to the OS (`waitpid`, `kill(2)`, `raise`)
-// converts through `platform_number` / `from_platform_number`. The raw
-// platform newtype is `bun_sys::SignalCode`.
+// enum here (Linux-numbered; the OS boundary uses `platform_number`), `SIGNAL_NAMES`, `ALL`,
+// `from_name` — is generated from it. Never re-spell a signal pair elsewhere.
 macro_rules! for_each_signal {
     ($cb:ident) => {
         $cb! {
@@ -261,8 +255,8 @@ macro_rules! for_each_signal {
 
 macro_rules! __define_signal_code {
     ($($name:ident = $n:literal),* $(,)?) => {
-        /// Signal name table. Index = enum discriminant; `[0]` is "" sentinel.
-        /// Generated from `for_each_signal!`.
+        /// Signal name table. Index = enum discriminant; `[0]` is "" sentinel
+        /// (callers range-check `1..=31`). Generated from `for_each_signal!`.
         pub const SIGNAL_NAMES: [&str; 32] = ["", $(stringify!($name),)*];
 
         /// Closed `#[repr(u8)]` enum over `1..=31` (the open newtype lives in
@@ -294,9 +288,7 @@ macro_rules! __define_signal_code {
 for_each_signal!(__define_signal_code);
 
 impl SignalCode {
-    /// The current platform's number for a signal that `kill(2)` or `raise`
-    /// accepts (`None` when the platform lacks the signal). Inverse of
-    /// [`Self::from_platform_number`].
+    /// This signal's number on the current platform (what `kill(2)` takes); `None` if it has none.
     pub const fn platform_number(self) -> Option<i32> {
         #[cfg(unix)]
         {
@@ -363,9 +355,7 @@ impl SignalCode {
         }
     }
 
-    /// The signal the current platform numbers `n` (as reported by `waitpid`),
-    /// or `None` when this table has no name for it: Linux real-time signals,
-    /// macOS `SIGEMT`/`SIGINFO`, `0`.
+    /// Inverse of `platform_number`; `None` for numbers with no entry (RT signals, macOS SIGEMT).
     pub fn from_platform_number(n: i32) -> Option<SignalCode> {
         Self::ALL
             .iter()

@@ -2,12 +2,11 @@ use core::fmt;
 
 use bun_core::output;
 
-/// A signal number as the current platform numbers it: the byte `waitpid`
-/// reports and the value `kill(2)` takes. Any u8 is a valid inhabitant (Linux
-/// real-time signals, macOS-only signals), so this is an open newtype rather
-/// than an enum. The platform-independent name is `bun_core::SignalCode`; the
-/// two numberings differ on macOS/BSD, so convert with [`Self::canonical`] and
-/// [`Self::from_canonical`] instead of casting.
+// Any u8 is a valid
+// inhabitant. A Rust `#[repr(u8)] enum` with only the named variants would be
+// UB for the `from()` path (which accepts arbitrary bytes), so this is modeled
+// as a transparent newtype with associated consts.
+/// A signal as the current platform numbers it; the names live in `bun_core::SignalCode`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct SignalCode(pub u8);
@@ -19,8 +18,7 @@ impl SignalCode {
     // argument is given, the process will be sent the 'SIGTERM' signal.
     pub const DEFAULT: Self = Self::of(bun_core::SignalCode::DEFAULT);
 
-    /// `from_canonical` for signals every supported platform has; a missing
-    /// one is a compile-time error.
+    /// For signals every platform has; anything else fails to compile.
     const fn of(code: bun_core::SignalCode) -> Self {
         match code.platform_number() {
             Some(number) => Self(number as u8),
@@ -28,14 +26,12 @@ impl SignalCode {
         }
     }
 
-    /// `None` when the current platform has no number for `code`
-    /// (`SIGPWR` on macOS, most signals on Windows).
+    /// `None` when this platform has no such signal (SIGPWR on macOS, most signals on Windows).
     pub fn from_canonical(code: bun_core::SignalCode) -> Option<Self> {
         code.platform_number().map(|number| Self(number as u8))
     }
 
-    /// `None` for a number this platform's table has no name for (real-time
-    /// signals, macOS `SIGEMT`/`SIGINFO`, `0`).
+    /// `None` when the table has no entry for this number (RT signals, macOS SIGEMT, 0).
     pub fn canonical(self) -> Option<bun_core::SignalCode> {
         bun_core::SignalCode::from_platform_number(i32::from(self.0))
     }
@@ -72,8 +68,7 @@ impl SignalCode {
 
 fn description(code: bun_core::SignalCode) -> &'static str {
     use bun_core::SignalCode as S;
-    // Description names copied from fish
-    // https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
+    // Copied from https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
     match code {
         S::SIGHUP => "Terminal hung up",
         S::SIGINT => "Quit request",

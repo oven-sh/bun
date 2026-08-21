@@ -28,10 +28,8 @@ declare function $debug(...args: any[]): void;
  * error if the first argument is falsy.  The source code passed to `check` is
  * inlined in the message, but in addition you can pass additional messages.
  *
- * `message` is evaluated on every call and formatted only on failure. Pass
- * values as-is: `Bun.inspect()` of a user value runs user code on every call.
- *
  * @note gets removed in release builds. Do not put code with side effects in the `check`.
+ * @note the `message` arguments are evaluated on every call. Pass values, not `Bun.inspect(value)`.
  */
 declare function $assert(check: any, ...message: any[]): asserts check;
 

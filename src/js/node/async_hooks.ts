@@ -33,8 +33,7 @@ function sameValue(a, b) {
   return a !== a && b !== b;
 }
 
-// Only run during debug. The messages pass the array as-is: Bun.inspect() of a
-// user store would run its custom inspect hook on every set().
+// Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
   if (array === undefined) return true;
@@ -279,7 +278,6 @@ class AsyncLocalStorage {
           }
         }
         const expectedStore = hasPrevious ? previous_value : this.#defaultValue;
-        // expectedStore goes in as-is, not Bun.inspect()ed: see assertValidAsyncContextArray.
         $assert(
           sameValue(this.getStore(), expectedStore),
           "run: previous_value",

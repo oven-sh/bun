@@ -19,6 +19,7 @@ use bun_core::fmt as bun_fmt;
 
 pub use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
+use bun_collections::index_sort;
 
 pub struct ServerConfig {
     pub(crate) address: Address,
@@ -256,7 +257,7 @@ impl ServerConfig {
 
         // sort the cloned static routes by name for determinism
         // (descending by path: `order(b, a)`).
-        list.sort_by(|a, b| strings::order(&b.path, &a.path));
+        index_sort::sort_slice_by(list, |a, b| strings::order(&b.path, &a.path));
 
         Ok(())
     }

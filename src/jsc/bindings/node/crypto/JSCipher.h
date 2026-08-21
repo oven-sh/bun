@@ -38,7 +38,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSCipher* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, CipherKind kind, ncrypto::CipherCtxPointer&& ctx, std::optional<uint32_t> authTagLen, int32_t maxMessageSize)
@@ -53,12 +53,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSCipher, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSCipher.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSCipher = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSCipher.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSCipher = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSCipher, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSCipher, m_subspaceForJSCipher));
     }
 
     bool checkCCMMessageLength(int32_t messageLen) const

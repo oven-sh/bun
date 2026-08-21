@@ -1224,7 +1224,7 @@ impl Interpreter {
                             ],
                         ),
                         Err(err) if !global_this.has_pending_termination_exception() => {
-                            let error = global_this.take_exception(err);
+                            let error = global_this.take_error(err);
                             if let Some(reject) =
                                 JSShellInterpreter::reject_get_cached(this_jsvalue)
                             {

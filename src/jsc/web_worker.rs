@@ -72,6 +72,9 @@ pub struct WebWorker {
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
+    /// Created by `node:worker_threads`' `Worker` (as opposed to the Web `Worker`
+    /// constructor): loads `node:worker_threads` before preloads and the entry point.
+    is_node_worker: bool,
     store_fd: bool,
     /// Borrowed from the proxy's `WorkerOptions` (alive as long as the proxy).
     argv_ptr: *const WTFStringImpl,
@@ -160,6 +163,9 @@ unsafe extern "C" {
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
+    /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
+    /// registers parentPort). May leave an exception pending.
+    safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,
@@ -284,6 +290,7 @@ impl WebWorker {
         mini: bool,
         default_unref: bool,
         eval_mode: bool,
+        is_node_worker: bool,
         argv_ptr: *const WTFStringImpl,
         argv_len: usize,
         inherit_exec_argv: bool,
@@ -320,8 +327,7 @@ impl WebWorker {
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
             // node: builtin specifiers skip the file resolver — the worker-side
-            // module loader resolves them. Lets node:worker_threads run its
-            // bootstrap (stdio rebinding) as a preload.
+            // module loader resolves them.
             if utf8_slice.slice().starts_with(b"node:") {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
@@ -396,6 +402,7 @@ impl WebWorker {
             execution_context_id: this_context_id,
             mini,
             eval_mode,
+            is_node_worker,
             store_fd,
             argv_ptr,
             argv_len,
@@ -842,6 +849,24 @@ impl WebWorker {
             return self.shutdown();
         }
 
+        // Node runs its worker bootstrap (parentPort, stdio, process overrides)
+        // ahead of user code; ours is node:worker_threads' module body.
+        if self.is_node_worker {
+            let global = vm.global();
+            if let Err(err) = jsc::host_fn::from_js_host_call_generic(global, || {
+                Bun__Worker__loadNodeWorkerThreadsModule(global)
+            }) {
+                let exception = global.take_exception(err);
+                let _ = vm.as_mut().uncaught_exception(global, exception, false);
+                if !self.exit_called.load(Ordering::Relaxed) {
+                    vm.as_mut().exit_handler.exit_code = 1;
+                }
+                self.flush_logs(vm);
+                WebWorker__entrySettled(global);
+                return self.shutdown();
+            }
+        }
+
         // `path` borrows the resolver's process-lifetime string store, the
         // standalone module graph, or `self.unresolved_specifier` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
@@ -1131,10 +1156,10 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown) => {
+            Err(err) => {
                 // The worker's start sequence is its outermost frame: building the error from the
                 // log threw, and that is reported here instead (a termination just stands down).
-                let _ = crate::task::report_error_or_terminate(global, JsError::Thrown);
+                let _ = crate::task::report_error_or_terminate(global, err);
                 return;
             }
         };
@@ -1382,7 +1407,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                     return None;
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown) => {
+                Err(JsError::Thrown | JsError::Terminated) => {
                     *error_message = BunString::static_(b"unexpected exception");
                     return None;
                 }

@@ -138,11 +138,6 @@ pub struct ErrorBuilder<'a, G: GlobalObjectRef + ?Sized = JSGlobalObject> {
 }
 
 impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
-    #[inline]
-    pub fn new(global: &'a G, code: ErrorCode, args: Arguments<'a>) -> Self {
-        Self { global, code, args }
-    }
-
     /// Throw this error as a JS exception.
     #[inline]
     pub fn throw(self) -> JsError {

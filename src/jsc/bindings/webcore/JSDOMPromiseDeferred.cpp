@@ -229,21 +229,6 @@ JSC::EncodedJSValue createRejectedPromiseWithTypeError(JSC::JSGlobalObject& lexi
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(&lexicalGlobalObject, rejectionValue)));
 }
 
-static inline JSC::JSValue parseAsJSON(JSC::JSGlobalObject* lexicalGlobalObject, const String& data)
-{
-    JSC::JSLockHolder lock(lexicalGlobalObject);
-    return JSC::JSONParse(lexicalGlobalObject, data);
-}
-
-void fulfillPromiseWithJSON(Ref<DeferredPromise>&& promise, const String& data)
-{
-    JSC::JSValue value = parseAsJSON(promise->globalObject(), data);
-    if (!value)
-        promise->reject(SyntaxError);
-    else
-        promise->resolve<IDLAny>(value);
-}
-
 void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, ArrayBuffer* arrayBuffer)
 {
     if (!arrayBuffer) {

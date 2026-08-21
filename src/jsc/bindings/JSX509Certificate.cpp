@@ -97,7 +97,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -253,14 +253,6 @@ void JSX509Certificate::finishCreation(VM& vm)
         init.property.setMayBeNull(init.owner->vm(), init.owner, init.owner->computeRaw(init.owner->view(), init.owner->globalObject()));
     });
 
-    m_infoAccess.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
-        JSValue value = init.owner->computeInfoAccess(init.owner->view(), init.owner->globalObject(), false);
-        if (value.isString()) {
-            init.set(value.toString(init.owner->globalObject()));
-        } else {
-            init.property.setMayBeNull(init.owner->vm(), init.owner, nullptr);
-        }
-    });
     m_subjectAltName.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
         init.property.setMayBeNull(init.owner->vm(), init.owner, init.owner->computeSubjectAltName(init.owner->view(), init.owner->globalObject()));
     });
@@ -337,7 +329,6 @@ void JSX509Certificate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_fingerprint256.visit(visitor);
     thisObject->m_fingerprint512.visit(visitor);
     thisObject->m_raw.visit(visitor);
-    thisObject->m_infoAccess.visit(visitor);
     thisObject->m_subjectAltName.visit(visitor);
     thisObject->m_publicKey.visit(visitor);
     visitor.reportExtraMemoryVisited(thisObject->m_extraMemorySizeForGC);
@@ -359,7 +350,7 @@ void JSX509Certificate::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 JSC::Structure* JSX509Certificate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 // Convert an X509_NAME* into a JavaScript object.
@@ -700,10 +691,6 @@ JSUint8Array* JSX509Certificate::raw()
 {
     return m_raw.get(this);
 }
-JSString* JSX509Certificate::infoAccess()
-{
-    return m_infoAccess.get(this);
-}
 JSString* JSX509Certificate::subjectAltName()
 {
     return m_subjectAltName.get(this);
@@ -727,7 +714,7 @@ bool JSX509Certificate::verify(const KeyObject& keyObject)
 }
 
 // This one doesn't depend on a JSX509Certificate object
-JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGlobalObject* globalObject)
+__attribute__((minsize)) JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -748,22 +735,22 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
     };
 
     // Set subject
-    object->putDirect(vm, Identifier::fromString(vm, "subject"_s), valueOrUndefined(computeSubject(view, globalObject, true)));
+    Bun::putDirectNamed(vm, object, "subject"_s, valueOrUndefined(computeSubject(view, globalObject, true)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set issuer
-    object->putDirect(vm, Identifier::fromString(vm, "issuer"_s), valueOrUndefined(computeIssuer(view, globalObject, true)));
+    Bun::putDirectNamed(vm, object, "issuer"_s, valueOrUndefined(computeIssuer(view, globalObject, true)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set subjectaltname
     {
         JSString* san = computeSubjectAltName(view, globalObject);
-        object->putDirect(vm, Identifier::fromString(vm, "subjectaltname"_s), san ? JSValue(san) : jsUndefined());
+        Bun::putDirectNamed(vm, object, "subjectaltname"_s, san ? JSValue(san) : jsUndefined());
     }
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set infoAccess
-    object->putDirect(vm, Identifier::fromString(vm, "infoAccess"_s), valueOrUndefined(computeInfoAccess(view, globalObject, true)));
+    Bun::putDirectNamed(vm, object, "infoAccess"_s, valueOrUndefined(computeInfoAccess(view, globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set modulus and exponent for RSA keys
@@ -780,7 +767,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                 // Convert modulus to string
                 auto bio = ncrypto::BIOPointer::New(n);
                 if (bio) {
-                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toUppercaseASCIIWTFString(bio)));
+                    Bun::putDirectNamed(vm, object, "modulus"_s, jsString(vm, toUppercaseASCIIWTFString(bio)));
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
 
@@ -788,18 +775,18 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                 // exponent is too wide for a BIGNUM word.
                 auto exponent_word = ncrypto::BignumPointer::GetWord(e);
                 if (!exponent_word.has_value()) {
-                    object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsNull());
+                    Bun::putDirectNamed(vm, object, "exponent"_s, jsNull());
                 } else {
                     auto bio_e = ncrypto::BIOPointer::NewMem();
                     if (bio_e) {
                         BIO_printf(bio_e.get(), "0x%" PRIx64, static_cast<uint64_t>(*exponent_word));
-                        object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsString(vm, toWTFString(bio_e)));
+                        Bun::putDirectNamed(vm, object, "exponent"_s, jsString(vm, toWTFString(bio_e)));
                         RETURN_IF_EXCEPTION(scope, nullptr);
                     }
                 }
 
                 // Set bits
-                object->putDirect(vm, Identifier::fromString(vm, "bits"_s), jsNumber(ncrypto::BignumPointer::GetBitCount(n)));
+                Bun::putDirectNamed(vm, object, "bits"_s, jsNumber(ncrypto::BignumPointer::GetBitCount(n)));
                 RETURN_IF_EXCEPTION(scope, nullptr);
 
                 // Set pubkey
@@ -809,7 +796,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     uint8_t* data = buffer->typedVector();
                     i2d_RSA_PUBKEY(rsa, &data);
-                    object->putDirect(vm, Identifier::fromString(vm, "pubkey"_s), buffer);
+                    Bun::putDirectNamed(vm, object, "pubkey"_s, buffer);
                 }
             }
             break;
@@ -822,7 +809,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                     // Set bits
                     int bits = EC_GROUP_order_bits(group);
                     if (bits > 0) {
-                        object->putDirect(vm, Identifier::fromString(vm, "bits"_s), jsNumber(bits));
+                        Bun::putDirectNamed(vm, object, "bits"_s, jsNumber(bits));
                         RETURN_IF_EXCEPTION(scope, nullptr);
                     }
 
@@ -837,7 +824,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                             uint8_t* data = buffer->typedVector();
                             size_t result_size = EC_POINT_point2oct(group, point, form, data, size, nullptr);
                             if (result_size == size) {
-                                object->putDirect(vm, Identifier::fromString(vm, "pubkey"_s), buffer);
+                                Bun::putDirectNamed(vm, object, "pubkey"_s, buffer);
                             }
                         }
                     }
@@ -847,13 +834,13 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                     if (nid != 0) {
                         const char* sn = OBJ_nid2sn(nid);
                         if (sn) {
-                            object->putDirect(vm, Identifier::fromString(vm, "asn1Curve"_s), jsString(vm, String::fromUTF8(sn)));
+                            Bun::putDirectNamed(vm, object, "asn1Curve"_s, jsString(vm, String::fromUTF8(sn)));
                             RETURN_IF_EXCEPTION(scope, nullptr);
                         }
 
                         const char* nist = EC_curve_nid2nist(nid);
                         if (nist) {
-                            object->putDirect(vm, Identifier::fromString(vm, "nistCurve"_s), jsString(vm, String::fromUTF8(nist)));
+                            Bun::putDirectNamed(vm, object, "nistCurve"_s, jsString(vm, String::fromUTF8(nist)));
                             RETURN_IF_EXCEPTION(scope, nullptr);
                         }
                     }
@@ -865,37 +852,37 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
     }
 
     // Set validFrom
-    object->putDirect(vm, Identifier::fromString(vm, "valid_from"_s), valueOrUndefined(computeValidFrom(view, globalObject)));
+    Bun::putDirectNamed(vm, object, "valid_from"_s, valueOrUndefined(computeValidFrom(view, globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set validTo
-    object->putDirect(vm, Identifier::fromString(vm, "valid_to"_s), valueOrUndefined(computeValidTo(view, globalObject)));
+    Bun::putDirectNamed(vm, object, "valid_to"_s, valueOrUndefined(computeValidTo(view, globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set fingerprints
-    object->putDirect(vm, Identifier::fromString(vm, "fingerprint"_s), valueOrUndefined(computeFingerprint(view, globalObject)));
+    Bun::putDirectNamed(vm, object, "fingerprint"_s, valueOrUndefined(computeFingerprint(view, globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    object->putDirect(vm, Identifier::fromString(vm, "fingerprint256"_s), valueOrUndefined(computeFingerprint256(view, globalObject)));
+    Bun::putDirectNamed(vm, object, "fingerprint256"_s, valueOrUndefined(computeFingerprint256(view, globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    object->putDirect(vm, Identifier::fromString(vm, "fingerprint512"_s), valueOrUndefined(computeFingerprint512(view, globalObject)));
+    Bun::putDirectNamed(vm, object, "fingerprint512"_s, valueOrUndefined(computeFingerprint512(view, globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set keyUsage
-    object->putDirect(vm, Identifier::fromString(vm, "ext_key_usage"_s), getKeyUsage(view, globalObject));
+    Bun::putDirectNamed(vm, object, "ext_key_usage"_s, getKeyUsage(view, globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set serialNumber
-    object->putDirect(vm, Identifier::fromString(vm, "serialNumber"_s), valueOrUndefined(computeSerialNumber(view, globalObject)));
+    Bun::putDirectNamed(vm, object, "serialNumber"_s, valueOrUndefined(computeSerialNumber(view, globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set raw
-    object->putDirect(vm, Identifier::fromString(vm, "raw"_s), computeRaw(view, globalObject));
+    Bun::putDirectNamed(vm, object, "raw"_s, computeRaw(view, globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set CA flag
-    object->putDirect(vm, Identifier::fromString(vm, "ca"_s), jsBoolean(computeIsCA(view, globalObject)));
+    Bun::putDirectNamed(vm, object, "ca"_s, jsBoolean(computeIsCA(view, globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     return object;
@@ -925,22 +912,22 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
     };
 
     // Set subject
-    object->putDirect(vm, Identifier::fromString(vm, "subject"_s), valueOrUndefined(computeSubject(view(), globalObject, true)));
+    Bun::putDirectNamed(vm, object, "subject"_s, valueOrUndefined(computeSubject(view(), globalObject, true)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set issuer
-    object->putDirect(vm, Identifier::fromString(vm, "issuer"_s), valueOrUndefined(computeIssuer(view(), globalObject, true)));
+    Bun::putDirectNamed(vm, object, "issuer"_s, valueOrUndefined(computeIssuer(view(), globalObject, true)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set subjectaltname
     {
         JSString* san = subjectAltName();
-        object->putDirect(vm, Identifier::fromString(vm, "subjectaltname"_s), san ? JSValue(san) : jsUndefined());
+        Bun::putDirectNamed(vm, object, "subjectaltname"_s, san ? JSValue(san) : jsUndefined());
     }
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set infoAccess
-    object->putDirect(vm, Identifier::fromString(vm, "infoAccess"_s), valueOrUndefined(computeInfoAccess(view(), globalObject, true)));
+    Bun::putDirectNamed(vm, object, "infoAccess"_s, valueOrUndefined(computeInfoAccess(view(), globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set modulus and exponent for RSA keys
@@ -957,7 +944,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                 // Convert modulus to string
                 auto bio = ncrypto::BIOPointer::New(n);
                 if (bio) {
-                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toUppercaseASCIIWTFString(bio)));
+                    Bun::putDirectNamed(vm, object, "modulus"_s, jsString(vm, toUppercaseASCIIWTFString(bio)));
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
 
@@ -965,18 +952,18 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                 // exponent is too wide for a BIGNUM word.
                 auto exponent_word = ncrypto::BignumPointer::GetWord(e);
                 if (!exponent_word.has_value()) {
-                    object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsNull());
+                    Bun::putDirectNamed(vm, object, "exponent"_s, jsNull());
                 } else {
                     auto bio_e = ncrypto::BIOPointer::NewMem();
                     if (bio_e) {
                         BIO_printf(bio_e.get(), "0x%" PRIx64, static_cast<uint64_t>(*exponent_word));
-                        object->putDirect(vm, Identifier::fromString(vm, "exponent"_s), jsString(vm, toWTFString(bio_e)));
+                        Bun::putDirectNamed(vm, object, "exponent"_s, jsString(vm, toWTFString(bio_e)));
                         RETURN_IF_EXCEPTION(scope, nullptr);
                     }
                 }
 
                 // Set bits
-                object->putDirect(vm, Identifier::fromString(vm, "bits"_s), jsNumber(ncrypto::BignumPointer::GetBitCount(n)));
+                Bun::putDirectNamed(vm, object, "bits"_s, jsNumber(ncrypto::BignumPointer::GetBitCount(n)));
                 RETURN_IF_EXCEPTION(scope, nullptr);
 
                 // Set pubkey
@@ -986,7 +973,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     uint8_t* data = buffer->typedVector();
                     i2d_RSA_PUBKEY(rsa, &data);
-                    object->putDirect(vm, Identifier::fromString(vm, "pubkey"_s), buffer);
+                    Bun::putDirectNamed(vm, object, "pubkey"_s, buffer);
                 }
             }
             break;
@@ -999,7 +986,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                     // Set bits
                     int bits = EC_GROUP_order_bits(group);
                     if (bits > 0) {
-                        object->putDirect(vm, Identifier::fromString(vm, "bits"_s), jsNumber(bits));
+                        Bun::putDirectNamed(vm, object, "bits"_s, jsNumber(bits));
                         RETURN_IF_EXCEPTION(scope, nullptr);
                     }
 
@@ -1014,7 +1001,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                             uint8_t* data = buffer->typedVector();
                             size_t result_size = EC_POINT_point2oct(group, point, form, data, size, nullptr);
                             if (result_size == size) {
-                                object->putDirect(vm, Identifier::fromString(vm, "pubkey"_s), buffer);
+                                Bun::putDirectNamed(vm, object, "pubkey"_s, buffer);
                             }
                         }
                     }
@@ -1024,13 +1011,13 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                     if (nid != 0) {
                         const char* sn = OBJ_nid2sn(nid);
                         if (sn) {
-                            object->putDirect(vm, Identifier::fromString(vm, "asn1Curve"_s), jsString(vm, String::fromUTF8(sn)));
+                            Bun::putDirectNamed(vm, object, "asn1Curve"_s, jsString(vm, String::fromUTF8(sn)));
                             RETURN_IF_EXCEPTION(scope, nullptr);
                         }
 
                         const char* nist = EC_curve_nid2nist(nid);
                         if (nist) {
-                            object->putDirect(vm, Identifier::fromString(vm, "nistCurve"_s), jsString(vm, String::fromUTF8(nist)));
+                            Bun::putDirectNamed(vm, object, "nistCurve"_s, jsString(vm, String::fromUTF8(nist)));
                             RETURN_IF_EXCEPTION(scope, nullptr);
                         }
                     }
@@ -1042,37 +1029,37 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
     }
 
     // Set validFrom
-    object->putDirect(vm, Identifier::fromString(vm, "valid_from"_s), valueOrUndefined(validFrom()));
+    Bun::putDirectNamed(vm, object, "valid_from"_s, valueOrUndefined(validFrom()));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set validTo
-    object->putDirect(vm, Identifier::fromString(vm, "valid_to"_s), valueOrUndefined(validTo()));
+    Bun::putDirectNamed(vm, object, "valid_to"_s, valueOrUndefined(validTo()));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set fingerprints
-    object->putDirect(vm, Identifier::fromString(vm, "fingerprint"_s), valueOrUndefined(fingerprint()));
+    Bun::putDirectNamed(vm, object, "fingerprint"_s, valueOrUndefined(fingerprint()));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    object->putDirect(vm, Identifier::fromString(vm, "fingerprint256"_s), valueOrUndefined(fingerprint256()));
+    Bun::putDirectNamed(vm, object, "fingerprint256"_s, valueOrUndefined(fingerprint256()));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    object->putDirect(vm, Identifier::fromString(vm, "fingerprint512"_s), valueOrUndefined(fingerprint512()));
+    Bun::putDirectNamed(vm, object, "fingerprint512"_s, valueOrUndefined(fingerprint512()));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set keyUsage
-    object->putDirect(vm, Identifier::fromString(vm, "ext_key_usage"_s), getKeyUsage(globalObject));
+    Bun::putDirectNamed(vm, object, "ext_key_usage"_s, getKeyUsage(globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set serialNumber
-    object->putDirect(vm, Identifier::fromString(vm, "serialNumber"_s), valueOrUndefined(serialNumber()));
+    Bun::putDirectNamed(vm, object, "serialNumber"_s, valueOrUndefined(serialNumber()));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set raw
-    object->putDirect(vm, Identifier::fromString(vm, "raw"_s), raw());
+    Bun::putDirectNamed(vm, object, "raw"_s, raw());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set CA flag
-    object->putDirect(vm, Identifier::fromString(vm, "ca"_s), jsBoolean(computeIsCA(view(), globalObject)));
+    Bun::putDirectNamed(vm, object, "ca"_s, jsBoolean(computeIsCA(view(), globalObject)));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     return object;
@@ -1094,7 +1081,7 @@ JSValue JSX509Certificate::computePublicKey(ncrypto::X509View view, JSGlobalObje
     return JSPublicKeyObject::create(vm, globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject), lexicalGlobalObject, WTF::move(handle));
 }
 
-JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
+JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1104,9 +1091,6 @@ JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObj
         return jsEmptyString(vm);
     }
     String info = toWTFString(bio);
-    if (!legacy) {
-        return jsString(vm, info);
-    }
 
     // InfoAccess is always an array, even when a single element is present.
     JSObject* object = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());

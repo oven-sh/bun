@@ -2569,13 +2569,6 @@ impl QuicEndpoint {
         self.with_state(|s| s.busy = busy as u8);
         Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn do_ref(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let want = frame.arguments_as_array::<1>()[0].to_boolean();
-        let ctx = bun_io::js_vm_ctx();
-        self.poll_ref
-            .with_mut(|p| if want { p.ref_(ctx) } else { p.unref(ctx) });
-        Ok(JSValue::UNDEFINED)
-    }
     fn build_sni_contexts(
         global: &JSGlobalObject,
         entries: JSValue,

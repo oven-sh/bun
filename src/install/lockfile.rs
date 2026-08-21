@@ -8,7 +8,7 @@ use crate::Error as BunError;
 use bun_alloc::AllocError;
 use bun_collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
-    HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
+    HashMap as BunHashMap, IdentityContext, LinearFifo, index_sort, linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
@@ -780,6 +780,16 @@ impl Lockfile {
     /// TODO make this faster by caching the workspace package ids
     pub(crate) fn is_workspace_dependency(&self, id: DependencyID) -> bool {
         self.get_workspace_pkg_if_workspace_dep(id) != invalid_package_id
+    }
+
+    /// `None` for the edges `enqueue_dependency_to_root` appends outside of any package.
+    pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> Option<PackageID> {
+        for (pkg_id, dependencies) in self.packages.items_dependencies().iter().enumerate() {
+            if dependencies.contains(id) {
+                return Some(PackageID::try_from(pkg_id).expect("int cast"));
+            }
+        }
+        None
     }
 
     pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
@@ -1643,7 +1653,7 @@ impl<'a> Printer<'a> {
         match Self::print_with_lockfile(&lockfile, format, writer) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-            Err(crate::Error::BrokenPipe) | Err(crate::Error::WriteFailed) => return Ok(()),
+            Err(crate::Error::WriteFailed) => return Ok(()),
             Err(e) => return Err(e),
         }
         Output::flush();
@@ -2777,7 +2787,7 @@ impl Lockfile {
                 string_buf: l_string_buf,
                 pkg_resolutions: l_pkg_resolutions,
             };
-            l_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
+            index_sort::sort_slice_unstable_by(l_buf, |a, b| sorter.order(*a, *b));
         }
 
         {
@@ -2786,7 +2796,7 @@ impl Lockfile {
                 string_buf: r_string_buf,
                 pkg_resolutions: r_pkg_resolutions,
             };
-            r_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
+            index_sort::sort_slice_unstable_by(r_buf, |a, b| sorter.order(*a, *b));
         }
 
         let l_extern_strings = l.buffers.extern_strings.as_slice();
@@ -2925,7 +2935,9 @@ impl Lockfile {
                 buf: bytes.into(),
                 resolutions: resolutions.into(),
             };
-            alphabetized_names.sort_unstable_by(|a, b| alphabetizer.order(*a, *b));
+            index_sort::sort_indices_unstable(&mut alphabetized_names, &mut |a, b| {
+                alphabetizer.order(a, b)
+            });
         }
 
         string_builder.allocate().expect("unreachable");
@@ -3045,7 +3057,7 @@ pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [
     std::sync::LazyLock::new(|| {
         const DATA: &[u8] = include_bytes!("default-trusted-dependencies.txt");
         let mut names: Vec<&'static [u8]> = strings::tokenize_any(DATA, b" \r\n\t").collect();
-        names.sort_unstable();
+        index_sort::sort_slice_unstable_by(&mut names, |a, b| a.cmp(b));
         debug_assert!(
             names.len() <= MAX_DEFAULT_TRUSTED_DEPENDENCIES,
             "default-trusted-dependencies.txt is too large, please increase \

@@ -1441,19 +1441,16 @@ pub mod js_bundler {
         unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
     }
 
-    /// # Safety
-    /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
-    /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
-        resolve: *mut Resolve,
+    extern "C" fn JSBundlerPlugin__onResolveAsync(
+        resolve: &mut Resolve,
         _unused: *mut c_void,
         path_value: JSValue,
         namespace_value: JSValue,
         external_value: JSValue,
     ) {
-        // SAFETY: called from C++ with valid Resolve pointer
-        let resolve = unsafe { &mut *resolve };
+        // C++ calls this only for a request the plugin object still held (BundlerPlugin::takeRequest): it is
+        // the request's one answer, produced on this thread, so `&mut` is real.
         if path_value.is_empty_or_undefined_or_null()
             || namespace_value.is_empty_or_undefined_or_null()
         {
@@ -1525,8 +1522,10 @@ pub mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct =
-                            ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
+                        let ct = ConcurrentTask::from_callback(
+                            std::ptr::from_mut::<Load>(self),
+                            on_notify_defer_js,
+                        );
                         let poster = (*ctx.as_mut_ptr())
                             .js_poster
                             .as_ref()
@@ -1537,12 +1536,10 @@ pub mod js_bundler {
                         }
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
-                        // `mini.enqueueTaskConcurrentWithExtraCtx(
-                        //    Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
                             std::ptr::from_mut::<Load>(self),
                             on_notify_defer_mini_wrap,
-                            core::mem::offset_of!(Load, task),
+                            core::mem::offset_of!(Load, defer_task),
                         );
                     }
                 }
@@ -1552,8 +1549,11 @@ pub mod js_bundler {
         }
     }
 
-    fn on_notify_defer_raw(ctx: *mut BundleV2<'static>) -> bun_event_loop::JsResult<()> {
-        bv2_mut(ctx).on_notify_defer();
+    fn on_notify_defer_js(load: *mut Load) -> bun_event_loop::JsResult<()> {
+        // SAFETY: task contract — `load` is the live request `on_defer` posted; this runs on the loop
+        // that runs the bundle (bake: the plugins' own), so it is the bundle thread here.
+        let load = unsafe { &mut *load };
+        BundleV2::on_notify_defer(load, bv2_mut(load.bv2));
         Ok(())
     }
 
@@ -1561,7 +1561,7 @@ pub mod js_bundler {
         // SAFETY: callback contract — `load` was passed as the `Context` arg to
         // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
         // `BundleV2` backref the mini loop's tick supplies as `extra`.
-        BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
+        BundleV2::on_notify_defer(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 
     /// # Safety
@@ -1585,24 +1585,11 @@ pub mod js_bundler {
         loader_as_int: JSValue,
     ) {
         jsc::mark_binding();
+        // As `onResolveAsync`: the request's one answer.
         if source_code_value.is_empty_or_undefined_or_null()
             || loader_as_int.is_empty_or_undefined_or_null()
         {
             this.value = LoadValue::NoMatch;
-
-            if this.was_file {
-                // Faster path: skip the extra threadpool dispatch
-                // SAFETY: bv2 backref is valid; pool/worker_pool are live for bundle.
-                unsafe {
-                    (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
-                        bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(
-                            (*this.parse_task.as_ptr()).task
-                        )),
-                    );
-                }
-                this.value = LoadValue::Consumed;
-                return;
-            }
         } else {
             let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
             let global = bv2_plugin(this.bv2).global_object();
@@ -1614,7 +1601,7 @@ pub mod js_bundler {
                 Err(err) => {
                     match err {
                         JsError::OutOfMemory => bun_core::out_of_memory(),
-                        JsError::Thrown => {}
+                        JsError::Thrown | JsError::Terminated => {}
                     }
                     panic!("Unexpected: source_code is not a string");
                 }
@@ -1686,8 +1673,9 @@ pub mod js_bundler {
         /// `this` must be a live handle previously returned by `Plugin::create`;
         /// non-null is checked via `Plugin::opaque_ref` (panics on null).
         fn destroy(this: *mut Plugin);
-        /// From here the plugin object swallows whatever its JS side still
-        /// delivers (onLoad/onResolve answers, defer, addError). JS thread.
+        /// The plugins' VM is shutting down: every request the plugin object still holds is answered
+        /// as cancelled now, and whatever its JS side delivers later is dropped (an answer) or refused
+        /// (`.defer()`). JS thread.
         fn tombstone(&self);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
@@ -1729,11 +1717,15 @@ pub mod js_bundler {
             let rejection_value = match rejection {
                 Ok(v) => v,
                 Err(JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
-                // A terminated worker runs no onEnd callbacks: keep its termination pending and unwind.
-                Err(JsError::Thrown) if global_this.has_pending_termination_exception() => {
-                    return Err(JsError::Thrown);
+                // A terminated worker runs no onEnd callbacks: taken outside script, or still unwinding beneath it.
+                Err(JsError::Terminated) => return Err(JsError::Terminated),
+                Err(JsError::Thrown) => {
+                    let value = global_this.take_error(JsError::Thrown);
+                    if value.is_termination_exception() {
+                        return Err(bun_jsc::top_exception_scope::thrown(global_this));
+                    }
+                    value
                 }
-                Err(JsError::Thrown) => global_this.take_error(JsError::Thrown),
             };
 
             // The C++ side has a `DECLARE_THROW_SCOPE` whose dtor sets
@@ -1849,37 +1841,48 @@ pub mod js_bundler {
     }
 
     /// # Safety
-    /// `plugin` must be a live `JSBundlerPlugin` opaque handle. `ctx` must be
-    /// the live `*mut Resolve` (when `which == 0`) or `*mut Load` (when
-    /// `which == 1`) previously handed to C++ via `dispatch`; sole owner on
-    /// the JS thread.
+    /// The plugin's answer to a request it still held is an error. `plugin` is the live `JSBundlerPlugin`
+    /// handle; `ctx` the live `*mut Resolve` (`kind == 0`) or `*mut Load` (`kind == 1`) handed over by
+    /// `dispatch`. JS thread.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn JSBundlerPlugin__addError(
         ctx: *mut c_void,
         plugin: *mut Plugin,
         exception: JSValue,
-        which: JSValue,
+        kind: u8,
     ) {
-        // SAFETY: plugin is valid opaque FFI handle; ctx is *mut Resolve or *mut Load
+        // SAFETY: per fn contract.
         let plugin = unsafe { &mut *plugin };
-        match which.as_int32() {
+        match kind {
             0 => {
-                // SAFETY: C++ caller passes the live `*mut Resolve` it received from
-                // `Resolve::dispatch` as `ctx` when `which == 0`; sole owner on the JS thread.
+                // SAFETY: per fn contract; the request's one answer.
                 let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
-                // SAFETY: C++ caller passes the live `*mut Load` it received from
-                // `Load::dispatch` as `ctx` when `which == 1`; sole owner on the JS thread.
+                // SAFETY: per fn contract; the request's one answer.
                 let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 bv2_mut(load.bv2).on_load_async(load);
             }
-            _ => panic!("invalid error type"),
+            _ => unreachable!(),
+        }
+    }
+
+    /// The plugins can no longer answer this request — their VM is shutting down (BundlerPlugin::tombstone),
+    /// or the hop arrived after that / could not call them: answer it as cancelled, from this (the JS)
+    /// thread like every other answer, and hand it back to the bundle thread. `kind`: 0 = Resolve, 1 = Load.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn JSBundlerPlugin__answerCancelled(kind: u8, ctx: *mut c_void) {
+        match kind {
+            // SAFETY: the live `*mut Resolve` handed over by `Resolve::dispatch`; its one answer.
+            0 => unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) }.answer_cancelled(),
+            // SAFETY: as above, `*mut Load` from `Load::dispatch`.
+            1 => unsafe { bun_ptr::callback_ctx::<Load>(ctx) }.answer_cancelled(),
+            _ => unreachable!("RequestKind"),
         }
     }
 }

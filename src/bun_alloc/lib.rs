@@ -241,13 +241,17 @@ pub mod default_alloc {
         }
     }
 
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
-    pub fn calloc(count: usize, size: usize) -> *mut c_void {
+    pub unsafe fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
         if cfg!(bun_asan) {
-            // SAFETY: `libc::calloc` has no input preconditions; null on failure.
-            unsafe { libc::calloc(count, size) }
+            // SAFETY: caller guarantees `ptr` is null or a live libc allocation
+            // (the default allocator under ASAN).
+            unsafe { libc::realloc(ptr, new_size) }
         } else {
-            crate::mimalloc::mi_calloc(count, size)
+            // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation.
+            unsafe { crate::mimalloc::mi_realloc(ptr, new_size) }
         }
     }
 
@@ -592,13 +596,6 @@ impl Default for Mutex {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocError;
 
-impl AllocError {
-    #[inline]
-    pub const fn name(self) -> &'static str {
-        "OutOfMemory"
-    }
-}
-
 impl core::fmt::Display for AllocError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("OutOfMemory")
@@ -696,13 +693,6 @@ pub unsafe fn realloc_raw(
         return Err(AllocError);
     }
     Ok(new_ptr.cast::<u8>())
-}
-
-/// `mi_usable_size` — actual allocated size for a mimalloc-owned ptr.
-#[inline]
-pub fn usable_size(ptr: *const u8) -> usize {
-    // SAFETY: `mi_usable_size` is null-safe (returns 0).
-    unsafe { mimalloc::mi_usable_size(ptr.cast()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1453,7 +1443,7 @@ macro_rules! bss_singleton {
 
 /// Heap-allocate a fresh `T` via mimalloc and run its in-place `init_at` initializer.
 ///
-/// Shared body of the `BSSList`/`BSSStringList`/`BSSMapInner` `init()` shims.
+/// Shared body of the `BSSStringList`/`BSSMapInner` `init()` shims.
 /// The once-guard is the *caller's* responsibility; use the `bss_*!` macros
 /// for the canonical per-monomorphization singleton.
 #[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
@@ -2020,9 +2010,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     // Rust cannot define generic statics, so the per-monomorphization storage is
     // emitted at the *declare site* via `bss_list! { name: T, N }` (see macro
     // below), which owns a `SyncUnsafeCell<MaybeUninit<Self>>` + `Once` and
-    // calls `init_at` on first access. `init()` is kept for callers that manage
-    // their own once-guard (e.g. `dir_info::hash_map_instance`); it heap-allocs
-    // a fresh instance each call.
+    // calls `init_at` on first access.
 
     /// In-place field initialization into demand-zero storage.
     ///
@@ -2048,13 +2036,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         }
     }
 
-    /// Heap-allocate and initialize a fresh instance. The once-guard is the
-    /// *caller's* responsibility — use `bss_list!` for
-    /// the canonical per-monomorphization singleton.
-    pub fn init() -> NonNull<Self> {
-        bss_heap_init(Self::init_at)
-    }
-
     // Singleton teardown belongs to the `bss_list!` singleton wrapper;
     // Drop only frees the heap-allocated head chain.
 
@@ -2066,7 +2047,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         &mut self,
     ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         self.used += 1;
-        // SAFETY: head is always non-null after init() (points at self.tail or heap block).
+        // SAFETY: head is always non-null after init_at() (points at self.tail or heap block).
         let mut head_ptr = self.head.unwrap();
         // Check capacity first, allocate the new block if
         // needed, then reserve exactly one slot. Safe under `self.mutex`.

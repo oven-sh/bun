@@ -3354,29 +3354,12 @@ impl OutOfRangeValue for i64 {
         "i64"
     }
 }
-impl OutOfRangeValue for i32 {
-    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", self)
-    }
-    fn type_name() -> &'static str {
-        "i32"
-    }
-}
 impl<'a> OutOfRangeValue for &'a [u8] {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", bstr::BStr::new(self))
     }
     fn type_name() -> &'static str {
         "[]const u8"
-    }
-}
-// MOVE_DOWN: bun_core::String → bun_alloc (T0). Re-import from there.
-impl OutOfRangeValue for bun_alloc::String {
-    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", self)
-    }
-    fn type_name() -> &'static str {
-        "bun.String"
     }
 }
 

@@ -208,8 +208,12 @@ pub mod random {
         /// which keeps its VM alive).
         InPlace { bytes: JsPtr<u8>, length: usize },
         /// `randomFill`: the caller's buffer stays untouched until completion;
-        /// fill `scratch` off-thread and copy it in at `offset` on the JS thread.
-        Scratch { scratch: Vec<u8>, offset: u32 },
+        /// `scratch` (empty, `size` bytes reserved) is filled off-thread and copied in at `offset` on the JS thread.
+        Scratch {
+            scratch: Vec<u8>,
+            size: usize,
+            offset: u32,
+        },
     }
 
     #[derive(bun_jsc::JsAffine)]
@@ -234,7 +238,16 @@ pub mod random {
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             match this {
-                RandomFillJob::Scratch { scratch, .. } => boringssl::rand_bytes(scratch),
+                RandomFillJob::Scratch { scratch, size, .. } => {
+                    let size = *size;
+                    // SAFETY: `rand_bytes` only writes, and fills every byte of the slice it is given.
+                    unsafe {
+                        bun_core::vec::fill_spare(scratch, 0, |spare| {
+                            boringssl::rand_bytes(&mut spare[..size]);
+                            (size, ())
+                        })
+                    }
+                }
                 RandomFillJob::InPlace { bytes, length } => {
                     // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
                     // the ticket keeps the VM (and so that buffer) alive; `length` is
@@ -253,7 +266,10 @@ pub mod random {
 
         fn then(this: Self, js: RandomFillJs, cx: &JsThread<'_>) -> JsResult<()> {
             let global = cx.global();
-            if let RandomFillJob::Scratch { scratch, offset } = this {
+            if let RandomFillJob::Scratch {
+                scratch, offset, ..
+            } = this
+            {
                 if let Some(mut buf) = js.value.value().as_array_buffer(global) {
                     let off = offset as usize;
                     let dst = buf.slice_mut();
@@ -713,12 +729,15 @@ pub mod random {
             if scratch.try_reserve_exact(size).is_err() {
                 return Err(global.throw_out_of_memory());
             }
-            scratch.resize(size, 0);
 
             schedule(
                 global,
                 callback,
-                RandomFillJob::Scratch { scratch, offset },
+                RandomFillJob::Scratch {
+                    scratch,
+                    size,
+                    offset,
+                },
                 buf_value,
             );
 

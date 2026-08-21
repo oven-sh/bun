@@ -792,15 +792,6 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.state())
     }
 
-    // Thin alias for the `From` impls below.
-    #[inline]
-    pub fn init<T>(response: T) -> AnyResponse
-    where
-        AnyResponse: From<T>,
-    {
-        AnyResponse::from(response)
-    }
-
     pub fn timeout(self, seconds: u8) {
         any_dispatch!(self, |r| r.timeout(seconds))
     }

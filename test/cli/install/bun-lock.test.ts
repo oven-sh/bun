@@ -1286,8 +1286,6 @@ describe.skipIf(isWindows).concurrent("a file bun install reads is not a regular
       env,
       stdout: "pipe",
       stderr: "pipe",
-      // Only matters if the install blocks on the file.
-      timeout: 30_000,
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { out: normalizeBunSnapshot(out, cwd), err: normalizeBunSnapshot(err, cwd), exitCode };

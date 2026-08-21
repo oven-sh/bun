@@ -355,13 +355,18 @@ impl File {
         #[cfg(not(unix))]
         let flags = O::RDONLY | O::CLOEXEC;
         let file = Self::openat(dir, path, flags, 0)?;
-        let st = file.stat()?;
+        let size = file.ensure_regular(path)?;
+        Ok((file, size))
+    }
+    /// The check of [`File::open_regular_at`] for a file opened with other flags: the size of a regular file, else its error.
+    pub fn ensure_regular(&self, path: &[u8]) -> Maybe<u64> {
+        let st = self.stat().map_err(|e| e.with_path(path))?;
         let mode = st.st_mode as Mode;
         if !S::ISREG(mode) {
             let errno = if S::ISDIR(mode) { E::EISDIR } else { E::ENODEV };
             return Err(Error::new(errno, Tag::open).with_path(path));
         }
-        Ok((file, st.st_size.max(0) as u64))
+        Ok(st.st_size.max(0) as u64)
     }
     /// Open + read + close of a regular file ([`File::open_regular_at`]); `&ZStr` deref-coerces.
     pub fn read_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {

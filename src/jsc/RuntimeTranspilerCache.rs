@@ -51,7 +51,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-const EXPECTED_VERSION: u32 = 25;
+/// Version 26: `delete`/assign/call targets no longer fold under minify_syntax.
+const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

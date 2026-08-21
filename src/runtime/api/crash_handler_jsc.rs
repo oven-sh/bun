@@ -29,6 +29,7 @@ pub(crate) mod js_bindings {
             ("abort", __jsc_host_js_abort),
             ("fastfail", __jsc_host_js_fastfail),
             ("trap", __jsc_host_js_trap),
+            ("handlePosixSignal", __jsc_host_js_handle_posix_signal),
             (
                 "raiseIgnoringPanicHandler",
                 __jsc_host_js_raise_ignoring_panic_handler,
@@ -195,6 +196,32 @@ pub(crate) mod js_bindings {
         );
         #[allow(unreachable_code)]
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// `handlePosixSignal(signo, si_code)`: runs the fatal-signal handler as
+    /// if the kernel had delivered `signo` with that `si_code`, so the
+    /// kill(2)-vs-fault classification is testable in ASAN builds too (they
+    /// never install the real handler). The fault address is fixed at
+    /// 0xDEADBEEF, like `segfault` above, so tests can assert on it.
+    #[bun_jsc::host_fn]
+    fn js_handle_posix_signal(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let signo = frame.argument(0).coerce_to_i32(global)?;
+        let si_code = frame.argument(1).coerce_to_i32(global)?;
+        #[cfg(unix)]
+        {
+            crash_handler::suppress_core_dumps_if_necessary();
+            crash_handler::handle_posix_signal(
+                signo,
+                si_code,
+                0xDEADBEEF,
+                crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (signo, si_code);
+            Ok(JSValue::UNDEFINED)
+        }
     }
 
     #[bun_jsc::host_fn]

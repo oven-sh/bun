@@ -459,21 +459,21 @@ it("backs off between retries and honours Retry-After", async () => {
     });
   });
   await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
-  const { stderr, exited } = spawn({
+  await using proc = spawn({
     cmd: [bunExe(), "add", "BaR", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "ignore",
     stderr: "pipe",
     env,
   });
-  const err = await stderr.text();
+  const [, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  expect(await exited).toBe(0);
+  expect(code).toBe(0);
   expect(tarballHits.length).toBe(3);
   // Retry-After: 1 → at least ~1s before the second attempt
   expect(tarballHits[1] - tarballHits[0]).toBeGreaterThanOrEqual(900);
-  // second retry waits ~500ms ± jitter (never immediate)
-  expect(tarballHits[2] - tarballHits[1]).toBeGreaterThanOrEqual(150);
+  // second retry waits 500ms ± 20% (so ≥ 400ms; small allowance for timer granularity)
+  expect(tarballHits[2] - tarballHits[1]).toBeGreaterThanOrEqual(380);
 });

@@ -772,6 +772,7 @@ public:
     size_t reloadCount = 0;
 
     void reload();
+    void clearModuleRegistry();
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
@@ -885,6 +886,8 @@ public:
 } // namespace Zig
 
 namespace Bun {
+
+void putDirectNamed(JSC::VM&, JSC::JSObject*, ASCIILiteral name, JSC::JSValue);
 
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
 {

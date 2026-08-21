@@ -361,10 +361,8 @@ const exports = {
     return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {
-    // node throws for any defined `recursive`, not just truthy ones
-    if (options?.recursive !== undefined) {
-      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is no longer supported");
-    }
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
+    if (options?.recursive) return exports.rm(path, options);
     return fs.rmdir(path, options);
   },
   writev: async (fd, buffers, position) => {

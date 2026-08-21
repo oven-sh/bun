@@ -2192,6 +2192,10 @@ where
         resp.clear_on_writable();
         resp.clear_timeout();
 
+        // The upgrade detaches the response and disarms onAborted, so neither
+        // on_abort nor an end path can reclaim a parked handler promise's
+        // claim later. Reclaim it here.
+        upgrader.reclaim_promise_cell();
         upgrader.deref();
 
         resp.upgrade(
@@ -2947,6 +2951,7 @@ where
             return;
         };
 
+        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         let call_route = if Ctx::IS_H3 {
             Bun__ServerRouteList__callRouteH3
@@ -3045,6 +3050,7 @@ where
         // SAFETY: `self_ptr` is `self`, live for this frame. Shared — the
         // handler call below re-enters JS, so no `&mut` may span it.
         let server = unsafe { &*self_ptr };
+        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let on_request_fn = server.config.on_request;
         debug_assert!(!on_request_fn.is_empty());
 
@@ -3359,6 +3365,7 @@ where
                 .upgrade_context
                 .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)))
         };
+        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         let global = bun_opaque::opaque_deref(server_ref.global_this);
@@ -3441,6 +3448,7 @@ where
             resp.end_without_body(true);
             return;
         }
+        let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
         this.on_pending_request();
         req.set_yield(false);
         // SAFETY: `request_pool` is non-null while the server is alive; `claim()`

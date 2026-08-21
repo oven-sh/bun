@@ -2160,8 +2160,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let msg = unsafe { core::ffi::CStr::from_ptr(reason.unwrap().cast()) };
             if !msg.is_empty() {
                 use bun_jsc::StringJsc as _;
-                js_error = bun_core::String::borrow_utf8(msg.to_bytes())
-                    .to_error_instance(&global);
+                js_error = bun_core::String::borrow_utf8(msg.to_bytes()).to_error_instance(&global);
             }
         }
 

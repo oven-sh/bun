@@ -1652,7 +1652,9 @@ dependencies = [
 name = "bun_telemetry"
 version = "0.0.0"
 dependencies = [
+ "bstr",
  "bun_core",
+ "bun_threading",
 ]
 
 [[package]]

@@ -2,8 +2,9 @@
 //! export (`OTEL_BSP_*` semantics), builds the OTLP request once and fans it
 //! out to every configured exporter.
 
+use bun_threading::{Condvar, Guarded, RwLock};
 use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::batch::LocalBatch;
@@ -80,7 +81,7 @@ struct Pending {
 }
 
 pub struct Processor {
-    pending: Mutex<Pending>,
+    pending: Guarded<Pending>,
     exporters: RwLock<Vec<Arc<dyn Exporter>>>,
     /// Encoded `Resource` body.
     resource: RwLock<Arc<[u8]>>,
@@ -90,7 +91,7 @@ pub struct Processor {
     pub config: RwLock<BatchConfig>,
     inflight: AtomicUsize,
     idle: Condvar,
-    idle_lock: Mutex<()>,
+    idle_lock: Guarded<()>,
     pub stats: Stats,
     idle_hooks: RwLock<Vec<Box<dyn Fn() + Send + Sync>>>,
 }
@@ -129,7 +130,7 @@ impl Processor {
             names.push(i.scope_name().as_bytes().into());
         }
         Processor {
-            pending: Mutex::new(Pending {
+            pending: Guarded::new(Pending {
                 scopes: Vec::new(),
                 spare: Vec::new(),
                 count: 0,
@@ -142,30 +143,30 @@ impl Processor {
             config: RwLock::new(BatchConfig::default()),
             inflight: AtomicUsize::new(0),
             idle: Condvar::new(),
-            idle_lock: Mutex::new(()),
+            idle_lock: Guarded::new(()),
             stats: Stats::default(),
             idle_hooks: RwLock::new(Vec::new()),
         }
     }
 
     pub fn set_resource(&self, encoded: Vec<u8>) {
-        *self.resource.write().unwrap() = Arc::from(encoded);
+        *self.resource.write() = Arc::from(encoded);
     }
 
     pub fn resource(&self) -> Arc<[u8]> {
-        self.resource.read().unwrap().clone()
+        self.resource.read().clone()
     }
 
     pub fn add_exporter(&self, e: Arc<dyn Exporter>) {
-        self.exporters.write().unwrap().push(e);
+        self.exporters.write().push(e);
     }
 
     pub fn clear_exporters(&self) {
-        self.exporters.write().unwrap().clear();
+        self.exporters.write().clear();
     }
 
     pub fn exporter_count(&self) -> usize {
-        self.exporters.read().unwrap().len()
+        self.exporters.read().len()
     }
 
     /// Called from any thread once nothing is in flight.
@@ -173,7 +174,6 @@ impl Processor {
     pub fn pending_retries(&self) -> usize {
         self.exporters
             .read()
-            .unwrap()
             .iter()
             .map(|e| e.pending_retries())
             .sum()
@@ -181,20 +181,20 @@ impl Processor {
 
     /// Kick parked retries immediately.
     pub fn retry_now(&'static self) {
-        for e in self.exporters.read().unwrap().clone() {
+        for e in self.exporters.read().clone() {
             e.retry_now(self);
         }
     }
 
     pub fn on_idle(&self, f: Box<dyn Fn() + Send + Sync>) {
-        self.idle_hooks.write().unwrap().push(f);
+        self.idle_hooks.write().push(f);
     }
 
     /// Instrumentation scope for a user tracer (`Bun.otel.tracer(name, version)`).
     pub fn register_scope(&self, name: &[u8], version: &[u8]) -> ScopeId {
         let encoded = otlp::encode_scope(name, version);
-        let mut names = self.scope_names.write().unwrap();
-        let mut scopes = self.scopes.write().unwrap();
+        let mut names = self.scope_names.write();
+        let mut scopes = self.scopes.write();
         // Linear scan: a process has a handful of tracers.
         for (i, n) in names.iter().enumerate().skip(Instrument::COUNT) {
             if &**n == name && *scopes[i] == *encoded {
@@ -212,7 +212,6 @@ impl Processor {
     pub fn scope_name(&self, id: ScopeId) -> Box<[u8]> {
         self.scope_names
             .read()
-            .unwrap()
             .get(id.0 as usize)
             .cloned()
             .unwrap_or_default()
@@ -223,8 +222,8 @@ impl Processor {
     /// (after releasing its own borrow); otherwise the next `tick` past the
     /// schedule delay exports.
     pub fn accept(&'static self, batch: &LocalBatch) -> bool {
-        let cfg = *self.config.read().unwrap();
-        let mut p = self.pending.lock().unwrap();
+        let cfg = *self.config.read();
+        let mut p = self.pending.lock();
         if p.count >= cfg.max_queue_size {
             self.stats
                 .spans_dropped
@@ -261,12 +260,12 @@ impl Processor {
     /// Returns true if an export was started.
     pub fn tick(&'static self) -> bool {
         crate::batch::flush_local();
-        for e in self.exporters.read().unwrap().clone() {
+        for e in self.exporters.read().clone() {
             e.tick(self);
         }
-        let cfg = *self.config.read().unwrap();
+        let cfg = *self.config.read();
         let due = self.inflight() == 0 && {
-            let p = self.pending.lock().unwrap();
+            let p = self.pending.lock();
             p.count > 0
                 && clock::now_unix_nanos().saturating_sub(p.oldest_ns)
                     >= (cfg.scheduled_delay_ms as u64) * 1_000_000
@@ -279,7 +278,7 @@ impl Processor {
 
     fn take_payload(&self) -> Option<Arc<ExportPayload>> {
         let (scopes, count) = {
-            let mut p = self.pending.lock().unwrap();
+            let mut p = self.pending.lock();
             let p = &mut *p;
             if p.count == 0 {
                 return None;
@@ -295,7 +294,7 @@ impl Processor {
         };
         let body = {
             let resource = self.resource();
-            let scope_defs = self.scopes.read().unwrap();
+            let scope_defs = self.scopes.read();
             let chunks: Vec<otlp::ScopeChunk<'_>> = scopes
                 .iter()
                 .enumerate()
@@ -308,7 +307,7 @@ impl Processor {
             otlp::encode_request(&resource, &chunks)
         };
         {
-            let mut p = self.pending.lock().unwrap();
+            let mut p = self.pending.lock();
             if p.spare.is_empty() {
                 p.spare = scopes;
             }
@@ -325,7 +324,7 @@ impl Processor {
         let Some(payload) = self.take_payload() else {
             return false;
         };
-        let exporters = self.exporters.read().unwrap().clone();
+        let exporters = self.exporters.read().clone();
         if exporters.is_empty() {
             self.stats
                 .spans_dropped
@@ -337,7 +336,7 @@ impl Processor {
             .store(clock::now_unix_nanos(), Ordering::Relaxed);
         self.inflight.fetch_add(exporters.len(), Ordering::AcqRel);
         for e in exporters {
-            e.export(self, payload.clone());
+            e.export(self, Arc::clone(&payload));
         }
         true
     }
@@ -381,14 +380,14 @@ impl Processor {
     fn finish_one(&self) {
         if self.inflight.fetch_sub(1, Ordering::AcqRel) == 1 {
             {
-                let _g = self.idle_lock.lock().unwrap();
+                let _g = self.idle_lock.lock();
                 self.idle.notify_all();
             }
-            for h in self.idle_hooks.read().unwrap().iter() {
+            for h in self.idle_hooks.read().iter() {
                 h();
             }
             // A full batch accumulated while this export was running: chain.
-            let cfg = *self.config.read().unwrap();
+            let cfg = *self.config.read();
             if self.pending_count() >= cfg.max_export_batch_size {
                 if let Some(p) = global() {
                     p.export();
@@ -404,26 +403,34 @@ impl Processor {
 
     /// Block until no exports are in flight or `timeout` elapses.
     pub fn wait_idle(&self, timeout: Duration) -> bool {
-        let g = self.idle_lock.lock().unwrap();
-        let (_g, res) = self
-            .idle
-            .wait_timeout_while(g, timeout, |_| self.inflight.load(Ordering::Acquire) != 0)
-            .unwrap();
-        !res.timed_out()
+        let mut g = self.idle_lock.lock();
+        let deadline = clock::now_unix_nanos().saturating_add(timeout.as_nanos() as u64);
+        while self.inflight.load(Ordering::Acquire) != 0 {
+            let now = clock::now_unix_nanos();
+            if now >= deadline
+                || self
+                    .idle
+                    .timed_wait_guarded(&mut g, deadline - now)
+                    .is_err()
+            {
+                return self.inflight.load(Ordering::Acquire) == 0;
+            }
+        }
+        true
     }
 
     /// Process-exit path: flush this thread, export synchronously through
     /// each exporter's blocking path, bounded by `export_timeout_ms`.
     pub fn shutdown_blocking(&'static self) {
         crate::batch::flush_local();
-        let cfg = *self.config.read().unwrap();
+        let cfg = *self.config.read();
         let deadline = clock::now_unix_nanos() + (cfg.export_timeout_ms as u64) * 1_000_000;
         // Anything already handed to async exporters: give it the same budget.
-        let exporters = self.exporters.read().unwrap().clone();
+        let exporters = self.exporters.read().clone();
         match self.take_payload() {
             Some(payload) => {
                 for e in exporters {
-                    let result = e.export_blocking(payload.clone(), deadline);
+                    let result = e.export_blocking(Arc::clone(&payload), deadline);
                     self.record_result(&payload, result);
                 }
             }
@@ -440,6 +447,6 @@ impl Processor {
     }
 
     pub fn pending_count(&self) -> u32 {
-        self.pending.lock().unwrap().count
+        self.pending.lock().count
     }
 }

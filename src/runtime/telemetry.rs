@@ -50,7 +50,7 @@ pub struct State {
 /// hand out `&'static` without locking on hot paths.
 static STATE: core::sync::atomic::AtomicPtr<State> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-static RETIRED_STATES: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+static RETIRED_STATES: bun_threading::Guarded<Vec<usize>> = bun_threading::Guarded::new(Vec::new());
 static DEFAULT_STATE: State = State {
     sampler: Sampler::ParentBasedAlwaysOn,
     limits: bun_telemetry::data::DEFAULT_LIMITS,
@@ -64,10 +64,10 @@ static DEFAULT_STATE: State = State {
 #[inline]
 pub fn state() -> &'static State {
     let p = STATE.load(core::sync::atomic::Ordering::Acquire);
-    // SAFETY: non-null values come from `Box::into_raw` in `configure` and are never freed.
     if p.is_null() {
         &DEFAULT_STATE
     } else {
+        // SAFETY: non-null values come from `Box::into_raw` in `configure` and are never freed.
         unsafe { &*p }
     }
 }
@@ -106,6 +106,7 @@ pub(crate) fn vm_state() -> Option<&'static VmState> {
     if p.is_null() {
         None
     } else {
+        // SAFETY: set only by `vm_state_or_init` (Box::leak) on this thread; cleared before free.
         Some(unsafe { &*p })
     }
 }
@@ -115,7 +116,7 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
         return s;
     }
     let s = Box::leak(Box::new(VmState {
-        global: global as *const JSGlobalObject,
+        global: core::ptr::from_ref(global),
         event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::TelemetryFlush),
         timer_armed: Cell::new(false),
         js_exporters: RefCell::new(Vec::new()),
@@ -127,7 +128,7 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
     // Flush this VM's spans (and, on the main thread, drain exporters) at exit.
     global.bun_vm().as_mut().rare_data().push_cleanup_hook(
         global,
-        s as *mut VmState as *mut c_void,
+        core::ptr::from_mut::<VmState>(s).cast::<c_void>(),
         on_vm_exit,
     );
     s
@@ -136,6 +137,7 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
 impl VmState {
     #[inline]
     fn global(&self) -> &JSGlobalObject {
+        // SAFETY: the VmState is thread-local to its VM's thread; the global outlives it.
         unsafe { &*self.global }
     }
 
@@ -143,15 +145,11 @@ impl VmState {
         if self.timer_armed.get() {
             return;
         }
-        let delay = processor()
-            .config
-            .read()
-            .unwrap()
-            .scheduled_delay_ms
-            .max(50);
+        let delay = processor().config.read().scheduled_delay_ms.max(50);
         let next =
             bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).add_ms(delay as i64);
-        let elt = &self.event_loop_timer as *const EventLoopTimer as *mut EventLoopTimer;
+        let elt = (&raw const self.event_loop_timer).cast_mut();
+        // SAFETY: JS thread only; the timer heap holds `elt` until `disarm_timer`/fire, and `self` is leaked.
         unsafe {
             (*elt).next = ElTimespec {
                 sec: next.sec,
@@ -164,7 +162,8 @@ impl VmState {
 
     fn disarm_timer(&self) {
         if self.timer_armed.replace(false) {
-            let elt = &self.event_loop_timer as *const EventLoopTimer as *mut EventLoopTimer;
+            let elt = (&raw const self.event_loop_timer).cast_mut();
+            // SAFETY: JS thread only; `elt` was inserted by `arm_timer`.
             unsafe { (*crate::jsc_hooks::timer_all()).remove(elt) };
         }
     }
@@ -180,7 +179,8 @@ impl VmState {
 }
 
 extern "C" fn on_vm_exit(ctx: *mut c_void) {
-    let s = unsafe { &*(ctx as *mut VmState) };
+    // SAFETY: `ctx` is the leaked VmState registered in `vm_state_or_init`.
+    let s = unsafe { &*ctx.cast::<VmState>() };
     s.disarm_timer();
     bun_telemetry::batch::flush_local();
     let global = s.global();
@@ -197,7 +197,7 @@ extern "C" fn on_vm_exit(ctx: *mut c_void) {
         VM_STATE.with(|c| c.set(core::ptr::null_mut()));
         // SAFETY: allocated by `vm_state_or_init` via Box::leak on this thread;
         // the thread-local that published it was just cleared.
-        drop(unsafe { Box::from_raw(ctx as *mut VmState) });
+        drop(unsafe { Box::from_raw(ctx.cast::<VmState>()) });
     }
 }
 
@@ -240,20 +240,20 @@ pub fn init_for_vm(global: &JSGlobalObject) {
     }
     let env = read_env_config(vm);
     for w in &env.warnings {
-        bun_core::Output::warn(format_args!("[otel] {w}"));
+        bun_core::warn!("[otel] {}", w);
     }
     if !env.enabled {
         return;
     }
-    if let Err(e) = configure(global, env.config) {
-        bun_core::Output::warn(format_args!("[otel] {}", bstr::BStr::new(&e)));
+    if let Err(e) = configure(global, &env.config) {
+        bun_core::warn!("[otel] {}", bstr::BStr::new(&e));
     }
 }
 
 /// Apply `cfg`: state, resource, exporters, enable mask. Exporters are
 /// additive; `start()` clears them first when it is given an explicit list.
 /// The enable mask replaces the previous one.
-pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<(), Vec<u8>> {
+pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry::Config) -> Result<(), Vec<u8>> {
     let vm = global.bun_vm();
     let p = processor();
     let new_state = Box::into_raw(Box::new(State {
@@ -277,9 +277,9 @@ pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<
     if !old.is_null() {
         // Other threads may still hold a `&'static State` from `state()`;
         // retire instead of freeing (reconfiguration is rare).
-        RETIRED_STATES.lock().unwrap().push(old as usize);
+        RETIRED_STATES.lock().push(old as usize);
     }
-    *p.config.write().unwrap() = cfg.batch;
+    *p.config.write() = cfg.batch;
     let script = bun_paths::basename(vm.main());
     let resource = bun_telemetry::resource::encode(&bun_telemetry::resource::ResourceInfo {
         service_name: cfg.service_name.as_deref(),
@@ -290,10 +290,7 @@ pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<
     });
     p.set_resource(resource);
     for x in &cfg.otlp_exporters {
-        match exporter::OtlpHttpExporter::new(x) {
-            Ok(e) => p.add_exporter(Arc::new(e)),
-            Err(e) => return Err(e),
-        }
+        p.add_exporter(Arc::new(exporter::OtlpHttpExporter::new(x)?));
     }
     if cfg.console_exporter {
         p.add_exporter(Arc::new(exporter::ConsoleExporter));
@@ -359,7 +356,7 @@ fn arg_string(global: &JSGlobalObject, v: JSValue) -> JsResult<Option<String>> {
     }
     let s = OwnedString::new(BunString::from_js(v, global)?);
     Ok(Some(
-        String::from_utf8_lossy(s.to_utf8().slice()).into_owned(),
+        bstr::ByteSlice::to_str_lossy(s.to_utf8().slice()).into_owned(),
     ))
 }
 
@@ -383,13 +380,13 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if let Some(v) = opts.get(global, "resourceAttributes")? {
             span::for_each_attribute(global, v, |k, val| {
                 let vs = match val {
-                    bun_telemetry::Value::Str(s) => String::from_utf8_lossy(s).into_owned(),
+                    bun_telemetry::Value::Str(s) => bstr::ByteSlice::to_str_lossy(*s).into_owned(),
                     bun_telemetry::Value::Int(i) => i.to_string(),
                     bun_telemetry::Value::Double(d) => d.to_string(),
                     bun_telemetry::Value::Bool(b) => b.to_string(),
                     _ => return,
                 };
-                let k = String::from_utf8_lossy(k).into_owned();
+                let k = bstr::ByteSlice::to_str_lossy(k).into_owned();
                 if k == "service.name" {
                     cfg.service_name = Some(vs);
                 } else {
@@ -494,7 +491,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     let mut x = match bun_telemetry::presets::resolve(&input, &|k| {
                         loader
                             .get(k.as_bytes())
-                            .map(|v| String::from_utf8_lossy(v).into_owned())
+                            .map(|v| bstr::ByteSlice::to_str_lossy(v).into_owned())
                     }) {
                         Ok(x) => x,
                         Err(e) => return Err(global.throw_invalid_arguments(format_args!("{e}"))),
@@ -607,13 +604,13 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             exporter::JsExporter::detach_all_for_vm(s);
         }
     }
-    if let Err(e) = configure(global, cfg) {
+    if let Err(e) = configure(global, &cfg) {
         return Err(global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&e))));
     }
     if !js_exporters.is_empty() {
         let s = vm_state_or_init(global);
         for e in js_exporters {
-            s.js_exporters.borrow_mut().push(e.clone());
+            s.js_exporters.borrow_mut().push(Arc::clone(&e));
             processor().add_exporter(e);
         }
     }
@@ -623,8 +620,10 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 fn normalize_traces_url(url: &str) -> String {
     // A bare collector base URL gets the traces path; anything with a path is used as-is.
     let trimmed = url.trim_end_matches('/');
-    let after_scheme = trimmed.split_once("://").map(|(_, r)| r).unwrap_or(trimmed);
-    if after_scheme.contains('/') {
+    let after_scheme = bun_core::strings::split_once(trimmed.as_bytes(), b"://")
+        .map(|(_, r)| r)
+        .unwrap_or(trimmed.as_bytes());
+    if bun_core::strings::contains_char(after_scheme, b'/') {
         url.to_string()
     } else {
         format!("{trimmed}/v1/traces")
@@ -654,7 +653,7 @@ fn read_exporter_extras(
                 let v = iter.value;
                 if let Some(vs) = arg_string(global, v)? {
                     x.headers.push((
-                        String::from_utf8_lossy(name.to_utf8().slice()).into_owned(),
+                        bstr::ByteSlice::to_str_lossy(name.to_utf8().slice()).into_owned(),
                         vs,
                     ));
                 }

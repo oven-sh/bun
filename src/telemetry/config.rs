@@ -122,7 +122,7 @@ fn truthy(v: &[u8]) -> bool {
 }
 
 fn s(v: &[u8]) -> String {
-    String::from_utf8_lossy(v.trim_ascii()).into_owned()
+    bstr::ByteSlice::to_str_lossy(v.trim_ascii()).into_owned()
 }
 
 /// Parse `k=v,k2=v2` with URL-decoding of values (used by
@@ -161,7 +161,7 @@ fn percent_decode(v: &[u8]) -> String {
         out.push(v[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    bstr::ByteVec::into_string_lossy(out)
 }
 
 fn join_url(base: &str, path: &str) -> String {
@@ -187,7 +187,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         enabled = false;
     }
     if let Some(b) = bunfig {
-        c.service_name = b.service_name.clone();
+        c.service_name.clone_from(&b.service_name);
     }
 
     if let Some(v) = get("OTEL_SERVICE_NAME") {

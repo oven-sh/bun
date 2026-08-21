@@ -44,6 +44,7 @@ pub fn active(global: &JSGlobalObject) -> Option<&SpanStub> {
     if p.is_null() {
         None
     } else {
+        // SAFETY: points into the active JSTelemetrySpan cell; valid until JS next runs (see doc).
         Some(unsafe { &*p })
     }
 }
@@ -108,7 +109,7 @@ fn extra_propagation(global: &JSGlobalObject, cell: JSValue) -> [Vec<u8>; 2] {
             which: u8,
         ) -> JSValue;
     }
-    for (i, which) in [b't', b'b'].iter().enumerate() {
+    for (i, which) in b"tb".iter().enumerate() {
         let v = Bun__TelemetrySpan__extraString(global, cell, *which);
         if v.is_string() {
             if let Ok(s) = v.to_slice(global) {
@@ -145,6 +146,7 @@ pub fn stub_of(value: JSValue) -> Option<SpanStub> {
     if cell.is_null() {
         return None;
     }
+    // SAFETY: `cell` is a live JSTelemetrySpan; its stub is inline storage.
     Some(unsafe { *Bun__TelemetrySpan__stub(cell) })
 }
 
@@ -160,7 +162,7 @@ impl Entered {
     #[inline]
     pub fn new(global: &JSGlobalObject, span_js: JSValue) -> Entered {
         Entered {
-            global: global as *const JSGlobalObject,
+            global: core::ptr::from_ref(global),
             prev: Bun__Telemetry__enter(global, span_js),
         }
     }
@@ -287,10 +289,13 @@ impl StrRef {
             return;
         }
         if self.is16 != 0 {
+            // SAFETY: C++ fills StrRef from a live WTF::StringImpl; `is16` means `ptr` is its 2-byte-aligned char16 buffer.
+            #[allow(clippy::cast_ptr_alignment)]
             let s =
                 unsafe { core::slice::from_raw_parts(self.ptr.cast::<u16>(), self.len as usize) };
             bun_core::strings::convert_utf16_to_utf8_append(out, s);
         } else {
+            // SAFETY: C++ fills StrRef from a live WTF::StringImpl (latin1 here).
             let s = unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) };
             if bun_core::strings::is_all_ascii(s) {
                 out.extend_from_slice(s);
@@ -417,6 +422,7 @@ impl StrRef {
             return &[];
         }
         if self.is16 == 0 {
+            // SAFETY: C++ fills StrRef from a live WTF::StringImpl (latin1 here).
             let s = unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) };
             if bun_core::strings::is_all_ascii(s) {
                 return s;
@@ -444,6 +450,7 @@ fn with_attrs(
     if n == 0 || attrs.is_null() {
         return;
     }
+    // SAFETY: C++ passes a stack array of `n` AttrRefs.
     let attrs = unsafe { core::slice::from_raw_parts(attrs, n as usize) };
     let [ks, vs, _] = scratch;
     for a in attrs {
@@ -452,14 +459,19 @@ fn with_attrs(
         if key.is_empty() {
             continue;
         }
-        // SAFETY: `kind` selects the live union member (written by JSTelemetrySpan.cpp).
         match a.kind {
+            // SAFETY: `kind` selects the live union member (written by JSTelemetrySpan.cpp).
             ATTR_STR => emit(key, &Value::Str(unsafe { &a.u.str_ }.utf8(vs))),
+            // SAFETY: as above.
             ATTR_BOOL => emit(key, &Value::Bool(unsafe { a.u.int } != 0)),
+            // SAFETY: as above.
             ATTR_INT => emit(key, &Value::Int(unsafe { a.u.int })),
+            // SAFETY: as above.
             ATTR_DOUBLE => emit(key, &Value::Double(unsafe { a.u.num })),
             ATTR_ARRAY => {
+                // SAFETY: as above.
                 let arr = unsafe { a.u.array };
+                // SAFETY: C++ passes `n` items alongside the pointer.
                 let items = unsafe { core::slice::from_raw_parts(arr.items, arr.n as usize) };
                 // Own every string first, then borrow.
                 let mut bytes: Vec<u8> = Vec::new();
@@ -467,9 +479,11 @@ fn with_attrs(
                 for it in items {
                     match it.kind {
                         ATTR_STR => {
+                            // SAFETY: `kind` selects the live union member.
                             let (s, n) = unsafe { &it.u.str_ }.range(&mut bytes);
                             ranges.push((ATTR_STR, s, n, 0, 0.0));
                         }
+                        // SAFETY: int/num are plain-old-data; the unused one is ignored downstream.
                         k => ranges.push((k, 0, 0, unsafe { it.u.int }, unsafe { it.u.num })),
                     }
                 }
@@ -492,6 +506,7 @@ fn with_attrs(
 /// Ids, sampling decision and start time for a new span.
 /// `parent` may be null (root) and may carry `Flags::REMOTE`.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__Telemetry__stubStart(
     out: &mut SpanStub,
     parent: *const SpanStub,
@@ -500,6 +515,7 @@ pub extern "C" fn Bun__Telemetry__stubStart(
     let parent = if parent.is_null() {
         None
     } else {
+        // SAFETY: C++ passes null or a live stub.
         Some(unsafe { &(*parent).ctx })
     };
     let now = if start_ns == 0 {
@@ -569,6 +585,7 @@ fn status_from_u8(s: u8) -> StatusCode {
 /// Encode a JS-owned span that just ended into this thread's batch.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
+    // SAFETY: `desc` is built on the C++ stack from a live JSTelemetrySpan.
     let stub = unsafe { &*desc.stub };
     if !stub.is_recording() {
         return;
@@ -591,6 +608,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
                 w.trace_state(&desc.trace_state.to_vec());
             }
             if desc.encoded_attrs_len != 0 {
+                // SAFETY: (ptr,len) of the cell's encoded-attribute buffer, alive for this call.
                 w.raw(unsafe {
                     core::slice::from_raw_parts(desc.encoded_attrs, desc.encoded_attrs_len as usize)
                 });
@@ -610,6 +628,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
                 }
             });
             if n_events != 0 {
+                // SAFETY: C++ passes `n_events` entries.
                 let events = unsafe { core::slice::from_raw_parts(desc.events, n_events as usize) };
                 for e in events {
                     let ename = e.name.to_vec();
@@ -623,6 +642,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
                 }
             }
             if n_links != 0 {
+                // SAFETY: C++ passes `n_links` entries.
                 let links = unsafe { core::slice::from_raw_parts(desc.links, n_links as usize) };
                 for lk in links {
                     let (Some(t), Some(sid)) = (
@@ -739,6 +759,7 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
     if p.is_null() {
         return JSValue::UNDEFINED;
     }
+    // SAFETY: non-null `stub_ptr` points at a live pool slot; copied immediately on the JS thread.
     let mut stub = unsafe { *p };
     stub.ctx.flags = Flags(stub.ctx.flags.0 | Flags::NON_RECORDING);
     Bun__TelemetrySpan__createNative(global, &stub, 0, 0, 0)
@@ -813,9 +834,11 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(handle: u64, link: &LinkRef) {
 /// The slot's current name as UTF-8 (for the `.name` getter). Writes up to
 /// `cap` bytes and returns the full length.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__Telemetry__nativeName(handle: u64, out: *mut u8, cap: usize) -> usize {
     pool::with_ref(NativeSpan(handle), |s| {
         let n = s.name.len().min(cap);
+        // SAFETY: caller provides `cap` writable bytes at `out`.
         unsafe { core::ptr::copy_nonoverlapping(s.name.as_ptr(), out, n) };
         s.name.len()
     })
@@ -859,6 +882,7 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
 /// tracestate (`which == b't'`) or baggage (`b'b'`) of a native-owned span.
 /// Writes up to `cap` bytes; returns the full length.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__Telemetry__nativePropagation(
     handle: u64,
     which: u8,
@@ -872,6 +896,7 @@ pub extern "C" fn Bun__Telemetry__nativePropagation(
             &s.baggage
         };
         let n = src.len().min(cap);
+        // SAFETY: caller provides `cap` writable bytes at `out`.
         unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), out, n) };
         src.len()
     })

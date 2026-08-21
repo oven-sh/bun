@@ -93,10 +93,7 @@ pub fn sql_operation(sql: &[u8]) -> Option<[u8; 16]> {
             continue;
         }
         if sql[i..].starts_with(b"/*") {
-            match crate_index_of(&sql[i..], b"*/") {
-                Some(j) => i += j + 2,
-                None => return None,
-            }
+            i += crate_index_of(&sql[i..], b"*/")? + 2;
             continue;
         }
         break;

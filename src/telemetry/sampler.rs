@@ -2,26 +2,21 @@ use crate::span::{SpanContext, TraceId};
 
 /// The SDK-spec built-in samplers. `ParentBased(root)` delegates to the
 /// remote/local parent's sampled flag when there is a parent.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Sampler {
     AlwaysOn,
     AlwaysOff,
     /// Threshold on the low 64 bits of the trace id.
     TraceIdRatio(u64),
+    #[default]
     ParentBasedAlwaysOn,
     ParentBasedAlwaysOff,
     ParentBasedTraceIdRatio(u64),
 }
 
-impl Default for Sampler {
-    fn default() -> Self {
-        Sampler::ParentBasedAlwaysOn
-    }
-}
-
 impl Sampler {
     pub fn ratio_threshold(ratio: f64) -> u64 {
-        if !(ratio > 0.0) {
+        if ratio.is_nan() || ratio <= 0.0 {
             return 0;
         }
         if ratio >= 1.0 {

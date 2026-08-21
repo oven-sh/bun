@@ -2369,7 +2369,6 @@ it(
     // Route session-level failures into the awaited request so the test fails
     // with the real error instead of hanging until the timeout.
     const sessionFailed = Promise.withResolvers();
-    sessionFailed.promise.catch(() => {}); // the close() in `finally` emits goaway
     client.on("error", err => sessionFailed.reject(err));
     client.on("goaway", errorCode => sessionFailed.reject(new Error(`GOAWAY errorCode=${errorCode}`)));
 

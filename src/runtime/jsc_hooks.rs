@@ -1770,6 +1770,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // `CURRENT_TIME` static.
             unsafe { (*all).fake_timers.reset_for_isolation(global) };
         }
+        if !all.is_null() {
+            // SAFETY: as above; `disable` borrows only `event_loop_delay` and
+            // reaches the heap through `timer_all()` (disjoint-field access).
+            unsafe { (*all).event_loop_delay.disable() };
+        }
     }
     // Entries that stay registered across a test-isolation swap.
     let mut kept: Vec<ActiveHandle> = Vec::new();

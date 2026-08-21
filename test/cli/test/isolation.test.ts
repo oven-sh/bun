@@ -362,6 +362,71 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("with --isolate, a leaked monitorEventLoopDelay() is disabled before next file", async () => {
+    // The monitor is per thread while its histogram belongs to the file's
+    // global. A file that enables it and never disables it used to leave the
+    // monitor recording into the collected histogram of the retired global for
+    // the rest of the run. Two things are observable from the next file: a
+    // fresh histogram that reuses the freed cell receives the stale records,
+    // and the next file's own enable() is a no-op because the monitor is still
+    // marked enabled, so its histogram never records anything.
+    const monitorFixtures = {
+      "a-monitor.test.ts": `
+        import { test, expect } from "bun:test";
+        import { monitorEventLoopDelay } from "node:perf_hooks";
+        test("leak an enabled monitor", () => {
+          expect(monitorEventLoopDelay({ resolution: 1 }).enable()).toBe(true);
+          // intentionally never calling disable()
+        });
+      `,
+      "b-histogram.test.ts": `
+        import { test, expect } from "bun:test";
+        import { createHistogram, monitorEventLoopDelay } from "node:perf_hooks";
+        test("previous file's monitor is gone and this file's own works", async () => {
+          // Collect file A's histogram first so a decoy below lands in its cell.
+          Bun.gc(true);
+          const decoys = Array.from({ length: 8 }, () => createHistogram());
+
+          const own = monitorEventLoopDelay({ resolution: 1 });
+          expect(own.enable()).toBe(true);
+          const deadline = Date.now() + 5000;
+          while (own.count === 0 && Date.now() < deadline) {
+            // Stall the loop, then yield so the monitor's timer can measure it.
+            const until = Date.now() + 10;
+            while (Date.now() < until) {}
+            await Bun.sleep(2);
+          }
+          own.disable();
+
+          expect(decoys.map(h => h.count)).toEqual(decoys.map(() => 0));
+          expect(own.count).toBeGreaterThan(0);
+        });
+      `,
+    };
+    const files = ["./a-monitor.test.ts", "./b-histogram.test.ts"];
+
+    using isolated = tempDir("isolate-event-loop-delay", monitorFixtures);
+    const serial = await runTests(String(isolated), ["--isolate", "--timeout=10000"], files);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("0 fail");
+    expect(serial.exitCode).toBe(0);
+
+    // One worker takes both files (scale-up gated) so the same sweep runs
+    // between files inside a --parallel worker.
+    using parallel = tempDir("isolate-event-loop-delay-parallel", monitorFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--timeout=10000", ...files],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test("leaked subprocesses are killed for every isolated file, not just the first", async () => {
     using dir = tempDir("isolate-subprocess", {
       "a-spawn.test.ts": `
@@ -848,6 +913,9 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
 //   sets and plugin callback lists were held through Strong handles, so any
 //   file that created a mock or registered a plugin formed an uncollectable
 //   root -> realm object -> global cycle (#31771's linear growth in practice).
+// - monitorEventLoopDelay().enable(): the per-thread monitor holds the file's
+//   histogram. It is disabled at the swap and only ever holds the histogram
+//   weakly, so an enabled monitor must not keep the file's global alive.
 //
 // Each fixture runs 8 isolated files that leak one handle apiece, forces a
 // full GC, and counts live GlobalObject cells. Pinned globals accumulate
@@ -971,6 +1039,17 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
             build.module("leaked-virtual-module", () => ({ exports: {}, loader: "object" }));
           },
         });
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("monitorEventLoopDelay() left enabled", async () => {
+    using dir = tempDir(
+      "isolate-leak-event-loop-delay",
+      makeLeakFixture(`
+        import { monitorEventLoopDelay } from "node:perf_hooks";
+        monitorEventLoopDelay({ resolution: 1 }).enable();
       `),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);

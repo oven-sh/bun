@@ -896,7 +896,15 @@ test("a Network/DOMStorage listener that mutates its event does not affect the n
       newValue: "v",
     });
 
-    expect(seenByB.map(p => [p.request?.url, p.request?.headers?.x, p.initiator?.type, p.response?.status, p.storageId?.securityOrigin])).toEqual([
+    expect(
+      seenByB.map(p => [
+        p.request?.url,
+        p.request?.headers?.x,
+        p.initiator?.type,
+        p.response?.status,
+        p.storageId?.securityOrigin,
+      ]),
+    ).toEqual([
       ["http://x/", "1", "script", undefined, undefined],
       [undefined, undefined, undefined, 200, undefined],
       [undefined, undefined, undefined, undefined, "http://x"],

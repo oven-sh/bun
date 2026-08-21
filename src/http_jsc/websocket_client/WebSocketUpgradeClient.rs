@@ -595,9 +595,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // cannot re-enter clear_data() while the proxy is still reachable.
         if let Some(proxy) = self.proxy.replace(None) {
             if let Some(tunnel) = proxy.get_tunnel() {
-                // SAFETY: `proxy` holds a live ref on `tunnel`; field-scoped
-                // raw write, no borrow of the tunnel is formed.
-                unsafe { WebSocketProxyTunnel::detach_upgrade_client(tunnel.as_ptr()) };
+                // SAFETY: `proxy` holds a live ref on `tunnel`.
+                unsafe { ThisPtr::new(tunnel.as_ptr()) }.detach_upgrade_client();
             }
             drop(proxy);
         }
@@ -875,13 +874,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if this.state.get() == State::Done {
             let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
             if let Some(tunnel) = tunnel {
-                let tp = tunnel.as_ptr();
+                // SAFETY: `proxy` holds a live ref on `tunnel`.
+                let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
                 // Ref the tunnel to keep it alive during this call
                 // (in case the WebSocket client closes during processing)
-                // SAFETY: `proxy` holds a live ref on `tunnel`.
-                let _g = unsafe { bun_ptr::ScopedRef::new(tp) };
-                // SAFETY: ref guard above keeps the tunnel live.
-                unsafe { WebSocketProxyTunnel::receive(tp, data) };
+                let _g = tunnel.ref_guard();
+                WebSocketProxyTunnel::receive(tunnel, data);
             }
             return;
         }
@@ -912,7 +910,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
             if let Some(tunnel) = tunnel {
                 // SAFETY: `proxy` holds a live ref on `tunnel`.
-                unsafe { WebSocketProxyTunnel::receive(tunnel.as_ptr(), data) };
+                WebSocketProxyTunnel::receive(unsafe { ThisPtr::new(tunnel.as_ptr()) }, data);
                 return;
             }
         }
@@ -1096,9 +1094,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Start TLS handshake
         // SAFETY: `tunnel` was just allocated by `init` (live, ref_count == 1).
-        if unsafe { WebSocketProxyTunnel::start(tunnel.as_ptr(), &ssl_options, initial_data) }
-            .is_err()
-        {
+        let tunnel_this = unsafe { ThisPtr::new(tunnel.as_ptr()) };
+        if WebSocketProxyTunnel::start(tunnel_this, &ssl_options, initial_data).is_err() {
             // SAFETY: release the ref taken by `init`.
             unsafe { WebSocketProxyTunnel::deref(tunnel.as_ptr()) };
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
@@ -1159,10 +1156,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         };
-        Self::write_pending(this, |buf| {
-            // SAFETY: `proxy` holds a live ref on `tunnel`.
-            unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), buf) }.ok()
-        });
+        // SAFETY: `proxy` holds a live ref on `tunnel`.
+        let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
+        Self::write_pending(this, |buf| WebSocketProxyTunnel::write(tunnel, buf).ok());
     }
 
     /// Called by WebSocketProxyTunnel with decrypted data from the TLS tunnel
@@ -1609,7 +1605,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
         if let Some(tunnel) = tunnel {
             // SAFETY: `proxy` holds a live ref on `tunnel`.
-            unsafe { WebSocketProxyTunnel::on_writable(tunnel.as_ptr()) };
+            let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
+            WebSocketProxyTunnel::on_writable(tunnel);
             // In .done state (after WebSocket upgrade), just handle tunnel writes
             if this.state.get() == State::Done {
                 return;
@@ -1619,10 +1616,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             if this.to_send_len.get() == 0 {
                 return;
             }
-            Self::write_pending(this, |buf| {
-                // SAFETY: `proxy` holds a live ref on `tunnel`.
-                unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), buf) }.ok()
-            });
+            Self::write_pending(this, |buf| WebSocketProxyTunnel::write(tunnel, buf).ok());
             return;
         }
 

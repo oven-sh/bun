@@ -227,6 +227,7 @@ pub fn end_native(span: NativeSpan, end_ns: u64, extra: impl FnOnce(&mut SpanWri
 
 /// A JS string as JSC holds it: Latin-1 or UTF-16 code units.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct StrRef {
     ptr: *const u8,
     len: u32,
@@ -275,15 +276,37 @@ const ATTR_DOUBLE: u8 = 3;
 const ATTR_ARRAY: u8 = 4;
 
 #[repr(C)]
-pub struct AttrRef {
-    key: StrRef,
-    kind: u8,
-    str_: StrRef,
+#[derive(Clone, Copy)]
+struct ArrayRef {
+    items: *const AttrRef,
+    n: u32,
+}
+
+#[repr(C)]
+union AttrValue {
+    str_: core::mem::ManuallyDrop<StrRef>,
     num: f64,
     int: i64,
-    /// kind == ATTR_ARRAY: `items[..n_items]` (their keys are unused).
-    items: *const AttrRef,
-    n_items: u32,
+    /// kind == ATTR_ARRAY: `items[..n]` (their keys are unused).
+    array: ArrayRef,
+}
+
+#[repr(C)]
+pub struct AttrRef {
+    key_ptr: *const u8,
+    key_len: u32,
+    key_is16: u8,
+    kind: u8,
+    u: AttrValue,
+}
+
+const _: () = assert!(core::mem::size_of::<AttrRef>() == 32);
+
+impl AttrRef {
+    #[inline]
+    fn key(&self) -> StrRef {
+        StrRef { ptr: self.key_ptr, len: self.key_len, is16: self.key_is16 }
+    }
 }
 
 #[repr(C)]
@@ -322,71 +345,79 @@ pub struct EndDesc {
     n_links: u32,
 }
 
-/// Attribute value with strings as ranges into a scratch buffer.
-enum Owned {
-    Str(usize, usize),
-    Bool(bool),
-    Int(i64),
-    Double(f64),
-    Array(Vec<Owned>),
-}
-
-fn own(a: &AttrRef, scratch: &mut Vec<u8>) -> Owned {
-    match a.kind {
-        ATTR_STR => {
-            let (s, n) = a.str_.range(scratch);
-            Owned::Str(s, n)
+impl StrRef {
+    /// Borrow as UTF-8 if the JS string is Latin-1 and pure ASCII (the common
+    /// case); otherwise transcode into `scratch` and borrow that.
+    #[inline]
+    fn utf8<'a>(&'a self, scratch: &'a mut Vec<u8>) -> &'a [u8] {
+        if self.ptr.is_null() || self.len == 0 {
+            return &[];
         }
-        ATTR_BOOL => Owned::Bool(a.int != 0),
-        ATTR_INT => Owned::Int(a.int),
-        ATTR_DOUBLE => Owned::Double(a.num),
-        ATTR_ARRAY => {
-            let items = unsafe { core::slice::from_raw_parts(a.items, a.n_items as usize) };
-            Owned::Array(items.iter().map(|i| own(i, scratch)).collect())
+        if self.is16 == 0 {
+            let s = unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) };
+            if bun_core::strings::is_all_ascii(s) {
+                return s;
+            }
         }
-        _ => Owned::Bool(false),
+        scratch.clear();
+        self.append_to(scratch);
+        &scratch[..]
     }
 }
 
-fn primitive<'a>(o: &Owned, scratch: &'a [u8]) -> Value<'a> {
-    match o {
-        Owned::Str(s, n) => Value::Str(&scratch[*s..*s + *n]),
-        Owned::Bool(b) => Value::Bool(*b),
-        Owned::Int(i) => Value::Int(*i),
-        Owned::Double(d) => Value::Double(*d),
-        Owned::Array(_) => Value::Str(b""),
-    }
+thread_local! {
+    /// Reused transcoding buffers: [key, value, name/misc].
+    static SCRATCH: core::cell::RefCell<[Vec<u8>; 3]> = const { core::cell::RefCell::new([Vec::new(), Vec::new(), Vec::new()]) };
 }
 
-/// Decode `attrs[..n]` and hand each `(key, value)` to `emit`.
-fn with_attrs(attrs: *const AttrRef, n: u32, mut emit: impl FnMut(&[u8], &Value<'_>)) {
+/// Decode `attrs[..n]` and hand each `(key, value)` to `emit`. No allocation
+/// unless a string needs transcoding or a value is an array.
+fn with_attrs(attrs: *const AttrRef, n: u32, scratch: &mut [Vec<u8>; 3], mut emit: impl FnMut(&[u8], &Value<'_>)) {
     if n == 0 || attrs.is_null() {
         return;
     }
     let attrs = unsafe { core::slice::from_raw_parts(attrs, n as usize) };
-    let mut scratch: Vec<u8> = Vec::with_capacity(64 * attrs.len());
-    let items: Vec<((usize, usize), Owned)> = attrs
-        .iter()
-        .map(|a| (a.key.range(&mut scratch), own(a, &mut scratch)))
-        .collect();
-    let scratch = &scratch[..];
-    let arrays: Vec<Vec<Value<'_>>> = items
-        .iter()
-        .map(|(_, v)| match v {
-            Owned::Array(xs) => xs.iter().map(|x| primitive(x, scratch)).collect(),
-            _ => Vec::new(),
-        })
-        .collect();
-    for (i, ((ks, kn), v)) in items.iter().enumerate() {
-        if *kn == 0 {
+    let [ks, vs, _] = scratch;
+    for a in attrs {
+        let key_ref = a.key();
+        let key = key_ref.utf8(ks);
+        if key.is_empty() {
             continue;
         }
-        let key = &scratch[*ks..*ks + *kn];
-        let value = match v {
-            Owned::Array(_) => Value::Array(&arrays[i]),
-            o => primitive(o, scratch),
-        };
-        emit(key, &value);
+        // SAFETY: `kind` selects the live union member (written by JSTelemetrySpan.cpp).
+        match a.kind {
+            ATTR_STR => emit(key, &Value::Str(unsafe { &a.u.str_ }.utf8(vs))),
+            ATTR_BOOL => emit(key, &Value::Bool(unsafe { a.u.int } != 0)),
+            ATTR_INT => emit(key, &Value::Int(unsafe { a.u.int })),
+            ATTR_DOUBLE => emit(key, &Value::Double(unsafe { a.u.num })),
+            ATTR_ARRAY => {
+                let arr = unsafe { a.u.array };
+                let items = unsafe { core::slice::from_raw_parts(arr.items, arr.n as usize) };
+                // Own every string first, then borrow.
+                let mut bytes: Vec<u8> = Vec::new();
+                let mut ranges: Vec<(u8, usize, usize, i64, f64)> = Vec::with_capacity(items.len());
+                for it in items {
+                    match it.kind {
+                        ATTR_STR => {
+                            let (s, n) = unsafe { &it.u.str_ }.range(&mut bytes);
+                            ranges.push((ATTR_STR, s, n, 0, 0.0));
+                        }
+                        k => ranges.push((k, 0, 0, unsafe { it.u.int }, unsafe { it.u.num })),
+                    }
+                }
+                let vals: Vec<Value<'_>> = ranges
+                    .iter()
+                    .map(|&(k, s, n, i, d)| match k {
+                        ATTR_STR => Value::Str(&bytes[s..s + n]),
+                        ATTR_BOOL => Value::Bool(i != 0),
+                        ATTR_INT => Value::Int(i),
+                        _ => Value::Double(d),
+                    })
+                    .collect();
+                emit(key, &Value::Array(&vals));
+            }
+            _ => {}
+        }
     }
 }
 
@@ -455,59 +486,67 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
         return;
     }
     let scope = ScopeId(desc.scope);
-    let name = desc.name.to_vec();
-    let trace_state = desc.trace_state.to_vec();
-    let status_message = desc.status_message.to_vec();
     let l = limits();
     let n_attrs = desc.n_attrs.min(l.attributes as u32);
     let n_events = desc.n_events.min(l.events as u32);
     let n_links = desc.n_links.min(l.links as u32);
-    batch::record(scope, |buf| {
-        let mut w = SpanWriter::begin(buf, stub, &name, kind_from_u8(desc.kind), desc.end_ns);
-        w.trace_state(&trace_state);
-        with_attrs(desc.attrs, n_attrs, |k, v| match *v {
-            Value::Str(s) if s.len() > l.attribute_value_length as usize => {
-                w.attr_bytes_key(k, Value::Str(&s[..l.attribute_value_length as usize]));
+    SCRATCH.with(|sc| {
+        let mut sc = sc.borrow_mut();
+        let sc = &mut *sc;
+        let mut name_buf = core::mem::take(&mut sc[2]);
+        let name = desc.name.utf8(&mut name_buf);
+        batch::record(scope, |buf| {
+            let mut w = SpanWriter::begin(buf, stub, name, kind_from_u8(desc.kind), desc.end_ns);
+            if desc.trace_state.len != 0 {
+                w.trace_state(&desc.trace_state.to_vec());
             }
-            _ => {
-                w.attr_bytes_key(k, *v);
+            with_attrs(desc.attrs, n_attrs, sc, |k, v| match *v {
+                Value::Str(s) if s.len() > l.attribute_value_length as usize => {
+                    w.attr_bytes_key(k, Value::Str(&s[..l.attribute_value_length as usize]));
+                }
+                _ => {
+                    w.attr_bytes_key(k, *v);
+                }
+            });
+            if n_events != 0 {
+                let events = unsafe { core::slice::from_raw_parts(desc.events, n_events as usize) };
+                for e in events {
+                    let ename = e.name.to_vec();
+                    let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
+                    with_attrs(e.attrs, e.n_attrs, sc, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
+                    let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
+                    w.event(&ename, e.time_ns, &borrowed);
+                }
             }
+            if n_links != 0 {
+                let links = unsafe { core::slice::from_raw_parts(desc.links, n_links as usize) };
+                for lk in links {
+                    let (Some(t), Some(sid)) = (TraceId::from_hex(&lk.trace_id.to_vec()), SpanId::from_hex(&lk.span_id.to_vec())) else {
+                        continue;
+                    };
+                    let ctx = SpanContext { trace_id: t, span_id: sid, flags: Flags(lk.flags & Flags::SAMPLED) };
+                    let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
+                    with_attrs(lk.attrs, lk.n_attrs, sc, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
+                    let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
+                    w.link(&ctx, &borrowed);
+                }
+            }
+            let dropped_attrs = desc.dropped_attrs + (desc.n_attrs - n_attrs);
+            if dropped_attrs != 0 {
+                w.dropped_attributes(dropped_attrs);
+            }
+            if desc.n_events != n_events {
+                w.dropped_events(desc.n_events - n_events);
+            }
+            if desc.n_links != n_links {
+                w.dropped_links(desc.n_links - n_links);
+            }
+            if desc.status != 0 {
+                w.status(status_from_u8(desc.status), &desc.status_message.to_vec());
+            }
+            w.finish();
         });
-        if n_events != 0 {
-            let events = unsafe { core::slice::from_raw_parts(desc.events, n_events as usize) };
-            for e in events {
-                let ename = e.name.to_vec();
-                let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
-                with_attrs(e.attrs, e.n_attrs, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
-                let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
-                w.event(&ename, e.time_ns, &borrowed);
-            }
-        }
-        if n_links != 0 {
-            let links = unsafe { core::slice::from_raw_parts(desc.links, n_links as usize) };
-            for l in links {
-                let (Some(t), Some(s)) = (TraceId::from_hex(&l.trace_id.to_vec()), SpanId::from_hex(&l.span_id.to_vec())) else {
-                    continue;
-                };
-                let ctx = SpanContext { trace_id: t, span_id: s, flags: Flags(l.flags & Flags::SAMPLED) };
-                let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
-                with_attrs(l.attrs, l.n_attrs, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
-                let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
-                w.link(&ctx, &borrowed);
-            }
-        }
-        let dropped_attrs = desc.dropped_attrs + (desc.n_attrs - n_attrs);
-        if dropped_attrs != 0 {
-            w.dropped_attributes(dropped_attrs);
-        }
-        if desc.n_events != n_events {
-            w.dropped_events(desc.n_events - n_events);
-        }
-        if desc.n_links != n_links {
-            w.dropped_links(desc.n_links - n_links);
-        }
-        w.status(status_from_u8(desc.status), &status_message);
-        w.finish();
+        sc[2] = name_buf;
     });
     super::after_record();
 }
@@ -559,8 +598,10 @@ pub extern "C" fn Bun__Telemetry__nativeEnd(handle: u64, end_ns: u64) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativeSetAttribute(handle: u64, attr: &AttrRef) {
     let l = limits();
-    with_attrs(attr, 1, |k, v| {
-        pool::with(NativeSpan(handle), |s| s.set_attribute(k, v, l));
+    SCRATCH.with(|sc| {
+        with_attrs(attr, 1, &mut sc.borrow_mut(), |k, v| {
+            pool::with(NativeSpan(handle), |s| s.set_attribute(k, v, l));
+        });
     });
 }
 
@@ -580,7 +621,7 @@ pub extern "C" fn Bun__Telemetry__nativeSetStatus(handle: u64, code: u8, message
 pub extern "C" fn Bun__Telemetry__nativeAddEvent(handle: u64, event: &EventRef) {
     let name = event.name.to_vec();
     let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
-    with_attrs(event.attrs, event.n_attrs, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
+    SCRATCH.with(|sc| with_attrs(event.attrs, event.n_attrs, &mut sc.borrow_mut(), |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v)))));
     let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
     pool::with(NativeSpan(handle), |s| s.add_event(&name, event.time_ns, &borrowed));
 }
@@ -592,7 +633,7 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(handle: u64, link: &LinkRef) {
     };
     let ctx = SpanContext { trace_id: t, span_id: sid, flags: Flags(link.flags & Flags::SAMPLED) };
     let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
-    with_attrs(link.attrs, link.n_attrs, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
+    SCRATCH.with(|sc| with_attrs(link.attrs, link.n_attrs, &mut sc.borrow_mut(), |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v)))));
     let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
     pool::with(NativeSpan(handle), |s| bun_telemetry::otlp::encode_link(&mut s.extra, &ctx, b"", &borrowed));
 }

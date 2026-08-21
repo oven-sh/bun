@@ -89,6 +89,26 @@ private:
 
 JSTelemetrySpan* toTelemetrySpan(JSValue);
 
+// Holder for the `createSpan` fast path so DFG can emit it as CallDOM.
+class JSTelemetryBinding final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    DECLARE_EXPORT_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTelemetryBinding, Base);
+        return &vm.plainObjectSpace();
+    }
+    static JSTelemetryBinding* create(VM&, Zig::GlobalObject*);
+
+private:
+    JSTelemetryBinding(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
 JSC::JSObject* createTelemetrySpanPrototype(VM&, Zig::GlobalObject*);
 
 } // namespace Bun

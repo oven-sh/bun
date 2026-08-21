@@ -71,6 +71,40 @@ bun_opaque::opaque_ffi! {
 /// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
 /// extern type (Nomicon pattern).
 #[repr(C)]
+/// A peer address as raw network-order bytes.
+#[derive(Clone, Copy)]
+pub enum RawIp {
+    V4([u8; 4]),
+    V6([u8; 16]),
+}
+
+impl RawIp {
+    /// Text form: dotted quad, RFC 5952 IPv6, or dotted quad for
+    /// IPv4-mapped IPv6 (matching what `requestIP()` reports).
+    pub fn format<'a>(&self, buf: &'a mut [u8; 46]) -> &'a [u8] {
+        use std::io::Write as _;
+        let mut cur = std::io::Cursor::new(&mut buf[..]);
+        match *self {
+            RawIp::V4(b) => {
+                let _ = write!(cur, "{}", std::net::Ipv4Addr::from(b));
+            }
+            RawIp::V6(b) => {
+                let a = std::net::Ipv6Addr::from(b);
+                match a.to_ipv4_mapped() {
+                    Some(v4) => {
+                        let _ = write!(cur, "::ffff:{v4}");
+                    }
+                    None => {
+                        let _ = write!(cur, "{a}");
+                    }
+                }
+            }
+        }
+        let n = cur.position() as usize;
+        &buf[..n]
+    }
+}
+
 pub struct Response<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
@@ -355,6 +389,17 @@ impl<const SSL: bool> Response<SSL> {
                 )
                 .unwrap(),
             )
+        }
+    }
+
+    /// The peer's IP (4 or 16 raw bytes) and port, cached per connection.
+    pub fn get_remote_address_raw(&mut self) -> Option<(RawIp, u16)> {
+        let mut out = [0u8; 16];
+        let mut port: i32 = 0;
+        match c::uws_res_get_remote_address_raw(Self::ssl_flag(), self.as_raw(), &mut out, &mut port) {
+            4 => Some((RawIp::V4([out[0], out[1], out[2], out[3]]), port as u16)),
+            16 => Some((RawIp::V6(out), port as u16)),
+            _ => None,
         }
     }
 
@@ -770,6 +815,23 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
 
+    /// Peer IP/port; cached per connection for H1, uncached text parse for H3.
+    pub fn get_remote_address_raw(self) -> Option<(RawIp, u16)> {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_remote_address_raw(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_remote_address_raw(),
+            AnyResponse::H3(ptr) => {
+                let info = H3Response::as_handle(ptr).get_remote_socket_info()?;
+                let text = core::str::from_utf8(info.ip()).ok()?;
+                let port = info.port as u16;
+                if let Ok(v4) = text.parse::<std::net::Ipv4Addr>() {
+                    return Some((RawIp::V4(v4.octets()), port));
+                }
+                text.parse::<std::net::Ipv6Addr>().ok().map(|v6| (RawIp::V6(v6.octets()), port))
+            }
+        }
+    }
+
     pub fn flush_headers(self, flush_immediately: bool) {
         any_dispatch!(self, |r| r.flush_headers(flush_immediately))
     }
@@ -1109,6 +1171,12 @@ pub mod c {
             port: &mut i32,
             is_ipv6: &mut bool,
         ) -> usize;
+        pub(crate) safe fn uws_res_get_remote_address_raw(
+            ssl: i32,
+            res: &mut uws_res,
+            out: &mut [u8; 16],
+            port: &mut i32,
+        ) -> c_int;
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub(crate) fn uws_res_end(
             ssl: i32,

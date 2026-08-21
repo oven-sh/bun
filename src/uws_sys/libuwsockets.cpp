@@ -20,6 +20,30 @@ static inline std::string_view stringViewFromC(const char* message, size_t lengt
 using TLSWebSocket = uWS::WebSocket<true, true, void *>;
 using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 
+/* Raw peer address (4 or 16 bytes into `out`), cached on the connection so
+ * only the first request pays for getpeername(). Returns 0 if unavailable. */
+template <bool SSL>
+static int uws_res_remote_address_raw(uWS::HttpResponse<SSL> *res, uint8_t *out, int *port) {
+    auto *data = res->getHttpResponseData();
+    if (data->remoteAddressLength == 0) {
+      char buf[16];
+      const char *unused;
+      int p = 0, ipv6 = 0;
+      unsigned len = us_get_remote_address_info(buf, (us_socket_t *)res, &unused, &p, &ipv6);
+      if (len == 4 || len == 16) {
+        memcpy(data->remoteAddress, buf, len);
+        data->remoteAddressLength = (uint8_t)len;
+        data->remotePort = (uint16_t)p;
+      } else {
+        data->remoteAddressLength = 0xff;
+      }
+    }
+    if (data->remoteAddressLength == 0xff) return 0;
+    memcpy(out, data->remoteAddress, data->remoteAddressLength);
+    *port = data->remotePort;
+    return data->remoteAddressLength;
+  }
+
 extern "C"
 {
 
@@ -1228,6 +1252,11 @@ extern "C"
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->writeStatus(stringViewFromC(status, length));
     }
+  }
+
+  int uws_res_get_remote_address_raw(int ssl, uws_res_r res, uint8_t *out, int *port) {
+    if (ssl) return uws_res_remote_address_raw((uWS::HttpResponse<true> *)res, out, port);
+    return uws_res_remote_address_raw((uWS::HttpResponse<false> *)res, out, port);
   }
 
   void uws_res_mark_wrote_content_length_header(int ssl, uws_res_r res) {

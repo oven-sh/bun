@@ -18,6 +18,7 @@ JSC_DECLARE_HOST_FUNCTION(jsTelemetryStartSpan);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryWrapSpanContext);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryStartInstrumentSpan);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryNativeSpanOp);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetryCreateBinding);
 
 /// Installed as VM::asyncContextLeaveAsyncFrameHook.
 JSC::JSValue telemetryLeaveAsyncFrame(JSC::JSGlobalObject*, JSC::JSValue atEntry, JSC::JSValue current);

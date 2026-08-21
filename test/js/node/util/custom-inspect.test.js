@@ -306,6 +306,44 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     expect(rs[customSymbol](-1, {})).toBe(rs);
   });
 
+  // Like node's customInspect (lib/internal/webstreams/util.js), the hook passes
+  // `{ ...options }` to the inspect call it makes for its fields. util.inspect forwards
+  // unknown user options to the hooks as they are, and the native copy of the options
+  // used to fail an assertion on an index key.
+  test("accepts a user option whose key is an array index", async () => {
+    const { bunEnv, bunExe } = require("harness");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { inspect } = require("node:util");
+         console.log(inspect(new ReadableStream(), { 0: 1 }));
+         console.log(inspect(new WritableStream(), { 0: 1 }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        "ReadableStream { locked: false, state: 'readable', supportsBYOB: false }\n" +
+        "WritableStream { locked: false, state: 'writable' }\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("copies the own enumerable options and not the inherited ones", () => {
+    const rs = new ReadableStream();
+    expect(rs[customSymbol](2, { colors: true })).toBe(
+      "ReadableStream { locked: \u001b[33mfalse\u001b[39m, state: \u001b[32m'readable'\u001b[39m, supportsBYOB: \u001b[33mfalse\u001b[39m }",
+    );
+    expect(rs[customSymbol](2, Object.create({ colors: true }))).toBe(
+      "ReadableStream { locked: false, state: 'readable', supportsBYOB: false }",
+    );
+  });
+
   test("wrong receiver returns the receiver (no infinite recursion)", () => {
     const o = {};
     expect(ReadableStream.prototype[customSymbol].call(o, 2, {})).toBe(o);

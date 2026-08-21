@@ -6863,6 +6863,13 @@ pub(crate) fn open_file_at_windows_nt_path(
             continue;
         }
 
+        // RtlNtStatusToDosError collapses STATUS_FILE_IS_A_DIRECTORY to
+        // ERROR_ACCESS_DENIED (→ EPERM). Preserve EISDIR so write-mode opens
+        // on a directory match libuv's fs__open.
+        if rc == w::NTSTATUS::FILE_IS_A_DIRECTORY {
+            return Err(Error::from_code(E::EISDIR, Tag::open));
+        }
+
         return match windows::Win32Error::from_nt_status(rc) {
             windows::Win32Error::SUCCESS => {
                 if (options.access_mask & w::FILE_APPEND_DATA) != 0 {
@@ -6993,11 +7000,21 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         0
     };
     let follow = (flags & O::NOFOLLOW) == 0;
-    let opts: u32 = if follow {
+    let mut opts: u32 = if follow {
         blocking_flag
     } else {
         blocking_flag | w::FILE_OPEN_REPARSE_POINT
     };
+
+    // libuv reports `EISDIR` from the open itself when an `O_CREAT` (but not
+    // `O_EXCL`) open lands on a directory: `CreateFileW` fails with
+    // `ERROR_FILE_EXISTS` for those dispositions and `fs__open` remaps it.
+    // https://github.com/libuv/libuv/blob/v1.52.0/src/win/fs.c#L619-L629
+    // `NtCreateFile` would instead hand back a directory handle and defer the
+    // failure to the first write, which surfaces as `EISDIR` on `write`.
+    if creat && !excl {
+        opts |= w::FILE_NON_DIRECTORY_FILE;
+    }
 
     let mut attributes: u32 = w::FILE_ATTRIBUTE_NORMAL;
     if (flags & O::CREAT) != 0 && (perm & 0x80) == 0 && perm != 0 {

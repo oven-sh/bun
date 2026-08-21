@@ -2221,32 +2221,6 @@ it("304 not modified with 0 content-length does not cause a request timeout", as
   server.stop(true);
 });
 
-// RFC 9112 §6.3: a 1xx/204/304 response is terminated by the first empty line
-// after the header fields, regardless of any Transfer-Encoding or Content-Length
-// header. Bytes following the header block are not part of this response's body.
-it.concurrent.each([
-  [204, "No Content"],
-  [304, "Not Modified"],
-])("%d with Transfer-Encoding: chunked ignores the chunked body", async (status, reason) => {
-  using server = Bun.listen({
-    socket: {
-      open(socket) {
-        socket.write(`HTTP/1.1 ${status} ${reason}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n`);
-        socket.flush();
-        setTimeout(() => socket.end(), 9999).unref();
-      },
-      data() {},
-      close() {},
-    },
-    port: 0,
-    hostname: "127.0.0.1",
-  });
-
-  const response = await fetch(`http://${server.hostname}:${server.port}/`);
-  expect(response.status).toBe(status);
-  expect(await response.text()).toBe("");
-});
-
 describe("http/1.1 response body length", () => {
   // issue #6932 (support response without Content-Length and Transfer-Encoding) + some regression tests
 
@@ -3228,9 +3202,21 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
   // redirect path, which pools the socket itself), so trailing bytes must cost the
   // connection while the same responses without them must still be pooled.
   const injected = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected";
+  // A well-formed chunked body. RFC 9112 §6.3: a 204/304 ends at its header block no
+  // matter what framing headers it carries, so these bytes are trailing junk too, not
+  // a body for the chunked decoder to consume (#2732).
+  const chunkedBody = "5\r\nhello\r\n0\r\n\r\n";
   const responses: Record<string, { head: string; junk: string }> = {
     "/204": { head: "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n", junk: injected },
     "/304": { head: 'HTTP/1.1 304 Not Modified\r\nETag: "x"\r\nConnection: keep-alive\r\n\r\n', junk: injected },
+    "/204-chunked": {
+      head: "HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n",
+      junk: chunkedBody,
+    },
+    "/304-chunked": {
+      head: 'HTTP/1.1 304 Not Modified\r\nETag: "x"\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n',
+      junk: chunkedBody,
+    },
     "/empty": { head: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n", junk: injected },
     // Answered with HEAD: Content-Length describes the GET body, nothing may follow.
     // The junk variant sends that body anyway.
@@ -3289,6 +3275,8 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
   const cases: { path: string; init?: () => RequestInit }[] = [
     { path: "/204" },
     { path: "/304" },
+    { path: "/204-chunked" },
+    { path: "/304-chunked" },
     { path: "/empty" },
     { path: "/head", init: () => ({ method: "HEAD" }) },
     // The redirect path only pools the socket once the upload is known to be
@@ -3337,6 +3325,10 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
       { request: "/204", status: 204, body: "", newConnections: 0 },
       { request: "/304 + trailing bytes", status: 304, body: "", newConnections: 1 },
       { request: "/304", status: 304, body: "", newConnections: 0 },
+      { request: "/204-chunked + trailing bytes", status: 204, body: "", newConnections: 1 },
+      { request: "/204-chunked", status: 204, body: "", newConnections: 0 },
+      { request: "/304-chunked + trailing bytes", status: 304, body: "", newConnections: 1 },
+      { request: "/304-chunked", status: 304, body: "", newConnections: 0 },
       { request: "/empty + trailing bytes", status: 200, body: "", newConnections: 1 },
       { request: "/empty", status: 200, body: "", newConnections: 0 },
       { request: "/head + trailing bytes", status: 200, body: "", newConnections: 1 },

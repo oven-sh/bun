@@ -28,7 +28,7 @@ static const JSC::HashTableValue JSPublicKeyObjectPrototypeTableValues[] = {
 void JSPublicKeyObjectPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPublicKeyObjectPrototype::info(), JSPublicKeyObjectPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSPublicKeyObjectPrototype::info(), JSPublicKeyObjectPrototypeTableValues, *this);
 
     // intentionally inherit KeyObject's toStringTag
     // https://github.com/nodejs/node/blob/95b0f9d448832eeb75586c89fab0777a1a4b0610/lib/internal/crypto/keys.js#L146

@@ -351,7 +351,7 @@ impl SupportsCondition {
         input.skip_whitespace();
         let location = input.current_source_location();
         let pos = input.position();
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match tok {
             css::Token::Function(f) => {
                 if strings::eql_case_insensitive_ascii_check_length(b"selector", f) {

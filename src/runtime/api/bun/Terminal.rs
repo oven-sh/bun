@@ -345,12 +345,6 @@ impl From<CreatePtyError> for InitError {
     }
 }
 
-impl From<InitError> for crate::Error {
-    fn from(e: InitError) -> Self {
-        crate::Error::TerminalInit(e)
-    }
-}
-
 impl Terminal {
     #[inline]
     fn global(&self) -> &JSGlobalObject {
@@ -831,12 +825,6 @@ pub enum CreatePtyError {
     DupFailed,
     #[error("NotSupported")]
     NotSupported,
-}
-
-impl From<CreatePtyError> for crate::Error {
-    fn from(e: CreatePtyError) -> Self {
-        crate::Error::TerminalInit(e.into())
-    }
 }
 
 fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {

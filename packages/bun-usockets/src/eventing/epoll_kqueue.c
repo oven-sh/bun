@@ -75,10 +75,6 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
     us_free(p);
 }
 
-__attribute__((always_inline)) void *us_poll_ext(struct us_poll_t *p) {
-    return p + 1;
-}
-
 /* Todo: why have us_poll_create AND us_poll_init!? libuv legacy! */
 void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type) {
     p->state.fd = fd;

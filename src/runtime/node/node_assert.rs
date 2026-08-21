@@ -1,7 +1,7 @@
 use bun_core::String as BunString;
 use bun_core::strings::EncodingNonAscii;
 use bun_jsc::js_object::PojoFields;
-use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult};
+use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult, StringJsc};
 
 use super::assert::myers_diff as MyersDiff;
 use super::assert::myers_diff::{Diff, DiffKind, Line};
@@ -50,21 +50,31 @@ pub(crate) fn myers_diff(
                 actual_utf8.slice(),
                 expected_utf8.slice(),
                 check_comma_disparity,
+                LineEncoding::Utf8,
             );
         }
 
         return match actual_encoding {
-            EncodingNonAscii::Latin1 | EncodingNonAscii::Utf8 => diff_lines::<u8>(
+            EncodingNonAscii::Latin1 => diff_lines::<u8>(
                 global,
                 actual.byte_slice(),
                 expected.byte_slice(),
                 check_comma_disparity,
+                LineEncoding::Latin1,
+            ),
+            EncodingNonAscii::Utf8 => diff_lines::<u8>(
+                global,
+                actual.byte_slice(),
+                expected.byte_slice(),
+                check_comma_disparity,
+                LineEncoding::Utf8,
             ),
             EncodingNonAscii::Utf16 => diff_lines::<u16>(
                 global,
                 actual.utf16(),
                 expected.utf16(),
                 check_comma_disparity,
+                LineEncoding::Utf16,
             ),
         };
     }
@@ -101,10 +111,11 @@ fn diff_lines<'s, T>(
     actual: &'s [T],
     expected: &'s [T],
     check_comma_disparity: bool,
+    encoding: LineEncoding,
 ) -> JsResult<JSValue>
 where
     T: PartialEq + Copy + From<u8>,
-    &'s [T]: Line + FromAny,
+    &'s [T]: Line + LineToJs,
 {
     let a = MyersDiff::split::<T>(actual);
     let e = MyersDiff::split::<T>(expected);
@@ -116,7 +127,77 @@ where
         MyersDiff::Differ::<&'s [T], false>::diff(a.as_slice(), e.as_slice())
             .map_err(|err| map_diff_error(global, err))?
     };
-    diff_list_to_js(global, &diff)
+    diff_lines_to_js(global, &diff, encoding)
+}
+
+/// Encoding of the bytes backing a diffed line. The JS side (`printMyersDiff`)
+/// interpolates line values directly as strings, so each line must be rebuilt
+/// as a `JSString` with the original encoding rather than decoded as UTF-8.
+#[derive(Clone, Copy)]
+enum LineEncoding {
+    Latin1,
+    Utf8,
+    Utf16,
+}
+
+/// Marshals a diff line slice back to a JS string using its source encoding.
+/// A plain UTF-8 decode would turn Latin1 bytes >= 0x80 into U+FFFD, and a
+/// `&[u16]` slice would marshal as an array of char codes.
+trait LineToJs: Copy {
+    fn line_to_js(self, global: &JSGlobalObject, encoding: LineEncoding) -> JsResult<JSValue>;
+}
+
+impl LineToJs for &[u8] {
+    fn line_to_js(self, global: &JSGlobalObject, encoding: LineEncoding) -> JsResult<JSValue> {
+        let mut s = match encoding {
+            LineEncoding::Latin1 => BunString::clone_latin1(self),
+            _ => BunString::clone_utf8(self),
+        };
+        s.transfer_to_js(global)
+    }
+}
+
+impl LineToJs for &[u16] {
+    fn line_to_js(self, global: &JSGlobalObject, _encoding: LineEncoding) -> JsResult<JSValue> {
+        let mut s = BunString::clone_utf16(self);
+        s.transfer_to_js(global)
+    }
+}
+
+/// Marshals a line diff, rebuilding each line value as an encoding-correct
+/// `JSString`. The char diff path uses [`diff_list_to_js`] instead, which
+/// marshals char codes as numbers.
+fn diff_lines_to_js<S: LineToJs>(
+    global: &JSGlobalObject,
+    diff_list: &MyersDiff::DiffList<S>,
+    encoding: LineEncoding,
+) -> JsResult<JSValue> {
+    JSValue::create_array_from_iter(global, diff_list.iter(), |line| {
+        Ok(JSObject::create_null_proto(&LineDiff { line, encoding }, global)?.to_js())
+    })
+}
+
+/// Field reflection for a line [`Diff`] whose `value` is rebuilt as an
+/// encoding-correct `JSString` (see [`LineToJs`]).
+struct LineDiff<'a, S> {
+    line: &'a Diff<S>,
+    encoding: LineEncoding,
+}
+
+impl<S: LineToJs> PojoFields for LineDiff<'_, S> {
+    const FIELD_COUNT: usize = 2;
+    fn put_fields(
+        &self,
+        global: &JSGlobalObject,
+        mut put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
+    ) -> JsResult<()> {
+        put(
+            b"kind",
+            JSValue::js_number_from_int32(self.line.kind as i32),
+        )?;
+        put(b"value", self.line.value.line_to_js(global, self.encoding)?)?;
+        Ok(())
+    }
 }
 
 fn diff_list_to_js<T>(

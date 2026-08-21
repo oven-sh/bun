@@ -259,12 +259,17 @@ pub(crate) fn do_send(
 
     #[cfg(windows)]
     if let Some(h) = &mut zig_handle {
-        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid)? {
-            Some(hex) => {
+        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
+            Ok(Some(hex)) => {
                 h.win_export_hex = Some(hex);
                 h.peer_pid = peer_pid;
             }
-            None => zig_handle = None,
+            Ok(None) => zig_handle = None,
+            Err(err) => {
+                // The handle's socket was already detached for transfer; don't leak it.
+                close_detached(global_object, pause_target)?;
+                return Err(err);
+            }
         }
     }
     if zig_handle.is_none() {

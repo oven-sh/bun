@@ -5681,7 +5681,9 @@ restart:
         if (anyHits) {
             if (prototypeCount++ < 5) {
 
-                if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
+                JSValue proto = prototypeObject.getPrototype(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                if (proto) {
                     if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
                         if ((structure = proto.structureOrNull())) {
                             prototypeObject = proto;
@@ -5690,7 +5692,6 @@ restart:
                         }
                     }
                 }
-                RETURN_IF_EXCEPTION(scope, );
             }
             return;
         }

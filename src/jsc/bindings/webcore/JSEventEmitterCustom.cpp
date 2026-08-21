@@ -51,9 +51,9 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
     auto name = clientData->builtinNames()._eventsPublicName();
-    JSValue _events = thisObject->getIfPropertyExists(lexicalGlobalObject, name);
+    JSValue _events = thisObject->get(lexicalGlobalObject, name);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    if (_events && _events.isCell() && _events.inherits<JSEventEmitter>()) {
+    if (_events.isCell() && _events.inherits<JSEventEmitter>()) {
         return uncheckedDowncast<JSEventEmitter>(asObject(_events));
     }
 

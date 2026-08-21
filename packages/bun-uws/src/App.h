@@ -765,6 +765,9 @@ public:
     void setOnSocketData(HttpContextData<SSL>::OnSocketDataCallback onData) {
         httpContext->getSocketContextData()->onSocketData = onData;
     }
+    void setOnSocketRawData(HttpContextData<SSL>::OnSocketRawDataCallback onRawData) {
+        httpContext->getSocketContextData()->onSocketRawData = onRawData;
+    }
 
     void setOnClientError(HttpContextData<SSL>::OnClientErrorCallback onClientError) {
         httpContext->getSocketContextData()->onClientError = std::move(onClientError);

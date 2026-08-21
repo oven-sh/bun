@@ -861,6 +861,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         if (isSocketNew && !reachedRequestsLimit) {
           server.emit("connection", socket);
+          maybeEnableRawSocketData(socket);
         }
 
         if (!isPipelined) {
@@ -1172,6 +1173,7 @@ function onServerConnection(this: Server, socketHandle) {
   if (isTLS && socketHandle.secureEstablished) {
     this.emit("secureConnection", socket);
   }
+  maybeEnableRawSocketData(socket);
 }
 
 // Like Node.js: server.setTimeout only records the per-socket inactivity
@@ -1339,6 +1341,13 @@ function detachSocketListenersForHandoff(socket) {
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
+const kEnableRawData = Symbol("kEnableRawData");
+// Arm the native raw-bytes tap so 'data'/'readable' see the raw request bytes.
+function maybeEnableRawSocketData(socket) {
+  if (!socket[kStreamingEnabled] && (socket.listenerCount("data") > 0 || socket.listenerCount("readable") > 0)) {
+    socket[kEnableRawData]();
+  }
+}
 // Scratch options object for the builtin ServerResponse (see the dispatcher).
 const scratchResponseOptions = {
   [kHandle]: undefined,
@@ -1571,9 +1580,21 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     }
     this.emit("drain");
   }
+  #onRawData(chunk) {
+    this._unrefTimer();
+    this.bytesRead += chunk.length;
+    this.push(chunk);
+  }
+  [kEnableRawData]() {
+    const handle = this[kHandle];
+    if (handle && !handle.onrawdata) {
+      handle.onrawdata = this.#onRawData.bind(this);
+    }
+  }
   #onData(chunk, last) {
     this._unrefTimer();
     if (chunk) {
+      this.bytesRead += chunk.length;
       this.push(chunk);
     }
     if (last) {
@@ -1812,19 +1833,23 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
         const message = this._httpMessage;
         const req = message?.req;
 
-        if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
-          emitServerSocketEOFNT(this, req);
+        // The raw tap owns the socket readable; parsed body goes to req only.
+        if (!handle.onrawdata) {
+          if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+            emitServerSocketEOFNT(this, req);
+          }
+          this.push(resumed);
         }
         if (req) {
           req.push(resumed);
         }
-        this.push(resumed);
       }
     }
   }
 
   _read(_size) {
     // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
+    maybeEnableRawSocketData(this);
     this.#resumeSocket();
   }
 

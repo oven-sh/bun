@@ -795,6 +795,54 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
     }
 }
 
+bool JSNodeHTTPServerSocket::onRawData(const char* data, int length)
+{
+    if (!functionToCallOnRawData) {
+        return false;
+    }
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+    WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
+    if (!scriptExecutionContext) {
+        return false;
+    }
+
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length));
+    auto chunk = JSC::JSValue(buffer);
+    if (auto* exception = scope.exception()) {
+        (void)scope.tryClearException();
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return false;
+    }
+    gcProtect(chunk);
+    scriptExecutionContext->postTask([self = this, chunk = chunk](ScriptExecutionContext& context) {
+        WTF::NakedPtr<JSC::Exception> exception;
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        auto* thisObject = self;
+        auto* callbackObject = thisObject->functionToCallOnRawData.get();
+        EnsureStillAliveScope ensureChunkStillAlive(chunk);
+        gcUnprotect(chunk);
+        if (!callbackObject) {
+            return;
+        }
+
+        auto callData = JSC::getCallData(callbackObject);
+        MarkedArgumentBuffer args;
+        args.append(chunk);
+        EnsureStillAliveScope ensureStillAlive(self);
+
+        if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+            profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
+
+            if (auto* ptr = exception.get()) {
+                exception.clear();
+                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+            }
+        }
+    });
+    return true;
+}
+
 JSC::Structure* JSNodeHTTPServerSocket::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto* structure = JSC::Structure::create(vm, globalObject, globalObject->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), JSNodeHTTPServerSocketPrototype::info());
@@ -818,6 +866,7 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->functionToCallOnClose);
     visitor.append(fn->functionToCallOnDrain);
     visitor.append(fn->functionToCallOnData);
+    visitor.append(fn->functionToCallOnRawData);
     visitor.append(fn->m_remoteAddress);
     visitor.append(fn->m_localAddress);
     visitor.append(fn->m_duplex);

@@ -64,7 +64,7 @@ import {
   markBuildkiteStepReported,
   printEnvironment,
   reportAnnotationToBuildKite,
-  spawnBackground,
+  spawnBackgroundServer,
   startGroup,
   tmpdir,
   unzip,
@@ -2243,7 +2243,7 @@ function startCiRemapServer(execPath) {
   const title = relative(cwd, join(ciRemapServerPath, "package.json")).replaceAll(sep, "/");
   const startedAt = Date.now();
   let installOutput = "";
-  /** @type {Promise<import("./utils.mjs").BackgroundProcess | { error: string }>} */
+  /** @type {Promise<import("./utils.mjs").BackgroundServer | { error: string }>} */
   const server = (async () => {
     const { ok, error } = await spawnBunInstall(execPath, {
       cwd: ciRemapServerPath,
@@ -2251,9 +2251,16 @@ function startCiRemapServer(execPath) {
       stderr: chunk => (installOutput += chunk),
     });
     if (!ok) return { error: `not installed (${error})` };
-    return spawnBackground([execPath, "run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
+    return spawnBackgroundServer([execPath, "run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
       cwd: ciRemapServerPath,
-      env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
+      env: {
+        ...process.env,
+        BUN_DEBUG_QUIET_LOGS: "1",
+        NO_COLOR: "1",
+        // The server is killed when this process exits. This also takes it down
+        // when this process is killed instead, which runs no exit handlers.
+        BUN_FEATURE_FLAG_NO_ORPHANS: "1",
+      },
     });
   })().catch(error => ({ error: String(error) }));
 
@@ -2264,18 +2271,15 @@ function startCiRemapServer(execPath) {
       const started = await server;
       startGroup(title);
       process.stdout.write(installOutput);
-      const result = "firstLine" in started ? await started.firstLine(ciRemapServerTimeout) : started;
-      const port = "line" in result ? parseInt(result.line) : NaN;
-      if (!Number.isInteger(port)) {
-        started.subprocess?.kill();
-        const reason = "line" in result ? `printed ${JSON.stringify(result.line)} instead of a port` : result.error;
+      const result = "port" in started ? await started.port(ciRemapServerTimeout) : started;
+      if ("error" in result) {
         console.warn(
-          `ci-remap server did not start: ${reason}, crash reports will not be remapped (${seconds(startedAt)} after it was started)`,
+          `ci-remap server did not start: ${result.error}, crash reports will not be remapped (${seconds(startedAt)} after it was started)`,
         );
         return;
       }
-      console.log(`crash reports parsed on port ${port} (waited ${seconds(neededAt)} for it)`);
-      return port;
+      console.log(`crash reports parsed on port ${result.port} (waited ${seconds(neededAt)} for it)`);
+      return result.port;
     },
   };
 }

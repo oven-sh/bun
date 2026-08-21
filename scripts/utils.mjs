@@ -441,40 +441,45 @@ export function spawnSyncSafe(command, options = {}) {
 }
 
 /**
- * @typedef {object} BackgroundProcess
+ * @typedef {object} BackgroundServer
  * @property {import("node:child_process").ChildProcess} subprocess
- * @property {(timeout: number) => Promise<{ line: string } | { error: string }>} firstLine
+ * @property {(timeout: number) => Promise<{ port: number } | { error: string }>} port
  */
 
 /**
- * Starts a helper process without waiting for it. The helper announces that it is
- * ready by printing one line to stdout (the ci-remap server prints its port), then
- * keeps running until this process exits, which kills it. Start it as early as
- * possible and call `firstLine()` right before the helper is needed, so that its
- * startup overlaps with the work in between.
+ * Starts a server without waiting for it. The server prints the port it listens
+ * on as its first line of stdout (the ci-remap server does), then keeps running
+ * until this process exits, which kills it. Start it as early as possible and call
+ * `port()` right before the server is needed, so that its startup overlaps with
+ * the work in between.
  *
- * `firstLine(timeout)` resolves with that line, also when it was printed before
- * the call. It resolves with an error as soon as the helper fails to spawn or ends
- * without printing a line, or when `timeout` ms pass after the call, which also
- * kills the helper. It never rejects. The helper does not keep this process alive,
- * and it inherits this process's stderr.
+ * `port(timeout)` resolves with the port, also when it was printed before the
+ * call. It resolves with an error as soon as the server fails to spawn or ends
+ * without printing a line, whatever its exit code, when its first line is not a
+ * port, or when `timeout` ms pass after the call. In the last two cases the server
+ * is killed as well. It never rejects. The server does not keep this process
+ * alive, and it inherits this process's stderr.
  * @param {string[]} command
  * @param {{ cwd?: string, env?: Record<string, string | undefined> }} [options]
- * @returns {BackgroundProcess}
+ * @returns {BackgroundServer}
  */
-export function spawnBackground(command, options = {}) {
+export function spawnBackgroundServer(command, options = {}) {
   const [cmd, ...args] = command;
   debugLog("$", cmd, ...args);
 
-  const { promise: result, resolve: settle } = Promise.withResolvers();
+  const { promise: firstLine, resolve: settle } = Promise.withResolvers();
   const subprocess = nodeSpawn(cmd, args, {
     cwd: options["cwd"],
     env: options["env"],
     stdio: ["ignore", "pipe", "inherit"],
   });
-  process.once("exit", () => subprocess.kill());
+  // kill() sends SIGTERM, on purpose. `bun run <bin>` stays alive as the parent of
+  // the script it runs and forwards SIGTERM to it. SIGKILL would end the wrapper
+  // alone and leave the script running, holding this process's stderr open.
+  const kill = () => subprocess.kill();
+  process.once("exit", kill);
   subprocess.on("error", error => settle({ error: error.message }));
-  // "close" and not "exit": a helper that prints its line and exits at once can
+  // "close" and not "exit": a server that prints its line and exits at once can
   // emit "exit" before its stdout was read. "close" comes after the end of stdout,
   // and readline emits the line before that.
   subprocess.on("close", (exitCode, signalCode) => settle({ error: signalCode ?? `code ${exitCode}` }));
@@ -484,16 +489,25 @@ export function spawnBackground(command, options = {}) {
 
   return {
     subprocess,
-    async firstLine(timeout) {
+    async port(timeout) {
       const timer = setTimeout(() => {
         settle({ error: "timeout" });
-        subprocess.kill();
+        kill();
       }, timeout);
+      let result;
       try {
-        return await result;
+        result = await firstLine;
       } finally {
         clearTimeout(timer);
       }
+      if ("error" in result) {
+        return result;
+      }
+      if (!/^\d+$/.test(result.line)) {
+        kill();
+        return { error: `printed ${JSON.stringify(result.line)} instead of a port` };
+      }
+      return { port: parseInt(result.line) };
     },
   };
 }

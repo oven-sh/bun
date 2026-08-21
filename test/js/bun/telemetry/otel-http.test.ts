@@ -20,6 +20,54 @@ async function collect(): Promise<any[]> {
 const byName = (list: any[], scope: string) => list.filter(s => s.scope.name === scope);
 
 describe("Bun.serve", () => {
+  test("a batch of varied requests exports each span with its own identity, timing, path, status and parent", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/r/:id": req => new Response(req.params.id, { status: 200 + (Number(req.params.id) % 3) }),
+      },
+      fetch(req) {
+        return new Response("nf", { status: 404 });
+      },
+    });
+    const N = 40;
+    const expected: any[] = [];
+    for (let i = 0; i < N; i++) {
+      const traceId = i % 2 ? i.toString(16).padStart(2, "0").repeat(16) : undefined;
+      const headers: Record<string, string> = { "user-agent": i % 5 ? "ua-a" : "ua-b/" + i };
+      if (traceId) headers.traceparent = `00-${traceId}-${"a".repeat(16)}-01`;
+      const path = i % 4 === 3 ? `/other/${i}?x=${i}` : `/r/${i}`;
+      const res = await fetch(`http://127.0.0.1:${server.port}${path}`, { headers });
+      await res.text();
+      expected.push({ i, traceId, path, status: res.status, ua: headers["user-agent"] });
+    }
+    const got = byName(await collect(), "bun.http.server");
+    expect(got.length).toBe(N);
+    const seen = new Set<string>();
+    for (let k = 0; k < N; k++) {
+      const s = got[k];
+      const e = expected[k];
+      const [p, q] = e.path.split("?");
+      expect(s.attributes["url.path"]).toBe(p);
+      expect(s.attributes["url.query"]).toBe(q);
+      expect(s.attributes["http.response.status_code"]).toBe(e.status);
+      expect(s.attributes["user_agent.original"]).toBe(e.ua);
+      expect(s.attributes["client.port"]).toEqual(expect.any(Number));
+      expect(s.name).toBe(p.startsWith("/r/") ? "GET /r/:id" : "GET");
+      if (e.traceId) {
+        expect(s.traceId).toBe(e.traceId);
+        expect(s.parentSpanId).toBe("a".repeat(16));
+      } else {
+        // parented under this process's fetch CLIENT span
+        expect(s.parentSpanId).toEqual(expect.any(String));
+      }
+      expect(seen.has(s.spanId)).toBe(false);
+      seen.add(s.spanId);
+      expect(s.endTime).toBeGreaterThanOrEqual(s.startTime);
+      if (k > 0) expect(s.startTime).toBeGreaterThanOrEqual(got[k - 1].startTime);
+    }
+  });
+
   test("server span per request with semconv attributes, parented under the fetch client span", async () => {
     using server = Bun.serve({
       port: 0,

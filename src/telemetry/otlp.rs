@@ -426,6 +426,10 @@ impl<'a> SpanWriter<'a> {
     pub fn finish(self) {
         self.nested.finish(self.out);
     }
+
+    /// Leave the length unpatched; the caller appends more fields and
+    /// patches it (http_record templating).
+    pub fn leak(self) {}
 }
 
 fn attrs_len(field: u32, attrs: &[(&[u8], Value<'_>)]) -> usize {

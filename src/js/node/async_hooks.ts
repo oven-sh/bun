@@ -33,12 +33,8 @@ function sameValue(a, b) {
   return a !== a && b !== b;
 }
 
-// Only run during debug
-//
-// The assertion messages below pass the array itself, never Bun.inspect(array):
-// $assert evaluates its message arguments on every call and only formats them
-// on failure. Inspecting the array eagerly would run user code (a store's
-// custom inspect hook) on every set(), and that code may re-enter run().
+// Only run during debug. The messages pass the array as-is: Bun.inspect() of a
+// user store would run its custom inspect hook on every set().
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
   if (array === undefined) return true;
@@ -283,9 +279,7 @@ class AsyncLocalStorage {
           }
         }
         const expectedStore = hasPrevious ? previous_value : this.#defaultValue;
-        // Pass the store itself, not Bun.inspect(store): the message arguments
-        // are evaluated on every exit from run(), and inspecting a user store
-        // can run user code that re-enters run() (see assertValidAsyncContextArray).
+        // expectedStore goes in as-is, not Bun.inspect()ed: see assertValidAsyncContextArray.
         $assert(
           sameValue(this.getStore(), expectedStore),
           "run: previous_value",

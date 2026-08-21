@@ -129,10 +129,16 @@ describe("@opentelemetry/api", () => {
     expect(child.spanContext().traceId).toBe("0af7651916cd43dd8448eb211c80319c");
     expect((child as any).parentSpanId).toBe("b7ad6b7169203331");
     child.end();
-    // re-inject includes baggage
+    // re-inject includes baggage; forwarding the extracted context keeps tracestate
     const out: Record<string, string> = {};
     propagation.inject(trace.setSpan(ctx, child), out);
     expect(out.baggage).toBe("user=1,tier=gold");
+    const fwd: Record<string, string> = {};
+    propagation.inject(
+      propagation.extract(ROOT_CONTEXT, { ...incoming, tracestate: "vendor=abc" }),
+      fwd,
+    );
+    expect(fwd.tracestate).toBe("vendor=abc");
     await collect();
   });
 

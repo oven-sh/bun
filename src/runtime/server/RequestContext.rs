@@ -1413,7 +1413,7 @@ where
             SSL_ENABLED,
         )?;
         self.otel_span.set(span);
-        entered
+        Some(entered)
     }
 
     pub(crate) fn otel_set_route(&self, route: &[u8]) {

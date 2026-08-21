@@ -36,6 +36,7 @@ struct Retry {
     payload: Arc<ExportPayload>,
     attempt: u32,
     due_ns: u64,
+    processor: &'static Processor,
 }
 
 const MAX_ATTEMPTS: u32 = 5;
@@ -145,6 +146,24 @@ impl OtlpHttpExporter {
         }
     }
 
+    fn send_retries(&self, processor: &'static Processor, all: bool) {
+        let due: Vec<Retry> = {
+            let mut q = self.retry.lock().unwrap();
+            if q.is_empty() {
+                return;
+            }
+            let now = bun_telemetry::clock::now_unix_nanos();
+            let (due, later): (Vec<_>, Vec<_>) = q.drain(..).partition(|r| all || r.due_ns <= now);
+            *q = later;
+            due
+        };
+        let me = self.arc();
+        for r in due {
+            processor.unpark();
+            me.send(processor, r.payload, r.attempt);
+        }
+    }
+
     fn warn_once(&self, args: core::fmt::Arguments<'_>) {
         if !self
             .warned
@@ -234,7 +253,9 @@ impl InflightExport {
                     payload,
                     attempt: attempt + 1,
                     due_ns,
+                    processor,
                 });
+                processor.park();
                 let _ = msg;
             }
             Err((_, msg)) => {
@@ -264,34 +285,21 @@ impl Exporter for OtlpHttpExporter {
     }
 
     fn tick(&self, processor: &'static Processor) {
-        let due: Vec<Retry> = {
-            let mut q = self.retry.lock().unwrap();
-            if q.is_empty() {
-                return;
-            }
-            let now = bun_telemetry::clock::now_unix_nanos();
-            let (due, later): (Vec<_>, Vec<_>) = q.drain(..).partition(|r| r.due_ns <= now);
-            *q = later;
-            due
-        };
-        let me = self.arc();
-        for r in due {
-            me.send(processor, r.payload, r.attempt);
-        }
+        self.send_retries(processor, false);
+    }
+
+    fn retry_now(&self, processor: &'static Processor) {
+        self.send_retries(processor, true);
     }
 
     fn export_blocking(&self, payload: Arc<ExportPayload>, deadline_ns: u64) -> ExportResult {
         // Retries still queued get this one last synchronous attempt too.
-        let mut payloads: Vec<Arc<ExportPayload>> = self
-            .retry
-            .lock()
-            .unwrap()
-            .drain(..)
-            .map(|r| r.payload)
-            .collect();
-        payloads.push(payload);
+        let parked: Vec<Retry> = self.retry.lock().unwrap().drain(..).collect();
+        let mut payloads: Vec<(Arc<ExportPayload>, Option<&'static Processor>)> =
+            parked.into_iter().map(|r| (r.payload, Some(r.processor))).collect();
+        payloads.push((payload, None));
         let mut all_ok = true;
-        for p in payloads {
+        for (p, parked_on) in payloads {
             if bun_telemetry::clock::now_unix_nanos() >= deadline_ns {
                 return ExportResult::Failure;
             }
@@ -307,7 +315,12 @@ impl Exporter for OtlpHttpExporter {
                 self.options(),
             );
             let mut response = MutableString::default();
-            match req.send_sync(&mut response) {
+            let sent = req.send_sync(&mut response);
+            if let Some(proc_) = parked_on {
+                let ok = matches!(&sent, Ok(meta) if (200..300).contains(&meta.response.status_code));
+                proc_.record_result(&p, if ok { ExportResult::Success } else { ExportResult::Failure });
+            }
+            match sent {
                 Ok(meta) if (200..300).contains(&meta.response.status_code) => {}
                 Ok(meta) => {
                     all_ok = false;

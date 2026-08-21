@@ -40,7 +40,7 @@ public:
     static constexpr JSC::JSType Type = static_cast<JSC::JSType>(JSC::BunTelemetrySpanType);
 
     enum class Field : uint32_t {
-        // int32: bit0 recording, bit1 ended, bit2 native-owned, bits 8.. dropped attribute count
+        // int32: bit0 recording, bit1 ended, bit2 native-owned
         State = 0,
         // null | JSArray [key0, value0, key1, value1, ...]
         Attributes,

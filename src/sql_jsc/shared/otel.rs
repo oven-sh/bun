@@ -9,6 +9,24 @@ pub fn end_with_js_error(
     global: &JSGlobalObject,
     err: JSValue,
 ) -> bun_jsc::JsResult<()> {
+    let details = error_details(global, err);
+    let (code, message) = match &details {
+        Ok(d) => (d.0.as_deref(), d.1.as_ref().map(|m| m.slice())),
+        Err(_) => (None, None),
+    };
+    bun_telemetry::db::end(
+        span,
+        statement,
+        None,
+        Some((code.unwrap_or(b"_OTHER"), message.unwrap_or(b""))),
+    );
+    details.map(|_| ())
+}
+
+fn error_details(
+    global: &JSGlobalObject,
+    err: JSValue,
+) -> bun_jsc::JsResult<(Option<Vec<u8>>, Option<bun_core::ZigStringSlice>)> {
     let mut code: Option<Vec<u8>> = None;
     let mut message = None;
     if err.is_object() {
@@ -31,14 +49,5 @@ pub fn end_with_js_error(
             }
         }
     }
-    bun_telemetry::db::end(
-        span,
-        statement,
-        None,
-        Some((
-            code.as_deref().unwrap_or(b"_OTHER"),
-            message.as_ref().map(|m| m.slice()).unwrap_or(b""),
-        )),
-    );
-    Ok(())
+    Ok((code, message))
 }

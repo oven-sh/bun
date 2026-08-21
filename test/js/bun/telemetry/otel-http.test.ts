@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import http from "node:http";
 
 const spans: any[] = [];
@@ -90,6 +91,7 @@ describe("Bun.serve", () => {
       port: 0,
       async fetch(req) {
         const active = Bun.otel.activeSpan()!;
+        expect(active.kind).toBe(1); // api SpanKind.SERVER
         active.setAttribute("app.user", "u1");
         await Bun.sleep(1);
         expect(Bun.otel.activeSpan()).toBe(active);
@@ -306,6 +308,92 @@ describe("node:http", () => {
     } finally {
       server.close();
     }
+  });
+
+  test("node:http handler that throws → 500 span with error status", async () => {
+    // Under bun:test a synchronous throw in the handler is intercepted by the
+    // runner, so exercise it in a plain process.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const spans = [];
+        Bun.otel.start({ exporters: [{ export: b => spans.push(...b) }], instrumentations: { http: true } });
+        process.on("uncaughtException", () => {});
+        const server = http.createServer(() => { throw new Error("boom"); });
+        await new Promise(r => server.listen(0, r));
+        const res = await fetch("http://localhost:" + server.address().port + "/boom");
+        await res.text();
+        await Bun.sleep(0);
+        await Bun.otel.forceFlush();
+        const srv = spans.find(s => s.scope.name === "bun.http.server");
+        console.log(res.status, srv.attributes["http.response.status_code"], srv.status.code, Bun.otel.activeSpan());
+        server.close();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toMatch(/^(200 200|500 500) 2 undefined$/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("http.request injects traceparent/tracestate under a traced request and honours propagators: []", async () => {
+    let seen: Record<string, string | undefined>[] = [];
+    using upstream = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push({
+          traceparent: req.headers.get("traceparent") ?? undefined,
+          tracestate: req.headers.get("tracestate") ?? undefined,
+        });
+        return new Response("u");
+      },
+    });
+    const get = () =>
+      new Promise<void>((resolve, reject) => {
+        const req = http.request(`http://localhost:${upstream.port}/x`, res => {
+          res.resume();
+          res.on("end", resolve);
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    using front = Bun.serve({
+      port: 0,
+      async fetch() {
+        await get();
+        return new Response("f");
+      },
+    });
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { http: true, fetch: true },
+    });
+    await (
+      await fetch(`http://localhost:${front.port}/`, {
+        headers: { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", tracestate: "vendor=abc" },
+      })
+    ).text();
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { http: true, fetch: true },
+      propagators: [],
+    });
+    await (await fetch(`http://localhost:${front.port}/`)).text();
+    Bun.otel.start({
+      serviceName: "otel-http-test",
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { http: true, fetch: true },
+    });
+    await collect();
+    expect(seen[0].traceparent).toMatch(/^00-0af7651916cd43dd8448eb211c80319c-[0-9a-f]{16}-01$/);
+    expect(seen[0].tracestate).toBe("vendor=abc");
+    expect(seen[1]).toEqual({ traceparent: undefined, tracestate: undefined });
   });
 
   test("http.request client goes through fetch instrumentation", async () => {

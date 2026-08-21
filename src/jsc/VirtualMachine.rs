@@ -4882,6 +4882,10 @@ impl VirtualMachine {
         self.event_loop_mut().ensure_waker();
 
         let _ = self.ensure_debugger(true);
+        if let Some(h) = runtime_hooks() {
+            // SAFETY: hook contract — `self` is the live per-thread VM.
+            unsafe { (h.before_entry_point)(self) };
+        }
 
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {

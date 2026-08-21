@@ -1,7 +1,7 @@
 // Prototype methods of Bun.otel / @opentelemetry/api spans (JSTelemetrySpan).
 //
 // Internal fields (JSTelemetrySpan.h):
-//   0 state   int32: bit0 recording, bit1 ended, bit2 native-owned, bits 8+ dropped attributes
+//   0 state   int32: bit0 recording, bit1 ended, bit2 native-owned
 //   1 attrs   null | [key0, value0, key1, value1, ...]
 //   2 name    string | null
 //   3 extra   null | { e: events, l: links, s: status, m: message, t: traceState, b: baggage }
@@ -22,21 +22,22 @@ export function setAttribute(this: unknown, key: unknown, value: unknown) {
     return this;
   }
   const attrs = $getInternalField(this, 1) as unknown[] | null;
+  key = key + "";
   if (attrs === null) {
-    $putInternalField(this, 1, [key + "", value]);
-  } else if (attrs.length < 256) {
-    $arrayPush(attrs, key + "");
-    $arrayPush(attrs, value);
-  } else {
-    key = key + "";
-    for (let i = attrs.length - 2; i >= 0; i -= 2) {
-      if (attrs[i] === key) {
-        attrs[i + 1] = value;
-        return this;
-      }
-    }
-    $putInternalField(this, 0, state + 256);
+    $putInternalField(this, 1, [key, value]);
+    return this;
   }
+  const n = attrs.length;
+  // Overwrite in place if the key is already present (keys are few; the
+  // native encoder relies on this to apply the count limit correctly).
+  for (let i = 0; i < n; i += 2) {
+    if (attrs[i] === key) {
+      attrs[i + 1] = value;
+      return this;
+    }
+  }
+  $arrayPush(attrs, key);
+  $arrayPush(attrs, value);
   return this;
 }
 
@@ -52,28 +53,27 @@ export function setAttributes(this: unknown, attributes: unknown) {
     return this;
   }
   let attrs = $getInternalField(this, 1) as unknown[] | null;
-  let dropped = 0;
+  const existing = attrs === null ? 0 : attrs.length;
   for (const key in attributes as object) {
     const value = attributes[key];
     if (value == null) continue;
     if (attrs === null) {
       attrs = [key, value];
       $putInternalField(this, 1, attrs);
-    } else if (attrs.length < 256) {
+      continue;
+    }
+    let i = 0;
+    for (; i < existing; i += 2) {
+      if (attrs[i] === key) {
+        attrs[i + 1] = value;
+        break;
+      }
+    }
+    if (i >= existing) {
       $arrayPush(attrs, key);
       $arrayPush(attrs, value);
-    } else {
-      let i = attrs.length - 2;
-      for (; i >= 0; i -= 2) {
-        if (attrs[i] === key) {
-          attrs[i + 1] = value;
-          break;
-        }
-      }
-      if (i < 0) dropped++;
     }
   }
-  if (dropped) $putInternalField(this, 0, state + dropped * 256);
   return this;
 }
 

@@ -205,6 +205,30 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(c.spans().map((s: any) => s.name)).toEqual(["retried", "retried"]);
   });
 
+  test("unreachable collector: retried export does not stall process exit", async () => {
+    // Nothing listens on this port: the export fails (retryable) and is parked;
+    // exit must not wait out OTEL_BSP_EXPORT_TIMEOUT for it.
+    const dead = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const port = dead.port;
+    dead.stop(true);
+    const started = performance.now();
+    const { exitCode, stderr } = await run(
+      `
+        const t = Bun.otel.tracer("t");
+        t.startSpan("a").end();
+        await Bun.otel.forceFlush().catch(() => {});
+        t.startSpan("b").end();
+      `,
+      {
+        BUN_OTEL: "1",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:" + port,
+        OTEL_BSP_EXPORT_TIMEOUT: "30000",
+      },
+    );
+    expect(performance.now() - started).toBeLessThan(15_000);
+    expect(exitCode).toBe(0);
+  });
+
   test("non-retryable failure is reported once on stderr and counted", async () => {
     using c = collector(() => new Response("nope", { status: 400 }));
     const { stdout, stderr, exitCode } = await run(

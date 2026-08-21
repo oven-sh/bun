@@ -202,11 +202,6 @@ pub(crate) fn after_record() {
 
 fn read_env_config(vm: &VirtualMachine) -> config::EnvConfig {
     let loader = vm.env_loader();
-    if let Some(v) = loader.get(b"BUN_OTEL_EXP") {
-        if let Ok(n) = core::str::from_utf8(v).unwrap_or("0").parse::<u32>() {
-            bun_telemetry::EXP.store(n, core::sync::atomic::Ordering::Relaxed);
-        }
-    }
     config::from_env(&|k: &str| loader.get(k.as_bytes()).map(|v| v.to_vec()))
 }
 
@@ -511,6 +506,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 if let Some(v) = b.get(global, "maxExportBatchSize")? {
                     cfg.batch.max_export_batch_size = (v.to_number(global)?.max(1.0)) as u32;
                 }
+                cfg.batch.max_export_batch_size = cfg.batch.max_export_batch_size.min(cfg.batch.max_queue_size);
             }
         }
         if let Some(v) = opts.get(global, "captureDbStatement")? {
@@ -779,7 +775,8 @@ pub fn current_context(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<
 pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let s = vm_state_or_init(global);
     processor().export();
-    if processor().inflight() == 0 {
+    processor().retry_now();
+    if processor().inflight() == 0 && processor().pending_retries() == 0 {
         return Ok(bun_jsc::JSPromise::resolved_promise_value(
             global,
             JSValue::UNDEFINED,
@@ -803,6 +800,12 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 
 pub(crate) fn resolve_flush_waiters() {
     let Some(s) = vm_state() else { return };
+    if processor().pending_retries() != 0 {
+        // A flush is waiting on a payload that got parked: retry it now
+        // rather than after its backoff.
+        processor().retry_now();
+        return;
+    }
     if processor().inflight() != 0 {
         return;
     }
@@ -895,3 +898,11 @@ pub fn http_client_enabled(global: &JSGlobalObject, _frame: &CallFrame) -> JsRes
     ))
 }
 
+/// `propagationFlags()` → bit 0: W3C trace context, bit 1: baggage.
+#[bun_jsc::host_fn]
+pub fn propagation_flags(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let st = state();
+    Ok(JSValue::js_number_from_int32(
+        (st.propagate_trace_context as i32) | ((st.propagate_baggage as i32) << 1),
+    ))
+}

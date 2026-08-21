@@ -190,13 +190,6 @@ pub fn set_enabled_mask(enabled: u32, roots: u32) {
     ENABLED.store(enabled, Ordering::Release);
 }
 
-/// TEMPORARY benchmark experiment knobs (BUN_OTEL_EXP bitmask).
-pub static EXP: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-#[inline]
-pub fn exp(bit: u32) -> bool {
-    EXP.load(core::sync::atomic::Ordering::Relaxed) & bit != 0
-}
-
 pub fn enabled_mask() -> u32 {
     ENABLED.load(Ordering::Relaxed)
 }

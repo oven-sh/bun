@@ -1299,7 +1299,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     any_response_from::<SSL>(std::ptr::from_mut(resp)),
                     SSL,
                 ) {
-                    Some((span, entered)) => (span, entered),
+                    Some((span, entered)) => (span, Some(entered)),
                     None => (bun_telemetry::NativeSpan::NONE, None),
                 }
             } else {
@@ -1493,11 +1493,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
+                                nhr.otel_handler_error.set(true);
                                 if raw.state().is_http_status_called() {
                                     raw.write_status(b"500 Internal Server Error");
                                     raw.end_without_body(true);
+                                    if nhr.otel_status.get() == 0 {
+                                        nhr.otel_status.set(500);
+                                    }
                                 } else {
+                                    // end_stream() without a status line sends 200.
                                     raw.end_stream(true);
+                                    if nhr.otel_status.get() == 0 {
+                                        nhr.otel_status.set(200);
+                                    }
                                 }
                             }
                         }

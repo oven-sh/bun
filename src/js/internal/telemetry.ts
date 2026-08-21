@@ -17,6 +17,7 @@ const nativeForceFlush = $newRustFunction("telemetry.rs", "forceFlush", 0);
 const nativeStats = $newRustFunction("telemetry.rs", "stats", 0);
 const nativeDecode = $newRustFunction("telemetry.rs", "decode", 1);
 const nativeSetEnabled = $newRustFunction("telemetry.rs", "setEnabled", 2);
+const nativePropagationFlags = $newRustFunction("telemetry.rs", "propagationFlags", 0);
 const nativeStartLeafSpan = $newCppFunction("BunTelemetry.cpp", "jsTelemetryStartInstrumentSpan", 3);
 const enterWithExtras = $newCppFunction("BunTelemetry.cpp", "jsEnterWithExtras", 2);
 const exitContext = $newCppFunction("BunTelemetry.cpp", "jsExitContext", 1);
@@ -274,8 +275,9 @@ const propagator = {
     return ["traceparent", "tracestate", "baggage"];
   },
   inject(context: any, carrier: any, setter: any = defaultSetter) {
+    const flags = nativePropagationFlags();
     const [span, extras] = unpackContext(context ?? activeContext());
-    if (span) {
+    if (span && flags & 1) {
       const ctx = span.spanContext();
       if (ctx.traceId && ctx.traceId !== "00000000000000000000000000000000") {
         setter.set(
@@ -288,7 +290,7 @@ const propagator = {
       }
     }
     const bag = extras?.get(BAGGAGE_KEY);
-    if (bag) {
+    if (bag && flags & 2) {
       const s = serializeBaggage(bag);
       if (s) setter.set(carrier, "baggage", s);
     }
@@ -350,9 +352,7 @@ const clientScopeId = 1; // bun_telemetry::Instrument::HttpClient
 function startClientSpan(name: string) {
   return nativeStartLeafSpan(clientScopeId, String(name), SpanKind.CLIENT);
 }
-function contextWithSpan(span: any) {
-  return new BunContext(span);
-}
+const propagationHeaders = $newCppFunction("BunTelemetry.cpp", "jsTelemetryPropagationHeaders", 1);
 
 // ── Bun.otel ──────────────────────────────────────────────────────────────
 
@@ -394,7 +394,7 @@ export default {
   SpanStatusCode,
   // internal, for node:http and JSTelemetrySpan.cpp
   startClientSpan,
-  contextWithSpan,
+  propagationHeaders,
   unpackContext,
   [Symbol.for("nodejs.util.inspect.custom")]() {
     return `Bun.otel { enabled: ${nativeIsEnabled()} }`;

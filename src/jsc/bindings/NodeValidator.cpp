@@ -600,19 +600,37 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
     return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
 }
 
+// validateObject(value, name[, options]) where options is Node's bitmask:
+// kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction.
+// The values must match internal/validators.ts. They are node's:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L270
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
+    int32_t options = callFrame->argument(2).isInt32() ? callFrame->argument(2).asInt32() : 0;
+    constexpr int32_t kValidateObjectAllowNullable = 1 << 0;
+    constexpr int32_t kValidateObjectAllowArray = 1 << 1;
+    constexpr int32_t kValidateObjectAllowFunction = 1 << 2;
 
-    bool isArray = JSC::isArray(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (value.isNull() || isArray || value.isCallable()) {
+    if (value.isNull()) {
+        if (options & kValidateObjectAllowNullable)
+            return JSValue::encode(jsUndefined());
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
-
+    if (value.isCallable()) {
+        if (options & kValidateObjectAllowFunction)
+            return JSValue::encode(jsUndefined());
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+    }
+    if (!(options & kValidateObjectAllowArray)) {
+        bool isArray = JSC::isArray(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isArray)
+            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+    }
     if (!value.isObject()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }

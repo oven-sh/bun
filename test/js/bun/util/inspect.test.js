@@ -498,8 +498,8 @@ it("Bun.inspect.custom exists", () => {
 // stylize helper) the first time a custom inspect function runs. When that load throws (a global
 // that the module reads while it loads has been replaced, the stack is nearly exhausted, the export
 // is not callable), the error has to reach the caller and the next call has to load again. It used
-// to abort the process. Each case runs in a fresh child so that nothing has loaded the function for
-// the formatter yet.
+// to abort the process. Each case runs in a fresh child, so it controls what the formatter has
+// loaded before the failing call.
 describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect function throws", () => {
   async function inspectInChild(code) {
     await using proc = Bun.spawn({
@@ -539,11 +539,19 @@ describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect 
     expect(result).toEqual({ stdout: "threw\ncustom\ntrue\ntrue\n", stderr: "", exitCode: 0 });
   });
 
+  // The first row fails while loading the inspect function. The second row loads it up front, so
+  // the failure happens one step later, while the stylize helper is built from it.
   it.each([
-    ["without colors", "Bun.inspect(obj)", '"custom"'],
-    ["with colors", "Bun.inspect(styled, { colors: true })", '"\\u001b[33mx\\u001b[39m"'],
-  ])("throws the RangeError when the stack is exhausted, and works afterwards, %s", async (_, call, expected) => {
+    ["without colors", "", "Bun.inspect(obj)", '"custom"'],
+    [
+      "with colors and the inspect function already loaded",
+      "Bun.inspect(obj);",
+      "Bun.inspect(styled, { colors: true })",
+      '"\\u001b[33mx\\u001b[39m"',
+    ],
+  ])("throws the RangeError at the stack limit, and works afterwards, %s", async (_, setup, call, expected) => {
     const result = await inspectInChild(`
+      ${setup}
       let deep;
       function recurse() {
         try {
@@ -568,8 +576,8 @@ describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect 
     });
   });
 
-  // bunEnv exposes the internal modules to the child. Any callable export is accepted, not only a
-  // plain function, so a wrapper such as a Proxy or a mock works.
+  // Only code with access to the internal modules (bunEnv gives the child that access) can replace
+  // the export the formatter reads. The formatter accepts any callable there, not only a function.
   it("throws a TypeError while the export is not callable, and passes the export once it is", async () => {
     const result = await inspectInChild(`
       const exports = require("internal/util/inspect");

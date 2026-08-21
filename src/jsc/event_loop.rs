@@ -606,38 +606,13 @@ impl EventLoop {
         if batch.count == 0 {
             return;
         }
-
-        let mut iter = batch.iterator();
         let _ = self.tasks.ensure_unused_capacity(batch.count);
-
-        // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
-        let mut to_destroy: Option<*mut ConcurrentTaskItem> = None;
-
-        loop {
-            let task = iter.next();
-            if task.is_null() {
-                break;
-            }
-            if let Some(dest) = to_destroy.take() {
-                // SAFETY: dest was returned by iterator and marked auto_delete; uniquely owned here
-                let _ = unsafe { bun_core::heap::take(dest) };
-            }
-
-            // SAFETY: `task` is non-null (checked above) and owned by this
-            // batch; only shared reads follow (`auto_delete`, the `task` copy).
-            let task_ref = unsafe { &*task };
-            if task_ref.auto_delete() {
-                to_destroy = Some(task);
-            }
-
-            // LinearFifo's fields are private — `write_item` is the
-            // public path (single-slot copy, same complexity).
-            let _ = self.tasks.write_item(task_ref.task);
-        }
-
-        if let Some(dest) = to_destroy {
-            // SAFETY: see above
-            let _ = unsafe { bun_core::heap::take(dest) };
+        let mut iter = batch.iterator();
+        while let Some(node) = NonNull::new(iter.next()) {
+            // SAFETY: a node of the popped batch; the iterator has already
+            // moved past it.
+            let task = unsafe { ConcurrentTaskItem::into_task(node) };
+            let _ = self.tasks.write_item(task);
         }
     }
 

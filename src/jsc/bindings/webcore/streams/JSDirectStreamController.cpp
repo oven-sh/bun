@@ -763,24 +763,23 @@ static bool directControllerHasWaitingConsumer(JSDirectStreamController* control
 }
 
 // Settlement reactions of the user pull()'s returned promise ([reaction-convention]).
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// The pull promise's fulfilment reaction (enterStreams): drain, then re-pull while a consumer is
+// waiting. Whatever throws in here (a chunkSteps callback, a deferred close, the source's hooks)
+// errors the stream.
+static void directPullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
-    auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(1));
-    if (!controller) [[unlikely]]
-        return JSValue::encode(jsUndefined());
     auto* stream = controller->m_stream.get();
     if (controller->m_closed || !stream || stream->m_state != ReadableStreamState::Readable) {
         controller->m_pullInFlight = false;
         controller->m_pullAgain = false;
-        return JSValue::encode(jsUndefined());
+        return;
     }
     // Drain anything this pull wrote while no reader was waiting. m_pullInFlight stays set
     // so onFlush's delivery-branch re-arm fires for a pull that wrote without c.flush().
     controller->onFlush(globalObject);
     controller->m_pullInFlight = false;
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, );
     bool pullAgain = takeDirectPullAgain(controller);
     // Edge-triggered (m_pullAgain) AND level-checked (a consumer is waiting), the spec's
     // ShouldCallPull equivalent; loop so a synchronous re-pull chains to the next consumer.
@@ -793,24 +792,21 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
         int8_t deferredFlush = controller->m_deferFlush;
         controller->m_deferClose = 0;
         controller->m_deferFlush = 0;
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!abrupt.isEmpty()) {
-            controller->handleError(globalObject, abrupt);
-            RETURN_IF_EXCEPTION(scope, {});
-            return JSValue::encode(jsUndefined());
-        }
+        RETURN_IF_EXCEPTION(scope, );
+        if (!abrupt.isEmpty())
+            RELEASE_AND_RETURN(scope, controller->handleError(globalObject, abrupt));
         if (deferredClose == 1) {
             JSValue reason = controller->m_deferCloseReason.get();
             controller->m_deferCloseReason.clear();
             controller->onClose(globalObject, reason);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, );
         } else {
             // An async re-pull left m_pullInFlight set: its own fulfillment reaction drains
             // and picks up m_pullAgain.
             if (controller->m_pullInFlight) {
                 if (deferredFlush == 1)
                     controller->onFlush(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
+                RETURN_IF_EXCEPTION(scope, );
                 break;
             }
             // Sync re-pull: drain with m_pullInFlight bracketed so onFlush's delivery-branch
@@ -818,11 +814,19 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
             controller->m_pullInFlight = true;
             controller->onFlush(globalObject);
             controller->m_pullInFlight = false;
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, );
         }
         pullAgain = takeDirectPullAgain(controller);
     }
-    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(1));
+    if (!controller) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    return enterStreams(globalObject, [&] { directPullFulfilled(vm, globalObject, controller); }, [&](JSValue error) { controller->handleError(globalObject, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -870,16 +874,20 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject *
     return JSValue::encode(wrote);
 }
 
+// controller.close(): if closing fails part-way (the sink's end(), the source's close() hook),
+// the stream cannot complete normally — it is errored with that failure (so a pending read
+// settles) and the failure is still thrown to the caller of close().
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
     if (!controller || controller->m_closed) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    controller->onClose(globalObject, callFrame->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
+    return enterStreams(globalObject, [&] { controller->onClose(globalObject, callFrame->argument(1)); }, [&](JSValue error) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        controller->handleError(globalObject, error);
+        RETURN_IF_EXCEPTION(scope, );
+        throwException(globalObject, scope, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectFlush, (JSGlobalObject * globalObject, CallFrame* callFrame))

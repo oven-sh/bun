@@ -1,6 +1,6 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //
-// `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
+// `TokenList::{parse, parse_into, to_css, to_css_raw}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
 // `EnvironmentVariable::{parse, parse_nested, to_css}`,
 // `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
@@ -15,7 +15,7 @@ use crate::printer::Printer;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
-use css_values::color::{ColorFallbackKind, CssColor, RGBA};
+use css_values::color::{ColorFallbackKind, CssColor};
 use css_values::ident::{
     CustomIdent, CustomIdentFns, DashedIdent, DashedIdentReference, Ident, IdentFns,
 };
@@ -93,7 +93,7 @@ mod ext {
 
 // ─── Token protocol impls ──────────────────────────────────────────────────
 // `Token` / `Num` / `Dimension` are defined data-only at crate root (lib.rs);
-// their `eql`/`hash` bodies in css_parser.rs forward to `generic::implement_*`
+// their `hash` bodies in css_parser.rs forward to `generic::implement_*`
 // which bound on these traits — provide them here so the cycle closes and
 // `#[derive(CssEql/CssHash/DeepClone)]` on `TokenOrValue` resolves the
 // `Token(Token)` arm. Hand-written (not derived) because `Token` carries
@@ -212,7 +212,7 @@ impl<'bump> DeepClone<'bump> for Token {
     fn deep_clone(&self, _bump: &'bump Arena) -> Self {
         // All `&'static [u8]` payloads borrow the parser source/arena (`'static`
         // is a placeholder) — identity copy is correct. `Num`/`Dimension` are POD.
-        self.clone()
+        *self
     }
 }
 
@@ -411,10 +411,6 @@ impl TokenList {
         Ok(TokenList { v: tokens })
     }
 
-    pub fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> Result<TokenList> {
-        Self::parse(input, options, 0)
-    }
-
     pub(crate) fn parse_raw(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
@@ -432,7 +428,7 @@ impl TokenList {
             };
             match token {
                 Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
-                    let tok = token.clone();
+                    let tok = *token;
                     let closing_delimiter = match tok {
                         Token::OpenParen => Token::CloseParen,
                         Token::OpenSquare => Token::CloseSquare,
@@ -446,7 +442,7 @@ impl TokenList {
                     tokens.push(TokenOrValue::Token(closing_delimiter));
                 }
                 Token::Function(_) => {
-                    tokens.push(TokenOrValue::Token(token.clone()));
+                    tokens.push(TokenOrValue::Token(*token));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_raw(input2, tokens, options, depth + 1)
                     })?;
@@ -456,12 +452,12 @@ impl TokenList {
                     if token.is_parse_error() {
                         return Err(ParseError {
                             kind: ParserErrorKind::basic(BasicParseErrorKind::unexpected_token(
-                                token.clone(),
+                                *token,
                             )),
                             location: state.source_location(),
                         });
                     }
-                    tokens.push(TokenOrValue::Token(token.clone()));
+                    tokens.push(TokenOrValue::Token(*token));
                 }
             }
         }
@@ -502,7 +498,7 @@ impl TokenList {
                 break;
             };
             // Clone the token so we can call &mut methods on `input` below.
-            let tok = tok.clone();
+            let tok = *tok;
             match &tok {
                 Token::Whitespace(_) | Token::Comment(_) => {
                     // Skip whitespace if the last token was a delimiter.
@@ -581,16 +577,11 @@ impl TokenList {
                 }
                 Token::UnrestrictedHash(h) | Token::IdHash(h) => {
                     'brk: {
-                        let Some((r, g, b, a)) = css_parser::color::parse_hash_color(h) else {
+                        let Some(rgba) = css_parser::color::parse_hash_color(h) else {
                             tokens.push(TokenOrValue::Token(Token::UnrestrictedHash(*h)));
                             break 'brk;
                         };
-                        tokens.push(TokenOrValue::Color(CssColor::Rgba(RGBA::from_floats(
-                            r as f32 / 255.0,
-                            g as f32 / 255.0,
-                            b as f32 / 255.0,
-                            a,
-                        ))));
+                        tokens.push(TokenOrValue::Color(CssColor::Rgba(rgba)));
                     }
                     last_is_delim = false;
                     last_is_whitespace = false;
@@ -620,7 +611,7 @@ impl TokenList {
                         Token::OpenCurly => Token::CloseCurly,
                         _ => unreachable!(),
                     };
-                    tokens.push(TokenOrValue::Token(tok.clone()));
+                    tokens.push(TokenOrValue::Token(tok));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_into(input2, tokens, options, depth + 1)
                     })?;
@@ -639,7 +630,7 @@ impl TokenList {
                     } else if let Ok(resolution) = Resolution::try_from_token(&tok) {
                         TokenOrValue::Resolution(resolution)
                     } else {
-                        TokenOrValue::Token(tok.clone())
+                        TokenOrValue::Token(tok)
                     };
 
                     tokens.push(value);
@@ -839,6 +830,7 @@ impl UnresolvedColor {
                     css_parser::to_css::integer(conv(*g), dest)?;
                     dest.delim(b',', false)?;
                     css_parser::to_css::integer(conv(*b), dest)?;
+                    dest.delim(b',', false)?;
                     alpha.to_css(dest, is_custom_property)?;
                     dest.write_char(b')')?;
                     return Ok(());
@@ -910,13 +902,14 @@ impl UnresolvedColor {
         depth: usize,
     ) -> Result<UnresolvedColor> {
         use css_values::color::{
-            ComponentParser, HSL, SRGB, parse_hsl_hwb_components, parse_rgb_components,
+            ComponentParser, HSL, RgbComponents, SRGB, parse_hsl_hwb_components,
+            parse_rgb_components,
         };
         let mut parser = ComponentParser::new(false);
         crate::match_ignore_ascii_case! { f, {
             b"rgb" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
-                    let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
+                    let RgbComponents { r, g, b, is_legacy } = parse_rgb_components(i, p)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
@@ -1311,7 +1304,7 @@ impl Clone for TokenList {
 impl Clone for TokenOrValue {
     fn clone(&self) -> Self {
         match self {
-            TokenOrValue::Token(t) => TokenOrValue::Token(t.clone()),
+            TokenOrValue::Token(t) => TokenOrValue::Token(*t),
             TokenOrValue::Color(c) => TokenOrValue::Color(c.clone()),
             TokenOrValue::UnresolvedColor(c) => TokenOrValue::UnresolvedColor(c.clone()),
             // `Url` has no `#[derive(Clone)]` but both fields are `Copy`.

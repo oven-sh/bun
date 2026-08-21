@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
@@ -444,6 +444,53 @@ test("dns.lookup (localhost)", () => {
   return promise;
 });
 
+// dns.lookup()'s contract is getaddrinfo(3), so it must use the system
+// resolver, not c-ares, which reads /etc/resolv.conf directly and bypasses
+// NSS/systemd-resolved on split-DNS hosts (#37378). "127.1" is a legacy IPv4
+// literal: getaddrinfo resolves it locally with no DNS traffic, while c-ares
+// treats it as a hostname and queries the configured servers, here a local
+// responder that REFUSEs every query. Linux-only: it is the one platform
+// where the default Bun.dns backend is c-ares.
+test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", async () => {
+  const fixture = `
+    const dns = require("node:dns");
+    function refused(msg) {
+      const r = Buffer.from(msg);
+      r[2] = 0x81; // QR + RD
+      r[3] = 0x85; // RA + rcode REFUSED
+      r.fill(0, 6, 12); // zero the answer counts
+      return r;
+    }
+    const server = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data(sock, buf, port, addr) { sock.send(refused(buf), port, addr); } },
+    });
+    dns.setServers(["127.0.0.1:" + server.port]);
+    const fromPromises = await dns.promises.lookup("127.1").then(
+      ({ address, family }) => ({ address, family }),
+      e => ({ code: e.code }),
+    );
+    const fromCallback = await new Promise(resolve => {
+      dns.lookup("127.1", (e, address, family) => resolve(e ? { code: e.code } : { address, family }));
+    });
+    server.close();
+    console.log(JSON.stringify({ fromPromises, fromCallback }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    fromPromises: { address: "127.0.0.1", family: 4 },
+    fromCallback: { address: "127.0.0.1", family: 4 },
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("dns.getServers", () => {
   function parseResolvConf() {
     const servers = [];
@@ -572,6 +619,43 @@ describe("test invalid arguments", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/39550
+// Node treats a third argument as the callback: query(name, options, callback).
+describe("a third argument shifts the callback", () => {
+  const resolvers = [
+    ["dns.resolve4", dns.resolve4],
+    ["dns.resolve6", dns.resolve6],
+    ["dns.resolveAny", dns.resolveAny],
+    ["dns.resolveCname", dns.resolveCname],
+    ["dns.resolveCaa", dns.resolveCaa],
+    ["dns.resolveMx", dns.resolveMx],
+    ["dns.resolveNaptr", dns.resolveNaptr],
+    ["dns.resolveNs", dns.resolveNs],
+    ["dns.resolvePtr", dns.resolvePtr],
+    ["dns.resolveSoa", dns.resolveSoa],
+    ["dns.resolveSrv", dns.resolveSrv],
+    ["dns.resolveTxt", dns.resolveTxt],
+    ["dns.reverse", dns.reverse],
+  ];
+
+  it.each(resolvers)("%s throws when the third argument is not a function", (_, fn) => {
+    expect(() => fn("localhost", () => {}, "ignored-value")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('The "callback" argument must be of type function'),
+      }),
+    );
+  });
+
+  it.each(resolvers.filter(([name]) => name !== "dns.reverse"))(
+    "%s accepts an options argument before the callback",
+    (_, fn, done) => {
+      // The overlong name fails locally, so the callback runs without network access.
+      fn(Buffer.alloc(2000, "a").toString(), {}, () => done());
+    },
+  );
+});
+
 describe("dns.lookupService", () => {
   it.each([
     ["1.1.1.1", 53, ["one.one.one.one", "domain"]],
@@ -631,6 +715,22 @@ describe("dns.lookupService", () => {
     expect(hostname).toStrictEqual(expected[0]);
     expect(service).toStrictEqual(expected[1]);
   });
+
+  // https://github.com/oven-sh/bun/issues/37486
+  it("treats an IPv4-mapped IPv6 address like its embedded IPv4 address", async () => {
+    // getnameinfo for 127.0.0.1 may ENOTFOUND on Windows, so assert the
+    // mapped form yields the same outcome rather than a specific result.
+    const settle = p =>
+      p.then(
+        v => ({ ok: v }),
+        e => ({ err: e.code }),
+      );
+    const [mapped, v4] = await Promise.all([
+      settle(dns_promises.lookupService("::ffff:127.0.0.1", 53)),
+      settle(dns_promises.lookupService("127.0.0.1", 53)),
+    ]);
+    expect(mapped).toEqual(v4);
+  });
 });
 
 // Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
@@ -668,9 +768,9 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
   });
 
   it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
-    // This test previously used example.com, but that domain has multiple A records, which can cause this test to fail.
-    // As of this writing, google.com has only one A record. If that changes, update this test with a domain that has only one A record.
-    expect(await util.promisify(dns.lookup)("google.com")).toEqual(await dns.promises.lookup("google.com"));
+    // Use a name that resolves locally: a public name with several A records
+    // behind round-robin DNS can return a different first address per call.
+    expect(await util.promisify(dns.lookup)("localhost")).toEqual(await dns.promises.lookup("localhost"));
   });
 });
 
@@ -697,6 +797,27 @@ describe("hostnames containing NUL bytes", () => {
 
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+// Node treats a null option field the same as an absent one (its guards are
+// `!= null`), so e.g. `{ hints: null }` must not throw. https://github.com/oven-sh/bun/issues/37318
+describe("dns.lookup null option fields are treated as unset", () => {
+  const fields = ["hints", "all", "verbatim", "order", "family"];
+
+  it.each(fields)("dns.lookup with {%s: null} resolves", async field => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookup("localhost", { [field]: null }, (err, address, family) => {
+      if (err) reject(err);
+      else resolve({ address, family });
+    });
+    const { address } = await promise;
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+
+  it.each(fields)("dns.promises.lookup with {%s: null} resolves", async field => {
+    const { address } = await dns_promises.lookup("localhost", { [field]: null });
     expect(["127.0.0.1", "::1"]).toContain(address);
   });
 });
@@ -787,5 +908,124 @@ describe("dns.lookupService with a numeric-string port", () => {
     expect(() => dns_promises.lookupService("127.0.0.1", "nope")).toThrow(
       expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
     );
+  });
+});
+
+// A resolver keeps a 32-slot pending cache per query kind. The first in-flight
+// query for a name owns a slot; identical queries issued while it is in flight
+// are chained onto it and settled together when it completes, so the server
+// sees one query per distinct name. Queries issued while all 32 slots are taken
+// get no slot and settle on their own. The fake server below records every
+// query it receives and answers an A query for "a<n>.pending.test" with
+// 10.0.0.<n>, so a promise settled from the wrong slot shows up as the wrong
+// address.
+describe("pending cache", () => {
+  function encodeName(name) {
+    return Buffer.concat([
+      ...name.split(".").map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)])),
+      Buffer.from([0]),
+    ]);
+  }
+
+  async function startFakeServer() {
+    const socket = dgram.createSocket("udp4");
+    const queries = [];
+    socket.on("message", (query, rinfo) => {
+      const labels = [];
+      let off = 12;
+      while (query[off] !== 0) {
+        labels.push(query.toString("latin1", off + 1, off + 1 + query[off]));
+        off += query[off] + 1;
+      }
+      const qtype = query.readUInt16BE(off + 1);
+      const question = query.subarray(12, off + 5);
+      const qname = labels.join(".");
+      queries.push(`${qtype === 1 ? "A" : qtype === 12 ? "PTR" : qtype} ${qname}`);
+
+      const rdata =
+        qtype === 1 ? Buffer.from([10, 0, 0, Number(/\d+/.exec(labels[0])[0])]) : encodeName("ptr.pending.test");
+      const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+      const answer = Buffer.from([0xc0, 0x0c, 0, qtype, 0, 1, 0, 0, 0, 60, rdata.length >> 8, rdata.length & 0xff]);
+      socket.send(Buffer.concat([header, question, answer, rdata]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + socket.address().port]);
+    return { socket, queries, resolver, port: socket.address().port };
+  }
+
+  test.concurrent("concurrent resolve4() of the same names share one query per name", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    try {
+      const names = Array.from({ length: 3 }, (_, i) => `a${i}.pending.test`);
+      const results = await Promise.all(
+        names.flatMap(name =>
+          Array.from({ length: 4 }, () => resolver.resolve4(name).then(addresses => [name, addresses])),
+        ),
+      );
+      expect(results).toEqual(names.flatMap((name, i) => Array(4).fill([name, ["10.0.0." + i]])));
+      expect(queries.sort()).toEqual(names.map(name => "A " + name));
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("more distinct resolve4() than pending-cache slots all settle with their own answers", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    try {
+      const names = Array.from({ length: 40 }, (_, i) => `a${i}.pending.test`);
+      const results = await Promise.all(names.map(name => resolver.resolve4(name)));
+      expect(results).toEqual(names.map((_, i) => ["10.0.0." + i]));
+      expect(queries.sort()).toEqual(names.map(name => "A " + name).sort());
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("concurrent reverse() of the same address share one PTR query", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    try {
+      const results = await Promise.all(Array.from({ length: 4 }, () => resolver.reverse("192.0.2.7")));
+      expect(results).toEqual(Array(4).fill(["ptr.pending.test"]));
+      expect(queries).toEqual(["PTR 7.2.0.192.in-addr.arpa"]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // Bun.dns.lookup with the c-ares backend goes through the default resolver,
+  // so point that resolver at the fake server in a child process. The trailing
+  // dot keeps c-ares from also trying the host's search domains.
+  test.concurrent("concurrent c-ares lookup() of the same name share one query", async () => {
+    const { socket, queries, port } = await startFakeServer();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("node:dns").setServers(["127.0.0.1:" + process.argv[1]]);
+           const lookups = Array.from({ length: 4 }, () => Bun.dns.lookup("a5.pending.test.", { backend: "c-ares", family: 4 }));
+           Promise.all(lookups).then(results => console.log(JSON.stringify(results.map(r => r.map(({ address, family }) => ({ address, family }))))));`,
+          String(port),
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(Array(4).fill([{ address: "10.0.0.5", family: 4 }]));
+      expect(exitCode).toBe(0);
+      expect(queries).toEqual(["A a5.pending.test"]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // dns.lookup() uses the OS resolver, which answers "localhost" from the hosts
+  // file, so this stays offline while still coalescing onto one slot.
+  test.concurrent("concurrent lookup() of the same name all settle", async () => {
+    const results = await Promise.all(Array.from({ length: 8 }, () => dns_promises.lookup("localhost", { family: 4 })));
+    expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
   });
 });

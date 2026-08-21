@@ -627,19 +627,22 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
     // `deinit` → impl Drop (below). Body returns the buffer to the pool.
 
-    pub fn init_top_level_dir() -> Self {
+    fn trimmed_top_level_dir() -> &'static [u8] {
         debug_assert!(crate::fs::FileSystem::instance_loaded());
         let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
 
-        let trimmed = match Kind::from_u8(KIND) {
+        match Kind::from_u8(KIND) {
             Kind::Abs => {
                 debug_assert!(is_input_absolute(top_level_dir));
                 trim_input(TrimInputKind::Abs, top_level_dir)
             }
             Kind::Rel => panic!("cannot create a relative path from top_level_dir"),
             Kind::Any => trim_input(TrimInputKind::Abs, top_level_dir),
-        };
+        }
+    }
 
+    pub fn init_top_level_dir() -> Self {
+        let trimmed = Self::trimmed_top_level_dir();
         let mut this = Self::init();
         // top_level_dir is &[u8]; `buf_append_input` routes it through
         // `append_other` (transcoding) when U == u16.
@@ -648,18 +651,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn init_top_level_dir_long_path() -> Self {
-        debug_assert!(crate::fs::FileSystem::instance_loaded());
-        let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
-
-        let trimmed = match Kind::from_u8(KIND) {
-            Kind::Abs => {
-                debug_assert!(is_input_absolute(top_level_dir));
-                trim_input(TrimInputKind::Abs, top_level_dir)
-            }
-            Kind::Rel => panic!("cannot create a relative path from top_level_dir"),
-            Kind::Any => trim_input(TrimInputKind::Abs, top_level_dir),
-        };
-
+        let trimmed = Self::trimmed_top_level_dir();
         let mut this = Self::init();
 
         #[cfg(windows)]
@@ -753,7 +745,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         Ok(this)
     }
 
-    pub fn from_long_path<C: PathUnit>(input: &[C]) -> options::Result<Self> {
+    fn trim_input_for_kind<C: PathUnit>(input: &[C]) -> options::Result<&[C]> {
         let trimmed = match Kind::from_u8(KIND) {
             Kind::Abs => {
                 debug_assert!(is_input_absolute(input));
@@ -779,6 +771,11 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             }
         }
 
+        Ok(trimmed)
+    }
+
+    pub fn from_long_path<C: PathUnit>(input: &[C]) -> options::Result<Self> {
+        let trimmed = Self::trim_input_for_kind(input)?;
         let mut this = Self::init();
         #[cfg(windows)]
         {
@@ -790,31 +787,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn from<C: PathUnit>(input: &[C]) -> options::Result<Self> {
-        let trimmed = match Kind::from_u8(KIND) {
-            Kind::Abs => {
-                debug_assert!(is_input_absolute(input));
-                trim_input(TrimInputKind::Abs, input)
-            }
-            Kind::Rel => {
-                debug_assert!(!is_input_absolute(input));
-                trim_input(TrimInputKind::Rel, input)
-            }
-            Kind::Any => trim_input(
-                if is_input_absolute(input) {
-                    TrimInputKind::Abs
-                } else {
-                    TrimInputKind::Rel
-                },
-                input,
-            ),
-        };
-
-        if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
-            if trimmed.len() >= U::MAX_PATH {
-                return Err(PathError::MaxPathExceeded);
-            }
-        }
-
+        let trimmed = Self::trim_input_for_kind(input)?;
         let mut this = Self::init();
         this.buf_append_input(trimmed, false);
         Ok(this)
@@ -1052,13 +1025,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         self.append(input)
     }
 
-    pub fn join(&mut self, parts: &[&[U]]) -> options::Result<()> {
-        // Rust can't compile-error on a
-        // type parameter without specialization; enforced here at runtime.
-        if core::any::TypeId::of::<U>() == core::any::TypeId::of::<u16>() {
-            panic!("unsupported unit type");
-        }
-
+    fn assert_joinable(&self) {
         match Kind::from_u8(KIND) {
             Kind::Abs => {}
             Kind::Rel => panic!("cannot join with relative path"),
@@ -1066,6 +1033,16 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 debug_assert!(self.is_absolute());
             }
         }
+    }
+
+    pub fn join(&mut self, parts: &[&[U]]) -> options::Result<()> {
+        // Rust can't compile-error on a
+        // type parameter without specialization; enforced here at runtime.
+        if core::any::TypeId::of::<U>() == core::any::TypeId::of::<u16>() {
+            panic!("unsupported unit type");
+        }
+
+        self.assert_joinable();
 
         let cloned = self.clone();
 
@@ -1098,13 +1075,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn append_join<C: PathUnit>(&mut self, part: &[C]) -> options::Result<()> {
-        match Kind::from_u8(KIND) {
-            Kind::Abs => {}
-            Kind::Rel => panic!("cannot join with relative path"),
-            Kind::Any => {
-                debug_assert!(self.is_absolute());
-            }
-        }
+        self.assert_joinable();
 
         if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath
             && self.len() + 1 + part.len() >= U::MAX_PATH

@@ -76,7 +76,7 @@ pub enum Feature {
     FocusWithin,
     FontFamilySystemUi,
     FontSizeRem,
-    FontSizeXxxLarge,
+    FontSizeXXXLarge,
     FontStretchPercentage,
     FontStyleObliqueAngle,
     FontWeightNumber,
@@ -223,300 +223,282 @@ pub enum Feature {
     XResolutionUnit,
 }
 
-/// Sentinel: the feature is not supported by this browser at any version.
-const UNSUPPORTED: u32 = u32::MAX;
-
-/// Minimum browser version (encoded as `major << 16 | minor << 8 | patch`,
-/// matching `Browsers`) required for native support of a feature.
-struct MinVersions {
-    android: u32,
-    chrome: u32,
-    edge: u32,
-    firefox: u32,
-    ie: u32,
-    ios_saf: u32,
-    opera: u32,
-    safari: u32,
-    samsung: u32,
-}
-
-/// Number of `Feature` variants; ties the table length to the enum so adding
-/// a variant without a row fails to compile.
-const FEATURE_COUNT: usize = Feature::XResolutionUnit as usize + 1;
-
-/// One entry per `Feature` variant, in declaration order (indexed by
-/// `Feature as usize`). `None` means no browser supports the feature.
-#[rustfmt::skip]
-static MIN_VERSIONS: [Option<MinVersions>; FEATURE_COUNT] = [
-    Some(MinVersions { android: UNSUPPORTED, chrome: UNSUPPORTED, edge: UNSUPPORTED, firefox: 7733248, ie: UNSUPPORTED, ios_saf: 984064, opera: UNSUPPORTED, safari: 984064, samsung: UNSUPPORTED }), // AbsFunction
-    Some(MinVersions { android: UNSUPPORTED, chrome: UNSUPPORTED, edge: UNSUPPORTED, firefox: 6750208, ie: UNSUPPORTED, ios_saf: 1049856, opera: UNSUPPORTED, safari: 1049856, samsung: UNSUPPORTED }), // AccentSystemColor
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // AfarListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // AmharicAbegedeListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // AmharicListStyleType
-    Some(MinVersions { android: 8192000, chrome: 8192000, edge: 8192000, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: UNSUPPORTED, opera: 5439488, safari: UNSUPPORTED, samsung: UNSUPPORTED }), // AnchorSizeSize
-    Some(MinVersions { android: 7536640, chrome: 7536640, edge: 7536640, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: UNSUPPORTED, opera: 5046272, safari: UNSUPPORTED, samsung: 1507328 }), // AnimationTimelineShorthand
-    Some(MinVersions { android: 8585216, chrome: 4259840, edge: 5177344, firefox: 3276800, ie: UNSUPPORTED, ios_saf: 589824, opera: 3407872, safari: 589824, samsung: 590336 }), // AnyLink
-    Some(MinVersions { android: 2424832, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 327680, opera: 917504, safari: 327680, samsung: 65536 }), // AnyPseudo
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // ArabicIndicListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // ArmenianListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 327680, opera: 917504, safari: 327936, samsung: 65536 }), // AsterisksListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 720896, ios_saf: 65536, opera: 917504, safari: 65536, samsung: 65536 }), // AutoSize
-    Some(MinVersions { android: 8585216, chrome: 7208960, edge: 7208960, firefox: 5636096, ie: UNSUPPORTED, ios_saf: 983040, opera: 6291456, safari: 983040, samsung: 1376256 }), // Autofill
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // BengaliListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // BinaryListStyleType
-    Some(MinVersions { android: 263168, chrome: 1966080, edge: 786432, firefox: 983040, ie: 720896, ios_saf: 590592, opera: 1179648, safari: 590080, samsung: 131072 }), // BorderImageRepeatRound
-    Some(MinVersions { android: 3670016, chrome: 3670016, edge: 786432, firefox: 3276800, ie: 720896, ios_saf: 590592, opera: 2818048, safari: 590080, samsung: 393216 }), // BorderImageRepeatSpace
-    Some(MinVersions { android: 8585216, chrome: 1703936, edge: 786432, firefox: 1048576, ie: UNSUPPORTED, ios_saf: 458752, opera: 983040, safari: 393472, samsung: 262144 }), // CalcFunction
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 2162688, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // CambodianListStyleType
-    Some(MinVersions { android: 7733248, chrome: 7733248, edge: 7733248, firefox: 6356992, ie: UNSUPPORTED, ios_saf: 1114624, opera: 5177344, safari: 1114624, samsung: 1638400 }), // CapUnit
-    Some(MinVersions { android: 8585216, chrome: 3211264, edge: 5177344, firefox: 3080192, ie: UNSUPPORTED, ios_saf: 589824, opera: 2359296, safari: 589824, samsung: 327680 }), // CaseInsensitive
-    Some(MinVersions { android: 263168, chrome: 1769472, edge: 786432, firefox: 262144, ie: 589824, ios_saf: 458752, opera: 983040, safari: 458752, samsung: 66816 }), // ChUnit
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 262144, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // CircleListStyleType
-    Some(MinVersions { android: 5963776, chrome: 5963776, edge: 5963776, firefox: 1835008, ie: UNSUPPORTED, ios_saf: 983040, opera: 4194304, safari: 983040, samsung: 1048576 }), // CjkDecimalListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // CjkEarthlyBranchListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // CjkHeavenlyStemListStyleType
-    Some(MinVersions { android: 5177344, chrome: 5177344, edge: 5177344, firefox: 5177344, ie: UNSUPPORTED, ios_saf: 852992, opera: 3735552, safari: 852224, samsung: 786432 }), // ClampFunction
-    Some(MinVersions { android: 7274496, chrome: 7274496, edge: 7274496, firefox: 7405568, ie: UNSUPPORTED, ios_saf: 656128, opera: 4915200, safari: 655616, samsung: 1441792 }), // ColorFunction
-    Some(MinVersions { android: 4521984, chrome: 4521984, edge: 5177344, firefox: 5439488, ie: UNSUPPORTED, ios_saf: 786944, opera: 3145728, safari: 786688, samsung: 655360 }), // ConicGradient
-    Some(MinVersions { android: 6881280, chrome: 6881280, edge: 6881280, firefox: 7208960, ie: UNSUPPORTED, ios_saf: 1048576, opera: 4718592, safari: 1048576, samsung: 1310720 }), // ContainerQueryLengthUnits
-    Some(MinVersions { android: 263168, chrome: 1703936, edge: 5177344, firefox: 3604480, ie: UNSUPPORTED, ios_saf: 458752, opera: 917504, safari: 458752, samsung: 66816 }), // Cue
-    Some(MinVersions { android: 263168, chrome: 1703936, edge: 5177344, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 458752, opera: 917504, safari: 458752, samsung: 66816 }), // CueFunction
-    None, // CustomMediaQueries
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // DecimalLeadingZeroListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 262144, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // DecimalListStyleType
-    Some(MinVersions { android: 8585216, chrome: 3342336, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 656128, opera: 2490368, safari: 655616, samsung: 327680 }), // DefaultPseudo
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // DevanagariListStyleType
-    Some(MinVersions { android: 8585216, chrome: 2424832, edge: 5177344, firefox: 6422528, ie: UNSUPPORTED, ios_saf: 984064, opera: 1572864, safari: 984064, samsung: 262144 }), // Dialog
-    Some(MinVersions { android: 8585216, chrome: 7864320, edge: 7864320, firefox: 3211264, ie: UNSUPPORTED, ios_saf: 1049600, opera: 6946816, safari: 1049600, samsung: 1638400 }), // DirSelector
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 262144, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // DiscListStyleType
-    Some(MinVersions { android: 5832704, chrome: 5832704, edge: 5832704, firefox: 2162688, ie: UNSUPPORTED, ios_saf: 983040, opera: 4128768, safari: 983040, samsung: 983040 }), // DisclosureClosedListStyleType
-    Some(MinVersions { android: 5832704, chrome: 5832704, edge: 5832704, firefox: 2162688, ie: UNSUPPORTED, ios_saf: 983040, opera: 4128768, safari: 983040, samsung: 983040 }), // DisclosureOpenListStyleType
-    Some(MinVersions { android: 4653056, chrome: 4653056, edge: 5177344, firefox: 4194304, ie: UNSUPPORTED, ios_saf: 786944, opera: 3276800, safari: 786688, samsung: 655360 }), // DoublePositionGradients
-    Some(MinVersions { android: 65536, chrome: 1179648, edge: 786432, firefox: 262144, ie: 196608, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // EmUnit
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicAbegedeAmEtListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicAbegedeGezListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicAbegedeListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicAbegedeTiErListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicAbegedeTiEtListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicHalehameAaErListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicHalehameAaEtListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicHalehameAmEtListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicHalehameGezListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicHalehameOmEtListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicHalehameSidEtListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicHalehameSoEtListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicHalehameTigListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // EthiopicListStyleType
-    Some(MinVersions { android: 5963776, chrome: 5963776, edge: 5963776, firefox: 262144, ie: UNSUPPORTED, ios_saf: 983040, opera: 4194304, safari: 983040, samsung: 1048576 }), // EthiopicNumericListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 262144, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // ExUnit
-    Some(MinVersions { android: UNSUPPORTED, chrome: UNSUPPORTED, edge: UNSUPPORTED, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 852992, opera: UNSUPPORTED, safari: 852224, samsung: UNSUPPORTED }), // ExtendedSystemFonts
-    Some(MinVersions { android: 196608, chrome: 589824, edge: 786432, firefox: 197888, ie: 589824, ios_saf: 327680, opera: 722432, safari: 327936, samsung: 262144 }), // FirstLetter
-    Some(MinVersions { android: 131328, chrome: 262144, edge: 786432, firefox: 131072, ie: 589824, ios_saf: 197120, opera: 589824, safari: 196864, samsung: 262144 }), // FirstLine
-    None, // FitContentFunctionSize
-    Some(MinVersions { android: 263168, chrome: 1638400, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 458752, opera: 917504, safari: 458752, samsung: 66816 }), // FitContentSize
-    Some(MinVersions { android: 8585216, chrome: 5636096, edge: 5636096, firefox: 5570560, ie: UNSUPPORTED, ios_saf: 984064, opera: 4718592, safari: 984064, samsung: 917504 }), // FocusVisible
-    Some(MinVersions { android: 8585216, chrome: 3932160, edge: 5177344, firefox: 3407872, ie: UNSUPPORTED, ios_saf: 656128, opera: 3080192, safari: 655616, samsung: 524800 }), // FocusWithin
-    Some(MinVersions { android: 8585216, chrome: 3670016, edge: 5177344, firefox: 6029312, ie: UNSUPPORTED, ios_saf: 720896, opera: 2818048, safari: 720896, samsung: 393728 }), // FontFamilySystemUi
-    Some(MinVersions { android: 2752512, chrome: 2752512, edge: 786432, firefox: 2031616, ie: 589824, ios_saf: 458752, opera: 1835008, safari: 458752, samsung: 262144 }), // FontSizeRem
-    Some(MinVersions { android: 5177344, chrome: 5177344, edge: 5177344, firefox: 5177344, ie: UNSUPPORTED, ios_saf: 1049600, opera: 3735552, safari: 1049600, samsung: 786432 }), // FontSizeXxxLarge
-    Some(MinVersions { android: 4063232, chrome: 4063232, edge: 1179648, firefox: 3997696, ie: UNSUPPORTED, ios_saf: 721664, opera: 3014656, safari: 721152, samsung: 524288 }), // FontStretchPercentage
-    Some(MinVersions { android: 4063232, chrome: 4063232, edge: 5177344, firefox: 3997696, ie: UNSUPPORTED, ios_saf: 721664, opera: 3014656, safari: 721152, samsung: 524288 }), // FontStyleObliqueAngle
-    Some(MinVersions { android: 4063232, chrome: 4063232, edge: 1114112, firefox: 3997696, ie: UNSUPPORTED, ios_saf: 720896, opera: 3014656, safari: 720896, samsung: 524288 }), // FontWeightNumber
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 327680, opera: 917504, safari: 327936, samsung: 65536 }), // FootnotesListStyleType
-    Some(MinVersions { android: 263171, chrome: 655360, edge: 786432, firefox: 262144, ie: 655360, ios_saf: 656128, opera: 655360, safari: 655616, samsung: 262144 }), // FormValidation
-    Some(MinVersions { android: UNSUPPORTED, chrome: 4653056, edge: 5177344, firefox: 4194304, ie: UNSUPPORTED, ios_saf: UNSUPPORTED, opera: 786688, safari: 1049600, samsung: 655616 }), // Fullscreen
-    Some(MinVersions { android: 131328, chrome: 262144, edge: 786432, firefox: 131072, ie: 589824, ios_saf: 197120, opera: 589824, safari: 196864, samsung: 262144 }), // Gencontent
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // GeorgianListStyleType
-    Some(MinVersions { android: 2621440, chrome: 2621440, edge: 5177344, firefox: 2359296, ie: UNSUPPORTED, ios_saf: 458752, opera: 1769472, safari: 458752, samsung: 262144 }), // GradientInterpolationHints
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // GujaratiListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // GurmukhiListStyleType
-    Some(MinVersions { android: 8585216, chrome: 6881280, edge: 6881280, firefox: 7929856, ie: UNSUPPORTED, ios_saf: 984064, opera: 5963776, safari: 984064, samsung: 1310720 }), // HasSelector
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 720896, ios_saf: 65536, opera: 917504, safari: 65536, samsung: 65536 }), // HebrewListStyleType
-    Some(MinVersions { android: 8585216, chrome: 4063232, edge: 5177344, firefox: 3211264, ie: UNSUPPORTED, ios_saf: 655360, opera: 3407872, safari: 655360, samsung: 524800 }), // HexAlphaColors
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 720896, ios_saf: 65536, opera: 917504, safari: 65536, samsung: 65536 }), // HiraganaIrohaListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 720896, ios_saf: 65536, opera: 917504, safari: 65536, samsung: 65536 }), // HiraganaListStyleType
-    Some(MinVersions { android: 7864320, chrome: 7864320, edge: 7864320, firefox: 7733248, ie: UNSUPPORTED, ios_saf: 984064, opera: 5242880, safari: 984064, samsung: 1638400 }), // HypotFunction
-    Some(MinVersions { android: 6946816, chrome: 6946816, edge: 6946816, firefox: 6356992, ie: UNSUPPORTED, ios_saf: 984064, opera: 4718592, safari: 984064, samsung: 1310720 }), // IcUnit
-    Some(MinVersions { android: 263168, chrome: 1638400, edge: 5177344, firefox: 5767168, ie: UNSUPPORTED, ios_saf: 393216, opera: 917504, safari: 393216, samsung: 66816 }), // ImageSet
-    Some(MinVersions { android: 8585216, chrome: 3473408, edge: 5177344, firefox: 3276800, ie: UNSUPPORTED, ios_saf: 656128, opera: 2621440, safari: 655616, samsung: 327680 }), // InOutOfRange
-    Some(MinVersions { android: 8585216, chrome: 2555904, edge: 5177344, firefox: 3342336, ie: UNSUPPORTED, ios_saf: 656128, opera: 1703936, safari: 655616, samsung: 262144 }), // IndeterminatePseudo
-    Some(MinVersions { android: 263168, chrome: 1703936, edge: 786432, firefox: 1048576, ie: 720896, ios_saf: 458752, opera: 917504, safari: 458752, samsung: 66816 }), // IsAnimatableSize
-    Some(MinVersions { android: 8585216, chrome: 5767168, edge: 5767168, firefox: 5111808, ie: UNSUPPORTED, ios_saf: 917504, opera: 4915200, safari: 917504, samsung: 983040 }), // IsSelector
-    Some(MinVersions { android: 5963776, chrome: 5963776, edge: 5963776, firefox: 262144, ie: UNSUPPORTED, ios_saf: 983040, opera: 4194304, safari: 983040, samsung: 1048576 }), // JapaneseFormalListStyleType
-    Some(MinVersions { android: 5963776, chrome: 5963776, edge: 5963776, firefox: 262144, ie: UNSUPPORTED, ios_saf: 983040, opera: 4194304, safari: 983040, samsung: 1048576 }), // JapaneseInformalListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // KannadaListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 720896, ios_saf: 65536, opera: 917504, safari: 65536, samsung: 65536 }), // KatakanaIrohaListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 720896, ios_saf: 65536, opera: 917504, safari: 65536, samsung: 65536 }), // KatakanaListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // KhmerListStyleType
-    Some(MinVersions { android: 2949120, chrome: 2949120, edge: 5177344, firefox: 1835008, ie: UNSUPPORTED, ios_saf: 983040, opera: 2097152, safari: 983040, samsung: 327680 }), // KoreanHangulFormalListStyleType
-    Some(MinVersions { android: 2949120, chrome: 2949120, edge: 5177344, firefox: 1835008, ie: UNSUPPORTED, ios_saf: 983040, opera: 2097152, safari: 983040, samsung: 327680 }), // KoreanHanjaFormalListStyleType
-    Some(MinVersions { android: 2949120, chrome: 2949120, edge: 5177344, firefox: 1835008, ie: UNSUPPORTED, ios_saf: 983040, opera: 2097152, safari: 983040, samsung: 327680 }), // KoreanHanjaInformalListStyleType
-    Some(MinVersions { android: 7274496, chrome: 7274496, edge: 7274496, firefox: 7405568, ie: UNSUPPORTED, ios_saf: 983040, opera: 4915200, safari: 983040, samsung: 1441792 }), // LabColors
-    Some(MinVersions { android: UNSUPPORTED, chrome: UNSUPPORTED, edge: UNSUPPORTED, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 656128, opera: UNSUPPORTED, safari: 655616, samsung: UNSUPPORTED }), // LangSelectorList
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // LaoListStyleType
-    Some(MinVersions { android: 7143424, chrome: 7143424, edge: 7143424, firefox: 7864320, ie: UNSUPPORTED, ios_saf: 1049600, opera: 4849664, safari: 1049600, samsung: 1376256 }), // LhUnit
-    Some(MinVersions { android: 8060928, chrome: 8060928, edge: 8060928, firefox: 7864320, ie: UNSUPPORTED, ios_saf: 1115392, opera: 5373952, safari: 1115392, samsung: UNSUPPORTED }), // LightDark
-    Some(MinVersions { android: 2424832, chrome: 1179648, edge: 786432, firefox: 262144, ie: 655360, ios_saf: 327680, opera: 720896, safari: 327936, samsung: 65536 }), // LinearGradient
-    Some(MinVersions { android: 5832704, chrome: 5832704, edge: 5832704, firefox: 4325376, ie: UNSUPPORTED, ios_saf: 983040, opera: 4128768, safari: 983040, samsung: 983040 }), // LogicalBorderRadius
-    Some(MinVersions { android: 5701632, chrome: 5701632, edge: 5701632, firefox: 4325376, ie: UNSUPPORTED, ios_saf: 918784, opera: 4063232, safari: 917760, samsung: 917504 }), // LogicalBorderShorthand
-    Some(MinVersions { android: 4521984, chrome: 4521984, edge: 5177344, firefox: 2686976, ie: UNSUPPORTED, ios_saf: 786944, opera: 3145728, safari: 786688, samsung: 655360 }), // LogicalBorders
-    Some(MinVersions { android: 5701632, chrome: 5701632, edge: 5701632, firefox: 4128768, ie: UNSUPPORTED, ios_saf: 918784, opera: 4063232, safari: 917760, samsung: 917504 }), // LogicalInset
-    Some(MinVersions { android: 5701632, chrome: 4521984, edge: 5177344, firefox: 2686976, ie: UNSUPPORTED, ios_saf: 786944, opera: 3145728, safari: 786688, samsung: 655360 }), // LogicalMargin
-    Some(MinVersions { android: 5701632, chrome: 5701632, edge: 5701632, firefox: 4325376, ie: UNSUPPORTED, ios_saf: 918784, opera: 4063232, safari: 917760, samsung: 917504 }), // LogicalMarginShorthand
-    Some(MinVersions { android: 5701632, chrome: 4521984, edge: 5177344, firefox: 2686976, ie: UNSUPPORTED, ios_saf: 786944, opera: 3145728, safari: 786688, samsung: 655360 }), // LogicalPadding
-    Some(MinVersions { android: 5701632, chrome: 5701632, edge: 5701632, firefox: 4325376, ie: UNSUPPORTED, ios_saf: 918784, opera: 4063232, safari: 917760, samsung: 917504 }), // LogicalPaddingShorthand
-    Some(MinVersions { android: 3735552, chrome: 3735552, edge: 5177344, firefox: 2686976, ie: UNSUPPORTED, ios_saf: 786944, opera: 2818048, safari: 786688, samsung: 327680 }), // LogicalSize
-    Some(MinVersions { android: 2424832, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 131072, opera: 917504, safari: 196864, samsung: 65536 }), // LogicalTextAlign
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // LowerAlphaListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 2162688, ie: UNSUPPORTED, ios_saf: 327680, opera: 917504, safari: 327936, samsung: 65536 }), // LowerArmenianListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // LowerGreekListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // LowerHexadecimalListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 327680 }), // LowerLatinListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // LowerNorwegianListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // LowerRomanListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // MalayalamListStyleType
-    Some(MinVersions { android: 8585216, chrome: 5636096, edge: 5636096, firefox: 4456448, ie: UNSUPPORTED, ios_saf: UNSUPPORTED, opera: 4718592, safari: UNSUPPORTED, samsung: 917504 }), // MarkerPseudo
-    Some(MinVersions { android: 263168, chrome: 1638400, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 720896, opera: 2818048, safari: 720896, samsung: 66816 }), // MaxContentSize
-    Some(MinVersions { android: 5177344, chrome: 5177344, edge: 5177344, firefox: 5177344, ie: UNSUPPORTED, ios_saf: 721664, opera: 3735552, safari: 721152, samsung: 786432 }), // MaxFunction
-    Some(MinVersions { android: 6815744, chrome: 6815744, edge: 6815744, firefox: 6684672, ie: UNSUPPORTED, ios_saf: 1049600, opera: 4653056, safari: 1049600, samsung: 1310720 }), // MediaIntervalSyntax
-    Some(MinVersions { android: 6815744, chrome: 6815744, edge: 6815744, firefox: 4128768, ie: UNSUPPORTED, ios_saf: 1049600, opera: 4653056, safari: 1049600, samsung: 1310720 }), // MediaRangeSyntax
-    Some(MinVersions { android: 3014656, chrome: 3014656, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 720896, opera: 2162688, safari: 720896, samsung: 327680 }), // MinContentSize
-    Some(MinVersions { android: 5177344, chrome: 5177344, edge: 5177344, firefox: 5177344, ie: UNSUPPORTED, ios_saf: 721664, opera: 3735552, safari: 721152, samsung: 786432 }), // MinFunction
-    Some(MinVersions { android: 8192000, chrome: 8192000, edge: 8192000, firefox: 7733248, ie: UNSUPPORTED, ios_saf: 984064, opera: 5439488, safari: 984064, samsung: UNSUPPORTED }), // ModFunction
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 2162688, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // MongolianListStyleType
-    Some(MinVersions { android: UNSUPPORTED, chrome: UNSUPPORTED, edge: UNSUPPORTED, firefox: 262144, ie: UNSUPPORTED, ios_saf: UNSUPPORTED, opera: UNSUPPORTED, safari: UNSUPPORTED, samsung: UNSUPPORTED }), // MozAvailableSize
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // MyanmarListStyleType
-    Some(MinVersions { android: 131328, chrome: 262144, edge: 786432, firefox: 131072, ie: 589824, ios_saf: 262656, opera: 589824, safari: 262144, samsung: 262144 }), // Namespaces
-    Some(MinVersions { android: 8585216, chrome: 7864320, edge: 7864320, firefox: 7667712, ie: UNSUPPORTED, ios_saf: 1114624, opera: 6946816, safari: 1114624, samsung: UNSUPPORTED }), // Nesting
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 5177344, ie: 720896, ios_saf: 65536, opera: 917504, safari: 65536, samsung: 65536 }), // NoneListStyleType
-    Some(MinVersions { android: 8585216, chrome: 5767168, edge: 5767168, firefox: 5505024, ie: UNSUPPORTED, ios_saf: 589824, opera: 4915200, safari: 589824, samsung: 983040 }), // NotSelectorList
-    Some(MinVersions { android: 7274496, chrome: 7274496, edge: 7274496, firefox: 7405568, ie: UNSUPPORTED, ios_saf: 589824, opera: 4915200, safari: 589824, samsung: 1441792 }), // NthChildOf
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // OctalListStyleType
-    Some(MinVersions { android: 7274496, chrome: 7274496, edge: 7274496, firefox: 7405568, ie: UNSUPPORTED, ios_saf: 984064, opera: 4915200, safari: 984064, samsung: 1441792 }), // OklabColors
-    Some(MinVersions { android: 131840, chrome: 983040, edge: 786432, firefox: 262144, ie: 655360, ios_saf: 327680, opera: 983040, safari: 327680, samsung: 262144 }), // OptionalPseudo
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // OriyaListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // OromoListStyleType
-    Some(MinVersions { android: 4456448, chrome: 4456448, edge: 5177344, firefox: 3997696, ie: UNSUPPORTED, ios_saf: 852992, opera: 3145728, safari: 852224, samsung: 655360 }), // OverflowShorthand
-    Some(MinVersions { android: UNSUPPORTED, chrome: UNSUPPORTED, edge: UNSUPPORTED, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 656128, opera: UNSUPPORTED, safari: 655616, samsung: UNSUPPORTED }), // P3Colors
-    Some(MinVersions { android: 4784128, chrome: 4784128, edge: 5177344, firefox: 5177344, ie: UNSUPPORTED, ios_saf: 852992, opera: 3407872, safari: 852224, samsung: 720896 }), // PartPseudo
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // PersianListStyleType
-    Some(MinVersions { android: 3866624, chrome: 3866624, edge: 5177344, firefox: 2949120, ie: UNSUPPORTED, ios_saf: 589824, opera: 2818048, safari: 589824, samsung: 458752 }), // PlaceContent
-    Some(MinVersions { android: 3866624, chrome: 3866624, edge: 5177344, firefox: 2949120, ie: UNSUPPORTED, ios_saf: 720896, opera: 2818048, safari: 720896, samsung: 458752 }), // PlaceItems
-    Some(MinVersions { android: 3866624, chrome: 3866624, edge: 5177344, firefox: 2949120, ie: UNSUPPORTED, ios_saf: 720896, opera: 2818048, safari: 720896, samsung: 458752 }), // PlaceSelf
-    Some(MinVersions { android: 8585216, chrome: 3735552, edge: 5177344, firefox: 3342336, ie: UNSUPPORTED, ios_saf: 656128, opera: 2883584, safari: 655616, samsung: 459264 }), // Placeholder
-    Some(MinVersions { android: 8585216, chrome: 3080192, edge: 5177344, firefox: 3342336, ie: UNSUPPORTED, ios_saf: 589824, opera: 2228224, safari: 589824, samsung: 327680 }), // PlaceholderShown
-    Some(MinVersions { android: 4128768, chrome: 4128768, edge: 5177344, firefox: 3211264, ie: UNSUPPORTED, ios_saf: 852992, opera: 3014656, safari: 852224, samsung: 524288 }), // QUnit
-    Some(MinVersions { android: 2424832, chrome: 1179648, edge: 786432, firefox: 262144, ie: 655360, ios_saf: 327680, opera: 786432, safari: 327936, samsung: 65536 }), // RadialGradient
-    Some(MinVersions { android: 7733248, chrome: 7733248, edge: 7733248, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 1114624, opera: 5177344, safari: 1114624, samsung: 1638400 }), // RcapUnit
-    Some(MinVersions { android: 7274496, chrome: 7274496, edge: 7274496, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 1114624, opera: 4915200, safari: 1114624, samsung: 1441792 }), // RchUnit
-    Some(MinVersions { android: 8585216, chrome: 2359296, edge: 851968, firefox: 5111808, ie: UNSUPPORTED, ios_saf: 589824, opera: 1507328, safari: 589824, samsung: 262144 }), // ReadOnlyWrite
-    Some(MinVersions { android: 8192000, chrome: 8192000, edge: 8192000, firefox: 7733248, ie: UNSUPPORTED, ios_saf: 984064, opera: 5439488, safari: 984064, samsung: UNSUPPORTED }), // RemFunction
-    Some(MinVersions { android: 131072, chrome: 1179648, edge: 786432, firefox: 262144, ie: 589824, ios_saf: 262144, opera: 786432, safari: 327680, samsung: 65536 }), // RemUnit
-    Some(MinVersions { android: 4521984, chrome: 4521984, edge: 5177344, firefox: 5439488, ie: UNSUPPORTED, ios_saf: 786944, opera: 3145728, safari: 786688, samsung: 655360 }), // RepeatingConicGradient
-    Some(MinVersions { android: 2424832, chrome: 1179648, edge: 786432, firefox: 262144, ie: 655360, ios_saf: 327680, opera: 720896, safari: 327936, samsung: 65536 }), // RepeatingLinearGradient
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 655360, ie: 655360, ios_saf: 327680, opera: 786432, safari: 327936, samsung: 65536 }), // RepeatingRadialGradient
-    Some(MinVersions { android: 7274496, chrome: 7274496, edge: 7274496, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 1114624, opera: 4915200, safari: 1114624, samsung: 1441792 }), // RexUnit
-    Some(MinVersions { android: 7274496, chrome: 7274496, edge: 7274496, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 1114624, opera: 4915200, safari: 1114624, samsung: 1441792 }), // RicUnit
-    Some(MinVersions { android: 7274496, chrome: 7274496, edge: 7274496, firefox: 7864320, ie: UNSUPPORTED, ios_saf: 1049600, opera: 4915200, safari: 1049600, samsung: 1441792 }), // RlhUnit
-    Some(MinVersions { android: 8192000, chrome: 8192000, edge: 8192000, firefox: 7733248, ie: UNSUPPORTED, ios_saf: 984064, opera: 5439488, safari: 984064, samsung: UNSUPPORTED }), // RoundFunction
-    Some(MinVersions { android: 263168, chrome: 262144, edge: 786432, firefox: 4063232, ie: 589824, ios_saf: UNSUPPORTED, opera: 591104, safari: 196864, samsung: 262144 }), // Selection
-    Some(MinVersions { android: 131328, chrome: 262144, edge: 786432, firefox: 131072, ie: 458752, ios_saf: 197120, opera: 589824, safari: 196864, samsung: 262144 }), // Selectors2
-    Some(MinVersions { android: 131328, chrome: 262144, edge: 786432, firefox: 197888, ie: 589824, ios_saf: 197120, opera: 591104, safari: 197120, samsung: 262144 }), // Selectors3
-    Some(MinVersions { android: 8585216, chrome: 3473408, edge: 5177344, firefox: 4128768, ie: UNSUPPORTED, ios_saf: 720896, opera: 2621440, safari: 655360, samsung: 393728 }), // Shadowdomv1
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // SidamaListStyleType
-    Some(MinVersions { android: UNSUPPORTED, chrome: UNSUPPORTED, edge: UNSUPPORTED, firefox: 7733248, ie: UNSUPPORTED, ios_saf: 984064, opera: UNSUPPORTED, safari: 984064, samsung: UNSUPPORTED }), // SignFunction
-    Some(MinVersions { android: 2949120, chrome: 2949120, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 983040, opera: 2097152, safari: 983040, samsung: 327680 }), // SimpChineseFormalListStyleType
-    Some(MinVersions { android: 2949120, chrome: 2949120, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 983040, opera: 2097152, safari: 983040, samsung: 327680 }), // SimpChineseInformalListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // SomaliListStyleType
-    Some(MinVersions { android: 4259840, chrome: 4259840, edge: 5177344, firefox: 3407872, ie: UNSUPPORTED, ios_saf: 786944, opera: 3080192, safari: 786688, samsung: 589824 }), // SpaceSeparatedColorNotation
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 262144, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // SquareListStyleType
-    None, // StretchSize
-    Some(MinVersions { android: 5177344, chrome: 5177344, edge: 5177344, firefox: 2555904, ie: UNSUPPORTED, ios_saf: 918784, opera: 3735552, safari: 917760, samsung: 786432 }), // StringListStyleType
-    Some(MinVersions { android: UNSUPPORTED, chrome: UNSUPPORTED, edge: UNSUPPORTED, firefox: 2293760, ie: UNSUPPORTED, ios_saf: UNSUPPORTED, opera: UNSUPPORTED, safari: UNSUPPORTED, samsung: UNSUPPORTED }), // SymbolsListStyleType
-    Some(MinVersions { android: 5963776, chrome: 5963776, edge: 5963776, firefox: 262144, ie: UNSUPPORTED, ios_saf: 983040, opera: 4194304, safari: 983040, samsung: 1048576 }), // TamilListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // TeluguListStyleType
-    Some(MinVersions { android: 5701632, chrome: 5701632, edge: 5701632, firefox: 5177344, ie: UNSUPPORTED, ios_saf: 1115136, opera: 4063232, safari: 1115136, samsung: 917504 }), // TextDecorationThicknessPercent
-    Some(MinVersions { android: 5701632, chrome: 5701632, edge: 5701632, firefox: 5177344, ie: UNSUPPORTED, ios_saf: UNSUPPORTED, opera: 4063232, safari: UNSUPPORTED, samsung: 917504 }), // TextDecorationThicknessShorthand
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // ThaiListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 2162688, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // TibetanListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // TigreListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // TigrinyaErAbegedeListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // TigrinyaErListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // TigrinyaEtAbegedeListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // TigrinyaEtListStyleType
-    Some(MinVersions { android: 2949120, chrome: 2949120, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 983040, opera: 2097152, safari: 983040, samsung: 327680 }), // TradChineseFormalListStyleType
-    Some(MinVersions { android: 2949120, chrome: 2949120, edge: 5177344, firefox: 262144, ie: UNSUPPORTED, ios_saf: 983040, opera: 2097152, safari: 983040, samsung: 327680 }), // TradChineseInformalListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // UpperAlphaListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 5177344, firefox: 2162688, ie: UNSUPPORTED, ios_saf: 327680, opera: 917504, safari: 327936, samsung: 65536 }), // UpperArmenianListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // UpperHexadecimalListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // UpperLatinListStyleType
-    Some(MinVersions { android: 196608, chrome: 1179648, edge: 5963776, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 262656, opera: 917504, safari: 327680, samsung: 65536 }), // UpperNorwegianListStyleType
-    Some(MinVersions { android: 263168, chrome: 1179648, edge: 786432, firefox: 262144, ie: 524288, ios_saf: 65536, opera: 655616, safari: 65536, samsung: 65536 }), // UpperRomanListStyleType
-    Some(MinVersions { android: 7077888, chrome: 7077888, edge: 7077888, firefox: 6619136, ie: UNSUPPORTED, ios_saf: 984064, opera: 4784128, safari: 984064, samsung: 1376256 }), // VbUnit
-    Some(MinVersions { android: 263168, chrome: 1638400, edge: 786432, firefox: 1245184, ie: 589824, ios_saf: 393216, opera: 917504, safari: 393216, samsung: 66816 }), // VhUnit
-    Some(MinVersions { android: 7077888, chrome: 7077888, edge: 7077888, firefox: 6619136, ie: UNSUPPORTED, ios_saf: 984064, opera: 4784128, safari: 984064, samsung: 1376256 }), // ViUnit
-    Some(MinVersions { android: 7077888, chrome: 7077888, edge: 7077888, firefox: 6619136, ie: UNSUPPORTED, ios_saf: 984064, opera: 4784128, safari: 984064, samsung: 1376256 }), // ViewportPercentageUnitsDynamic
-    Some(MinVersions { android: 7077888, chrome: 7077888, edge: 7077888, firefox: 6619136, ie: UNSUPPORTED, ios_saf: 984064, opera: 4784128, safari: 984064, samsung: 1376256 }), // ViewportPercentageUnitsLarge
-    Some(MinVersions { android: 7077888, chrome: 7077888, edge: 7077888, firefox: 6619136, ie: UNSUPPORTED, ios_saf: 984064, opera: 4784128, safari: 984064, samsung: 1376256 }), // ViewportPercentageUnitsSmall
-    Some(MinVersions { android: 66816, chrome: 1703936, edge: 1048576, firefox: 1245184, ie: UNSUPPORTED, ios_saf: 458752, opera: 917504, safari: 458752, samsung: 66816 }), // VmaxUnit
-    Some(MinVersions { android: 263168, chrome: 1703936, edge: 786432, firefox: 1245184, ie: 655360, ios_saf: 458752, opera: 917504, safari: 458752, samsung: 66816 }), // VminUnit
-    Some(MinVersions { android: 263168, chrome: 1638400, edge: 786432, firefox: 1245184, ie: 589824, ios_saf: 393216, opera: 917504, safari: 393216, samsung: 66816 }), // VwUnit
-    Some(MinVersions { android: 263168, chrome: 1638400, edge: 5177344, firefox: UNSUPPORTED, ie: UNSUPPORTED, ios_saf: 458752, opera: 917504, safari: 458752, samsung: 327680 }), // WebkitFillAvailableSize
-    Some(MinVersions { android: 4456448, chrome: 4456448, edge: 5177344, firefox: 4063232, ie: UNSUPPORTED, ios_saf: UNSUPPORTED, opera: 3145728, safari: UNSUPPORTED, samsung: 655360 }), // XResolutionUnit
-];
-
 impl Feature {
     /// Returns whether all of the given browser targets support this feature
     /// natively, without fallback.
     pub(crate) fn is_compatible(self, browsers: &Browsers) -> bool {
-        let Some(min) = &MIN_VERSIONS[self as usize] else {
+        let min_versions = &MIN_VERSIONS[self as usize];
+        if min_versions.iter().all(|&v| v == UNSUPPORTED) {
+            // No support data at all for this feature.
             return false;
-        };
-        macro_rules! check {
-            ($field:ident) => {
-                if let Some(version) = browsers.$field {
-                    if min.$field == UNSUPPORTED || version < min.$field {
-                        return false;
-                    }
-                }
-            };
         }
-        check!(android);
-        check!(chrome);
-        check!(edge);
-        check!(firefox);
-        check!(ie);
-        check!(ios_saf);
-        check!(opera);
-        check!(safari);
-        check!(samsung);
-        true
+        let targets = [
+            browsers.android,
+            browsers.chrome,
+            browsers.edge,
+            browsers.firefox,
+            browsers.ie,
+            browsers.ios_saf,
+            browsers.opera,
+            browsers.safari,
+            browsers.samsung,
+        ];
+        targets
+            .iter()
+            .zip(min_versions)
+            .all(|(target, &min)| target.is_none_or(|version| version >= min))
     }
 
     /// Returns whether *any* of the given browser targets supports this
     /// feature natively.
     pub(crate) fn is_partially_compatible(self, targets: &Browsers) -> bool {
-        let Some(min) = &MIN_VERSIONS[self as usize] else {
-            return false;
-        };
-        macro_rules! check {
+        // Generic implementation in terms of `is_compatible` —
+        // probe each browser field one at a time.
+        macro_rules! probe {
             ($field:ident) => {
-                if let Some(version) = targets.$field {
-                    if min.$field != UNSUPPORTED && version >= min.$field {
+                if targets.$field.is_some() {
+                    let mut browsers = Browsers::default();
+                    browsers.$field = targets.$field;
+                    if self.is_compatible(&browsers) {
                         return true;
                     }
                 }
             };
         }
-        check!(android);
-        check!(chrome);
-        check!(edge);
-        check!(firefox);
-        check!(ie);
-        check!(ios_saf);
-        check!(opera);
-        check!(safari);
-        check!(samsung);
+        probe!(android);
+        probe!(chrome);
+        probe!(edge);
+        probe!(firefox);
+        probe!(ie);
+        probe!(ios_saf);
+        probe!(opera);
+        probe!(safari);
+        probe!(samsung);
         false
     }
 }
+
+/// A browser that never shipped the feature.
+const UNSUPPORTED: u32 = u32::MAX;
+
+/// Minimum version of each browser (android, chrome, edge, firefox, ie,
+/// ios_saf, opera, safari, samsung) that supports each `Feature`, indexed by
+/// discriminant. `0` = every version, `UNSUPPORTED` = none.
+#[rustfmt::skip]
+static MIN_VERSIONS: [[u32; 9]; 215] = [
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 7733248, UNSUPPORTED, 984064, UNSUPPORTED, 984064, UNSUPPORTED], // AbsFunction
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 6750208, UNSUPPORTED, 1049856, UNSUPPORTED, 1049856, UNSUPPORTED], // AccentSystemColor
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // AfarListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // AmharicAbegedeListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // AmharicListStyleType
+    [8192000, 8192000, 8192000, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 5439488, UNSUPPORTED, UNSUPPORTED], // AnchorSizeSize
+    [7536640, 7536640, 7536640, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 5046272, UNSUPPORTED, 1507328], // AnimationTimelineShorthand
+    [8585216, 4259840, 5177344, 3276800, UNSUPPORTED, 589824, 3407872, 589824, 590336], // AnyLink
+    [2424832, 1179648, 5177344, 262144, UNSUPPORTED, 327680, 917504, 327680, 65536], // AnyPseudo
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // ArabicIndicListStyleType
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 65536], // ArmenianListStyleType
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 327680, 917504, 327936, 65536], // AsterisksListStyleType
+    [263168, 1179648, 786432, 262144, 720896, 65536, 917504, 65536, 65536], // AutoSize
+    [8585216, 7208960, 7208960, 5636096, UNSUPPORTED, 983040, 6291456, 983040, 1376256], // Autofill
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // BengaliListStyleType
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // BinaryListStyleType
+    [263168, 1966080, 786432, 983040, 720896, 590592, 1179648, 590080, 131072], // BorderImageRepeatRound
+    [3670016, 3670016, 786432, 3276800, 720896, 590592, 2818048, 590080, 393216], // BorderImageRepeatSpace
+    [8585216, 1703936, 786432, 1048576, UNSUPPORTED, 458752, 983040, 393472, 262144], // CalcFunction
+    [263168, 1179648, 5177344, 2162688, UNSUPPORTED, 262656, 917504, 327680, 65536], // CambodianListStyleType
+    [7733248, 7733248, 7733248, 6356992, UNSUPPORTED, 1114624, 5177344, 1114624, 1638400], // CapUnit
+    [8585216, 3211264, 5177344, 3080192, UNSUPPORTED, 589824, 2359296, 589824, 327680], // CaseInsensitive
+    [263168, 1769472, 786432, 262144, 589824, 458752, 983040, 458752, 66816], // ChUnit
+    [263168, 1179648, 786432, 262144, 262144, 65536, 655616, 65536, 65536], // CircleListStyleType
+    [5963776, 5963776, 5963776, 1835008, UNSUPPORTED, 983040, 4194304, 983040, 1048576], // CjkDecimalListStyleType
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // CjkEarthlyBranchListStyleType
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // CjkHeavenlyStemListStyleType
+    [5177344, 5177344, 5177344, 5177344, UNSUPPORTED, 852992, 3735552, 852224, 786432], // ClampFunction
+    [7274496, 7274496, 7274496, 7405568, UNSUPPORTED, 656128, 4915200, 655616, 1441792], // ColorFunction
+    [4521984, 4521984, 5177344, 5439488, UNSUPPORTED, 786944, 3145728, 786688, 655360], // ConicGradient
+    [6881280, 6881280, 6881280, 7208960, UNSUPPORTED, 1048576, 4718592, 1048576, 1310720], // ContainerQueryLengthUnits
+    [263168, 1703936, 5177344, 3604480, UNSUPPORTED, 458752, 917504, 458752, 66816], // Cue
+    [263168, 1703936, 5177344, UNSUPPORTED, UNSUPPORTED, 458752, 917504, 458752, 66816], // CueFunction
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED], // CustomMediaQueries
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 65536], // DecimalLeadingZeroListStyleType
+    [263168, 1179648, 786432, 262144, 262144, 65536, 655616, 65536, 65536], // DecimalListStyleType
+    [8585216, 3342336, 5177344, 262144, UNSUPPORTED, 656128, 2490368, 655616, 327680], // DefaultPseudo
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // DevanagariListStyleType
+    [8585216, 2424832, 5177344, 6422528, UNSUPPORTED, 984064, 1572864, 984064, 262144], // Dialog
+    [8585216, 7864320, 7864320, 3211264, UNSUPPORTED, 1049600, 6946816, 1049600, 1638400], // DirSelector
+    [263168, 1179648, 786432, 262144, 262144, 65536, 655616, 65536, 65536], // DiscListStyleType
+    [5832704, 5832704, 5832704, 2162688, UNSUPPORTED, 983040, 4128768, 983040, 983040], // DisclosureClosedListStyleType
+    [5832704, 5832704, 5832704, 2162688, UNSUPPORTED, 983040, 4128768, 983040, 983040], // DisclosureOpenListStyleType
+    [4653056, 4653056, 5177344, 4194304, UNSUPPORTED, 786944, 3276800, 786688, 655360], // DoublePositionGradients
+    [65536, 1179648, 786432, 262144, 196608, 65536, 655616, 65536, 65536], // EmUnit
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicAbegedeAmEtListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicAbegedeGezListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicAbegedeListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicAbegedeTiErListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicAbegedeTiEtListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicHalehameAaErListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicHalehameAaEtListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicHalehameAmEtListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicHalehameGezListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicHalehameOmEtListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicHalehameSidEtListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicHalehameSoEtListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicHalehameTigListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // EthiopicListStyleType
+    [5963776, 5963776, 5963776, 262144, UNSUPPORTED, 983040, 4194304, 983040, 1048576], // EthiopicNumericListStyleType
+    [263168, 1179648, 786432, 262144, 262144, 65536, 655616, 65536, 65536], // ExUnit
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 852992, UNSUPPORTED, 852224, UNSUPPORTED], // ExtendedSystemFonts
+    [196608, 589824, 786432, 197888, 589824, 327680, 722432, 327936, 262144], // FirstLetter
+    [131328, 262144, 786432, 131072, 589824, 197120, 589824, 196864, 262144], // FirstLine
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED], // FitContentFunctionSize
+    [263168, 1638400, 5177344, 262144, UNSUPPORTED, 458752, 917504, 458752, 66816], // FitContentSize
+    [8585216, 5636096, 5636096, 5570560, UNSUPPORTED, 984064, 4718592, 984064, 917504], // FocusVisible
+    [8585216, 3932160, 5177344, 3407872, UNSUPPORTED, 656128, 3080192, 655616, 524800], // FocusWithin
+    [8585216, 3670016, 5177344, 6029312, UNSUPPORTED, 720896, 2818048, 720896, 393728], // FontFamilySystemUi
+    [2752512, 2752512, 786432, 2031616, 589824, 458752, 1835008, 458752, 262144], // FontSizeRem
+    [5177344, 5177344, 5177344, 5177344, UNSUPPORTED, 1049600, 3735552, 1049600, 786432], // FontSizeXXXLarge
+    [4063232, 4063232, 1179648, 3997696, UNSUPPORTED, 721664, 3014656, 721152, 524288], // FontStretchPercentage
+    [4063232, 4063232, 5177344, 3997696, UNSUPPORTED, 721664, 3014656, 721152, 524288], // FontStyleObliqueAngle
+    [4063232, 4063232, 1114112, 3997696, UNSUPPORTED, 720896, 3014656, 720896, 524288], // FontWeightNumber
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 327680, 917504, 327936, 65536], // FootnotesListStyleType
+    [263171, 655360, 786432, 262144, 655360, 656128, 655360, 655616, 262144], // FormValidation
+    [UNSUPPORTED, 4653056, 5177344, 4194304, UNSUPPORTED, UNSUPPORTED, 786688, 1049600, 655616], // Fullscreen
+    [131328, 262144, 786432, 131072, 589824, 197120, 589824, 196864, 262144], // Gencontent
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 65536], // GeorgianListStyleType
+    [2621440, 2621440, 5177344, 2359296, UNSUPPORTED, 458752, 1769472, 458752, 262144], // GradientInterpolationHints
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // GujaratiListStyleType
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // GurmukhiListStyleType
+    [8585216, 6881280, 6881280, 7929856, UNSUPPORTED, 984064, 5963776, 984064, 1310720], // HasSelector
+    [263168, 1179648, 786432, 262144, 720896, 65536, 917504, 65536, 65536], // HebrewListStyleType
+    [8585216, 4063232, 5177344, 3211264, UNSUPPORTED, 655360, 3407872, 655360, 524800], // HexAlphaColors
+    [263168, 1179648, 786432, 262144, 720896, 65536, 917504, 65536, 65536], // HiraganaIrohaListStyleType
+    [263168, 1179648, 786432, 262144, 720896, 65536, 917504, 65536, 65536], // HiraganaListStyleType
+    [7864320, 7864320, 7864320, 7733248, UNSUPPORTED, 984064, 5242880, 984064, 1638400], // HypotFunction
+    [6946816, 6946816, 6946816, 6356992, UNSUPPORTED, 984064, 4718592, 984064, 1310720], // IcUnit
+    [263168, 1638400, 5177344, 5767168, UNSUPPORTED, 393216, 917504, 393216, 66816], // ImageSet
+    [8585216, 3473408, 5177344, 3276800, UNSUPPORTED, 656128, 2621440, 655616, 327680], // InOutOfRange
+    [8585216, 2555904, 5177344, 3342336, UNSUPPORTED, 656128, 1703936, 655616, 262144], // IndeterminatePseudo
+    [263168, 1703936, 786432, 1048576, 720896, 458752, 917504, 458752, 66816], // IsAnimatableSize
+    [8585216, 5767168, 5767168, 5111808, UNSUPPORTED, 917504, 4915200, 917504, 983040], // IsSelector
+    [5963776, 5963776, 5963776, 262144, UNSUPPORTED, 983040, 4194304, 983040, 1048576], // JapaneseFormalListStyleType
+    [5963776, 5963776, 5963776, 262144, UNSUPPORTED, 983040, 4194304, 983040, 1048576], // JapaneseInformalListStyleType
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // KannadaListStyleType
+    [263168, 1179648, 786432, 262144, 720896, 65536, 917504, 65536, 65536], // KatakanaIrohaListStyleType
+    [263168, 1179648, 786432, 262144, 720896, 65536, 917504, 65536, 65536], // KatakanaListStyleType
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // KhmerListStyleType
+    [2949120, 2949120, 5177344, 1835008, UNSUPPORTED, 983040, 2097152, 983040, 327680], // KoreanHangulFormalListStyleType
+    [2949120, 2949120, 5177344, 1835008, UNSUPPORTED, 983040, 2097152, 983040, 327680], // KoreanHanjaFormalListStyleType
+    [2949120, 2949120, 5177344, 1835008, UNSUPPORTED, 983040, 2097152, 983040, 327680], // KoreanHanjaInformalListStyleType
+    [7274496, 7274496, 7274496, 7405568, UNSUPPORTED, 983040, 4915200, 983040, 1441792], // LabColors
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 656128, UNSUPPORTED, 655616, UNSUPPORTED], // LangSelectorList
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // LaoListStyleType
+    [7143424, 7143424, 7143424, 7864320, UNSUPPORTED, 1049600, 4849664, 1049600, 1376256], // LhUnit
+    [8060928, 8060928, 8060928, 7864320, UNSUPPORTED, 1115392, 5373952, 1115392, UNSUPPORTED], // LightDark
+    [2424832, 1179648, 786432, 262144, 655360, 327680, 720896, 327936, 65536], // LinearGradient
+    [5832704, 5832704, 5832704, 4325376, UNSUPPORTED, 983040, 4128768, 983040, 983040], // LogicalBorderRadius
+    [5701632, 5701632, 5701632, 4325376, UNSUPPORTED, 918784, 4063232, 917760, 917504], // LogicalBorderShorthand
+    [4521984, 4521984, 5177344, 2686976, UNSUPPORTED, 786944, 3145728, 786688, 655360], // LogicalBorders
+    [5701632, 5701632, 5701632, 4128768, UNSUPPORTED, 918784, 4063232, 917760, 917504], // LogicalInset
+    [5701632, 4521984, 5177344, 2686976, UNSUPPORTED, 786944, 3145728, 786688, 655360], // LogicalMargin
+    [5701632, 5701632, 5701632, 4325376, UNSUPPORTED, 918784, 4063232, 917760, 917504], // LogicalMarginShorthand
+    [5701632, 4521984, 5177344, 2686976, UNSUPPORTED, 786944, 3145728, 786688, 655360], // LogicalPadding
+    [5701632, 5701632, 5701632, 4325376, UNSUPPORTED, 918784, 4063232, 917760, 917504], // LogicalPaddingShorthand
+    [3735552, 3735552, 5177344, 2686976, UNSUPPORTED, 786944, 2818048, 786688, 327680], // LogicalSize
+    [2424832, 1179648, 5177344, 262144, UNSUPPORTED, 131072, 917504, 196864, 65536], // LogicalTextAlign
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 65536], // LowerAlphaListStyleType
+    [263168, 1179648, 5177344, 2162688, UNSUPPORTED, 327680, 917504, 327936, 65536], // LowerArmenianListStyleType
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 65536], // LowerGreekListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // LowerHexadecimalListStyleType
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 327680], // LowerLatinListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // LowerNorwegianListStyleType
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 65536], // LowerRomanListStyleType
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // MalayalamListStyleType
+    [8585216, 5636096, 5636096, 4456448, UNSUPPORTED, UNSUPPORTED, 4718592, UNSUPPORTED, 917504], // MarkerPseudo
+    [263168, 1638400, 5177344, 262144, UNSUPPORTED, 720896, 2818048, 720896, 66816], // MaxContentSize
+    [5177344, 5177344, 5177344, 5177344, UNSUPPORTED, 721664, 3735552, 721152, 786432], // MaxFunction
+    [6815744, 6815744, 6815744, 6684672, UNSUPPORTED, 1049600, 4653056, 1049600, 1310720], // MediaIntervalSyntax
+    [6815744, 6815744, 6815744, 4128768, UNSUPPORTED, 1049600, 4653056, 1049600, 1310720], // MediaRangeSyntax
+    [3014656, 3014656, 5177344, 262144, UNSUPPORTED, 720896, 2162688, 720896, 327680], // MinContentSize
+    [5177344, 5177344, 5177344, 5177344, UNSUPPORTED, 721664, 3735552, 721152, 786432], // MinFunction
+    [8192000, 8192000, 8192000, 7733248, UNSUPPORTED, 984064, 5439488, 984064, UNSUPPORTED], // ModFunction
+    [263168, 1179648, 5177344, 2162688, UNSUPPORTED, 262656, 917504, 327680, 65536], // MongolianListStyleType
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 262144, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED], // MozAvailableSize
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // MyanmarListStyleType
+    [131328, 262144, 786432, 131072, 589824, 262656, 589824, 262144, 262144], // Namespaces
+    [8585216, 7864320, 7864320, 7667712, UNSUPPORTED, 1114624, 6946816, 1114624, UNSUPPORTED], // Nesting
+    [263168, 1179648, 786432, 5177344, 720896, 65536, 917504, 65536, 65536], // NoneListStyleType
+    [8585216, 5767168, 5767168, 5505024, UNSUPPORTED, 589824, 4915200, 589824, 983040], // NotSelectorList
+    [7274496, 7274496, 7274496, 7405568, UNSUPPORTED, 589824, 4915200, 589824, 1441792], // NthChildOf
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // OctalListStyleType
+    [7274496, 7274496, 7274496, 7405568, UNSUPPORTED, 984064, 4915200, 984064, 1441792], // OklabColors
+    [131840, 983040, 786432, 262144, 655360, 327680, 983040, 327680, 262144], // OptionalPseudo
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // OriyaListStyleType
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // OromoListStyleType
+    [4456448, 4456448, 5177344, 3997696, UNSUPPORTED, 852992, 3145728, 852224, 655360], // OverflowShorthand
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 656128, UNSUPPORTED, 655616, UNSUPPORTED], // P3Colors
+    [4784128, 4784128, 5177344, 5177344, UNSUPPORTED, 852992, 3407872, 852224, 720896], // PartPseudo
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // PersianListStyleType
+    [3866624, 3866624, 5177344, 2949120, UNSUPPORTED, 589824, 2818048, 589824, 458752], // PlaceContent
+    [3866624, 3866624, 5177344, 2949120, UNSUPPORTED, 720896, 2818048, 720896, 458752], // PlaceItems
+    [3866624, 3866624, 5177344, 2949120, UNSUPPORTED, 720896, 2818048, 720896, 458752], // PlaceSelf
+    [8585216, 3735552, 5177344, 3342336, UNSUPPORTED, 656128, 2883584, 655616, 459264], // Placeholder
+    [8585216, 3080192, 5177344, 3342336, UNSUPPORTED, 589824, 2228224, 589824, 327680], // PlaceholderShown
+    [4128768, 4128768, 5177344, 3211264, UNSUPPORTED, 852992, 3014656, 852224, 524288], // QUnit
+    [2424832, 1179648, 786432, 262144, 655360, 327680, 786432, 327936, 65536], // RadialGradient
+    [7733248, 7733248, 7733248, UNSUPPORTED, UNSUPPORTED, 1114624, 5177344, 1114624, 1638400], // RcapUnit
+    [7274496, 7274496, 7274496, UNSUPPORTED, UNSUPPORTED, 1114624, 4915200, 1114624, 1441792], // RchUnit
+    [8585216, 2359296, 851968, 5111808, UNSUPPORTED, 589824, 1507328, 589824, 262144], // ReadOnlyWrite
+    [8192000, 8192000, 8192000, 7733248, UNSUPPORTED, 984064, 5439488, 984064, UNSUPPORTED], // RemFunction
+    [131072, 1179648, 786432, 262144, 589824, 262144, 786432, 327680, 65536], // RemUnit
+    [4521984, 4521984, 5177344, 5439488, UNSUPPORTED, 786944, 3145728, 786688, 655360], // RepeatingConicGradient
+    [2424832, 1179648, 786432, 262144, 655360, 327680, 720896, 327936, 65536], // RepeatingLinearGradient
+    [263168, 1179648, 786432, 655360, 655360, 327680, 786432, 327936, 65536], // RepeatingRadialGradient
+    [7274496, 7274496, 7274496, UNSUPPORTED, UNSUPPORTED, 1114624, 4915200, 1114624, 1441792], // RexUnit
+    [7274496, 7274496, 7274496, UNSUPPORTED, UNSUPPORTED, 1114624, 4915200, 1114624, 1441792], // RicUnit
+    [7274496, 7274496, 7274496, 7864320, UNSUPPORTED, 1049600, 4915200, 1049600, 1441792], // RlhUnit
+    [8192000, 8192000, 8192000, 7733248, UNSUPPORTED, 984064, 5439488, 984064, UNSUPPORTED], // RoundFunction
+    [263168, 262144, 786432, 4063232, 589824, UNSUPPORTED, 591104, 196864, 262144], // Selection
+    [131328, 262144, 786432, 131072, 458752, 197120, 589824, 196864, 262144], // Selectors2
+    [131328, 262144, 786432, 197888, 589824, 197120, 591104, 197120, 262144], // Selectors3
+    [8585216, 3473408, 5177344, 4128768, UNSUPPORTED, 720896, 2621440, 655360, 393728], // Shadowdomv1
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // SidamaListStyleType
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 7733248, UNSUPPORTED, 984064, UNSUPPORTED, 984064, UNSUPPORTED], // SignFunction
+    [2949120, 2949120, 5177344, 262144, UNSUPPORTED, 983040, 2097152, 983040, 327680], // SimpChineseFormalListStyleType
+    [2949120, 2949120, 5177344, 262144, UNSUPPORTED, 983040, 2097152, 983040, 327680], // SimpChineseInformalListStyleType
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // SomaliListStyleType
+    [4259840, 4259840, 5177344, 3407872, UNSUPPORTED, 786944, 3080192, 786688, 589824], // SpaceSeparatedColorNotation
+    [263168, 1179648, 786432, 262144, 262144, 65536, 655616, 65536, 65536], // SquareListStyleType
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED], // StretchSize
+    [5177344, 5177344, 5177344, 2555904, UNSUPPORTED, 918784, 3735552, 917760, 786432], // StringListStyleType
+    [UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, 2293760, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED, UNSUPPORTED], // SymbolsListStyleType
+    [5963776, 5963776, 5963776, 262144, UNSUPPORTED, 983040, 4194304, 983040, 1048576], // TamilListStyleType
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // TeluguListStyleType
+    [5701632, 5701632, 5701632, 5177344, UNSUPPORTED, 1115136, 4063232, 1115136, 917504], // TextDecorationThicknessPercent
+    [5701632, 5701632, 5701632, 5177344, UNSUPPORTED, UNSUPPORTED, 4063232, UNSUPPORTED, 917504], // TextDecorationThicknessShorthand
+    [263168, 1179648, 5177344, 262144, UNSUPPORTED, 262656, 917504, 327680, 65536], // ThaiListStyleType
+    [263168, 1179648, 5177344, 2162688, UNSUPPORTED, 262656, 917504, 327680, 65536], // TibetanListStyleType
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // TigreListStyleType
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // TigrinyaErAbegedeListStyleType
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // TigrinyaErListStyleType
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // TigrinyaEtAbegedeListStyleType
+    [263168, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // TigrinyaEtListStyleType
+    [2949120, 2949120, 5177344, 262144, UNSUPPORTED, 983040, 2097152, 983040, 327680], // TradChineseFormalListStyleType
+    [2949120, 2949120, 5177344, 262144, UNSUPPORTED, 983040, 2097152, 983040, 327680], // TradChineseInformalListStyleType
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 65536], // UpperAlphaListStyleType
+    [263168, 1179648, 5177344, 2162688, UNSUPPORTED, 327680, 917504, 327936, 65536], // UpperArmenianListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // UpperHexadecimalListStyleType
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 65536], // UpperLatinListStyleType
+    [196608, 1179648, 5963776, UNSUPPORTED, UNSUPPORTED, 262656, 917504, 327680, 65536], // UpperNorwegianListStyleType
+    [263168, 1179648, 786432, 262144, 524288, 65536, 655616, 65536, 65536], // UpperRomanListStyleType
+    [7077888, 7077888, 7077888, 6619136, UNSUPPORTED, 984064, 4784128, 984064, 1376256], // VbUnit
+    [263168, 1638400, 786432, 1245184, 589824, 393216, 917504, 393216, 66816], // VhUnit
+    [7077888, 7077888, 7077888, 6619136, UNSUPPORTED, 984064, 4784128, 984064, 1376256], // ViUnit
+    [7077888, 7077888, 7077888, 6619136, UNSUPPORTED, 984064, 4784128, 984064, 1376256], // ViewportPercentageUnitsDynamic
+    [7077888, 7077888, 7077888, 6619136, UNSUPPORTED, 984064, 4784128, 984064, 1376256], // ViewportPercentageUnitsLarge
+    [7077888, 7077888, 7077888, 6619136, UNSUPPORTED, 984064, 4784128, 984064, 1376256], // ViewportPercentageUnitsSmall
+    [66816, 1703936, 1048576, 1245184, UNSUPPORTED, 458752, 917504, 458752, 66816], // VmaxUnit
+    [263168, 1703936, 786432, 1245184, 655360, 458752, 917504, 458752, 66816], // VminUnit
+    [263168, 1638400, 786432, 1245184, 589824, 393216, 917504, 393216, 66816], // VwUnit
+    [263168, 1638400, 5177344, UNSUPPORTED, UNSUPPORTED, 458752, 917504, 458752, 327680], // WebkitFillAvailableSize
+    [4456448, 4456448, 5177344, 4063232, UNSUPPORTED, UNSUPPORTED, 3145728, UNSUPPORTED, 655360], // XResolutionUnit
+];

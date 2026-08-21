@@ -3,6 +3,7 @@
 #include "JSBuffer.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
 #include "NativeModuleList.h"
 
@@ -54,6 +55,12 @@
       JSC::MarkedArgumentBuffer &exportValues)
 #define DEFINE_NATIVE_MODULE_NOINLINE(name)                                             \
   void generateNativeModule_##name(                                     \
+      JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
+      Vector<JSC::Identifier, 4> &exportNames,                                 \
+      JSC::MarkedArgumentBuffer &exportValues)
+// For modules in BUN_FOREACH_LAZY_ESM_NATIVE_MODULE; the body usually ends in exportObjectProperties().
+#define DEFINE_LAZY_NATIVE_MODULE(name)                                        \
+  inline JSC::JSObject *generateNativeModule_##name(                           \
       JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
       Vector<JSC::Identifier, 4> &exportNames,                                 \
       JSC::MarkedArgumentBuffer &exportValues)
@@ -127,4 +134,41 @@ void generateNativeModule_##enumName( \
   Vector<JSC::Identifier, 4> &exportNames, \
   JSC::MarkedArgumentBuffer &exportValues);
 BUN_FOREACH_ESM_NATIVE_MODULE(FORWARD_DECL_GENERATOR)
+// Returns the object that exports appended as an empty JSValue are read from on first binding.
+#define FORWARD_DECL_LAZY_GENERATOR(id, enumName) \
+JSC::JSObject* generateNativeModule_##enumName( \
+  JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey, \
+  Vector<JSC::Identifier, 4> &exportNames, \
+  JSC::MarkedArgumentBuffer &exportValues);
+BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(FORWARD_DECL_LAZY_GENERATOR)
+
+// The lazy modules each mirror an object that already exists (the Bun object, process, the Module
+// constructor): `default` is the object and each of propertyNames is an export. A value that is
+// already stored on the object is exported as is. Anything else, i.e. a static table entry nothing
+// has read yet, an accessor, or an inherited property, is declared without a value, and JSC reads
+// object[name] when something first binds to it, so loading the module does not construct the
+// object's lazy properties. Returns the object, as the LazySyntheticSourceGenerator contract wants.
+inline JSC::JSObject *exportObjectProperties(
+    JSC::VM &vm, JSC::JSObject *object,
+    const JSC::PropertyNameArrayBuilder &propertyNames,
+    Vector<JSC::Identifier, 4> &exportNames,
+    JSC::MarkedArgumentBuffer &exportValues) {
+  exportNames.reserveCapacity(propertyNames.size() + 1);
+  exportValues.ensureCapacity(propertyNames.size() + 1);
+
+  exportNames.append(vm.propertyNames->defaultKeyword);
+  exportValues.append(object);
+
+  for (const auto &propertyName : propertyNames) {
+    if (propertyName == vm.propertyNames->defaultKeyword) [[unlikely]]
+      continue;
+    JSC::JSValue stored = object->getDirect(vm, propertyName);
+    if (stored && (stored.isGetterSetter() || stored.isCustomGetterSetter()))
+      stored = JSC::JSValue();
+    exportNames.append(propertyName);
+    exportValues.append(stored);
+  }
+
+  return object;
+}
 } // namespace Zig

@@ -72,12 +72,6 @@ impl Request {
             Some(unsafe { bun_core::ffi::slice(p, n) })
         }
     }
-    pub fn parameter(&mut self, idx: u16) -> &[u8] {
-        let mut p: *const u8 = ptr::null();
-        let n = c::uws_h3_req_get_parameter(self, idx, &mut p);
-        // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -740,11 +734,6 @@ mod c {
             name: *const u8,
             len: usize,
             out: *mut *const u8,
-        ) -> usize;
-        pub(super) safe fn uws_h3_req_get_parameter(
-            req: &mut Request,
-            idx: u16,
-            out: &mut *const u8,
         ) -> usize;
     }
 }

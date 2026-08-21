@@ -140,6 +140,9 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
               }
             : {}),
 
+          // `bun update <name>` only updates a declared dependency; it never adds one
+          ...(command === "update" ? Object.fromEntries(args.map(arg => [arg, SimpleRegistry.packages[arg][0]])) : {}),
+
           // For npm scanner, add it to dependencies so it gets installed
           ...(scannerType === "npm"
             ? {

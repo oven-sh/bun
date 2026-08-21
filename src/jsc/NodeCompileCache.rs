@@ -437,7 +437,15 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         tagged.as_bstr()
     );
 
-    let dir_handle = match sys::Dir::cwd().make_open_path(&tagged, Default::default()) {
+    let cwd = sys::Dir::cwd();
+    let dir_flags = O::RDONLY | O::CLOEXEC | O::NOFOLLOW;
+    let opened = match cwd.open_at_with(&tagged, dir_flags) {
+        Err(e) if e.get_errno() == sys::E::ENOENT => cwd
+            .make_path(&tagged)
+            .and_then(|()| cwd.open_at_with(&tagged, dir_flags)),
+        result => result,
+    };
+    let dir_handle = match opened {
         Ok(d) => d,
         Err(e) => {
             let errname = errno_name(&e);
@@ -453,6 +461,26 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
             };
         }
     };
+    #[cfg(unix)]
+    {
+        let owned_private = sys::fstat(dir_handle.fd()).is_ok_and(|st| {
+            st.st_uid == sys::c::getuid() && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+        });
+        if !owned_private {
+            cclog!(
+                "[compile cache] creating cache directory {}...not owned by the current user or writable by others\n",
+                tagged.as_bstr()
+            );
+            return EnableResult {
+                status: STATUS_FAILED,
+                directory: None,
+                message: Some(
+                    "Cannot use cache directory: it must be owned by the current user and not be group- or world-writable"
+                        .to_string(),
+                ),
+            };
+        }
+    }
     cclog!(
         "[compile cache] creating cache directory {}...success\n",
         tagged.as_bstr()
@@ -654,7 +682,7 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
 
     let file = match state
         .dir_handle
-        .open_file(&basename, O::RDONLY | O::CLOEXEC, 0)
+        .open_file(&basename, O::RDONLY | O::CLOEXEC | O::NOFOLLOW, 0)
     {
         Ok(f) => f,
         Err(e) => {
@@ -693,13 +721,21 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
         // SAFETY: the mapping is `total` bytes and outlives this borrow.
         Some((base, _)) => unsafe { core::slice::from_raw_parts(base.as_ptr(), total) },
         None => {
-            let mut contents = vec![0u8; total];
-            match file.pread_all(&mut contents, 0) {
-                Ok(n) if n == total => {}
-                _ => {
-                    finish(line, &|| "reading header failed\n".into());
-                    return;
-                }
+            let mut contents: Vec<u8> = Vec::new();
+            if contents.try_reserve_exact(total).is_err() {
+                finish(line, &|| "allocation failed\n".into());
+                return;
+            }
+            // SAFETY: `pread_all` only writes into the spare bytes and returns how many it filled.
+            let read = unsafe {
+                bun_core::vec::fill_spare(&mut contents, 0, |spare| {
+                    let read = file.pread_all(&mut spare[..total], 0).ok();
+                    (read.unwrap_or(0), read)
+                })
+            };
+            if read != Some(total) {
+                finish(line, &|| "reading header failed\n".into());
+                return;
             }
             heap_contents = contents;
             &heap_contents

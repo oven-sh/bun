@@ -219,7 +219,7 @@ pub extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncode
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextEncoderStreamEncoder__destroyForStream(this: *mut TextEncoderStreamEncoder) {
     if !this.is_null() {
-        // SAFETY: `this` was returned by `__createForStream` and has not been
+        // SAFETY: `this` was returned by `TextEncoderStreamEncoder__createForStream` and has not been
         // freed (the C++ cell clears its pointer before calling).
         drop(unsafe { Box::from_raw(this) });
     }
@@ -255,7 +255,7 @@ pub extern "C" fn TextEncoderStreamEncoder__flushForStream(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
 ) -> JSValue {
-    // SAFETY: as in `__encodeForStream`.
+    // SAFETY: as in `TextEncoderStreamEncoder__encodeForStream`.
     unsafe { &*this }.flush_body(global)
 }
 
@@ -323,7 +323,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     wrote
 }
 
-/// Native-sink flush step; see `__encodeIntoSink` for the return contract.
+/// Native-sink flush step; see `TextEncoderStreamEncoder__encodeIntoSink` for the return contract.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
@@ -332,7 +332,7 @@ pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     sink_id: u8,
     sink_ptr: *mut core::ffi::c_void,
 ) -> JSValue {
-    // SAFETY: as in `__encodeForStream`.
+    // SAFETY: as in `TextEncoderStreamEncoder__encodeForStream`.
     let this = unsafe { &*this };
     if this.pending_lead_surrogate.get().is_none() {
         return JSValue::UNDEFINED;
@@ -341,7 +341,7 @@ pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     let Some(ptr) = NonNull::new(sink_ptr) else {
         return JSValue::UNDEFINED;
     };
-    // SAFETY: as in `__encodeIntoSink`.
+    // SAFETY: as in `TextEncoderStreamEncoder__encodeIntoSink`.
     let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
     if handle.is_none() {
         return JSValue::UNDEFINED;

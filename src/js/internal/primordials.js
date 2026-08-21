@@ -136,14 +136,6 @@ export default {
       }
     },
   ),
-  SafeWeakSet: makeSafe(
-    WeakSet,
-    class SafeWeakSet extends WeakSet {
-      constructor(i) {
-        super(i);
-      }
-    },
-  ),
   SafeWeakMap: makeSafe(
     WeakMap,
     class SafeWeakMap extends WeakMap {

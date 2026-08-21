@@ -247,11 +247,7 @@ impl JobContext for WalkTask {
     type OffThread = Self;
     type Js = WalkJs;
 
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         let result = match this.walker.walk() {
             Ok(r) => r,
             Err(err) => {
@@ -274,9 +270,9 @@ impl JobContext for WalkTask {
         }
         let js_strings = match glob_walk_result_to_js(&mut this.walker, global) {
             Ok(v) => v,
-            Err(e) => return Ok(promise.reject(global, Err(e))?),
+            Err(e) => return promise.reject(global, Err(e)),
         };
-        Ok(promise.resolve(global, js_strings)?)
+        promise.resolve(global, js_strings)
     }
 }
 

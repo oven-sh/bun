@@ -256,16 +256,6 @@ fn is_load_context_mutable(
     false
 }
 
-/// Corresponds to TS `convertHoistedLValueKind` — returns None for non-hoisted kinds.
-fn convert_hoisted_lvalue_kind(kind: InstructionKind) -> Option<InstructionKind> {
-    match kind {
-        InstructionKind::HoistedLet => Some(InstructionKind::Let),
-        InstructionKind::HoistedConst => Some(InstructionKind::Const),
-        InstructionKind::HoistedFunction => Some(InstructionKind::Function),
-        _ => None,
-    }
-}
-
 /// Recursive implementation. Corresponds to TS `collectTemporariesSidemapImpl`.
 fn collect_temporaries_sidemap_impl(
     func: &HirFunction,
@@ -2087,7 +2077,7 @@ fn handle_instruction(
         }
         InstructionValue::DeclareLocal { lvalue, .. }
         | InstructionValue::DeclareContext { lvalue, .. } => {
-            if convert_hoisted_lvalue_kind(lvalue.kind).is_none() {
+            if lvalue.kind.unhoisted().is_none() {
                 let scope_stack_copy = ctx.scope_stack.clone();
                 ctx.declare(
                     lvalue.place.identifier,

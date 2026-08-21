@@ -1474,6 +1474,8 @@ impl<'a> Linker<'a> {
         target: &[u8],
         bin_name: &[u8],
     ) -> &'b ZStr {
+        // A trailing separator would make `lchmod` follow a symlinked target; npm drops it too.
+        let target = strings::without_trailing_slash(target);
         let primary = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
 
         if !is_native_binlink_redirect {

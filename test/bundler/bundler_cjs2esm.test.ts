@@ -284,6 +284,42 @@ describe("bundler", () => {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
     },
   });
+  // A require() of an unwrapped package that initializes a destructuring
+  // declaration is kept as a require expression that remembers it was
+  // unwrapped, and prints as the namespace object. One inside try/catch is
+  // never unwrapped and prints as an ordinary require.
+  itBundled("cjs2esm/UnwrappedModuleRequireDestructuredAndInTry", {
+    files: {
+      "/entry.js": /* js */ `
+        const { react: named } = require("react");
+        console.log(named);
+
+        let inTry = "missing";
+        try {
+          inTry = require("react").react;
+        } catch {}
+        console.log(inTry);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.react = "react";
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        {
+          "name": "react",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).toMatch(/\{ react: named \} = \(?exports_react\)?;/);
+      expect(code).toContain("__toCommonJS(exports_react)).react");
+    },
+    run: {
+      stdout: "react\nreact",
+    },
+  });
   itBundled("cjs2esm/ReactSpecificUnwrapping", {
     files: {
       "/entry.js": /* js */ `

@@ -149,10 +149,6 @@ impl AnyWebSocket {
     // getTopicsAsJSArray — deleted: *_jsc alias (see PORTING.md). Lives in
     // bun_runtime::socket::uws_jsc as an extension on AnyWebSocket.
 
-    // pub fn iterate_topics(self) {
-    //     return uws_ws_iterate_topics(ssl_flag, self.raw(), callback, user_data);
-    // }
-
     pub fn publish(
         self,
         topic: &[u8],
@@ -596,12 +592,6 @@ pub mod c {
             topic: *const u8,
             length: usize,
         ) -> bool;
-        pub fn uws_ws_iterate_topics(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            callback: Option<unsafe extern "C" fn(*const u8, usize, *mut c_void)>,
-            user_data: *mut c_void,
-        );
         // uws_ws_get_topics_as_js_array: see src/runtime/socket/uws_jsc.rs
         pub(crate) fn uws_ws_publish_with_options(
             ssl: i32,

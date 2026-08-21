@@ -837,29 +837,27 @@ impl<'a> TablePrinter<'a> {
         row: &CollectedRow,
         cell_text: &[u8],
     ) {
-        writer.write_all("│".as_bytes()).ok();
+        let _ = writer.write_all("│".as_bytes());
         {
             let needed = columns[0].width.saturating_sub(row.key.width());
 
             // Right-align the number column
-            writer
-                .splat_byte_all(b' ', (needed + PADDING) as usize)
-                .ok();
+            let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
             match &row.key {
                 RowKey::Str { text, .. } => {
-                    writer.write_all(text.slice()).ok();
+                    let _ = writer.write_all(text.slice());
                 }
                 RowKey::Num(value) => {
-                    write!(writer, "{value}").ok();
+                    let _ = write!(writer, "{value}");
                 }
             }
-            writer.splat_byte_all(b' ', PADDING as usize).ok();
+            let _ = writer.splat_byte_all(b' ', PADDING as usize);
         }
 
         for col_idx in 1..columns.len() {
             let col = &columns[col_idx];
 
-            writer.write_all("│".as_bytes()).ok();
+            let _ = writer.write_all("│".as_bytes());
 
             let cell = if col_idx == self.values_col_idx {
                 row.values_cell
@@ -869,21 +867,17 @@ impl<'a> TablePrinter<'a> {
 
             match cell {
                 None => {
-                    writer
-                        .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', (col.width + PADDING * 2) as usize);
                 }
                 Some(cell) => {
                     let needed = col.width.saturating_sub(cell.width);
-                    writer.splat_byte_all(b' ', PADDING as usize).ok();
-                    writer.write_all(cell.text(cell_text)).ok();
-                    writer
-                        .splat_byte_all(b' ', (needed + PADDING) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', PADDING as usize);
+                    let _ = writer.write_all(cell.text(cell_text));
+                    let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
                 }
             }
         }
-        writer.write_all("│\n".as_bytes()).ok();
+        let _ = writer.write_all("│\n".as_bytes());
     }
 
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
@@ -1027,51 +1021,49 @@ impl<'a> TablePrinter<'a> {
                 );
             }
 
-            writer.write_all("┌".as_bytes()).ok();
+            let _ = writer.write_all("┌".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┬".as_bytes()).ok();
+                    let _ = writer.write_all("┬".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
 
-            writer.write_all("┐\n│".as_bytes()).ok();
+            let _ = writer.write_all("┐\n│".as_bytes());
 
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("│".as_bytes()).ok();
+                    let _ = writer.write_all("│".as_bytes());
                 }
                 let len = col.name.visible_width_exclude_ansi_colors(false);
                 let needed = (col.width as usize).saturating_sub(len);
-                writer.splat_byte_all(b' ', 1).ok();
+                let _ = writer.splat_byte_all(b' ', 1);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r><b>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r><b>", true).as_bytes());
                 }
-                write!(writer, "{}", col.name).ok();
+                let _ = write!(writer, "{}", col.name);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
-                writer.splat_byte_all(b' ', needed + PADDING as usize).ok();
+                let _ = writer.splat_byte_all(b' ', needed + PADDING as usize);
             }
 
-            writer.write_all("│\n├".as_bytes()).ok();
+            let _ = writer.write_all("│\n├".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┼".as_bytes()).ok();
+                    let _ = writer.write_all("┼".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┤\n".as_bytes()).ok();
+            let _ = writer.write_all("┤\n".as_bytes());
         }
 
         // render pass: replay each row's pre-formatted cell bytes
@@ -1081,23 +1073,21 @@ impl<'a> TablePrinter<'a> {
 
         // print the table bottom border
         {
-            writer.write_all("└".as_bytes()).ok();
-            Self::write_string_n_times(
+            let _ = writer.write_all("└".as_bytes());
+            let _ = Self::write_string_n_times(
                 writer,
                 "─".as_bytes(),
                 (columns[0].width + PADDING * 2) as usize,
-            )
-            .ok();
+            );
             for column in columns[1..].iter() {
-                writer.write_all("┴".as_bytes()).ok();
-                Self::write_string_n_times(
+                let _ = writer.write_all("┴".as_bytes());
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (column.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┘\n".as_bytes()).ok();
+            let _ = writer.write_all("┘\n".as_bytes());
         }
 
         Ok(())
@@ -1812,28 +1802,16 @@ pub mod formatter {
 
     impl core::fmt::Display for ZigFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            // Move the unique `&mut Formatter` out of the cell for the body;
-            // re-seat it (and clear `remaining_values`) on the way out so the
-            // adapter stays reusable.
             let formatter: &mut Formatter<'_> = self
                 .formatter
                 .take()
                 .expect("ZigFormatter::fmt re-entered or used after consumption");
 
-            let one = [self.value];
-            formatter.remaining_values = bun_ptr::RawSlice::new(&one);
+            let mut sink = bun_io::FmtAdapter::new(f);
+            let result = formatter
+                .format_value::<false>(self.value, &mut sink)
+                .map_err(|_| core::fmt::Error);
 
-            let result = (|| {
-                let tag =
-                    Tag::get(self.value, formatter.global_this).map_err(|_| core::fmt::Error)?;
-                let mut sink = bun_io::FmtAdapter::new(f);
-                let global = formatter.global_this;
-                formatter
-                    .format::<false>(tag, &mut sink, self.value, global)
-                    .map_err(|_| core::fmt::Error)
-            })();
-
-            formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
             self.formatter.set(Some(formatter));
             result
         }
@@ -2006,12 +1984,6 @@ pub mod formatter {
     }
 
     impl TagPayload {
-        /// The constructor lives here as well as on the bare
-        /// discriminant `Tag`. Callers in sibling modules use either name.
-        #[inline]
-        pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
-            Tag::get(value, global_this)
-        }
         pub(crate) fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }
@@ -3249,7 +3221,7 @@ pub mod formatter {
         value.get_class_name(global_this, &mut name_str)?;
         if !name_str.eql_comptime(b"Object") {
             return Ok(Some(name_str));
-        } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
+        } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
             return Ok(Some(ZigString::static_("[Object: null prototype]")));
         }
         Ok(None)
@@ -3979,7 +3951,7 @@ pub mod formatter {
             // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
             // have `Function.prototype` as their prototype, which would
             // render as `[class X extends Function]` and is noise.
-            let proto = value.get_prototype(self.global_this);
+            let proto = value.get_prototype(self.global_this)?;
             let proto_is_class = !proto.is_empty_or_undefined_or_null()
                 && proto.is_cell()
                 && proto.is_class(self.global_this);
@@ -4045,7 +4017,7 @@ pub mod formatter {
             }
             let printable = OwnedString::new(value.get_name(self.global_this)?);
 
-            let proto = value.get_prototype(self.global_this);
+            let proto = value.get_prototype(self.global_this)?;
             // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
             let func_name = OwnedString::new(proto.get_name(self.global_this)?);
 
@@ -5653,38 +5625,45 @@ pub mod formatter {
             writer: &mut WrappedWriter<'_>,
             slice: &[N],
         ) {
-            writer.print(format_args!(
-                "{}{}{}{}",
-                pfmt!("<r><yellow>", C),
-                N::display(slice[0]),
-                if N::IS_BIGINT { "n" } else { "" },
-                pfmt!("<r>", C),
-            ));
-            let leftover = &slice[1..];
+            // Only the per-element `Display` differs by `N`; the loop is shared.
+            Self::write_typed_array_elements::<C>(
+                writer,
+                slice.len(),
+                N::IS_BIGINT,
+                &mut |w, i| w.print(format_args!("{}", N::display(slice[i]))),
+            );
+        }
+
+        fn write_typed_array_elements<const C: bool>(
+            writer: &mut WrappedWriter<'_>,
+            len: usize,
+            is_bigint: bool,
+            print_element: &mut dyn FnMut(&mut WrappedWriter<'_>, usize),
+        ) {
+            let suffix = if is_bigint { "n" } else { "" };
+            writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+            print_element(writer, 0);
+            writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
             const MAX: usize = 512;
-            let leftover = &leftover[..leftover.len().min(MAX)];
-            for &el in leftover {
+            let shown = len.min(MAX + 1);
+            for i in 1..shown {
                 writer.print_comma::<C>();
                 if writer.failed {
                     return;
                 }
                 writer.space();
 
-                writer.print(format_args!(
-                    "{}{}{}{}",
-                    pfmt!("<r><yellow>", C),
-                    N::display(el),
-                    if N::IS_BIGINT { "n" } else { "" },
-                    pfmt!("<r>", C),
-                ));
+                writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+                print_element(writer, i);
+                writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
             }
 
-            if slice.len() > MAX + 1 {
+            if len > MAX + 1 {
                 writer.print(format_args!(
                     "{}{}, ... {} more{}",
                     pfmt!("<r><d>", C),
-                    if N::IS_BIGINT { "n" } else { "" },
-                    slice.len() - MAX - 1,
+                    suffix,
+                    len - MAX - 1,
                     pfmt!("<r>", C),
                 ));
             }

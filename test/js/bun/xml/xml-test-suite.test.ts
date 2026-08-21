@@ -35,7 +35,7 @@
 import { XML } from "bun";
 import { describe, expect, test } from "bun:test";
 
-type XMLNode = { name: string; attributes: Record<string, string>; children: (XMLNode | string)[] };
+type XMLNode = XML.Node;
 
 const CANON_ESCAPES: Record<string, string> = {
   "&": "&amp;",
@@ -56,8 +56,10 @@ function codePointCompare(a: string, b: string): number {
   return x.length - y.length;
 }
 /** James Clark's Canonical XML for an element tree. */
-function canonicalize(node: XMLNode | string): string {
+function canonicalize(node: XMLNode | XML.Comment | XML.ProcessingInstruction | string): string {
   if (typeof node === "string") return node.replace(/[&<>"\t\n\r]/g, c => CANON_ESCAPES[c]);
+  if ("comment" in node) return "";
+  if ("target" in node) return `<?${node.target} ${node.data}?>`;
   const attrs = Object.keys(node.attributes)
     .sort(codePointCompare)
     .map(k => ` ${k}="${node.attributes[k].replace(/[&<>"\t\n\r]/g, c => CANON_ESCAPES[c])}"`)
@@ -1532,7 +1534,7 @@ describe("xmltest", () => {
     // 3.1 4.6 [43] — Test demonstrates numeric character references can be used for element content.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc>&#32;</doc>\r\n";
     const canonical = "<doc> </doc>";
-    const compact: unknown = { doc: "" };
+    const compact: unknown = { doc: " " };
     expectParses(input, canonical, compact);
   });
 
@@ -1549,7 +1551,7 @@ describe("xmltest", () => {
     // 2.3 3.1 [43] — Test demonstrates that PubidChar can be used for element content.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc>&#x20;</doc>\r\n";
     const canonical = "<doc> </doc>";
-    const compact: unknown = { doc: "" };
+    const compact: unknown = { doc: " " };
     expectParses(input, canonical, compact);
   });
 
@@ -1614,7 +1616,7 @@ describe("xmltest", () => {
   test("valid-sa-016", () => {
     // 2.6 3.1 [16] [43] — Test demonstrates that Processing Instructions are valid element content.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc><?pi?></doc>\r\n";
-    const canonical = "<doc></doc>";
+    const canonical = "<doc><?pi ?></doc>";
     const compact: unknown = { doc: "" };
     expectParses(input, canonical, compact);
   });
@@ -1623,7 +1625,7 @@ describe("xmltest", () => {
     // 2.6 3.1 [16] [43] — Test demonstrates that Processing Instructions are valid element content and
     // there can be more than one.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc><?pi some data ?><?x?></doc>\r\n";
-    const canonical = "<doc></doc>";
+    const canonical = "<doc><?pi some data ?><?x ?></doc>";
     const compact: unknown = { doc: "" };
     expectParses(input, canonical, compact);
   });
@@ -1804,7 +1806,7 @@ describe("xmltest", () => {
     // 2.6 3.1 [16] [43] — Test demonstrates that two apparently wrong Processing Instructions make a right
     // one, with very odd content "some data ? > <?".
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc><?pi some data ? > <??></doc>";
-    const canonical = "<doc></doc>";
+    const canonical = "<doc><?pi some data ? > <??></doc>";
     const compact: unknown = { doc: "" };
     expectParses(input, canonical, compact);
   });
@@ -2121,7 +2123,7 @@ describe("xmltest", () => {
     // 4.1 [66] — Test demonstrates the use of decimal character references within element content.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc>&#13;</doc>\r\n";
     const canonical = "<doc>&#13;</doc>";
-    const compact: unknown = { doc: "" };
+    const compact: unknown = { doc: "\r" };
     expectParses(input, canonical, compact);
   });
 
@@ -2132,7 +2134,7 @@ describe("xmltest", () => {
     const input: string =
       '<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n<!ENTITY e "&#13;">\r\n]>\r\n<doc>&e;</doc>\r\n';
     const canonical = "<doc>&#13;</doc>";
-    const compact: unknown = { doc: "" };
+    const compact: unknown = { doc: "\r" };
     expectParses(input, canonical, compact);
   });
 
@@ -2380,7 +2382,7 @@ describe("xmltest", () => {
     // version of the document.
     const input: string = "<!DOCTYPE doc [\n<!ELEMENT doc (#PCDATA)>\n]>\n<doc>\n\n\n</doc>\n";
     const canonical = "<doc>&#10;&#10;&#10;</doc>";
-    const compact: unknown = { doc: "" };
+    const compact: unknown = { doc: "\n\n\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -2430,7 +2432,7 @@ describe("xmltest", () => {
     // 2.6 2.10 [16] — Test demonstrates that extra whitespace within a processing instruction is converted
     // into a single space character.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc><?pi x\r\ny?></doc>\r\n";
-    const canonical = "<doc></doc>";
+    const canonical = "<doc><?pi x\ny?></doc>";
     const compact: unknown = { doc: "" };
     expectParses(input, canonical, compact);
   });
@@ -2604,7 +2606,7 @@ describe("xmltest", () => {
     // 2.11 — Test demonstrates that a line break within CDATA will be normalized.
     const input: string = "<!DOCTYPE doc [\r\n<!ELEMENT doc (#PCDATA)>\r\n]>\r\n<doc><![CDATA[\r\n]]></doc>\r\n";
     const canonical = "<doc>&#10;</doc>";
-    const compact: unknown = { doc: "" };
+    const compact: unknown = { doc: "\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -3093,10 +3095,10 @@ describe("sun", () => {
           "",
           "",
           "moreover",
-          { empty: "", "#text": "moreover" },
-          { empty: "", "#text": "moreover" },
+          { "#text": "moreover ", empty: "" },
+          { "#text": "moreover ", empty: "" },
           { empty: "" },
-          { empty: "", "#text": "too" },
+          { empty: "", "#text": " too" },
         ],
       },
     };
@@ -3128,7 +3130,7 @@ describe("sun", () => {
       "<root>&#10;    <child>&#10;    The whitespace before and after this element keeps&#10;    this from being standalone.&#10;    </child>&#10;</root>";
     const compact: unknown = {
       root: {
-        child: "The whitespace before and after this element keeps\n    this from being standalone.",
+        child: "\n    The whitespace before and after this element keeps\n    this from being standalone.\n    ",
       },
     };
     expectParses(input, canonical, compact);
@@ -3230,7 +3232,8 @@ describe("sun", () => {
       "<root>&#10;    <child>&#10;    The whitespace around this element would be&#10;    invalid as standalone were the DTD external.&#10;    </child>&#10;</root>";
     const compact: unknown = {
       root: {
-        child: "The whitespace around this element would be\n    invalid as standalone were the DTD external.",
+        child:
+          "\n    The whitespace around this element would be\n    invalid as standalone were the DTD external.\n    ",
       },
     };
     expectParses(input, canonical, compact);
@@ -3318,7 +3321,9 @@ describe("sun", () => {
       "<?xml version='1.0' standalone='yes'?>\n\n<!DOCTYPE root SYSTEM \"sa.dtd\">\n\n<root><child>\n    No whitespace before or after this standalone element.\n</child></root>\n";
     const canonical =
       "<root><child>&#10;    No whitespace before or after this standalone element.&#10;</child></root>";
-    const compact: unknown = { root: { child: "No whitespace before or after this standalone element." } };
+    const compact: unknown = {
+      root: { child: "\n    No whitespace before or after this standalone element.\n" },
+    };
     expectParses(input, canonical, compact);
   });
 
@@ -6839,7 +6844,7 @@ describe("ibm", () => {
     const compact: unknown = {
       root: {
         a: "should not have content here",
-        b: { c: "", "#text": "content of b element" },
+        b: { c: "", "#text": " \n   content of b element\n" },
       },
     };
     expectParses(input, canonical, compact);
@@ -6854,9 +6859,9 @@ describe("ibm", () => {
       "<root>&#10; root can't have text content&#10;<a></a><b>&#10;   <c></c> &#10;   content of b element&#10;</b></root>";
     const compact: unknown = {
       root: {
+        "#text": "\n root can't have text content\n",
         a: "",
-        b: { c: "", "#text": "content of b element" },
-        "#text": "root can't have text content",
+        b: { c: "", "#text": " \n   content of b element\n" },
       },
     };
     expectParses(input, canonical, compact);
@@ -6874,8 +6879,8 @@ describe("ibm", () => {
         a: "",
         b: {
           c: "",
+          "#text": " \n   content of b element\n   \n   could not have 'a' as 'b's content\n",
           a: "",
-          "#text": "content of b element\n   \n   could not have 'a' as 'b's content",
         },
       },
     };
@@ -6894,7 +6899,7 @@ describe("ibm", () => {
         a: "",
         b: {
           c: [{ f: "" }, { d: "not declared in dtd" }],
-          "#text": "content of b element",
+          "#text": " \n   content of b element\n   ",
         },
       },
     };
@@ -6949,7 +6954,7 @@ describe("ibm", () => {
     const compact: unknown = {
       root: {
         b: ["", "", { "@attr1": "value1" }, { "@attr1": "value1", "@attr2": "value2", "@attr3": "value3" }],
-        "#text": "without white space\n   with a white space",
+        "#text": "without white space\n   with a white space\n  ",
       },
     };
     expectParses(input, canonical, compact);
@@ -6962,7 +6967,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root SYSTEM "ibm49i01.dtd" [\r\n  <!ELEMENT root (a,b)>\r\n]>\r\n<root><a/><b>\r\n   <c></c >\r\n   content of b element\r\n</b></root>\r\n<!--* a invalid test: tests VC:Proper Group/PE Nesting in P49 *-->\r\n';
     const canonical = "<root><a></a><b>&#10;   <c></c>&#10;   content of b element&#10;</b></root>";
-    const compact: unknown = { root: { a: "", b: { c: "", "#text": "content of b element" } } };
+    const compact: unknown = { root: { a: "", b: { c: "", "#text": "\n   content of b element\n" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -6973,7 +6978,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root SYSTEM "ibm50i01.dtd" [\r\n  <!ELEMENT root (a,b)>\r\n]>\r\n<root><a/><b>\r\n   <c></c >\r\n   content of b element\r\n</b></root>\r\n<!--* a invalid test: tests VC:Proper Group/PE Nesting in P50 *-->\r\n';
     const canonical = "<root><a></a><b>&#10;   <c></c>&#10;   content of b element&#10;</b></root>";
-    const compact: unknown = { root: { a: "", b: { c: "", "#text": "content of b element" } } };
+    const compact: unknown = { root: { a: "", b: { c: "", "#text": "\n   content of b element\n" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -6984,7 +6989,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root SYSTEM "ibm51i01.dtd" [\r\n  <!ELEMENT root ANY>\r\n]>\r\n<root>\r\n  <a> Element type a </a>\r\n  <b> Element type b </b>\r\n</root>\r\n<!--* a invalid test: tests P51 VC: Proper Group/PE Nesting *-->';
     const canonical = "<root>&#10;  <a> Element type a </a>&#10;  <b> Element type b </b>&#10;</root>";
-    const compact: unknown = { root: { a: "Element type a", b: "Element type b" } };
+    const compact: unknown = { root: { a: " Element type a ", b: " Element type b " } };
     expectParses(input, canonical, compact);
   });
 
@@ -6994,7 +6999,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n  <!ELEMENT root ANY>\r\n  <!ELEMENT a (#PCDATA)* >\r\n  <!ELEMENT b (#PCDATA) >\r\n  <!ELEMENT c ( #PCDATA)*>\r\n  <!ELEMENT d (#PCDATA|c)* >\r\n  <!--* Duplicate element types in Mixed content decl *-->\r\n  <!ELEMENT e (#PCDATA|a|a|b|c)* >\r\n]>\r\n<root>\r\n  <a> Element type a </a>\r\n  <b> Element type b </b>\r\n</root>\r\n<!--* a invalid test: tests P51 VC: No Duplicate Types *-->\r\n';
     const canonical = "<root>&#10;  <a> Element type a </a>&#10;  <b> Element type b </b>&#10;</root>";
-    const compact: unknown = { root: { a: "Element type a", b: "Element type b" } };
+    const compact: unknown = { root: { a: " Element type a ", b: " Element type b " } };
     expectParses(input, canonical, compact);
   });
 
@@ -7009,7 +7014,7 @@ describe("ibm", () => {
       tokenizer: {
         "@UniqueName": "@c999",
         "#text":
-          "This is a negative test for validity constraints\nthe value of the attribute with a type ID does not match the Name production",
+          "\nThis is a negative test for validity constraints\nthe value of the attribute with a type ID does not match the Name production\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7027,7 +7032,7 @@ describe("ibm", () => {
         "@UniqueName": "Ac999",
         b: { "@attr": "Ac999" },
         "#text":
-          "This is a negative test for validity constraints\nthe value of the attribute with a type ID appears more than once in the XML document",
+          "\nThis is a negative test for validity constraints\nthe value of the attribute with a type ID appears more than once in the XML document\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7043,7 +7048,8 @@ describe("ibm", () => {
     const compact: unknown = {
       tokenizer: {
         "@UniqueName": "AC1999",
-        "#text": "This is a Negative validity test for ID Attribute Default.\nGiving the attribute default as #FIXED",
+        "#text":
+          "\nThis is a Negative validity test for ID Attribute Default.\nGiving the attribute default as #FIXED\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7060,7 +7066,7 @@ describe("ibm", () => {
       tokenizer: {
         "@UniqueName": "AC1999",
         "#text":
-          "This is a Negative validity test for ID Attribute Default.\nGiving the attibute default as a const string",
+          "\nThis is a Negative validity test for ID Attribute Default.\nGiving the attibute default as a const string\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7076,7 +7082,8 @@ describe("ibm", () => {
     const compact: unknown = {
       tokenizer: {
         a: { "@first": "AC1999", "@second": "BC1999" },
-        "#text": "This is a Negative validity test for ID.\nThere is more than attribute of type ID for the element a",
+        "#text":
+          "\nThis is a Negative validity test for ID.\nThere is more than attribute of type ID for the element a\n\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7094,7 +7101,7 @@ describe("ibm", () => {
         id: { "@UniqueName": "AC456" },
         idref: { "@reference": "@456" },
         "#text":
-          "Negative test for validity constraint of IDREF.\nIn an attribute decl, values of type IDREF does not match the name production",
+          "\nNegative test for validity constraint of IDREF.\nIn an attribute decl, values of type IDREF does not match the name production\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7112,7 +7119,7 @@ describe("ibm", () => {
         id: { "@UniqueName": "AC456" },
         idref: { "@reference": "BC456" },
         "#text":
-          "Negative test for validity constraint of IDREF.\nIn an attribute decl, values of type IDREF match the name production and\nIDREF value does not match the value assigned to any ID attribute somewhere\nin the XML document.",
+          "\nNegative test for validity constraint of IDREF.\nIn an attribute decl, values of type IDREF match the name production and\nIDREF value does not match the value assigned to any ID attribute somewhere\nin the XML document.\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7131,7 +7138,7 @@ describe("ibm", () => {
         id2: { "@UName": "BC567" },
         idrefs: { "@reference": "AC456 #567" },
         "#text":
-          "Negative test for validity constraint of IDREFS.\nIn an attribute decl, values of type IDREFS does not match the name production",
+          "\nNegative test for validity constraint of IDREFS.\nIn an attribute decl, values of type IDREFS does not match the name production\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7151,7 +7158,7 @@ describe("ibm", () => {
         id2: { "@UName": "AC567" },
         idrefs: { "@reference": "EF456 DE355" },
         "#text":
-          "Negative test for validity constraint of IDREFS.\nIn an attribute decl, values of type IDREFS match the name production\nbut IDREFS value do not match the values assigned to one or more ID attributes\nsomewhere in the XML document",
+          "\nNegative test for validity constraint of IDREFS.\nIn an attribute decl, values of type IDREFS match the name production\nbut IDREFS value do not match the values assigned to one or more ID attributes\nsomewhere in the XML document\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7167,7 +7174,7 @@ describe("ibm", () => {
     const compact: unknown = {
       test: {
         landscape: { "@sun": "ima ge" },
-        "#text": "In the attribute decl, values of type ENTITY do not match the Name production",
+        "#text": "\nIn the attribute decl, values of type ENTITY do not match the Name production\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7184,7 +7191,7 @@ describe("ibm", () => {
       test: {
         landscape: { "@sun": "notimage" },
         "#text":
-          "In the attribute decl, values of type ENTITY match the Name production\nbut does not match the name of any entity declared in the DTD",
+          "\nIn the attribute decl, values of type ENTITY match the Name production\nbut does not match the name of any entity declared in the DTD\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7202,7 +7209,7 @@ describe("ibm", () => {
       test: {
         landscape: { "@sun": "parsedentity" },
         "#text":
-          "In an attribute declaration, values of type ENTITY match the Name production and the ENTITY value\nmatches the name of a parsed entity declared in the DTD.",
+          "\nIn an attribute declaration, values of type ENTITY match the Name production and the ENTITY value\nmatches the name of a parsed entity declared in the DTD. \n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7218,7 +7225,7 @@ describe("ibm", () => {
     const compact: unknown = {
       test: {
         landscape: { "@sun": "#image1 @image" },
-        "#text": "In an attribute declaration, values of type ENTITIES do not match the Name production.",
+        "#text": "\nIn an attribute declaration, values of type ENTITIES do not match the Name production.\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7235,7 +7242,7 @@ describe("ibm", () => {
       test: {
         landscape: { "@sun": "image3 image4" },
         "#text":
-          "In an attribute declaration, values of type ENTITIES match the Name production and the ENTITIES value\ndoes not match one or more names of entities declared in the DTD.",
+          "\nIn an attribute declaration, values of type ENTITIES match the Name production and the ENTITIES value\ndoes not match one or more names of entities declared in the DTD. \n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7253,7 +7260,7 @@ describe("ibm", () => {
       test: {
         landscape: { "@sun": "parsedentity1 parsedentity2" },
         "#text":
-          "In an attribute declaration, values of type ENTITIES match the Name production and the ENTITIES value\nmatches one or more names of parsed entities declared in the DTD. .",
+          "\nIn an attribute declaration, values of type ENTITIES match the Name production and the ENTITIES value\nmatches one or more names of parsed entities declared in the DTD. .\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7269,7 +7276,7 @@ describe("ibm", () => {
     const compact: unknown = {
       test: {
         nametoken: { "@thistoken": "x : image" },
-        "#text": "In an attribute declaration, values of type NMTOKEN does not match the Nmtoken production",
+        "#text": "\nIn an attribute declaration, values of type NMTOKEN does not match the Nmtoken production\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7285,7 +7292,7 @@ describe("ibm", () => {
     const compact: unknown = {
       test: {
         nametokens: { "@thistoken": "@lang y: #country" },
-        "#text": "In an attribute declaration, values of type NMTOKENS does not match the Nmtokens production",
+        "#text": "\nIn an attribute declaration, values of type NMTOKENS does not match the Nmtokens production\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7302,7 +7309,7 @@ describe("ibm", () => {
       test: {
         blob: { "@content-encoding": "raw" },
         "#text":
-          "The attribute values of type NOTATION does not match any of the notation names included in the\ndeclaration.All notation names in the declaration have been declared.",
+          "\nThe attribute values of type NOTATION does not match any of the notation names included in the\ndeclaration.All notation names in the declaration have been declared.\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7320,7 +7327,7 @@ describe("ibm", () => {
       test: {
         blob: { "@content-encoding": "raw" },
         "#text":
-          "The attribute values of type NOTATION does match any of the notation names included in the\ndeclaration, but some of notation names in the declaration have not been declared",
+          "\nThe attribute values of type NOTATION does match any of the notation names included in the\ndeclaration, but some of notation names in the declaration have not been declared\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7338,7 +7345,7 @@ describe("ibm", () => {
       test: {
         num: { "@value": "ONE" },
         "#text":
-          "This is a Negative test\nThe attribute values of type Enumeration does not match any of the Nmtoken tokens in the declaration.",
+          "\nThis is a Negative test\nThe attribute values of type Enumeration does not match any of the Nmtoken tokens in the declaration.\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7357,7 +7364,7 @@ describe("ibm", () => {
         one: { "@chapter": "Introduction" },
         two: "",
         "#text":
-          "Negative test for Required Attribute. Some occurrence of an element with \nan attribute of #REQUIRED default declaration does not give the value of \nthose attribute",
+          "\nNegative test for Required Attribute. Some occurrence of an element with \nan attribute of #REQUIRED default declaration does not give the value of \nthose attribute\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7376,7 +7383,7 @@ describe("ibm", () => {
       Java: {
         one: { "@chapter": "JavaBeans" },
         "#text":
-          "Negative Test\nAn attribute has a default value declared with the #FIXED keyword, \nand an instances of that attribute is given a value which is not \nthe same as the default value in the declaration.",
+          "\nNegative Test\nAn attribute has a default value declared with the #FIXED keyword, \nand an instances of that attribute is given a value which is not \nthe same as the default value in the declaration. \n",
       },
     };
     expectParses(input, canonical, compact);
@@ -7390,7 +7397,7 @@ describe("ibm", () => {
     const canonical =
       "<test>&#10;The default value specified for an attribute does not meet the &#10;lexical constraints of the declared attribute type.&#10;</test>";
     const compact: unknown = {
-      test: "The default value specified for an attribute does not meet the \nlexical constraints of the declared attribute type.",
+      test: "\nThe default value specified for an attribute does not meet the \nlexical constraints of the declared attribute type.\n",
     };
     expectParses(input, canonical, compact);
   });
@@ -7403,7 +7410,7 @@ describe("ibm", () => {
     const canonical =
       "<test>&#10;The default value specified for an attribute does not meet the &#10;lexical constraints of the declared attribute type.&#10;</test>";
     const compact: unknown = {
-      test: "The default value specified for an attribute does not meet the \nlexical constraints of the declared attribute type.",
+      test: "\nThe default value specified for an attribute does not meet the \nlexical constraints of the declared attribute type.\n",
     };
     expectParses(input, canonical, compact);
   });
@@ -7414,7 +7421,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root SYSTEM "ibm68i01.dtd" [\r\n  <!ELEMENT root (#PCDATA|a)* >\r\n]>\r\n<root>\r\n  pcdata content\r\n  <a attr1="xyz"/>\r\n</root>\r\n<!--* a invalid test for P68 VC:Entity Declared *-->\r\n\r\n';
     const canonical = '<root>&#10;  pcdata content&#10;  <a attr1="xyz"></a>&#10;</root>';
-    const compact: unknown = { root: { a: { "@attr1": "xyz" }, "#text": "pcdata content" } };
+    const compact: unknown = { root: { "#text": "\n  pcdata content\n  ", a: { "@attr1": "xyz" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -7424,7 +7431,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root SYSTEM "ibm68i02.dtd" [\r\n  <!ELEMENT root (#PCDATA|a)* >\r\n]>\r\n<root>\r\n  pcdata content\r\n  <a attr1="xyz"/>\r\n</root>\r\n<!--* a invalid test for P68 VC:Entity Declared *-->\r\n\r\n';
     const canonical = '<root>&#10;  pcdata content&#10;  <a attr1="xyz"></a>&#10;</root>';
-    const compact: unknown = { root: { a: { "@attr1": "xyz" }, "#text": "pcdata content" } };
+    const compact: unknown = { root: { "#text": "\n  pcdata content\n  ", a: { "@attr1": "xyz" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -7434,7 +7441,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0" standalone=\'no\'?>\r\n<!DOCTYPE root [\r\n  <!ELEMENT root (#PCDATA)* >\r\n  <!ENTITY % pe1 SYSTEM "ibm68i03.ent">\r\n  %pe1;\r\n]>\r\n<root>\r\n  pcdata content\r\n</root>\r\n<!--* a invalid test for P68 VC:Entity Declared *-->\r\n';
     const canonical = "<root>&#10;  pcdata content&#10;</root>";
-    const compact: unknown = { root: "pcdata content" };
+    const compact: unknown = { root: "\n  pcdata content\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -7444,7 +7451,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0" standalone=\'no\'?>\r\n<!DOCTYPE root [\r\n  <!ELEMENT root (#PCDATA)* >\r\n  <!ENTITY % pe1 SYSTEM "ibm68i04.ent">\r\n  %pe1;\r\n]>\r\n<root>\r\n  pcdata content\r\n</root>\r\n<!--* a invalid test for P68 VC:Entity Declared *-->\r\n';
     const canonical = "<root>&#10;  pcdata content&#10;</root>";
-    const compact: unknown = { root: "pcdata content" };
+    const compact: unknown = { root: "\n  pcdata content\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -7455,7 +7462,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root SYSTEM "ibm69i01.dtd" [\r\n  <!ELEMENT root (#PCDATA|a)* >\r\n]>\r\n<root>\r\n  pcdata content\r\n  <a attr1="xyz"/>\r\n</root>\r\n<!--* a invalid test for P69 VC:Entity Declared *-->\r\n\r\n';
     const canonical = '<root>&#10;  pcdata content&#10;  <a attr1="xyz"></a>&#10;</root>';
-    const compact: unknown = { root: { a: { "@attr1": "xyz" }, "#text": "pcdata content" } };
+    const compact: unknown = { root: { "#text": "\n  pcdata content\n  ", a: { "@attr1": "xyz" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -7465,7 +7472,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root SYSTEM "ibm69i02.dtd" [\r\n  <!ELEMENT root (#PCDATA|a)* >\r\n]>\r\n<root>\r\n  pcdata content\r\n  <a attr1="xyz"/>\r\n</root>\r\n<!--* a invalid test for P69 VC:Entity Declared *-->\r\n\r\n';
     const canonical = '<root>&#10;  pcdata content&#10;  <a attr1="xyz"></a>&#10;</root>';
-    const compact: unknown = { root: { a: { "@attr1": "xyz" }, "#text": "pcdata content" } };
+    const compact: unknown = { root: { "#text": "\n  pcdata content\n  ", a: { "@attr1": "xyz" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -7476,7 +7483,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0" standalone=\'no\'?>\r\n<!DOCTYPE root [\r\n  <!ELEMENT root (#PCDATA)* >\r\n  <!ENTITY % pe1 SYSTEM "ibm69i03.ent">\r\n  %pe1;\r\n]>\r\n<root>\r\n  pcdata content\r\n</root>\r\n<!--* a invalid test for P69 VC:Entity Declared *-->\r\n';
     const canonical = "<root>&#10;  pcdata content&#10;</root>";
-    const compact: unknown = { root: "pcdata content" };
+    const compact: unknown = { root: "\n  pcdata content\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -7486,7 +7493,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0" standalone=\'no\'?>\r\n<!DOCTYPE root  [\r\n  <!ELEMENT root (#PCDATA)* >\r\n  <!ENTITY % pe1 SYSTEM "ibm69i04.ent">\r\n  %pe1;\r\n]>\r\n<root>\r\n  pcdata content\r\n</root>\r\n<!--* a invalid test for P69 VC:Entity Declared *-->\r\n';
     const canonical = "<root>&#10;  pcdata content&#10;</root>";
-    const compact: unknown = { root: "pcdata content" };
+    const compact: unknown = { root: "\n  pcdata content\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -11232,7 +11239,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n \t<!ENTITY FullName "">\r\n]>\r\n\r\n<student>My Name is &FullName;. </student>\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n ';
     const canonical = "<student>My Name is . </student>";
-    const compact: unknown = { student: "My Name is ." };
+    const compact: unknown = { student: "My Name is . " };
     expectParses(input, canonical, compact);
   });
 
@@ -11241,7 +11248,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n \t<!ENTITY FullName "SnowMan">\r\n]>\r\n\r\n<student>My Name is &FullName;. </student>';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11258,7 +11265,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?> \r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n<!-- testing entity value with Reference -->\r\n\t<!ENTITY RealName "SnowMan"> \r\n \t<!ENTITY FullName "&RealName;">\r\n]>\r\n\r\n<student>My Name is &FullName;. </student>';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11275,7 +11282,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student\r\n\t\tfirst CDATA #REQUIRED\r\n\t\tmiddle CDATA #IMPLIED\r\n\t\tlast CDATA #REQUIRED > \r\n\t<!ENTITY myfirst "Snow">\r\n\t<!ENTITY mymiddle "Y">\r\n\t<!ENTITY mylast "">\r\n]>\r\n<!-- testing AttValue with empty char inside double quote -->\r\n<student first="" last="">My Name is Snow &mylast; Man. </student>\r\n\r\n\r\n\r\n\r\n\r\n\r\n';
     const canonical = '<student first="" last="">My Name is Snow  Man. </student>';
-    const compact: unknown = { student: { "@first": "", "@last": "", "#text": "My Name is Snow  Man." } };
+    const compact: unknown = { student: { "@first": "", "@last": "", "#text": "My Name is Snow  Man. " } };
     expectParses(input, canonical, compact);
   });
 
@@ -11284,7 +11291,7 @@ describe("ibm", () => {
     const input: string =
       "<?xml version=\"1.0\"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student\r\n\t\tfirst CDATA #REQUIRED\r\n\t\tmiddle CDATA #IMPLIED\r\n\t\tlast CDATA #REQUIRED > \r\n\t<!ENTITY myfirst \"Snow\">\r\n\t<!ENTITY mymiddle \"Y\">\r\n\t<!ENTITY mylast ''>\r\n]>\r\n<!-- testing AttValue with empty char inside single quote -->\r\n<student first='' last=''>My Name is Snow &mylast; Man. </student>\r\n\r\n";
     const canonical = '<student first="" last="">My Name is Snow  Man. </student>';
-    const compact: unknown = { student: { "@first": "", "@last": "", "#text": "My Name is Snow  Man." } };
+    const compact: unknown = { student: { "@first": "", "@last": "", "#text": "My Name is Snow  Man. " } };
     expectParses(input, canonical, compact);
   });
 
@@ -11294,7 +11301,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student\r\n\t\tfirst CDATA #REQUIRED\r\n\t\tmiddle CDATA #IMPLIED\r\n\t\tlast CDATA #REQUIRED > \r\n\t<!ENTITY myfirst \'Snow\'>\r\n\t<!ENTITY mymiddle \'I\'>\r\n\t<!ENTITY mylast "Man\'">\r\n]>\r\n<!-- testing AttValue string with a single quote inside -->\r\n<student first="Snow\'" last="Man">My Name is &myfirst; &mylast;. </student>';
     const canonical = '<student first="Snow\'" last="Man">My Name is Snow Man\'. </student>';
     const compact: unknown = {
-      student: { "@first": "Snow'", "@last": "Man", "#text": "My Name is Snow Man'." },
+      student: { "@first": "Snow'", "@last": "Man", "#text": "My Name is Snow Man'. " },
     };
     expectParses(input, canonical, compact);
   });
@@ -11305,7 +11312,7 @@ describe("ibm", () => {
       "<?xml version=\"1.0\"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student\r\n\t\tfirst CDATA #REQUIRED\r\n\t\tmiddle CDATA #IMPLIED\r\n\t\tlast CDATA #REQUIRED > \r\n\t<!ENTITY myfirst 'Snow'>\r\n\t<!ENTITY mymiddle 'I'>\r\n\t<!ENTITY mylast 'Man\"'>\r\n]>\r\n<!-- testing AttValue string with a double quote inside -->\r\n<student first='Snow\"' last='Man'>My Name is &myfirst; &mylast;. </student>\r\n\r\n";
     const canonical = '<student first="Snow&quot;" last="Man">My Name is Snow Man&quot;. </student>';
     const compact: unknown = {
-      student: { "@first": 'Snow"', "@last": "Man", "#text": 'My Name is Snow Man".' },
+      student: { "@first": 'Snow"', "@last": "Man", "#text": 'My Name is Snow Man". ' },
     };
     expectParses(input, canonical, compact);
   });
@@ -11316,7 +11323,7 @@ describe("ibm", () => {
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student\r\n\t\tfirst CDATA #REQUIRED\r\n\t\tmiddle CDATA #IMPLIED\r\n\t\tlast CDATA #REQUIRED > \r\n\t<!ENTITY myfirst "Snow">\r\n\t<!ENTITY mymiddle "Y">\r\n\t<!ENTITY mylast "&myfirst; Man">\r\n]>\r\n<!-- testing AttValue with a reference in double quote -->\r\n<student first="&myfirst;" last="mylast;">My Name is &mylast;. </student>\r\n\r\n';
     const canonical = '<student first="Snow" last="mylast;">My Name is Snow Man. </student>';
     const compact: unknown = {
-      student: { "@first": "Snow", "@last": "mylast;", "#text": "My Name is Snow Man." },
+      student: { "@first": "Snow", "@last": "mylast;", "#text": "My Name is Snow Man. " },
     };
     expectParses(input, canonical, compact);
   });
@@ -11327,7 +11334,7 @@ describe("ibm", () => {
       "<?xml version=\"1.0\"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student\r\n\t\tfirst CDATA #REQUIRED\r\n\t\tmiddle CDATA #IMPLIED\r\n\t\tlast CDATA #REQUIRED > \r\n\t<!ENTITY myfirst \"Snow\">\r\n\t<!ENTITY mymiddle \"Y\">\r\n\t<!ENTITY mylast '&myfirst; Man'>\r\n]>\r\n<!-- testing AttValue with a reference in single quote -->\r\n<student first='&myfirst;' last='&mylast;'>My Name is &mylast;. </student>\r\n\r\n";
     const canonical = '<student first="Snow" last="Snow Man">My Name is Snow Man. </student>';
     const compact: unknown = {
-      student: { "@first": "Snow", "@last": "Snow Man", "#text": "My Name is Snow Man." },
+      student: { "@first": "Snow", "@last": "Snow Man", "#text": "My Name is Snow Man. " },
     };
     expectParses(input, canonical, compact);
   });
@@ -11342,7 +11349,7 @@ describe("ibm", () => {
       student: {
         "@first": "Full Name Snow 1 and Man Snow and Snow mymiddle;. Man Snow and Snow mymiddle;. c",
         "@last": "Man Snow and Snow mymiddle;.",
-        "#text": "My first Name is Snow and my last name is Man Snow and Snow mymiddle;..",
+        "#text": "My first Name is Snow and my last name is Man Snow and Snow mymiddle;.. ",
       },
     };
     expectParses(input, canonical, compact);
@@ -11358,7 +11365,7 @@ describe("ibm", () => {
       student: {
         "@first": 'Full Name Snow and "Man Snow and Snow mymiddle;." Man Snow and Snow mymiddle;.',
         "@last": "Man Snow and Snow mymiddle;.",
-        "#text": "My first Name is Snow and my last name is Man Snow and Snow mymiddle;..",
+        "#text": "My first Name is Snow and my last name is Man Snow and Snow mymiddle;.. ",
       },
     };
     expectParses(input, canonical, compact);
@@ -11369,7 +11376,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n   <!ELEMENT student (#PCDATA)>\r\n   <!ENTITY unref SYSTEM "">\r\n]>\r\n\r\n<!-- testing systemliteral with nothing between the double quotes -->\r\n<student>My Name is SnowMan. </student>\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n ';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11378,7 +11385,7 @@ describe("ibm", () => {
     const input: string =
       "<?xml version=\"1.0\"?>\r\n<!DOCTYPE student [\r\n   <!ELEMENT student (#PCDATA)>\r\n   <!ENTITY unref SYSTEM ''>\r\n]>\r\n\r\n<!-- testing systemliteral with nothing between the single quotes -->\r\n<student>My Name is SnowMan. </student>\r\n";
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11388,7 +11395,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student SYSTEM \'student.dtd\'[\r\n]>\r\n<!-- testing systemliteral with a string with "\'" -->\r\n<student>My Name is SnowMan. </student>\r\n';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11398,7 +11405,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student SYSTEM "student.dtd" [\r\n]>\r\n\r\n<!-- testing systemliteral with a string with \'"\' -->\r\n<student>My Name is SnowMan. </student>\r\n\r\n';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11408,7 +11415,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student PUBLIC "" "student.dtd"[\r\n]>\r\n\r\n<!-- testing Pubid Literal with nothing between the double quote -->\r\n<student>My Name is SnowMan. </student>\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n ';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11418,7 +11425,7 @@ describe("ibm", () => {
     const input: string =
       "<?xml version=\"1.0\"?>\r\n<!DOCTYPE student PUBLIC '' 'student.dtd'[\r\n]>\r\n\r\n<!-- testing Pubid Literal with nothing between the single quotes -->\r\n<student>My Name is SnowMan. </student>\r\n";
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11428,7 +11435,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student PUBLIC "The big \' in it" "student.dtd"[\r\n]>\r\n\r\n<!-- testing Pubid Literal with a string with "\'" inside -->\r\n<student>My Name is SnowMan. </student>\r\n';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11438,7 +11445,7 @@ describe("ibm", () => {
     const input: string =
       "<?xml version=\"1.0\"?>\r\n<!DOCTYPE student PUBLIC 'The latest version' 'student.dtd'[\r\n]>\r\n\r\n<!-- testing Pubid Literal with a string without  \"'\" inside -->\r\n<student>My Name is SnowMan. </student>\r\n";
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11448,7 +11455,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student PUBLIC "#x20 #xD #xA abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -\'()+,./:=?;!*#@$_% " "student.dtd"[\r\n]>\r\n\r\n<!-- testing Pubid char with all legal pubidchar in a string -->\r\n<student>My Name is SnowMan. </student>\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n ';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11466,7 +11473,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)>\r\n\t<!ATTLIST student first CDATA #REQUIRED\r\n\t\t\t  last  CDATA #IMPLIED>\r\n]>\r\n\r\n<!-- testing chardata with white space -->\r\n<student first="Eric"> &#x0A; &#x09; &#x0D;&#x20;</student>\r\n\r\n\r\n';
     const canonical = '<student first="Eric"> &#10; &#9; &#13; </student>';
-    const compact: unknown = { student: { "@first": "Eric" } };
+    const compact: unknown = { student: { "@first": "Eric", "#text": " \n \t \r " } };
     expectParses(input, canonical, compact);
   });
 
@@ -11484,7 +11491,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n<!--* Tests empty comment *-->\r\n<!---->\r\n<student>My Name is SnowMan. </student>\r\n\r\n\r\n';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11493,7 +11500,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- Student\'s name -->\r\n<student>My Name is SnowMan. </student>';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11502,7 +11509,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- student file-1 -->\r\n<student>My Name is SnowMan. </student>';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11511,7 +11518,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!--student phone number 408-398 (387)-4758 -->\r\n<student>My Name is SnowMan. </student>\r\n';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11520,7 +11527,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<?MyInstruct?>\r\n<student>My Name is SnowMan. </student>\r\n\r\n\r\n';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11529,7 +11536,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<?MyInstruct ?>\r\n<student>My Name is SnowMan. </student>';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11538,7 +11545,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<?MyInstruct AVOID ? BEFORE > IN PI ?>\r\n<student>My Name is SnowMan. </student>';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11547,7 +11554,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<?MyInstruct This is a test ?>\r\n<student>My Name is SnowMan. </student>\r\n\r\n\r\n';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11556,7 +11563,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing CDSect with CDStart CData CDEnd -->\r\n\r\n<student>My Name is SnowMan. <![CDATA[This is <normal> text]]> </student>\r\n\r\n';
     const canonical = "<student>My Name is SnowMan. This is &lt;normal&gt; text </student>";
-    const compact: unknown = { student: "My Name is SnowMan. This is <normal> text" };
+    const compact: unknown = { student: "My Name is SnowMan. This is <normal> text " };
     expectParses(input, canonical, compact);
   });
 
@@ -11565,7 +11572,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing CDStart -->\r\n<student>My Name is SnowMan. <![CDATA[This is a test]]> </student>\r\n\r\n\r\n';
     const canonical = "<student>My Name is SnowMan. This is a test </student>";
-    const compact: unknown = { student: "My Name is SnowMan. This is a test" };
+    const compact: unknown = { student: "My Name is SnowMan. This is a test " };
     expectParses(input, canonical, compact);
   });
 
@@ -11574,7 +11581,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing CData with empty string -->\r\n\r\n<student>My Name is SnowMan. <![CDATA[]]></student>\r\n\r\n\r\n';
     const canonical = "<student>My Name is SnowMan. </student>";
-    const compact: unknown = { student: "My Name is SnowMan." };
+    const compact: unknown = { student: "My Name is SnowMan. " };
     expectParses(input, canonical, compact);
   });
 
@@ -11592,7 +11599,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE student [\r\n\t<!ELEMENT student (#PCDATA)> \r\n]>\r\n\r\n<!-- testing CDEnd --> \r\n\r\n<student>My Name is SnowMan. <![CDATA[This is a test]]> </student>\r\n\r\n\r\n';
     const canonical = "<student>My Name is SnowMan. This is a test </student>";
-    const compact: unknown = { student: "My Name is SnowMan. This is a test" };
+    const compact: unknown = { student: "My Name is SnowMan. This is a test " };
     expectParses(input, canonical, compact);
   });
 
@@ -11990,7 +11997,7 @@ describe("ibm", () => {
         a: "",
         b: {
           c: ["", { d: { e: ["no more children", { f: "" }], f: "" } }],
-          "#text": "content of b element",
+          "#text": " \n   content of b element\n   ",
         },
       },
     };
@@ -12007,7 +12014,7 @@ describe("ibm", () => {
       root: {
         b: [
           "without white space",
-          "with a white space",
+          " with a white space",
           { "@attr1": "value1", "#text": "one attribute" },
           {
             "@attr1": "value1",
@@ -12048,7 +12055,7 @@ describe("ibm", () => {
     const compact: unknown = {
       root: {
         a: "",
-        b: { c: "", "#text": ": End tag with a space inside\n   content of b element" },
+        b: { c: "", "#text": " : End tag with a space inside\n   content of b element\n" },
       },
     };
     expectParses(input, canonical, compact);
@@ -12059,7 +12066,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n  <!ELEMENT root (a,b)>\r\n  <!ELEMENT a EMPTY>\r\n  <!ELEMENT b (#PCDATA|c)* >\r\n  <!ELEMENT c ANY>\r\n  <!ENTITY inContent "<b>General entity reference in element content</b>">\r\n]>\r\n<!--* content: element|CharData|Reference|CDSect|PI|CDSect|PI|Comment *-->\r\n<root><a/><b>\r\n<!-- there is an empty element in the above line -->\r\n   <c></c> \r\n   CharData: content of b element\r\n   %paaa; : PE reference should not be recognized in element content \r\n   <c>\r\n<?PIcontent anyProcessingInstruction?>\r\n<!-- Comment content -->\r\n    &inContent;\r\n    Charater reference: &#x41;\r\n    CDSect in content: <![CDATA[ <html>markups<head>HEAD</head><body>nothing</body></html> ]]>\r\n   </c>\r\n</b>\r\n</root>\r\n<!--* test P43 *-->\r\n';
     const canonical =
-      "<root><a></a><b>&#10;&#10;   <c></c> &#10;   CharData: content of b element&#10;   %paaa; : PE reference should not be recognized in element content &#10;   <c>&#10;&#10;&#10;    <b>General entity reference in element content</b>&#10;    Charater reference: A&#10;    CDSect in content:  &lt;html&gt;markups&lt;head&gt;HEAD&lt;/head&gt;&lt;body&gt;nothing&lt;/body&gt;&lt;/html&gt; &#10;   </c>&#10;</b>&#10;</root>";
+      "<root><a></a><b>&#10;&#10;   <c></c> &#10;   CharData: content of b element&#10;   %paaa; : PE reference should not be recognized in element content &#10;   <c>&#10;<?PIcontent anyProcessingInstruction?>&#10;&#10;    <b>General entity reference in element content</b>&#10;    Charater reference: A&#10;    CDSect in content:  &lt;html&gt;markups&lt;head&gt;HEAD&lt;/head&gt;&lt;body&gt;nothing&lt;/body&gt;&lt;/html&gt; &#10;   </c>&#10;</b>&#10;</root>";
     const compact: unknown = {
       root: {
         a: "",
@@ -12069,11 +12076,11 @@ describe("ibm", () => {
             {
               b: "General entity reference in element content",
               "#text":
-                "Charater reference: A\n    CDSect in content:  <html>markups<head>HEAD</head><body>nothing</body></html>",
+                "\n    Charater reference: A\n    CDSect in content:  <html>markups<head>HEAD</head><body>nothing</body></html> \n   ",
             },
           ],
           "#text":
-            "CharData: content of b element\n   %paaa; : PE reference should not be recognized in element content",
+            " \n   CharData: content of b element\n   %paaa; : PE reference should not be recognized in element content \n   ",
         },
       },
     };
@@ -12089,7 +12096,7 @@ describe("ibm", () => {
     const compact: unknown = {
       root: {
         b: ["", "", { "@attr1": "value1" }, { "@attr1": "value1", "@attr2": "value2", "@attr3": "value3" }],
-        "#text": "without white space\n   with a white space",
+        "#text": "without white space\n   with a white space\n  ",
       },
     };
     expectParses(input, canonical, compact);
@@ -12104,7 +12111,7 @@ describe("ibm", () => {
     const compact: unknown = {
       root: {
         b: ["", "", { "@attr1": "value1" }, { "@attr1": "value1", "@attr2": "value2", "@attr3": "value3" }],
-        "#text": "without white space\n   with a white space",
+        "#text": "without white space\n   with a white space\n  ",
       },
     };
     expectParses(input, canonical, compact);
@@ -12115,7 +12122,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n  <!ELEMENT root (a,b)>\r\n  <!ELEMENT a EMPTY>\r\n  <!ELEMENT b (#PCDATA|c)* >\r\n  <!ELEMENT c ANY>\r\n  <!ELEMENT d ANY>\r\n  <!ELEMENT e ANY>\r\n  <!ELEMENT f ANY>\r\n  <!--* test all possible children,cp,choice,seq patterns in P47,P48,P49,P50 *-->\r\n  <!ELEMENT child0 (a)>\r\n  <!ELEMENT child1 (a|b|c)>\r\n  <!ELEMENT child2 (a ,b,b?,a*,c,c,a,a,b+,c ) >\r\n  <!ELEMENT child3 (a+|b)? >\r\n  <!ELEMENT child4 (a, (b|c)+, (a|d)?, (e|f)* )?>\r\n  <!ELEMENT child5 ( (a,b) | c? | ((d|e),b,c) )* >\r\n  <!ELEMENT child5_1 ( (a,b)* | (c,b)? | (d,a)+ | ((e|f),b,c) )* >\r\n  <!ELEMENT child6 (a,b,c)*>\r\n  <!ELEMENT child7 ((a,b)|c*|((d|e),b,c) )+ >\r\n  <!ELEMENT child8 ( a, (b|c), (a|b), b)+>  \r\n]>\r\n<root><a/><b>\r\n   <c></c >\r\n   content of b element\r\n</b></root>\r\n<!--* a valid test: tests P47,P48,P49,P50*-->\r\n\r\n';
     const canonical = "<root><a></a><b>&#10;   <c></c>&#10;   content of b element&#10;</b></root>";
-    const compact: unknown = { root: { a: "", b: { c: "", "#text": "content of b element" } } };
+    const compact: unknown = { root: { a: "", b: { c: "", "#text": "\n   content of b element\n" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -12125,7 +12132,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root SYSTEM "ibm49v01.dtd"[\r\n  <!ELEMENT root (a,b)>\r\n]>\r\n<root><a/><b>\r\n   <c></c>\r\n   content of b element\r\n</b></root>\r\n<!--* a valid test: tests VC:Proper Group/PE Nesting in P49 *-->\r\n\r\n\r\n\r\n';
     const canonical = "<root><a></a><b>&#10;   <c></c>&#10;   content of b element&#10;</b></root>";
-    const compact: unknown = { root: { a: "", b: { c: "", "#text": "content of b element" } } };
+    const compact: unknown = { root: { a: "", b: { c: "", "#text": "\n   content of b element\n" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -12141,7 +12148,7 @@ describe("ibm", () => {
         a: "",
         b: {
           c: [{ child1: { a: "", b: "", c: "" } }, { child2: { a: "", b: "", c: "" } }],
-          "#text": "content of b element",
+          "#text": "\n   content of b element\n",
         },
       },
     };
@@ -12156,11 +12163,11 @@ describe("ibm", () => {
       "<root>&#10;  <a> Element type a </a>&#10;  <b> Element type b </b>&#10;  <c> Element type c </c>&#10;  <d> Element type d <c></c> </d>&#10;  <e> Element type e <a></a> <b></b> <c></c> </e>&#10;</root>";
     const compact: unknown = {
       root: {
-        a: "Element type a",
-        b: "Element type b",
-        c: "Element type c",
-        d: { c: "", "#text": "Element type d" },
-        e: { a: "", b: "", c: "", "#text": "Element type e" },
+        a: " Element type a ",
+        b: " Element type b ",
+        c: " Element type c ",
+        d: { "#text": " Element type d ", c: "" },
+        e: { "#text": " Element type e ", a: "", b: "", c: "" },
       },
     };
     expectParses(input, canonical, compact);
@@ -12175,11 +12182,11 @@ describe("ibm", () => {
       "<root>&#10;  <a> Element type a </a>&#10;  <b> Element type b </b>&#10;  <c> Element type c </c>&#10;  <d> Element type d <c></c> </d>&#10;  <e> Element type e <a></a> <b></b> <c></c> </e>&#10;</root>";
     const compact: unknown = {
       root: {
-        a: "Element type a",
-        b: "Element type b",
-        c: "Element type c",
-        d: { c: "", "#text": "Element type d" },
-        e: { a: "", b: "", c: "", "#text": "Element type e" },
+        a: " Element type a ",
+        b: " Element type b ",
+        c: " Element type c ",
+        d: { "#text": " Element type d ", c: "" },
+        e: { "#text": " Element type e ", a: "", b: "", c: "" },
       },
     };
     expectParses(input, canonical, compact);
@@ -12193,12 +12200,12 @@ describe("ibm", () => {
       '<root>&#10;  <a> Element type a </a>&#10;  <b battr1="anyvalue" battr3="fixedvalue" battr4="def"> test P52 and P53 </b>&#10;</root>';
     const compact: unknown = {
       root: {
-        a: "Element type a",
+        a: " Element type a ",
         b: {
           "@battr1": "anyvalue",
           "@battr3": "fixedvalue",
           "@battr4": "def",
-          "#text": "test P52 and P53",
+          "#text": " test P52 and P53 ",
         },
       },
     };
@@ -12229,7 +12236,7 @@ describe("ibm", () => {
     const input: string =
       "<?xml  version=\"1.0\"?>\r\n<!-- test for Production 54-->\r\n<!DOCTYPE AttrType\r\n[\r\n<!ELEMENT AttrType ANY>\r\n<!ELEMENT a (#PCDATA)>\r\n<!ATTLIST a att CDATA #IMPLIED>\r\n]>\r\n<AttrType>\r\n<a att= 'hello world'>\r\n</a>\r\n</AttrType>\r\n";
     const canonical = '<AttrType>&#10;<a att="hello world">&#10;</a>&#10;</AttrType>';
-    const compact: unknown = { AttrType: { a: { "@att": "hello world" } } };
+    const compact: unknown = { AttrType: { a: { "@att": "hello world", "#text": "\n" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -12242,7 +12249,7 @@ describe("ibm", () => {
     const compact: unknown = {
       StType: {
         a: { "@att": "Hello" },
-        "#text": "Testing with a valid stringType attribute",
+        "#text": "\nTesting with a valid stringType attribute \n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12269,7 +12276,7 @@ describe("ibm", () => {
       tokenizer: {
         "@UniqueName": "AC1999",
         "#text":
-          "This is a positive test for validity constraints\nGiving a unique name to the attribute ID an ID Attribute default as #required",
+          "\nThis is a positive test for validity constraints\nGiving a unique name to the attribute ID an ID Attribute default as #required\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12285,7 +12292,7 @@ describe("ibm", () => {
     const compact: unknown = {
       tokenizer: {
         "@UniqueName": "AC1999",
-        "#text": "This is a positive test for validity constraints\nGiving ID attribute default as #IMPLIED",
+        "#text": "\nThis is a positive test for validity constraints\nGiving ID attribute default as #IMPLIED\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12303,7 +12310,7 @@ describe("ibm", () => {
         "@UniqueName": "Ac999",
         b: { "@attr": "BC999" },
         "#text":
-          "This is a positive test for validity constraints\nthe value of the attribute with a type ID does not appear more than once in the XML document",
+          "\nThis is a positive test for validity constraints\nthe value of the attribute with a type ID does not appear more than once in the XML document\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12321,7 +12328,7 @@ describe("ibm", () => {
         a: { "@first": "AC1999" },
         b: { "@second": "CD345" },
         "#text":
-          "This is a positive validity test for ID.\nany element type has no more than one attribute of type ID specified",
+          "\nThis is a positive validity test for ID.\nany element type has no more than one attribute of type ID specified\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12339,7 +12346,7 @@ describe("ibm", () => {
         id: { "@UniqueName": "AC456" },
         idref: { "@reference": "AC456" },
         "#text":
-          "Positive test for validity constraint of IDREF.\nIn an attribute decl, values of type IDREF match tha name production\nand the IDREF value matches the value assigned to an ID attribute somewhere\nin the XML document.",
+          "\nPositive test for validity constraint of IDREF.\nIn an attribute decl, values of type IDREF match tha name production\nand the IDREF value matches the value assigned to an ID attribute somewhere\nin the XML document.\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12358,7 +12365,7 @@ describe("ibm", () => {
         id2: { "@UName": "Q123" },
         idref: { "@reference": "AC456 Q123" },
         "#text":
-          "Positive test for validity constraint of IDREFS.\nIn an attribute decl, values of type IDREFS match tha name production\nand the IDREFS value matches the values assigned to an ID attributes somewhere\nin the XML document.",
+          "\nPositive test for validity constraint of IDREFS.\nIn an attribute decl, values of type IDREFS match tha name production\nand the IDREFS value matches the values assigned to an ID attributes somewhere\nin the XML document.\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12375,7 +12382,7 @@ describe("ibm", () => {
       test: {
         landscape: { "@sun": "image" },
         "#text":
-          "values of type ENTITY match the Name production and the ENTITY value\nmatches the name of an unparsed entity declared in the DTD.",
+          "\nvalues of type ENTITY match the Name production and the ENTITY value\nmatches the name of an unparsed entity declared in the DTD.\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12391,7 +12398,7 @@ describe("ibm", () => {
     const compact: unknown = {
       test: {
         nametoken: { "@thistoken": "x:image" },
-        "#text": "In an attribute declaration, values of type NMTOKEN match the Nmtoken production",
+        "#text": "\nIn an attribute declaration, values of type NMTOKEN match the Nmtoken production\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12407,7 +12414,7 @@ describe("ibm", () => {
     const compact: unknown = {
       test: {
         nametokens: { "@thistoken": "x:lang y:country" },
-        "#text": "In an attribute declaration, values of type NMTOKENS match the Nmtokens production",
+        "#text": "\nIn an attribute declaration, values of type NMTOKENS match the Nmtokens production\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12420,7 +12427,11 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- valid test for Production 57-->\r\n<!DOCTYPE root\r\n [\r\n <!ELEMENT root (#PCDATA|a|b)*>\r\n <!ELEMENT a ANY>\r\n <!ELEMENT b ANY>\r\n <!NOTATION a SYSTEM "a">\r\n <!NOTATION b SYSTEM "b"> \r\n <!ATTLIST a att (a|b) #IMPLIED>\r\n <!ATTLIST b att NOTATION (a|b) #IMPLIED>\r\n ]>\r\n <root>\r\nThis test case tests the kinds of enumerated types\r\n<a/><b/>\r\n</root>\r\n';
     const canonical = "<root>&#10;This test case tests the kinds of enumerated types&#10;<a></a><b></b>&#10;</root>";
     const compact: unknown = {
-      root: { a: "", b: "", "#text": "This test case tests the kinds of enumerated types" },
+      root: {
+        "#text": "\nThis test case tests the kinds of enumerated types\n",
+        a: "",
+        b: "",
+      },
     };
     expectParses(input, canonical, compact);
   });
@@ -12430,7 +12441,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- valid test for Production 58-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one ANY>\r\n <!ELEMENT two ANY>\r\n <!ELEMENT three ANY>\r\n <!ELEMENT four ANY>\r\n <!ELEMENT five ANY>\r\n <!NOTATION this SYSTEM "alpha">\r\n <!NOTATION that SYSTEM "beta">\r\n <!ATTLIST one attr NOTATION (this) #IMPLIED>\r\n <!ATTLIST two attr NOTATION ( this) #IMPLIED>\r\n <!ATTLIST three attr NOTATION (this|that) #IMPLIED>\r\n <!ATTLIST four attr NOTATION (that |this) #IMPLIED>\r\n <!ATTLIST five attr NOTATION ( that ) #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a positive test with different patterns for NOTATION\r\n</test>\r\n';
     const canonical = "<test>&#10;This is a positive test with different patterns for NOTATION&#10;</test>";
-    const compact: unknown = { test: "This is a positive test with different patterns for NOTATION" };
+    const compact: unknown = { test: "\nThis is a positive test with different patterns for NOTATION\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -12445,7 +12456,7 @@ describe("ibm", () => {
       test: {
         blob: { "@content-encoding": "base64" },
         "#text":
-          "The attribute values of type NOTATION matches one of the notation names included in the declaration;\nall notation names in the declaration have been declared",
+          "\nThe attribute values of type NOTATION matches one of the notation names included in the declaration;\nall notation names in the declaration have been declared\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12457,7 +12468,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 59-->\r\n<!DOCTYPE test\r\n [\r\n <!ELEMENT test ANY>\r\n <!ELEMENT one EMPTY>\r\n <!ELEMENT two EMPTY>\r\n <!ELEMENT enum (#PCDATA)>\r\n <!ATTLIST one attr (one) #IMPLIED>\r\n <!ATTLIST two attr ( enum) #IMPLIED>\r\n <!ATTLIST two attr (one|two) #IMPLIED>\r\n <!ATTLIST two attr (one| two) #IMPLIED>\r\n <!ATTLIST two attr (enum ) #IMPLIED>\r\n <!ATTLIST two attr ( one | two | enum) #IMPLIED>\r\n ]>\r\n <test>\r\nThis is a Positive test\r\n</test>\r\n';
     const canonical = "<test>&#10;This is a Positive test&#10;</test>";
-    const compact: unknown = { test: "This is a Positive test" };
+    const compact: unknown = { test: "\nThis is a Positive test\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -12472,7 +12483,7 @@ describe("ibm", () => {
       test: {
         num: { "@value": "one" },
         "#text":
-          "This is a Positive test\nThe attribute values of type Enumeration match one of the Nmtoken tokens in the declaration.",
+          "\nThis is a Positive test\nThe attribute values of type Enumeration match one of the Nmtoken tokens in the declaration.\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12489,7 +12500,7 @@ describe("ibm", () => {
       Java: {
         one: { "@chapter": "Introduction" },
         three: { "@chapter": "JavaBeans" },
-        "#text": "Positive test\n DefaultDecl attributes values IMPLIED, REQUIRED, FIXED and default",
+        "#text": "\n Positive test\n DefaultDecl attributes values IMPLIED, REQUIRED, FIXED and default\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12507,7 +12518,7 @@ describe("ibm", () => {
         one: { "@chapter": "Introduction" },
         two: { "@chapter": "JavaApplets" },
         "#text":
-          "Positive test. Required attribute. Every occurrence of an element with a \n#REQUIRED attribute default declaration gives the value of that attribute",
+          "\nPositive test. Required attribute. Every occurrence of an element with a \n#REQUIRED attribute default declaration gives the value of that attribute\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12524,7 +12535,7 @@ describe("ibm", () => {
       Java: {
         one: { "@chapter": "Introduction" },
         "#text":
-          "An attribute has a default value declared with the #FIXED keyword, \nand an instances of that attribute is given a value which is exactly \nthe same as the default value in the declaration.",
+          "\nAn attribute has a default value declared with the #FIXED keyword, \nand an instances of that attribute is given a value which is exactly \nthe same as the default value in the declaration. \n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12538,7 +12549,7 @@ describe("ibm", () => {
     const canonical =
       "<test>&#10;The default value specified for an attribute meets the &#10;lexical constraints of the declared attribute type.&#10;</test>";
     const compact: unknown = {
-      test: "The default value specified for an attribute meets the \nlexical constraints of the declared attribute type.",
+      test: "\nThe default value specified for an attribute meets the \nlexical constraints of the declared attribute type.\n",
     };
     expectParses(input, canonical, compact);
   });
@@ -12573,7 +12584,7 @@ describe("ibm", () => {
     const compact: unknown = {
       animal: {
         tiger: "",
-        "#text": "Positive test. Test includeSect with pattern1 of p62.\nNormal Pattern",
+        "#text": "\nPositive test. Test includeSect with pattern1 of p62.\nNormal Pattern\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12589,7 +12600,7 @@ describe("ibm", () => {
     const compact: unknown = {
       animal: {
         tiger: "",
-        "#text": "Positive test. Test includeSect with pattern2 of p62.\nspace included before INCLUDE",
+        "#text": "\nPositive test. Test includeSect with pattern2 of p62.\nspace included before INCLUDE\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12605,7 +12616,7 @@ describe("ibm", () => {
     const compact: unknown = {
       animal: {
         tiger: "",
-        "#text": "Positive test. Test includeSect with pattern3 of p62.\nspace included after INCLUDE",
+        "#text": "\nPositive test. Test includeSect with pattern3 of p62.\nspace included after INCLUDE\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12621,7 +12632,7 @@ describe("ibm", () => {
     const compact: unknown = {
       animal: {
         tiger: "",
-        "#text": "Positive test. Test includeSect with pattern4 of p62.\nspace included before and after INCLUDE",
+        "#text": "\nPositive test. Test includeSect with pattern4 of p62.\nspace included before and after INCLUDE\n",
       },
     };
     expectParses(input, canonical, compact);
@@ -12635,7 +12646,10 @@ describe("ibm", () => {
     const canonical =
       "<animal>&#10; <tiger></tiger>&#10;Positive test. Missing external subset declaration.&#10;</animal>";
     const compact: unknown = {
-      animal: { tiger: "", "#text": "Positive test. Missing external subset declaration." },
+      animal: {
+        tiger: "",
+        "#text": "\nPositive test. Missing external subset declaration.\n",
+      },
     };
     expectParses(input, canonical, compact);
   });
@@ -12647,7 +12661,10 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 63-->\r\n<!DOCTYPE animal SYSTEM "ibm63v01.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n<!ELEMENT tiger (#PCDATA)>\r\n<!ATTLIST animal a (tiger) #REQUIRED> \r\n]>\r\n<animal a = "tiger">\r\nPositive test. Test for IGNORE with pattern 1.\r\n</animal>';
     const canonical = '<animal a="tiger">&#10;Positive test. Test for IGNORE with pattern 1.&#10;</animal>';
     const compact: unknown = {
-      animal: { "@a": "tiger", "#text": "Positive test. Test for IGNORE with pattern 1." },
+      animal: {
+        "@a": "tiger",
+        "#text": "\nPositive test. Test for IGNORE with pattern 1.\n",
+      },
     };
     expectParses(input, canonical, compact);
   });
@@ -12659,7 +12676,10 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 63-->\r\n<!DOCTYPE animal SYSTEM "ibm63v02.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n<!ELEMENT tiger (#PCDATA)>\r\n<!ATTLIST animal a (tiger) #REQUIRED> \r\n]>\r\n<animal a = "tiger">\r\nPositive test. Test for IGNORE with pattern 2.\r\n</animal>';
     const canonical = '<animal a="tiger">&#10;Positive test. Test for IGNORE with pattern 2.&#10;</animal>';
     const compact: unknown = {
-      animal: { "@a": "tiger", "#text": "Positive test. Test for IGNORE with pattern 2." },
+      animal: {
+        "@a": "tiger",
+        "#text": "\nPositive test. Test for IGNORE with pattern 2.\n",
+      },
     };
     expectParses(input, canonical, compact);
   });
@@ -12671,7 +12691,10 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 63-->\r\n<!DOCTYPE animal SYSTEM "ibm63v03.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n<!ELEMENT tiger (#PCDATA)>\r\n<!ATTLIST animal a (tiger) #REQUIRED> \r\n]>\r\n<animal a = "tiger">\r\nPositive test. Test for IGNORE with pattern 3.\r\n</animal>';
     const canonical = '<animal a="tiger">&#10;Positive test. Test for IGNORE with pattern 3.&#10;</animal>';
     const compact: unknown = {
-      animal: { "@a": "tiger", "#text": "Positive test. Test for IGNORE with pattern 3." },
+      animal: {
+        "@a": "tiger",
+        "#text": "\nPositive test. Test for IGNORE with pattern 3.\n",
+      },
     };
     expectParses(input, canonical, compact);
   });
@@ -12683,7 +12706,10 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 63-->\r\n<!DOCTYPE animal SYSTEM "ibm63v04.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n<!ELEMENT tiger (#PCDATA)>\r\n<!ATTLIST animal a (tiger) #REQUIRED> \r\n]>\r\n<animal a = "tiger">\r\nPositive test. Test for IGNORE with pattern 4.\r\n</animal>';
     const canonical = '<animal a="tiger">&#10;Positive test. Test for IGNORE with pattern 4.&#10;</animal>';
     const compact: unknown = {
-      animal: { "@a": "tiger", "#text": "Positive test. Test for IGNORE with pattern 4." },
+      animal: {
+        "@a": "tiger",
+        "#text": "\nPositive test. Test for IGNORE with pattern 4.\n",
+      },
     };
     expectParses(input, canonical, compact);
   });
@@ -12695,7 +12721,10 @@ describe("ibm", () => {
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 63-->\r\n<!DOCTYPE animal SYSTEM "ibm63v05.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n<!ELEMENT tiger (#PCDATA)>\r\n<!ATTLIST animal a (tiger) #REQUIRED> \r\n]>\r\n<animal a = "tiger">\r\nPositive test. Test for IGNORE with pattern 5.\r\n</animal>';
     const canonical = '<animal a="tiger">&#10;Positive test. Test for IGNORE with pattern 5.&#10;</animal>';
     const compact: unknown = {
-      animal: { "@a": "tiger", "#text": "Positive test. Test for IGNORE with pattern 5." },
+      animal: {
+        "@a": "tiger",
+        "#text": "\nPositive test. Test for IGNORE with pattern 5.\n",
+      },
     };
     expectParses(input, canonical, compact);
   });
@@ -12706,7 +12735,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 64-->\r\n<!DOCTYPE animal SYSTEM "ibm64v01.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n]>\r\n<animal>\r\nPositive Test. Pattern1\r\n</animal>';
     const canonical = "<animal>&#10;Positive Test. Pattern1&#10;</animal>";
-    const compact: unknown = { animal: "Positive Test. Pattern1" };
+    const compact: unknown = { animal: "\nPositive Test. Pattern1\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -12716,7 +12745,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 64-->\r\n<!DOCTYPE animal SYSTEM "ibm64v02.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n]>\r\n<animal>\r\nPositive Test. Pattern2\r\n</animal>';
     const canonical = "<animal>&#10;Positive Test. Pattern2&#10;</animal>";
-    const compact: unknown = { animal: "Positive Test. Pattern2" };
+    const compact: unknown = { animal: "\nPositive Test. Pattern2\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -12726,7 +12755,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 64-->\r\n<!DOCTYPE animal SYSTEM "ibm64v03.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n]>\r\n<animal>\r\nPositive Test. Pattern3\r\n</animal>';
     const canonical = "<animal>&#10;Positive Test. Pattern3&#10;</animal>";
-    const compact: unknown = { animal: "Positive Test. Pattern3" };
+    const compact: unknown = { animal: "\nPositive Test. Pattern3\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -12736,7 +12765,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 65-->\r\n<!DOCTYPE animal SYSTEM "ibm65v01.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n]>\r\n<animal>\r\nPositive Test. Pattern1. Empty string.\r\n</animal>';
     const canonical = "<animal>&#10;Positive Test. Pattern1. Empty string.&#10;</animal>";
-    const compact: unknown = { animal: "Positive Test. Pattern1. Empty string." };
+    const compact: unknown = { animal: "\nPositive Test. Pattern1. Empty string.\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -12746,7 +12775,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml  version="1.0"?>\r\n<!-- syntax test for Production 65-->\r\n<!DOCTYPE animal SYSTEM "ibm65v02.dtd"\r\n[\r\n<!ELEMENT animal ANY>\r\n]>\r\n<animal>\r\nPositive Test. Pattern2.\r\n</animal>';
     const canonical = "<animal>&#10;Positive Test. Pattern2.&#10;</animal>";
-    const compact: unknown = { animal: "Positive Test. Pattern2." };
+    const compact: unknown = { animal: "\nPositive Test. Pattern2.\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -12757,7 +12786,7 @@ describe("ibm", () => {
     const canonical =
       "<root>&#10;Test all valid Charater references for P66:&#10;&#9;&#9;&#9;&#10;&#10;&#10;&#10;&#10;&#10;&#13;&#10;« « Í Í ï ï&#10;C C _&#10;  힣 가&#10;豈 �&#10;𐀀 􏿿&#10;</root>";
     const compact: unknown = {
-      root: "Test all valid Charater references for P66:\n\t\t\t\n\n\n\n\n\n\r\n« « Í Í ï ï\nC C _\n  힣 가\n豈 �\n𐀀 􏿿",
+      root: "\nTest all valid Charater references for P66:\n\t\t\t\n\n\n\n\n\n\r\n« « Í Í ï ï\nC C _\n  힣 가\n豈 �\n𐀀 􏿿\n",
     };
     expectParses(input, canonical, compact);
   });
@@ -12767,7 +12796,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root [\r\n  <!ELEMENT root (#PCDATA)>\r\n  <!ATTLIST root attr CDATA #REQUIRED>\r\n  <!ENTITY ge1 "xyz">\r\n]>\r\n<root attr="&ge1;&#65;">\r\n&ge1; &#66;\r\n</root>\r\n<!--* a valid test for P67 *-->\r\n';
     const canonical = '<root attr="xyzA">&#10;xyz B&#10;</root>';
-    const compact: unknown = { root: { "@attr": "xyzA", "#text": "xyz B" } };
+    const compact: unknown = { root: { "@attr": "xyzA", "#text": "\nxyz B\n" } };
     expectParses(input, canonical, compact);
   });
 
@@ -12777,7 +12806,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0"?>\r\n<!DOCTYPE root SYSTEM "ibm68v01.dtd" [\r\n  <!ELEMENT root (#PCDATA|a)* >\r\n]>\r\n<root>\r\n  pcdata content\r\n  <a attr1="xyz"/>\r\n</root>\r\n<!--* a valid test for P68 VC:Entity Declared *-->\r\n';
     const canonical = '<root>&#10;  pcdata content&#10;  <a attr1="xyz"></a>&#10;</root>';
-    const compact: unknown = { root: { a: { "@attr1": "xyz" }, "#text": "pcdata content" } };
+    const compact: unknown = { root: { "#text": "\n  pcdata content\n  ", a: { "@attr1": "xyz" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -12787,7 +12816,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0" standalone=\'no\'?>\r\n<!DOCTYPE root [\r\n  <!ELEMENT root (#PCDATA)* >\r\n  <!ENTITY % pe1 SYSTEM "ibm68v02.ent">\r\n  %pe1;\r\n]>\r\n<root>\r\n  pcdata content\r\n</root>\r\n<!--* a valid test for P68 VC:Entity Declared *-->\r\n';
     const canonical = "<root>&#10;  pcdata content&#10;</root>";
-    const compact: unknown = { root: "pcdata content" };
+    const compact: unknown = { root: "\n  pcdata content\n" };
     expectParses(input, canonical, compact);
   });
 
@@ -12797,7 +12826,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0" standalone="no" ?>\r\n<!DOCTYPE root SYSTEM "ibm69v01.dtd" [\r\n  <!ELEMENT root (#PCDATA|a)* >\r\n  <!ENTITY % pe1 "<!-- comment in PE -->">\r\n  %pe1;\r\n]>\r\n<root>\r\n  pcdata content\r\n  <a attr1="xyz"/>\r\n</root>\r\n<!--* a valid test for P69 VC:Entity Declared *-->\r\n';
     const canonical = '<root>&#10;  pcdata content&#10;  <a attr1="xyz"></a>&#10;</root>';
-    const compact: unknown = { root: { a: { "@attr1": "xyz" }, "#text": "pcdata content" } };
+    const compact: unknown = { root: { "#text": "\n  pcdata content\n  ", a: { "@attr1": "xyz" } } };
     expectParses(input, canonical, compact);
   });
 
@@ -12807,7 +12836,7 @@ describe("ibm", () => {
     const input: string =
       '<?xml version="1.0" standalone=\'no\'?>\r\n<!DOCTYPE root [\r\n  <!ELEMENT root (#PCDATA)* >\r\n  <!ENTITY % pe1 SYSTEM "ibm69v02.ent">\r\n  %pe1;\r\n]>\r\n<root>\r\n  pcdata content\r\n</root>\r\n<!--* a valid test for P69 VC:Entity Declared *-->\r\n';
     const canonical = "<root>&#10;  pcdata content&#10;</root>";
-    const compact: unknown = { root: "pcdata content" };
+    const compact: unknown = { root: "\n  pcdata content\n" };
     expectParses(input, canonical, compact);
   });
 

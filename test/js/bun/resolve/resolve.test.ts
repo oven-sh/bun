@@ -484,6 +484,95 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
   expect(exitCode).toBe(0);
 });
 
+// Parsing a package.json normalized every key of the "browser" map into a fixed
+// 1024-byte threadlocal buffer without a bounds check, so a longer key aborted
+// the process (`panic: range end index 1103 out of range for slice of length
+// 1024`) as soon as the package.json was read, whatever the target.
+describe.concurrent("browser map with a key longer than 1024 bytes", () => {
+  const longKey = Buffer.alloc(1100, "k").toString();
+
+  it("does not crash reading the package.json of a dependency at runtime", async () => {
+    using dir = tempDir("resolver-browser-long-key-runtime", {
+      "node_modules/dep/package.json": JSON.stringify({
+        name: "dep",
+        main: "index.js",
+        browser: { [`./${longKey}.js`]: "./browser.js" },
+      }),
+      "node_modules/dep/index.js": "module.exports = 1;",
+      "index.js": `console.log(require("dep"));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("still applies the other entries of the map to a browser build", async () => {
+    using dir = tempDir("resolver-browser-long-key-build", {
+      "package.json": JSON.stringify({
+        name: "pkg",
+        browser: {
+          [`./${longKey}.js`]: "./unused.js",
+          "./node-only.js": "./browser-only.js",
+        },
+      }),
+      "entry.js": `import { x } from "./node-only.js"; console.log(x);`,
+      "node-only.js": `export const x = "node-only";`,
+      "browser-only.js": `export const x = "browser-only";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=browser", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"browser-only"');
+    expect(stdout).not.toContain('"node-only"');
+    expect(exitCode).toBe(0);
+  });
+
+  // Looking a specifier up in the map goes through a PATH_MAX-sized buffer,
+  // which on macOS is itself 1024 bytes, so a key this long can only ever be
+  // matched on Linux and Windows.
+  it.skipIf(isMacOS)("remaps a package path that long in a browser build", async () => {
+    using dir = tempDir("resolver-browser-long-key-remap", {
+      "package.json": JSON.stringify({
+        name: "pkg",
+        browser: { [longKey]: "./shim.js" },
+      }),
+      "entry.js": `import { x } from ${JSON.stringify(longKey)}; console.log(x);`,
+      "shim.js": `export const x = "remapped";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=browser", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"remapped"');
+    expect(exitCode).toBe(0);
+  });
+});
+
 // ESModule.Package.parse scanned the entire specifier for an `@` to split off a
 // version. For wildcard `exports` maps the matched substring can contain `@`
 // (e.g. `ember-source/@ember/renderer/...`, `pkg/@scope/sub`) — those `@`s

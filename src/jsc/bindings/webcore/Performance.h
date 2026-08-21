@@ -58,7 +58,6 @@ using DOMHighResTimeStamp = double;
 
 class CachedResource;
 class Document;
-class DocumentLoadTiming;
 class DocumentLoader;
 class NetworkLoadMetrics;
 class PerformanceUserTiming;

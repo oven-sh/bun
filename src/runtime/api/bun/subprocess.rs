@@ -208,12 +208,8 @@ const _: () = {
 };
 
 impl<'a> Subprocess<'a> {
-    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any)
-    /// for the caller to `deref()`. Clears `started` so `StaticPipeWriter::
-    /// on_write`'s own release site becomes a no-op if a queued write-complete
-    /// callback still fires after the caller closes the pipe (Windows: a
-    /// `uv_write` whose I/O already completed is delivered with its real
-    /// status after `uv_close`, not `ECANCELED`).
+    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any) for
+    /// the caller to `deref()` after closing the writer; see `StaticPipeWriter`.
     fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
         match self.stdin.get() {
             Writable::Buffer(buffer) => {
@@ -443,6 +439,11 @@ impl Subprocess<'_> {
 
     pub(crate) fn update_has_pending_activity(&self) {
         if self.flags.get().contains(Flags::IS_SYNC) {
+            return;
+        }
+        // The wrapper is gone (finalize() closing stdio that a stopped worker
+        // left pending): there is nothing to keep alive or release.
+        if self.this_value.get().is_finalized() {
             return;
         }
 
@@ -835,7 +836,7 @@ impl Subprocess<'_> {
         };
         // `ipc()` centralises the single unsafe `JsCell` deref; `do_send` may
         // re-enter JS, but only the SendQueue is borrowed, not `*self`.
-        crate::ipc_host::do_send(this.ipc(), global, call_frame, context)
+        crate::ipc_host::do_send(this.ipc(), global, call_frame, context, this.pid() as u32)
     }
 
     pub(crate) fn disconnect_ipc(&self, next_tick: bool) {
@@ -849,7 +850,9 @@ impl Subprocess<'_> {
         _global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.disconnect_ipc(true);
+        if let Some(ipc_data) = this.ipc() {
+            ipc_data.disconnect();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1352,7 +1355,7 @@ impl Subprocess<'_> {
 
         if let Some(ipc_data) = this.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
-            // get here (that is what allowed `computeHasPendingActivity` to drop
+            // get here (that is what allowed `compute_has_pending_activity` to drop
             // to false and let GC collect us). Detach and release our ref; any
             // still-queued close task holds its own ref and frees the SendQueue
             // when it runs.
@@ -1473,9 +1476,7 @@ impl Subprocess<'_> {
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {
-            // Avoid keeping the callback alive longer than necessary
-            js::ipc_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
-
+            // The ipc callback is kept: a server/dgram handle still adopting at EOF is delivered afterwards, as in node.
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) =
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)

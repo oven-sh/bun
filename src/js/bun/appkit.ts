@@ -849,7 +849,8 @@ class Window {
       if (!isWindowProp(key) && !windowCreateOnly.includes(key)) throw typeError(`Unknown Window option "${key}"`);
     }
     for (const key of windowEvents) {
-      if (options[key] != null && typeof options[key] !== "function") throw typeError(`Window.${key} must be a function`);
+      if (options[key] != null && typeof options[key] !== "function")
+        throw typeError(`Window.${key} must be a function`);
     }
     if (options.content != null) {
       const error = contentError(options.content);

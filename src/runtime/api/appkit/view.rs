@@ -47,9 +47,10 @@ impl ViewSink for Events {
                     return;
                 }
             },
-            Event::RowActivated(row) => {
-                (js::on_activate_get_cached, Some(JSValue::js_number(row as f64)))
-            }
+            Event::RowActivated(row) => (
+                js::on_activate_get_cached,
+                Some(JSValue::js_number(row as f64)),
+            ),
             Event::EditingBegan => (js::on_focus_get_cached, None),
             Event::EditingEnded => (js::on_blur_get_cached, None),
         };
@@ -147,9 +148,8 @@ impl AppKitView {
         let child = Self::peer(global, frame.argument(0), "child")?;
         let index = conv::number(global, frame.argument(1), format_args!("index"))?;
         if index < 0.0 || index.fract() != 0.0 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "index must be a non-negative integer"
-            )));
+            return Err(global
+                .throw_invalid_arguments(format_args!("index must be a non-negative integer")));
         }
         conv::check(global, self.view.insert_child(&child.view, index as usize))?;
         Ok(JSValue::UNDEFINED)

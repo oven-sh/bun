@@ -195,7 +195,8 @@ pub(crate) fn positive(
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    let bad = || global.throw_invalid_arguments(format_args!("{what} must be a positive number or null"));
+    let bad =
+        || global.throw_invalid_arguments(format_args!("{what} must be a positive number or null"));
     if !value.is_number() {
         return Err(bad());
     }
@@ -297,7 +298,11 @@ pub(crate) fn font(
             Weight::from_css(number(global, weight, format_args!("{what}.weight"))?)
         } else if weight.is_string() {
             let name = JsStr::new(global, weight, format_args!("{what}.weight"))?.to_utf8();
-            let name = if name == "normal" { "regular" } else { name.as_str() };
+            let name = if name == "normal" {
+                "regular"
+            } else {
+                name.as_str()
+            };
             Weight::from_name(name).ok_or_else(|| {
                 global.throw_invalid_arguments(format_args!(
                     "{what}.weight: unknown weight \"{name}\""
@@ -414,7 +419,10 @@ fn optional_one_of<T: Named>(
 }
 
 /// `app.activationPolicy` / the argument to `app.start()`.
-pub(crate) fn activation_policy(global: &JSGlobalObject, value: JSValue) -> JsResult<ActivationPolicy> {
+pub(crate) fn activation_policy(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<ActivationPolicy> {
     one_of::<ActivationPolicy>(global, value, format_args!("app.activationPolicy"))
 }
 
@@ -536,7 +544,9 @@ pub(crate) fn with_prop<R>(
         b"value" => Prop::Number(optional_number(global, value, what)?.unwrap_or(0.0)),
         b"font" => Prop::Font(font(global, value, what)?),
         b"color" => Prop::Color(color(global, value, what)?),
-        b"textAlign" => Prop::TextAlign(optional_one_of(global, value, what)?.unwrap_or(TextAlign::Natural)),
+        b"textAlign" => {
+            Prop::TextAlign(optional_one_of(global, value, what)?.unwrap_or(TextAlign::Natural))
+        }
         b"selectable" => Prop::Selectable(optional_boolean(global, value, what)?),
         b"lineLimit" => Prop::LineLimit(
             optional_number(global, value, what)?.map(|lines| lines.max(0.0) as usize),
@@ -575,7 +585,9 @@ pub(crate) fn with_prop<R>(
         b"running" => Prop::Running(optional_boolean(global, value, what)?),
         b"spinner" => Prop::Spinner(optional_boolean(global, value, what)?),
         b"image" => return image(global, value, what, apply),
-        b"scaling" => Prop::Scaling(optional_one_of(global, value, what)?.unwrap_or(ImageScaling::Down)),
+        b"scaling" => {
+            Prop::Scaling(optional_one_of(global, value, what)?.unwrap_or(ImageScaling::Down))
+        }
         b"tint" => Prop::Tint(color(global, value, what)?),
         b"size" => Prop::SymbolSize(positive_points(global, value, what)?),
         b"vertical" => Prop::Vertical(optional_boolean(global, value, what)?),
@@ -618,8 +630,10 @@ pub(crate) fn with_prop<R>(
         b"columns" => return columns(global, value, what, apply),
         b"rows" => {
             let owned = rows(global, value, what)?;
-            let rows: Vec<Vec<NsStr<'_>>> =
-                owned.iter().map(|r| r.iter().map(JsStr::ns).collect()).collect();
+            let rows: Vec<Vec<NsStr<'_>>> = owned
+                .iter()
+                .map(|r| r.iter().map(JsStr::ns).collect())
+                .collect();
             return Ok(apply(Prop::Rows(rows)));
         }
         b"selectedIndexes" => {

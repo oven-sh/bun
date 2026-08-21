@@ -40,7 +40,13 @@ impl WindowSink for Events {
     }
 
     fn resized(&self, size: Size) {
-        let payload = pair_object(self.slots.global(), b"width", size.width, b"height", size.height);
+        let payload = pair_object(
+            self.slots.global(),
+            b"width",
+            size.width,
+            b"height",
+            size.height,
+        );
         self.slots.call(js::on_resize_get_cached, &[payload]);
     }
 

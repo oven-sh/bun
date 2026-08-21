@@ -69,7 +69,11 @@ impl JsSlots {
     }
 
     /// Runs the function in `slot` with `args`.
-    pub(super) fn call(&self, slot: fn(JSValue) -> Option<JSValue>, args: &[JSValue]) -> SlotOutcome {
+    pub(super) fn call(
+        &self,
+        slot: fn(JSValue) -> Option<JSValue>,
+        args: &[JSValue],
+    ) -> SlotOutcome {
         let Some(this) = self.this_value.borrow().try_get() else {
             return SlotOutcome::Skipped;
         };

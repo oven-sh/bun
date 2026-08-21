@@ -2978,6 +2978,59 @@ it("http2 client.request() propagates a throwing header-value toString() instead
   }
 });
 
+// HPACK string literal: 7-bit length prefix, no Huffman coding.
+function literal(str) {
+  const bytes = Buffer.from(str, "latin1");
+  return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+}
+
+// Writes the connection preface, an empty SETTINGS and `frames` to the h2 server listening on
+// `port`, then a PING as a barrier: by the time its ACK (or a GOAWAY) arrives the server has fully
+// processed every frame before it. Resolves with the frames the server sent up to that point.
+async function exchangeFrames(port, frames) {
+  const received = [];
+  const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
+  const socket = net.connect(port, "127.0.0.1", () => {
+    socket.write(http2utils.kClientMagic);
+    socket.write(new http2utils.SettingsFrame(false).data);
+    for (const frame of frames) socket.write(frame);
+    socket.write(new http2utils.PingFrame(false).data);
+  });
+  socket.on("error", onSocketError);
+  let pending = Buffer.alloc(0);
+  socket.on("data", chunk => {
+    pending = Buffer.concat([pending, chunk]);
+    while (pending.length >= 9) {
+      const length = pending.readUIntBE(0, 3);
+      if (pending.length < 9 + length) break;
+      const frame = {
+        type: pending[3],
+        flags: pending[4],
+        streamId: pending.readUInt32BE(5) & 0x7fffffff,
+        payload: Buffer.from(pending.subarray(9, 9 + length)),
+      };
+      pending = pending.subarray(9 + length);
+      received.push(frame);
+      if ((frame.type === 6 && (frame.flags & 1) !== 0) || frame.type === 7) {
+        onExchanged();
+        return;
+      }
+    }
+  });
+  socket.on("close", () => onExchanged());
+  try {
+    await exchanged;
+  } finally {
+    socket.destroy();
+  }
+  return received;
+}
+
+// Sends `headerBlock` as the request on stream 1 (HEADERS with END_HEADERS | END_STREAM).
+function exchangeHeaderBlock(port, headerBlock) {
+  return exchangeFrames(port, [new http2utils.HeadersFrame(1, headerBlock, 0, true, true).data]);
+}
+
 it("http2 server resets streams whose request headers contain CR, LF, or NUL octets", async () => {
   // RFC 9113 Section 8.2.1: a request carrying a field value with NUL, CR, or
   // LF is malformed and must be answered with a stream error, not delivered
@@ -2997,11 +3050,6 @@ it("http2 server resets streams whose request headers contain CR, LF, or NUL oct
   await listening;
   const port = server.address().port;
 
-  // HPACK string literal: 7-bit length prefix, no Huffman coding.
-  const literal = str => {
-    const bytes = Buffer.from(str, "latin1");
-    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
-  };
   const headerBlock = Buffer.concat([
     Buffer.from([0x82]), // :method: GET   (static table index 2)
     Buffer.from([0x86]), // :scheme: http  (static table index 6)
@@ -3013,54 +3061,16 @@ it("http2 server resets streams whose request headers contain CR, LF, or NUL oct
     literal("a\r\nx-forwarded-for: 127.0.0.1"),
   ]);
 
-  const frames = [];
-  const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
-  const socket = net.connect(port, "127.0.0.1", () => {
-    socket.write(http2utils.kClientMagic);
-    socket.write(new http2utils.SettingsFrame(false).data);
-    // HEADERS frame on stream 1 with END_HEADERS | END_STREAM.
-    socket.write(new http2utils.HeadersFrame(1, headerBlock, 0, true, true).data);
-    // PING acts as a barrier: by the time its ACK (or a GOAWAY) arrives the
-    // server has fully processed the HEADERS frame above.
-    socket.write(new http2utils.PingFrame(false).data);
-  });
-  socket.on("error", onSocketError);
-  let received = Buffer.alloc(0);
-  socket.on("data", chunk => {
-    received = Buffer.concat([received, chunk]);
-    while (received.length >= 9) {
-      const length = received.readUIntBE(0, 3);
-      if (received.length < 9 + length) break;
-      const frame = {
-        type: received[3],
-        flags: received[4],
-        streamId: received.readUInt32BE(5) & 0x7fffffff,
-        payload: Buffer.from(received.subarray(9, 9 + length)),
-      };
-      received = received.subarray(9 + length);
-      frames.push(frame);
-      if ((frame.type === 6 && (frame.flags & 1) !== 0) || frame.type === 7) {
-        onExchanged();
-        return;
-      }
-    }
-  });
-  socket.on("close", () => onExchanged());
-
   let client;
   try {
-    try {
-      await exchanged;
-      // The malformed request never reaches the application.
-      expect(deliveredValues).toEqual([]);
-      // The stream is reset with PROTOCOL_ERROR instead of being answered.
-      const rst = frames.find(f => f.type === 3 && f.streamId === 1);
-      expect(rst).toBeDefined();
-      expect(rst.payload.readUInt32BE(0)).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
-      expect(frames.find(f => f.type === 1 && f.streamId === 1)).toBeUndefined();
-    } finally {
-      socket.destroy();
-    }
+    const frames = await exchangeHeaderBlock(port, headerBlock);
+    // The malformed request never reaches the application.
+    expect(deliveredValues).toEqual([]);
+    // The stream is reset with PROTOCOL_ERROR instead of being answered.
+    const rst = frames.find(f => f.type === 3 && f.streamId === 1);
+    expect(rst).toBeDefined();
+    expect(rst.payload.readUInt32BE(0)).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+    expect(frames.find(f => f.type === 1 && f.streamId === 1)).toBeUndefined();
 
     // A request whose header values contain no forbidden octets still reaches
     // the application and gets a response.
@@ -3101,11 +3111,6 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
   await listening;
   const port = server.address().port;
 
-  // HPACK string literal: 7-bit length prefix, no Huffman coding.
-  const literal = str => {
-    const bytes = Buffer.from(str, "latin1");
-    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
-  };
   const malformedHeaderBlocks = {
     "transfer-encoding header": Buffer.concat([
       Buffer.from([0x82]), // :method: GET   (static table index 2)
@@ -3203,52 +3208,10 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
     ]),
   };
 
-  async function exchange(headerBlock) {
-    const frames = [];
-    const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
-    const socket = net.connect(port, "127.0.0.1", () => {
-      socket.write(http2utils.kClientMagic);
-      socket.write(new http2utils.SettingsFrame(false).data);
-      // HEADERS frame on stream 1 with END_HEADERS | END_STREAM.
-      socket.write(new http2utils.HeadersFrame(1, headerBlock, 0, true, true).data);
-      // PING acts as a barrier: by the time its ACK (or a GOAWAY) arrives the
-      // server has fully processed the HEADERS frame above.
-      socket.write(new http2utils.PingFrame(false).data);
-    });
-    socket.on("error", onSocketError);
-    let received = Buffer.alloc(0);
-    socket.on("data", chunk => {
-      received = Buffer.concat([received, chunk]);
-      while (received.length >= 9) {
-        const length = received.readUIntBE(0, 3);
-        if (received.length < 9 + length) break;
-        const frame = {
-          type: received[3],
-          flags: received[4],
-          streamId: received.readUInt32BE(5) & 0x7fffffff,
-          payload: Buffer.from(received.subarray(9, 9 + length)),
-        };
-        received = received.subarray(9 + length);
-        frames.push(frame);
-        if ((frame.type === 6 && (frame.flags & 1) !== 0) || frame.type === 7) {
-          onExchanged();
-          return;
-        }
-      }
-    });
-    socket.on("close", () => onExchanged());
-    try {
-      await exchanged;
-    } finally {
-      socket.destroy();
-    }
-    return frames;
-  }
-
   let client;
   try {
     for (const [caseName, headerBlock] of Object.entries(malformedHeaderBlocks)) {
-      const frames = await exchange(headerBlock);
+      const frames = await exchangeHeaderBlock(port, headerBlock);
       // The malformed request never reaches the application.
       expect({ caseName, delivered: deliveredRequests.length }).toEqual({ caseName, delivered: 0 });
       // The stream is reset with PROTOCOL_ERROR instead of being answered.
@@ -3296,10 +3259,6 @@ it("http2 server rejects malformed extended-CONNECT requests", async () => {
   await listening;
   const port = server.address().port;
 
-  const literal = str => {
-    const bytes = Buffer.from(str, "latin1");
-    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
-  };
   const cases = {
     ":protocol on a non-CONNECT method": Buffer.concat([
       Buffer.from([0x82]), // :method: GET
@@ -3336,48 +3295,9 @@ it("http2 server rejects malformed extended-CONNECT requests", async () => {
     literal("websocket"),
   ]);
 
-  async function exchange(headerBlock) {
-    const frames = [];
-    const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
-    const socket = net.connect(port, "127.0.0.1", () => {
-      socket.write(http2utils.kClientMagic);
-      socket.write(new http2utils.SettingsFrame(false).data);
-      socket.write(new http2utils.HeadersFrame(1, headerBlock, 0, true, true).data);
-      socket.write(new http2utils.PingFrame(false).data);
-    });
-    socket.on("error", onSocketError);
-    let received = Buffer.alloc(0);
-    socket.on("data", chunk => {
-      received = Buffer.concat([received, chunk]);
-      while (received.length >= 9) {
-        const length = received.readUIntBE(0, 3);
-        if (received.length < 9 + length) break;
-        const frame = {
-          type: received[3],
-          flags: received[4],
-          streamId: received.readUInt32BE(5) & 0x7fffffff,
-          payload: Buffer.from(received.subarray(9, 9 + length)),
-        };
-        received = received.subarray(9 + length);
-        frames.push(frame);
-        if ((frame.type === 6 && (frame.flags & 1) !== 0) || frame.type === 7) {
-          onExchanged();
-          return;
-        }
-      }
-    });
-    socket.on("close", () => onExchanged());
-    try {
-      await exchanged;
-    } finally {
-      socket.destroy();
-    }
-    return frames;
-  }
-
   try {
     for (const [caseName, headerBlock] of Object.entries(cases)) {
-      const frames = await exchange(headerBlock);
+      const frames = await exchangeHeaderBlock(port, headerBlock);
       expect({ caseName, delivered: deliveredRequests.length }).toEqual({ caseName, delivered: 0 });
       const rst = frames.find(f => f.type === 3 && f.streamId === 1);
       expect({ caseName, rstCode: rst?.payload?.readUInt32BE(0) }).toEqual({
@@ -3387,7 +3307,7 @@ it("http2 server rejects malformed extended-CONNECT requests", async () => {
     }
     // Positive control: a well-formed extended CONNECT still reaches the application, so the
     // rejections above are the extended_connect clause and not protocol_disabled.
-    const frames = await exchange(wellFormed);
+    const frames = await exchangeHeaderBlock(port, wellFormed);
     expect(frames.find(f => f.type === 3 && f.streamId === 1)).toBeUndefined();
     expect(deliveredRequests.length).toBe(1);
     expect(deliveredRequests[0][":protocol"]).toBe("websocket");
@@ -3399,10 +3319,6 @@ it("http2 server rejects malformed extended-CONNECT requests", async () => {
 // RFC 9113 §8.3.2 (nghttp2_http_on_response_headers): a response block must carry :status
 // and must not carry a request pseudo-header. node RST_STREAMs and never emits 'response'.
 it("http2 client rejects a response missing :status or carrying a request pseudo-header", async () => {
-  const literal = str => {
-    const bytes = Buffer.from(str, "latin1");
-    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
-  };
   const cases = {
     "no pseudo-headers": Buffer.concat([Buffer.from([0x00]), literal("x-foo"), literal("bar")]),
     ":method in a response": Buffer.concat([
@@ -3473,10 +3389,6 @@ it("http2 client rejects a response missing :status or carrying a request pseudo
 // no `host` case, so a response carrying an empty or repeated Host header is delivered to
 // the client (node keeps the first value) instead of being answered with RST_STREAM.
 it("http2 client delivers a response carrying an empty or repeated host header", async () => {
-  const literal = str => {
-    const bytes = Buffer.from(str, "latin1");
-    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
-  };
   const responseBlock = Buffer.concat([
     Buffer.from([0x88]), // :status: 200 (static table index 8)
     Buffer.from([0x00]), // literal header field without indexing, new name
@@ -3547,10 +3459,6 @@ it("http2 client delivers a response carrying an empty or repeated host header",
 // stays alive and the parent request still completes. nghttp2 also rejects :method CONNECT
 // in a promised request per-header ("we won't allow CONNECT for push").
 it("http2 client rejects a malformed PUSH_PROMISE with RST_STREAM and keeps the session alive", async () => {
-  const literal = str => {
-    const bytes = Buffer.from(str, "latin1");
-    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
-  };
   const cases = {
     valid: Buffer.concat([
       Buffer.from([0x82]), // :method: GET (static table index 2)

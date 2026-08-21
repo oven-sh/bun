@@ -9,7 +9,7 @@
 // rather than realm bootstrap; SafePromiseRace additionally wraps its input in
 // a SafeArrayIterator because spec Promise.race reads
 // Array.prototype[Symbol.iterator] at CALL time.
-const { SafeSet, SafeStringIterator, SafeArrayIterator } = require("internal/primordials");
+const { SafeMap, SafeSet, SafeWeakMap, SafeStringIterator, SafeArrayIterator } = require("internal/primordials");
 
 const ArrayFromFn = Array.from;
 const ArrayPrototypeAtFn = Array.prototype.at;
@@ -57,6 +57,7 @@ const StringPrototypeTrimStartFn = String.prototype.trimStart;
 
 export default {
   ArrayFrom: (...args) => ArrayFromFn.$apply(Array, args),
+  ArrayIsArray: Array.isArray,
   ArrayPrototypeAt: (a, i) => ArrayPrototypeAtFn.$call(a, i),
   ArrayPrototypeFilter: (a, fn) => ArrayPrototypeFilterFn.$call(a, fn),
   ArrayPrototypeForEach: (a, fn) => ArrayPrototypeForEachFn.$call(a, fn),
@@ -110,6 +111,8 @@ export default {
   RegExpPrototypeSymbolSplit: (re, s, limit) => RegExpPrototypeSymbolSplitFn.$call(re, s, limit),
   SafePromiseRace: promises => PromiseRaceFn.$call(Promise, new SafeArrayIterator(promises)),
   SafeSet,
+  SafeMap,
+  SafeWeakMap,
   SafeStringIterator,
   StringFromCharCode: String.fromCharCode,
   StringPrototypeCharAt: (s, i) => StringPrototypeCharAtFn.$call(s, i),

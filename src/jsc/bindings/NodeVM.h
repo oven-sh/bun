@@ -173,5 +173,6 @@ void configureNodeVM(JSC::VM&, Zig::GlobalObject*);
 // VM module functions
 JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);
 JSC_DECLARE_HOST_FUNCTION(vmModule_isContext);
+JSC_DECLARE_HOST_FUNCTION(vmModuleGlobalLexicalScopeNames);
 
 } // namespace Bun

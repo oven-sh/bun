@@ -866,6 +866,8 @@ function buildScriptCoverageList(
 
   for (const script of rawScripts) {
     const { scriptId, sourceLength } = script;
+    // V8 does not report empty scripts (the whole-script range would be zero-width).
+    if (sourceLength === 0) continue;
     let { url } = script;
     // V8 reports file-backed scripts with file:// URLs even for plain paths: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/inspector/
     if (url && isAbsolute(url)) {
@@ -873,10 +875,12 @@ function buildScriptCoverageList(
     }
 
     // Outer functions before nested ones so the stack sweep sees enclosing ranges first.
+    // Zero-width entries are dropped: V8 never emits startOffset === endOffset, and
+    // @bcoe/v8-coverage recurses forever on one.
     const functions = script.functions
-      .filter(([start, end]) => start >= 0 && end >= start)
+      .filter(([start, end]) => start >= 0 && end > start)
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
+    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end > start).sort((a, b) => a[0] - b[0]);
 
     // Assign each basic block to the innermost function range containing it.
     const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);

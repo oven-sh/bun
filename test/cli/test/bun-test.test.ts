@@ -725,17 +725,22 @@ describe("bun test", () => {
       const dataUrlModule = 'export default function fromDataUrl() { throw new Error("boom"); }//';
       const base64 = btoa(dataUrlModule + Buffer.alloc(padding, "x").toString());
       const longPath = "/" + Buffer.alloc(padding, "y").toString();
+      const longName = Buffer.alloc(padding, "z").toString();
       const stderr = runTest({
         input: `
           import { test } from "bun:test";
+          const thrower = (name, sourceURL) =>
+            (0, eval)("(function " + name + "() { throw new Error('boom'); })\\n//# sourceURL=" + sourceURL);
           test("data url", async () => {
             const source = ${JSON.stringify(dataUrlModule)} + Buffer.alloc(${padding}, "x").toString();
             const m = await import("data:text/javascript;base64," + btoa(source));
             m.default();
           });
-          test("long sourceURL", () => {
-            const sourceURL = "/" + Buffer.alloc(${padding}, "y").toString();
-            (0, eval)("(function fromLongPath() { throw new Error('boom'); })\\n//# sourceURL=" + sourceURL)();
+          test("long absolute sourceURL", () => {
+            thrower("fromLongPath", "/" + Buffer.alloc(${padding}, "y").toString())();
+          });
+          test("long relative sourceURL", () => {
+            thrower("fromLongName", Buffer.alloc(${padding}, "z").toString())();
           });
         `,
         env: {
@@ -744,24 +749,33 @@ describe("bun test", () => {
         expectExitCode: 1,
       });
       const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
-      expect(annotations).toHaveLength(2);
-      const [dataUrl, longSourceUrl] = annotations;
+      expect(annotations).toHaveLength(3);
+      const [dataUrl, longSourceUrl, longNameSourceUrl] = annotations;
       expect(dataUrl).toStartWith(`::error file=data%3Atext/javascript;base64%2C${base64},line=1,col=`);
       expect(dataUrl).toContain(`%0A      at fromDataUrl (data:text/javascript;base64,${base64}:1:`);
       expect(longSourceUrl).toStartWith(`::error file=${longPath},line=1,col=`);
       expect(longSourceUrl).toContain(`%0A      at fromLongPath (${longPath}:1:`);
+      expect(longNameSourceUrl).toStartWith(`::error file=${longName},line=1,col=`);
+      expect(longNameSourceUrl).toContain(`%0A      at fromLongName (${longName}:1:`);
     });
-    test("should make the annotation file relative to GITHUB_WORKSPACE only when it is a path", () => {
+    test("should make the annotation file relative to GITHUB_WORKSPACE for a path but not for a URL", () => {
       const cwd = createTest([
         {
           filename: "workspace.test.ts",
           contents: `
             import { test } from "bun:test";
+            import vm from "node:vm";
             test("in the test file", () => {
               throw new Error("boom");
             });
-            test("in a sourceURL that is not a path", () => {
+            test("in a sourceURL that is a URL", () => {
               (0, eval)("(function fromSourceUrl() { throw new Error('boom'); })\\n//# sourceURL=webpack://app/./src/x.ts")();
+            });
+            test("in a sourceURL that is a relative path", () => {
+              (0, eval)("(function fromRelativeSourceUrl() { throw new Error('boom'); })\\n//# sourceURL=./src/../src/y.ts")();
+            });
+            test("in a vm script with a relative filename", () => {
+              vm.runInThisContext("(function fromVm() { throw new Error('boom'); })", { filename: "lib/z.ts" })();
             });
           `,
         },
@@ -775,11 +789,14 @@ describe("bun test", () => {
         expectExitCode: 1,
       });
       const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
-      expect(annotations).toHaveLength(2);
-      const [testFile, sourceUrl] = annotations;
-      expect(testFile).toStartWith(`::error file=${basename(cwd)}${sep}workspace.test.ts,line=4,col=`);
+      expect(annotations).toHaveLength(4);
+      const [testFile, sourceUrl, relativeSourceUrl, vmFilename] = annotations;
+      expect(testFile).toStartWith(`::error file=${basename(cwd)}${sep}workspace.test.ts,line=5,col=`);
       expect(sourceUrl).toStartWith("::error file=webpack%3A//app/./src/x.ts,line=1,col=");
       expect(sourceUrl).toContain("%0A      at fromSourceUrl (webpack://app/./src/x.ts:1:");
+      // A relative name counts from the cwd, which is inside the workspace.
+      expect(relativeSourceUrl).toStartWith(`::error file=${[basename(cwd), "src", "y.ts"].join(sep)},line=1,col=`);
+      expect(vmFilename).toStartWith(`::error file=${[basename(cwd), "lib", "z.ts"].join(sep)},line=1,col=`);
     });
   });
   describe(".each", () => {

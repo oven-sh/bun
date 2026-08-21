@@ -555,12 +555,13 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
-  it("prints a stack frame whose source is not a file path as-is in <failure>", async () => {
+  it("relativizes a frame's path in <failure> and prints a URL or an over-long name as-is", async () => {
     // Longer than a path buffer on every platform (98302 bytes on Windows).
     const padding = 100_000;
     const dataUrlModule = 'export default function fromDataUrl() { throw new Error("boom"); }//';
     const dataUrl = "data:text/javascript;base64," + btoa(dataUrlModule + Buffer.alloc(padding, "x").toString());
     const longPath = "/" + Buffer.alloc(padding, "y").toString();
+    const longName = Buffer.alloc(padding, "z").toString();
 
     await using tmpDir = tempDir("junit-source-url", {
       "package.json": "{}",
@@ -573,14 +574,20 @@ describe("junit reporter", () => {
           const m = await import("data:text/javascript;base64," + btoa(source));
           m.default();
         });
-        test("sourceURL that is not a path", () => {
+        test("sourceURL that is a URL", () => {
           thrower("fromSourceUrl", "webpack://app/./src/x.ts")();
         });
-        test("sourceURL longer than a path", () => {
+        test("sourceURL that is an absolute path longer than a path buffer", () => {
           thrower("fromLongPath", "/" + Buffer.alloc(${padding}, "y").toString())();
         });
-        test("sourceURL that is a path", () => {
+        test("sourceURL that is a relative name longer than a path buffer", () => {
+          thrower("fromLongName", Buffer.alloc(${padding}, "z").toString())();
+        });
+        test("sourceURL that is an absolute path", () => {
           thrower("fromPath", import.meta.dir.replaceAll("\\\\", "/") + "/virtual/../generated.js")();
+        });
+        test("sourceURL that is a relative path", () => {
+          thrower("fromRelativePath", "./virtual/../relative.js")();
         });
       `,
     });
@@ -599,14 +606,18 @@ describe("junit reporter", () => {
     const result = await new Promise((resolve, reject) => {
       xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
     });
-    const [dataUrlCase, sourceUrlCase, longPathCase, pathCase] = result.testsuites.testsuite[0].testcase;
+    const [dataUrlCase, sourceUrlCase, longPathCase, longNameCase, pathCase, relativePathCase] =
+      result.testsuites.testsuite[0].testcase;
 
     expect(dataUrlCase.failure[0]._).toContain(`at fromDataUrl (${dataUrl}:1:`);
-    // The frame in the test file itself is still relative to the cwd.
+    // The frame in the test file itself is relative to the cwd.
     expect(dataUrlCase.failure[0]._).toContain("at dataUrlTest (source-url.test.js:");
     expect(sourceUrlCase.failure[0]._).toContain("at fromSourceUrl (webpack://app/./src/x.ts:1:");
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
+    expect(longNameCase.failure[0]._).toContain(`at fromLongName (${longName}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
+    // A relative name counts from the cwd, so it is normalized like a path.
+    expect(relativePathCase.failure[0]._).toContain("at fromRelativePath (relative.js:1:");
   });
 });
 

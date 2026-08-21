@@ -78,15 +78,25 @@ impl ZigStackFrame {
     /// The frame's source as a report that lists files relative to `dir` (the JUnit
     /// reporter, the GitHub Actions annotation) prints it.
     ///
-    /// Only an absolute path is made relative. A source URL that is not a path (a
-    /// `data:` or `blob:` URL, `node:fs`, the name from a `//# sourceURL=` comment)
-    /// is printed as-is, like [`SourceURLFormatter`] prints it. `relative` normalizes
-    /// its operands in fixed path buffers, so a source URL that is too long to be a
-    /// path is printed as-is too.
+    /// A path is made relative to `dir`. A relative name (a `node:vm` filename, a
+    /// `//# sourceURL=` comment, a sourcemap `sources` entry) counts from the cwd, as
+    /// `relative` resolves it. A URL (`data:`, `blob:`, `node:fs`, `webpack://...`) is
+    /// not a file under `dir` and is printed as-is, like [`SourceURLFormatter`] prints
+    /// it. `relative` normalizes its operands in fixed path buffers, so a name that does
+    /// not fit one is printed as-is too.
     ///
     /// The relative form lives in `relative`'s thread-local buffer until the next call.
     pub fn relative_source_url<'a>(dir: &[u8], source_url: &'a [u8]) -> &'a [u8] {
-        if !bun_paths::is_absolute(source_url) || source_url.len() >= bun_paths::MAX_PATH_BYTES {
+        let relativize = if bun_paths::is_absolute(source_url) {
+            source_url.len() < bun_paths::MAX_PATH_BYTES
+        } else if source_url.is_empty() || has_url_scheme(source_url) {
+            false
+        } else {
+            // `relative` joins a relative name onto this cwd before it relativizes it.
+            let cwd = bun_paths::fs::FileSystem::instance().top_level_dir();
+            cwd.len() + source_url.len() < bun_paths::MAX_PATH_BYTES
+        };
+        if !relativize {
             return source_url;
         }
         bun_paths::resolve_path::relative(dir, source_url)
@@ -117,6 +127,15 @@ impl ZigStackFrame {
             enable_color,
             remapped: self.remapped,
         }
+    }
+}
+
+/// `data:...`, `node:fs`, `webpack://app/x.ts`: a colon before the first separator.
+/// A Windows drive (`C:\`) is absolute and never gets here.
+fn has_url_scheme(name: &[u8]) -> bool {
+    match bun_core::strings::index_of_char_usize(name, b':') {
+        Some(colon) => bun_core::strings::index_of_any(&name[..colon], b"/\\").is_none(),
+        None => false,
     }
 }
 

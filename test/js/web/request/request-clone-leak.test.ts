@@ -1,4 +1,3 @@
-import { gcAndSweep } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { isASAN, isDebug, rss } from "harness";
 
@@ -20,7 +19,9 @@ const leakedBytesPerIteration = 192;
 // a 192 byte per iteration leak from the noise there. Those builds run a short
 // loop, and the RSS check is only a backstop for gross leaks (a clean run grows
 // by 0 to 3 MB). LeakSanitizer reports the small leaks on the ASAN lane: the
-// loops below leak about 8000 slots on a build with the bug.
+// loops below leak about 8000 slots on a build with the bug. That report is only
+// attributed to this file when it runs on its own, which is why the file is in
+// test/parallel-denylist.txt.
 const shortLoop = isDebug || isASAN;
 const iterations = shortLoop ? 1_000 : 100_000;
 const gcEvery = shortLoop ? 250 : 5_000;
@@ -32,46 +33,57 @@ const body = "ahoyhoy";
 
 const cases: {
   name: string;
-  args: ConstructorParameters<typeof Request>;
-  headers: [string, string][];
+  testHeader: string | null;
+  // Returns a new constructor each time. A constructor may carry state, so the
+  // functional check and the measured loop of a test each take their own.
+  makeConstruct: () => () => Request;
 }[] = [];
 
-for (const headers of [[], [["test-header", "value"]]] as [string, string][][]) {
+for (const testHeader of [null, "value"]) {
   const init: RequestInit = { body, method };
-  if (headers.length > 0) init.headers = headers;
-  const suffix = headers.length > 0 ? " with headers" : "";
+  if (testHeader !== null) init.headers = { "test-header": testHeader };
+  const urlObject = new URL(url);
+  const suffix = testHeader === null ? "" : " with headers";
   cases.push(
-    { name: `new Request(request)${suffix}`, args: [new Request(url, init)], headers },
-    { name: `new Request(string, init)${suffix}`, args: [url, init], headers },
-    { name: `new Request(URL, init)${suffix}`, args: [new URL(url), init], headers },
+    {
+      name: `new Request(request)${suffix}`,
+      testHeader,
+      // Each request is built from the previous one. This works whether
+      // `new Request(request)` tees the input body, as it does today, or moves
+      // it, as the fetch spec says. One shared input would only work with tee.
+      makeConstruct: () => {
+        let input = new Request(url, init);
+        return () => (input = new Request(input));
+      },
+    },
+    { name: `new Request(string, init)${suffix}`, testHeader, makeConstruct: () => () => new Request(url, init) },
+    { name: `new Request(URL, init)${suffix}`, testHeader, makeConstruct: () => () => new Request(urlObject, init) },
   );
 }
 
-function churn(construct: () => void, count: number) {
+function churn(construct: () => unknown, count: number) {
   for (let i = 0; i < count; i++) construct();
 }
 
-// The JIT tiers `churn` up once per process. The compiler threads and code
-// pages this brings in add 6 to 11 MB of RSS on a debug build, and they would
-// land in whichever loop happens to be running. Pay for them before the first
+// The first hot loop in the process makes the JIT compile `churn` and start its
+// compiler threads. That adds 6 to 11 MB of RSS on a debug build, and it would
+// land in whichever loop happens to be running. Pay for it before the first
 // baseline is taken.
 churn(() => {}, 1_000_000);
 
-// gcAndSweep() frees every dead Request before it returns, and unlike Bun.gc()
-// it neither deletes the JIT code (which would recompile `churn` in every batch)
-// nor purges the allocator, so RSS stays a plain high-water mark.
-function rssAfterChurn(construct: () => void) {
+function rssAfterChurn(construct: () => unknown) {
   for (let done = 0; done < iterations; done += gcEvery) {
     churn(construct, gcEvery);
-    gcAndSweep();
+    Bun.gc(true);
   }
   return rss();
 }
 
-// The warm-up runs the exact workload that is measured afterwards, so the
-// allocator and the JS heap reach their high-water mark before the baseline is
-// taken. Only memory that the second run does not free shows up in the delta.
-function expectNoRssGrowth(construct: () => void) {
+// The warm-up runs the exact workload that is measured afterwards, and both
+// readings are taken at the same point of that sequence, right after a full
+// collection. The allocator and the JS heap reach their steady state during the
+// warm-up, so the delta is memory that the second run allocated and did not free.
+function expectNoRssGrowth(construct: () => unknown) {
   const before = rssAfterChurn(construct);
   const growth = rssAfterChurn(construct) - before;
 
@@ -81,33 +93,33 @@ function expectNoRssGrowth(construct: () => void) {
   ).toBeLessThan(maxGrowth);
 }
 
-for (const { name, args, headers } of cases) {
+// The functional checks look up the one header the case sets rather than
+// listing every header, so they do not depend on which headers Bun adds for a
+// string body on its own.
+for (const { name, testHeader, makeConstruct } of cases) {
   test(`${name}: construction does not leak`, async () => {
-    const request = new Request(...args);
+    const request = makeConstruct()();
     expect({
       url: request.url,
       method: request.method,
-      headers: [...request.headers],
+      testHeader: request.headers.get("test-header"),
       body: await request.text(),
-    }).toEqual({ url, method, headers, body });
+    }).toEqual({ url, method, testHeader, body });
 
-    expectNoRssGrowth(() => {
-      new Request(...args);
-    });
+    expectNoRssGrowth(makeConstruct());
   });
 
   test(`${name}: request.clone() does not leak`, async () => {
-    const request = new Request(...args);
+    const request = makeConstruct()();
     const clone = request.clone();
     expect({
       url: clone.url,
       method: clone.method,
-      headers: [...clone.headers],
+      testHeader: clone.headers.get("test-header"),
       bodies: await Promise.all([request.text(), clone.text()]),
-    }).toEqual({ url, method, headers, bodies: [body, body] });
+    }).toEqual({ url, method, testHeader, bodies: [body, body] });
 
-    expectNoRssGrowth(() => {
-      new Request(...args).clone();
-    });
+    const construct = makeConstruct();
+    expectNoRssGrowth(() => construct().clone());
   });
 }

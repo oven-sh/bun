@@ -230,7 +230,13 @@ describe("Bun.serve", () => {
     // every span downstream of the front server shares the incoming trace id
     // (the test's own outer fetch carries a user-supplied traceparent, so its
     // client span is deliberately left out of that trace)
-    expect(new Set([...servers, ...clients.filter(c => c.attributes["url.full"].includes(String(backend.port)))].map(s => s.traceId))).toEqual(new Set([traceId]));
+    expect(
+      new Set(
+        [...servers, ...clients.filter(c => c.attributes["url.full"].includes(String(backend.port)))].map(
+          s => s.traceId,
+        ),
+      ),
+    ).toEqual(new Set([traceId]));
     // outbound propagation
     expect(inner!.get("traceparent")).toMatch(new RegExp(`^00-${traceId}-[0-9a-f]{16}-01$`));
     expect(inner!.get("tracestate")).toBe("vendor=abc,other=1");

@@ -251,12 +251,19 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     const { exitCode, stderr } = await run(script, { C: c.url });
     expect(stderr).toBe("");
     const got = c.received.map(r => [new URL(r.url).pathname, r.headers]);
-    const by = (path: string, h: string) => got.find(([p, hs]) => p === path && (h === "" || h in (hs as any)))?.[1] as any;
+    const by = (path: string, h: string) =>
+      got.find(([p, hs]) => p === path && (h === "" || h in (hs as any)))?.[1] as any;
     expect(by("/v1/traces", "dd-api-key")["dd-api-key"]).toBe("ddkey");
-    expect(by("/v1/traces", "x-honeycomb-team")).toMatchObject({ "x-honeycomb-team": "hckey", "x-honeycomb-dataset": "classic-ds" });
+    expect(by("/v1/traces", "x-honeycomb-team")).toMatchObject({
+      "x-honeycomb-team": "hckey",
+      "x-honeycomb-dataset": "classic-ds",
+    });
     expect(by("/otlp/v1/traces", "authorization").authorization).toBe("Basic " + btoa("12345:tok"));
     expect(by("/v1/traces", "api-key")["api-key"]).toBe("nrkey");
-    expect(by("/v1/traces", "x-axiom-dataset")).toMatchObject({ authorization: "Bearer axtok", "x-axiom-dataset": "ds" });
+    expect(by("/v1/traces", "x-axiom-dataset")).toMatchObject({
+      authorization: "Bearer axtok",
+      "x-axiom-dataset": "ds",
+    });
     expect(by("/api/v2/otlp/v1/traces", "authorization").authorization).toBe("Api-Token dttok");
     expect(by("/api/7/integration/otlp/v1/traces", "x-sentry-auth")["x-sentry-auth"]).toBe("sentry sentry_key=pub");
     expect(got.filter(([p]) => p === "/v1/traces").length).toBe(5);

@@ -134,10 +134,7 @@ describe("@opentelemetry/api", () => {
     propagation.inject(trace.setSpan(ctx, child), out);
     expect(out.baggage).toBe("user=1,tier=gold");
     const fwd: Record<string, string> = {};
-    propagation.inject(
-      propagation.extract(ROOT_CONTEXT, { ...incoming, tracestate: "vendor=abc" }),
-      fwd,
-    );
+    propagation.inject(propagation.extract(ROOT_CONTEXT, { ...incoming, tracestate: "vendor=abc" }), fwd);
     expect(fwd.tracestate).toBe("vendor=abc");
     await collect();
   });

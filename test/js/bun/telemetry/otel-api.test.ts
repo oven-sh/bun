@@ -1,5 +1,5 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { describe, expect, test } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // One process-wide pipeline: every test in this file shares the collector.
 const spans: any[] = [];
@@ -273,10 +273,7 @@ describe("encoding", () => {
     let bytes: Uint8Array | undefined, json: string | undefined;
     Bun.otel.start({
       serviceName: "enc",
-      exporters: [
-        { exportProtobuf: (b: Uint8Array) => (bytes = b) },
-        { exportJSON: (j: string) => (json = j) },
-      ],
+      exporters: [{ exportProtobuf: (b: Uint8Array) => (bytes = b) }, { exportJSON: (j: string) => (json = j) }],
       instrumentations: [],
     });
     const t = Bun.otel.tracer("enc");

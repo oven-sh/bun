@@ -69,7 +69,8 @@ function arrayFromSlot(context: unknown): any[] {
 /** Inverse of arrayFromSlot once the last store is removed. */
 function collapse(context: any[]): any {
   if (context.length === 0) return undefined;
-  if (context.length === 2 && !(context[0] instanceof AsyncLocalStorage)) return context[1] == null ? context[0] : context;
+  if (context.length === 2 && !(context[0] instanceof AsyncLocalStorage))
+    return context[1] == null ? context[0] : context;
   return context;
 }
 
@@ -79,7 +80,8 @@ function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
   if (!$isJSArray(value)) return "{ <span> }";
   let str = "{\n";
   for (var i = 0; i < value.length; i += 2) {
-    str += value[i] instanceof AsyncLocalStorage ? `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n` : `  <span>\n`;
+    str +=
+      value[i] instanceof AsyncLocalStorage ? `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n` : `  <span>\n`;
   }
   str += "}";
   return str;

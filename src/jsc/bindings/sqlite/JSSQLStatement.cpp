@@ -198,7 +198,6 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return {};                                                                                                  \
     }
 
-
 // ── Native OpenTelemetry (see src/runtime/telemetry/sqlite.rs) ───────────────
 extern "C" uint32_t Bun__Telemetry__enabled;
 extern "C" uint64_t Bun__Telemetry__sqliteBegin(JSC::JSGlobalObject*, const char* file, size_t fileLen);

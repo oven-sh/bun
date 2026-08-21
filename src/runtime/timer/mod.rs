@@ -427,10 +427,19 @@ impl DateHeaderTimer {
 }
 
 pub struct EventLoopDelayMonitor {
-    // TODO: bare `JSValue` heap field with no Strong/visitChildren rooting —
-    // the histogram object can be GC'd while `monitorEventLoopDelay` is active.
-    // Needs JsRef-style rooting.
-    js_histogram: JSValue,
+    /// The histogram `monitorEventLoopDelay().enable()` registered. Its
+    /// realm's `perf_hooks` module holds the only strong reference, so the
+    /// cell (and the `hdr_histogram` it owns) dies with that realm, while this
+    /// monitor is per thread and outlives it (`bun test --isolate` retires a
+    /// realm per file). Observed weakly so [`Self::on_fire`] sees the cell go
+    /// away instead of recording into freed memory; a `Strong` would pin the
+    /// retired realm for as long as a leaked monitor stays enabled.
+    ///
+    /// Released by [`Self::disable`], which `jsc_hooks::stop_active_handles`
+    /// runs at every file swap and in the teardown stop phase, while the JSC
+    /// heap the handle lives in is still alive (`All` itself is dropped after
+    /// `~VM`).
+    histogram: bun_jsc::Weak<()>,
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) resolution_ms: i32,
     pub(crate) last_fire_ns: u64,
@@ -439,7 +448,7 @@ pub struct EventLoopDelayMonitor {
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
-            js_histogram: JSValue::default(),
+            histogram: bun_jsc::Weak::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
             resolution_ms: 10,
             last_fire_ns: 0,
@@ -453,16 +462,17 @@ impl EventLoopDelayMonitor {
         crate::jsc_hooks::timer_all()
     }
 
+    /// Start recording into `histogram` every `resolution_ms`. A histogram
+    /// that is already registered (one a retired `--isolate` realm left
+    /// behind, for example) is dropped in favour of this one.
     fn enable(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
-        if self.enabled {
-            return;
-        }
-        self.js_histogram = histogram;
+        self.disable();
+        self.histogram = bun_jsc::Weak::create_passive(histogram, vm.global());
         self.resolution_ms = resolution_ms;
         self.enabled = true;
 
@@ -479,16 +489,22 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    /// Stop recording and release the histogram handle (see the field doc for
+    /// the sweep that also calls this).
+    pub(crate) fn disable(&mut self) {
         if !self.enabled {
             return;
         }
         self.enabled = false;
-        self.js_histogram = JSValue::default();
+        self.histogram = bun_jsc::Weak::default();
         self.last_fire_ns = 0;
-        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).remove(elt) };
+        // Not ACTIVE while `on_fire` has the node popped and is deciding
+        // whether to re-arm it.
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
+            // SAFETY: see `enable` — disjoint-field access on `All`.
+            unsafe { (*Self::timer_all()).remove(elt) };
+        }
     }
 
     /// Record `now - last_fire_ns`
@@ -498,9 +514,16 @@ impl EventLoopDelayMonitor {
         _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        if !self.enabled || self.js_histogram.is_empty() {
+        self.event_loop_timer.state = EventLoopTimerState::FIRED;
+        if !self.enabled {
             return;
         }
+        // The histogram was collected (its realm is gone): nothing can read it
+        // any more, so stop instead of re-arming.
+        let Some(histogram) = self.histogram.get() else {
+            self.disable();
+            return;
+        };
 
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
@@ -518,7 +541,7 @@ impl EventLoopDelayMonitor {
                         delay_ns: i64,
                     );
                 }
-                JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
+                JSNodePerformanceHooksHistogram_recordDelay(histogram, delay_ns);
             }
         }
 

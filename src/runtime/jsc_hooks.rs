@@ -1760,6 +1760,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
     // next, which walks both heaps and releases `TimeoutObject` pins and
     // discards `AbortSignalTimeout` timers at a point where no user JS can
     // touch the outgoing signals.
+    //
+    // The `monitorEventLoopDelay()` monitor lives there too, but its
+    // histogram belongs to the outgoing global. Left enabled, it would keep
+    // firing into a histogram the swap (or `~VM`) is about to collect, and a
+    // later file's `enable()` would find the slot taken.
     {
         let all = timer_all();
         // SAFETY: `state` is non-null so `timer_all()` is non-null; single
@@ -1769,6 +1774,12 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // SAFETY: as above; only touches `fake_timers.active` and the
             // `CURRENT_TIME` static.
             unsafe { (*all).fake_timers.reset_for_isolation(global) };
+        }
+        if !all.is_null() {
+            // SAFETY: as above; only the `event_loop_delay` field is borrowed,
+            // and `disable` reaches the heap through `timer_all()` like every
+            // other `All`-embedded timer owner (disjoint-field access).
+            unsafe { (*all).event_loop_delay.disable() };
         }
     }
     // Entries that stay registered across a test-isolation swap.

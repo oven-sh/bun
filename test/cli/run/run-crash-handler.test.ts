@@ -1,6 +1,18 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -10,6 +22,13 @@ const { getMachOImageZeroOffset } = crash_handler;
 // deliberate crashes must not upload there or the runner pins them on the
 // next unrelated failing test as "crash reported" and blocks its retries.
 const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+
+// For children that die via SIG_DFL (rather than via a test hook that calls
+// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
+// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
+// wrapper is inherited by the bun child (and by anything it spawns); every
+// user is isPosix-gated so /bin/sh is available.
+const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
 
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
@@ -223,9 +242,14 @@ describe.if(isPosix && !isASAN)("crash while initializing JavaScriptCore", () =>
   // a bug. Its report says where it happened. structureHeapSizeInKB must be a
   // power of two: 3072 trips a RELEASE_ASSERT in the constructor that reserves
   // the heap, before the reservation.
-  test("a crash that the address space does not explain is reported", async () => {
+  //
+  // Not on Apple Silicon: a release RELEASE_ASSERT there is `brk #0xbb08`, and
+  // macOS 26 kills the process with SIGKILL on that instruction before any
+  // SIGTRAP handler runs (a plain C program with a SIGTRAP handler dies the
+  // same way), so this crash is not observable by the crash handler at all.
+  test.if(!(isMacOS && isArm64))("a crash that the address space does not explain is reported", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "1", "--debug-crash-handler-use-trace-string"],
+      cmd: noCoreCmd([bunExe(), "-e", "1", "--debug-crash-handler-use-trace-string"]),
       env: { ...noReportEnv, BUN_JSC_structureHeapSizeInKB: "3072" },
       stdout: "pipe",
       stderr: "pipe",
@@ -453,13 +477,6 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
-
-// For children that die via SIG_DFL (rather than via a test hook that calls
-// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
-// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
-// wrapper is inherited by the bun child (and by anything it spawns); every
-// user is isPosix-gated so /bin/sh is available.
-const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
 
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
 // SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)

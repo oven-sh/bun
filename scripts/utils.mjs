@@ -18,6 +18,7 @@ import { connect } from "node:net";
 import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
+import { createInterface } from "node:readline";
 
 export const isWindows = process.platform === "win32";
 export const isMacOS = process.platform === "darwin";
@@ -437,6 +438,64 @@ export function spawnSync(command, options = {}) {
  */
 export function spawnSyncSafe(command, options = {}) {
   return spawnSync(command, { throwOnError: true, ...options });
+}
+
+/**
+ * @typedef {object} BackgroundProcess
+ * @property {import("node:child_process").ChildProcess} subprocess
+ * @property {(timeout: number) => Promise<{ line: string } | { error: string }>} firstLine
+ */
+
+/**
+ * Starts a helper process without waiting for it. The helper announces that it is
+ * ready by printing one line to stdout (the ci-remap server prints its port), then
+ * keeps running until this process exits, which kills it. Start it as early as
+ * possible and call `firstLine()` right before the helper is needed, so that its
+ * startup overlaps with the work in between.
+ *
+ * `firstLine(timeout)` resolves with that line, also when it was printed before
+ * the call. It resolves with an error as soon as the helper fails to spawn or ends
+ * without printing a line, or when `timeout` ms pass after the call, which also
+ * kills the helper. It never rejects. The helper does not keep this process alive,
+ * and it inherits this process's stderr.
+ * @param {string[]} command
+ * @param {{ cwd?: string, env?: Record<string, string | undefined> }} [options]
+ * @returns {BackgroundProcess}
+ */
+export function spawnBackground(command, options = {}) {
+  const [cmd, ...args] = command;
+  debugLog("$", cmd, ...args);
+
+  const { promise: result, resolve: settle } = Promise.withResolvers();
+  const subprocess = nodeSpawn(cmd, args, {
+    cwd: options["cwd"],
+    env: options["env"],
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  process.once("exit", () => subprocess.kill());
+  subprocess.on("error", error => settle({ error: error.message }));
+  // "close" and not "exit": a helper that prints its line and exits at once can
+  // emit "exit" before its stdout was read. "close" comes after the end of stdout,
+  // and readline emits the line before that.
+  subprocess.on("close", (exitCode, signalCode) => settle({ error: signalCode ?? `code ${exitCode}` }));
+  createInterface(subprocess.stdout).once("line", line => settle({ line }));
+  subprocess.unref();
+  subprocess.stdout.unref?.();
+
+  return {
+    subprocess,
+    async firstLine(timeout) {
+      const timer = setTimeout(() => {
+        settle({ error: "timeout" });
+        subprocess.kill();
+      }, timeout);
+      try {
+        return await result;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
 }
 
 /**

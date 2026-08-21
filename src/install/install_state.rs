@@ -46,12 +46,26 @@ fn zpath(path: &[u8]) -> bun_core::ZBox {
     bun_core::ZBox::from_vec_with_nul(v)
 }
 
-fn read_file(path: &[u8]) -> Option<Vec<u8>> {
-    bun_sys::File::read_from(Fd::cwd(), path).ok()
+enum FileHash {
+    Present(u64),
+    /// ENOENT / ENOTDIR — a legitimately missing input (recorded as such)
+    Absent,
+    /// exists but could not be read (EACCES, EIO, …): never treated as a valid state
+    Unreadable,
 }
 
-fn hash_file(path: &[u8]) -> Option<u64> {
-    read_file(path).map(|b| h(&b))
+fn read_file(path: &[u8]) -> Result<Vec<u8>, bun_sys::Error> {
+    bun_sys::File::read_from(Fd::cwd(), path)
+}
+
+fn hash_file(path: &[u8]) -> FileHash {
+    match read_file(path) {
+        Ok(b) => FileHash::Present(h(&b)),
+        Err(e) if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+            FileHash::Absent
+        }
+        Err(_) => FileHash::Unreadable,
+    }
 }
 
 fn mtime_ns(st: &bun_sys::Stat) -> u64 {
@@ -133,6 +147,7 @@ pub fn applicable(manager: &PackageManager) -> bool {
         && !manager.options.dry_run
         && !manager.options.enable.force_install()
         && manager.options.positionals.len() <= 1
+        && manager.options.filter_patterns.is_empty()
         && manager.update_requests.is_empty()
         && manager.options.do_.install_packages()
         && manager.options.do_.load_lockfile()
@@ -205,7 +220,7 @@ fn parse(text: &[u8]) -> Option<Recorded> {
 /// `Some(summary)` when the recorded state exists and every input is unchanged.
 pub fn is_up_to_date(manager: &mut PackageManager, root_dir: &[u8]) -> Option<Summary> {
     let sp = state_path(manager, root_dir, false)?;
-    let text = read_file(&sp)?;
+    let text = read_file(&sp).ok()?;
     let rec = parse(&text)?;
     if rec.lines.is_empty() {
         return None;
@@ -217,9 +232,12 @@ pub fn is_up_to_date(manager: &mut PackageManager, root_dir: &[u8]) -> Option<Su
     };
     for (kind, val, path) in &rec.lines {
         let ok = match kind {
-            b'f' => hash_file(path) == Some(*val),
+            b'f' => matches!(hash_file(path), FileHash::Present(v) if v == *val),
+            // the project root this state belongs to (guards against a hash collision
+            // between two projects sharing one cache directory)
+            b'r' => path.as_slice() == root_dir,
             // recorded as absent: must still be absent
-            b'a' => hash_file(path).is_none(),
+            b'a' => matches!(hash_file(path), FileHash::Absent),
             b'd' => dir_stamp(path) == Some(*val),
             b'n' => dir_stamp(path).is_none(),
             b'l' => lstat_stamp(path) == Some(*val),
@@ -301,12 +319,12 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                         join(root_dir, rel)
                     };
                     match hash_file(&path) {
-                        Some(v) => {
+                        FileHash::Present(v) => {
                             let _ = write!(local_lines, "f {v:016x} ");
                             local_lines.extend_from_slice(&path);
                             local_lines.push(b'\n');
                         }
-                        None => {
+                        _ => {
                             ok = false;
                             break;
                         }
@@ -325,17 +343,23 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     };
     let mut out: Vec<u8> = Vec::with_capacity(4096);
     let _ = writeln!(out, "{VERSION_LINE}");
-    let file = |out: &mut Vec<u8>, p: Vec<u8>| match hash_file(&p) {
-        Some(v) => {
+    let _ = write!(out, "r {:016x} ", 0);
+    out.extend_from_slice(root_dir);
+    out.push(b'\n');
+    // any input that exists but cannot be read makes the state unrecordable
+    let mut unreadable = false;
+    let mut file = |out: &mut Vec<u8>, p: Vec<u8>| match hash_file(&p) {
+        FileHash::Present(v) => {
             let _ = write!(out, "f {v:016x} ");
             out.extend_from_slice(&p);
             out.push(b'\n');
         }
-        None => {
+        FileHash::Absent => {
             let _ = write!(out, "a {:016x} ", 0);
             out.extend_from_slice(&p);
             out.push(b'\n');
         }
+        FileHash::Unreadable => unreadable = true,
     };
     // lockfiles (whichever exist; absence is recorded too)
     file(&mut out, join(root_dir, b"bun.lock"));
@@ -343,18 +367,15 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     file(&mut out, join(root_dir, b"package.json"));
     file(&mut out, join(root_dir, b"bunfig.toml"));
     file(&mut out, join(root_dir, b".npmrc"));
-    if let Some(home) = manager
-        .env()
-        .get(b"HOME")
-        .or_else(|| manager.env().get(b"USERPROFILE"))
-    {
+    // global config, with the same precedence the loaders use: $XDG_CONFIG_HOME first
+    // (its .npmrc wins when it exists), then $HOME (USERPROFILE on Windows)
+    if let Some(xdg) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+        file(&mut out, join(xdg, b".bunfig.toml"));
+        file(&mut out, join(xdg, b".npmrc"));
+    }
+    if let Some(home) = bun_core::env_var::HOME.get_not_empty() {
         file(&mut out, join(home, b".npmrc"));
         file(&mut out, join(home, b".bunfig.toml"));
-    }
-    if let Some(xdg) = manager.env().get(b"XDG_CONFIG_HOME") {
-        file(&mut out, join(xdg, b".bunfig.toml"));
-        // the npmrc loader prefers $XDG_CONFIG_HOME/.npmrc over ~/.npmrc when present
-        file(&mut out, join(xdg, b".npmrc"));
     }
     // workspaces: manifest hash + parent dir stamp
     let buf = manager.lockfile.buffers.string_bytes.as_slice();
@@ -377,7 +398,7 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     // manifest (`packages/*` → `packages/`), recorded even when it does not exist yet,
     // so creating the first workspace under it is noticed.
     let root_manifest_path = join(root_dir, b"package.json");
-    if let Some(root_json) = read_file(&root_manifest_path) {
+    if let Ok(root_json) = read_file(&root_manifest_path) {
         if let Some(globs) = workspace_globs(&root_json) {
             for g in globs {
                 let g: &[u8] = g.strip_prefix(b"./").unwrap_or(&g);
@@ -452,6 +473,9 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     for nm in nm_dirs {
         stamp_tree(&mut out, &nm, 0);
     }
+    if unreadable {
+        return;
+    }
     out.extend_from_slice(&local_lines);
     let _ = writeln!(
         out,
@@ -461,10 +485,12 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     let _ = writeln!(out, "s {entries:016x} {packages}");
 
     let mut tmp = sp.clone();
-    tmp.extend_from_slice(b".tmp");
+    let _ = write!(tmp, ".{}.tmp", std::process::id());
     if let Ok(f) = bun_sys::File::create(Fd::cwd(), &tmp, true) {
-        if f.write_all(&out).is_ok() {
-            let _ = bun_sys::renameat(Fd::cwd(), &zpath(&tmp), Fd::cwd(), &zpath(&sp));
+        let renamed = f.write_all(&out).is_ok()
+            && bun_sys::renameat(Fd::cwd(), &zpath(&tmp), Fd::cwd(), &zpath(&sp)).is_ok();
+        if !renamed {
+            let _ = bun_sys::unlinkat(Fd::cwd(), &zpath(&tmp));
         }
     }
 }

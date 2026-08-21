@@ -88,12 +88,10 @@ pub fn install_with_manager(
             }
             return Ok(());
         }
-        // We are about to do real work; never leave a stale "clean" marker behind if
-        // this install dies half way.
-        crate::install_state::invalidate(manager, &state_root);
-    } else if manager.subcommand != Subcommand::Install || !manager.update_requests.is_empty() {
-        crate::install_state::invalidate(manager, &state_root);
     }
+    // We are about to do real work (or were told to with --force / add / remove /
+    // update): never leave a stale "clean" marker behind if this install dies half way.
+    crate::install_state::invalidate(manager, &state_root);
 
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.

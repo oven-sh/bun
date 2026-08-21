@@ -234,4 +234,52 @@ describe("BackPressure buffer", () => {
     expect(received).toBe(target);
     expect(hash.digest("hex")).toBe(expectedHash);
   });
+
+  // The drain handler runs corked, so a close() inside it writes the Close
+  // frame on uncork; the TCP FIN has to follow once that is written out.
+  // Without that, uws only closes the socket from its end() timer, which is
+  // 16s at the default idleTimeout, so this test times out instead.
+  it.skipIf(isWindows)("close() from inside the drain handler sends the Close frame and then the FIN", async () => {
+    const payload = patternBuffer(1024 * 1024, 7);
+    const closeFrame = Buffer.concat([Buffer.from([0x88, 0x05, 0x03, 0xe8]), Buffer.from("bye")]);
+
+    const opened = Promise.withResolvers<import("bun").ServerWebSocket<unknown>>();
+    let closeCalls = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("no", { status: 500 });
+      },
+      websocket: {
+        open(ws) {
+          opened.resolve(ws);
+        },
+        drain(ws) {
+          if (ws.getBufferedAmount() !== 0) return;
+          closeCalls++;
+          ws.close(1000, "bye");
+        },
+        message() {},
+      },
+    });
+
+    const { sock, initial } = await pausedClient(server.port);
+    const ws = await opened.promise;
+    // Fill until uws has to buffer, so that drain events follow once the client reads.
+    let status = 0;
+    for (let i = 0; i < 16 && (status = ws.sendBinary(payload)) > 0; i++) {}
+    expect(status).toBe(-1);
+
+    const chunks = [initial];
+    sock.on("data", chunk => chunks.push(chunk));
+    const ended = new Promise<void>(resolve => sock.once("end", resolve));
+    sock.resume();
+    await ended;
+    sock.destroy();
+
+    const bytes = Buffer.concat(chunks);
+    expect(closeCalls).toBe(1);
+    expect(bytes.subarray(bytes.length - closeFrame.length)).toEqual(closeFrame);
+  });
 });

@@ -75,7 +75,7 @@ impl All {
         global_this: &JSGlobalObject,
         countdown: f64,
         warning_type: TimeoutWarning,
-    ) {
+    ) -> JsResult<()> {
         const SUFFIX: &str = ".\nTimeout duration was set to 1.";
 
         let mut warning_string = match warning_type {
@@ -114,35 +114,15 @@ impl All {
         };
         let mut warning_type_string =
             BunString::create_atom_if_possible(<&'static str>::from(warning_type).as_bytes());
-        // Emitting a warning should never interrupt execution, but the emit path calls
-        // into user-observable JS (process.nextTick, getters, etc.) which can throw.
-        // Swallowing error.JSError alone leaves the exception pending on the VM and
-        // trips assertExceptionPresenceMatches in the host-call wrapper, so clear it.
-        let warning_js = match warning_string.transfer_to_js(global_this) {
-            Ok(v) => v,
-            Err(_) => {
-                let _ = global_this.clear_exception_except_termination();
-                return;
-            }
-        };
-        let warning_type_js = match warning_type_string.transfer_to_js(global_this) {
-            Ok(v) => v,
-            Err(_) => {
-                let _ = global_this.clear_exception_except_termination();
-                return;
-            }
-        };
-        if global_this
-            .emit_warning(
-                warning_js,
-                warning_type_js,
-                JSValue::UNDEFINED,
-                JSValue::UNDEFINED,
-            )
-            .is_err()
-        {
-            let _ = global_this.clear_exception_except_termination();
-        }
+        let warning_js = warning_string.transfer_to_js(global_this)?;
+        let warning_type_js = warning_type_string.transfer_to_js(global_this)?;
+        global_this.emit_warning(
+            warning_js,
+            warning_type_js,
+            JSValue::UNDEFINED,
+            JSValue::UNDEFINED,
+        )?;
+        Ok(())
     }
 
     /// Convert an arbitrary JavaScript value to a number of milliseconds used to schedule a timer.
@@ -175,14 +155,14 @@ impl All {
                                 global_this,
                                 countdown_double,
                                 TimeoutWarning::TimeoutOverflowWarning,
-                            );
+                            )?;
                         } else if countdown_double < 0.0 && !self.warned_negative_number {
                             self.warned_negative_number = true;
                             Self::warn_invalid_countdown(
                                 global_this,
                                 countdown_double,
                                 TimeoutWarning::TimeoutNegativeWarning,
-                            );
+                            )?;
                         } else if !countdown.is_undefined()
                             && countdown.is_number()
                             && countdown_double.is_nan()
@@ -193,7 +173,7 @@ impl All {
                                 global_this,
                                 countdown_double,
                                 TimeoutWarning::TimeoutNaNWarning,
-                            );
+                            )?;
                         }
                     }
                     1

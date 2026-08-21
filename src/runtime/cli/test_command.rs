@@ -2131,7 +2131,10 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
-        jsc::initialize_with(false, ctx.test_options.isolate);
+        jsc::initialize(jsc::InitializeOptions {
+            short_lived_globals: ctx.test_options.isolate,
+            ..Default::default()
+        });
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;

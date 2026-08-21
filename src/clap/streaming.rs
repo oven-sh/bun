@@ -37,6 +37,14 @@ pub(crate) enum ArgError {
     InvalidArgument,
 }
 
+/// Whether `takes_value` opts the param into Node's value-binding rules.
+fn is_node_style(takes_value: clap::Values) -> bool {
+    matches!(
+        takes_value,
+        clap::Values::OneNoDashValue | clap::Values::OneOptionalNoDashValue
+    )
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ArgKind {
     Long,
@@ -62,7 +70,6 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) state: State<'a>,
     pub(crate) positional: Option<&'p clap::Param<Id>>,
     pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
-    pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
 }
 
 // ArgIterator is the
@@ -128,6 +135,13 @@ where
                             param,
                             value: maybe_value,
                         }));
+                    }
+
+                    if is_node_style(param.takes_value) {
+                        return match self.node_style_value(param.takes_value, maybe_value) {
+                            Ok(value) => Ok(Some(Arg { param, value })),
+                            Err(e) => Err(self.err(arg, None, Some(name), e)),
+                        };
                     }
 
                     let value = 'blk: {
@@ -251,6 +265,37 @@ where
                 return Ok(Some(Arg { param, value: None }));
             }
 
+            if is_node_style(param.takes_value) {
+                if next_is_eql {
+                    return match self
+                        .node_style_value(param.takes_value, Some(&arg[next_index + 1..]))
+                    {
+                        Ok(value) => Ok(Some(Arg { param, value })),
+                        Err(e) => Err(self.err(arg, Some(short), None, e)),
+                    };
+                }
+                if arg.len() > next_index {
+                    // Text attached without '=' stays part of the cluster for
+                    // the optional form, so "-pe 42" is -p followed by -e 42
+                    // rather than -p with the value "e".
+                    if param.takes_value == clap::Values::OneOptionalNoDashValue {
+                        self.state = State::Chaining(Chaining {
+                            arg,
+                            index: next_index,
+                        });
+                        return Ok(Some(Arg { param, value: None }));
+                    }
+                    return Ok(Some(Arg {
+                        param,
+                        value: Some(&arg[next_index..]),
+                    }));
+                }
+                return match self.node_style_value(param.takes_value, None) {
+                    Ok(value) => Ok(Some(Arg { param, value })),
+                    Err(e) => Err(self.err(arg, Some(short), None, e)),
+                };
+            }
+
             if arg.len() <= next_index {
                 let value = match self.iter.next() {
                     Some(v) => v,
@@ -302,20 +347,9 @@ where
     }
 
     fn parse_next_arg(&mut self) -> Result<Option<ArgInfo<'a>>, ArgError> {
-        let Some(mut full_arg) = self.iter.next() else {
+        let Some(full_arg) = self.iter.next() else {
             return Ok(None);
         };
-        // Only flag-shaped tokens reach here (option values and `--` targets are pulled straight
-        // off `iter`); restrict rewrites so a mapping never touches `-`/`--` or a positional,
-        // per the contract on `ParseOptions::short_aliases`.
-        if full_arg.starts_with(b"-") && full_arg != b"-" && full_arg != b"--" {
-            for (from, to) in self.short_aliases {
-                if full_arg == *from {
-                    full_arg = to;
-                    break;
-                }
-            }
-        }
         if full_arg == b"--" || full_arg == b"-" {
             return Ok(Some(ArgInfo {
                 arg: full_arg,
@@ -338,6 +372,46 @@ where
         Ok(Some(ArgInfo {
             arg: full_arg,
             kind: ArgKind::Positional,
+        }))
+    }
+
+    /// Bind a [`clap::Values::OneNoDashValue`] / `OneOptionalNoDashValue` value
+    /// per Node's rules: https://github.com/nodejs/node/blob/main/src/node_options-inl.h
+    /// `attached` is the `=`-attached value, if the caller found one.
+    fn node_style_value(
+        &mut self,
+        takes_value: clap::Values,
+        attached: Option<&'a [u8]>,
+    ) -> Result<Option<&'a [u8]>, ArgError> {
+        if let Some(value) = attached {
+            if !value.is_empty() {
+                return Ok(Some(value));
+            }
+            // Upstream's optional form is a plain boolean, so an empty
+            // `=` value is simply no value (`node --print=` prints undefined)
+            // rather than the error the required form raises.
+            if takes_value == clap::Values::OneOptionalNoDashValue {
+                return Ok(None);
+            }
+            return Err(ArgError::MissingValue);
+        }
+
+        let usable = self.iter.remain().first().is_some_and(|next| {
+            !next.starts_with(b"-")
+                && !(takes_value == clap::Values::OneOptionalNoDashValue && next.is_empty())
+        });
+        if !usable {
+            if takes_value == clap::Values::OneNoDashValue {
+                return Err(ArgError::MissingValue);
+            }
+            return Ok(None);
+        }
+
+        // `usable` only holds when the iterator has a next argument.
+        let value = self.iter.next().unwrap_or_default();
+        Ok(Some(match value.strip_prefix(b"\\") {
+            Some(rest) if rest.starts_with(b"-") => rest,
+            _ => value,
         }))
     }
 
@@ -367,7 +441,6 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
-            short_aliases: &[],
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -400,7 +473,6 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
-            short_aliases: &[],
             params,
             iter: &mut iter,
             state: State::Normal,

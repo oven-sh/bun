@@ -224,6 +224,14 @@ pub enum Values {
     One,
     Many,
     OneOptional,
+    /// Like [`Values::One`], but a separate following argument that starts
+    /// with '-' is never consumed as the value (Node's behavior for `-e`):
+    /// the parse fails with a missing value instead.
+    OneNoDashValue,
+    /// Like [`Values::OneOptional`], but a separate following arg is only the
+    /// value when it does not start with '-' (Node's `-p`), and a short-cluster
+    /// remainder stays in the cluster (`-pe` is `-p` then `-e`).
+    OneOptionalNoDashValue,
 }
 
 /// Represents a parameter for the command line.
@@ -296,6 +304,22 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    /// The argument as written, with its leading dashes stripped. For a long
+    /// flag with an attached `=` this retains the `=` (e.g. `--eval=` yields
+    /// `b"eval="`), mirroring what the user typed.
+    pub fn arg(&self) -> &[u8] {
+        &self.arg
+    }
+    /// Short flag letter that failed, when the failing argument was a short.
+    pub fn short(&self) -> Option<u8> {
+        self.short
+    }
+    /// Long flag name (no leading `--`) that failed, when the failing argument
+    /// was a long.
+    pub fn long(&self) -> Option<&[u8]> {
+        self.long.as_deref()
+    }
+
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
     ///
@@ -369,10 +393,6 @@ impl Default for Help {
 pub struct ParseOptions<'a> {
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
-    /// Whole-token rewrites applied only where a token is being classified as a
-    /// flag, never to an option's value or a `--` target. Node keeps its own
-    /// aliases on exactly that branch (node_options-inl.h).
-    pub short_aliases: &'static [(&'static [u8], &'static [u8])],
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -454,7 +474,6 @@ pub fn parse<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
-            short_aliases: opt.short_aliases,
         },
     )?;
     Ok(Args { clap })
@@ -474,7 +493,6 @@ pub fn parse_with_table<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
-            short_aliases: opt.short_aliases,
         },
     )?;
     Ok(Args { clap })

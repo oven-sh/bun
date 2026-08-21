@@ -2377,7 +2377,7 @@ describe("LinkWorkspacePackages", () => {
     ]);
 
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cmd: [bunExe(), `--config=${bunfigPath}`, "install"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -2431,7 +2431,7 @@ describe("LinkWorkspacePackages", () => {
     ]);
 
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cmd: [bunExe(), `--config=${bunfigPath}`, "install"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",

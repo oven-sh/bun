@@ -1257,7 +1257,6 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             clap::ParseOptions {
                 diagnostic: Some(&mut diag),
                 stop_after_positional_at: 0,
-                ..Default::default()
             },
         ) {
             Ok(a) => {

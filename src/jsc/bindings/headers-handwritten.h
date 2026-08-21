@@ -3,6 +3,8 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ArgList.h"
+#include <wtf/Noncopyable.h>
+#include <wtf/Vector.h>
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN
@@ -67,8 +69,6 @@ typedef struct BunString {
 
     // If it's not a WTFStringImpl, this does nothing
     inline void deref();
-
-    static size_t utf8ByteLength(const WTF::String&);
 
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
@@ -385,11 +385,6 @@ extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
 
-// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
-// Only keep the ones still exported from native code
-extern "C" const char* Bun__versions_uws;
-extern "C" const char* Bun__versions_usockets;
-
 extern "C" const char* Bun__version_sha;
 
 extern "C" void ZigString__freeGlobal(const unsigned char* ptr, size_t len);
@@ -473,6 +468,39 @@ ALWAYS_INLINE void BunString::deref()
         this->impl.wtf->deref();
     }
 }
+
+namespace Bun {
+
+// Frames built here for Bun__remapStackFramePositions, which may swap in a freshly allocated source_url; frames behind ZigStackTrace::frames_ptr are released by Rust instead.
+class OwnedZigStackFrames {
+    WTF_MAKE_NONCOPYABLE(OwnedZigStackFrames);
+
+public:
+    explicit OwnedZigStackFrames(size_t count)
+        : m_frames(count)
+    {
+    }
+
+    ~OwnedZigStackFrames()
+    {
+        for (ZigStackFrame& frame : m_frames) {
+            frame.function_name.deref();
+            frame.source_url.deref();
+        }
+    }
+
+    ZigStackFrame& operator[](size_t index) { return m_frames[index]; }
+
+    void remap(void* bunVM)
+    {
+        Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size());
+    }
+
+private:
+    WTF::Vector<ZigStackFrame, 8> m_frames;
+};
+
+} // namespace Bun
 
 #define CLEAR_IF_EXCEPTION(scope__) (void)scope__.tryClearException();
 

@@ -116,6 +116,7 @@ use crate::webcore::s3::simple_request::{
     execute_simple_s3_request,
 };
 use crate::webcore::s3::xml_response;
+use bun_collections::index_sort;
 
 declare_scope!(S3MultiPartUpload, hidden);
 
@@ -599,7 +600,7 @@ impl MultiPartUpload {
                 );
                 self.multipart_etags.with_mut(|etags| {
                     // sort the etags
-                    etags.sort_by_key(|a| a.number);
+                    index_sort::sort_slice_by(etags, |a, b| a.number.cmp(&b.number));
                     for tag in etags.drain(..) {
                         write!(
                             list,

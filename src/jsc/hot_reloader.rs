@@ -32,12 +32,6 @@ pub enum ImportWatcher {
     Watch(Box<Watcher>),
 }
 
-// Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its `File`
-// constant must mirror `bun_ast::Loader::File` —
-// the watcher stores that value for auto-watched directories. This crate sees
-// both types, so the compile-time check lives here.
-const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
-
 impl ImportWatcher {
     /// Look up the `package_json` column for `hash` under the watcher's
     /// mutex.
@@ -62,13 +56,9 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: bun_ast::Loader) -> bool {
-        // Note: bun_watcher::Loader is an opaque newtype over u8;
-        // wrap the bun_ast::Loader discriminant.
+    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
-                w.add_file_by_path_slow(file_path, bun_watcher::Loader(loader as u8))
-            }
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.add_file_by_path_slow(file_path),
             ImportWatcher::None => true,
         }
     }
@@ -79,22 +69,15 @@ impl ImportWatcher {
         fd: Fd,
         file_path: &[u8],
         hash: bun_watcher::HashType,
-        loader: bun_ast::Loader,
         dir_fd: Fd,
         // Note: bun_watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
         package_json: Option<&'static bun_watcher::PackageJSON>,
     ) -> bun_sys::Result<bun_watcher::FdOwnership> {
         match self {
-            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => watcher
-                .add_file::<COPY_FILE_PATH>(
-                    fd,
-                    file_path,
-                    hash,
-                    bun_watcher::Loader(loader as u8),
-                    dir_fd,
-                    package_json,
-                ),
+            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
+                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
+            }
             ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),
         }
     }
@@ -687,6 +670,9 @@ fn arm_watch_reload_grace_timer() {
     let spawned = std::thread::Builder::new()
         .name("WatchReloadGrace".into())
         .spawn(move || {
+            // `force()` clears the terminal through this thread's `Output`
+            // writers; they are zeroed until the thread is configured.
+            Output::Source::configure_thread_no_js();
             const STEP_MS: u64 = 10;
             // Budget to drain the posted WatchReloadTask; extended once when
             // the kill-signal emit is observed so a bounded synchronous

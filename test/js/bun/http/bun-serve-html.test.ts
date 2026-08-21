@@ -678,6 +678,64 @@ test("serve html error handling", async () => {
   Bun.gc(true);
 });
 
+// The dev server treats a file that fails to load with ENOENT as deleted and
+// leaves it to the importers to report. The html file of a route has no
+// importer, so the route used to reach the loaded state without any bundled
+// html and crash the process while it rendered the page. Now the route reports
+// the missing file and watches its directory, so the page comes back with the
+// file. Nothing else in the directory was ever bundled, so nothing else
+// watches it.
+test("serve html whose file is deleted before its first bundle", async () => {
+  using dir = tempDir("bun-serve-html-deleted-route-file", {
+    "index.html": `<!DOCTYPE html><html><head><title>restored page</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    "serve.ts": /*ts*/ `
+      import { renameSync } from "node:fs";
+      import { join } from "node:path";
+      import html from "./index.html";
+
+      const htmlPath = join(import.meta.dir, "index.html");
+      const movedPath = htmlPath + ".moved";
+
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      async function page() {
+        const response = await fetch(server.url);
+        const text = await response.text();
+        return { status: response.status, title: text.match(/<title>(.*?)<\\/title>/)?.[1] };
+      }
+
+      renameSync(htmlPath, movedPath);
+      // The second request hits the route while it is already marked as failed.
+      const missing = [await page(), await page()];
+
+      renameSync(movedPath, htmlPath);
+      let restored = await page();
+      const deadline = Date.now() + 30_000;
+      while (restored.status !== 200 && Date.now() < deadline) {
+        await Bun.sleep(10);
+        restored = await page();
+      }
+
+      console.log(JSON.stringify({ missing, restored }));
+      server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const failed = { status: 500, title: "Bun - Build Failed" };
+  expect({ stdout: stdout.trim(), exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({ missing: [failed, failed], restored: { status: 200, title: "restored page" } }),
+    exitCode: 0,
+  });
+});
+
 test("wildcard static routes", async () => {
   await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `

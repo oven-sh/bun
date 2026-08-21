@@ -552,6 +552,48 @@ it("writeFileSync in append should not truncate the file", () => {
   expect(readFileSync(path, "utf8")).toBe(str);
 });
 
+describe("append with flag a+ writes at end of file", () => {
+  const seed = "0123456789";
+  const expected = "0123456789AB";
+
+  it("writeFileSync", () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    writeFileSync(path, "AB", { flag: "a+" });
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+
+  it("promises.writeFile", async () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    await promises.writeFile(path, "AB", { flag: "a+" });
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+
+  it("appendFileSync", () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    fs.appendFileSync(path, "AB", { flag: "a+" });
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+
+  it("openSync + writeSync", () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    const fd = openSync(path, "a+");
+    try {
+      writeSync(fd, "AB");
+      // a+ (unlike a) also grants read access.
+      const buf = Buffer.alloc(expected.length);
+      expect(readSync(fd, buf, 0, buf.length, 0)).toBe(expected.length);
+      expect(buf.toString()).toBe(expected);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+});
+
 it.concurrent("await readdir #3931", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
@@ -3219,21 +3261,23 @@ describe("rmdir", () => {
 
     expect(existsSync(path + "/file.txt")).toBe(true);
 
-    await expect(promises.rmdir(path, { recursive: true })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
-    await promises.rm(path, { recursive: true, force: true });
+    await promises.rmdir(path, { recursive: true });
     expect(existsSync(path + "/file.txt")).toBe(false);
   });
-  it("throws for recursive: true like node", () => {
-    const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
-    try {
-      mkdirSync(path, { recursive: true });
-    } catch (e) {}
-    expect(existsSync(path)).toBe(true);
-    expect(() => {
-      rmdir(join(path, "../../"), { recursive: true }, () => {});
-    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
-    rmSync(join(path, "../../"), { recursive: true, force: true });
-    expect(existsSync(path)).toBe(false);
+  // Node 26 removed rmdir's `recursive` option (DEP0147). Bun keeps accepting
+  // it and removes the tree the way `rm` does, because packages still call it.
+  it("removes a non-empty tree with recursive: true", async () => {
+    using dir = tempDir("rmdir-recursive-cb", { "a/b/c.txt": "c", "a/d.txt": "d", "e": {} });
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    rmdir(join(String(dir), "a"), { recursive: true }, resolve);
+    expect(await promise).toBeNull();
+    expect(readdirSync(String(dir))).toEqual(["e"]);
+  });
+  it("reports ENOENT for a missing path with recursive: true", async () => {
+    using dir = tempDir("rmdir-recursive-cb-missing", {});
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    rmdir(join(String(dir), "missing"), { recursive: true }, resolve);
+    expect(await promise).toMatchObject({ code: "ENOENT" });
   });
 });
 
@@ -3256,17 +3300,14 @@ describe("rmdirSync", () => {
     rmdirSync(path);
     expect(existsSync(path)).toBe(false);
   });
-  it("throws for recursive: true like node", () => {
-    const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
-    try {
-      mkdirSync(path, { recursive: true });
-    } catch (e) {}
-    expect(existsSync(path)).toBe(true);
-    expect(() => rmdirSync(join(path, "../../"), { recursive: true })).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-    );
-    rmSync(join(path, "../../"), { recursive: true, force: true });
-    expect(existsSync(path)).toBe(false);
+  it("removes a non-empty tree with recursive: true", () => {
+    using dir = tempDir("rmdirsync-recursive", { "a/b/c.txt": "c", "a/d.txt": "d", "e": {} });
+    const a = join(String(dir), "a");
+    expect(() => rmdirSync(a, { recursive: false })).toThrow(expect.objectContaining({ syscall: "rmdir" }));
+    expect(existsSync(join(a, "b/c.txt"))).toBe(true);
+    rmdirSync(a, { recursive: true, maxRetries: 1, retryDelay: 0 });
+    expect(readdirSync(String(dir))).toEqual(["e"]);
+    expect(() => rmdirSync(a, { recursive: true })).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 });
 
@@ -4023,7 +4064,7 @@ describe("createWriteStream", () => {
 });
 
 describe("fs/promises", () => {
-  const { exists, mkdir, readFile, rm, rmdir, stat, writeFile } = promises;
+  const { exists, mkdir, readFile, rmdir, stat, writeFile } = promises;
 
   it("should not segfault on exception", async () => {
     try {
@@ -4450,17 +4491,13 @@ describe("fs/promises", () => {
       await rmdir(path);
       expect(await exists(path)).toBe(false);
     });
-    it("throws for recursive: true like node", async () => {
-      const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
-      try {
-        await mkdir(path, { recursive: true });
-      } catch (e) {}
-      expect(await exists(path)).toBe(true);
-      await expect(rmdir(join(path, "../../"), { recursive: true })).rejects.toMatchObject({
-        code: "ERR_INVALID_ARG_VALUE",
-      });
-      await rm(join(path, "../../"), { recursive: true, force: true });
-      expect(await exists(path)).toBe(false);
+    it("removes a non-empty tree with recursive: true", async () => {
+      using dir = tempDir("rmdir-recursive-promises", { "a/b/c.txt": "c", "a/d.txt": "d", "e": {} });
+      const a = join(String(dir), "a");
+      await expect(rmdir(a, { recursive: false })).rejects.toMatchObject({ syscall: "rmdir" });
+      await rmdir(a, { recursive: true });
+      expect(readdirSync(String(dir))).toEqual(["e"]);
+      await expect(rmdir(a, { recursive: true })).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 

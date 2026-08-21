@@ -1,5 +1,6 @@
 #include "config.h"
 #include "JSCompressionStreamShared.h"
+#include "BunClientData.h"
 
 #include "ErrorCode.h"
 #include "JSCompressionStream.h"
@@ -409,6 +410,7 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
             step.thrown = takeAbruptCompletion(globalObject, scope);
             if (step.thrown.isEmpty()) {
                 // VM termination: the chunk stays pending; teardown's finalizer releases the coder.
+                Bun__VM__takeTerminationOutsideScript(globalObject);
                 stream->m_asyncCodecInFlight = false;
                 return;
             }

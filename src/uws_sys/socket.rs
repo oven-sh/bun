@@ -197,9 +197,6 @@ pub struct NewSocketHandler<const IS_SSL: bool> {
 
 pub type SocketTCP = NewSocketHandler<false>;
 pub type SocketTLS = NewSocketHandler<true>;
-/// snake-case aliases (match `AnySocket` variant names).
-pub type SocketTcp = NewSocketHandler<false>;
-pub type SocketTls = NewSocketHandler<true>;
 /// Alias used by `http`, `ipc`, `websocket_client` — same type, less ceremony.
 pub type SocketHandler<const SSL: bool> = NewSocketHandler<SSL>;
 
@@ -612,7 +609,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    // ── ext / group / fd ────────────────────────────────────────────────────
+    // ── ext / fd ────────────────────────────────────────────────────────────
 
     /// Typed ext storage. `None` for non-uSockets transports.
     pub fn ext<T>(&self) -> Option<*mut T> {
@@ -623,17 +620,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Connecting(s) => {
                 Some(crate::connecting_socket::us_connecting_socket_ext(conn(s)).cast::<T>())
             }
-            _ => None,
-        }
-    }
-
-    /// Group this socket is linked into. `None` for non-uSockets transports.
-    pub fn group(&self) -> Option<*mut SocketGroup> {
-        match self.socket {
-            InternalSocket::Connected(s) => {
-                Some(std::ptr::from_mut::<SocketGroup>(sock(s).group()))
-            }
-            InternalSocket::Connecting(s) => Some(conn(s).group()),
             _ => None,
         }
     }
@@ -939,14 +925,6 @@ impl AnySocket {
             AnySocket::SocketTcp(s) => &s.socket,
             AnySocket::SocketTls(s) => &s.socket,
         }
-    }
-    #[inline]
-    pub fn group(&self) -> *mut SocketGroup {
-        match self {
-            AnySocket::SocketTcp(s) => s.group(),
-            AnySocket::SocketTls(s) => s.group(),
-        }
-        .unwrap()
     }
 
     any_socket_forward! {

@@ -130,6 +130,7 @@ new!(pub CI_JOB_URL: string, "CI_JOB_URL", {});
 new!(pub CLAUDE_CODE_AGENT_RULE_DISABLED: boolean, "CLAUDE_CODE_AGENT_RULE_DISABLED", { default: false });
 new!(pub CLAUDECODE: boolean, "CLAUDECODE", { default: false });
 new!(pub COLORTERM: string, "COLORTERM", {});
+new!(pub COLUMNS: unsigned, "COLUMNS", {});
 new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { default: false });
 new!(pub CURSOR_TRACE_ID: boolean, "CURSOR_TRACE_ID", { default: false });
 new!(pub DO_NOT_TRACK: boolean, "DO_NOT_TRACK", { default: false });
@@ -488,11 +489,6 @@ pub(crate) mod kind {
                 deser: DeserOpts::DEFAULT,
             };
         }
-        impl Default for CtorOptions {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
-        }
 
         /// Control how deserializing and deserialization errors are handled.
         ///
@@ -533,11 +529,6 @@ pub(crate) mod kind {
                 error_handling: ErrorHandling::DebugWarn,
                 empty_string_as: EmptyStringAs::Erroneous,
             };
-        }
-        impl Default for DeserOpts {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
         }
 
         // `ip` (var_name + opts) lives on the struct so handle_error can read it; it is

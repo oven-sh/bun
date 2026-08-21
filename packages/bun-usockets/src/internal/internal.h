@@ -75,13 +75,20 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
  * allocations this library has no way to fail gracefully from. */
 extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 
+/* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
+ * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
+ * on POSIX, a WSA code on Windows, which on_close maps (socket_body.rs). The
+ * fallback has to be in that numbering too: the CRT's ECONNRESET is a
+ * different number on Windows (108) and is misread as another errno there. */
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
+#define LIBUS_ECONNRESET WSAECONNRESET
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
+#define LIBUS_ECONNRESET ECONNRESET
 #endif
 #include <stdbool.h>
 /* Poll type and what it polls for */
@@ -240,9 +247,7 @@ int us_internal_ssl_write(us_socket_r s, const char *data, int length);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
-void *us_internal_ssl_sni_userdata(us_socket_r s);
 const char *us_internal_ssl_sni_servername(us_socket_r s);
-void us_internal_ssl_handshake_abort(us_socket_r s);
 /* SSL_CTX_free(ls->ssl_ctx) + sni_free(ls->sni). Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
@@ -250,13 +255,6 @@ void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
-
-#ifdef LIBUS_USE_KQUEUE
-/* Arm an EV_CLEAR read filter on a socket with no readable interest so the
- * peer's FIN/RST still reaches the dispatcher (kqueue's stand-in for epoll's
- * implicit EPOLLHUP/EPOLLERR). See the definition in epoll_kqueue.c. */
-void us_internal_kqueue_socket_arm_read_sentinel(us_socket_r s);
-#endif
 
 int us_internal_handle_dns_results(us_loop_r loop);
 

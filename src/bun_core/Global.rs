@@ -328,7 +328,7 @@ impl SignalCode {
         #[cfg(not(unix))]
         {
             // Windows numbering: CRT <signal.h> plus libuv's synthetic SIGHUP/SIGQUIT/SIGKILL/
-            // SIGWINCH (src/jsc/bindings/libuv/uv/win.h). The enum discriminants are Linux numbers
+            // SIGWINCH (vendor/libuv/include/uv/win.h). The enum discriminants are Linux numbers
             // and must not leak here (SIGABRT is 22 on Windows, not 6).
             use SignalCode as S;
             match self {

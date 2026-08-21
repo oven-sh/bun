@@ -120,6 +120,7 @@ impl Default for Config {
 // ──────────────────────────────────────────────────────────────────────────
 
 use bun_bundler_jsc::options_jsc::{loader_from_js, target_from_js};
+use bun_collections::index_sort;
 
 fn source_map_option_from_js(
     global: &JSGlobalObject,
@@ -701,10 +702,8 @@ impl TransformTask {
         let mut log = bun_ast::Log::init();
         log.level = config.log.level;
 
-        // SAFETY: bitwise copy of the wrapper's Transpiler; `ManuallyDrop` so the
-        // copy never frees what the original owns. Its self-pointers (log,
-        // linker.resolver, arena) are re-aimed in `run` once the task has its
-        // final address inside the job.
+        // SAFETY: `ManuallyDrop` keeps this bitwise copy from freeing what the
+        // wrapper owns; `run` re-aims its log and arena pointers.
         let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
             core::ptr::read(transpiler.transpiler.as_ptr())
         });
@@ -742,8 +741,6 @@ impl TransformTask {
 
     fn run(&mut self, vm: &jsc::Ticket) {
         let name = self.loader.stdin_name();
-        let resolver_ptr: *mut _ = &raw mut self.transpiler.resolver;
-        self.transpiler.linker.resolver = resolver_ptr;
         // SAFETY: the wrapper's config, alive under the job's ticket (see `schedule`).
         let tsconfig: Option<&TSConfigJSON> =
             self.tsconfig.map(|p| &*unsafe { p.under_ticket(vm) });
@@ -1602,7 +1599,7 @@ fn named_exports_to_js(
     while let Some(entry) = named_exports_iter.next() {
         keys.push(&**entry.key_ptr);
     }
-    keys.sort_unstable();
+    index_sort::sort_slice_unstable_by(&mut keys, |a, b| a.cmp(b));
 
     let names: Vec<BunString> = keys.into_iter().map(BunString::from_bytes).collect();
     bun_jsc::bun_string_jsc::to_js_array(global, &names)

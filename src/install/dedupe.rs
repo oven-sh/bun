@@ -244,7 +244,7 @@ impl<'a> Pass<'a> {
                 }
             }
             if !self.protected.is_empty() {
-                self.protected.sort_unstable();
+                index_sort::sort_slice_unstable_by(&mut self.protected, |a, b| a.cmp(b));
                 self.protected.dedup();
                 for i in 0..self.protected.len() {
                     let k = self.protected[i];

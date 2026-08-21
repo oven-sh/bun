@@ -63,45 +63,6 @@ impl OutputFile {
     }
 }
 
-impl Clone for OutputFile {
-    fn clone(&self) -> Self {
-        let owned_src_path_text = self.owned_src_path_text.clone();
-        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
-        let text: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
-        let src_path = if !self.owned_src_path_text.is_empty() {
-            fs::Path {
-                is_disabled: self.src_path.is_disabled,
-                is_symlink: self.src_path.is_symlink,
-                ..fs::Path::init(text)
-            }
-        } else {
-            self.src_path
-        };
-        OutputFile {
-            loader: self.loader,
-            input_loader: self.input_loader,
-            src_path,
-            owned_src_path_text,
-            value: self.value.clone(),
-            size: self.size,
-            size_without_sourcemap: self.size_without_sourcemap,
-            hash: self.hash,
-            is_executable: self.is_executable,
-            source_map_index: self.source_map_index,
-            bytecode_index: self.bytecode_index,
-            module_info_index: self.module_info_index,
-            output_kind: self.output_kind,
-            dest_path: self.dest_path.clone(),
-            side: self.side,
-            entry_point_index: self.entry_point_index,
-            referenced_css_chunks: self.referenced_css_chunks.clone(),
-            source_index: self.source_index,
-            bake_extra: self.bake_extra,
-        }
-    }
-}
-
 #[derive(Default, Clone, Copy)]
 pub struct BakeExtra {
     pub route: BakeRouteKind,
@@ -248,21 +209,17 @@ impl OutputFile {
         }
     }
 
-    pub fn write_to_disk(&self, root_dir: Fd, root_dir_path: &[u8]) -> Result<(), Error> {
+    /// `dest_path` is relative to `root_dir`.
+    pub fn write_to_disk(&self, root_dir: Fd) -> Result<(), Error> {
         match &self.value {
             Value::Noop => {}
             Value::Saved(_) => {
                 // already written to disk
             }
             Value::Buffer { bytes } => {
-                let mut rel_path: &[u8] = &self.dest_path;
-                if self.dest_path.len() > root_dir_path.len() {
-                    rel_path = resolve_path::relative(root_dir_path, &self.dest_path);
-                    // `dirname` returns `b""` when there's no separator.
-                    let parent = resolve_path::dirname::<platform::Auto>(rel_path);
-                    if !parent.is_empty() {
-                        bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
-                    }
+                let parent = resolve_path::dirname::<platform::Auto>(&self.dest_path);
+                if !parent.is_empty() && parent != b"." {
+                    bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
                 let mut path_buf = PathBuffer::uninit();
@@ -273,18 +230,18 @@ impl OutputFile {
                         encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(rel_path),
+                        file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
                     },
                 )?;
             }
             Value::Copy(value) => {
-                self.copy_to(root_dir_path, &value.pathname, root_dir)?;
+                self.copy_to(&value.pathname, root_dir)?;
             }
         }
         Ok(())
     }
 
-    pub(crate) fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
+    pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
         let mut out_buf = PathBuffer::uninit();
         let fd_out = bun_sys::openat(
             dir,

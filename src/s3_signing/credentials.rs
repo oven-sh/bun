@@ -808,17 +808,19 @@ impl S3Credentials {
             return Ok(r);
         }
 
-        if contains_newline_or_cr(aws_content_hash)
-            || search_params.is_some_and(contains_newline_or_cr)
-            || acl.is_some_and(contains_newline_or_cr)
-            || storage_class.is_some_and(contains_newline_or_cr)
-            || content_md5.as_deref().is_some_and(contains_newline_or_cr)
-            || content_disposition.is_some_and(contains_newline_or_cr)
-            || content_encoding.is_some_and(contains_newline_or_cr)
-            || session_token.is_some_and(contains_newline_or_cr)
-            || contains_newline_or_cr(region)
-            || contains_newline_or_cr(&self.access_key_id)
-            || contains_newline_or_cr(&host)
+        if contains_invalid_header_value_byte(aws_content_hash)
+            || search_params.is_some_and(contains_invalid_header_value_byte)
+            || acl.is_some_and(contains_invalid_header_value_byte)
+            || storage_class.is_some_and(contains_invalid_header_value_byte)
+            || content_md5
+                .as_deref()
+                .is_some_and(contains_invalid_header_value_byte)
+            || content_disposition.is_some_and(contains_invalid_header_value_byte)
+            || content_encoding.is_some_and(contains_invalid_header_value_byte)
+            || session_token.is_some_and(contains_invalid_header_value_byte)
+            || contains_invalid_header_value_byte(region)
+            || contains_invalid_header_value_byte(&self.access_key_id)
+            || contains_invalid_header_value_byte(&host)
         {
             return Err(SignError::InvalidHeaderValue);
         }
@@ -1418,10 +1420,11 @@ impl CanonicalRequest {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Returns true if the given slice contains any CR (\r) or LF (\n) characters,
-/// which would allow HTTP header injection if used in a header value.
-fn contains_newline_or_cr(value: &[u8]) -> bool {
-    strings::index_of_any(value, b"\r\n").is_some()
+/// Returns true if the given slice contains a byte that is never valid in an
+/// HTTP header value (NUL, CR, LF). Same byte set `fetch()` rejects through
+/// `Headers`, see https://fetch.spec.whatwg.org/#concept-header-value.
+pub fn contains_invalid_header_value_byte(value: &[u8]) -> bool {
+    strings::contains_any(value, b"\0\r\n")
 }
 
 fn is_valid_host_component(value: &[u8]) -> bool {

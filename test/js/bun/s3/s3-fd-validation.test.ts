@@ -29,7 +29,7 @@ test("S3 file type option containing CR/LF or other control characters is not re
   // A `type` value embedding CR/LF is rejected outright at option-parsing time,
   // before any request is made, so it can never become extra request headers.
   expect(() => client.file("report.txt", { type: "text/plain\r\nx-amz-acl: public-read" })).toThrow(
-    "type must not contain newline characters (CR/LF)",
+    "type must not contain CR/LF or NUL characters",
   );
 
   // Other control characters in `type` must not be stored as the file's content

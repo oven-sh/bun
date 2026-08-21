@@ -2,6 +2,7 @@ import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -486,6 +487,12 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
 describe.if(isPosix)("process.kill() aimed at the process itself is not reported as a crash", () => {
   const crashHandlerSignals = ["SIGSEGV", "SIGILL", "SIGBUS", "SIGFPE", "SIGABRT", "SIGTRAP"] as const;
 
+  // The value `exited` resolves to for a death by signal: 128 + the platform's
+  // number for it. Compared instead of `signalCode`, which Bun currently names
+  // with Linux numbering, so on macOS a death from SIGBUS (10 there) reads as
+  // "SIGUSR1".
+  const diedFrom = (signal: (typeof crashHandlerSignals)[number]) => 128 + osConstants.signals[signal];
+
   // `detached` puts the child in a process group of its own, so that the
   // process-group forms of kill(2) below cannot reach this test runner.
   async function run(code: string, { detached = false } = {}) {
@@ -495,8 +502,8 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
       stdio: ["ignore", "pipe", "pipe"],
       detached,
     });
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode: proc.exitCode, signalCode: proc.signalCode };
+    const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode: proc.exitCode, exited };
   }
 
   test.concurrent.each(crashHandlerSignals)(
@@ -506,7 +513,7 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
         stdout: "",
         stderr: "",
         exitCode: null,
-        signalCode: signal,
+        exited: diedFrom(signal),
       });
     },
   );
@@ -522,7 +529,7 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
       stdout: "",
       stderr: "",
       exitCode: null,
-      signalCode: "SIGABRT",
+      exited: diedFrom("SIGABRT"),
     });
   });
 
@@ -533,25 +540,24 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
          process.kill(process.pid, "SIGABRT");
          setInterval(() => {}, 1 << 30);`,
       ),
-    ).toEqual({ stdout: "listener ran\n", stderr: "", exitCode: 0, signalCode: null });
+    ).toEqual({ stdout: "listener ran\n", stderr: "", exitCode: 0, exited: 0 });
   });
 
   // Sending one of these signals to another process must leave this process's
   // crash handler installed: a real abort afterwards is still reported.
   // (Outside ASAN builds the abort hook raises the real signal.)
   test.concurrent("sending the signal to another process keeps the crash handler installed", async () => {
-    const { stdout, stderr, signalCode } = await run(
+    const { stdout, stderr, exitCode, exited } = await run(
       `import { crash_handler } from "bun:internal-for-testing";
        const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1 << 30)"], stdio: ["ignore", "ignore", "ignore"] });
        process.kill(child.pid, "SIGABRT");
-       await child.exited;
-       console.log(child.signalCode);
+       console.log(await child.exited);
        crash_handler.abort();`,
     );
-    expect(stdout).toBe("SIGABRT\n");
+    expect(stdout).toBe(`${diedFrom("SIGABRT")}\n`);
     expect(stderr).toContain("abort() called");
     expect(stderr).toContain("oh no: Bun has crashed");
-    expect(signalCode).toBe("SIGABRT");
+    expect({ exitCode, exited }).toEqual({ exitCode: null, exited: diedFrom("SIGABRT") });
   });
 });
 

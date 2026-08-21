@@ -284,10 +284,8 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// absolute deadline for the header block to complete (undici `headersTimeout`
 /// semantics). 0 disables the timer (matching `disable_timeout = true`).
 /// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes.
-/// `HTTPThread::on_start` replaces this initial value with the configured one
-/// padded for the timer-wheel sweep (see [`normalize_idle_timeout_seconds`]),
-/// so the timer fires at the configured duration plus up to one wheel period,
-/// never earlier.
+/// `HTTPThread::on_start` stores it padded for the timer-wheel sweep (see
+/// [`normalize_idle_timeout_seconds`]).
 pub(crate) static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
@@ -296,22 +294,18 @@ pub(crate) fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
 }
 
-/// Normalise an idle timeout (seconds) for uSockets' timer wheels so the
-/// sweep never fires *earlier* than asked. Both wheels tick on a fixed
-/// period (4s short wheel, 60s long wheel) whose phase is unrelated to when
-/// a socket arms its timer, so a timer armed for N ticks can fire up to one
-/// whole period early — `timeout: 100` armed as 1 tick died at the next 4s
-/// sweep, aborting whatever request was in flight (#39952). Pad by one
-/// period: short-wheel values get one 4s tick, long-wheel values (armed in
-/// whole minutes, above 240s) get one minute. The long counter wraps `% 240`
-/// minutes, so clamp so the padded value stays at 239 min. 0 = disabled.
+/// Normalise an idle timeout (seconds) for uSockets' timer wheels. The sweep
+/// phase is unrelated to when a socket arms its timer, so a timer armed for N
+/// ticks can fire up to one period (4s short wheel, 60s long wheel) before
+/// the requested duration (#39952). Pad by one period so it never fires
+/// early, and clamp so the padded value stays at the long wheel's 239 min
+/// maximum. 0 = disabled.
 #[inline]
 pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
     if raw == 0 {
         return 0;
     }
-    /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h):
-    /// the short-wheel sweep period in seconds.
+    /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h).
     const SWEEP_SECONDS: u64 = 4;
     let raw = raw.min(238 * 60);
     (if raw + SWEEP_SECONDS > 240 {

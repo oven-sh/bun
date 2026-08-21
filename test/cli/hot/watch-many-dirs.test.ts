@@ -256,16 +256,18 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
   // directory event busts the resolver's directory cache, which abandons the
   // directory handle the busted entry holds. So both phases below run the same
   // reloads and directory events per cycle and differ only in whether the
-  // deleted files are watched, and each cycle evicts `files` entries, so the
-  // leak is `files` handles per cycle while anything else a cycle can differ
-  // by (an extra reload) is one or two.
+  // deleted files are watched. The entry blocks on stdin after every reload, so
+  // the file changes of a step all land while no reload can run and then
+  // coalesce into one reload per step in both phases. Each cycle evicts `files`
+  // entries, so the leak is `files` handles per cycle, far more than the one
+  // handle an occasional extra reload would cost.
   test.skipIf(!isWindows)("evicting watchlist entries closes their handles", async () => {
     const files = 16;
     const cycles = 6;
     const indexes = Array.from({ length: files }, (_, i) => i);
     await using dir = tempDir("hot-evict-handles", {
       "entry.js": `
-        import { existsSync } from "node:fs";
+        import { existsSync, readSync } from "node:fs";
         import { loadDeps, seq } from "./trigger.js";
         // GC helper threads are handles too. Create them before the first sample.
         Bun.gc(true);
@@ -278,6 +280,8 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
           deps = "deleted";
         }
         console.log("RELOAD", seq, deps);
+        // Block until the test has made the next step's file changes.
+        readSync(0, new Uint8Array(1));
       `,
       "trigger.js": `export const seq = 0; export const loadDeps = true;`,
       ...Object.fromEntries(indexes.map(i => [`dep${i}.js`, `export const value = 0;`])),
@@ -309,6 +313,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
       cmd: [bunExe(), "--hot", "entry.js"],
       cwd: root,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "inherit",
     });
@@ -321,28 +326,40 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
         if (line === expected) return;
       }
     };
+    // The entry is blocked on stdin between steps. Unblock it so the reload the
+    // step's file changes enqueued runs, then wait for that reload's line.
+    const releaseAndWaitFor = async (expected: string) => {
+      proc.stdin.write("\n");
+      await proc.stdin.flush();
+      await waitForLine(expected);
+    };
     let seq = 0;
-    const reloadWith = async (loadDeps: boolean, expectedDeps: string) => {
+    const writeTrigger = (loadDeps: boolean) => {
       seq++;
       writeFileSync(join(root, "trigger.js"), `export const seq = ${seq}; export const loadDeps = ${loadDeps};`);
-      await waitForLine(`RELOAD ${seq} ${expectedDeps}`);
     };
     // Deletes and recreates the `victim` files between reloads that do not load
     // the deps, then reloads once more with the deps loaded. Deleting the deps
     // evicts their entries (the same delete events enqueue the "deleted"
     // reload), and the last reload watches the recreated files again. Deleting
     // the never-imported other* files instead raises the same directory events
-    // and the same number of reloads without touching the watchlist.
+    // without touching the watchlist, so that step gets its reload from the
+    // trigger. Every step is one reload in both phases.
     const cycle = async (victim: "dep" | "other", value: number) => {
-      await reloadWith(false, "skipped");
+      writeTrigger(false);
+      await releaseAndWaitFor(`RELOAD ${seq} skipped`);
+
       for (const i of indexes) rmSync(join(root, `${victim}${i}.js`));
       if (victim === "dep") {
-        await waitForLine(`RELOAD ${seq} deleted`);
+        await releaseAndWaitFor(`RELOAD ${seq} deleted`);
       } else {
-        await reloadWith(false, "skipped");
+        writeTrigger(false);
+        await releaseAndWaitFor(`RELOAD ${seq} skipped`);
       }
+
       for (const i of indexes) writeFileSync(join(root, `${victim}${i}.js`), `export const value = ${value};`);
-      await reloadWith(true, String(victim === "dep" ? files * value : 0));
+      writeTrigger(true);
+      await releaseAndWaitFor(`RELOAD ${seq} ${victim === "dep" ? files * value : 0}`);
     };
 
     await waitForLine("RELOAD 0 0");

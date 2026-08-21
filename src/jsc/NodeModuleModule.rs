@@ -117,7 +117,16 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     if frame.arguments_count() == 0 {
         return Err(global.throw_missing_arguments_value(&["specifier"]));
     }
-    let specifier = OwnedString::new(frame.argument(0).to_bun_string(global)?);
+    // Like Node, any other value is used as `${specifier}`.
+    let specifier_value = frame.argument(0);
+    if specifier_value.is_symbol() {
+        return Err(global.throw_invalid_argument_type_value(
+            "specifier",
+            "string",
+            specifier_value,
+        ));
+    }
+    let specifier = OwnedString::new(specifier_value.to_bun_string(global)?);
     let base_value = frame.argument(1);
     let base = if base_value.is_undefined() {
         None

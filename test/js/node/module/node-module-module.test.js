@@ -266,6 +266,17 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       for (const invalid of [null, {}, [], Symbol(), () => {}, true, false, 1, 0]) {
         expect(() => findPackageJSON("", invalid)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
       }
+      // Node stringifies the specifier, so a number is looked up as a package
+      // name; only a symbol, which cannot be stringified, is rejected up front.
+      expect(() => findPackageJSON(123, import.meta.path)).toThrow(
+        expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND", message: expect.stringContaining("'123'") }),
+      );
+      expect(() => findPackageJSON(Symbol("pkg"), import.meta.path)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "specifier" argument must be of type string. Received type symbol (Symbol(pkg))',
+        }),
+      );
       // URLs go through the same checks as fileURLToPath(), in either position,
       // instead of being treated as a path or a package name.
       const invalidURL = expect.objectContaining({
@@ -329,9 +340,16 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-      expect(buildStderr).not.toContain("error:");
-      expect(buildExitCode).toBe(0);
+      const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect({ buildStdout, buildStderr, buildExitCode }).toEqual({
+        buildStdout: expect.stringContaining("compile"),
+        buildStderr: expect.not.stringContaining("error:"),
+        buildExitCode: 0,
+      });
 
       await using proc = Bun.spawn({ cmd: [exe], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

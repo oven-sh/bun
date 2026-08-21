@@ -716,6 +716,23 @@ describe.concurrent("--isolate experimental global reuse", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("falls back to a full swap when an indexed own property leaks on globalThis", async () => {
+    using dir = tempDir(
+      "isolate-reuse-indexed",
+      // Indexed slots live in the butterfly, which the named-slot compare
+      // never visits, so the reset refuses a global with indexed storage.
+      reuseFixtures(
+        `(globalThis as any)[0] = "leaked-indexed";`,
+        `expect((globalThis as any)[0]).toBeUndefined();
+         expect(pkg.slot).toBe(null);`,
+      ),
+    );
+    const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(stats).toEqual({ reuse: 1, swap: 1 });
+    expect(exitCode).toBe(0);
+  });
+
   test("falls back to a full swap when the file called mock.module", async () => {
     using dir = tempDir(
       "isolate-reuse-mock-module",

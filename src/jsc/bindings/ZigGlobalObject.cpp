@@ -891,6 +891,10 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         || !globalObject->setIteratorProtocolWatchpointSet().isStillValid())
         return swap();
 
+    // Indexed own properties live in the butterfly, which the named-slot walks below never visit; the baseline global has none.
+    if (JSC::hasIndexedProperties(globalObject->indexingType()))
+        return swap();
+
     // Top-level `let`/`const`/`class` land here and cannot be deleted.
     if (globalObject->globalLexicalEnvironment()->symbolTable()->size() != baseline->lexicalSymbolTableSize)
         return swap();

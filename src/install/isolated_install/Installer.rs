@@ -2573,8 +2573,7 @@ impl<'a> Installer<'a> {
                                 strings::StringOrTinyString::init(paths::basename(workspace_path))
                             }
                             ResolutionTag::Symlink => {
-                                let symlink_dir_path: &[u8] =
-                                    &self.manager().global_link_dir_path;
+                                let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
                                 paths::PathLike::clear(&mut target_node_modules_path);
                                 let _ = target_node_modules_path.append(symlink_dir_path); // OOM/capacity: fire-and-forget
                                 strings::StringOrTinyString::init(paths::basename(

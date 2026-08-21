@@ -870,8 +870,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalOb
     controller->onFlush(globalObject);
     if (scope.exception()) [[unlikely]] {
         JSC::JSValue error = takeAbruptCompletion(globalObject, scope);
-        if (!error)
-            return {};
+        RETURN_IF_EXCEPTION(scope, {}); // termination is left pending
         controller->handleError(globalObject, error);
         RETURN_IF_EXCEPTION(scope, {});
     }

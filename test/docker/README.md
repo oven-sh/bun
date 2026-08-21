@@ -268,7 +268,7 @@ if (isDockerServiceEnabled("postgres_plain")) {
 }
 ```
 
-`isDockerEnabled()` only checks for a docker daemon. It ignores `BUN_TEST_SERVICE_*` and the CI coordinator, so use it only for tests that need docker itself.
+`isDockerEnabled()` only checks for a docker daemon, and it is always false on Linux arm64. It ignores `BUN_TEST_SERVICE_*` and the CI coordinator, so use it only for tests that need docker itself, or for a service whose image is amd64-only (`autobahn`). The CI coordinator also runs on the Linux arm64 agents, so a suite gated with `isDockerServiceEnabled()` or `describeWithContainer()` runs there.
 
 ## Migration Guide
 

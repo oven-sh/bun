@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isDockerServiceEnabled } from "harness";
+import { isDockerEnabled } from "harness";
 import * as dockerCompose from "../../../docker/index.ts";
 
 let url: string = "";
@@ -28,7 +28,10 @@ async function load() {
   return true;
 }
 
-describe.skipIf(!isDockerServiceEnabled("autobahn"))("autobahn", () => {
+// isDockerEnabled(), not isDockerServiceEnabled("autobahn"): the autobahn image
+// is amd64-only, and the Linux arm64 early return in isDockerEnabled() is what
+// keeps this suite off the native arm64 CI agents, which run a coordinator too.
+describe.skipIf(!isDockerEnabled())("autobahn", () => {
   let wsOptions: any;
 
   beforeAll(async () => {

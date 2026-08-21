@@ -1130,7 +1130,10 @@ export function isDockerEnabled(): boolean {
  * daemon. Gate suites that talk to a service with this, not with
  * `isDockerEnabled()`: the first two sources need no docker, and
  * `isDockerEnabled()` throws on Linux CI when docker is missing, so it is only
- * consulted once neither of them is configured.
+ * consulted once neither of them is configured. The coordinator runs on every
+ * Linux CI architecture, so unlike `isDockerEnabled()` this is true on Linux
+ * arm64 agents too. A service whose image is amd64-only (autobahn) keeps
+ * `isDockerEnabled()`.
  */
 export function isDockerServiceEnabled(service: ServiceName): boolean {
   if (process.env["BUN_TEST_SERVICE_" + service] || process.env.BUN_DOCKER_COORDINATOR) {

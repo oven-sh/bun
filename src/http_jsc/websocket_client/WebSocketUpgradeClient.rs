@@ -875,11 +875,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
             if let Some(tunnel) = tunnel {
                 // SAFETY: `proxy` holds a live ref on `tunnel`.
-                let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
-                // Ref the tunnel to keep it alive during this call
-                // (in case the WebSocket client closes during processing)
-                let _g = tunnel.ref_guard();
-                WebSocketProxyTunnel::receive(tunnel, data);
+                WebSocketProxyTunnel::receive(unsafe { ThisPtr::new(tunnel.as_ptr()) }, data);
             }
             return;
         }

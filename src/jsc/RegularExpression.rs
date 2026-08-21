@@ -91,7 +91,9 @@ impl RegularExpression {
 
 #[unsafe(no_mangle)]
 fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
-    // Initialize JSC before first compile (idempotent).
+    // Idempotent. `bun install` never initializes JSC otherwise; every other
+    // command has already done so with its own options by the time the
+    // matcher first runs (see `bun_install_types::NodeLinker::RegularExpression`).
     crate::initialize(false);
     match RegularExpression::init(pattern, Flags::None) {
         Ok(r) => core::ptr::NonNull::new(r.cast()),

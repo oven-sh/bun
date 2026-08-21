@@ -395,7 +395,7 @@ impl Exporter for ConsoleExporter {
 impl ConsoleExporter {
     fn print(&self, payload: &ExportPayload) {
         let mut out = String::new();
-        for_each_span(&payload.body, |scope, span| {
+        for_each_span(&payload.body, &mut |scope, span| {
             let mut tid = [0u8; 32];
             let mut sid = [0u8; 16];
             let mut pid = [0u8; 16];
@@ -569,9 +569,10 @@ fn parse_span(body: &[u8]) -> DecodedSpan<'_> {
 }
 
 /// Walk every span in an encoded `ExportTraceServiceRequest`.
+#[inline(never)]
 pub fn for_each_span<'a>(
     request: &'a [u8],
-    mut each: impl FnMut(&DecodedScope<'a>, &DecodedSpan<'a>),
+    each: &mut dyn FnMut(&DecodedScope<'a>, &DecodedSpan<'a>),
 ) {
     let mut r = Reader::new(request);
     while let Ok(Some((field, rs))) = r.next() {
@@ -718,7 +719,7 @@ pub fn decode_to_js(global: &JSGlobalObject, request: &[u8]) -> JsResult<JSValue
     }
     let mut err: Option<bun_jsc::JsError> = None;
     let mut last_scope: (usize, JSValue) = (usize::MAX, JSValue::UNDEFINED);
-    for_each_span(request, |scope, span| {
+    for_each_span(request, &mut |scope, span| {
         if err.is_some() {
             return;
         }

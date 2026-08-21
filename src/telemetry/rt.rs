@@ -83,18 +83,21 @@ pub fn end_leaf(
     stub: &SpanStub,
     name: &[u8],
     kind: SpanKind,
-    write: impl FnOnce(&mut SpanWriter<'_>),
+    mut write: impl FnMut(&mut SpanWriter<'_>),
 ) {
-    end_leaf_at(i, stub, name, kind, 0, write)
+    end_leaf_at(i, stub, name, kind, 0, &mut write)
 }
 
+/// One out-of-line copy for every integration (the attribute writer is
+/// dynamically dispatched; leaf spans are not the hot path).
+#[inline(never)]
 pub fn end_leaf_at(
     i: Instrument,
     stub: &SpanStub,
     name: &[u8],
     kind: SpanKind,
     end_ns: u64,
-    write: impl FnOnce(&mut SpanWriter<'_>),
+    write: &mut dyn FnMut(&mut SpanWriter<'_>),
 ) {
     if !stub.is_recording() {
         return;
@@ -104,7 +107,7 @@ pub fn end_leaf_at(
     } else {
         end_ns
     };
-    batch::record(ScopeId::from(i), |buf| {
+    batch::record(ScopeId::from(i), &mut |buf: &mut Vec<u8>| {
         let mut w = SpanWriter::begin(buf, stub, name, kind, end_ns);
         write(&mut w);
         w.finish();

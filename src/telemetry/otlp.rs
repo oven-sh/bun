@@ -172,7 +172,6 @@ fn write_any_value_body(out: &mut Vec<u8>, v: &Value<'_>) {
 }
 
 /// Append one `KeyValue` as field number `field` of the enclosing message.
-#[inline]
 pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>) {
     let av = any_value_body_len(v);
     let kv = len_field_len(f::KV_KEY, key.len()) + len_field_len(f::KV_VALUE, av);

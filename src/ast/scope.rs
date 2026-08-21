@@ -29,6 +29,8 @@ pub struct Scope {
     /// so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
     pub children: AstVec<StoreRef<Scope>>,
     pub members: MemberHashMap,
+    /// Members `declare_symbol` replaced in this scope; read by `hoist_symbols`.
+    pub replaced: AstVec<Member>,
     /// `AstVec`: arena-backed.
     pub generated: AstVec<Ref>,
 
@@ -69,6 +71,7 @@ impl Scope {
         parent: None,
         children: AstAlloc::vec(),
         members: MemberHashMap::new_in(AstAlloc),
+        replaced: AstAlloc::vec(),
         generated: AstAlloc::vec(),
         label_ref: Ref::NONE,
         label_stmt_is_loop: false,

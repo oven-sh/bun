@@ -1056,6 +1056,7 @@ pub struct ParsedPath<'a> {
 pub enum StrictModeFeature {
     EvalOrArguments,
     ReservedWord,
+    LegacyOctalLiteral,
 }
 
 #[derive(Clone, Copy)]
@@ -1199,6 +1200,10 @@ pub struct FnOrArrowDataParse {
     pub(crate) allow_super_call: bool,
     pub(crate) allow_super_property: bool,
     pub(crate) is_top_level: bool,
+    /// True while parsing statements lexically outside every function/arrow
+    /// body (mirrors the visit struct). Unlike `is_top_level`, an
+    /// await-permission flag, this does not vary with `top_level_await`.
+    pub(crate) is_outside_fn_or_arrow: bool,
     pub(crate) is_constructor: bool,
     pub(crate) is_typescript_declare: bool,
 
@@ -1227,6 +1232,7 @@ impl Default for FnOrArrowDataParse {
             allow_super_call: false,
             allow_super_property: false,
             is_top_level: false,
+            is_outside_fn_or_arrow: false,
             is_constructor: false,
             is_typescript_declare: false,
             has_argument_decorators: false,

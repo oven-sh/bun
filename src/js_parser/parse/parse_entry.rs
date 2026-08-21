@@ -1758,6 +1758,10 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
         }
 
+        // `exports_kind` is final here; only `ExportsKind::Esm` executes as a
+        // real (strict) ES module, every other classification runs sloppy.
+        p.flush_deferred_forced_esm_strict_features(exports_kind == js_ast::ExportsKind::Esm);
+
         // Auto inject jest globals into the test file
         'outer: {
             if !p.options.features.inject_jest_globals {

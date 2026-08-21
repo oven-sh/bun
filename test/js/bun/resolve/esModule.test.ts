@@ -11,18 +11,6 @@ test("__esModule defaults to undefined", () => {
   expect(Self.__esModule).toBeUndefined();
 });
 
-test("__esModule is settable", () => {
-  Self.__esModule = true;
-  expect(Self.__esModule).toBe(true);
-  expect(Object.hasOwn(Self, "__esModule")).toBe(true);
-  Self.__esModule = false;
-  expect(Self.__esModule).toBe(undefined);
-  expect(Object.hasOwn(Self, "__esModule")).toBe(false);
-  Self.__esModule = true;
-  expect(Self.__esModule).toBe(true);
-  Self.__esModule = undefined;
-});
-
 test("require of self does not set __esModule without a default export", () => {
   expect(Self.__esModule).toBeUndefined();
   {
@@ -31,6 +19,35 @@ test("require of self does not set __esModule without a default export", () => {
   }
   expect(Self.__esModule).toBeUndefined();
   expect(Object.getOwnPropertyNames(Self)).toBeEmpty();
+});
+
+// Runs after the tests above because the marker cannot be removed again.
+test("__esModule can be set, and then behaves like a non-configurable own property", () => {
+  expect(() => {
+    Self.__esModule = false;
+  }).toThrow(TypeError);
+  expect(Object.hasOwn(Self, "__esModule")).toBe(false);
+
+  Self.__esModule = true;
+  expect(Self.__esModule).toBe(true);
+  expect(Object.getOwnPropertyDescriptor(Self, "__esModule")).toEqual({
+    value: true,
+    writable: true,
+    enumerable: true,
+    configurable: false,
+  });
+  expect(Object.getOwnPropertyNames(Self)).toEqual(["__esModule"]);
+
+  expect(() => {
+    Self.__esModule = false;
+  }).toThrow(TypeError);
+  expect(() => {
+    delete Self.__esModule;
+  }).toThrow(TypeError);
+  expect(() => Object.defineProperty(Self, "__esModule", { value: false })).toThrow(TypeError);
+  Self.__esModule = true;
+  expect(Self.__esModule).toBe(true);
+  expect(Object.hasOwn(Self, "__esModule")).toBe(true);
 });
 
 test("require(esm) defines __esModule as an own enumerable property", async () => {

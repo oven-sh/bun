@@ -2439,13 +2439,10 @@ impl<'a> Installer<'a> {
         Ok(())
     }
 
-    /// A peer dependency resolved for a package inside a project's subtree is
-    /// only wired inside the store (`node_modules/.bun/<entry>/node_modules`),
-    /// so its bin never reaches the project's `node_modules/.bin` and tools
-    /// that spawn it by path cannot find it (#39857). pnpm links the bins of
-    /// every peer it resolves inside an importer's subtree into that
-    /// importer's bin directory; do the same for the root and for workspaces.
-    /// Direct dependencies were linked first, so their bin names win.
+    /// Link the bins of peers wired anywhere in an importer's subtree into
+    /// that importer's `node_modules/.bin` (#39857). Peers are otherwise only
+    /// reachable inside the store, and pnpm links them the same way. Runs
+    /// after the direct dependencies, so their bin names win.
     fn link_resolved_peer_bins(
         &self,
         parent_entry_id: StoreEntryId,
@@ -2496,9 +2493,7 @@ impl<'a> Installer<'a> {
 
                 if !visited.is_set(dep.entry_id.get() as usize) {
                     visited.set(dep.entry_id.get() as usize);
-                    // Workspaces and the root are their own importers; peers
-                    // wired inside their subtrees are linked when their own
-                    // entry runs this step.
+                    // do not cross into another importer's subtree
                     if !matches!(
                         pkg_resolutions[dep_pkg_id as usize].tag,
                         ResolutionTag::Root | ResolutionTag::Workspace
@@ -2550,8 +2545,8 @@ impl<'a> Installer<'a> {
                     None => package_name,
                 };
 
-                // The peer has no symlink in this entry's node_modules, so the
-                // link target is its store location.
+                // the peer has no symlink in this node_modules; target its
+                // store location
                 let mut target_node_modules_path = DefaultAbsPath::init_top_level_dir();
                 self.append_real_store_node_modules_path(
                     &mut target_node_modules_path,
@@ -2578,9 +2573,8 @@ impl<'a> Installer<'a> {
 
                 bin_linker.link(false);
 
-                // see the matching retry in `link_dependency_bins`: fall back
-                // to the package's own store entry when the native-binlink
-                // redirect has no usable bin.
+                // matches the retry in `link_dependency_bins` when the
+                // native-binlink redirect has no usable bin
                 let own_store_node_modules_path: DefaultAbsPath;
                 if replacement_entry_id.is_some()
                     && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())

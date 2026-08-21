@@ -970,10 +970,13 @@ impl Linux {
 
                 // Kernel retired this wd: `remove_watch` issued an explicit
                 // `inotify_rm_watch` (it deletes the `wd_map` entry first, so no
-                // owners remain to notify) or the watched inode is gone. libuv
-                // turns the latter into one more "rename" after IN_DELETE_SELF,
-                // so a deleted watch root reports two. Recursive sub-wds stay
-                // silent; their parent directory's IN_DELETE already reported it.
+                // owners remain to notify) or the watched inode is gone. A watch
+                // whose root is gone leaves the dedup map, so that a watch() of the
+                // path (recreated, say) starts a new one; its handlers keep it
+                // alive until they close. libuv turns the retirement into one
+                // more "rename" after IN_DELETE_SELF, so a deleted watch root
+                // reports two. Recursive sub-wds stay silent; their parent
+                // directory's IN_DELETE already reported it.
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
                     let wd_map = unsafe { &mut (*plat).wd_map };
@@ -982,13 +985,16 @@ impl Linux {
                             // SAFETY: o.watcher live under manager.mutex; shared
                             // access only — `emit_unsuppressed` takes `&self`.
                             let w = unsafe { &*o.watcher };
-                            if o.subpath.as_bytes().is_empty() && (w.is_file || !w.recursive) {
-                                w.emit_unsuppressed(
-                                    WatchEventKind::Rename,
-                                    path::basename(w.path.as_bytes()),
-                                    w.is_file,
-                                );
-                                let _ = handle_oom(touched.get_or_put(o.watcher));
+                            if o.subpath.as_bytes().is_empty() {
+                                manager.unlink_watcher_locked(o.watcher);
+                                if w.is_file || !w.recursive {
+                                    w.emit_unsuppressed(
+                                        WatchEventKind::Rename,
+                                        path::basename(w.path.as_bytes()),
+                                        w.is_file,
+                                    );
+                                    let _ = handle_oom(touched.get_or_put(o.watcher));
+                                }
                             }
                             // SAFETY: exclusive scoped access to this watcher's wd
                             // list under manager.mutex; the shared borrow above is
@@ -1101,6 +1107,13 @@ impl Linux {
                         )
                         .as_bytes()
                     };
+
+                    // Leave the dedup map (see IN_IGNORED above) before the event is
+                    // queued, so a listener that recreates and re-watches the path
+                    // cannot join this watch; IN_IGNORED may land a read() later.
+                    if owner_subpath.is_empty() && ev.mask & IN::DELETE_SELF != 0 {
+                        manager.unlink_watcher_locked(owner_watcher);
+                    }
 
                     // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
                     unsafe {
@@ -1617,6 +1630,12 @@ impl Kqueue {
                 } else {
                     entry.subpath.as_bytes()
                 };
+
+                // The watched path itself is gone: leave the dedup map, as the inotify
+                // backend does, so that a watch() of the path starts a new one.
+                if entry.subpath.is_empty() && kev.fflags & (NOTE::DELETE | NOTE::REVOKE) != 0 {
+                    manager.unlink_watcher_locked(entry.watcher);
+                }
 
                 watcher.emit(event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));

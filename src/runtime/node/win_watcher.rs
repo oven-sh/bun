@@ -266,26 +266,29 @@ impl PathWatcher {
             return;
         }
         // SAFETY: libuv passes a valid NUL-terminated string when non-null.
-        let path = ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(filename) });
+        let name = unsafe { core::ffi::CStr::from_ptr(filename) }.to_bytes();
         let is_file = !me.handle.is_dir();
 
         // The watched directory itself was removed: libuv names that report with
-        // the path it was given (no child name is absolute) and repeats it on
-        // every loop iteration until the handle is stopped (nodejs/node#61398).
+        // the path it was given, volume included, and repeats it on every loop
+        // iteration until the handle is stopped (nodejs/node#61398).
         if !is_file
             && event_type == WatchEventKind::Rename
-            && bun_paths::is_absolute(path.as_bytes())
+            && bun_paths::resolve_path::windows_volume_name_len(name).0 != 0
         {
             Self::retire(this);
-            // `path` is libuv's own copy of the name; stopping the handle does not free it.
-            Self::emit_unsuppressed(this, bun_paths::basename(path.as_bytes()), event_type);
+            // `name` is libuv's own copy; stopping the handle does not free it.
+            Self::emit_unsuppressed(this, bun_paths::basename(name), event_type);
             Self::maybe_deinit(this);
             return;
         }
 
+        // A watched path that ends in a separator (a drive root, or given that way)
+        // makes libuv report its entries as `\name`.
+        let name = name.strip_prefix(b"\\").unwrap_or(name);
         // Intentional wrap to bun_watcher::HashType
-        let hash = me.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
-        Self::emit(this, path.as_bytes(), hash, timestamp, is_file, event_type);
+        let hash = me.handle.hash(name, events, status) as bun_watcher::HashType;
+        Self::emit(this, name, hash, timestamp, is_file, event_type);
     }
 
     fn emit(

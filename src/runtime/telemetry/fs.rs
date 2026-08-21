@@ -15,9 +15,9 @@ pub fn end(stub: &SpanStub, name: &str, path: Option<&[u8]>, err: Option<&bun_sy
                 w.attr_opt("file.path", p);
             }
             if let Some(e) = err {
-                let errno = <&'static str>::from(e.get_errno());
+                let errno = e.name();
                 w.attr("error.type", errno);
-                w.status(StatusCode::Error, errno.as_bytes());
+                w.status(StatusCode::Error, errno);
             }
         },
     );

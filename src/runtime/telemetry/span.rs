@@ -248,8 +248,8 @@ pub(crate) fn for_each_attribute(
 
 /// End a native-owned span into this thread's batch.
 #[inline]
-pub fn end_native(span: NativeSpan, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'_>)) {
-    end_native_with(span, end_ns, |_| {}, extra)
+pub fn end_native(span: NativeSpan, end_ns: u64, mut extra: impl FnMut(&mut SpanWriter<'_>)) {
+    end_native_with(span, end_ns, &mut |_: &mut pool::Slot| {}, &mut extra)
 }
 
 /// [`end_native`] with a closure that updates the slot first (one pool borrow).
@@ -257,8 +257,8 @@ pub fn end_native(span: NativeSpan, end_ns: u64, extra: impl FnOnce(&mut SpanWri
 pub fn end_native_with(
     span: NativeSpan,
     end_ns: u64,
-    prep: impl FnOnce(&mut pool::Slot),
-    extra: impl FnOnce(&mut SpanWriter<'_>),
+    prep: &mut dyn FnMut(&mut pool::Slot),
+    extra: &mut dyn FnMut(&mut SpanWriter<'_>),
 ) {
     if let Some(e) = pool::end_with(span, end_ns, prep, extra) {
         release_cell(e.js_cell);
@@ -602,7 +602,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
         let sc = &mut *sc;
         let mut name_buf = core::mem::take(&mut sc[2]);
         let name = desc.name.utf8(&mut name_buf);
-        batch::record(scope, |buf| {
+        batch::record(scope, &mut |buf: &mut Vec<u8>| {
             let mut w = SpanWriter::begin(buf, stub, name, kind_from_u8(desc.kind), desc.end_ns);
             if desc.trace_state.len != 0 {
                 w.trace_state(&desc.trace_state.to_vec());

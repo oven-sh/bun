@@ -70,7 +70,7 @@ pub fn with_local<R>(f: impl FnOnce(&mut LocalBatch) -> R) -> R {
 /// processor if it crossed the threshold. This is the function every
 /// integration's end path funnels through.
 #[inline]
-pub fn record(scope: ScopeId, write: impl FnOnce(&mut Vec<u8>)) {
+pub fn record(scope: ScopeId, write: &mut dyn FnMut(&mut Vec<u8>)) {
     let full = with_local(|l| {
         let buf = l.buffer(scope);
         let start = buf.len();

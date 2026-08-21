@@ -225,7 +225,7 @@ impl Slot {
         otlp::encode_event(&mut self.extra, name, t, attrs);
     }
 
-    fn write(&self, out: &mut Vec<u8>, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'_>)) {
+    fn write(&self, out: &mut Vec<u8>, end_ns: u64, extra: &mut dyn FnMut(&mut SpanWriter<'_>)) {
         if self.http.active {
             let limits = crate::rt::hooks()
                 .map(|h| (h.limits)())
@@ -353,19 +353,19 @@ pub struct Ended {
 pub fn end(
     handle: NativeSpan,
     end_ns: u64,
-    extra: impl FnOnce(&mut SpanWriter<'_>),
+    mut extra: impl FnMut(&mut SpanWriter<'_>),
 ) -> Option<Ended> {
-    end_with(handle, end_ns, |_| {}, extra)
+    end_with(handle, end_ns, &mut |_: &mut Slot| {}, &mut extra)
 }
 
 /// [`end`] plus a closure that runs on the slot (under the same borrow)
 /// right before it is written.
-#[inline]
+#[inline(never)]
 pub fn end_with(
     handle: NativeSpan,
     end_ns: u64,
-    prep: impl FnOnce(&mut Slot),
-    extra: impl FnOnce(&mut SpanWriter<'_>),
+    prep: &mut dyn FnMut(&mut Slot),
+    extra: &mut dyn FnMut(&mut SpanWriter<'_>),
 ) -> Option<Ended> {
     if !handle.is_some() {
         return None;

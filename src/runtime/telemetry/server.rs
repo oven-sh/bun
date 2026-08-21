@@ -128,7 +128,7 @@ pub fn end_with(span: NativeSpan, status: u16, aborted: bool, handler_error: boo
     super::end_native_with(
         span,
         0,
-        |s| {
+        &mut |s: &mut pool::Slot| {
             s.http.status = status;
             if aborted {
                 s.http.flags |= R::FLAG_ABORTED;
@@ -137,6 +137,6 @@ pub fn end_with(span: NativeSpan, status: u16, aborted: bool, handler_error: boo
                 s.http.flags |= R::FLAG_HANDLER_ERROR;
             }
         },
-        |_| {},
+        &mut |_: &mut bun_telemetry::SpanWriter<'_>| {},
     );
 }

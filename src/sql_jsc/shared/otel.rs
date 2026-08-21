@@ -15,6 +15,7 @@ pub fn end_with_js_error(
         Err(_) => (None, None),
     };
     bun_telemetry::db::end(
+        global.as_ptr().cast(),
         span,
         statement,
         None,

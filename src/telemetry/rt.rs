@@ -1,17 +1,23 @@
 //! Hooks the runtime installs so lower-tier crates (sql, http_jsc, C++) can
 //! start/end leaf spans without depending on `bun_runtime`.
 
+use core::cell::RefCell;
 use core::ffi::c_void;
 use std::sync::OnceLock;
 
-use crate::{Instrument, ScopeId, SpanContext, SpanKind, SpanStub, SpanWriter, batch, clock};
+use crate::{
+    Instrument, Local, ScopeId, SpanContext, SpanKind, SpanStub, SpanWriter, batch, clock,
+};
 
 pub struct Hooks {
     /// The active span's identity for `global` (a `JSGlobalObject*`), or null.
     /// Points into the JS cell; valid until the caller next runs JS.
     pub active_span: fn(global: *mut c_void) -> *const SpanStub,
-    /// Called after a span is recorded on this thread (arms the flush timer).
-    pub after_record: fn(),
+    /// The per-VM state for `global` (null once the VM is exiting); lives as
+    /// long as the VM.
+    pub local: fn(global: *mut c_void) -> *const RefCell<Local>,
+    /// Called after a span is recorded on `global`'s VM (arms the flush timer).
+    pub after_record: fn(global: *mut c_void),
     /// A pooled span that had a JS cell materialized for it ended: release it
     /// (`Slot::js_cell`).
     pub release_cell: fn(js_cell: usize),
@@ -29,6 +35,20 @@ pub fn install(h: Hooks) {
 #[inline]
 pub fn hooks() -> Option<&'static Hooks> {
     HOOKS.get()
+}
+
+/// Run `f` with `global`'s per-VM state. `None` before the runtime installed
+/// its hooks (telemetry never configured) or once the VM is exiting. Must not
+/// be nested, and `f` must not run JS.
+#[inline]
+pub fn with_local<R>(global: *mut c_void, f: impl FnOnce(&mut Local) -> R) -> Option<R> {
+    let p = (HOOKS.get()?.local)(global);
+    if p.is_null() {
+        return None;
+    }
+    // SAFETY: `Hooks::local` returns null or the VM-owned cell for a live global; we are on that VM's thread.
+    let cell = unsafe { &*p };
+    Some(f(&mut cell.borrow_mut()))
 }
 
 /// The active span's identity.
@@ -73,25 +93,36 @@ pub fn start_leaf(global: *mut c_void, i: Instrument) -> SpanStub {
     if parent.is_none() && !crate::allows_root(i) {
         return SpanStub::NONE;
     }
-    SpanStub::start(parent.as_ref(), &(h.sampler)(), clock::now_unix_nanos())
+    let sampler = (h.sampler)();
+    with_local(global, |l| {
+        SpanStub::start(
+            &mut l.rng,
+            parent.as_ref(),
+            &sampler,
+            clock::now_unix_nanos(),
+        )
+    })
+    .unwrap_or(SpanStub::NONE)
 }
 
 /// End a leaf span started with [`start_leaf`]; `write` adds attributes.
 #[inline]
 pub fn end_leaf(
+    global: *mut c_void,
     i: Instrument,
     stub: &SpanStub,
     name: &[u8],
     kind: SpanKind,
     mut write: impl FnMut(&mut SpanWriter<'_>),
 ) {
-    end_leaf_at(i, stub, name, kind, 0, &mut write)
+    end_leaf_at(global, i, stub, name, kind, 0, &mut write)
 }
 
 /// One out-of-line copy for every integration (the attribute writer is
 /// dynamically dispatched; leaf spans are not the hot path).
 #[inline(never)]
 pub fn end_leaf_at(
+    global: *mut c_void,
     i: Instrument,
     stub: &SpanStub,
     name: &[u8],
@@ -107,12 +138,14 @@ pub fn end_leaf_at(
     } else {
         end_ns
     };
-    batch::record(ScopeId::from(i), &mut |buf: &mut Vec<u8>| {
-        let mut w = SpanWriter::begin(buf, stub, name, kind, end_ns);
-        write(&mut w);
-        w.finish();
+    let recorded = with_local(global, |l| {
+        batch::record(&mut l.batch, ScopeId::from(i), &mut |buf: &mut Vec<u8>| {
+            let mut w = SpanWriter::begin(buf, stub, name, kind, end_ns);
+            write(&mut w);
+            w.finish();
+        });
     });
-    if let Some(h) = HOOKS.get() {
-        (h.after_record)();
+    if let (Some(()), Some(h)) = (recorded, HOOKS.get()) {
+        (h.after_record)(global);
     }
 }

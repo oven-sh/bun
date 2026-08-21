@@ -984,19 +984,26 @@ impl Subprocess<'_> {
         let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
             match status {
-                Status::Exited(e) => {
-                    crate::telemetry::spawn::exited(span, Some(i32::from(e.code)), None, None)
-                }
+                Status::Exited(e) => crate::telemetry::spawn::exited(
+                    global_this,
+                    span,
+                    Some(i32::from(e.code)),
+                    None,
+                    None,
+                ),
                 Status::Signaled(sig) => {
-                    crate::telemetry::spawn::exited(span, None, Some(*sig), None)
+                    crate::telemetry::spawn::exited(global_this, span, None, Some(*sig), None)
                 }
                 Status::Err(err) => crate::telemetry::spawn::exited(
+                    global_this,
                     span,
                     None,
                     None,
                     Some(<&'static str>::from(err.get_errno())),
                 ),
-                Status::Running => crate::telemetry::spawn::exited(span, None, None, None),
+                Status::Running => {
+                    crate::telemetry::spawn::exited(global_this, span, None, None, None)
+                }
             }
         }
 

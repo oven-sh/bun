@@ -937,6 +937,7 @@ mod _async_tasks {
             let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
             if self.otel.is_some() {
                 crate::telemetry::fs::end(
+                    self.global_object(),
                     &self.otel,
                     F.otel_name(false),
                     self.args.otel_path(),
@@ -1365,6 +1366,7 @@ mod _async_tasks {
             let success = this.result.is_ok();
             if this.otel.is_some() {
                 crate::telemetry::fs::end(
+                    global_object,
                     &this.otel,
                     F.otel_name(false),
                     this.args.otel_path(),

@@ -1,5 +1,5 @@
 //! Native OpenTelemetry core: ids, clock, W3C propagation, sampling, OTLP
-//! protobuf encoding, per-thread span batching and the export processor.
+//! protobuf encoding, per-VM span batching and the export processor.
 //! No JSC or HTTP dependencies — transports and JS bindings live in
 //! `bun_runtime::telemetry` and plug in through [`Exporter`].
 
@@ -32,6 +32,30 @@ pub use pool::NativeSpan;
 pub use processor::{ExportPayload, Exporter, Processor};
 pub use sampler::Sampler;
 pub use span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId};
+
+/// Per-VM (per JS thread) telemetry state. Owned by the runtime's `VmState`
+/// and reached through the VM; lower tiers get it via [`rt::with_local`].
+pub struct Local {
+    pub pool: pool::Pool,
+    pub batch: batch::LocalBatch,
+    pub http_templates: http_record::Cache,
+    /// xoshiro256++ state for span/trace ids; seeded lazily.
+    pub rng: [u64; 4],
+    /// Reused transcoding buffers for the JS span ABI: [key, value, name/misc].
+    pub scratch: [Vec<u8>; 3],
+}
+
+impl Local {
+    pub const fn new() -> Local {
+        Local {
+            pool: pool::Pool::new(),
+            batch: batch::LocalBatch::new(),
+            http_templates: http_record::Cache::new(),
+            rng: [0; 4],
+            scratch: [Vec::new(), Vec::new(), Vec::new()],
+        }
+    }
+}
 
 /// Built-in instrumentations. The discriminant is the bit index in the global
 /// enable mask and the index into the built-in scope table.

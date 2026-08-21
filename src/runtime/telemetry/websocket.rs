@@ -6,7 +6,7 @@ use bun_telemetry::{
     DEFAULT_LIMITS, Instrument, ScopeId, SpanContext, SpanKind, SpanStub, StatusCode, Value, clock,
 };
 
-use super::{Entered, state};
+use super::{Entered, local, state};
 
 /// Start a span for one incoming WebSocket message and make it active for
 /// the handler. `link` is the upgrade request's context (may be invalid).
@@ -24,21 +24,29 @@ pub fn begin_message(
     if parent.is_none() && !bun_telemetry::allows_root(Instrument::WebSocket) {
         return None;
     }
-    let stub = SpanStub::start(parent.as_ref(), &state().sampler, clock::now_unix_nanos());
+    let mut lo = local(global)?;
+    let stub = SpanStub::start(
+        &mut lo.rng,
+        parent.as_ref(),
+        &state().sampler,
+        clock::now_unix_nanos(),
+    );
     let kind = if server {
         SpanKind::Server
     } else {
         SpanKind::Client
     };
-    let span = pool::begin(
+    let span = pool::begin_with(
+        &mut lo.pool,
         stub,
         ScopeId::from(Instrument::WebSocket),
         b"websocket.message",
         kind,
-    );
-    if stub.is_recording() {
-        let l = &DEFAULT_LIMITS;
-        pool::with(span, |s| {
+        |s| {
+            if !stub.is_recording() {
+                return;
+            }
+            let l = &DEFAULT_LIMITS;
             s.push_attribute(
                 b"websocket.opcode",
                 &Value::Str(if binary { b"binary" } else { b"text" }),
@@ -48,8 +56,9 @@ pub fn begin_message(
             if link.is_valid() {
                 s.add_link(link, &[], l);
             }
-        });
-    }
+        },
+    );
+    drop(lo);
     Some((
         span,
         Entered::new(global, super::native_context_value(span)),
@@ -67,12 +76,14 @@ pub fn end_message(
     } else {
         if let Some(p) = result.as_any_promise() {
             if p.status() == bun_jsc::js_promise::Status::Rejected {
-                pool::with(span, |s| s.set_status(StatusCode::Error, b""));
+                if let Some(mut l) = local(global) {
+                    pool::with(&mut l.pool, span, |s| s.set_status(StatusCode::Error, b""));
+                }
             }
         }
         Ok(())
     };
-    super::end_native(span, 0, |_| {});
+    super::end_native(global, span, 0, |_| {});
     r
 }
 
@@ -109,9 +120,11 @@ pub fn record_exception_value(
         (b"exception.stacktrace", Value::Str(stack)),
     ];
     let n = if stack.is_empty() { 2 } else { 3 };
-    pool::with(span, |s| {
-        s.add_event(b"exception", 0, &attrs[..n], super::span::limits());
-        s.set_status(StatusCode::Error, b"");
-    });
+    if let Some(mut l) = local(global) {
+        pool::with(&mut l.pool, span, |s| {
+            s.add_event(b"exception", 0, &attrs[..n], super::span::limits());
+            s.set_status(StatusCode::Error, b"");
+        });
+    }
     Ok(())
 }

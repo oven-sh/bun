@@ -257,10 +257,10 @@ impl Processor {
         p.count >= cfg.max_export_batch_size && self.inflight() == 0
     }
 
-    /// Periodic driver; call from each event loop every ~`scheduled_delay`.
-    /// Returns true if an export was started.
+    /// Periodic driver; call from each event loop every ~`scheduled_delay`
+    /// after flushing its VM's local batch. Returns true if an export was
+    /// started.
     pub fn tick(&'static self) -> bool {
-        crate::batch::flush_local();
         for e in self.exporters.read().clone() {
             e.tick(self);
         }
@@ -321,7 +321,6 @@ impl Processor {
 
     /// Export everything pending now (non-blocking).
     pub fn export(&'static self) -> bool {
-        crate::batch::flush_local();
         let Some(payload) = self.take_payload() else {
             return false;
         };
@@ -420,10 +419,10 @@ impl Processor {
         true
     }
 
-    /// Process-exit path: flush this thread, export synchronously through
-    /// each exporter's blocking path, bounded by `export_timeout_ms`.
+    /// Process-exit path (caller flushed its VM's local batch): export
+    /// synchronously through each exporter's blocking path, bounded by
+    /// `export_timeout_ms`.
     pub fn shutdown_blocking(&'static self) {
-        crate::batch::flush_local();
         let cfg = *self.config.read();
         let deadline = clock::now_unix_nanos() + (cfg.export_timeout_ms as u64) * 1_000_000;
         // Anything already handed to async exporters: give it the same budget.

@@ -10,48 +10,41 @@ pub struct TraceId(pub [u8; 16]);
 #[repr(C)]
 pub struct SpanId(pub [u8; 8]);
 
-/// Per-thread xoshiro256++ for span/trace ids, seeded from the process PRNG.
-/// Fills `out` with non-zero values in one thread-local access.
+/// xoshiro256++ for span/trace ids over the VM's [`Local::rng`](crate::Local)
+/// state, seeded from the process PRNG on first use. Fills `out` with
+/// non-zero values.
 #[inline(always)]
-fn next_ids(out: &mut [u64]) {
-    use core::cell::Cell;
-    thread_local! {
-        static S: Cell<[u64; 4]> = const { Cell::new([0; 4]) };
+fn next_ids(s: &mut [u64; 4], out: &mut [u64]) {
+    if s[0] | s[1] | s[2] | s[3] == 0 {
+        *s = [
+            bun_core::fast_random() | 1,
+            bun_core::fast_random(),
+            bun_core::fast_random(),
+            bun_core::fast_random(),
+        ];
     }
-    S.with(|c| {
-        let mut s = c.get();
-        if s[0] | s[1] | s[2] | s[3] == 0 {
-            s = [
-                bun_core::fast_random() | 1,
-                bun_core::fast_random(),
-                bun_core::fast_random(),
-                bun_core::fast_random(),
-            ];
-        }
-        for o in out.iter_mut() {
-            loop {
-                let result = (s[0].wrapping_add(s[3])).rotate_left(23).wrapping_add(s[0]);
-                let t = s[1] << 17;
-                s[2] ^= s[0];
-                s[3] ^= s[1];
-                s[1] ^= s[2];
-                s[0] ^= s[3];
-                s[2] ^= t;
-                s[3] = s[3].rotate_left(45);
-                if result != 0 {
-                    *o = result;
-                    break;
-                }
+    for o in out.iter_mut() {
+        loop {
+            let result = (s[0].wrapping_add(s[3])).rotate_left(23).wrapping_add(s[0]);
+            let t = s[1] << 17;
+            s[2] ^= s[0];
+            s[3] ^= s[1];
+            s[1] ^= s[2];
+            s[0] ^= s[3];
+            s[2] ^= t;
+            s[3] = s[3].rotate_left(45);
+            if result != 0 {
+                *o = result;
+                break;
             }
         }
-        c.set(s);
-    })
+    }
 }
 
 #[inline(always)]
-fn next_id_u64() -> u64 {
+fn next_id_u64(rng: &mut [u64; 4]) -> u64 {
     let mut v = [0u64; 1];
-    next_ids(&mut v);
+    next_ids(rng, &mut v);
     v[0]
 }
 
@@ -61,13 +54,13 @@ impl TraceId {
     pub fn is_valid(&self) -> bool {
         self.0 != [0; 16]
     }
-    /// Random 128-bit id from the thread-local PRNG. The W3C/OTel spec only
-    /// requires uniqueness with high probability; samplers read the low 8
+    /// Random 128-bit id from `rng` (see [`crate::Local`]). The W3C/OTel spec
+    /// only requires uniqueness with high probability; samplers read the low 8
     /// bytes as a uniform integer, which xoshiro provides.
     #[inline]
-    pub fn generate() -> TraceId {
+    pub fn generate(rng: &mut [u64; 4]) -> TraceId {
         let mut v = [0u64; 2];
-        next_ids(&mut v);
+        next_ids(rng, &mut v);
         let mut id = [0u8; 16];
         id[..8].copy_from_slice(&v[0].to_be_bytes());
         id[8..].copy_from_slice(&v[1].to_be_bytes());
@@ -96,8 +89,8 @@ impl SpanId {
         self.0 != [0; 8]
     }
     #[inline]
-    pub fn generate() -> SpanId {
-        SpanId(next_id_u64().to_be_bytes())
+    pub fn generate(rng: &mut [u64; 4]) -> SpanId {
+        SpanId(next_id_u64(rng).to_be_bytes())
     }
     pub fn to_hex(self, out: &mut [u8; 16]) {
         hex_encode(&self.0, out);
@@ -280,15 +273,20 @@ impl SpanStub {
 
     /// Start a child of `parent` (or a new root when `parent` is None/invalid).
     #[inline]
-    pub fn start(parent: Option<&SpanContext>, sampler: &crate::Sampler, now_ns: u64) -> SpanStub {
+    pub fn start(
+        rng: &mut [u64; 4],
+        parent: Option<&SpanContext>,
+        sampler: &crate::Sampler,
+        now_ns: u64,
+    ) -> SpanStub {
         let mut ids = [0u64; 3];
         let (trace_id, parent_id, parent_remote) = match parent {
             Some(p) if p.is_valid() => {
-                next_ids(&mut ids[..1]);
+                next_ids(rng, &mut ids[..1]);
                 (p.trace_id, p.span_id, p.flags.remote())
             }
             _ => {
-                next_ids(&mut ids);
+                next_ids(rng, &mut ids);
                 let mut t = [0u8; 16];
                 t[..8].copy_from_slice(&ids[1].to_be_bytes());
                 t[8..].copy_from_slice(&ids[2].to_be_bytes());

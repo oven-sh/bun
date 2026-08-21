@@ -1767,6 +1767,7 @@ impl DNSLookup {
         }
         let name = self.otel_name.take();
         crate::telemetry::end_leaf(
+            self.global_this(),
             bun_telemetry::Instrument::Dns,
             &stub,
             b"dns.lookup",

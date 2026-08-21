@@ -1209,9 +1209,9 @@ fn spawn_maybe_sync(
         unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) };
     if otel_stub.is_some() {
         if let Err(err) = &spawn_result {
-            crate::telemetry::spawn::failed(&otel_stub, &argv, err.name().as_bytes());
+            crate::telemetry::spawn::failed(global_this, &otel_stub, &argv, err.name().as_bytes());
         } else if let Ok(sys::Result::Err(err)) = &spawn_result {
-            crate::telemetry::spawn::failed(&otel_stub, &argv, err.name());
+            crate::telemetry::spawn::failed(global_this, &otel_stub, &argv, err.name());
         }
     }
     let mut spawned = match spawn_result {
@@ -1377,6 +1377,7 @@ fn spawn_maybe_sync(
         exited_due_to_maxbuf: Cell::new(None),
         // SAFETY: `process` is the live Box from `to_process` above.
         otel: Cell::new(crate::telemetry::spawn::begin(
+            global_this,
             otel_stub,
             &argv,
             i64::from(unsafe { (*process).pid }),
@@ -1472,6 +1473,7 @@ fn spawn_maybe_sync(
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
             crate::telemetry::discard_native(
+                global_this,
                 subprocess.otel.replace(bun_telemetry::NativeSpan::NONE),
             );
             if let Some(ipc_data) = subprocess.ipc_data.take() {

@@ -4952,6 +4952,7 @@ pub(crate) fn write_file_internal(
                     .as_any_promise()
                     .is_some_and(|p| p.status() == jsc::js_promise::Status::Rejected);
             crate::telemetry::end_leaf(
+                global_this,
                 bun_telemetry::Instrument::Fs,
                 &otel,
                 b"Bun.write",

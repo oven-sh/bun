@@ -703,6 +703,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
         bun_telemetry::rt::end_leaf(
+            bun_jsc::virtual_machine::VirtualMachine::get()
+                .global()
+                .as_ptr()
+                .cast(),
             bun_telemetry::Instrument::WebSocket,
             &stub,
             b"websocket.connect",

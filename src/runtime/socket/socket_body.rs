@@ -1120,6 +1120,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             Some(UnixOrHost::Fd(_)) | None => (&b"socket.connect"[..], "tcp", &b""[..], 0),
         };
         crate::telemetry::end_leaf(
+            VirtualMachine::get().global(),
             bun_telemetry::Instrument::Net,
             &stub,
             name,

@@ -6,7 +6,7 @@ use bun_jsc::JSGlobalObject;
 use bun_telemetry::{Instrument, SpanKind, SpanStub, StatusCode, propagation};
 use bun_url::URL;
 
-use super::{http, state};
+use super::{http, local, state};
 
 /// Start a CLIENT span for an outgoing request and inject `traceparent`
 /// (+ `tracestate` / `baggage`) into `headers` unless the caller already set
@@ -20,11 +20,16 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
     if parent_ctx.is_none() && !bun_telemetry::allows_root(Instrument::HttpClient) {
         return SpanStub::NONE;
     }
+    let Some(mut l) = local(global) else {
+        return SpanStub::NONE;
+    };
     let stub = SpanStub::start(
+        &mut l.rng,
         parent_ctx.as_ref(),
         &st.sampler,
         bun_telemetry::clock::now_unix_nanos(),
     );
+    drop(l);
     if st.propagate_trace_context && headers.get(b"traceparent").is_none() {
         let mut tp = [0u8; propagation::TRACEPARENT_LEN];
         propagation::format_traceparent(&stub.ctx, &mut tp);
@@ -46,12 +51,20 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
 
 /// Finish the client span. `url` is the request URL as originally given
 /// (before redirects); `status == 0` means no response was received.
-pub fn end(stub: &SpanStub, method: Method, url: &[u8], status: u16, error: Option<&str>) {
+pub fn end(
+    global: &JSGlobalObject,
+    stub: &SpanStub,
+    method: Method,
+    url: &[u8],
+    status: u16,
+    error: Option<&str>,
+) {
     if !stub.is_recording() {
         return;
     }
     let name = http::method_name(method);
     super::end_leaf(
+        global,
         Instrument::HttpClient,
         stub,
         name.as_bytes(),

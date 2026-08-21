@@ -1265,6 +1265,7 @@ impl WriteFilePromise {
                     WriteFileResultType::Result(_) => (b"", b""),
                 };
                 crate::telemetry::end_leaf(
+                    global_this,
                     bun_telemetry::Instrument::Fs,
                     &h.otel,
                     b"Bun.write",

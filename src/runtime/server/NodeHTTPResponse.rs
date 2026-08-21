@@ -2571,6 +2571,7 @@ impl NodeHTTPResponse {
             let flags = self.flags.get();
             let aborted = flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED);
             crate::telemetry::server::end_with(
+                self.server.global_this(),
                 span,
                 self.otel_status.get(),
                 aborted,

@@ -1,4 +1,4 @@
-//! Per-thread slots for spans that outlive one native call but are never
+//! Per-VM slots for spans that outlive one native call but are never
 //! owned by JS (request spans, DB queries, child processes). A slot's buffers
 //! survive release, so steady-state span bookkeeping does not allocate.
 //!
@@ -6,11 +6,9 @@
 //! already ended) resolves to nothing, which is what lets a JS wrapper keep a
 //! handle without keeping the slot alive.
 
-use core::cell::RefCell;
-
 use crate::otlp::{self, SpanWriter, Value, field};
 use crate::span::{SpanKind, SpanStub, StatusCode};
-use crate::{Limits, ScopeId, clock};
+use crate::{Limits, Local, ScopeId, clock};
 
 /// `index | generation << 32`; 0 is the empty handle (generation starts at 1).
 /// The generation is kept below 2^21 so the handle round-trips through a JS
@@ -266,12 +264,19 @@ impl Slot {
         otlp::encode_link(&mut self.extra, ctx, b"", attrs);
     }
 
-    fn write(&self, out: &mut Vec<u8>, end_ns: u64, extra: &mut dyn FnMut(&mut SpanWriter<'_>)) {
+    fn write(
+        &self,
+        templates: &mut crate::http_record::Cache,
+        out: &mut Vec<u8>,
+        end_ns: u64,
+        extra: &mut dyn FnMut(&mut SpanWriter<'_>),
+    ) {
         if self.http.active {
             let limits = crate::rt::hooks()
                 .map(|h| (h.limits)())
                 .unwrap_or(crate::data::DEFAULT_LIMITS);
             crate::http_record::encode(
+                templates,
                 out,
                 &self.http,
                 &crate::http_record::SpanParts {
@@ -310,7 +315,7 @@ impl Slot {
     }
 }
 
-struct Pool {
+pub struct Pool {
     slots: Vec<Slot>,
     /// FIFO so a released slot (whose identity stale handles may still read)
     /// is reused as late as possible.
@@ -318,18 +323,49 @@ struct Pool {
     live: u32,
 }
 
-thread_local! {
-    static POOL: RefCell<Pool> = const { RefCell::new(Pool { slots: Vec::new(), free: std::collections::VecDeque::new(), live: 0 }) };
+impl Pool {
+    pub const fn new() -> Pool {
+        Pool {
+            slots: Vec::new(),
+            free: std::collections::VecDeque::new(),
+            live: 0,
+        }
+    }
+
+    #[inline]
+    fn live_slot(&mut self, handle: NativeSpan) -> Option<&mut Slot> {
+        if !handle.is_some() {
+            return None;
+        }
+        let slot = self.slots.get_mut(handle.index())?;
+        if !slot.live || slot.generation != handle.generation() {
+            return None;
+        }
+        Some(slot)
+    }
+
+    fn release(&mut self, handle: NativeSpan) {
+        self.slots[handle.index()].reset();
+        self.free.push_back(handle.index() as u32);
+        self.live -= 1;
+    }
 }
 
 /// Claim a slot for a span that has started. Returns `NONE` for `SpanStub::NONE`.
-pub fn begin(stub: SpanStub, scope: ScopeId, name: &[u8], kind: SpanKind) -> NativeSpan {
-    begin_with(stub, scope, name, kind, |_| {})
+pub fn begin(
+    p: &mut Pool,
+    stub: SpanStub,
+    scope: ScopeId,
+    name: &[u8],
+    kind: SpanKind,
+) -> NativeSpan {
+    begin_with(p, stub, scope, name, kind, |_| {})
 }
 
-/// [`begin`] plus an initializer run on the fresh slot under the same borrow.
+/// [`begin`] plus an initializer run on the fresh slot.
 #[inline]
 pub fn begin_with(
+    p: &mut Pool,
     stub: SpanStub,
     scope: ScopeId,
     name: &[u8],
@@ -339,54 +375,47 @@ pub fn begin_with(
     if !stub.is_some() {
         return NativeSpan::NONE;
     }
-    POOL.with(|p| {
-        let mut p = p.borrow_mut();
-        let p = &mut *p;
-        let index = match p.free.pop_front() {
-            Some(i) => i as usize,
-            None => {
-                p.slots.push(Slot::new());
-                p.slots.len() - 1
-            }
-        };
-        p.live += 1;
-        let slot = &mut p.slots[index];
-        slot.generation = (slot.generation.wrapping_add(1) & GENERATION_MASK).max(1);
-        slot.live = true;
-        slot.stub = stub;
-        slot.scope = scope;
-        slot.kind = kind;
-        slot.name.extend_from_slice(name);
-        init(slot);
-        NativeSpan::pack(index, slot.generation)
-    })
+    let index = match p.free.pop_front() {
+        Some(i) => i as usize,
+        None => {
+            p.slots.push(Slot::new());
+            p.slots.len() - 1
+        }
+    };
+    p.live += 1;
+    let slot = &mut p.slots[index];
+    slot.generation = (slot.generation.wrapping_add(1) & GENERATION_MASK).max(1);
+    slot.live = true;
+    slot.stub = stub;
+    slot.scope = scope;
+    slot.kind = kind;
+    slot.name.extend_from_slice(name);
+    init(slot);
+    NativeSpan::pack(index, slot.generation)
 }
 
 /// Run `f` on the live slot for `handle`. Returns `None` if the span has ended.
 #[inline]
-pub fn with<R>(handle: NativeSpan, f: impl FnOnce(&mut Slot) -> R) -> Option<R> {
-    if !handle.is_some() {
-        return None;
-    }
-    POOL.with(|p| {
-        let mut p = p.borrow_mut();
-        let slot = p.slots.get_mut(handle.index())?;
-        if !slot.live || slot.generation != handle.generation() {
-            return None;
-        }
-        Some(f(slot))
-    })
+pub fn with<R>(p: &mut Pool, handle: NativeSpan, f: impl FnOnce(&mut Slot) -> R) -> Option<R> {
+    p.live_slot(handle).map(f)
 }
 
 /// Read-only access (e.g. propagation reading trace state).
 #[inline]
-pub fn with_ref<R>(handle: NativeSpan, f: impl FnOnce(&Slot) -> R) -> Option<R> {
-    with(handle, |s| f(s))
+pub fn with_ref<R>(p: &Pool, handle: NativeSpan, f: impl FnOnce(&Slot) -> R) -> Option<R> {
+    if !handle.is_some() {
+        return None;
+    }
+    let slot = p.slots.get(handle.index())?;
+    if !slot.live || slot.generation != handle.generation() {
+        return None;
+    }
+    Some(f(slot))
 }
 
 #[inline]
-pub fn stub(handle: NativeSpan) -> SpanStub {
-    with_ref(handle, |s| s.stub).unwrap_or(SpanStub::NONE)
+pub fn stub(p: &Pool, handle: NativeSpan) -> SpanStub {
+    with_ref(p, handle, |s| s.stub).unwrap_or(SpanStub::NONE)
 }
 
 /// Result of [`end`]: whether a span was recorded, and the JS cell that had
@@ -396,108 +425,89 @@ pub struct Ended {
     pub js_cell: usize,
 }
 
-/// End the span: encode it into this thread's batch (if recording) and
-/// release the slot. `extra` adds integration attributes at end time.
-/// Returns `None` if the handle was stale.
+/// End the span: encode it into the VM's batch (if recording) and release
+/// the slot. `extra` adds integration attributes at end time. Returns `None`
+/// if the handle was stale.
 pub fn end(
+    l: &mut Local,
     handle: NativeSpan,
     end_ns: u64,
     mut extra: impl FnMut(&mut SpanWriter<'_>),
 ) -> Option<Ended> {
-    end_with(handle, end_ns, &mut |_: &mut Slot| {}, &mut extra)
+    end_with(l, handle, end_ns, &mut |_: &mut Slot| {}, &mut extra)
 }
 
-/// [`end`] plus a closure that runs on the slot (under the same borrow)
-/// right before it is written.
+/// [`end`] plus a closure that runs on the slot right before it is written.
 #[inline(never)]
 pub fn end_with(
+    l: &mut Local,
     handle: NativeSpan,
     end_ns: u64,
     prep: &mut dyn FnMut(&mut Slot),
     extra: &mut dyn FnMut(&mut SpanWriter<'_>),
 ) -> Option<Ended> {
-    if !handle.is_some() {
-        return None;
-    }
     let end_ns = if end_ns == 0 {
         clock::now_unix_nanos()
     } else {
         end_ns
     };
-    // Encode while borrowed, but hand the batch to the processor (which may
-    // take locks / call out) after the borrow is released.
-    let recorded = POOL.with(|p| {
-        let mut p = p.borrow_mut();
-        let p = &mut *p;
-        let slot = p.slots.get_mut(handle.index())?;
-        if !slot.live || slot.generation != handle.generation() {
-            return None;
-        }
-        prep(slot);
-        let mut full = false;
-        let js_cell = slot.js_cell;
-        let recording = slot.is_recording();
-        if recording {
-            full = crate::batch::with_local(|l| {
-                let buf = l.buffer(slot.scope);
-                let start = buf.len();
-                slot.write(buf, end_ns, extra);
-                l.committed(slot.scope, start)
-            });
-        }
-        slot.reset();
-        p.free.push_back(handle.index() as u32);
-        p.live -= 1;
-        Some((recording, full, js_cell))
-    });
-    let (recorded, full, js_cell) = recorded?;
-    if full {
-        crate::batch::flush_local();
+    let Local {
+        pool,
+        batch,
+        http_templates,
+        ..
+    } = l;
+    let slot = pool.live_slot(handle)?;
+    prep(slot);
+    let mut full = false;
+    let js_cell = slot.js_cell;
+    let recording = slot.is_recording();
+    if recording {
+        let buf = batch.buffer(slot.scope);
+        let start = buf.len();
+        slot.write(http_templates, buf, end_ns, extra);
+        full = batch.committed(slot.scope, start);
     }
-    Some(Ended { recorded, js_cell })
+    pool.release(handle);
+    if full {
+        crate::batch::flush_local(batch);
+    }
+    Some(Ended {
+        recorded: recording,
+        js_cell,
+    })
 }
 
 /// Release without recording (e.g. the owner was torn down mid-flight and
 /// the integration has nothing truthful to say about the outcome).
-pub fn discard(handle: NativeSpan) -> usize {
-    POOL.with(|p| {
-        let mut p = p.borrow_mut();
-        let p = &mut *p;
-        let slot = p.slots.get_mut(handle.index())?;
-        let mut cell = 0;
-        if slot.live && slot.generation == handle.generation() {
-            cell = slot.js_cell;
-            slot.reset();
-            p.free.push_back(handle.index() as u32);
-            p.live -= 1;
-        }
-        Some(cell)
-    })
-    .unwrap_or(0)
+pub fn discard(p: &mut Pool, handle: NativeSpan) -> usize {
+    let Some(slot) = p.live_slot(handle) else {
+        return 0;
+    };
+    let cell = slot.js_cell;
+    p.release(handle);
+    cell
 }
 
 /// Identity of a span by handle, tolerating spans that already ended as long
 /// as their slot has not been reused (callbacks captured during a request can
-/// outlive it). Pointer is valid until the pool is next mutated on this thread.
-pub fn stub_ptr(handle: NativeSpan) -> *const SpanStub {
+/// outlive it). Pointer is valid until the pool is next mutated.
+pub fn stub_ptr(p: &Pool, handle: NativeSpan) -> *const SpanStub {
     if !handle.is_some() {
         return core::ptr::null();
     }
-    POOL.with(|p| {
-        let p = p.borrow();
-        match p.slots.get(handle.index()) {
-            Some(slot) if slot.generation == handle.generation() => &raw const slot.stub,
-            _ => core::ptr::null(),
-        }
-    })
+    match p.slots.get(handle.index()) {
+        Some(slot) if slot.generation == handle.generation() => &raw const slot.stub,
+        _ => core::ptr::null(),
+    }
 }
 
 /// Whether the span behind `handle` is still open.
-pub fn is_live(handle: NativeSpan) -> bool {
-    with_ref(handle, |_| ()).is_some()
+pub fn is_live(p: &Pool, handle: NativeSpan) -> bool {
+    with_ref(p, handle, |_| ()).is_some()
 }
 
-/// Number of live native spans on this thread (stats / leak tests).
-pub fn live_count() -> u32 {
-    POOL.with(|p| p.borrow().live)
+/// Number of live native spans in this pool (stats / leak tests).
+pub fn live_count(p: &Pool) -> u32 {
+    p.live
 }

@@ -257,6 +257,10 @@ pub struct RareData {
     /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
     pub(crate) memory_pressure_watcher: Option<NonNull<c_void>>,
 
+    /// `bun_runtime::telemetry::VmState` — erased `Box`; lazy-init in
+    /// `bun_runtime::telemetry`, freed by its VM cleanup hook.
+    pub telemetry: Option<NonNull<c_void>>,
+
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
     /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
@@ -325,6 +329,7 @@ impl Default for RareData {
             default_client_ssl_ctx: None,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
+            telemetry: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
             h2_padded_frame_buffer: None,

@@ -1354,12 +1354,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if otel_span.is_some() {
             if node_http_response.is_null() {
-                crate::telemetry::server::end(otel_span, 503, false);
+                crate::telemetry::server::end(global, otel_span, 503, false);
             } else {
                 // SAFETY: out-param written by `on_request_ffi`; live for this frame.
                 let nhr = unsafe { &*node_http_response };
                 if nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED) {
-                    crate::telemetry::server::end(otel_span, nhr.otel_status.get(), false);
+                    crate::telemetry::server::end(global, otel_span, nhr.otel_status.get(), false);
                 } else {
                     nhr.otel_span.set(otel_span);
                 }

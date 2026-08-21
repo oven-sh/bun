@@ -6,7 +6,7 @@ use bun_telemetry::http_record as R;
 use bun_telemetry::pool::{self, NativeSpan};
 use bun_telemetry::{Instrument, ScopeId, SpanKind, SpanStub, Value, clock, propagation};
 
-use super::{Entered, http, state};
+use super::{Entered, http, local, state};
 
 /// Start a SERVER span for an incoming request and make it the active span.
 /// Returns the span (stored on the request context and finished with
@@ -39,7 +39,8 @@ pub fn begin(
         }
     }
     let now = clock::now_unix_nanos();
-    let stub = SpanStub::start(parent.as_ref(), &st.sampler, now);
+    let mut l = local(global)?;
+    let stub = SpanStub::start(&mut l.rng, parent.as_ref(), &st.sampler, now);
     let method_name = http::method_name(method).as_bytes();
     let baggage = if st.propagate_baggage {
         h.baggage()
@@ -50,6 +51,7 @@ pub fn begin(
     // Facts only; attributes are encoded when the batch is exported
     // (bun_telemetry::http_record).
     let span = pool::begin_with(
+        &mut l.pool,
         stub,
         ScopeId::from(Instrument::HttpServer),
         b"",
@@ -98,6 +100,7 @@ pub fn begin(
             }
         },
     );
+    drop(l);
     Some((
         span,
         Entered::new(global, super::native_context_value(span)),
@@ -105,27 +108,36 @@ pub fn begin(
 }
 
 /// Refine the span name to `METHOD /route` once the matched route is known.
-pub fn set_route(span: NativeSpan, _method: Method, route: &[u8]) {
+pub fn set_route(global: &JSGlobalObject, span: NativeSpan, _method: Method, route: &[u8]) {
     if route.is_empty() {
         return;
     }
-    pool::with(span, |s| {
-        if s.stub.ctx.flags.sampled() {
-            s.http.set_route(route);
-        }
-    });
+    if let Some(mut l) = local(global) {
+        pool::with(&mut l.pool, span, |s| {
+            if s.stub.ctx.flags.sampled() {
+                s.http.set_route(route);
+            }
+        });
+    }
 }
 
 /// Finish the request span. `status == 0` means no status line was written
 /// (aborted before headers).
-pub fn end(span: NativeSpan, status: u16, aborted: bool) {
-    end_with(span, status, aborted, false)
+pub fn end(global: &JSGlobalObject, span: NativeSpan, status: u16, aborted: bool) {
+    end_with(global, span, status, aborted, false)
 }
 
 /// `handler_error`: the JS handler threw or rejected (node:http), which is an
 /// error even when the status line that went out was not 5xx.
-pub fn end_with(span: NativeSpan, status: u16, aborted: bool, handler_error: bool) {
+pub fn end_with(
+    global: &JSGlobalObject,
+    span: NativeSpan,
+    status: u16,
+    aborted: bool,
+    handler_error: bool,
+) {
     super::end_native_with(
+        global,
         span,
         0,
         &mut |s: &mut pool::Slot| {

@@ -191,7 +191,9 @@ pub struct Promise {
 
 impl Drop for Promise {
     fn drop(&mut self) {
-        self.otel_end(None);
+        if self.otel.is_some() {
+            self.otel_end(jsc::virtual_machine::VirtualMachine::get().global(), None);
+        }
     }
 }
 
@@ -233,7 +235,10 @@ impl Promise {
         if !span.is_some() {
             return;
         }
-        bun_telemetry::pool::with(span, |s| {
+        let Some(mut local) = crate::telemetry::local(global_object) else {
+            return;
+        };
+        bun_telemetry::pool::with(&mut local.pool, span, |s| {
             if !s.is_recording() {
                 return;
             }
@@ -277,17 +282,26 @@ impl Promise {
     }
 
     #[inline]
-    fn otel_end(&mut self, error: Option<(&[u8], &[u8])>) {
+    fn otel_end(&mut self, global_object: &JSGlobalObject, error: Option<(&[u8], &[u8])>) {
         let span = core::mem::take(&mut self.otel);
         if span.is_some() {
-            let name = bun_telemetry::pool::with_ref(span, |s| {
-                let mut b = [0u8; 24];
-                let l = s.name.len().min(24);
-                b[..l].copy_from_slice(&s.name[..l]);
-                (b, l)
-            })
-            .unwrap_or(([0u8; 24], 0));
-            bun_telemetry::db::end(span, b"", Some(&name.0[..name.1]), error);
+            let name = crate::telemetry::local(global_object)
+                .and_then(|l| {
+                    bun_telemetry::pool::with_ref(&l.pool, span, |s| {
+                        let mut b = [0u8; 24];
+                        let l = s.name.len().min(24);
+                        b[..l].copy_from_slice(&s.name[..l]);
+                        (b, l)
+                    })
+                })
+                .unwrap_or(([0u8; 24], 0));
+            bun_telemetry::db::end(
+                global_object.as_ptr().cast(),
+                span,
+                b"",
+                Some(&name.0[..name.1]),
+                error,
+            );
         }
     }
 
@@ -305,9 +319,9 @@ impl Promise {
                 protocol::RESPValue::Error(e) => {
                     let code_end =
                         bun_core::strings::index_of_char_usize(e, b' ').unwrap_or(e.len());
-                    self.otel_end(Some((&e[..code_end], e)));
+                    self.otel_end(global_object, Some((&e[..code_end], e)));
                 }
-                _ => self.otel_end(None),
+                _ => self.otel_end(global_object, None),
             }
         }
         let js_value = match resp_value_to_js_with_options(value, global_object, options) {
@@ -337,10 +351,10 @@ impl Promise {
                     }
                 }
             }
-            self.otel_end(Some((
-                code.as_ref().map(|c| c.slice()).unwrap_or(b"_OTHER"),
-                b"",
-            )));
+            self.otel_end(
+                global_object,
+                Some((code.as_ref().map(|c| c.slice()).unwrap_or(b"_OTHER"), b"")),
+            );
         }
         self.promise.reject(global_object, jsvalue)?;
         Ok(())

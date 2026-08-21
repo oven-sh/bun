@@ -924,7 +924,7 @@ impl JsExporter {
 fn run_js_export_task(task: *mut JsExportTask) -> JsResult<()> {
     // SAFETY: allocated in `export`; consumed here.
     let task = unsafe { Box::from_raw(task) };
-    let result = match super::vm_state() {
+    let result = match super::current_vm_state() {
         Some(s) if core::ptr::eq(s, task.exporter.owner) => {
             task.exporter.call(s_global(s), &task.payload)
         }
@@ -935,7 +935,7 @@ fn run_js_export_task(task: *mut JsExportTask) -> JsResult<()> {
 }
 
 fn s_global(s: &super::VmState) -> &JSGlobalObject {
-    // SAFETY: a live VmState's global outlives it (thread-local to the VM's thread).
+    // SAFETY: a live VmState's global outlives it (`rebind_global` keeps it current).
     unsafe { &*s.global.get() }
 }
 
@@ -973,7 +973,7 @@ impl Exporter for JsExporter {
         if std::thread::current().id() != self.thread {
             return ExportResult::Failure;
         }
-        match super::vm_state() {
+        match super::current_vm_state() {
             Some(s) if core::ptr::eq(s, self.owner) => self.call(s_global(s), &payload),
             _ => ExportResult::Failure,
         }

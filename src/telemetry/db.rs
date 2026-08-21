@@ -53,28 +53,32 @@ pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> 
     if !stub.is_some() {
         return NativeSpan::NONE;
     }
-    let span = pool::begin(
-        stub,
-        ScopeId::from(system.instrument()),
-        system.name().as_bytes(),
-        SpanKind::Client,
-    );
-    if stub.is_recording() {
-        let l = &DEFAULT_LIMITS;
-        pool::with(span, |s| {
-            s.push_attribute(b"db.system.name", &Value::Str(system.name().as_bytes()), l);
-            if !conn.namespace.is_empty() {
-                s.push_attribute(b"db.namespace", &Value::Str(conn.namespace), l);
-            }
-            if !conn.host.is_empty() {
-                s.push_attribute(b"server.address", &Value::Str(conn.host), l);
-                if conn.port != 0 {
-                    s.push_attribute(b"server.port", &Value::Int(conn.port as i64), l);
+    rt::with_local(global, |local| {
+        pool::begin_with(
+            &mut local.pool,
+            stub,
+            ScopeId::from(system.instrument()),
+            system.name().as_bytes(),
+            SpanKind::Client,
+            |s| {
+                if !stub.is_recording() {
+                    return;
                 }
-            }
-        });
-    }
-    span
+                let l = &DEFAULT_LIMITS;
+                s.push_attribute(b"db.system.name", &Value::Str(system.name().as_bytes()), l);
+                if !conn.namespace.is_empty() {
+                    s.push_attribute(b"db.namespace", &Value::Str(conn.namespace), l);
+                }
+                if !conn.host.is_empty() {
+                    s.push_attribute(b"server.address", &Value::Str(conn.host), l);
+                    if conn.port != 0 {
+                        s.push_attribute(b"server.port", &Value::Int(conn.port as i64), l);
+                    }
+                }
+            },
+        )
+    })
+    .unwrap_or(NativeSpan::NONE)
 }
 
 /// The leading SQL verb (`SELECT`, `INSERT`, …) if the statement starts with
@@ -140,6 +144,7 @@ fn op_len(op: &[u8; 16]) -> usize {
 /// Finish a query span. `statement` is recorded as `db.query.text` when
 /// statement capture is on; `error` = (error.type, message).
 pub fn end(
+    global: *mut c_void,
     span: NativeSpan,
     statement: &[u8],
     operation: Option<&[u8]>,
@@ -159,35 +164,38 @@ pub fn end(
             None => None,
         },
     };
-    if let Some(o) = op {
-        pool::with(span, |s| s.set_name(o));
-    }
     let capture = rt::capture_db_statement();
-    let ended = pool::end(span, 0, |w| {
+    let ended = rt::with_local(global, |local| {
         if let Some(o) = op {
-            w.attr("db.operation.name", o);
+            pool::with(&mut local.pool, span, |s| s.set_name(o));
         }
-        if capture && !statement.is_empty() {
-            // Cap very large statements; collectors reject multi-MB attributes.
-            w.attr(
-                "db.query.text",
-                crate::otlp::truncate_utf8(statement, 16 * 1024),
-            );
-        }
-        if let Some((ty, msg)) = error {
-            w.attr_opt("error.type", ty);
-            if !ty.is_empty() && ty.iter().all(|c| c.is_ascii_alphanumeric()) && ty.len() <= 8 {
-                w.attr("db.response.status_code", ty);
+        pool::end(local, span, 0, |w| {
+            if let Some(o) = op {
+                w.attr("db.operation.name", o);
             }
-            w.status(StatusCode::Error, msg);
-        }
-    });
+            if capture && !statement.is_empty() {
+                // Cap very large statements; collectors reject multi-MB attributes.
+                w.attr(
+                    "db.query.text",
+                    crate::otlp::truncate_utf8(statement, 16 * 1024),
+                );
+            }
+            if let Some((ty, msg)) = error {
+                w.attr_opt("error.type", ty);
+                if !ty.is_empty() && ty.iter().all(|c| c.is_ascii_alphanumeric()) && ty.len() <= 8 {
+                    w.attr("db.response.status_code", ty);
+                }
+                w.status(StatusCode::Error, msg);
+            }
+        })
+    })
+    .flatten();
     if let (Some(h), Some(e)) = (rt::hooks(), &ended) {
         if e.js_cell != 0 {
             (h.release_cell)(e.js_cell);
         }
         if e.recorded {
-            (h.after_record)();
+            (h.after_record)(global);
         }
     }
 }

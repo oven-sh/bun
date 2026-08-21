@@ -63,7 +63,12 @@ pub struct PostgresSQLQuery {
 // `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
-        self.otel_end(None);
+        if self.otel.get().is_some() {
+            self.otel_end(
+                bun_jsc::virtual_machine::VirtualMachine::get().global(),
+                None,
+            );
+        }
         self.release_statement();
         self.query.deref();
         self.cursor_name.deref();
@@ -216,11 +221,11 @@ impl PostgresSQLQuery {
     }
 
     /// Finish the telemetry span (first call wins).
-    pub(crate) fn otel_end(&self, error: Option<(&[u8], &[u8])>) {
+    pub(crate) fn otel_end(&self, global_object: &JSGlobalObject, error: Option<(&[u8], &[u8])>) {
         let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
             let q = self.query.to_utf8();
-            bun_telemetry::db::end(span, q.slice(), None, error);
+            bun_telemetry::db::end(global_object.as_ptr().cast(), span, q.slice(), None, error);
         }
     }
 
@@ -230,7 +235,10 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         queries_array: JSValue,
     ) {
-        self.otel_end(Some((<&'static str>::from(err).as_bytes(), b"")));
+        self.otel_end(
+            global_object,
+            Some((<&'static str>::from(err).as_bytes(), b"")),
+        );
         // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
         // is sufficient and `noalias` is suppressed. `ScopedRef` brackets the
         // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
@@ -327,7 +335,7 @@ impl PostgresSQLQuery {
         is_last: bool,
     ) {
         if is_last {
-            self.otel_end(None);
+            self.otel_end(global_object, None);
         }
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
@@ -503,7 +511,7 @@ impl PostgresSQLQuery {
     ) -> JsResult<JSValue> {
         let r = Self::do_run_inner(this, global_object, callframe);
         if r.is_err() {
-            this.otel_end(Some((b"_OTHER", b"failed to run query")));
+            this.otel_end(global_object, Some((b"_OTHER", b"failed to run query")));
         }
         r
     }

@@ -2209,7 +2209,7 @@ where
         // request span now rather than when the pooled context is recycled.
         let span = upgrader.otel_span.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
-            crate::telemetry::server::end(span, 101, false);
+            crate::telemetry::server::end(global, span, 101, false);
         }
         upgrader.deref();
 

@@ -1248,8 +1248,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             .map(|b| &**b)
             .collect();
 
-        // The AST-allocator pop lives in `generate_in_new_thread`. Teardown
-        // joins the source map tasks an error can leave on the shared pool.
+        // The AST-allocator pop lives in `generate_in_new_thread`.
         let result = match bv2.run_from_js_in_new_thread(&entry_points) {
             Ok(build) => {
                 self.set_result(BundleV2Result::Value(build));

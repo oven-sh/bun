@@ -2109,9 +2109,8 @@ pub mod bv2_impl {
         }
 
         /// Runs one of the `enqueue_entry_points_*` variants and drains what it
-        /// scheduled. They put the runtime's parse task on the pool before anything
-        /// in them can fail, and every driver tears the bundle down when this
-        /// returns an error, so the drain comes before the error does.
+        /// scheduled, also when it failed: the runtime's parse task is on the pool
+        /// before anything in them can fail, and an error leads to the teardown.
         fn enqueue_and_wait_for_parse(
             &mut self,
             enqueue: impl FnOnce(&mut Self) -> Result<(), Error>,
@@ -4001,8 +4000,7 @@ pub mod bv2_impl {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
 
-            // `init` started the pools: an error exit tears the bundle down here,
-            // a success leaves that to the caller.
+            // The caller tears down a returned bundle; an error exit has to do it here.
             let scanned = if this.transpiler.log().has_errors() {
                 Err(crate::Error::BuildFailed)
             } else {
@@ -4890,21 +4888,17 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
-            // Parse tasks are the driver's to drain (`enqueue_and_wait_for_parse`;
-            // the dev server gets here from `is_done()`): their results need the
-            // event loop. A task that is still running would use the graph and the
-            // workers this frees, so fail with a message instead. Everything else
-            // the bundle put on the pools is joined here. `link` schedules the
-            // source map tasks and only `generate_chunks_in_parallel` waits for
-            // them, so an error in between gets here with them still running.
+            // Nothing may still run against the graph and the workers this frees.
+            // Parse results need the event loop, so the drivers drain those
+            // (`enqueue_and_wait_for_parse`; the dev server gets here from `is_done`).
             assert_eq!(
                 self.graph.pending_items, 0,
                 "BundleV2 torn down with parse tasks in flight"
             );
+            // Scheduled by `link`, waited for only by `generate_chunks_in_parallel`.
             self.linker.source_maps.line_offset_wait_group.wait();
             self.linker.source_maps.quoted_contents_wait_group.wait();
-            // A parse task whose IO step finished last is still inside
-            // `schedule` on the worker pool that `pool.deinit()` below frees.
+            // The last IO callback may still be inside the worker pool `pool.deinit()` frees.
             self.graph.pool().wait_for_io_tasks();
 
             {

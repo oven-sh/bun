@@ -11,8 +11,8 @@
 //   bun scripts/appkit-coverage.ts            # markdown to stdout
 //   bun scripts/appkit-coverage.ts --json     # machine-readable
 
-import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join, basename } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 
 const SDK =
   process.env.SDKROOT ??
@@ -27,7 +27,14 @@ const json = process.argv.includes("--json");
 
 // ───────────────────────────── SDK side ─────────────────────────────
 
-type Decl = { framework: string; header: string; selectors: Set<string>; isProtocol: boolean; superclass?: string; primary: boolean };
+type Decl = {
+  framework: string;
+  header: string;
+  selectors: Set<string>;
+  isProtocol: boolean;
+  superclass?: string;
+  primary: boolean;
+};
 const sdk = new Map<string, Decl>(); // ObjC class/protocol name -> declared selectors
 
 function selectorsOfMethod(line: string): string | null {
@@ -51,7 +58,9 @@ function selectorsOfMethod(line: string): string | null {
 function selectorsOfProperty(line: string): string[] {
   // "@property (nullable, copy, readonly, getter=isVisible) NSString *title;" -> ["title"] or ["title","setTitle:"]
   const attrs = line.match(/@property\s*\(([^)]*)\)/)?.[1] ?? "";
-  const decl = line.replace(/@property\s*(\([^)]*\))?/, "").replace(/\b(NS_|API_|__OSX|UI_APPEARANCE)\w*(\([^;]*?\))?/g, "");
+  const decl = line
+    .replace(/@property\s*(\([^)]*\))?/, "")
+    .replace(/\b(NS_|API_|__OSX|UI_APPEARANCE)\w*(\([^;]*?\))?/g, "");
   // last identifier before ';' is the name (handles "NSString *title", "BOOL hidden", block types crudely)
   const names = [...decl.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*(?:;|,)/g)].map(m => m[1]);
   const name = names[0];
@@ -59,7 +68,8 @@ function selectorsOfProperty(line: string): string[] {
   const getter = attrs.match(/getter\s*=\s*([A-Za-z_][A-Za-z0-9_]*)/)?.[1] ?? name;
   const out = [getter];
   if (!/\breadonly\b/.test(attrs)) {
-    const setter = attrs.match(/setter\s*=\s*([A-Za-z_][A-Za-z0-9_:]*)/)?.[1] ?? "set" + name[0].toUpperCase() + name.slice(1) + ":";
+    const setter =
+      attrs.match(/setter\s*=\s*([A-Za-z_][A-Za-z0-9_:]*)/)?.[1] ?? "set" + name[0].toUpperCase() + name.slice(1) + ":";
     out.push(setter);
   }
   return out;
@@ -73,10 +83,19 @@ for (const fw of new Set(Object.values(FRAMEWORKS).flat())) {
     let current: Decl | null = null;
     for (const raw of text.split("\n")) {
       const line = raw.trim();
-      const iface = line.match(/^@(interface|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?(?::\s*([A-Za-z_][A-Za-z0-9_]*))?/);
+      const iface = line.match(
+        /^@(interface|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\()?(?::\s*([A-Za-z_][A-Za-z0-9_]*))?/,
+      );
       if (iface) {
         const [, kind, name, category, superclass] = iface;
-        current = sdk.get(name) ?? { framework: fw, header: h, selectors: new Set(), isProtocol: kind === "protocol", superclass, primary: false };
+        current = sdk.get(name) ?? {
+          framework: fw,
+          header: h,
+          selectors: new Set(),
+          isProtocol: kind === "protocol",
+          superclass,
+          primary: false,
+        };
         // A class belongs to the framework of its primary @interface, not of the
         // first category some other framework declares on it (AppKit adds
         // categories to NSString, NSURL, NSObject...).
@@ -106,15 +125,31 @@ for (const fw of new Set(Object.values(FRAMEWORKS).flat())) {
 
 // ───────────────────────────── our side ─────────────────────────────
 
-type Bound = { rust: string; objc: string; file: string; active: Set<string>; commented: Set<string>; usedBy: Set<string> };
+type Bound = {
+  rust: string;
+  objc: string;
+  file: string;
+  active: Set<string>;
+  commented: Set<string>;
+  usedBy: Set<string>;
+};
 const bound = new Map<string, Bound>(); // rust name -> binding
 
 for (const file of Object.keys(FRAMEWORKS)) {
   const text = readFileSync(join(root, file), "utf8");
-  for (const m of text.matchAll(/^(\/\/ )?objc_class!\((?:pub(?:\([a-z]+\))? )?struct ([A-Za-z0-9_]+)(?:: [A-Za-z0-9_]+)? = "([A-Za-z0-9_]+)"\);/gm)) {
+  for (const m of text.matchAll(
+    /^(\/\/ )?objc_class!\((?:pub(?:\([a-z]+\))? )?struct ([A-Za-z0-9_]+)(?:: [A-Za-z0-9_]+)? = "([A-Za-z0-9_]+)"\);/gm,
+  )) {
     const [, commentedOut, rust, objc] = m;
     // Protocol-typed Metal objects bind as NSObject; use the Rust name (which is the protocol name).
-    bound.set(rust, { rust, objc: objc === "NSObject" && rust !== "NSObject" ? rust : objc, file, active: new Set(), commented: new Set(), usedBy: new Set() });
+    bound.set(rust, {
+      rust,
+      objc: objc === "NSObject" && rust !== "NSObject" ? rust : objc,
+      file,
+      active: new Set(),
+      commented: new Set(),
+      usedBy: new Set(),
+    });
     if (commentedOut) bound.get(rust)!.usedBy.add("(commented out)");
   }
   // objc_methods! { impl X { ... }} blocks, possibly commented out line by line
@@ -132,7 +167,9 @@ for (const file of Object.keys(FRAMEWORKS)) {
 
 // Which crate modules use each bound class (a rough "surfaces in JS through…").
 const users = [
-  ...readdirSync(join(root, "src/appkit")).filter(f => f.endsWith(".rs")).map(f => "src/appkit/" + f),
+  ...readdirSync(join(root, "src/appkit"))
+    .filter(f => f.endsWith(".rs"))
+    .map(f => "src/appkit/" + f),
   ...readdirSync(join(root, "src/appkit/view")).map(f => "src/appkit/view/" + f),
   ...readdirSync(join(root, "src/appkit/gpu")).map(f => "src/appkit/gpu/" + f),
 ];
@@ -145,7 +182,16 @@ for (const file of users) {
 
 // ───────────────────────────── report ─────────────────────────────
 
-type Row = { class: string; framework: string; declared: number; bound: number; commented: number; pct: number; usedBy: string[]; missingSample: string[] };
+type Row = {
+  class: string;
+  framework: string;
+  declared: number;
+  bound: number;
+  commented: number;
+  pct: number;
+  usedBy: string[];
+  missingSample: string[];
+};
 const rows: Row[] = [];
 for (const b of bound.values()) {
   const decl = sdk.get(b.objc);
@@ -173,17 +219,29 @@ const summary = frameworks.map(fw => {
   const ours = rows.filter(r => r.framework === fw);
   const declaredSelectors = classes.concat(protocols).reduce((n, [, d]) => n + d.selectors.size, 0);
   const boundSelectors = ours.reduce((n, r) => n + r.bound, 0);
-  return { framework: fw, sdkClasses: classes.length, sdkProtocols: protocols.length, boundTypes: ours.length, declaredSelectors, boundSelectors };
+  return {
+    framework: fw,
+    sdkClasses: classes.length,
+    sdkProtocols: protocols.length,
+    boundTypes: ours.length,
+    declaredSelectors,
+    boundSelectors,
+  };
 });
 
 function inherits(name: string, base: string): boolean {
-  for (let c: string | undefined = name, i = 0; c && i < 32; c = sdk.get(c)?.superclass, i++) if (c === base) return true;
+  for (let c: string | undefined = name, i = 0; c && i < 32; c = sdk.get(c)?.superclass, i++)
+    if (c === base) return true;
   return false;
 }
-const viewClasses = [...sdk.entries()].filter(([n, d]) => !d.isProtocol && d.framework === "AppKit" && inherits(n, "NSView")).map(([n]) => n);
+const viewClasses = [...sdk.entries()]
+  .filter(([n, d]) => !d.isProtocol && d.framework === "AppKit" && inherits(n, "NSView"))
+  .map(([n]) => n);
 const boundViews = viewClasses.filter(n => [...bound.values()].some(b => b.objc === n && b.active.size > 0));
 // The React host component table lists every element name once: `  Name: appkit.Name,`.
-const jsElements = [...readFileSync(join(root, "src/js/bun/appkit.react.ts"), "utf8").matchAll(/^\s*([A-Z][A-Za-z]+): appkit\.\1,$/gm)].map(m => m[1]);
+const jsElements = [
+  ...readFileSync(join(root, "src/js/bun/appkit.react.ts"), "utf8").matchAll(/^\s*([A-Z][A-Za-z]+): appkit\.\1,$/gm),
+].map(m => m[1]);
 
 if (json) {
   console.log(JSON.stringify({ summary, rows, viewClasses: viewClasses.length, boundViews, jsElements }, null, 2));
@@ -192,25 +250,43 @@ if (json) {
 
 const pad = (s: string | number, n: number) => String(s).padEnd(n);
 console.log("# Bun.AppKit — Objective-C surface coverage\n");
-console.log(`SDK: ${SDK.split("/").slice(-1)[0]}  ·  generated ${new Date().toISOString().slice(0, 10)} by scripts/appkit-coverage.ts\n`);
+console.log(
+  `SDK: ${SDK.split("/").slice(-1)[0]}  ·  generated ${new Date().toISOString().slice(0, 10)} by scripts/appkit-coverage.ts\n`,
+);
 console.log(`## Headline\n`);
 console.log(`- JavaScript elements: **${jsElements.length}** (${jsElements.join(", ")}).`);
-console.log(`- AppKit \`NSView\` subclasses reachable through them: **${boundViews.length} of ${viewClasses.length}** in the SDK (${boundViews.join(", ")}).`);
-console.log(`- Not yet reachable \`NSView\` subclasses: ${viewClasses.filter(n => !boundViews.includes(n)).join(", ")}.`);
-console.log(`- No generic bridge: a class or selector not listed below is not reachable from JS yet; adding one is a binding line plus a prop.\n`);
+console.log(
+  `- AppKit \`NSView\` subclasses reachable through them: **${boundViews.length} of ${viewClasses.length}** in the SDK (${boundViews.join(", ")}).`,
+);
+console.log(
+  `- Not yet reachable \`NSView\` subclasses: ${viewClasses.filter(n => !boundViews.includes(n)).join(", ")}.`,
+);
+console.log(
+  `- No generic bridge: a class or selector not listed below is not reachable from JS yet; adding one is a binding line plus a prop.\n`,
+);
 console.log("## By framework\n");
-console.log("| framework | classes in SDK | protocols in SDK | types we bind | selectors declared (SDK) | selectors we bind |");
+console.log(
+  "| framework | classes in SDK | protocols in SDK | types we bind | selectors declared (SDK) | selectors we bind |",
+);
 console.log("|---|---:|---:|---:|---:|---:|");
 for (const s of summary) {
-  console.log(`| ${s.framework} | ${s.sdkClasses} | ${s.sdkProtocols} | ${s.boundTypes} | ${s.declaredSelectors} | ${s.boundSelectors} (${s.declaredSelectors ? ((100 * s.boundSelectors) / s.declaredSelectors).toFixed(1) : 0}%) |`);
+  console.log(
+    `| ${s.framework} | ${s.sdkClasses} | ${s.sdkProtocols} | ${s.boundTypes} | ${s.declaredSelectors} | ${s.boundSelectors} (${s.declaredSelectors ? ((100 * s.boundSelectors) / s.declaredSelectors).toFixed(1) : 0}%) |`,
+  );
 }
 console.log("\n## By bound class\n");
-console.log("`declared` = selectors the SDK header declares on that class itself (properties count getter+setter; inherited ones are on the superclass row). `bound` = compiled bindings; `parked` = transcribed but commented out until something needs them.\n");
+console.log(
+  "`declared` = selectors the SDK header declares on that class itself (properties count getter+setter; inherited ones are on the superclass row). `bound` = compiled bindings; `parked` = transcribed but commented out until something needs them.\n",
+);
 console.log("| class | framework | declared | bound | parked | % | used by |");
 console.log("|---|---|---:|---:|---:|---:|---|");
 for (const r of rows) {
-  console.log(`| ${r.class} | ${r.framework} | ${r.declared} | ${r.bound} | ${r.commented} | ${r.declared ? r.pct + "%" : "–"} | ${r.usedBy.join(", ")} |`);
+  console.log(
+    `| ${r.class} | ${r.framework} | ${r.declared} | ${r.bound} | ${r.commented} | ${r.declared ? r.pct + "%" : "–"} | ${r.usedBy.join(", ")} |`,
+  );
 }
 const totalDeclared = rows.reduce((n, r) => n + r.declared, 0);
 const totalBound = rows.reduce((n, r) => n + r.bound, 0);
-console.log(`\n**Bound classes: ${rows.length}. On those classes: ${totalBound} of ${totalDeclared} declared selectors bound (${((100 * totalBound) / Math.max(1, totalDeclared)).toFixed(1)}%), ${rows.reduce((n, r) => n + r.commented, 0)} more parked as comments.**`);
+console.log(
+  `\n**Bound classes: ${rows.length}. On those classes: ${totalBound} of ${totalDeclared} declared selectors bound (${((100 * totalBound) / Math.max(1, totalDeclared)).toFixed(1)}%), ${rows.reduce((n, r) => n + r.commented, 0)} more parked as comments.**`,
+);

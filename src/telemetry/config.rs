@@ -91,6 +91,8 @@ pub struct Bunfig {
     pub endpoint: Option<String>,
     pub headers: Vec<(String, String)>,
     pub service_name: Option<String>,
+    /// `exporter = "datadog"` (see presets.rs); `BUN_OTEL_EXPORTER` wins.
+    pub exporter: Option<String>,
 }
 
 static BUNFIG: std::sync::OnceLock<Bunfig> = std::sync::OnceLock::new();
@@ -277,6 +279,27 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
 
     // Exporter selection.
     let mut want_otlp = true;
+    let preset = get("BUN_OTEL_EXPORTER").or_else(|| bunfig.and_then(|b| b.exporter.clone()).map(|s| s.into_bytes()));
+    if let Some(v) = preset {
+        for name in bun_core::strings::split(&v, b",") {
+            let name = name.trim_ascii();
+            if name.is_empty() {
+                continue;
+            }
+            want_otlp = false;
+            let input = crate::presets::PresetInput {
+                name: &s(name),
+                api_key: None,
+                site: None,
+                id: None,
+                endpoint: None,
+            };
+            match crate::presets::resolve(&input, &|k| get(k).map(|v| s(&v))) {
+                Ok(x) => c.otlp_exporters.push(x),
+                Err(e) => warnings.push(format!("BUN_OTEL_EXPORTER: {e}")),
+            }
+        }
+    }
     if let Some(v) = get("OTEL_TRACES_EXPORTER") {
         want_otlp = false;
         for e in bun_core::strings::split(&v, b",") {

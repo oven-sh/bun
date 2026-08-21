@@ -390,6 +390,12 @@ impl<'a> Parser<'a> {
                         self.expect(&e, ExprTag::EBoolean)?;
                         cfg.enabled = e.as_bool();
                     }
+                    if let Some(e) = expr.get(b"exporter") {
+                        self.expect(&e, ExprTag::EString)?;
+                        cfg.exporter = e
+                            .as_string(self.bump)
+                            .map(|s| String::from_utf8_lossy(s).into_owned());
+                    }
                     if let Some(e) = expr.get(b"endpoint") {
                         self.expect(&e, ExprTag::EString)?;
                         cfg.endpoint = e

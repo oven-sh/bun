@@ -13,6 +13,7 @@ pub mod db;
 pub mod otlp;
 pub mod otlp_json;
 pub mod pool;
+pub mod presets;
 pub mod processor;
 pub mod propagation;
 pub mod proto;

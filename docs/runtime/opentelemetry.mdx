@@ -64,6 +64,7 @@ Once enabled, Bun reads the standard OpenTelemetry environment variables:
 | `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BSP_EXPORT_TIMEOUT` | Batch processor tuning.                                                            |
 | `OTEL_PROPAGATORS`                                                      | `tracecontext` and/or `baggage`.                                                                                 |
 | `OTEL_SDK_DISABLED=true`                                                | Force tracing off.                                                                                               |
+| `BUN_OTEL_EXPORTER`                                                     | Vendor preset(s): `datadog`, `honeycomb`, `grafana`, `newrelic`, `axiom`, `dynatrace`, `sentry`, `otlp`. Credentials come from the vendor's env vars (`DD_API_KEY`, `HONEYCOMB_API_KEY`, …). |
 | `BUN_OTEL_INSTRUMENTATIONS`                                             | Allow-list, e.g. `http,fetch,sql`.                                                                               |
 | `BUN_OTEL_DISABLE`                                                      | Deny-list, e.g. `fs,dns`.                                                                                        |
 
@@ -87,6 +88,26 @@ Bun.otel.start({
   instrumentations: { fs: false, sqlite: "always" },
 });
 ```
+
+### Sending to a hosted backend
+
+Anything that accepts OTLP/HTTP works with `{ url, headers }`. For the common vendors there are presets that fill in the endpoint and auth header, reading the vendor's usual environment variables when a field is omitted:
+
+```ts title="telemetry.ts" icon="/icons/typescript.svg"
+Bun.otel.start({
+  exporters: [
+    { type: "datadog", apiKey: process.env.DD_API_KEY, site: "datadoghq.com" }, // no apiKey → local Datadog Agent on :4318
+    { type: "honeycomb", apiKey: process.env.HONEYCOMB_API_KEY },
+    { type: "grafana", site: "prod-us-east-0", id: "123456", apiKey: process.env.GRAFANA_CLOUD_API_KEY },
+    { type: "newrelic", apiKey: process.env.NEW_RELIC_LICENSE_KEY, site: "eu" },
+    { type: "axiom", apiKey: process.env.AXIOM_TOKEN, id: "my-dataset" },
+    { type: "dynatrace", id: "abc12345", apiKey: process.env.DT_API_TOKEN },
+    { type: "sentry", endpoint: "https://o1.ingest.us.sentry.io/api/2/integration/otlp/v1/traces", apiKey: "<dsn public key>" },
+  ],
+});
+```
+
+Without code: `BUN_OTEL=1 BUN_OTEL_EXPORTER=datadog DD_API_KEY=… bun server.ts` (or `exporter = "datadog"` in the `[telemetry]` bunfig table). AWS X-Ray and Google Cloud Trace sign every request with short-lived credentials; run an OpenTelemetry Collector next to the app for those and point Bun at it (`type: "otlp"`).
 
 See the [`Bun.otel` type definitions](https://github.com/oven-sh/bun/blob/main/packages/bun-types/telemetry.d.ts) for every option. `Bun.otel.forceFlush()` exports whatever is buffered; Bun also flushes when the process exits.
 

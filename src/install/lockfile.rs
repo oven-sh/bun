@@ -180,6 +180,11 @@ pub struct Lockfile {
     pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
+    /// Workspaces (by name hash) whose package.json declares
+    /// `installConfig.hoistingLimits = "workspaces"`; unioned with
+    /// `install.selfContainedWorkspaces` at hoist time. Not serialized: it is
+    /// re-derived from the manifests on every install.
+    pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 
     /// Optional because `trustedDependencies` in package.json might be an
     /// empty list or it might not exist
@@ -684,6 +689,7 @@ impl Lockfile {
         self.trusted_dependencies = None;
         self.workspace_paths = NameHashMap::default();
         self.workspace_versions = VersionHashMap::default();
+        self.self_contained_workspaces = ArrayHashMap::default();
         self.overrides = OverrideMap::default();
         self.catalogs = CatalogMap::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
@@ -815,13 +821,17 @@ impl Lockfile {
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     /// Workspace packages whose node_modules must be self-contained: listed in
-    /// `install.selfContainedWorkspaces` (by path or name) or declaring yarn's
-    /// `"installConfig": { "hoistingLimits": "workspaces" | "dependencies" }`.
+    /// `install.selfContainedWorkspaces` (by path or name) or declaring
+    /// `"installConfig": { "hoistingLimits": "workspaces" }` in their manifest
+    /// (recorded in `self_contained_workspaces` while the workspaces were parsed).
     pub(crate) fn self_contained_workspace_ids(&self) -> Vec<PackageID> {
-        let mut out = Vec::new();
         let configured: &[&[u8]] = crate::PackageManager::try_get()
             .map(|pm| pm.options.self_contained_workspaces)
             .unwrap_or(&[]);
+        if configured.is_empty() && self.self_contained_workspaces.count() == 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
         let buf = self.buffers.string_bytes.as_slice();
         let pkgs = self.packages.slice();
         for (i, res) in pkgs.items_resolution().iter().enumerate() {
@@ -830,26 +840,13 @@ impl Lockfile {
             }
             let path = res.workspace().slice(buf);
             let name = pkgs.items_name()[i].slice(buf);
-            let mut yes = configured.iter().any(|c| {
-                let c = bun_core::strings::without_trailing_slash(c);
-                c == path || c == name
-            });
-            if !yes {
-                // yarn compat: installConfig.hoistingLimits in the workspace's own manifest
-                let mut p = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = p.append(path);
-                let _ = p.append(b"package.json");
-                if let Ok(bytes) = std::fs::read(std::path::Path::new(unsafe {
-                    std::str::from_utf8_unchecked(p.slice())
-                })) {
-                    if let Some(i) = bun_core::strings::index_of(&bytes, b"\"hoistingLimits\"") {
-                        let rest = &bytes[i + 16..bytes.len().min(i + 64)];
-                        yes = bun_core::strings::index_of(rest, b"\"workspaces\"").is_some()
-                            || bun_core::strings::index_of(rest, b"\"dependencies\"").is_some();
-                    }
-                }
-            }
-            if yes {
+            let name_hash = pkgs.items_name_hash()[i];
+            if self.self_contained_workspaces.contains(&name_hash)
+                || configured.iter().any(|c| {
+                    let c = bun_core::strings::without_trailing_slash(c);
+                    c == path || c == name
+                })
+            {
                 out.push(i as PackageID);
             }
         }
@@ -1149,6 +1146,9 @@ impl Lockfile {
 
                 new.workspace_versions.re_index()?;
                 new.workspace_paths.re_index()?;
+            }
+            for key in old.self_contained_workspaces.keys() {
+                new.self_contained_workspaces.put(*key, ())?;
             }
         }
 
@@ -2048,6 +2048,7 @@ impl Lockfile {
             trusted_dependencies: None,
             workspace_paths: NameHashMap::default(),
             workspace_versions: VersionHashMap::default(),
+            self_contained_workspaces: ArrayHashMap::default(),
             overrides: OverrideMap::default(),
             catalogs: CatalogMap::default(),
             meta_hash: ZERO_HASH,
@@ -2404,6 +2405,7 @@ impl Lockfile {
                 workspace_versions: &mut self.workspace_versions,
                 patched_dependencies: &mut self.patched_dependencies,
                 trusted_dependencies: &mut self.trusted_dependencies,
+                self_contained_workspaces: &mut self.self_contained_workspaces,
             },
         )
     }
@@ -2457,6 +2459,8 @@ pub(crate) struct LockfileFields<'a> {
     pub(crate) workspace_versions: &'a mut VersionHashMap,
     pub(crate) patched_dependencies: &'a mut PatchedDependenciesMap,
     pub(crate) trusted_dependencies: &'a mut Option<TrustedDependenciesSet>,
+    pub(crate) self_contained_workspaces:
+        &'a mut ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 }
 
 // ────────────────────────────────────────────────────────────────────────────

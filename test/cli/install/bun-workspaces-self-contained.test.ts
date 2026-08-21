@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { existsSync, readlinkSync, statSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, readdirSorted } from "harness";
@@ -63,11 +63,11 @@ async function writeProject(desktopExtra: object, bunfigExtra: object) {
   await writeFile(join(package_dir, "packages", "shared", "package.json"), JSON.stringify({ name: "shared", version: "1.0.0", dependencies: { baz: "0.0.3" } }));
 }
 
-for (const [label, desktopExtra, bunfigExtra] of [
+describe.each([
   ["installConfig.hoistingLimits in the workspace's package.json", { installConfig: { hoistingLimits: "workspaces" } }, {}],
   ["install.selfContainedWorkspaces in bunfig.toml", {}, { selfContainedWorkspaces: ["apps/desktop"] }],
-] as const) {
-  it(`self-contained workspace via ${label}`, async () => {
+] as const)("self-contained workspace via %s", (_label, desktopExtra, bunfigExtra) => {
+  it("gets a complete, physical node_modules while other workspaces still hoist", async () => {
     await writeProject(desktopExtra, bunfigExtra);
     const r = await install(package_dir);
     expect(r.err).not.toContain("error:");
@@ -95,11 +95,13 @@ for (const [label, desktopExtra, bunfigExtra] of [
     expect(again.code).toBe(0);
     expect(await readdirSorted(desktopNm)).toEqual(["@barn", "bar", "baz", "shared"]);
   });
-}
+});
 
 it("without either setting the workspace is hoisted normally", async () => {
   await writeProject({}, {});
-  expect((await install(package_dir)).code).toBe(0);
+  const r = await install(package_dir);
+  expect(r.err).not.toContain("error:");
+  expect(r.code).toBe(0);
   expect(existsSync(join(package_dir, "apps", "desktop", "node_modules"))).toBeFalse();
   expect(existsSync(join(package_dir, "node_modules", "@barn", "moo", "package.json"))).toBeTrue();
   expect(existsSync(join(package_dir, "node_modules", "baz", "package.json"))).toBeTrue();

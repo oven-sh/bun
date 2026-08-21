@@ -417,6 +417,13 @@ pub fn install_with_manager(
                             lf.workspace_versions.insert(*key, version);
                         }
                     }
+                    // …and which workspaces asked for a self-contained node_modules
+                    {
+                        lf.self_contained_workspaces.clear_retaining_capacity();
+                        for key in lockfile.self_contained_workspaces.keys() {
+                            lf.self_contained_workspaces.put(*key, ())?;
+                        }
+                    }
 
                     // Update patched dependencies
                     {

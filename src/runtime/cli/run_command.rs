@@ -466,9 +466,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     }
                 }
 
+                // cmd.exe exits 0 after abandoning a line whose command was Ctrl+C'd.
                 #[cfg(windows)]
-                if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
-                    Global::exit(exit_code.raw);
+                if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT
+                    || (exit_code.raw == 0 && sync::LeaveCtrlCToChildren::took_ctrl_c())
+                {
+                    Global::exit(bun_sys::windows::STATUS_CONTROL_C_EXIT);
                 }
 
                 if exit_code.code != 0 {

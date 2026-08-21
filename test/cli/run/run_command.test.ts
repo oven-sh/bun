@@ -171,14 +171,11 @@ for (const mode of ctrlCModes) {
     // ...did not go on to the next command...
     expect(text).not.toContain("NOPE");
     // ...and ended like the child did.
-    if (!isWindows) {
-      expect(signalCode).toBe("SIGINT");
-    } else if (mode.name === "--shell=bun") {
+    if (isWindows) {
       // STATUS_CONTROL_C_EXIT (0xC000013A); Bun.spawn reports the low byte on Windows.
       expect(exitCode).toBe(0x3a);
     } else {
-      // cmd.exe abandons the rest of the line on Ctrl+C but itself exits 0.
-      expect(exitCode).toBe(0);
+      expect(signalCode).toBe("SIGINT");
     }
   });
 }

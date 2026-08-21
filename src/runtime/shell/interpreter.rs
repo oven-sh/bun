@@ -788,6 +788,12 @@ macro_rules! shell_state_dispatch {
         /// Signal to `parent` that `child` finished with `exit_code`. This is the
         /// single hoisted `match` dispatching on the parent's state tag.
         pub fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
+            let child_kind = self.nodes.get()[child.idx()].kind();
+            let in_pipeline = parent != NodeId::INTERPRETER
+                && self.nodes.get()[parent.idx()].kind() == StateKind::Pipeline;
+            if child_kind == StateKind::Pipeline || (child_kind == StateKind::Cmd && !in_pipeline) {
+                crate::api::bun_process::sync::LeaveCtrlCToChildren::job_done(exit_code == 0);
+            }
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
             }

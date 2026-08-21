@@ -2632,7 +2632,7 @@ mod spawn_process_body {
         ///   signalling only us) is forwarded so the child still sees it;
         /// - with no child alive, Ctrl+C takes its previous action;
         /// - once the children are gone, if we took a Ctrl+C for them and one died of
-        ///   it, end the same way (`exit_with_children_if_ctrl_c`), so `a; b` stops
+        ///   it, and the job did not succeed, end the same way (`job_done`), so `a; b` stops
         ///   and callers see an interrupt rather than an exit code.
         /// Not inherited: on POSIX a caught signal resets to default on exec; on
         /// Windows a handler routine (unlike `SetConsoleCtrlHandler(NULL, TRUE)`) is
@@ -2714,7 +2714,9 @@ mod spawn_process_body {
                     // SAFETY: the kernel passes a valid siginfo_t for SA_SIGINFO handlers.
                     let sender = unsafe { siginfo_pid(info) };
                     // From the tty (no sender) or from inside our own process group,
-                    // the children already have it; only forward an outsider's.
+                    // the children already have it; only forward an outsider's. (An
+                    // outsider's `kill(-pgrp)` still reaches the child twice: siginfo
+                    // names the sender, not whether the target was us or the group.)
                     if sender > 0 && getpgid(sender) != getpgrp() {
                         for slot in &CTRL_C_CHILDREN {
                             let pid = slot.load(Ordering::Relaxed);
@@ -2772,35 +2774,49 @@ mod spawn_process_body {
             }
 
             /// Call after dropping the `CtrlCChild` whose `status` this is.
-            pub fn exit_with_children_if_ctrl_c(status: &Status) {
-                if !CTRL_C_INSTALLED.load(Ordering::Relaxed) {
+            pub fn child_exited(status: &Status) {
+                if !CTRL_C_INSTALLED.load(Ordering::Relaxed)
+                    || !CTRL_C_RECEIVED.load(Ordering::Relaxed)
+                {
                     return;
                 }
-                if CTRL_C_RECEIVED.load(Ordering::Relaxed) {
-                    #[cfg(unix)]
-                    if status.signal_code() == Some(bun_core::SignalCode::SIGINT) {
-                        CTRL_C_KILLED_CHILD.store(libc::SIGINT as u32, Ordering::Relaxed);
-                    }
-                    #[cfg(windows)]
-                    if let Status::Exited(exited) = status {
-                        if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
-                            CTRL_C_KILLED_CHILD.store(exited.raw, Ordering::Relaxed);
-                        }
+                #[cfg(unix)]
+                if status.signal_code() == Some(bun_core::SignalCode::SIGINT) {
+                    CTRL_C_KILLED_CHILD.store(libc::SIGINT as u32, Ordering::Relaxed);
+                }
+                #[cfg(windows)]
+                if let Status::Exited(exited) = status {
+                    if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                        CTRL_C_KILLED_CHILD.store(exited.raw, Ordering::Relaxed);
                     }
                 }
-                if CTRL_C_CHILD_COUNT.load(Ordering::Relaxed) > 0 {
+            }
+
+            /// A foreground job (command or pipeline) finished with all its children
+            /// reaped. If we took a Ctrl+C for it, a member died of that, and the job
+            /// as a whole did not succeed, end the way the child did.
+            pub fn job_done(succeeded: bool) {
+                if !CTRL_C_INSTALLED.load(Ordering::Relaxed)
+                    || CTRL_C_CHILD_COUNT.load(Ordering::Relaxed) > 0
+                {
                     return;
                 }
-                CTRL_C_RECEIVED.store(false, Ordering::Relaxed);
-                match CTRL_C_KILLED_CHILD.swap(0, Ordering::Relaxed) {
-                    0 => {}
-                    #[cfg(unix)]
-                    _ => {
-                        bun_core::Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGINT)
-                    }
-                    #[cfg(windows)]
-                    status => bun_core::Global::exit(status),
+                let received = CTRL_C_RECEIVED.swap(false, Ordering::Relaxed);
+                let killed = CTRL_C_KILLED_CHILD.swap(0, Ordering::Relaxed);
+                if !received || killed == 0 || succeeded {
+                    return;
                 }
+                #[cfg(unix)]
+                bun_core::Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGINT);
+                #[cfg(windows)]
+                bun_core::Global::exit(killed);
+            }
+
+            /// Whether a Ctrl+C was taken for the children since `install` / the last
+            /// `job_done`, for parents whose child can't report it (cmd.exe exits 0
+            /// after abandoning an interrupted command line).
+            pub fn took_ctrl_c() -> bool {
+                CTRL_C_INSTALLED.load(Ordering::Relaxed) && CTRL_C_RECEIVED.load(Ordering::Relaxed)
             }
         }
         impl Drop for LeaveCtrlCToChildren {

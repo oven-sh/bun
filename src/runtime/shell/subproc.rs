@@ -970,7 +970,7 @@ impl ShellSubprocess {
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
         if self.ctrl_c_child.take().is_some() {
-            bun_process::sync::LeaveCtrlCToChildren::exit_with_children_if_ctrl_c(status);
+            bun_process::sync::LeaveCtrlCToChildren::child_exited(status);
         }
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {

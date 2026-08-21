@@ -399,15 +399,21 @@ JSValue invokeOptionalMethod(JSGlobalObject* globalObject, JSObject* object, con
 bool errorCodeIs(JSGlobalObject* globalObject, JSValue error, ASCIILiteral code)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (!error || !error.isObject())
         return false;
-    JSValue codeValue = asObject(error)->get(globalObject, WebCore::builtinNames(vm).codePublicName());
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!codeValue.isString())
+    JSValue codeValue = asObject(error)->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).codePublicName());
+    if (catchScope.exception()) [[unlikely]] {
+        catchScope.clearExceptionExceptTermination();
+        return false;
+    }
+    if (!codeValue || !codeValue.isString())
         return false;
     String codeString = asString(codeValue)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
+    if (catchScope.exception()) [[unlikely]] {
+        catchScope.clearExceptionExceptTermination();
+        return false;
+    }
     return codeString == StringView(code);
 }
 

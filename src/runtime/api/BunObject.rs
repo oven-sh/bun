@@ -1157,7 +1157,7 @@ impl Drop for ResolveDerefOnDrop {
 
 enum Resolved {
     Found(JSValue),
-    /// The resolver's error object (e.g. "Cannot find module"); not thrown yet.
+    /// The resolver's `ResolveMessage` for a specifier it could not resolve; not thrown yet.
     NotFound(JSValue),
 }
 
@@ -1207,7 +1207,12 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
 
     if !errorable.success {
         // SAFETY: !success → `err` arm of the #[repr(C)] union is active.
-        return Ok(Resolved::NotFound(unsafe { errorable.result.err }.value));
+        let err = unsafe { errorable.result.err }.value;
+        if err.as_class_ref::<jsc::ResolveMessage>().is_some() {
+            return Ok(Resolved::NotFound(err));
+        }
+        // e.g. an onResolve plugin returned an invalid result
+        return Err(ctx.throw_value(err));
     }
     // SAFETY: success → `value` arm of the #[repr(C)] union is active.
     owned.result_value = unsafe { errorable.result.value };
@@ -1379,9 +1384,10 @@ pub fn bun_resolve_sync_with_strings(
     })
 }
 
-/// Like `Bun__resolveSyncWithSource`, but a specifier that does not resolve yields `undefined`
-/// instead of a thrown "Cannot find module"; anything else that goes wrong (a plugin's `onResolve`
-/// throwing, an invalid specifier) is still thrown.
+/// Like `Bun__resolveSyncWithSource`, but a specifier the resolver cannot resolve (the
+/// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing.
+/// Everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
+/// that is not a string — is thrown.
 // HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
 pub fn bun_resolve_sync_with_source_if_exists(
     global: &JSGlobalObject,

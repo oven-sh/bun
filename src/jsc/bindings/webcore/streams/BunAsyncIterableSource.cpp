@@ -185,30 +185,19 @@ static void asyncIterReturnIteratorAndSettle(JSGlobalObject* globalObject, JSAsy
 }
 
 // Error tail: an already-gone consumer (ERR_INVALID_THIS) returns the iterator quietly;
-// otherwise notify it via iterator.throw(error) and settle once that settles. If reading
-// `error.code` itself throws, that exception becomes the error being delivered.
+// otherwise notify it via iterator.throw(error) and settle once that settles.
 static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
-    bool swallowByCode = false;
-    bool isInvalidThis = errorCodeIs(globalObject, error, "ERR_INVALID_THIS"_s);
-    if (scope.exception()) [[unlikely]] {
-        error = takeAbruptCompletion(globalObject, scope);
-        RETURN_IF_EXCEPTION(scope, );
-    } else if (isInvalidThis) {
+    if (errorCodeIs(globalObject, error, "ERR_INVALID_THIS"_s)) {
         asyncIterReturnIteratorAndSettle(globalObject, op);
         return;
-    } else {
-        swallowByCode = errorCodeIs(globalObject, error, "ERR_INVALID_STATE"_s);
-        if (scope.exception()) [[unlikely]] {
-            swallowByCode = false;
-            error = takeAbruptCompletion(globalObject, scope);
-            RETURN_IF_EXCEPTION(scope, );
-        }
     }
+
+    bool swallowByCode = errorCodeIs(globalObject, error, "ERR_INVALID_STATE"_s);
 
     JSObject* iterator = op->m_iterator.get();
     op->m_iterator.clear();

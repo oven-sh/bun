@@ -101,6 +101,25 @@ it("--offline never issues a request and fails cleanly on a cache miss", async (
   expect(urls.length).toBe(before);
 });
 
+// Regression: with an *expired* cached manifest (here forced via --force, which turns off
+// the max-age check) --prefer-offline / --offline must still resolve from it, not spin.
+it("--prefer-offline and --offline use an expired cached manifest", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }));
+  expect((await install(package_dir, [])).code).toBe(0);
+  const before = urls.length;
+  for (const flag of ["--prefer-offline", "--offline"]) {
+    const dir = await newProject({ baz: "^0.0.3" });
+    const r = await install(dir, ["--force", flag]);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    // resolved the range from the cached manifest (0.0.5 is listed there too, but its
+    // tarball was never downloaded; 0.0.3's was) — no manifest request either way
+    expect(urls.slice(before).filter(u => !u.endsWith(".tgz"))).toEqual([]);
+  }
+});
+
 it("install.prefer = \"offline\" and install.offline = true in bunfig.toml behave like the flags", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {} }));

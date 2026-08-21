@@ -1128,10 +1128,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        // `--prefer-offline` / `--offline` accept a cached manifest of
-                                        // any age.
-                                        if (this.options.enable.manifest_cache_control() && !expired)
-                                            || this.options.offline != crate::package_manager_real::options::OfflineMode::Online
+                                        // (`--prefer-offline` / `--offline` load cached manifests as fresh
+                                        // regardless of age — see `DiskCacheCtx::accept_expired` — so they
+                                        // take this branch too; an entry still marked expired here needs
+                                        // the extended manifest and must be fetched.)
+                                        if !expired
+                                            && (this.options.enable.manifest_cache_control()
+                                                || this.options.offline
+                                                    != crate::package_manager_real::options::OfflineMode::Online)
                                         {
                                             let _ = this.network_dedupe_map.remove(&task_id);
                                             continue 'retry_from_manifests_ptr;

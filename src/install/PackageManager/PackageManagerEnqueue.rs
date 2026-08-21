@@ -673,9 +673,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     let mut version_was_replaced = true;
     let version: dependency::Version = 'version: {
         // An `npm:` alias names its registry target explicitly, so only plain
-        // dependencies may be redirected to a same-named alias elsewhere in the tree.
+        // dependencies may be redirected to a same-named alias elsewhere in the
+        // tree. An override that matches this dependency wins over the
+        // redirect: without this check the redirect would `break 'version`
+        // past the override lookup below and silently drop the override.
         if dependency.version.tag == dependency::version::Tag::Npm
             && !dependency.version.npm().is_alias
+            && (dependency.behavior.is_workspace()
+                || this
+                    .lockfile
+                    .overrides
+                    .get(&this.lockfile, id, name_hash)
+                    .is_none())
         {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
                 let group = &dependency.version.npm().version;

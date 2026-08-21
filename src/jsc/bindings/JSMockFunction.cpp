@@ -635,7 +635,15 @@ extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
 // If `encodedValue` is an active spyOn(globalObject, key) mock, returns the value the spy replaced (with its attributes); otherwise returns the empty JSValue.
 extern "C" JSC::EncodedJSValue JSMock__originalIfGlobalThisSpy(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedValue, WTF::UniquedStringImpl* key, unsigned* outAttributes)
 {
-    auto* mock = tryJSDynamicCast<JSMockFunction*>(JSValue::decode(encodedValue));
+    JSValue decoded = JSValue::decode(encodedValue);
+    auto* mock = tryJSDynamicCast<JSMockFunction*>(decoded);
+    // A spy on a non-callable target is installed as a GetterSetter wrapping the mock (the putDirectAccessor path in spyOn).
+    if (!mock) {
+        if (auto* getterSetter = tryJSDynamicCast<JSC::GetterSetter*>(decoded)) {
+            if (auto* getter = getterSetter->getter())
+                mock = tryJSDynamicCast<JSMockFunction*>(JSValue(getter));
+        }
+    }
     if (!mock)
         return JSValue::encode(JSValue());
     JSObject* target = mock->spyTarget.get();

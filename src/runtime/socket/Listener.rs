@@ -1619,9 +1619,7 @@ fn connect_finish<const IS_SSL: bool>(
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
         socket_ref.flags.set(f);
     }
-    // The connect attempt holds the loop whatever `.ref()`/`.unref()` said so
-    // far (node:net hands out the handle before connecting); `on_open` applies
-    // `user_wants_ref`, and every failure path releases `poll_ref` itself.
+    // Held for the connect attempt regardless of `user_wants_ref`; `on_open` applies that.
     socket_ref
         .poll_ref
         .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));

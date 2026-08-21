@@ -721,10 +721,11 @@ it.concurrent.each(["s.unref()", "s.pause()"])("%s survives an autoSelectFamily 
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("connected 127.0.0.1\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   } finally {
     server.close();
@@ -754,28 +755,36 @@ describe.concurrent("unref()/pause() around connect()", () => {
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { stdout, exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
   }
 
+  // net.ts hands the connect to the native socket on the next tick, so two ticks in the
+  // attempt is in flight (the handle exists but is not yet established).
+  const inFlight = (code: string) => `process.nextTick(() => process.nextTick(() => { ${code} }));`;
   it.each([
     ["unref() before connect()", `s.unref(); s.connect(port, "127.0.0.1");`],
-    ["unref() while connecting", `s.connect(port, "127.0.0.1"); s.unref();`],
-    ["pause() while connecting", `s.connect(port, "127.0.0.1"); s.pause();`],
+    ["unref() right after connect()", `s.connect(port, "127.0.0.1"); s.unref();`],
+    ["unref() while the connect is in flight", `s.connect(port, "127.0.0.1"); ${inFlight("s.unref();")}`],
+    ["pause() before connect()", `s.pause(); s.connect(port, "127.0.0.1");`],
+    ["pause() right after connect()", `s.connect(port, "127.0.0.1"); s.pause();`],
+    ["pause() while the connect is in flight", `s.connect(port, "127.0.0.1"); ${inFlight("s.pause();")}`],
   ])("%s waits for the connection, then lets the process exit", async (_, client) => {
-    const { stdout, exitCode } = await run(client);
+    const { stdout, stderr, exitCode } = await run(client);
     expect(stdout).toBe("connected\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
-  it("ref() after unref() while connecting keeps holding the loop", async () => {
-    const { stdout, exitCode } = await run(
-      `s.connect(port, "127.0.0.1"); s.unref(); s.ref(); s.resume();`,
-      "c => { c.unref(); c.end(); }",
-    );
+  it.each([
+    ["right after connect()", `s.connect(port, "127.0.0.1"); s.unref(); s.ref(); s.resume();`],
+    ["while the connect is in flight", `s.connect(port, "127.0.0.1"); ${inFlight("s.unref(); s.ref(); s.resume();")}`],
+  ])("ref() after unref() %s keeps holding the loop", async (_, client) => {
+    const { stdout, stderr, exitCode } = await run(client, "c => { c.unref(); c.end(); }");
     expect(stdout).toBe("connected\nclosed\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

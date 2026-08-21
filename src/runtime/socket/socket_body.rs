@@ -3586,7 +3586,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             flags: Cell::new(initial_flags),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
-            user_wants_ref: Cell::new(true),
+            user_wants_ref: Cell::new(this.user_wants_ref.get()),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),

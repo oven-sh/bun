@@ -12,6 +12,7 @@ pub mod data;
 pub mod db;
 pub mod otlp;
 pub mod otlp_json;
+pub mod http_record;
 pub mod pool;
 pub mod presets;
 pub mod processor;

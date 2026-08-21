@@ -58,6 +58,8 @@ pub struct Slot {
     pub status_message: Vec<u8>,
     pub trace_state: Vec<u8>,
     pub baggage: Vec<u8>,
+    /// HTTP server request facts (record mode; see http_record.rs).
+    pub http: crate::http_record::Facts,
 }
 
 impl Slot {
@@ -78,6 +80,7 @@ impl Slot {
             status_message: Vec::new(),
             trace_state: Vec::new(),
             baggage: Vec::new(),
+            http: crate::http_record::Facts::new(),
         }
     }
 
@@ -93,6 +96,7 @@ impl Slot {
         self.status_message.clear();
         self.trace_state.clear();
         self.baggage.clear();
+        self.http.reset();
         // A pathological span shouldn't pin megabytes per slot forever.
         if self.attrs.capacity() > 16 * 1024 {
             self.attrs = Vec::with_capacity(512);
@@ -199,6 +203,21 @@ impl Slot {
     }
 
     fn write(&self, out: &mut Vec<u8>, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'_>)) {
+        if self.http.active {
+            self.http.write(
+                out,
+                &self.stub,
+                end_ns,
+                &self.name,
+                &self.trace_state,
+                &self.attrs,
+                self.dropped_attrs,
+                &self.extra,
+                self.status,
+                &self.status_message,
+            );
+            return;
+        }
         let mut w = SpanWriter::begin(out, &self.stub, &self.name, self.kind, end_ns);
         w.trace_state(&self.trace_state);
         w.raw(&self.attrs);

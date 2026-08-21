@@ -2579,7 +2579,9 @@ impl<'a> Installer<'a> {
                             ResolutionTag::Symlink => {
                                 let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
                                 paths::PathLike::clear(&mut target_node_modules_path);
-                                target_node_modules_path.append(symlink_dir_path).assume_ok();
+                                target_node_modules_path
+                                    .append(symlink_dir_path)
+                                    .assume_ok();
                                 // keep the `@scope/` segment of a scoped link
                                 // name in the directory part
                                 let link_name = pkg_res.symlink().slice(string_buf);

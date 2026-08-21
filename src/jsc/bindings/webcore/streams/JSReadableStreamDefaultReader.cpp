@@ -128,7 +128,7 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
         // promise-backed read adopts it instead of waiting in [[readRequests]].
         if (readRequest->kind() == ReadRequestKind::Promise) {
             auto* readPromise = uncheckedDowncast<JSPromise>(readRequest->m_context.get());
-            JSValue pulled = controller->onPull(globalObject);
+            JSValue pulled = controller->onPull(globalObject, /* readRequestQueued */ false);
             RETURN_IF_EXCEPTION(scope, void());
             if (!pulled.isObject()) {
                 // The pump refused (already closed / re-entrant pull): report done.
@@ -138,14 +138,11 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
             }
             RELEASE_AND_RETURN(scope, resolvePromise(globalObject, readPromise, pulled));
         }
-        // Other read-request kinds wait in [[readRequests]]; the pump's unobserved
-        // head-of-line promise for this read is dropped so delivery reaches the request.
+        // Other read-request kinds wait in [[readRequests]] and are delivered through their
+        // own chunk/close/error steps.
         readableStreamAddReadRequest(vm, stream, readRequest);
-        bool hadPendingRead = !!controller->m_pendingRead;
-        JSValue pulled = controller->onPull(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (!hadPendingRead && controller->m_pendingRead && pulled == JSValue(controller->m_pendingRead.get()))
-            controller->m_pendingRead.clear();
+        scope.release();
+        controller->onPull(globalObject, /* readRequestQueued */ true);
         return;
     }
     case ControllerKind::NativeSink: {
@@ -393,7 +390,7 @@ JSValue readableStreamDefaultReaderReadMany(JSGlobalObject* globalObject, JSRead
         if (state == ReadableStreamState::Closed)
             break;
         auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        JSValue pulled = controller->onPull(globalObject);
+        JSValue pulled = controller->onPull(globalObject, /* readRequestQueued */ false);
         RETURN_IF_EXCEPTION(scope, {});
         auto* pulledPromise = dynamicDowncast<JSPromise>(pulled);
         if (!pulledPromise)
@@ -458,7 +455,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSReadableStreamDefaultReaderPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSReadableStreamDefaultReaderPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamDefaultReaderPrototype>(vm)) JSReadableStreamDefaultReaderPrototype(vm, structure);
+        JSReadableStreamDefaultReaderPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamDefaultReaderPrototype))) JSReadableStreamDefaultReaderPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -472,7 +469,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -517,23 +514,14 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSReadableStreamDefaultReaderCon
 
 template<> GCClient::IsoSubspace* JSReadableStreamDefaultReaderConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamDefaultReaderConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamDefaultReaderConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultReaderConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamDefaultReaderConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultReaderConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamDefaultReaderConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamDefaultReaderConstructor, m_subspaceForReadableStreamDefaultReaderConstructor));
 }
 
 template<> void JSReadableStreamDefaultReaderConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "ReadableStreamDefaultReader"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSReadableStreamDefaultReader::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "ReadableStreamDefaultReader"_s, JSReadableStreamDefaultReader::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSReadableStreamDefaultReader>(vm, globalObject));
 }
 
@@ -582,23 +570,23 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototype_inspectCustom, (
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "stream"_s, thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined());
     size_t requestCount;
     {
         WTF::Locker locker { thisObject->cellLock() };
         requestCount = thisObject->m_readRequests.size();
     }
-    data->putDirect(vm, Identifier::fromString(vm, "readRequests"_s), jsNumber(requestCount), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "close"_s), thisObject->m_closedPromise.get() ? JSValue(thisObject->m_closedPromise.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "readRequests"_s, jsNumber(requestCount));
+    Bun::putDirectNamed(vm, data, "close"_s, thisObject->m_closedPromise.get() ? JSValue(thisObject->m_closedPromise.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamDefaultReader"_s, data));
 }
 
 void JSReadableStreamDefaultReaderPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSReadableStreamDefaultReader::info(), JSReadableStreamDefaultReaderPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSReadableStreamDefaultReader::info(), JSReadableStreamDefaultReaderPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamDefaultReaderPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSReadableStreamDefaultReader
@@ -632,7 +620,7 @@ void JSReadableStreamDefaultReader::destroy(JSCell* cell)
 
 Structure* JSReadableStreamDefaultReader::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSReadableStreamDefaultReader::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -654,12 +642,7 @@ JSValue JSReadableStreamDefaultReader::getConstructor(VM& vm, const JSGlobalObje
 
 GCClient::IsoSubspace* JSReadableStreamDefaultReader::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamDefaultReader, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamDefaultReader.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultReader = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamDefaultReader.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultReader = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamDefaultReader, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamDefaultReader, m_subspaceForReadableStreamDefaultReader));
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultReader);

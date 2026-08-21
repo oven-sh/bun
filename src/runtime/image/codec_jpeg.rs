@@ -229,9 +229,10 @@ pub(crate) fn decode(
             },
         );
     }
-    let mut out = vec![0u8; w as usize * ht as usize * 4];
-    // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is the
-    // exclusive `out` buffer sized `w*ht*4` and the explicit pitch + cropping
+    let out_len = w as usize * ht as usize * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is `out`'s
+    // exclusive `w*ht*4` bytes of capacity and the explicit pitch + cropping
     // region above bound libjpeg-turbo's writes to that allocation.
     if unsafe {
         tj3Decompress8(
@@ -250,6 +251,8 @@ pub(crate) fn decode(
     if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) != rw || tj3Get(h, TJPARAM_JPEGHEIGHT) != rh } {
         return Err(codecs::Error::DecodeFailed);
     }
+    // SAFETY: rc 0 (no warning) with unchanged dims means all `ht` rows of `w` pixels were written.
+    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
 
     // Extract the APP2 ICC profile (if the source carried one). The marker
     // parser ran during tj3DecompressHeader, so this is a copy-out of

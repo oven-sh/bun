@@ -490,7 +490,11 @@ impl Expect {
                     promise.set_handled(vm);
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this.bun_vm().as_mut().wait_for_promise(promise);
+            global_this
+                .bun_vm()
+                .as_mut()
+                .wait_for_promise(promise)
+                .map_err(|stopped| stopped.throw(global_this))?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -874,7 +878,7 @@ impl Expect {
         let mut return_value: JSValue = JSValue::ZERO;
 
         // Drain existing unhandled rejections
-        vm.global().handle_rejected_promises();
+        let _ = vm.global().handle_rejected_promises();
 
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
@@ -886,15 +890,16 @@ impl Expect {
         };
         vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
-        vm.global().handle_rejected_promises();
+        let _ = vm.global().handle_rejected_promises();
 
         if return_value.is_empty() {
             return_value = return_value_from_function;
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            vm.wait_for_promise(promise);
+            let waited = vm.wait_for_promise(promise);
             scope.apply(vm);
+            waited.map_err(|stopped| stopped.throw(global_this))?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));
@@ -1022,7 +1027,7 @@ impl Expect {
                 dst_idx += line_newline;
             }
         }
-        let Some(c) = str_in.iter().rposition(|&b| b == b'\n') else { return give_up_2!(); }; // there has to have been at least a single newline to get here
+        let Some(c) = strings::last_index_of_char(str_in, b'\n') else { return give_up_2!(); }; // there has to have been at least a single newline to get here
         let end_indent = c + 1;
         for &c in &str_in[end_indent..] {
             if c != b' ' && c != b'\t' { return give_up_2!(); } // we already checked, but the last line is not all whitespace again
@@ -1422,7 +1427,6 @@ impl Expect {
                         &raw const matcher_name,
                         host_fn_ptr,
                         matcher_fn,
-                        true,
                     )
                 };
 
@@ -1488,7 +1492,11 @@ impl Expect {
             promise.set_handled(vm);
 
             // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this.bun_vm().as_mut().wait_for_promise(promise);
+            global_this
+                .bun_vm()
+                .as_mut()
+                .wait_for_promise(promise)
+                .map_err(|stopped| stopped.throw(global_this))?;
 
             result = promise.result(vm);
             result.ensure_still_alive();
@@ -1553,7 +1561,6 @@ impl Expect {
 
         let matcher_params = CustomMatcherParamsFormatter {
             colors: Output::enable_ansi_colors_stderr(),
-            global_this,
             matcher_fn,
         };
         Err(Self::throw_pretty_matcher_error(
@@ -1604,7 +1611,6 @@ impl Expect {
 
         let matcher_params = CustomMatcherParamsFormatter {
             colors: Output::enable_ansi_colors_stderr(),
-            global_this,
             matcher_fn,
         };
 
@@ -1809,25 +1815,23 @@ impl Drop for PostMatchGuard<'_> {
     }
 }
 
-pub struct CustomMatcherParamsFormatter<'a> {
+pub struct CustomMatcherParamsFormatter {
     pub(crate) colors: bool,
-    pub global_this: &'a JSGlobalObject,
     pub(crate) matcher_fn: JSValue,
 }
 
-impl fmt::Display for CustomMatcherParamsFormatter<'_> {
+impl fmt::Display for CustomMatcherParamsFormatter {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         // try to detect param names from matcher_fn (user function) source code
         if let Some(source_str) = JSFunction::get_source_code(self.matcher_fn) {
             let source_slice = source_str.to_utf8();
 
             let source: &[u8] = source_slice.slice();
-            if let Some(lparen) = source.iter().position(|&b| b == b'(') {
-                if let Some(rparen_rel) = source[lparen..].iter().position(|&b| b == b')') {
-                    let rparen = lparen + rparen_rel;
+            if let Some(lparen) = strings::index_of_char_usize(source, b'(') {
+                if let Some(rparen) = strings::index_of_char_pos(source, b')', lparen) {
                     let params_str = &source[lparen + 1..rparen];
                     let mut param_index: usize = 0;
-                    for param_name in params_str.split(|&b| b == b',') {
+                    for param_name in strings::split(params_str, b",") {
                         if param_index > 0 {
                             // skip the first param from the matcher_fn, which is the received value
                             if param_index > 1 {
@@ -2783,63 +2787,45 @@ impl ExpectMatcherUtils {
         value: JSValue,
         color_or_null: Option<&'static str>,
     ) -> JsResult<JSValue> {
-        use std::io::Write as _;
         let mut mutable_string = bun_core::MutableString::init_2048()?;
-
-        // MutableString already writes to an in-memory Vec, so no extra
-        // buffering layer is needed.
-        let writer = mutable_string.writer();
 
         if let Some(color) = color_or_null {
             if Output::enable_ansi_colors_stderr() {
-                // MutableString writes to a Vec; can't fail.
-                let _ = writer.write_all(Output::pretty_fmt::<true>(color).as_ref());
+                let _ = mutable_string.write_all(Output::pretty_fmt::<true>(color).as_ref());
             }
         }
 
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-        let _ = write!(writer, "{}", value.to_fmt(&mut formatter));
+        formatter.format_value::<false>(value, &mut mutable_string)?;
 
         if color_or_null.is_some() {
             if Output::enable_ansi_colors_stderr() {
-                let _ = writer.write_all(Output::pretty_fmt::<true>("<r>").as_ref());
+                let _ = mutable_string.write_all(Output::pretty_fmt::<true>("<r>").as_ref());
             }
         }
 
-        // buffered_writer.flush() — no-op with direct Vec writer
-
         bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
-    }
-
-    #[inline]
-    fn print_value_catched(
-        global_this: &JSGlobalObject,
-        value: JSValue,
-        color_or_null: Option<&'static str>,
-    ) -> JSValue {
-        Self::print_value(global_this, value, color_or_null)
-            .unwrap_or_else(|_| global_this.throw_out_of_memory_value())
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn stringify(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Ok(Self::print_value_catched(global_this, value, None))
+        Self::print_value(global_this, value, None)
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn print_expected(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Ok(Self::print_value_catched(global_this, value, Some("<green>")))
+        Self::print_value(global_this, value, Some("<green>"))
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn print_received(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Ok(Self::print_value_catched(global_this, value, Some("<red>")))
+        Self::print_value(global_this, value, Some("<red>"))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3069,10 +3055,14 @@ pub mod mock {
     }
 
     pub(crate) fn jest_mock_return_object_type(global_this: &JSGlobalObject, value: JSValue) -> JsResult<ReturnStatus> {
-        if let Some(type_string) = value.fast_get(global_this, bun_jsc::BuiltinName::Type)? {
-            if type_string.is_string() {
-                if let Some(val) = RETURN_STATUS_MAP.from_js(global_this, type_string)? {
-                    return Ok(val);
+        // `mock.results` is a user-mutable JSArray, so `value` can be anything
+        // (`fn.mock.results.push(undefined)`); `fast_get` requires an object.
+        if value.is_object() {
+            if let Some(type_string) = value.fast_get(global_this, bun_jsc::BuiltinName::Type)? {
+                if type_string.is_string() {
+                    if let Some(val) = RETURN_STATUS_MAP.from_js(global_this, type_string)? {
+                        return Ok(val);
+                    }
                 }
             }
         }
@@ -3206,7 +3196,6 @@ pub mod mock {
     // split lifetimes — see AllCallsFormatter above for rationale (avoids the
     // `&'a mut T<'a>` invariance trap that locks the Formatter borrow for its entire life).
     pub struct SuccessfulReturnsFormatter<'g, 'f> {
-        pub global_this: &'g JSGlobalObject,
         pub(crate) successful_returns: &'f Vec<JSValue>,
         // reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
         pub(crate) formatter: core::cell::RefCell<&'f mut ConsoleObject::Formatter<'g>>,
@@ -3249,7 +3238,6 @@ unsafe extern "C" {
         // Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
-        strong: bool,
     ) -> JSValue;
     fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: *const JSGlobalObject) -> JSValue;
 
@@ -3277,8 +3265,8 @@ mod tests {
 
     fn sanity_check(input: &[u8], res: &TrimResult<'_>) {
         // sanity check: output has same number of lines & all input lines endWith output lines
-        let mut input_iter = input.split(|&b| b == b'\n');
-        let mut output_iter = res.trimmed.split(|&b| b == b'\n');
+        let mut input_iter = strings::split(input, b"\n");
+        let mut output_iter = strings::split(res.trimmed, b"\n");
         loop {
             let next_input = input_iter.next();
             let next_output = output_iter.next();

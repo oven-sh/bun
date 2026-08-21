@@ -66,7 +66,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    throwScope.assertNoException();
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -129,7 +129,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    throwScope.assertNoException();
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});

@@ -85,17 +85,12 @@ void JSDirectStreamController::armEndOfTickFlush(JSGlobalObject* globalObject)
 
 Structure* JSDirectStreamController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSDirectStreamController::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDirectStreamController, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDirectStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDirectStreamController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDirectStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDirectStreamController = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDirectStreamController, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDirectStreamController, m_subspaceForDirectStreamController));
 }
 
 DEFINE_VISIT_CHILDREN(JSDirectStreamController);

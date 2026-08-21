@@ -531,15 +531,6 @@ pub struct IntoArray {
     pub(crate) len: BlobSizeType,
 }
 
-impl Default for IntoArray {
-    fn default() -> Self {
-        Self {
-            value: JSValue::default(),
-            len: BlobSizeType::MAX,
-        }
-    }
-}
-
 // ─── Result.Pending ──────────────────────────────────────────────────────
 
 pub struct Pending {

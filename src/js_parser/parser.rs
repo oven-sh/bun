@@ -146,13 +146,6 @@ pub mod options {
     pub struct ReactFastRefresh {
         pub import_source: Cow<'static, [u8]>,
     }
-    impl Default for ReactFastRefresh {
-        fn default() -> Self {
-            Self {
-                import_source: Cow::Borrowed(b"react-refresh/runtime"),
-            }
-        }
-    }
 }
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
 pub use crate::renamer;
@@ -1048,15 +1041,6 @@ pub struct ThenCatchChain {
     pub(crate) next_target: js_ast::ExprData,
     pub(crate) has_multiple_args: bool,
     pub(crate) has_catch: bool,
-}
-impl Default for ThenCatchChain {
-    fn default() -> Self {
-        Self {
-            next_target: js_ast::ExprData::EMissing(E::Missing {}),
-            has_multiple_args: false,
-            has_catch: false,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]

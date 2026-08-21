@@ -11,7 +11,6 @@ use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
-use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, Mode};
@@ -250,8 +249,6 @@ pub struct RareData {
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
     pub default_client_ssl_ctx: Option<*mut SslCtx>,
 
-    pub(crate) mime_types: Option<mime_type::Map>,
-
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
     pub(crate) node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
@@ -326,7 +323,6 @@ impl Default for RareData {
             ws_client_group_: SocketGroup::default(),
             ws_client_tls_group: SocketGroup::default(),
             default_client_ssl_ctx: None,
-            mime_types: None,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
@@ -749,15 +745,6 @@ impl RareData {
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
         self.spawn_sync_event_loop_.as_mut().unwrap()
-    }
-
-    pub(crate) fn mime_type_from_string(&mut self, str_: &[u8]) -> Option<mime_type::MimeType> {
-        let table = self
-            .mime_types
-            .get_or_insert_with(|| bun_core::handle_oom(mime_type::create_hash_table()));
-        table
-            .get(str_)
-            .map(|entry| mime_type::Compact::from(*entry).to_mime_type())
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────

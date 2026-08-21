@@ -2656,23 +2656,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
             let text = factory.text.slice();
-            self.options.jsx.factory =
-                options::JSX::Pragma::member_list_to_components_if_different(
-                    core::mem::take(&mut self.options.jsx.factory),
-                    text,
-                )
-                .expect("unreachable");
+            match options::JSX::Pragma::member_list_to_components_if_different(
+                &self.options.jsx.factory,
+                text,
+            ) {
+                Some(members) => self.options.jsx.factory = members,
+                None => self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    factory.range,
+                    format_args!("Invalid JSX factory: \"{}\"", bstr::BStr::new(text)),
+                ),
+            }
         }
 
         if let Some(fragment) = self.lexer.jsx_pragma.jsx_frag() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = fragment.text.slice();
-            self.options.jsx.fragment =
-                options::JSX::Pragma::member_list_to_components_if_different(
-                    core::mem::take(&mut self.options.jsx.fragment),
-                    text,
-                )
-                .expect("unreachable");
+            match options::JSX::Pragma::member_list_to_components_if_different(
+                &self.options.jsx.fragment,
+                text,
+            ) {
+                Some(members) => self.options.jsx.fragment = members,
+                None => self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    fragment.range,
+                    format_args!("Invalid JSX fragment: \"{}\"", bstr::BStr::new(text)),
+                ),
+            }
         }
 
         if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {

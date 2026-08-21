@@ -256,22 +256,32 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
   // directory event busts the resolver's directory cache, which abandons the
   // directory handle the busted entry holds. So both phases below run the same
   // reloads and directory events per cycle and differ only in whether the
-  // deleted file is watched. The eviction phase's extra growth is what the
-  // evictions leak.
+  // deleted files are watched, and each cycle evicts `files` entries, so the
+  // leak is `files` handles per cycle while anything else a cycle can differ
+  // by (an extra reload) is one or two.
   test.skipIf(!isWindows)("evicting watchlist entries closes their handles", async () => {
-    const cycles = 16;
+    const files = 16;
+    const cycles = 6;
+    const indexes = Array.from({ length: files }, (_, i) => i);
     await using dir = tempDir("hot-evict-handles", {
       "entry.js": `
         import { existsSync } from "node:fs";
-        import { loadDep, seq } from "./trigger.js";
+        import { loadDeps, seq } from "./trigger.js";
         // GC helper threads are handles too. Create them before the first sample.
         Bun.gc(true);
-        const dep = loadDep ? require("./dep.js").value : existsSync("dep.js") ? "skipped" : "deleted";
-        console.log("RELOAD", seq, dep);
+        let deps = "skipped";
+        if (loadDeps) {
+          let sum = 0;
+          for (let i = 0; i < ${files}; i++) sum += require("./dep" + i + ".js").value;
+          deps = sum;
+        } else if (!existsSync("dep0.js")) {
+          deps = "deleted";
+        }
+        console.log("RELOAD", seq, deps);
       `,
-      "trigger.js": `export const seq = 0; export const loadDep = true;`,
-      "dep.js": `export const value = 0;`,
-      "other.js": `export const value = 0;`,
+      "trigger.js": `export const seq = 0; export const loadDeps = true;`,
+      ...Object.fromEntries(indexes.map(i => [`dep${i}.js`, `export const value = 0;`])),
+      ...Object.fromEntries(indexes.map(i => [`other${i}.js`, `export const value = 0;`])),
     });
     const root = String(dir);
 
@@ -312,47 +322,46 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
       }
     };
     let seq = 0;
-    const reloadWith = async (loadDep: boolean, expectedDep: string) => {
+    const reloadWith = async (loadDeps: boolean, expectedDeps: string) => {
       seq++;
-      writeFileSync(join(root, "trigger.js"), `export const seq = ${seq}; export const loadDep = ${loadDep};`);
-      await waitForLine(`RELOAD ${seq} ${expectedDep}`);
+      writeFileSync(join(root, "trigger.js"), `export const seq = ${seq}; export const loadDeps = ${loadDeps};`);
+      await waitForLine(`RELOAD ${seq} ${expectedDeps}`);
     };
-    // Deletes and recreates `victim` between reloads that do not load dep.js,
-    // then reloads once more with dep.js loaded. When the victim is dep.js, the
-    // delete event evicts its entry and enqueues the "deleted" reload, and the
-    // last reload watches the recreated file again. Deleting the never-imported
-    // other.js instead raises the same directory events and the same number of
-    // reloads without touching the watchlist.
-    const cycle = async (victim: "dep.js" | "other.js", value: number) => {
+    // Deletes and recreates the `victim` files between reloads that do not load
+    // the deps, then reloads once more with the deps loaded. Deleting the deps
+    // evicts their entries (the same delete events enqueue the "deleted"
+    // reload), and the last reload watches the recreated files again. Deleting
+    // the never-imported other* files instead raises the same directory events
+    // and the same number of reloads without touching the watchlist.
+    const cycle = async (victim: "dep" | "other", value: number) => {
       await reloadWith(false, "skipped");
-      rmSync(join(root, victim));
-      if (victim === "dep.js") {
+      for (const i of indexes) rmSync(join(root, `${victim}${i}.js`));
+      if (victim === "dep") {
         await waitForLine(`RELOAD ${seq} deleted`);
       } else {
         await reloadWith(false, "skipped");
       }
-      writeFileSync(join(root, victim), `export const value = ${value};`);
-      await reloadWith(true, String(victim === "dep.js" ? value : 0));
+      for (const i of indexes) writeFileSync(join(root, `${victim}${i}.js`), `export const value = ${value};`);
+      await reloadWith(true, String(victim === "dep" ? files * value : 0));
     };
 
     await waitForLine("RELOAD 0 0");
-    for (let i = 1; i <= 3; i++) await cycle("other.js", i);
+    for (let i = 1; i <= 2; i++) await cycle("other", i);
     const start = handleCount(proc.pid);
-    for (let i = 1; i <= cycles; i++) await cycle("other.js", i);
+    for (let i = 1; i <= cycles; i++) await cycle("other", i);
     const afterBaseline = handleCount(proc.pid);
-    for (let i = 1; i <= cycles; i++) await cycle("dep.js", i);
+    for (let i = 1; i <= cycles; i++) await cycle("dep", i);
     const afterEvictions = handleCount(proc.pid);
 
     const baselineGrowth = afterBaseline - start;
     const evictionGrowth = afterEvictions - afterBaseline;
-    // Unfixed, every eviction cycle leaks one more handle than a baseline
-    // cycle, so this is `cycles`. Fixed, it is within a couple of handles of
-    // zero (the process still creates the odd handle on its own over time).
+    // Unfixed, every eviction cycle leaks `files` handles more than a baseline
+    // cycle. Fixed, the two phases grow by about the same amount.
     const leakedByEvictions = evictionGrowth - baselineGrowth;
     expect({ baselineGrowth, evictionGrowth, leakedByEvictions }).toEqual({
       baselineGrowth,
       evictionGrowth,
-      leakedByEvictions: Math.min(leakedByEvictions, cycles / 2),
+      leakedByEvictions: Math.min(leakedByEvictions, (files * cycles) / 2),
     });
   });
 });

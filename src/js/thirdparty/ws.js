@@ -1007,8 +1007,7 @@ class BunWebSocketMocked extends EventEmitter {
     };
   }
 
-  // ServerWebSocket applies binaryType to ping and pong payloads too, while npm ws always emits a Buffer
-  // for them. An ArrayBuffer can be wrapped synchronously, a Blob cannot, so "blob" passes through.
+  // npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
   #controlPayload(data) {
     return this.#binaryType === "arraybuffer" ? Buffer.from(data) : data;
   }

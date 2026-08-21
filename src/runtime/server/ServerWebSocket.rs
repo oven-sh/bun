@@ -112,15 +112,12 @@ impl Flags {
     }
     #[inline]
     pub(crate) fn binary_type(self) -> BinaryType {
-        // Stored value was written via `set_binary_type` from a valid
-        // `BinaryType` discriminant.
         match ((self.0 & Self::BINARY_TYPE_MASK) >> Self::BINARY_TYPE_SHIFT) as u8 {
             0 => BinaryType::Buffer,
             1 => BinaryType::ArrayBuffer,
             2 => BinaryType::Uint8Array,
             3 => BinaryType::Blob,
-            // 4-bit field; only `set_binary_type` writes it, so anything else
-            // indicates memory corruption — trap.
+            // Only `set_binary_type` writes this field, so any other value is memory corruption.
             n => unreachable!("invalid BinaryType {n}"),
         }
     }
@@ -626,8 +623,6 @@ impl ServerWebSocket {
             }
             BinaryType::Blob => {
                 let blob = Blob::init(data.to_vec(), global_this);
-                // UFCS: the consuming `JsClass::to_js` heap-promotes the blob. The inherent
-                // `Blob::to_js` expects a receiver that is already on the heap.
                 Ok(<Blob as bun_jsc::JsClass>::to_js(blob, global_this))
             }
         }

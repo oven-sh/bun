@@ -1249,3 +1249,61 @@ describe("async generators", () => {
     expect(caughtStore).toBe("STORE_X");
   });
 });
+
+describe("unhandledRejection async context", () => {
+  // Node runs 'unhandledRejection' listeners in the async context that was
+  // active when the promise rejected (lib/internal/process/promises.js keeps
+  // a contextFrame per pending rejection). Next.js relies on this to filter
+  // rejections from aborted prerenders. Verified against Node v26.3.0.
+  // Subprocess: the test runner installs its own rejection handling.
+  test("unhandledRejection listener runs in the async context of the rejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+         const assert = require("assert");
+         const als = new AsyncLocalStorage();
+         const results = [];
+         process.on("unhandledRejection", reason => {
+           results.push([reason.message, als.getStore()?.id]);
+           if (results.length === 3) {
+             // The rejection-time context wins, not the creation-time one.
+             assert.deepStrictEqual(results, [
+               ["sync", "sync"],
+               ["late", "late"],
+               ["timer", "timer"],
+             ]);
+             console.log("OK");
+             process.exit(0);
+           }
+         });
+         // rejected synchronously inside run()
+         als.run({ id: "sync" }, () => {
+           Promise.reject(new Error("sync"));
+         });
+         // created in one context, rejected from another
+         let rejectLate;
+         als.run({ id: "create" }, () => {
+           new Promise((_, reject) => (rejectLate = reject));
+         });
+         als.run({ id: "late" }, () => rejectLate(new Error("late")));
+         // rejected from a timer callback
+         let rejectTimer;
+         als.run({ id: "create2" }, () => {
+           new Promise((_, reject) => (rejectTimer = reject));
+         });
+         setTimeout(() => {
+           als.run({ id: "timer" }, () => rejectTimer(new Error("timer")));
+         }, 1);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("AssertionError");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
+});

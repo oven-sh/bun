@@ -851,7 +851,42 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+    // Rejected promises waiting for 'unhandledRejection'. Each entry keeps the
+    // async context captured when the promise rejected; handleRejectedPromises()
+    // restores it around the emit so AsyncLocalStorage.getStore() inside an
+    // 'unhandledRejection' listener sees the rejecting context, like Node
+    // (lib/internal/process/promises.js stores a contextFrame per rejection).
+    class UnhandledRejectionList {
+    public:
+        void append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSValue asyncContext);
+
+        // Move every entry out under one cellLock; promises.at(i) pairs with
+        // asyncContexts.at(i).
+        void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& asyncContexts);
+
+        bool remove(JSC::JSCell* owner, JSC::JSPromise* promise);
+
+        bool isEmpty() const { return m_list.isEmpty(); }
+
+        template<typename Visitor>
+        void visit(JSC::JSCell* owner, Visitor& visitor)
+        {
+            WTF::Locker locker { owner->cellLock() };
+            for (auto& entry : m_list) {
+                visitor.append(entry.promise);
+                visitor.append(entry.asyncContext);
+            }
+        }
+
+    private:
+        struct Entry {
+            JSC::WriteBarrier<JSC::JSPromise> promise;
+            JSC::WriteBarrier<JSC::Unknown> asyncContext;
+        };
+        WTF::Vector<Entry> m_list;
+    };
+
+    UnhandledRejectionList m_aboutToBeNotifiedRejectedPromises;
 
 public:
     // While handleRejectedPromises() is iterating its drained snapshot, this

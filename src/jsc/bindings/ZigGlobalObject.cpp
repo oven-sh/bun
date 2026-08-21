@@ -1102,19 +1102,48 @@ void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObje
 
 extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
 
+void GlobalObject::UnhandledRejectionList::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSValue asyncContext)
+{
+    WTF::Locker locker { owner->cellLock() };
+    m_list.append({ JSC::WriteBarrier<JSC::JSPromise>(vm, owner, promise),
+        JSC::WriteBarrier<JSC::Unknown>(vm, owner, asyncContext) });
+}
+
+void GlobalObject::UnhandledRejectionList::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& asyncContexts)
+{
+    WTF::Locker locker { owner->cellLock() };
+    promises.ensureCapacity(promises.size() + m_list.size());
+    asyncContexts.ensureCapacity(asyncContexts.size() + m_list.size());
+    for (auto& entry : m_list) {
+        if (auto* cell = entry.promise.get()) {
+            promises.append(cell);
+            asyncContexts.append(entry.asyncContext.get());
+        }
+    }
+    m_list.clear();
+}
+
+bool GlobalObject::UnhandledRejectionList::remove(JSC::JSCell* owner, JSC::JSPromise* promise)
+{
+    WTF::Locker locker { owner->cellLock() };
+    return m_list.removeFirstMatching([&](auto& entry) { return entry.promise.get() == promise; });
+}
+
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
     JSC::JSPromiseRejectionOperation operation)
 {
     auto* globalObj = static_cast<GlobalObject*>(obj);
 
     switch (operation) {
-    case JSPromiseRejectionOperation::Reject:
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);
+    case JSPromiseRejectionOperation::Reject: {
+        JSC::JSValue asyncContext = globalObj->m_asyncContextData.get()->getInternalField(0);
+        if (asyncContext.isEmpty())
+            asyncContext = JSC::jsUndefined();
+        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, asyncContext);
         break;
+    }
     case JSPromiseRejectionOperation::Handle:
-        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching(globalObj, [&](JSC::WriteBarrier<JSC::JSPromise>& unhandledPromise) {
-            return unhandledPromise.get() == promise;
-        });
+        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.remove(globalObj, promise);
         if (removed) break;
         // handleRejectedPromises() drains the list into a local buffer before
         // running any handler. A handler may .catch() a later still-queued
@@ -3431,8 +3460,10 @@ void GlobalObject::handleRejectedPromises()
         // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
         // RejectedPromiseTracker use.
         JSC::MarkedArgumentBuffer promises;
-        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises);
+        JSC::MarkedArgumentBuffer asyncContexts;
+        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises, asyncContexts);
         RELEASE_ASSERT(!promises.hasOverflowed());
+        RELEASE_ASSERT(!asyncContexts.hasOverflowed());
         // Expose the not-yet-processed tail so promiseRejectionTracker(Handle)
         // can tell "still pending" apart from "already notified". Linked as a
         // stack so a re-entrant handleRejectedPromises() (a handler that ticks
@@ -3445,7 +3476,13 @@ void GlobalObject::handleRejectedPromises()
                 continue;
             inflight.index = i + 1;
 
+            // Emit with the async context captured at rejection time, the way
+            // Node restores the stored contextFrame around the emit.
+            auto* asyncContextData = m_asyncContextData.get();
+            JSC::JSValue priorAsyncContext = asyncContextData->getInternalField(0);
+            asyncContextData->putInternalField(virtual_machine, 0, asyncContexts.at(i));
             Bun__handleRejectedPromise(this, promise);
+            asyncContextData->putInternalField(virtual_machine, 0, priorAsyncContext);
             if (auto ex = scope.exception()) {
                 if (virtual_machine.isTerminationException(ex)) [[unlikely]]
                     return;

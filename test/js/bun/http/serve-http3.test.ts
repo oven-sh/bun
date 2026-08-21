@@ -1646,7 +1646,7 @@ describe("Bun.serve WebTransport", () => {
     expect(await h3Exchange(server.port, requestHeaders("/"))).toBe("200 plain http/3");
   });
 
-  test("a CONNECT without :protocol is refused rather than upgraded", async () => {
+  test("a CONNECT without :protocol goes to fetch rather than being upgraded", async () => {
     let sessions = 0;
     await using server = Bun.serve({
       port: 0,
@@ -1657,7 +1657,7 @@ describe("Bun.serve WebTransport", () => {
           sessions++;
         },
       },
-      fetch: () => new Response("plain http/3"),
+      fetch: req => new Response("fetch saw " + req.method),
     });
 
     const result = await h3Exchange(server.port, {
@@ -1666,8 +1666,55 @@ describe("Bun.serve WebTransport", () => {
       ":scheme": "https",
       ":authority": "localhost",
     });
-    expect(result).toBe("501 ");
+    // Adding a webtransport handler must not take plain CONNECT away from the
+    // application: the session route yields when :protocol is not ours.
+    expect(result).toBe("200 fetch saw CONNECT");
     expect(sessions).toBe(0);
+  });
+
+  test("reload() cannot add webtransport to a server that started without it", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch: () => new Response("plain http/3"),
+    });
+
+    expect(() => server.reload({ fetch: () => new Response("x"), webtransport: { datagram() {} } })).toThrow(
+      /webtransport/,
+    );
+  });
+
+  test("reload() can replace the handlers on a server that started with them", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    server.reload({
+      fetch: () => new Response("plain http/3"),
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(Buffer.from("reloaded:" + Buffer.from(bytes).toString()));
+        },
+      },
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("hi");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      expect(wt.text()).toEqual(["reloaded:hi"]);
+    } finally {
+      await wt.close();
+    }
   });
 
   test("close() ends the session and runs the close handler", async () => {

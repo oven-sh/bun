@@ -77,13 +77,25 @@ struct Http3WebTransportSession {
         return us_quic_wt_send_datagram(stream(), data, len);
     }
 
+    /* What this server will queue, which is the limit that actually binds:
+     * lsquic exposes the peer's max_datagram_frame_size only as a setter that
+     * accepts or refuses a size, and every implementation that offers
+     * datagrams at all advertises far more than this. A peer that somehow
+     * advertised less would refuse the send rather than be surprised by it. */
     unsigned maxDatagramSize() { return US_QUIC_WT_MAX_DATAGRAM; }
 
     /* CLOSE_WEBTRANSPORT_SESSION followed by FIN, which is what the draft
      * defines an orderly close as. The peer's own close arrives the same way
      * and is parsed by feedCapsules below. */
     void close(uint32_t code, std::string_view reason) {
-        if (reason.size() > 1024) reason = reason.substr(0, 1024);
+        if (reason.size() > 1024) {
+            /* Back off the cut to a character boundary. Half a UTF-8 sequence
+             * makes the peer fail the session over the reason for closing it,
+             * which is a poor last word. */
+            size_t cut = 1024;
+            while (cut && ((unsigned char) reason[cut] & 0xc0) == 0x80) cut--;
+            reason = reason.substr(0, cut);
+        }
         /* One buffer and one write. Split across two, a short first write
          * leaves a header promising a body that never follows, and the FIN
          * below would then present a truncated capsule as an orderly close. */

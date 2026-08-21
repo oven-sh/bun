@@ -900,13 +900,6 @@ int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int
     unsigned int plen = us_quic_varint_write(prefix, s->wt_qsid);
     unsigned int need = 2 + plen + len;
 
-    /* The peer's max_datagram_frame_size is only reachable through this
-     * setter, so ask it about *this* record before queueing it rather than
-     * discovering the refusal once it reaches the head, with everything that
-     * arrived after it stuck behind. arm_dgram below puts the value back to
-     * whatever the head needs. */
-    if (lsquic_conn_set_min_datagram_size(qs->conn, (size_t) (plen + len)) != 0) return -1;
-
     /* Compact rather than wrap: a queue this shallow is empty almost every
      * time, so the memmove is rare, and it saves on_dg_write from ever seeing
      * a record split across the end of the ring. */
@@ -917,6 +910,16 @@ int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int
         qs->wt_dgram_tail = live;
     }
     if (qs->wt_dgram_tail + need > US_QUIC_WT_DGRAM_RING) return 0;
+
+    /* The peer's max_datagram_frame_size is only reachable through this
+     * setter, so ask it about *this* record rather than discovering the
+     * refusal once the record reaches the head with everything behind it
+     * stuck. It comes after the room check on purpose: the setter is the one
+     * step here with a side effect, and leaving the minimum pointing at a
+     * record that was never queued would size the write callback's buffer for
+     * the wrong datagram. arm_dgram below puts it back to what the head needs.
+     * lsquic validates before assigning, so a refusal changes nothing. */
+    if (lsquic_conn_set_min_datagram_size(qs->conn, (size_t) (plen + len)) != 0) return -1;
 
     char *rec = qs->wt_dgram_ring + qs->wt_dgram_tail;
     unsigned int payload = plen + len;

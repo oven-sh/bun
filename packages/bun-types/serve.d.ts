@@ -533,10 +533,12 @@ declare module "bun" {
     /**
      * Send one datagram.
      *
-     * Returns the number of bytes sent, `0` when the connection's queue had no
-     * room for it — drop it; this path has no retransmission and the next
-     * datagram is worth more than a late one — or `-1` when the payload is
-     * larger than the peer will accept.
+     * Returns the bytes queued — the payload plus the session's frame prefix,
+     * so an empty payload still reports a positive number — or `0` when the
+     * connection's queue had no room for it (drop it; this path has no
+     * retransmission and the next datagram is worth more than a late one), or
+     * `-1` when the payload is larger than {@link maxDatagramSize} or than the
+     * peer will accept.
      */
     sendDatagram(data: string | BufferSource): number;
 
@@ -549,7 +551,13 @@ declare module "bun" {
     /** Arbitrary data attached to this session. */
     data: T;
 
-    /** The largest payload {@link sendDatagram} will accept. */
+    /**
+     * The largest payload {@link sendDatagram} will queue.
+     *
+     * A send can still be refused if the peer negotiated a smaller datagram
+     * size than this, which returns `-1`; no implementation that offers
+     * datagrams at all advertises less.
+     */
     readonly maxDatagramSize: number;
 
     /** Whether the session has ended. */

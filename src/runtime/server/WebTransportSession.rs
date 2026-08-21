@@ -85,9 +85,12 @@ impl WebTransportSession {
         req: &mut Request,
         res: &mut Response,
     ) {
+        // A plain CONNECT is somebody else's: yielding puts it back to the
+        // router, which falls through to whatever the application registered.
+        // Answering it here would take every CONNECT away from `fetch` the
+        // moment a `webtransport` handler was added.
         if !req.is_webtransport() {
-            res.write_status(b"501 Not Implemented");
-            res.end(b"", false);
+            req.set_yield(true);
             return;
         }
         let Some(session) = res.upgrade_webtransport(req, core::ptr::null_mut()) else {
@@ -160,10 +163,12 @@ impl WebTransportSession {
         self.session.set(None);
 
         if let (Some(this_value), false) = (this_value, cb.is_empty_or_undefined_or_null()) {
-            let reason_value = bun_core::String::clone_utf8(reason);
             let vm = VirtualMachine::get();
             let _loop_guard = vm.enter_event_loop_scope();
-            let reason_js = bun_jsc::StringJsc::to_js(&reason_value, global)
+            // transfer_to_js, not to_js: `clone_utf8` hands over a +1 that
+            // borrowing would never release.
+            let mut reason_string = bun_core::String::clone_utf8(reason);
+            let reason_js = bun_jsc::StringJsc::transfer_to_js(&mut reason_string, global)
                 .unwrap_or(JSValue::UNDEFINED);
             let args = [this_value, JSValue::js_number(code as f64), reason_js];
             if let Err(e) = cb.call(global, JSValue::UNDEFINED, &args) {

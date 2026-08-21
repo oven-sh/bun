@@ -2383,6 +2383,18 @@ where
             return Err(JsError::Thrown);
         }
 
+        // A reload cannot introduce WebTransport. What makes a session
+        // possible is the SETTINGS the HTTP/3 listener advertised when its
+        // lsquic engine was built, and that listener is already bound — so
+        // handlers arriving now would sit there and never be called. Replacing
+        // the handlers on a server that started with them is fine.
+        if new_config.webtransport_handler.is_some() && !self.config.webtransport {
+            drop(new_config);
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'webtransport' cannot be added by reload(): the HTTP/3 listener advertises it at startup"
+            )));
+        }
+
         // `on_reload_from_zig` moves `new_config.websocket` into the unscanned
         // `self.config` heap box before `write_ws_handler_slots` roots the 7
         // ws shadows, and each `wrap_handler_slot` call allocates via

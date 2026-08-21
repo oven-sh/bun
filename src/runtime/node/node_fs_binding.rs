@@ -49,11 +49,7 @@ where
 
     if permission::is_enabled() {
         if let Some(denied) = args.permission_denied() {
-            return Err(permission::throw_access_denied(
-                global,
-                denied.scope,
-                &denied.resource,
-            ));
+            return Err(global.throw_value(denied.to_error(global, Some(F))));
         }
     }
 
@@ -130,7 +126,7 @@ fn run_async<A: FsArgument, const F: NodeFSFunctionEnum>(
 
     if permission::is_enabled() {
         if let Some(denied) = args.permission_denied() {
-            let error = permission::access_denied_error(global, denied.scope, &denied.resource);
+            let error = denied.to_error(global, Some(F));
             args.unprotect();
             drop(args);
             // SAFETY: not yet dropped; only drop site for this path.
@@ -241,7 +237,7 @@ impl Binding {
             if let Some(denied) =
                 fs_perm::read(&cp_args.src).or_else(|| fs_perm::write(&cp_args.dest))
             {
-                let error = permission::access_denied_error(global, denied.scope, &denied.resource);
+                let error = denied.to_error(global, None);
                 drop(cp_args);
                 // SAFETY: not yet dropped; only drop site for this path.
                 unsafe { ManuallyDrop::drop(&mut slice) };
@@ -279,11 +275,7 @@ impl Binding {
             if let Some(denied) =
                 fs_perm::read(&cp_args.src).or_else(|| fs_perm::write(&cp_args.dest))
             {
-                return Err(permission::throw_access_denied(
-                    global,
-                    denied.scope,
-                    &denied.resource,
-                ));
+                return Err(global.throw_value(denied.to_error(global, None)));
             }
         }
 
@@ -324,7 +316,7 @@ impl Binding {
 
         if permission::is_enabled() {
             if let Some(denied) = fs_perm::read(&rd_args.path) {
-                let error = permission::access_denied_error(global, denied.scope, &denied.resource);
+                let error = denied.to_error(global, Some(NodeFSFunctionEnum::Readdir));
                 drop(rd_args);
                 // SAFETY: not yet dropped; only drop site for this path.
                 unsafe { ManuallyDrop::drop(&mut slice) };
@@ -366,11 +358,7 @@ impl Binding {
 
         if permission::is_enabled() {
             if let Some(denied) = fs_perm::read(&watch_args.path) {
-                return Err(permission::throw_access_denied(
-                    global,
-                    denied.scope,
-                    &denied.resource,
-                ));
+                return Err(global.throw_value(denied.to_error(global, None)));
             }
         }
 
@@ -403,11 +391,7 @@ impl Binding {
 
         if permission::is_enabled() {
             if let Some(denied) = fs_perm::read(&wf_args.path) {
-                return Err(permission::throw_access_denied(
-                    global,
-                    denied.scope,
-                    &denied.resource,
-                ));
+                return Err(global.throw_value(denied.to_error(global, None)));
             }
         }
 

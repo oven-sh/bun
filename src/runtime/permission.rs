@@ -1,6 +1,6 @@
-//! Node's permission model (`--permission`), ported from
-//! <https://github.com/nodejs/node/blob/v26.3.0/src/permission/permission.cc>.
-//! Bun stores state per process (Node: per Environment), so worker `drop()` is global.
+//! Node's permission model (`--permission`) — ported from
+//! <https://github.com/nodejs/node/blob/v26.3.0/src/permission/>. Node stores
+//! state per-`Environment`; Bun stores it per-process, so `drop()` is global.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -24,7 +24,7 @@ pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-/// Node's permission scopes; mirrors `PERMISSIONS(V)` in
+/// Mirrors `PERMISSIONS(V)` in
 /// <https://github.com/nodejs/node/blob/v26.3.0/src/permission/permission_base.h>.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Scope {
@@ -88,8 +88,9 @@ impl Scope {
     }
 }
 
-/// Grants for one fs direction. Node keeps a radix tree + grant list; [`grant_covers`]
-/// reproduces the tree's matching rules, so the list alone is enough.
+/// Grants for one fs direction. Node keeps a radix tree + the grant list (for
+/// `RevokeAccess`); [`grant_covers`] reproduces the tree's matching, so the
+/// list alone suffices: <https://github.com/nodejs/node/blob/v26.3.0/src/permission/fs_permission.cc>.
 struct FsGrants {
     /// Resolved grants, each already passed through [`wildcard_if_dir`].
     granted: Vec<Vec<u8>>,
@@ -159,8 +160,9 @@ impl FsGrants {
     }
 }
 
-/// Whether `grant` covers `path`, reproducing `FSPermission::RadixTree::Lookup`:
-/// `*` matches the remainder, and `dir/*` also covers bare `dir`.
+/// Reproduces `FSPermission::RadixTree::Lookup`: `*` matches the rest of the
+/// path, and `dir/*` also covers bare `dir` (its `path_len >= prefix_len - 2`
+/// case). <https://github.com/nodejs/node/blob/v26.3.0/src/permission/fs_permission.cc>
 fn grant_covers(grant: &[u8], path: &[u8]) -> bool {
     let Some(star) = grant.iter().position(|&c| c == b'*') else {
         return grant == path;
@@ -230,8 +232,9 @@ static STATE: RwLock<State> = RwLock::new(State::new());
 pub struct CliGrants<'a> {
     pub fs_read: &'a [&'static [u8]],
     pub fs_write: &'a [&'static [u8]],
-    /// Read grants Node adds without a flag (entrypoint + `-r` modules, env.cc); kept
-    /// separate so the comma-separated-list warning only checks what the user typed.
+    /// Entrypoint + `-r` preloads Node grants read implicitly; kept separate so
+    /// the comma-list warning only inspects user-typed grants.
+    /// https://github.com/nodejs/node/blob/main/src/env.cc
     pub implicit_fs_read: &'a [&'a [u8]],
     pub child: bool,
     pub worker: bool,
@@ -446,6 +449,16 @@ pub fn throw_access_denied(global: &JSGlobalObject, scope: Scope, resource: &[u8
     global.throw_value(access_denied_error(global, scope, resource))
 }
 
+/// Deny `scope` for `resource` unless it is granted. `resource` is the path
+/// being accessed; it is echoed back on the error the way Node does.
+#[inline]
+pub fn check(global: &JSGlobalObject, scope: Scope, resource: &[u8]) -> Result<(), JsError> {
+    if is_granted(scope, Some(resource)) {
+        return Ok(());
+    }
+    Err(throw_access_denied(global, scope, resource))
+}
+
 // ── The warnings Node prints at startup ─────────────────────────────────────
 
 /// `initializePermission` in `lib/internal/process/pre_execution.js`. Called
@@ -549,23 +562,18 @@ fn scope_and_reference(
     Ok((scope, Some(reference)))
 }
 
-/// Publish to `node:permission-model:<scope>` diagnostics channels via
-/// `internal/permission`'s `publishPermissionEvent` (JS registry + re-entrancy guard).
+/// Publishes to `node:permission-model:<scope>` diagnostics channels via
+/// `internal/permission` (which holds the re-entrancy guard).
+/// https://github.com/nodejs/node/blob/main/src/permission/permission.cc
 fn publish_permission_event(
     global: &JSGlobalObject,
     scope: Scope,
     resource: &[u8],
     dropped: bool,
 ) -> JsResult<()> {
-    // `requireId` owns a ThrowScope whose dtor simulates a throw; observe it
-    // through a local scope so the next `has_exception()`/scope ctor doesn't
-    // trip `verifyExceptionCheckNeedIsSatisfied`.
-    let module = {
-        bun_jsc::top_scope!(exc, global);
-        let module = Bun__Permission__requireInternalPermissionModule(global);
-        exc.return_if_exception()?;
-        module
-    };
+    let module = bun_jsc::from_js_host_call(global, || {
+        Bun__Permission__requireInternalPermissionModule(global)
+    })?;
     let Some(publish) = module.get(global, b"publishPermissionEvent")? else {
         return Ok(());
     };
@@ -644,8 +652,9 @@ pub(crate) fn is_permission_model_enabled(_global: &JSGlobalObject) -> JSValue {
     JSValue::from(is_enabled())
 }
 
-/// `$newRustFunction("permission.rs", "netAccessDeniedError", 1)` — denied-net error or
-/// `undefined`. Node's tcp_wrap.cc *returns* (not throws) so `net.js` can wrap it.
+/// `netAccessDeniedError` — error for a denied connection, or `undefined` when
+/// net is granted. Returned (not thrown) so `net.js` can wrap it in
+/// `ExceptionWithHostPort`: <https://github.com/nodejs/node/blob/main/src/tcp_wrap.cc>.
 pub(crate) fn net_access_denied_error(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -666,8 +675,8 @@ pub(crate) fn net_access_denied_error(
     ))
 }
 
-/// `$newRustFunction("permission.rs", "jsIsGranted", 2)` — `has()` for builtin modules,
-/// immune to user tampering. Callers pass builtin literals, so no arg validation.
+/// Tamper-proof `has()` predicate for builtin modules; callers pass string
+/// literals so no argument validation.
 pub(crate) fn js_is_granted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [scope_arg, reference_arg] = frame.arguments_as_array::<2>();
     let scope_slice = scope_arg.to_slice(global)?;
@@ -681,9 +690,9 @@ pub(crate) fn js_is_granted(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     Ok(JSValue::from(is_granted(scope, Some(reference.slice()))))
 }
 
-/// Permission-model flags a sandboxed parent copies into `NODE_OPTIONS`
-/// (`copyPermissionModelFlagsToEnv` in lib/child_process.js); parsed back out at
-/// startup so children inherit the sandbox. All other `NODE_OPTIONS` tokens ignored.
+/// Permission-model flags a sandboxed parent copies into `NODE_OPTIONS`; parsed
+/// back out here so children inherit the sandbox. Other tokens are ignored.
+/// https://github.com/nodejs/node/blob/main/lib/child_process.js
 pub struct NodeOptionsGrants {
     pub permission: bool,
     pub fs_read: Vec<&'static [u8]>,
@@ -697,9 +706,9 @@ pub struct NodeOptionsGrants {
 }
 
 pub fn grants_from_node_options() -> Option<NodeOptionsGrants> {
-    use bstr::ByteSlice as _;
     let value = bun_core::env_var::NODE_OPTIONS::get()?;
-    if !value.contains_str("--permission") {
+    let value = core::str::from_utf8(value).ok()?;
+    if !value.contains("--permission") {
         return None;
     }
     let mut grants = NodeOptionsGrants {
@@ -715,23 +724,24 @@ pub fn grants_from_node_options() -> Option<NodeOptionsGrants> {
     };
     // Node splits NODE_OPTIONS on whitespace with no quoting; the flags Node
     // itself injects are always in `--flag=value` form.
-    for token in value
-        .split(|b| b.is_ascii_whitespace())
-        .filter(|s| !s.is_empty())
-    {
+    for token in value.split_ascii_whitespace() {
         match token {
-            b"--permission" => grants.permission = true,
-            b"--allow-child-process" => grants.child = true,
-            b"--allow-worker" => grants.worker = true,
-            b"--allow-inspector" => grants.inspector = true,
-            b"--allow-wasi" => grants.wasi = true,
-            b"--allow-net" => grants.net = true,
-            b"--allow-addons" => grants.addon = true,
+            "--permission" => grants.permission = true,
+            "--allow-child-process" => grants.child = true,
+            "--allow-worker" => grants.worker = true,
+            "--allow-inspector" => grants.inspector = true,
+            "--allow-wasi" => grants.wasi = true,
+            "--allow-net" => grants.net = true,
+            "--allow-addons" => grants.addon = true,
             _ => {
-                if let Some(value) = token.strip_prefix(b"--allow-fs-read=") {
-                    grants.fs_read.push(value);
-                } else if let Some(value) = token.strip_prefix(b"--allow-fs-write=") {
-                    grants.fs_write.push(value);
+                if let Some(value) = token.strip_prefix("--allow-fs-read=") {
+                    grants
+                        .fs_read
+                        .push(&*Box::leak(Box::<[u8]>::from(value.as_bytes())));
+                } else if let Some(value) = token.strip_prefix("--allow-fs-write=") {
+                    grants
+                        .fs_write
+                        .push(&*Box::leak(Box::<[u8]>::from(value.as_bytes())));
                 }
             }
         }
@@ -746,8 +756,9 @@ pub extern "C" fn Bun__Permission__isEnabled() -> bool {
     is_enabled()
 }
 
-/// Gate for C++ callers: throws `ERR_ACCESS_DENIED` and returns true when `path` is not
-/// covered by the fs scope. Null `ptr` means "the cwd". SAFETY: `ptr` null or valid for `len`.
+/// C++ gate (`process.chdir`, `writeReport`): throws `ERR_ACCESS_DENIED` and
+/// returns true on denial. Null `ptr` means "the cwd".
+/// SAFETY precondition: `ptr` is either null or valid for `len` bytes.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Permission__throwIfFsDenied(
     global: &JSGlobalObject,

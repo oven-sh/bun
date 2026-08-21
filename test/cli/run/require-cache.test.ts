@@ -6,6 +6,7 @@ import {
   isASAN,
   isBroken,
   isCI,
+  isDebug,
   isIntelMacOS,
   isMacOS,
   isMusl,
@@ -50,7 +51,14 @@ describe.concurrent("require.cache", () => {
     expect(exitCode).toBe(0);
   });
 
-  describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't leak the output source code", () => {
+  // The three "don't leak" blocks below are skipped under a debug build (bun bd): one
+  // load of their larger modules takes 1-7 s there, so every fixture overruns its
+  // timeout, and since the tests are concurrent, bun test does not kill the timed-out
+  // children, which run on for up to half an hour holding the inherited stdio. ASAN's
+  // quarantine also makes their RSS bounds meaningless. CI has no debug lane; the
+  // release and release+ASAN lanes (isDebug is false on both) still run them.
+  const skipSourceLeakChecks = isDebug || (isBroken && isIntelMacOS);
+  describe.skipIf(skipSourceLeakChecks)("files transpiled and loaded don't leak the output source code", () => {
     test("via require() with a lot of long export names", async () => {
       let text = "";
       for (let i = 0; i < 10000; i++) {
@@ -281,7 +289,7 @@ describe.concurrent("require.cache", () => {
     ); // takes 4s on an M1 in release build
   });
 
-  describe("files transpiled and loaded don't leak the AST", () => {
+  describe.skipIf(isDebug)("files transpiled and loaded don't leak the AST", () => {
     test("via require()", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", join(import.meta.dir, "require-cache-bug-leak-fixture.js")],
@@ -309,8 +317,7 @@ describe.concurrent("require.cache", () => {
     }, 20000);
   });
 
-  // These tests are extra slow in debug builds
-  describe("files transpiled and loaded don't leak file paths", () => {
+  describe.skipIf(isDebug)("files transpiled and loaded don't leak file paths", () => {
     test("via require()", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "cjs-fixture-leak-small.js")],

@@ -238,7 +238,11 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     }
 
     // Indexed like `by_file.values()`, not like `order`.
-    let merged: Vec<Vec<(u32, u32)>> = by_file.values().iter().map(FileCoverage::merged_lines).collect();
+    let merged: Vec<Vec<(u32, u32)>> = by_file
+        .values()
+        .iter()
+        .map(FileCoverage::merged_lines)
+        .collect();
 
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();

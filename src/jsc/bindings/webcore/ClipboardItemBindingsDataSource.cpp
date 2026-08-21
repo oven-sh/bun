@@ -130,7 +130,9 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
         if (terminated)
             return;
         if (blob) {
-            promise->resolveWithJSValue(clipboardBlobToJS(globalObject, *blob, type));
+            promise->resolveWithCallback([&](JSDOMGlobalObject& promiseGlobalObject) {
+                return clipboardBlobToJS(&promiseGlobalObject, *blob, type);
+            });
             return;
         }
         if (error) {

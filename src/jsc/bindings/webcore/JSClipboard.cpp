@@ -71,7 +71,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -117,7 +117,7 @@ const ClassInfo JSClipboardPrototype::s_info = { "Clipboard"_s, &Base::s_info, n
 void JSClipboardPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSClipboard::info(), JSClipboardPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSClipboard::info(), JSClipboardPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -237,12 +237,7 @@ JSC_DEFINE_HOST_FUNCTION(jsClipboardPrototypeFunction_write, (JSGlobalObject * l
 
 JSC::GCClient::IsoSubspace* JSClipboard::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSClipboard, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForClipboard.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForClipboard = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForClipboard.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForClipboard = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSClipboard, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForClipboard, m_subspaceForClipboard));
 }
 
 void JSClipboard::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

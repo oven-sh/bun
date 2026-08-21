@@ -76,13 +76,11 @@ void ClipboardItemPlatformDataSource::getType(const String& type, Ref<DeferredPr
         return;
     }
 
-    // The read already produced a Blob of exactly this type.
-    auto* globalObject = promise->globalObject();
-    if (!globalObject) {
-        promise->reject(ExceptionCode::InvalidStateError);
-        return;
-    }
-    promise->resolveWithJSValue(clipboardBlobToJS(globalObject, m_data[matchIndex].value.get(), type));
+    // The read already produced a Blob of exactly this type. (A promise whose
+    // context is gone ignores this, like every other settlement.)
+    promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) {
+        return clipboardBlobToJS(&globalObject, m_data[matchIndex].value.get(), type);
+    });
 }
 
 void ClipboardItemPlatformDataSource::collectDataForWriting(Clipboard&, CollectCompletionHandler&& completion)

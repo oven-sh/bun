@@ -1503,6 +1503,14 @@ impl ServerConfig {
                     global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
                 );
             }
+        } else if args.webtransport {
+            // A session arrives over HTTP/3 or not at all, so handlers on a
+            // server without it could never fire. Refusing is the only way the
+            // caller finds out; the listener would otherwise come up looking
+            // healthy and never call them.
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'webtransport' requires 'http3' to be set"
+            )));
         } else if !args.http1 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 without enabling http3"

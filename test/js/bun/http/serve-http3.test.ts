@@ -1546,19 +1546,26 @@ async function webTransportSession(port: number) {
   await client.opened;
 
   let status = "";
+  // Headers are sent separately, and deliberately not through the
+  // `headers` option: that path FINs the stream when there is no body, which
+  // is right for a request and wrong for a session — the CONNECT stream stays
+  // open for as long as the session does, and a FIN on it ends the session.
   const stream = await client.createBidirectionalStream({
-    headers: {
+    onheaders(headers: Record<string, string>) {
+      status = headers[":status"];
+    },
+  });
+  stream.closed.catch(() => {});
+  stream.sendHeaders(
+    {
       ":method": "CONNECT",
       ":protocol": "webtransport",
       ":scheme": "https",
       ":authority": "localhost",
       ":path": "/echo",
     },
-    onheaders(headers: Record<string, string>) {
-      status = headers[":status"];
-    },
-  });
-  stream.closed.catch(() => {});
+    { terminal: false },
+  );
 
   const until = async (predicate: () => boolean, ms = 5000) => {
     const deadline = Date.now() + ms;
@@ -1571,6 +1578,7 @@ async function webTransportSession(port: number) {
 
   const qsid = quicVarint(0);
   return {
+    stream,
     get status() {
       return status;
     },
@@ -1698,6 +1706,43 @@ describe("Bun.serve WebTransport", () => {
     } finally {
       await wt.close();
     }
+  });
+
+  test("a peer that ends the CONNECT stream ends the session", async () => {
+    const closes: number[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+        close() {
+          closes.push(Date.now());
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("still here");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      // An empty body is a FIN and nothing else. The draft lets a peer end a
+      // session by ending its CONNECT stream, and this is the only way to say
+      // that through node:quic.
+      wt.stream.setBody(new Response("").body);
+      expect(await wt.until(() => closes.length > 0, 3000)).toBe(true);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("rejects a webtransport handler on a server without http3", () => {
+    expect(() =>
+      Bun.serve({ port: 0, tls, webtransport: { datagram() {} }, fetch: () => new Response() }),
+    ).toThrow(/webtransport/);
   });
 
   test("rejects a webtransport option that is not a handler object", () => {

@@ -195,10 +195,12 @@ const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsign
 int us_quic_stream_accept_webtransport(us_quic_stream_t *s);
 int us_quic_stream_is_webtransport(us_quic_stream_t *s);
 
-/* Queue one datagram on `s`'s session. Returns `len` when it was queued, 0
- * when the queue is full — drop it, this path is unreliable by construction
- * and a late datagram is worth less than the next one — or -1 when `s` is not
- * a session or `len` exceeds US_QUIC_WT_MAX_DATAGRAM. */
+/* Queue one datagram on `s`'s session. Returns the bytes queued — the payload
+ * plus its quarter-stream-id prefix, so a zero-length payload still reports a
+ * positive number — or 0 when the queue is full (drop it: this path is
+ * unreliable by construction and a late datagram is worth less than the next
+ * one), or -1 when `s` is not a session, `len` exceeds
+ * US_QUIC_WT_MAX_DATAGRAM, or the peer will not accept a datagram that big. */
 int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int len);
 
 /* Datagrams the peer sent on a session. Not called for datagrams naming a

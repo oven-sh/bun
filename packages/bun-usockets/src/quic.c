@@ -804,17 +804,23 @@ static us_quic_stream_t *us_quic_wt_find(us_quic_socket_t *qs, uint64_t qsid) {
  * than the queued record on a nearly-full packet, and a record that never fits
  * is a queue that never drains. Returns 0, or -1 when the head is larger than
  * the peer will accept — in which case it cannot ever be sent. */
-static int us_quic_wt_arm_dgram(us_quic_socket_t *qs) {
-    if (qs->wt_dgram_head == qs->wt_dgram_tail) {
-        qs->wt_dgram_head = qs->wt_dgram_tail = 0;
-        lsquic_conn_want_datagram_write(qs->conn, 0);
-        return 0;
+static void us_quic_wt_arm_dgram(us_quic_socket_t *qs) {
+    /* A head the peer will not accept can never leave, and leaving it there
+     * would stop every record behind it as well as keeping the connection
+     * permanently tickable. Enqueue already refuses those, so this loop should
+     * never advance more than once; it is here so that a record which somehow
+     * got in cannot wedge the queue. */
+    while (qs->wt_dgram_head != qs->wt_dgram_tail) {
+        const unsigned char *rec = (const unsigned char *) qs->wt_dgram_ring + qs->wt_dgram_head;
+        size_t len = (size_t) rec[0] | ((size_t) rec[1] << 8);
+        if (lsquic_conn_set_min_datagram_size(qs->conn, len) == 0) {
+            lsquic_conn_want_datagram_write(qs->conn, 1);
+            return;
+        }
+        qs->wt_dgram_head += (unsigned int) (2 + len);
     }
-    const unsigned char *rec = (const unsigned char *) qs->wt_dgram_ring + qs->wt_dgram_head;
-    size_t len = (size_t) rec[0] | ((size_t) rec[1] << 8);
-    if (lsquic_conn_set_min_datagram_size(qs->conn, len) != 0) return -1;
-    lsquic_conn_want_datagram_write(qs->conn, 1);
-    return 0;
+    qs->wt_dgram_head = qs->wt_dgram_tail = 0;
+    lsquic_conn_want_datagram_write(qs->conn, 0);
 }
 
 static void us_quic_on_datagram(lsquic_conn_t *conn, const void *buf, size_t sz) {
@@ -891,6 +897,13 @@ int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int
     unsigned int plen = us_quic_varint_write(prefix, s->wt_qsid);
     unsigned int need = 2 + plen + len;
 
+    /* The peer's max_datagram_frame_size is only reachable through this
+     * setter, so ask it about *this* record before queueing it rather than
+     * discovering the refusal once it reaches the head, with everything that
+     * arrived after it stuck behind. arm_dgram below puts the value back to
+     * whatever the head needs. */
+    if (lsquic_conn_set_min_datagram_size(qs->conn, (size_t) (plen + len)) != 0) return -1;
+
     /* Compact rather than wrap: a queue this shallow is empty almost every
      * time, so the memmove is rare, and it saves on_dg_write from ever seeing
      * a record split across the end of the ring. */
@@ -910,15 +923,11 @@ int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int
     memcpy(rec + 2 + plen, data, len);
     qs->wt_dgram_tail += need;
 
-    if (us_quic_wt_arm_dgram(qs) != 0) {
-        /* Larger than the peer's max_datagram_frame_size. Take it back off
-         * the queue: leaving it there would block every later datagram behind
-         * one that can never go out. */
-        qs->wt_dgram_tail -= need;
-        us_quic_wt_arm_dgram(qs);
-        return -1;
-    }
-    return (int) len;
+    us_quic_wt_arm_dgram(qs);
+    /* The bytes that went on the wire, prefix included, so that a zero-length
+     * payload still reports success rather than colliding with the 0 that
+     * means the queue had no room. */
+    return (int) payload;
 }
 
 void us_quic_socket_context_on_wt_datagram(us_quic_socket_context_t *ctx,
@@ -1026,7 +1035,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
          * es_webtransport_server writes ENABLE_WEBTRANSPORT, WT_MAX_SESSIONS
          * and ENABLE_CONNECT_PROTOCOL; es_h3_datagram writes H3_DATAGRAM.
          * Both must be set and neither writes the other's — see
-         * patches/lsquic/webtransport-settings-dedupe.patch for why the
+         * patches/lsquic/webtransport-settings.patch for why the
          * overlap had to be removed rather than left to sort itself out. */
         ctx->settings.es_datagrams = 1;
         ctx->settings.es_h3_datagram = 1;

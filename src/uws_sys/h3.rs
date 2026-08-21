@@ -587,7 +587,9 @@ impl WebTransport {
         };
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
         match unsafe { c::uws_h3_wt_send_datagram(self, data.as_ptr(), len) } {
-            n if n > 0 => DatagramResult::Sent(n as usize),
+            // The C side counts the quarter-stream-id prefix, so a positive
+            // answer means queued and `data.len()` is what the caller sent.
+            n if n > 0 => DatagramResult::Sent(data.len()),
             0 => DatagramResult::Dropped,
             _ => DatagramResult::TooLarge,
         }

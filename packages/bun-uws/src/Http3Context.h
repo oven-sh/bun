@@ -57,7 +57,10 @@ struct Http3Context {
             /* On an upgraded session the CONNECT stream carries capsules, not
              * a request body, so it never reaches inStream. A FIN without a
              * close capsule is still the end of the session — the draft allows
-             * a peer to just stop — and on_stream_close reports it. */
+             * a peer to just stop — so it is closed here rather than left for
+             * the connection to time out: lsquic only schedules on_close once
+             * both halves are done, and until that runs the session's JS
+             * wrapper is held by its own strong reference. */
             if (us_quic_stream_is_webtransport(s)) {
                 Http3WebTransportSession *wt = (Http3WebTransportSession *) s;
                 /* A close capsule only records why; the report itself happens
@@ -69,7 +72,7 @@ struct Http3Context {
                     rd->wtCloseReason.shrink(0);
                     rd->wtCloseReason.append(std::span<const char>(reason.data(), reason.size()));
                 });
-                if (!alive) us_quic_stream_close(s);
+                if (!alive || fin) us_quic_stream_close(s);
                 return;
             }
             if (rd->inStream) rd->inStream(res, data, len, fin != 0, rd->userData);

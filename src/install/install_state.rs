@@ -89,11 +89,25 @@ fn is_directory(path: &[u8]) -> bool {
     matches!(bun_sys::stat(&zpath(path)), Ok(st) if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::Directory)
 }
 
-/// Iterate a directory with std's reader; the path bytes are ours.
-fn read_dir(path: &[u8]) -> Option<std::fs::ReadDir> {
-    // SAFETY: only hands our own path bytes to `read_dir`; never inspected as `str`.
-    let p = std::path::Path::new(unsafe { std::str::from_utf8_unchecked(path) });
-    std::fs::read_dir(p).ok()
+/// Directory entries as (name, is_directory); `.`/`..` are never returned by the
+/// iterator. None if the directory cannot be opened.
+fn read_dir(path: &[u8]) -> Option<Vec<(Vec<u8>, bool)>> {
+    let fd = bun_sys::open_dir_for_iteration(Fd::cwd(), path).ok()?;
+    let mut out = Vec::new();
+    let mut iter = bun_sys::iterate_dir(fd);
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        let is_dir = match entry.kind {
+            bun_sys::EntryKind::Directory => true,
+            // some filesystems do not report d_type; ask
+            bun_sys::EntryKind::Unknown => is_directory(&join(path, name)),
+            _ => false,
+        };
+        out.push((name.to_vec(), is_dir));
+    }
+    drop(iter);
+    let _ = bun_sys::close(fd);
+    Some(out)
 }
 
 fn join(root: &[u8], rel: &[u8]) -> Vec<u8> {
@@ -516,9 +530,8 @@ fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) {
     out.extend_from_slice(dir);
     out.push(b'\n');
     let Some(rd) = read_dir(dir) else { return };
-    for e in rd.flatten() {
-        let name = e.file_name();
-        let name = name.as_encoded_bytes();
+    for (name, _) in &rd {
+        let name = name.as_slice();
         if name == b".cache" || name == b".install-state" {
             continue;
         }
@@ -582,16 +595,14 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
         return;
     }
     let Some(rd) = read_dir(dir) else { return };
-    for e in rd.flatten() {
+    for (name, is_dir) in &rd {
         if *budget == 0 {
             return;
         }
-        let Ok(ft) = e.file_type() else { continue };
-        if !ft.is_dir() {
+        if !is_dir {
             continue;
         }
-        let name = e.file_name();
-        let name = name.as_encoded_bytes();
+        let name = name.as_slice();
         if name == b"node_modules" || name.starts_with(b".") {
             continue;
         }
@@ -616,19 +627,17 @@ fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool 
     let Some(rd) = read_dir(dir) else {
         return false;
     };
-    for e in rd.flatten() {
+    for (name, is_dir) in &rd {
         if *budget == 0 {
             return false;
         }
         *budget -= 1;
-        let name = e.file_name();
-        let name = name.as_encoded_bytes();
+        let name = name.as_slice();
         if name == b"node_modules" || name == b".git" {
             continue;
         }
         let child = join(dir, name);
-        let Ok(ft) = e.file_type() else { return false };
-        if ft.is_dir() {
+        if *is_dir {
             if !stamp_source_tree(out, &child, budget) {
                 return false;
             }

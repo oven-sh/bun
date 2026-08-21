@@ -393,89 +393,13 @@ impl Exporter for ConsoleExporter {
 }
 
 impl ConsoleExporter {
+    /// One OTLP/JSON `ExportTraceServiceRequest` per batch on stderr — the same
+    /// document a collector would receive, so it can be piped into tooling.
     fn print(&self, payload: &ExportPayload) {
-        let mut out = String::new();
-        for_each_span(&payload.body, &mut |scope, span| {
-            let mut tid = [0u8; 32];
-            let mut sid = [0u8; 16];
-            let mut pid = [0u8; 16];
-            hex(span.trace_id, &mut tid);
-            hex(span.span_id, &mut sid);
-            hex(span.parent_span_id, &mut pid);
-            let dur_us = span.end_ns.saturating_sub(span.start_ns) as f64 / 1000.0;
-            use core::fmt::Write;
-            let _ = write!(
-                out,
-                "[otel] {} {} trace={} span={}{}{} {:.1}µs",
-                bstr::BStr::new(scope.name),
-                bstr::BStr::new(span.name),
-                bstr::BStr::new(&tid),
-                bstr::BStr::new(&sid),
-                if span.parent_span_id.is_empty() {
-                    ""
-                } else {
-                    " parent="
-                },
-                bstr::BStr::new(if span.parent_span_id.is_empty() {
-                    &pid[..0]
-                } else {
-                    &pid[..]
-                }),
-                dur_us,
-            );
-            for (k, v) in span.attributes.iter() {
-                let _ = write!(out, " {}=", bstr::BStr::new(k));
-                fmt_any_value(&mut out, v);
-            }
-            if span.status_code != 0 {
-                let _ = write!(
-                    out,
-                    " status={}",
-                    if span.status_code == 1 { "OK" } else { "ERROR" }
-                );
-                if !span.status_message.is_empty() {
-                    let _ = write!(out, "({})", bstr::BStr::new(span.status_message));
-                }
-            }
-            out.push('\n');
-        });
-        bun_core::Output::print_error(&out);
+        let mut json = bun_telemetry::otlp_json::to_json(&payload.body);
+        json.push(b'\n');
+        bun_core::Output::print_error(bstr::BStr::new(&json));
         bun_core::Output::flush();
-    }
-}
-
-fn fmt_any_value(out: &mut String, v: &[u8]) {
-    use core::fmt::Write;
-    let mut r = Reader::new(v);
-    while let Ok(Some((field, val))) = r.next() {
-        match field {
-            f::AV_STRING => {
-                let _ = write!(out, "{:?}", bstr::BStr::new(val.as_bytes()));
-            }
-            f::AV_BOOL => {
-                let _ = write!(out, "{}", val.as_u64() != 0);
-            }
-            f::AV_INT => {
-                let _ = write!(out, "{}", val.as_u64() as i64);
-            }
-            f::AV_DOUBLE => {
-                let _ = write!(out, "{}", val.as_f64());
-            }
-            f::AV_ARRAY => {
-                out.push('[');
-                let mut first = true;
-                let mut ar = Reader::new(val.as_bytes());
-                while let Ok(Some((_, item))) = ar.next() {
-                    if !first {
-                        out.push_str(", ");
-                    }
-                    first = false;
-                    fmt_any_value(out, item.as_bytes());
-                }
-                out.push(']');
-            }
-            _ => {}
-        }
     }
 }
 

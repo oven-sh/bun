@@ -2906,7 +2906,10 @@ impl RunCommand {
             ctx.positionals.remove(0);
         }
 
-        let (source, display_name): (Box<[u8]>, Box<[u8]>) = if !ctx.positionals.is_empty() {
+        // Module type: 0 = detect (CommonJS first, then ES module), 1 = CommonJS,
+        // 2 = ES module. Like Node, `--input-type` only applies to stdin; a file's
+        // type comes from its extension.
+        let (source, display_name, module_type) = if !ctx.positionals.is_empty() {
             // Resolve the file argument against cwd, like a normal entry point.
             let mut cwd_buf = PathBuffer::uninit();
             let cwd = bun_core::getcwd(&mut cwd_buf)?;
@@ -2934,15 +2937,23 @@ impl RunCommand {
                     resolved = with_js;
                 }
             }
-            match contents {
-                Ok(bytes) => (bytes.into_boxed_slice(), resolved),
+            let bytes = match contents {
+                Ok(bytes) => bytes,
                 Err(_) => {
                     // Same first line as Node's loader for a missing --check target.
                     pretty_errorln!("Error: Cannot find module '{}'", bstr::BStr::new(&resolved));
                     Output::flush();
                     Global::exit(1);
                 }
-            }
+            };
+            let module_type = if resolved.ends_with(b".mjs") {
+                2
+            } else if resolved.ends_with(b".cjs") {
+                1
+            } else {
+                0
+            };
+            (bytes.into_boxed_slice(), resolved, module_type)
         } else {
             // No file argument: check stdin, like `node --check` with piped input.
             let mut list: Vec<u8> = Vec::new();
@@ -2951,22 +2962,16 @@ impl RunCommand {
                 Output::flush();
                 Global::exit(1);
             }
-            (list.into_boxed_slice(), Box::from(&b"[stdin]"[..]))
-        };
-
-        // 0 = detect (CommonJS first, then ES module), 1 = CommonJS, 2 = ES module.
-        let module_type: i32 = match &*ctx.runtime_options.eval.input_type {
-            b"module" => 2,
-            b"commonjs" => 1,
-            _ => {
-                if display_name.ends_with(b".mjs") {
-                    2
-                } else if display_name.ends_with(b".cjs") {
-                    1
-                } else {
-                    0
-                }
-            }
+            let module_type = match &*ctx.runtime_options.eval.input_type {
+                b"module" => 2,
+                b"commonjs" => 1,
+                _ => 0,
+            };
+            (
+                list.into_boxed_slice(),
+                Box::<[u8]>::from(&b"[stdin]"[..]),
+                module_type,
+            )
         };
         let _ = CHECK_SYNTAX_TARGET.set((source, display_name, module_type));
 

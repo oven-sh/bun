@@ -257,7 +257,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "-p, --print <STR>?!               Evaluate argument as a script and print the result"
     ),
     parse_param!(
-        "--input-type <STR>                Module type for string input from stdin or --eval: \"module\" or \"commonjs\""
+        "--input-type <STR>!               Module type for string input from stdin or --eval: \"module\" or \"commonjs\""
     ),
     parse_param!(
         "--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk"
@@ -942,7 +942,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 // https://github.com/nodejs/node/blob/main/src/node_options-inl.h
                 let node_flag: Option<Vec<u8>> = match (diag.short(), diag.long()) {
                     (Some(short @ (b'e' | b'p')), _) => Some(vec![b'-', short]),
-                    (_, Some(b"eval" | b"print" | b"inspect-port" | b"debug-port")) => {
+                    (
+                        _,
+                        Some(b"eval" | b"print" | b"inspect-port" | b"debug-port" | b"input-type"),
+                    ) => {
                         let mut flag = b"--".to_vec();
                         flag.extend_from_slice(diag.arg());
                         Some(flag)

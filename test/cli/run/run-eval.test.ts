@@ -308,7 +308,7 @@ describe("node-style CLI argument errors", () => {
   // Node exits with code 9 and `<execPath>: <flag> requires an argument` when a
   // flag that needs a value is passed without one. Bun matches that contract for
   // the runtime flags it shares with Node.
-  test.each(["-e", "--eval", "--inspect-port", "--debug-port"])(
+  test.each(["-e", "--eval", "--inspect-port", "--debug-port", "--input-type"])(
     "%s without a value exits with code 9 and Node's error message",
     flag => {
       const { stdout, stderr, exitCode } = Bun.spawnSync({
@@ -321,7 +321,18 @@ describe("node-style CLI argument errors", () => {
     },
   );
 
-  test.each(["--inspect-port=", "--debug-port="])("%s (empty value) exits with code 9", flag => {
+  test("--input-type followed by another option is a missing argument, not a value", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--input-type", "--check"],
+      env: bunEnv,
+      stdin: Buffer.from("var ok = 1;"),
+    });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(`${process.execPath}: --input-type requires an argument`);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  test.each(["--inspect-port=", "--debug-port=", "--input-type="])("%s (empty value) exits with code 9", flag => {
     const { stdout, stderr, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), flag],
       env: bunEnv,
@@ -442,6 +453,33 @@ describe("--check / -c (syntax check)", () => {
     });
     expect(stderr.toString("utf8")).toMatch(/^SyntaxError: Unexpected identifier\b/m);
     expect(exitCode).toBe(1);
+  });
+
+  test("--input-type=commonjs checks stdin as CommonJS only (no ES module fallback)", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--input-type=commonjs", "--check"],
+      env: bunEnv,
+      stdin: Buffer.from("export var p = 5;\n"),
+    });
+    expect(stderr.toString("utf8")).toMatch(/^SyntaxError: /m);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // Like Node, --input-type describes string input only; a file's module type
+  // comes from its extension.
+  test.each([
+    ["--input-type=commonjs", "esm.mjs", "export var p = 5;\n"],
+    ["--input-type=module", "cjs.cjs", "return;\n"],
+  ])("%s does not override the module type of %s", (inputType, name, contents) => {
+    using dir = tempDir("check-input-type-file", { [name]: contents });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), inputType, "--check", join(String(dir), name)],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("top-level return passes (CommonJS wrapper), and -r can override the wrapper", () => {

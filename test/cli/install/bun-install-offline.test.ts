@@ -43,8 +43,18 @@ afterEach(async () => {
   dirs = [];
 });
 
+// the CI runner exports BUN_INSTALL_CACHE_DIR, which would override the per-project
+// bunfig cache dirs these tests populate and inspect
+const { BUN_INSTALL_CACHE_DIR: _ciCacheDir, ...installEnv } = env;
+
 async function install(cwd: string, args: string[]) {
-  await using proc = spawn({ cmd: [bunExe(), "install", ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+  await using proc = spawn({
+    cmd: [bunExe(), "install", ...args],
+    cwd,
+    env: installEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { out, err, code };
 }

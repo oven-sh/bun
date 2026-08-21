@@ -1,7 +1,6 @@
-//! `libbun_rust.a` — the Rust-port staticlib.
-//!
-//! Built by `cargo build -p bun_bin` (emitted from `scripts/build/rust.ts`)
-//! and linked into the final `bun-debug` executable by ninja's link step.
+//! The process entry point. `bun_runtime` is built as a staticlib
+//! (`cargo build -p bun_runtime`, emitted from `scripts/build/rust.ts`) and
+//! linked into the final `bun-debug` executable by ninja's link step.
 //! The clang++ driver supplies the
 //! C runtime startup (`_start` → `main`); `main` below is the process entry.
 //!
@@ -31,7 +30,6 @@
 //! their translation unit's `.text` instead of interleaving with the
 //! startup chain.
 
-#![warn(unused_must_use)]
 
 use core::ffi::{c_char, c_int};
 
@@ -196,7 +194,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     bun_io::ParentDeathWatchdog::install();
 
     // 7. CLI dispatch.
-    bun_runtime::cli::Cli::start();
+    crate::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
 }

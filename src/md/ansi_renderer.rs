@@ -701,7 +701,11 @@ impl<'a> AnsiRenderer<'a> {
             TextType::Code | TextType::Latexmath => {
                 // A line break inside the span is a space (as in the HTML renderer).
                 if strings::contains_char(content, b'\n') {
-                    let mut one_line = content.to_vec();
+                    let mut one_line: Vec<u8> = Vec::new();
+                    try_extend(&mut self.out.oom, &mut one_line, content);
+                    if self.out.oom {
+                        return;
+                    }
                     for byte in &mut one_line {
                         if *byte == b'\n' {
                             *byte = b' ';

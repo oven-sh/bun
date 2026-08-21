@@ -218,11 +218,11 @@ class AsyncLocalStorage {
     var hasPrevious = false;
     var previous_value;
     var i = 0;
-    var contextWasAlreadyInit = !$isJSArray(context);
+    var slotWasNotArray = !$isJSArray(context);
     var initialSlot = context;
     // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     this.#disabled = false;
-    if (contextWasAlreadyInit) {
+    if (slotWasNotArray) {
       context = arrayFromSlot(context);
       i = context.length;
       context.push(this, store_value);
@@ -264,7 +264,7 @@ class AsyncLocalStorage {
       // entering a disabled storage must not leave store_value installed after run().
       {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
-        if (context2 === context && contextWasAlreadyInit) {
+        if (context2 === context && slotWasNotArray) {
           $assert(context2.length === i + 2, "context was mutated without copy");
           set(initialSlot as any);
         } else {

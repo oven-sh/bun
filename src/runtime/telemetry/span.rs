@@ -112,8 +112,9 @@ fn extra_propagation(global: &JSGlobalObject, cell: JSValue) -> [Vec<u8>; 2] {
     for (i, which) in b"tb".iter().enumerate() {
         let v = Bun__TelemetrySpan__extraString(global, cell, *which);
         if v.is_string() {
-            if let Ok(s) = v.to_slice(global) {
-                out[i].extend_from_slice(s.slice());
+            match v.to_slice(global) {
+                Ok(s) => out[i].extend_from_slice(s.slice()),
+                Err(_) => _ = global.clear_exception_except_termination(),
             }
         }
     }
@@ -262,7 +263,9 @@ pub fn end_native_with(
 ) {
     if let Some(e) = pool::end_with(span, end_ns, prep, extra) {
         release_cell(e.js_cell);
-        super::after_record();
+        if e.recorded {
+            super::after_record();
+        }
     }
 }
 
@@ -725,7 +728,9 @@ pub extern "C" fn Bun__Telemetry__nativeEnd(handle: u64, end_ns: u64) -> bool {
     match pool::end(NativeSpan(handle), end_ns, |_| {}) {
         Some(e) => {
             release_cell(e.js_cell);
-            super::after_record();
+            if e.recorded {
+                super::after_record();
+            }
             true
         }
         None => false,

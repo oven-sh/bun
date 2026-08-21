@@ -303,12 +303,12 @@ const propagator = {
   extract(context: any, carrier: any, getter: any = defaultGetter): BunContext {
     let ctx: BunContext = context instanceof BunContext ? context : new BunContext(...unpackContext(context));
     let tp = getter.get(carrier, "traceparent");
-    if (Array.isArray(tp)) tp = tp[0];
+    if ($isJSArray(tp)) tp = tp[0];
     if (typeof tp === "string") {
       const m = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(-.*)?$/.exec(tp.trim());
       if (m && m[1] !== "ff" && !(m[1] === "00" && m[5]) && !/^0+$/.test(m[2]) && !/^0+$/.test(m[3])) {
         let traceState = getter.get(carrier, "tracestate");
-        if (Array.isArray(traceState)) traceState = traceState.join(",");
+        if ($isJSArray(traceState)) traceState = traceState.join(",");
         const span = wrapSpanContext({
           traceId: m[2],
           spanId: m[3],
@@ -320,7 +320,7 @@ const propagator = {
       }
     }
     let bg = getter.get(carrier, "baggage");
-    if (Array.isArray(bg)) bg = bg.join(",");
+    if ($isJSArray(bg)) bg = bg.join(",");
     if (typeof bg === "string") {
       const bag = parseBaggage(bg);
       if (bag) ctx = ctx.setValue(BAGGAGE_KEY, bag);

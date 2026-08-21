@@ -37,28 +37,17 @@ pub fn encode(info: &ResourceInfo<'_>) -> Vec<u8> {
         Value::Str(info.runtime_version.as_bytes()),
     ));
     attrs.push((b"process.pid", Value::Int(info.pid as i64)));
-    let builtin: [&[u8]; 7] = [
-        b"service.name",
-        b"telemetry.sdk.name",
-        b"telemetry.sdk.language",
-        b"telemetry.sdk.version",
-        b"process.runtime.name",
-        b"process.runtime.version",
-        b"process.pid",
-    ];
     for (k, v) in info.extra {
         let k = k.as_bytes();
-        // User-provided keys win over our defaults except the sdk identity.
+        // User-provided keys win over our defaults except the sdk identity; last write wins.
         if k.starts_with(b"telemetry.sdk.") {
             continue;
         }
         if let Some(pos) = attrs.iter().position(|(bk, _)| *bk == k) {
-            if builtin.contains(&k) {
-                attrs[pos].1 = Value::Str(v.as_bytes());
-                continue;
-            }
+            attrs[pos].1 = Value::Str(v.as_bytes());
+        } else {
+            attrs.push((k, Value::Str(v.as_bytes())));
         }
-        attrs.push((k, Value::Str(v.as_bytes())));
     }
     otlp::encode_resource(&attrs)
 }

@@ -178,13 +178,18 @@ describe("WebSocket", () => {
       },
     });
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/chat`);
-    const { promise: opened, resolve } = Promise.withResolvers<void>();
+    const { promise: opened, resolve, reject } = Promise.withResolvers<void>();
     ws.onopen = () => resolve();
+    ws.onerror = () => reject(new Error("ws error"));
+    ws.onclose = e => reject(new Error(`ws closed ${e.code}`));
     await opened;
-    const { promise: replied, resolve: gotReply } = Promise.withResolvers<void>();
+    const { promise: replied, resolve: gotReply, reject: noReply } = Promise.withResolvers<void>();
     ws.onmessage = () => gotReply();
+    ws.onerror = () => noReply(new Error("ws error"));
+    ws.onclose = e => noReply(new Error(`ws closed ${e.code}`));
     ws.send("hi");
     await replied;
+    ws.onclose = null;
     ws.close();
     const got = await collect();
     const connect = got.find(s => s.name === "websocket.connect");

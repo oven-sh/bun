@@ -101,7 +101,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
                     .or_else(|| env("GRAFANA_CLOUD_INSTANCE_ID"))
                     .ok_or_else(|| need("id (the stack's instance id)", p.name))?;
             let mut auth = Vec::new();
-            bun_base64_encode(format!("{instance}:{token}").as_bytes(), &mut auth);
+            crate::otlp_json::base64(&mut auth, format!("{instance}:{token}").as_bytes());
             headers.push((
                 "authorization".into(),
                 format!("Basic {}", bstr::ByteVec::into_string_lossy(auth)),
@@ -223,27 +223,4 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
         compression: Compression::Gzip,
         timeout_ms: 10000,
     })
-}
-
-fn bun_base64_encode(input: &[u8], out: &mut Vec<u8>) {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    for chunk in input.chunks(3) {
-        let b = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        out.push(T[(b[0] >> 2) as usize]);
-        out.push(T[((b[0] & 3) << 4 | b[1] >> 4) as usize]);
-        out.push(if chunk.len() > 1 {
-            T[((b[1] & 15) << 2 | b[2] >> 6) as usize]
-        } else {
-            b'='
-        });
-        out.push(if chunk.len() > 2 {
-            T[(b[2] & 63) as usize]
-        } else {
-            b'='
-        });
-    }
 }

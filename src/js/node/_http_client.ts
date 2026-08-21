@@ -181,11 +181,12 @@ function otelClientRequestStart(req, protocol, host, port) {
   if (span.isRecording()) {
     const defaultPort = protocol === "https:" ? 443 : 80;
     const p = +port || defaultPort;
+    const urlHost = host.indexOf(":") !== -1 && host.charCodeAt(0) !== 91 /* '[' */ ? "[" + host + "]" : host;
     span.setAttributes({
       "http.request.method": req.method,
       "server.address": host,
       "server.port": p,
-      "url.full": protocol + "//" + host + (p !== defaultPort ? ":" + p : "") + req.path,
+      "url.full": protocol + "//" + urlHost + (p !== defaultPort ? ":" + p : "") + req.path,
     });
   }
 }

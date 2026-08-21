@@ -133,6 +133,25 @@ describe("context propagation", () => {
     expect(Bun.otel.activeSpan()).toBeUndefined();
   });
 
+  test("startActiveSpan(fn) rethrows and restores the active span when the callback throws or rejects", async () => {
+    const err = new Error("boom");
+    expect(() =>
+      tracer.startActiveSpan("throws", span => {
+        span.end();
+        throw err;
+      }),
+    ).toThrow(err);
+    expect(Bun.otel.activeSpan()).toBeUndefined();
+    const p = tracer.startActiveSpan("rejects", async span => {
+      span.end();
+      throw err;
+    });
+    expect(Bun.otel.activeSpan()).toBeUndefined();
+    await expect(p).rejects.toBe(err);
+    expect(Bun.otel.activeSpan()).toBeUndefined();
+    await collect();
+  });
+
   test("`using` form activates until scope exit and ends the span", async () => {
     let id: string;
     {

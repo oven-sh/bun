@@ -60,7 +60,7 @@ thread_local! {
 }
 
 /// Run `f` with this thread's batch. Re-entrancy (ending a span from inside
-/// `f`) is a bug in the caller; `RefCell` will say so in debug.
+/// `f`) is a bug in the caller; `RefCell` panics on it.
 #[inline]
 pub fn with_local<R>(f: impl FnOnce(&mut LocalBatch) -> R) -> R {
     LOCAL.with(|l| f(&mut l.borrow_mut()))

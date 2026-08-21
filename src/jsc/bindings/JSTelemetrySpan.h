@@ -75,7 +75,6 @@ public:
 
     SpanStub m_stub;
     uint64_t m_native { 0 };
-    uint64_t m_endNs { 0 };
     uint16_t m_scope { 0 };
     uint8_t m_kind { 0 };
 

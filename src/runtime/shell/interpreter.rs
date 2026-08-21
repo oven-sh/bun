@@ -673,6 +673,8 @@ impl Interpreter {
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
         }
+        // We are the script's shell (`bun run <script>`, `bun exec`, `bun x.sh`).
+        let _ctrl_c = crate::api::bun_process::sync::LeaveCtrlCToChildren::install();
 
         let mut shargs = ShellArgs::init();
 

@@ -417,24 +417,16 @@ fn fail_and_exit_with_reason(reason: FailReason) -> ! {
     nt::RtlExitUserProcess(255)
 }
 
-/// The child shares our console and gets Ctrl+C itself; outlive it to report its exit code.
-struct IgnoreCtrlC;
-impl IgnoreCtrlC {
+/// The child shares our console and gets Ctrl+C itself; outlive it to report its
+/// exit code. Every path after this exits the process, so it is never removed.
+fn ignore_ctrl_c() {
     extern "system" fn handler(ctrl_type: DWORD) -> BOOL {
         if ctrl_type == w::CTRL_C_EVENT {
             return w::TRUE;
         }
         w::FALSE
     }
-    fn install() -> Self {
-        let _ = k32::SetConsoleCtrlHandler(Some(Self::handler), w::TRUE);
-        Self
-    }
-}
-impl Drop for IgnoreCtrlC {
-    fn drop(&mut self) {
-        let _ = k32::SetConsoleCtrlHandler(Some(Self::handler), w::FALSE);
-    }
+    let _ = k32::SetConsoleCtrlHandler(Some(handler), w::TRUE);
 }
 
 const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
@@ -1368,7 +1360,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         },
     };
 
-    let _ctrl_c = IgnoreCtrlC::install();
+    ignore_ctrl_c();
 
     // PERF: the body is large enough that unrolling this two-iteration loop is
     // unlikely to matter — profile if it shows up on a hot path.

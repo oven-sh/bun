@@ -321,7 +321,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         if !use_system_shell {
-            let _ctrl_c = crate::api::bun_process::sync::LeaveCtrlCToChildren::install();
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
             let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -394,6 +393,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        #[cfg(windows)]
+        let _ctrl_c = sync::LeaveCtrlCToChildren::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(shell_bin.as_ptr().cast::<::core::ffi::c_char>()),
@@ -2069,6 +2070,10 @@ impl RunCommand {
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        // POSIX forwards signals inside `sync::spawn`; on Windows the child shares
+        // our console and gets Ctrl+C itself, we just have to outlive it.
+        #[cfg(windows)]
+        let _ctrl_c = sync::LeaveCtrlCToChildren::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(executable_z.as_ptr().cast::<c_char>()),

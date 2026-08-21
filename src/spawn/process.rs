@@ -2624,20 +2624,29 @@ mod spawn_process_body {
             result
         }
 
-        /// What `bun run` (and anything else acting as a mini shell for a foreground
-        /// child) does about Ctrl+C: while a `CtrlCChild` is alive, leave it to the
-        /// child — it received the same Ctrl+C from the terminal (same pgroup /
-        /// same console); on POSIX also forward it in case only we were signalled.
-        /// With no child alive, Ctrl+C takes its previous action. If the child then
-        /// dies *of* the Ctrl+C, `exit_with_child_if_ctrl_c` ends us the same way
-        /// (bash's wait-and-cooperative-exit), so `a; b` stops and callers see an
-        /// interrupt rather than an exit code. Not inherited: on POSIX a caught
-        /// signal resets to default on exec; on Windows a handler routine (unlike
-        /// `SetConsoleCtrlHandler(NULL, TRUE)`) is per-process.
+        /// What `bun run` (and anything else acting as a shell for a foreground child)
+        /// does about Ctrl+C — bash's wait-and-cooperative-exit:
+        /// - while a `CtrlCChild` is alive, Ctrl+C is the child's: it received the same
+        ///   SIGINT / CTRL_C_EVENT from the terminal (same pgroup / same console). On
+        ///   POSIX a SIGINT that came from *outside* our process group (a supervisor
+        ///   signalling only us) is forwarded so the child still sees it;
+        /// - with no child alive, Ctrl+C takes its previous action;
+        /// - once the children are gone, if we took a Ctrl+C for them and one died of
+        ///   it, end the same way (`exit_with_children_if_ctrl_c`), so `a; b` stops
+        ///   and callers see an interrupt rather than an exit code.
+        /// Not inherited: on POSIX a caught signal resets to default on exec; on
+        /// Windows a handler routine (unlike `SetConsoleCtrlHandler(NULL, TRUE)`) is
+        /// per-process.
         pub struct LeaveCtrlCToChildren;
 
         static CTRL_C_INSTALLED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
+        /// A Ctrl+C arrived while children were alive and was left to them.
+        static CTRL_C_RECEIVED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
+        /// ...and one of them died of it (Windows: holds the exit status to reuse).
+        static CTRL_C_KILLED_CHILD: core::sync::atomic::AtomicU32 =
+            core::sync::atomic::AtomicU32::new(0);
         const MAX_CTRL_C_CHILDREN: usize = 64;
         static CTRL_C_CHILDREN: [core::sync::atomic::AtomicI32; MAX_CTRL_C_CHILDREN] =
             [const { core::sync::atomic::AtomicI32::new(0) }; MAX_CTRL_C_CHILDREN];
@@ -2647,22 +2656,25 @@ mod spawn_process_body {
         static PREVIOUS_SIGINT: bun_core::RacyCell<core::mem::MaybeUninit<libc::sigaction>> =
             bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
-        /// A live child that receives the terminal's Ctrl+C itself.
+        /// A live child that receives the terminal's Ctrl+C itself. Create it just
+        /// before spawning (a Ctrl+C in that window is then swallowed rather than
+        /// orphaning the child) and `set_pid` once the pid is known.
         pub struct CtrlCChild {
             slot: Option<usize>,
         }
         impl CtrlCChild {
-            pub fn enter(pid: PidT) -> Self {
+            pub fn enter() -> Self {
                 CTRL_C_CHILD_COUNT.fetch_add(1, Ordering::Relaxed);
-                let slot = if pid > 0 {
-                    CTRL_C_CHILDREN.iter().position(|s| {
+                Self { slot: None }
+            }
+
+            pub fn set_pid(&mut self, pid: PidT) {
+                if cfg!(unix) && self.slot.is_none() && pid > 0 {
+                    self.slot = CTRL_C_CHILDREN.iter().position(|s| {
                         s.compare_exchange(0, pid, Ordering::Relaxed, Ordering::Relaxed)
                             .is_ok()
-                    })
-                } else {
-                    None
-                };
-                Self { slot }
+                    });
+                }
             }
         }
         impl Drop for CtrlCChild {
@@ -2682,39 +2694,59 @@ mod spawn_process_body {
                 if ctrl_type == bun_sys::windows::CTRL_C_EVENT
                     && CTRL_C_CHILD_COUNT.load(Ordering::Relaxed) > 0
                 {
+                    CTRL_C_RECEIVED.store(true, Ordering::Relaxed);
                     return bun_sys::windows::TRUE;
                 }
                 bun_sys::windows::FALSE
             }
 
             #[cfg(unix)]
-            extern "C" fn handler(sig: c_int) {
+            extern "C" fn handler(
+                sig: c_int,
+                info: *mut libc::siginfo_t,
+                _: *mut core::ffi::c_void,
+            ) {
+                // SAFETY: errno_ptr() is this thread's errno slot; saved/restored so
+                // the interrupted code never sees ours.
+                let saved_errno = unsafe { *bun_core::ffi::errno_ptr() };
                 if CTRL_C_CHILD_COUNT.load(Ordering::Relaxed) > 0 {
-                    for slot in &CTRL_C_CHILDREN {
-                        let pid = slot.load(Ordering::Relaxed);
-                        if pid > 0 {
-                            let _ = kill(pid, sig);
+                    CTRL_C_RECEIVED.store(true, Ordering::Relaxed);
+                    // SAFETY: the kernel passes a valid siginfo_t for SA_SIGINFO handlers.
+                    let sender = unsafe { siginfo_pid(info) };
+                    // From the tty (no sender) or from inside our own process group,
+                    // the children already have it; only forward an outsider's.
+                    if sender > 0 && getpgid(sender) != getpgrp() {
+                        for slot in &CTRL_C_CHILDREN {
+                            let pid = slot.load(Ordering::Relaxed);
+                            if pid > 0 {
+                                let _ = kill(pid, sig);
+                            }
                         }
                     }
-                    return;
+                } else {
+                    // SAFETY: PREVIOUS_SIGINT was written before this handler was
+                    // installed; SIGINT is blocked while we run, so the re-raise is
+                    // delivered with the restored disposition once we return.
+                    unsafe {
+                        libc::sigaction(
+                            sig,
+                            (*PREVIOUS_SIGINT.get()).as_ptr(),
+                            core::ptr::null_mut(),
+                        );
+                        libc::raise(sig);
+                    }
                 }
-                // SAFETY: PREVIOUS_SIGINT was written before this handler was
-                // installed; SIGINT is blocked while we run, so the re-raise is
-                // delivered with the restored disposition once we return.
-                unsafe {
-                    libc::sigaction(
-                        sig,
-                        (*PREVIOUS_SIGINT.get()).as_ptr(),
-                        core::ptr::null_mut(),
-                    );
-                    libc::raise(sig);
-                }
+                // SAFETY: as above.
+                unsafe { *bun_core::ffi::errno_ptr() = saved_errno };
             }
 
+            /// `None` if one is already installed further up the stack.
             pub fn install() -> Option<Self> {
                 if CTRL_C_INSTALLED.swap(true, Ordering::Relaxed) {
                     return None;
                 }
+                CTRL_C_RECEIVED.store(false, Ordering::Relaxed);
+                CTRL_C_KILLED_CHILD.store(0, Ordering::Relaxed);
                 #[cfg(windows)]
                 {
                     let _ = bun_sys::windows::SetConsoleCtrlHandler(
@@ -2728,7 +2760,7 @@ mod spawn_process_body {
                 unsafe {
                     let mut sa: libc::sigaction = bun_core::ffi::zeroed();
                     sa.sa_sigaction = Self::handler as *const () as usize;
-                    sa.sa_flags = libc::SA_RESTART;
+                    sa.sa_flags = libc::SA_RESTART | libc::SA_SIGINFO;
                     libc::sigemptyset(&raw mut sa.sa_mask);
                     libc::sigaction(
                         libc::SIGINT,
@@ -2739,20 +2771,35 @@ mod spawn_process_body {
                 Some(Self)
             }
 
-            /// Called with the status of a `CtrlCChild` that just exited.
-            pub fn exit_with_child_if_ctrl_c(status: &Status) {
+            /// Call after dropping the `CtrlCChild` whose `status` this is.
+            pub fn exit_with_children_if_ctrl_c(status: &Status) {
                 if !CTRL_C_INSTALLED.load(Ordering::Relaxed) {
                     return;
                 }
-                #[cfg(unix)]
-                if status.signal_code() == Some(bun_core::SignalCode::SIGINT) {
-                    bun_core::Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGINT);
-                }
-                #[cfg(windows)]
-                if let Status::Exited(exited) = status {
-                    if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
-                        bun_core::Global::exit(exited.raw);
+                if CTRL_C_RECEIVED.load(Ordering::Relaxed) {
+                    #[cfg(unix)]
+                    if status.signal_code() == Some(bun_core::SignalCode::SIGINT) {
+                        CTRL_C_KILLED_CHILD.store(libc::SIGINT as u32, Ordering::Relaxed);
                     }
+                    #[cfg(windows)]
+                    if let Status::Exited(exited) = status {
+                        if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                            CTRL_C_KILLED_CHILD.store(exited.raw, Ordering::Relaxed);
+                        }
+                    }
+                }
+                if CTRL_C_CHILD_COUNT.load(Ordering::Relaxed) > 0 {
+                    return;
+                }
+                CTRL_C_RECEIVED.store(false, Ordering::Relaxed);
+                match CTRL_C_KILLED_CHILD.swap(0, Ordering::Relaxed) {
+                    0 => {}
+                    #[cfg(unix)]
+                    _ => {
+                        bun_core::Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGINT)
+                    }
+                    #[cfg(windows)]
+                    status => bun_core::Global::exit(status),
                 }
             }
         }
@@ -2778,6 +2825,25 @@ mod spawn_process_body {
             }
         }
 
+        /// `si_pid` of a `kill()`-sent signal; 0 for kernel/tty-generated ones.
+        #[cfg(unix)]
+        unsafe fn siginfo_pid(info: *const libc::siginfo_t) -> libc::pid_t {
+            if info.is_null() {
+                return 0;
+            }
+            // SAFETY: caller passes the kernel-provided siginfo_t.
+            unsafe {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    (*info).si_pid()
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                {
+                    (*info).si_pid
+                }
+            }
+        }
+
         #[cfg(windows)]
         fn spawn_windows_without_pipes(
             options: &Options,
@@ -2785,9 +2851,9 @@ mod spawn_process_body {
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_ = options.windows.loop_.platform_event_loop();
-            // All stdio inherited: the child is the foreground program on our console.
-            let _ctrl_c = LeaveCtrlCToChildren::install();
-            let _child = CtrlCChild::enter(0);
+            // All stdio inherited: the child is the foreground program on our console
+            // (inert unless the caller installed `LeaveCtrlCToChildren`).
+            let _child = CtrlCChild::enter();
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
                     Err(err) => return Ok(Err(err)),
@@ -3056,6 +3122,7 @@ mod spawn_process_body {
             safe fn tcgetpgrp(fd: c_int) -> libc::pid_t;
             safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
             safe fn getpgrp() -> libc::pid_t;
+            safe fn getpgid(pid: libc::pid_t) -> libc::pid_t;
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             safe fn getppid() -> libc::pid_t;
             safe fn isatty(fd: c_int) -> c_int;

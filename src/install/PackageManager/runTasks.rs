@@ -491,16 +491,7 @@ fn run_tasks_erased(
                 }
 
                 // Handle retry-able errors.
-                if download_failed
-                    || task
-                        .response
-                        .metadata
-                        .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
-                {
+                if download_failed || is_retryable_response(task.response.metadata.as_ref()) {
                     let err = task
                         .response
                         .fail
@@ -774,16 +765,7 @@ fn run_tasks_erased(
                     }
                 }
 
-                if download_failed
-                    || task
-                        .response
-                        .metadata
-                        .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
-                {
+                if download_failed || is_retryable_response(task.response.metadata.as_ref()) {
                     let err = task
                         .response
                         .fail
@@ -2158,12 +2140,26 @@ fn process_dependency_list_for_ctx(
     )
 }
 
-/// `Retry-After: <seconds>` from a 429/503 response, if present and sane.
+/// `Retry-After: <seconds>` from a 429/503 response, if present. Values are capped at
+/// 60 s (a registry asking for longer still gets the longest wait we are willing to do,
+/// never a shorter one); HTTP-date forms are ignored.
 fn retry_after_secs(task: &NetworkTask) -> Option<u32> {
     let md = task.response.metadata.as_ref()?;
-    let v = md
-        .header(b"retry-after")
-        .or_else(|| md.header(b"Retry-After"))?;
+    // header lookup is ASCII case-insensitive
+    let v = md.header(b"retry-after")?;
     let s = core::str::from_utf8(v).ok()?.trim();
-    s.parse::<u32>().ok().filter(|n| *n <= 120)
+    s.parse::<u32>().ok().map(|n| n.min(60))
+}
+
+/// Responses worth retrying: no response at all (connection-level failure), a server
+/// error, or an explicit rate limit (429; 408 request timeout is treated the same way).
+#[inline]
+fn is_retryable_response(metadata: Option<&bun_http::HTTPResponseMetadata>) -> bool {
+    match metadata {
+        None => true,
+        Some(md) => {
+            let status = md.response.status_code;
+            status > 499 || status == 429 || status == 408
+        }
+    }
 }

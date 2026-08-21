@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { bunEnv, bunExe, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -14,6 +14,10 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
+
+// Retries back off exponentially (250ms base by default); keep the tests that only care
+// about *whether* a retry happens fast. The backoff test below uses the default.
+const env = { ...bunEnv, BUN_CONFIG_HTTP_RETRY_BACKOFF: "10" };
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -448,7 +452,7 @@ it("backs off between retries and honours Retry-After", async () => {
     const { pathname } = new URL(request.url);
     if (pathname.endsWith(".tgz")) {
       tarballHits.push(performance.now());
-      if (tarballHits.length === 1) return new Response("busy", { status: 503, headers: { "Retry-After": "1" } });
+      if (tarballHits.length === 1) return new Response("busy", { status: 429, headers: { "Retry-After": "1" } });
       if (tarballHits.length === 2) return new Response("oops", { status: 500 });
       return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
     }
@@ -465,11 +469,12 @@ it("backs off between retries and honours Retry-After", async () => {
     stdout: "pipe",
     stdin: "ignore",
     stderr: "pipe",
-    env,
+    env: bunEnv,
   });
-  const [, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
+  expect(out).toContain("installed BaR@0.0.2");
   expect(code).toBe(0);
   expect(tarballHits.length).toBe(3);
   // Retry-After: 1 → at least ~1s before the second attempt

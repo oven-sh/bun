@@ -26,7 +26,6 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/MarkedVector.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <optional>
 #include <utility>
@@ -113,8 +112,7 @@ struct QueuingStrategyDict {
     JSC::JSValue size; // callable or empty (empty ⇒ the default `() => 1`)
 };
 
-// WebStreamsMisc.cpp — shared utilities, promise helpers, dictionary conversion, and the ONE
-// sanctioned catch helper.
+// WebStreamsMisc.cpp — shared utilities, promise helpers, dictionary conversion.
 
 // spec ExtractHighWaterMark(strategy, defaultHWM). Throws RangeError (NaN / negative).
 double extractHighWaterMark(JSC::JSGlobalObject*, const QueuingStrategyDict&, double defaultHWM); // userJS: no — WebStreamsMisc.cpp
@@ -151,7 +149,22 @@ JSC::JSPromise* promiseFulfilledWith(JSC::JSGlobalObject*, JSC::JSValue); // use
 JSC::JSBoundFunction* createStreamsBoundHandler(JSC::JSGlobalObject*, JSC::JSFunction* target, JSC::JSCell* context);
 // obj.name(...args); returns the EMPTY value when `name` is not callable. userJS: yes — WebStreamsMisc.cpp
 JSC::JSValue invokeOptionalMethod(JSC::JSGlobalObject*, JSC::JSObject*, const JSC::Identifier& name, const JSC::MarkedArgumentBuffer&);
-// error.code === code, swallowing any lookup exception. userJS: yes — WebStreamsMisc.cpp
+// BOUNDARY helper for an algorithm whose contract is "returns a promise" (pull/cancel/write/
+// transform algorithms, promise-returning API methods): the exception it is about to return with
+// becomes the rejected promise it returns instead. nullptr only with a VM termination pending.
+JSC::JSPromise* promiseRejectedWithPendingException(JSC::JSGlobalObject*, JSC::ThrowScope&); // userJS: no — WebStreamsMisc.cpp
+// WebIDL "invoke a callback function" whose declared return type is Promise<T> (underlying
+// source/sink/transformer methods): the callback's completion is converted HERE, per WebIDL — a
+// throw becomes a rejected promise, any other result a resolved one — because the spec reacts to
+// that promise (e.g. "upon rejection of pullPromise, error the controller"); the throw must not
+// escape to whichever API call happened to trigger the algorithm.
+// nullptr only with a VM termination pending. userJS: yes — WebStreamsMisc.cpp
+JSC::JSPromise* invokeCallbackReturningPromise(JSC::JSGlobalObject*, JSC::JSObject* callback, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer&);
+// Same conversion, minus wrappers the internal reaction machinery does not need: nullptr with
+// nothing pending for a synchronous non-thenable result (the caller runs its fulfilment step
+// inline), and a vanilla JSPromise returned unwrapped. userJS: yes — WebStreamsMisc.cpp
+JSC::JSPromise* invokeCallbackReturningPromiseFast(JSC::JSGlobalObject*, JSC::JSObject* callback, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer&);
+// error.code === code (a `code` getter can throw). userJS: yes — WebStreamsMisc.cpp
 bool errorCodeIs(JSC::JSGlobalObject*, JSC::JSValue error, WTF::ASCIILiteral code);
 JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
 // "a promise rejected with r" (rejection never does a `then` lookup)
@@ -183,11 +196,15 @@ void rejectStreamClosedPromise(JSC::VM&, JSWritableStream*, JSC::JSValue error);
 void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — ReadableStreamOperations.cpp
 void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
 
-// THE ONE SANCTIONED CATCH of the subsystem. Returns the thrown value after
-// clearExceptionExceptTermination(); returns the EMPTY JSValue if the exception is a VM
-// termination (which the caller must propagate, never consume). Never call bare
-// clearException() anywhere in the subsystem.
-JSC::JSValue takeAbruptCompletion(JSC::JSGlobalObject*, JSC::TopExceptionScope&); // userJS: no — WebStreamsMisc.cpp
+// Exceptions propagate (ThrowScope + RETURN_IF_EXCEPTION) through every helper in this
+// subsystem. They are converted into a value only at a BOUNDARY: a host function entered from a
+// promise reaction / microtask / the event loop (nothing above it would receive the exception),
+// an operation whose contract is "returns a promise" (WebIDL: a throw is a rejection), or a spec
+// step that literally reads the completion value ("if result is an abrupt completion, error the
+// stream with result.[[Value]]"). This is the primitive those places use: it clears and returns
+// the pending exception's value; for a VM termination it returns the EMPTY value and leaves the
+// termination pending — the caller returns (RETURN_IF_EXCEPTION) and never runs anything over it.
+JSC::JSValue takeException(JSC::ExceptionScope&); // userJS: no — WebStreamsMisc.cpp
 
 // Joins any pending bytes, strips a single leading BOM per stream (ignoreBOM=false), holds
 // back a trailing incomplete sequence (unless `flush`), and decodes the remaining span via
@@ -356,7 +373,7 @@ void readableByteStreamControllerCommitPullIntoDescriptor(JSC::JSGlobalObject*, 
 JSC::JSArrayBufferView* readableByteStreamControllerConvertPullIntoDescriptor(JSC::JSGlobalObject*, JSPullIntoDescriptor*); // userJS: no (intrinsic view construction only) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSArrayBufferView* chunk); // userJS: yes; throws — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueueChunkToQueue(JSReadableByteStreamController*, RefPtr<JSC::ArrayBuffer>&&, size_t byteOffset, size_t byteLength); // userJS: no — JSReadableByteStreamController.cpp
-void readableByteStreamControllerEnqueueClonedChunkToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::ArrayBuffer&, size_t byteOffset, size_t byteLength); // userJS: yes (a takeAbruptCompletion catch site; errors the controller then rethrows) — JSReadableByteStreamController.cpp
+void readableByteStreamControllerEnqueueClonedChunkToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::ArrayBuffer&, size_t byteOffset, size_t byteLength); // userJS: yes (per spec a clone failure errors the controller and is rethrown) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueueDetachedPullIntoToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSPullIntoDescriptor*); // userJS: yes; throws — JSReadableByteStreamController.cpp
 void readableByteStreamControllerError(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSValue error); // userJS: yes — JSReadableByteStreamController.cpp
 void readableByteStreamControllerFillHeadPullIntoDescriptor(JSReadableByteStreamController*, size_t size, JSPullIntoDescriptor*); // userJS: no — JSReadableByteStreamController.cpp
@@ -435,8 +452,7 @@ void writableStreamDefaultControllerClose(JSC::JSGlobalObject*, JSWritableStream
 void writableStreamDefaultControllerError(JSC::JSGlobalObject*, JSWritableStreamDefaultController*, JSC::JSValue error); // userJS: yes — JSWritableStreamDefaultController.cpp
 void writableStreamDefaultControllerErrorIfNeeded(JSC::JSGlobalObject*, JSWritableStreamDefaultController*, JSC::JSValue error); // userJS: yes — JSWritableStreamDefaultController.cpp
 bool writableStreamDefaultControllerGetBackpressure(JSWritableStreamDefaultController*); // userJS: no — JSWritableStreamDefaultController.cpp
-// Calls the user size(); a sanctioned takeAbruptCompletion catch site (converts the abrupt
-// completion into ErrorIfNeeded and returns 1 — it NEVER throws out).
+// Calls the user size(); per spec an abrupt completion becomes ErrorIfNeeded and the size is 1.
 double writableStreamDefaultControllerGetChunkSize(JSC::JSGlobalObject*, JSWritableStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSWritableStreamDefaultController.cpp
 double writableStreamDefaultControllerGetDesiredSize(JSWritableStreamDefaultController*); // userJS: no — JSWritableStreamDefaultController.cpp
 void writableStreamDefaultControllerProcessClose(JSC::JSGlobalObject*, JSWritableStreamDefaultController*); // userJS: yes (user close algorithm) — JSWritableStreamDefaultController.cpp
@@ -465,8 +481,7 @@ JSC::JSPromise* transformStreamDefaultSourcePullAlgorithm(JSC::JSGlobalObject*, 
 // JSTransformStreamDefaultController.cpp
 
 void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultController*); // userJS: no — JSTransformStreamDefaultController.cpp
-// A sanctioned takeAbruptCompletion catch site (catches the readable-side enqueue's abrupt
-// completion, errors the writable, then throws stream.[[readable]].[[storedError]]).
+// Per spec, a readable-side enqueue failure errors the writable and throws [[readable]].[[storedError]].
 void transformStreamDefaultControllerEnqueue(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes; throws — JSTransformStreamDefaultController.cpp
 void nativeTransformReleaseState(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
 // Performs a release ClearAlgorithms deferred, once nothing holds the native state any more.

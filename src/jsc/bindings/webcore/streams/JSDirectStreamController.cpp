@@ -25,7 +25,6 @@
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -428,11 +427,10 @@ static void closeDirectSinkForError(JSC::VM& vm, JSGlobalObject* globalObject, J
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The Bun-only `underlyingSource.close(reason)` lifecycle callback; the call is swallowed.
-static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue reason)
+// The Bun-only `underlyingSource.close(reason)` lifecycle callback.
+static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* underlyingSource, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* underlyingSource = controller->m_underlyingSource.get();
     if (!underlyingSource)
         return;
     JSValue closeFunction = underlyingSource->get(globalObject, builtinNames(vm).closePublicName());
@@ -440,38 +438,23 @@ static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject,
     auto callData = JSC::getCallData(closeFunction);
     if (callData.type == CallData::Type::None)
         return;
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     MarkedArgumentBuffer args;
     args.append(reason);
     JSC::call(globalObject, closeFunction, callData, underlyingSource, args);
-    if (catchScope.exception()) [[unlikely]] {
-        if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
-            return;
-    }
+    RELEASE_AND_RETURN(scope, );
 }
 
+// Errors the stream with `error`: rejects the pending read, errors the stream, tears the sink down,
+// then runs the user's close(error) hook. The stream is fully errored before anything that can throw
+// (the sink teardown, the hook) runs, so a throw from those propagates with the stream consistent.
 void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     const bool wasClosed = m_closed;
-    if (!wasClosed) {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        closeDirectSinkForError(vm, globalObject, this, error);
-        if (catchScope.exception()) [[unlikely]] {
-            if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
-                return;
-        }
-    }
     m_closed = true;
-
-    // onClose() already ran the user's close() if the sink was closed (end() arming the
-    // final chunk leaves the stream Readable), so running it again would double it.
-    if (!wasClosed) {
-        callUnderlyingSourceClose(vm, globalObject, this, error);
-        RETURN_IF_EXCEPTION(scope, );
-    }
+    JSObject* underlyingSource = m_underlyingSource.get();
     directStreamControllerClearSource(this);
 
     if (auto* pendingRead = m_pendingRead.get()) {
@@ -479,15 +462,27 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
         rejectPromise(globalObject, pendingRead, error);
         RETURN_IF_EXCEPTION(scope, );
     }
-
     auto* stream = m_stream.get();
-    if (stream && stream->m_state == ReadableStreamState::Readable)
-        RELEASE_AND_RETURN(scope, readableStreamError(globalObject, stream, error));
+    if (stream && stream->m_state == ReadableStreamState::Readable) {
+        readableStreamError(globalObject, stream, error);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+
+    // onClose() already closed the sink and ran the user's close() if the controller was closed
+    // (end() arming the final chunk leaves the stream Readable), so doing it again would double it.
+    if (wasClosed)
+        return;
+    closeDirectSinkForError(vm, globalObject, this, error);
+    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, callUnderlyingSourceClose(vm, globalObject, underlyingSource, error));
 }
 
 // Invokes the user's pull() once, bracketed by m_pullInFlight (the spec sets [[pulling]]
 // before invoking pullAlgorithm); left set only when a promise's settlement reaction will
-// clear it. Returns the synchronous abrupt completion (empty on normal return/termination).
+// clear it. This is the callback boundary for pull(): its synchronous throw is returned as a
+// value (the caller errors the stream with it and rejects the read), a returned promise's
+// rejection goes to onDirectPullRejected. Empty on normal return, and on VM termination
+// (which is left pending).
 static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -495,18 +490,13 @@ static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirec
     JSObject* pullFunction = controller->m_pull.get();
     JSObject* underlyingSource = controller->m_underlyingSource.get();
     controller->m_pullInFlight = true;
-    JSValue result;
-    JSValue abrupt;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        MarkedArgumentBuffer args;
-        args.append(controller);
-        result = JSC::call(globalObject, pullFunction ? JSValue(pullFunction) : jsUndefined(), underlyingSource, args, "underlyingSource.pull is not a function"_s);
-        if (catchScope.exception()) [[unlikely]]
-            abrupt = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!abrupt.isEmpty()) {
+    MarkedArgumentBuffer args;
+    args.append(controller);
+    JSValue result = JSC::call(globalObject, pullFunction ? JSValue(pullFunction) : jsUndefined(), underlyingSource, args, "underlyingSource.pull is not a function"_s);
+    if (scope.exception()) [[unlikely]] {
         controller->m_pullInFlight = false;
+        JSValue abrupt = takeException(scope);
+        RETURN_IF_EXCEPTION(scope, {});
         return abrupt;
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
@@ -656,26 +646,20 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     // No "Closing" stream state exists: m_closed set here is what blocks re-entry.
     m_closed = true;
 
-    callUnderlyingSourceClose(vm, globalObject, this, reason);
+    callUnderlyingSourceClose(vm, globalObject, m_underlyingSource.get(), reason);
     RETURN_IF_EXCEPTION(scope, );
     directStreamControllerClearSource(this);
 
-    JSValue flushed;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        flushed = endDirectSink(vm, globalObject, this);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (!thrown)
-                return;
-            if (auto* pendingRead = m_pendingRead.get()) {
-                m_pendingRead.clear();
-                rejectPromise(globalObject, pendingRead, thrown);
-                return;
-            }
-            throwException(globalObject, scope, thrown);
+    JSValue flushed = endDirectSink(vm, globalObject, this);
+    if (scope.exception()) [[unlikely]] {
+        // A read waiting on this close owns the end() failure; with none, the closer does.
+        auto* pendingRead = m_pendingRead.get();
+        if (!pendingRead)
             return;
-        }
+        JSValue thrown = takeException(scope);
+        RETURN_IF_EXCEPTION(scope, );
+        m_pendingRead.clear();
+        RELEASE_AND_RETURN(scope, rejectPromise(globalObject, pendingRead, thrown));
     }
 
     if (byteLengthOf(flushed)) {
@@ -853,24 +837,23 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullRejected, (JSGlobalObje
     return JSValue::encode(jsUndefined());
 }
 
+// BOUNDARY: runs from the end-of-tick queue with nothing above it. A throw from onFlush (e.g. a
+// read request's chunkSteps) errors the stream; if erroring the stream throws too, that is left
+// for the tick runner to report.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(1));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
     controller->m_endOfTickFlushArmed = false;
     if (controller->m_closed || !controller->m_stream)
         return JSValue::encode(jsUndefined());
-    // onFlush may throw (e.g. a read request's chunkSteps threw). This is a boundary:
-    // convert the abrupt completion into the direct controller's error action so the
-    // stream errors instead of surfacing as an uncaught nextTick exception. If erroring
-    // the stream itself throws, that is left for the tick runner to report.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     controller->onFlush(globalObject);
     if (scope.exception()) [[unlikely]] {
-        JSC::JSValue error = takeAbruptCompletion(globalObject, scope);
-        RETURN_IF_EXCEPTION(scope, {}); // termination is left pending
+        JSC::JSValue error = takeException(scope);
+        RETURN_IF_EXCEPTION(scope, {});
         controller->handleError(globalObject, error);
         RETURN_IF_EXCEPTION(scope, {});
     }

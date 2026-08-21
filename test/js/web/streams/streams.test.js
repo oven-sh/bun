@@ -543,6 +543,22 @@ it("ReadableStream (direct)", async () => {
   expect((await reader.read()).done).toBe(true);
 });
 
+it("ReadableStream (direct): an underlyingSource close() hook that throws is not swallowed", async () => {
+  // close() runs when the controller closes; its exception propagates out of controller.close()
+  // (here: out of pull), which errors the stream like any other pull() throw.
+  const stream = new ReadableStream({
+    type: "direct",
+    pull(controller) {
+      controller.write("hello");
+      controller.close();
+    },
+    close() {
+      throw new Error("close hook threw");
+    },
+  });
+  await expect(new Response(stream).text()).rejects.toThrow("close hook threw");
+});
+
 it("ReadableStream (bytes)", async () => {
   var stream = new ReadableStream({
     start(controller) {

@@ -36,7 +36,6 @@
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringBuilder.h>
@@ -828,22 +827,14 @@ JSValue readableStreamIntoArray(JSGlobalObject* globalObject, WebCore::JSReadabl
     const ControllerKind controllerKind = stream->m_controllerKind;
     bool isQueueBacked = controllerKind == ControllerKind::Default || controllerKind == ControllerKind::Byte;
     if (!isQueueBacked) {
-        // Direct (and controller-less) streams keep the generic readMany loop.
+        // Direct (and controller-less) streams keep the generic readMany loop. readMany() throws
+        // synchronously on an already-errored stream; this returns a promise, so that is a rejection.
+        JSValue many = readableStreamDefaultReaderReadMany(globalObject, reader);
         JSValue result;
-        {
-            // readMany() throws synchronously on an already-errored stream; convert every
-            // synchronous abrupt completion to a rejection.
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            JSValue many = readableStreamDefaultReaderReadMany(globalObject, reader);
-            if (!catchScope.exception())
-                result = intoArrayLoop(vm, globalObject, reader, chunks, many);
-            if (catchScope.exception()) {
-                JSValue error = takeAbruptCompletion(globalObject, catchScope);
-                if (error.isEmpty())
-                    return {};
-                RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-            }
-        }
+        if (!scope.exception())
+            result = intoArrayLoop(vm, globalObject, reader, chunks, many);
+        if (scope.exception())
+            RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
         if (auto* promise = dynamicDowncast<JSPromise>(result))
             return promise;
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
@@ -851,19 +842,9 @@ JSValue readableStreamIntoArray(JSGlobalObject* globalObject, WebCore::JSReadabl
     // Queue-backed streams: one persistent op {reader, chunks, result promise} carries the
     // pump across every read, so a pending hop costs one reaction registration and nothing else.
     JSPromise* pendingRead = nullptr;
-    JSValue thrown;
-    ConsumerFillStep step = ConsumerFillStep::Done;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        step = readableStreamDefaultReaderFillFromQueue(globalObject, reader, chunks, &pendingRead);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return {};
-        }
-    }
-    if (!thrown.isEmpty()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    ConsumerFillStep step = readableStreamDefaultReaderFillFromQueue(globalObject, reader, chunks, &pendingRead);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
     if (step == ConsumerFillStep::Done) {
         readableStreamDefaultReaderRelease(globalObject, reader);
         RETURN_IF_EXCEPTION(scope, {});
@@ -982,18 +963,10 @@ static JSValue consumeDirectStream(JSGlobalObject* globalObject, WebCore::JSRead
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result;
-    {
-        // Today's function is async: every synchronous abrupt completion becomes a rejection.
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        result = consumeDirectStreamBody(vm, globalObject, stream, kind);
-        if (catchScope.exception()) {
-            JSValue error = takeAbruptCompletion(globalObject, catchScope);
-            if (error.isEmpty())
-                return {};
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-        }
-    }
+    // This returns a promise: every synchronous abrupt completion becomes its rejection.
+    JSValue result = consumeDirectStreamBody(vm, globalObject, stream, kind);
+    if (scope.exception())
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
     if (auto* promise = dynamicDowncast<JSPromise>(result))
         return promise;
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
@@ -1102,19 +1075,16 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
     installOneShotMethods(vm, globalObject, sink);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue firstPull;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        firstPull = oneShotCallPull(vm, globalObject, pullFunction, sink);
-        if (catchScope.exception()) {
-            JSValue error = takeAbruptCompletion(globalObject, catchScope);
-            if (error.isEmpty())
-                return {};
-            stream->m_lockedWithoutReader = false;
-            readableStreamError(globalObject, stream, error);
-            RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-        }
+    // The callback boundary for the direct source's pull(): a synchronous throw errors the stream and
+    // rejects the returned promise; a returned promise's rejection is handled by its reaction.
+    JSValue firstPull = oneShotCallPull(vm, globalObject, pullFunction, sink);
+    if (scope.exception()) {
+        JSValue error = takeException(scope);
+        RETURN_IF_EXCEPTION(scope, {});
+        stream->m_lockedWithoutReader = false;
+        readableStreamError(globalObject, stream, error);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {
         auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
@@ -1191,22 +1161,12 @@ static JSValue convertChunkArrayPromise(JSC::VM& vm, JSGlobalObject* globalObjec
         return arrayResult;
     auto* runtime = JSStreamsRuntime::from(globalObject);
     if (arrayPromise->status() == JSPromise::Status::Fulfilled) {
-        JSValue converted;
-        JSValue thrown;
-        {
-            // Text consumers are promise-returning: a synchronous conversion failure rejects.
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            converted = convertChunks(globalObject, arrayPromise->result(), kind);
-            if (catchScope.exception()) [[unlikely]] {
-                thrown = takeAbruptCompletion(globalObject, catchScope);
-                if (thrown.isEmpty()) [[unlikely]]
-                    return {};
-            }
-        }
-        if (!thrown.isEmpty()) [[unlikely]] {
+        JSValue converted = convertChunks(globalObject, arrayPromise->result(), kind);
+        if (scope.exception()) [[unlikely]] {
+            // Text consumers are promise-returning: a synchronous conversion failure rejects. The
+            // buffer consumers have always thrown it synchronously.
             if (kind == ChunkArrayConversion::Text)
-                RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-            throwException(globalObject, scope, thrown);
+                RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
             return {};
         }
         releaseInternalChunkArray(globalObject, arrayPromise->result());
@@ -1289,19 +1249,13 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
         return textResult;
     auto* runtime = JSStreamsRuntime::from(globalObject);
     if (textPromise->status() == JSPromise::Status::Fulfilled) {
+        // .json() returns a promise: a parse failure is its rejection.
+        WTF::String text = textPromise->result().toWTFString(globalObject);
         JSValue parsed;
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            WTF::String text = textPromise->result().toWTFString(globalObject);
-            if (!catchScope.exception())
-                parsed = JSONParseWithException(globalObject, text);
-            if (catchScope.exception()) {
-                JSValue error = takeAbruptCompletion(globalObject, catchScope);
-                if (error.isEmpty())
-                    return {};
-                RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-            }
-        }
+        if (!scope.exception())
+            parsed = JSONParseWithException(globalObject, text);
+        if (scope.exception())
+            RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
         auto* fulfilled = JSPromise::create(vm, globalObject->promiseStructure());
         fulfilled->fulfill(vm, parsed);
         return fulfilled;
@@ -1572,88 +1526,59 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadManyFulfilled, (JSGl
 }
 
 // The persistent-op pump: settle the op's result promise with an error, releasing the reader.
-static void intoArrayFinishWithError(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStreamDefaultReader* reader, JSPromise* __restrict resultPromise, JSValue error)
+// Settle, then release the reader (the original `finally { reader.releaseLock() }`).
+static void intoArraySettle(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStreamDefaultReader* reader, JSPromise* resultPromise, JSValue chunks, JSValue error)
 {
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        if (reader->m_stream)
-            Bun::WebStreams::readableStreamDefaultReaderRelease(globalObject, reader);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue releaseError = takeAbruptCompletion(globalObject, catchScope);
-            if (releaseError.isEmpty())
-                return;
-        }
-    }
-    resultPromise->reject(vm, error);
+    if (error)
+        resultPromise->reject(vm, error);
+    else
+        resultPromise->fulfill(vm, chunks);
+    if (reader->m_stream)
+        Bun::WebStreams::readableStreamDefaultReaderRelease(globalObject, reader);
 }
 
+// One step of the queue-backed pump: consume the read result, refill from the queue; true = done.
+static bool intoArrayStep(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamIntoArrayOperation* op, JSValue readResult, JSPromise*& pendingRead)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!readResult.isObject()) [[unlikely]]
+        return true;
+    JSValue done = asObject(readResult)->get(globalObject, vm.propertyNames->done);
+    RETURN_IF_EXCEPTION(scope, true);
+    JSValue value = asObject(readResult)->get(globalObject, vm.propertyNames->value);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (done.toBoolean(globalObject))
+        return true;
+    auto* chunks = op->m_chunks.get();
+    chunks->push(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, true);
+    auto step = Bun::WebStreams::readableStreamDefaultReaderFillFromQueue(globalObject, op->m_reader.get(), chunks, &pendingRead);
+    RETURN_IF_EXCEPTION(scope, true);
+    return step == Bun::WebStreams::ConsumerFillStep::Done;
+}
+
+// BOUNDARY: the read's fulfilment reaction. A throw while consuming the result (a `done`/`value`
+// getter, the refill, releasing the reader) is the operation's rejection.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(callFrame->uncheckedArgument(1));
     auto* reader = op->m_reader.get();
-    auto* chunks = op->m_chunks.get();
     auto* resultPromise = op->m_result.get();
 
-    JSValue thrown;
-    bool finished = false;
     JSPromise* pendingRead = nullptr;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        do {
-            JSValue readResult = callFrame->argument(0);
-            if (!readResult.isObject()) [[unlikely]] {
-                finished = true;
-                break;
-            }
-            JSValue done = asObject(readResult)->get(globalObject, vm.propertyNames->done);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            JSValue value = asObject(readResult)->get(globalObject, vm.propertyNames->value);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            if (done.toBoolean(globalObject)) {
-                finished = true;
-                break;
-            }
-            chunks->push(globalObject, value);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            auto step = Bun::WebStreams::readableStreamDefaultReaderFillFromQueue(globalObject, reader, chunks, &pendingRead);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            if (step == Bun::WebStreams::ConsumerFillStep::Done)
-                finished = true;
-        } while (false);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return JSValue::encode(jsUndefined());
-        }
+    bool finished = intoArrayStep(vm, globalObject, op, callFrame->argument(0), pendingRead);
+    if (scope.exception()) [[unlikely]] {
+        JSValue thrown = takeException(scope);
+        RETURN_IF_EXCEPTION(scope, {});
+        intoArraySettle(vm, globalObject, reader, resultPromise, {}, thrown);
+    } else if (finished)
+        intoArraySettle(vm, globalObject, reader, resultPromise, op->m_chunks.get(), {});
+    else {
+        auto* runtime = JSStreamsRuntime::from(globalObject);
+        pendingRead->performPromiseThenWithContext(vm, globalObject, runtime->onIntoArrayReadFulfilled(), runtime->onIntoArrayReadRejected(), jsUndefined(), op);
     }
-    if (!thrown.isEmpty()) [[unlikely]] {
-        intoArrayFinishWithError(vm, globalObject, reader, resultPromise, thrown);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
-    }
-    if (finished) {
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            if (reader->m_stream)
-                Bun::WebStreams::readableStreamDefaultReaderRelease(globalObject, reader);
-            if (catchScope.exception()) [[unlikely]] {
-                JSValue releaseError = takeAbruptCompletion(globalObject, catchScope);
-                if (releaseError.isEmpty())
-                    return JSValue::encode(jsUndefined());
-                resultPromise->reject(vm, releaseError);
-                RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
-            }
-        }
-        resultPromise->fulfill(vm, chunks);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
-    }
-    auto* runtime = JSStreamsRuntime::from(globalObject);
-    pendingRead->performPromiseThenWithContext(vm, globalObject, runtime->onIntoArrayReadFulfilled(), runtime->onIntoArrayReadRejected(), jsUndefined(), op);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1663,8 +1588,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadRejected, (JSGlobalO
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     const auto* op = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(callFrame->uncheckedArgument(1));
-    intoArrayFinishWithError(vm, globalObject, op->m_reader.get(), op->m_result.get(), callFrame->argument(0));
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    intoArraySettle(vm, globalObject, op->m_reader.get(), op->m_result.get(), {}, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadManyRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))

@@ -31,7 +31,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/MicrotaskQueue.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
 
 namespace Bun {
@@ -887,17 +886,11 @@ JSPromise* fromIterablePullAlgorithm(JSGlobalObject* globalObject, JSReadableStr
     const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
     IterationRecord iteratorRecord { context->m_iterator.get(), context->m_nextMethod.get() };
 
-    JSValue nextResult;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        nextResult = iteratorNextExported(globalObject, iteratorRecord);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-        }
-    }
+    // Spec steps 3-4: "Let nextResult be IteratorNext(iteratorRecord). If nextResult is an abrupt
+    // completion, return a promise rejected with nextResult.[[Value]]."
+    JSValue nextResult = iteratorNextExported(globalObject, iteratorRecord);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
     auto* nextPromise = promiseResolvedWith(globalObject, nextResult);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
@@ -915,17 +908,11 @@ JSPromise* fromIterableCancelAlgorithm(JSGlobalObject* globalObject, JSReadableS
     const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
     JSObject* iterator = context->m_iterator.get();
 
-    JSValue returnMethod;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        returnMethod = iterator->get(globalObject, vm.propertyNames->returnKeyword);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-        }
-    }
+    // Spec steps 3-4 / 6-7: GetMethod(iterator, "return") and Call(returnMethod, ...) are completion
+    // records; an abrupt one is "return a promise rejected with [[Value]]".
+    JSValue returnMethod = iterator->get(globalObject, vm.propertyNames->returnKeyword);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
     if (returnMethod.isUndefinedOrNull())
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     if (!returnMethod.isCallable()) {
@@ -934,21 +921,13 @@ JSPromise* fromIterableCancelAlgorithm(JSGlobalObject* globalObject, JSReadableS
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, notCallable));
     }
 
-    JSValue returnResult;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = JSC::getCallData(returnMethod);
-        MarkedArgumentBuffer args;
-        args.append(reason);
-        ASSERT(!args.hasOverflowed());
-        returnResult = JSC::call(globalObject, returnMethod, callData, iterator, args);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-        }
-    }
+    auto callData = JSC::getCallData(returnMethod);
+    MarkedArgumentBuffer args;
+    args.append(reason);
+    ASSERT(!args.hasOverflowed());
+    JSValue returnResult = JSC::call(globalObject, returnMethod, callData, iterator, args);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
     auto* returnPromise = promiseResolvedWith(globalObject, returnResult);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
@@ -1020,18 +999,10 @@ JSPromise* textDecodePullAlgorithm(JSGlobalObject* globalObject, JSReadableStrea
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
     auto* readRequest = WebCore::JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::TextDecode, controller);
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        readableStreamDefaultReaderRead(globalObject, reader, readRequest);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-        }
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    // A pull algorithm returns a promise: a throw from the read is its rejection.
+    readableStreamDefaultReaderRead(globalObject, reader, readRequest);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
@@ -1341,14 +1312,13 @@ static EncodedJSValue byteTeeChunkStepsMicrotask(JSGlobalObject* globalObject, J
     auto* chunk1 = uncheckedDowncast<JSArrayBufferView>(chunk);
     JSArrayBufferView* chunk2 = chunk1;
     if (!teeState->m_canceled1 && !teeState->m_canceled2) {
-        JSUint8Array* cloneResult = nullptr;
+        // Spec chunk steps 3.2: "If cloneResult is an abrupt completion" error both branches and
+        // resolve cancelPromise with ReadableStreamCancel(stream, cloneResult.[[Value]]).
+        JSUint8Array* cloneResult = cloneAsUint8Array(globalObject, chunk1);
         {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            cloneResult = cloneAsUint8Array(globalObject, chunk1);
-            if (catchScope.exception()) [[unlikely]] {
-                JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-                if (thrown.isEmpty())
-                    return {};
+            if (scope.exception()) [[unlikely]] {
+                JSValue thrown = takeException(scope);
+                RETURN_IF_EXCEPTION(scope, {});
                 if (controller1) {
                     readableByteStreamControllerError(globalObject, controller1, thrown);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1404,14 +1374,12 @@ static EncodedJSValue byteTeeReadIntoChunkStepsMicrotask(JSGlobalObject* globalO
     bool otherCanceled = forBranch2 ? teeState->m_canceled1 : teeState->m_canceled2;
 
     if (!otherCanceled) {
-        JSUint8Array* clonedChunk = nullptr;
+        // Same spec step as the default-reader chunk steps: a clone failure errors both branches.
+        JSUint8Array* clonedChunk = cloneAsUint8Array(globalObject, chunk);
         {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            clonedChunk = cloneAsUint8Array(globalObject, chunk);
-            if (catchScope.exception()) [[unlikely]] {
-                JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-                if (thrown.isEmpty())
-                    return {};
+            if (scope.exception()) [[unlikely]] {
+                JSValue thrown = takeException(scope);
+                RETURN_IF_EXCEPTION(scope, {});
                 if (byobController) {
                     readableByteStreamControllerError(globalObject, byobController, thrown);
                     RETURN_IF_EXCEPTION(scope, {});

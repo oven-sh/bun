@@ -19,7 +19,6 @@
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/TypedArrayType.h>
 #include <cmath>
 
@@ -396,24 +395,56 @@ JSValue invokeOptionalMethod(JSGlobalObject* globalObject, JSObject* object, con
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, object, args, "method is not a function"_s));
 }
 
+JSPromise* promiseRejectedWithPendingException(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    JSValue thrown = takeException(scope);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return promiseRejectedWith(globalObject, thrown);
+}
+
+JSPromise* invokeCallbackReturningPromise(JSGlobalObject* globalObject, JSObject* callback, JSValue thisValue, const MarkedArgumentBuffer& args)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto callData = JSC::getCallData(callback);
+    ASSERT(callData.type != JSC::CallData::Type::None);
+    JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
+    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+}
+
+JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSObject* callback, JSValue thisValue, const MarkedArgumentBuffer& args)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto callData = JSC::getCallData(callback);
+    ASSERT(callData.type != JSC::CallData::Type::None);
+    JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
+    if (!result.isObject()) [[likely]]
+        return nullptr;
+    // A vanilla JSPromise with an unpatched .then needs no wrapper: callers use
+    // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
+    // thenable adoption is unobservable. Subclasses / patched .then fall through.
+    if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
+        return resultPromise;
+    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+}
+
 bool errorCodeIs(JSGlobalObject* globalObject, JSValue error, ASCIILiteral code)
 {
     auto& vm = getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!error || !error.isObject())
         return false;
-    JSValue codeValue = asObject(error)->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).codePublicName());
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return false;
-    }
-    if (!codeValue || !codeValue.isString())
+    JSValue codeValue = asObject(error)->get(globalObject, WebCore::builtinNames(vm).codePublicName());
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!codeValue.isString())
         return false;
     String codeString = asString(codeValue)->value(globalObject);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return false;
-    }
+    RETURN_IF_EXCEPTION(scope, false);
     return codeString == StringView(code);
 }
 
@@ -562,12 +593,12 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
 
 // The ONE sanctioned completion-record catch: the spec's "interpreting X as a completion
 // record" sites only. Empty return = a VM termination the caller must propagate.
-JSValue takeAbruptCompletion(JSGlobalObject*, TopExceptionScope& catchScope)
+JSValue takeException(JSC::ExceptionScope& scope)
 {
-    const JSC::Exception* exception = catchScope.exception();
+    JSC::Exception* exception = scope.exception();
     ASSERT(exception);
     JSValue thrown = exception->value();
-    if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+    if (!scope.tryClearException()) [[unlikely]]
         return {};
     return thrown;
 }

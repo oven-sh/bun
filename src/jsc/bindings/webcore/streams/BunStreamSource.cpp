@@ -39,7 +39,6 @@
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
@@ -282,23 +281,6 @@ static void startJSSinkController(JSC::VM& vm, JSGlobalObject* globalObject, JSO
     throwTypeError(globalObject, scope, "Unknown direct controller. This is a bug in Bun."_s);
 }
 
-// ReadableStream.prototype.cancel semantics; the result promise is only ever markAsHandled'd.
-static void publicStreamCancelIgnoringResult(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
-{
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSPromise* promise = nullptr;
-    if (isReadableStreamLocked(stream))
-        promise = promiseRejectedWith(globalObject, createTypeError(globalObject, "ReadableStream is locked"_s));
-    else
-        promise = readableStreamCancel(globalObject, stream, reason);
-    if (catchScope.exception()) [[unlikely]] {
-        takeAbruptCompletion(globalObject, catchScope);
-        return;
-    }
-    if (promise)
-        markPromiseAsHandled(vm, promise);
-}
-
 static void clearStreamControllerSlots(JSReadableStream* stream)
 {
     stream->m_controller.clear();
@@ -343,46 +325,40 @@ static bool nativeCloserFlag(JSC::VM& vm, JSGlobalObject* globalObject, JSNative
     return flag.toBoolean(globalObject);
 }
 
-// Terminal severing: the handle's callback slots, the handle edge, and the pending view.
+// Terminal severing: the handle edge, the pending view, and the handle's callback slots.
 static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto& vm = getVM(globalObject);
-    if (JSObject* handle = adapter->handle()) {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        PutPropertySlot onCloseSlot(handle, false);
-        handle->methodTable()->put(handle, globalObject, builtinNames(vm).onClosePublicName(), jsUndefined(), onCloseSlot);
-        if (!catchScope.exception()) {
-            PutPropertySlot onDrainSlot(handle, false);
-            handle->methodTable()->put(handle, globalObject, builtinNames(vm).onDrainPublicName(), jsUndefined(), onDrainSlot);
-        }
-        if (catchScope.exception()) [[unlikely]] {
-            if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
-                return;
-        }
-    }
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* handle = adapter->handle();
     adapter->clearHandle(vm);
     adapter->clearPendingView(vm);
+    if (!handle)
+        return;
+    PutPropertySlot onCloseSlot(handle, false);
+    handle->methodTable()->put(handle, globalObject, builtinNames(vm).onClosePublicName(), jsUndefined(), onCloseSlot);
+    RETURN_IF_EXCEPTION(scope, );
+    PutPropertySlot onDrainSlot(handle, false);
+    handle->methodTable()->put(handle, globalObject, builtinNames(vm).onDrainPublicName(), jsUndefined(), onDrainSlot);
+    RELEASE_AND_RETURN(scope, );
 }
 
-// The queued callClose job body: close the controller if the consumer is still alive, then sever.
+// The queued callClose job body (run from its own microtask, which reports what this throws):
+// sever, then close the controller if the consumer is still alive.
 static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = adapter->controller();
     adapter->clearController(vm);
-    if (controller && readableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        if (adapter->m_textMode)
-            nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, {}, /* flush */ true);
-        if (!catchScope.exception())
-            readableStreamDefaultControllerClose(globalObject, controller);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return;
-            Bun__reportError(globalObject, JSValue::encode(thrown));
-        }
-    }
     nativeSourceSever(globalObject, adapter);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!controller || !readableStreamDefaultControllerCanCloseOrEnqueue(controller))
+        return;
+    if (adapter->m_textMode) {
+        nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, {}, /* flush */ true);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    RELEASE_AND_RETURN(scope, readableStreamDefaultControllerClose(globalObject, controller));
 }
 
 static void scheduleNativeSourceCallClose(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
@@ -671,19 +647,10 @@ JSPromise* nativeSourcePull(JSGlobalObject* globalObject, JSReadableStreamDefaul
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-    JSValue thrown;
-    JSPromise* asyncResult = nullptr;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        asyncResult = nativeSourcePullImpl(vm, globalObject, adapter, controller);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-        }
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    // A pull algorithm returns a promise: a throw is its rejection.
+    JSPromise* asyncResult = nativeSourcePullImpl(vm, globalObject, adapter, controller);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
     if (asyncResult)
         return asyncResult;
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -694,23 +661,15 @@ JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefa
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        adapter->clearPendingView(vm);
-        adapter->clearController(vm);
-        if (JSObject* handle = adapter->handle())
-            invokeNativeHandleCancel(vm, globalObject, handle, reason);
-        if (!catchScope.exception())
-            nativeSourceSever(globalObject, adapter);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-        }
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    // A cancel algorithm returns a promise: a throw is its rejection.
+    adapter->clearPendingView(vm);
+    adapter->clearController(vm);
+    if (JSObject* handle = adapter->handle())
+        invokeNativeHandleCancel(vm, globalObject, handle, reason);
+    if (!scope.exception())
+        nativeSourceSever(globalObject, adapter);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
@@ -724,18 +683,9 @@ JSPromise* cancelPendingNativeSource(JSGlobalObject* globalObject, JSReadableStr
     JSObject* handle = stream->nativeHandleDetached() ? nullptr : stream->m_nativePtr.get().getObject();
     if (!handle)
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        invokeNativeHandleCancel(vm, globalObject, handle, reason);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-        }
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    invokeNativeHandleCancel(vm, globalObject, handle, reason);
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
@@ -789,49 +739,22 @@ static void nativeSourcePullRejected(JSC::VM& vm, JSGlobalObject* globalObject, 
         readableStreamDefaultControllerError(globalObject, controller, error);
         RETURN_IF_EXCEPTION(scope, );
     }
-    nativeSourceSever(globalObject, adapter);
+    RELEASE_AND_RETURN(scope, nativeSourceSever(globalObject, adapter));
 }
 
 //                       The native-sink path
 
-// readDirectStreamOnClose: the state-mutation half runs only when a stream is provided.
+// readDirectStreamOnClose. The state-mutation half runs only when a stream is provided; everything
+// that can throw (the sink's end(), the user's cancel(reason)) runs after the state is final, and a
+// throw from it propagates to whoever closed.
 static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectSinkCloseState* state, JSValue streamValue, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The sink closed (or is closing): end() detaches the controller cell from the native
-    // sink so a later GC of the cell cannot release a reference it does not own.
-    if (JSObject* sinkController = state->m_sinkController.get()) {
-        state->m_sinkController.clear();
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        MarkedArgumentBuffer noArgs;
-        invokeMethod(vm, globalObject, sinkController, builtinNames(vm).endPublicName(), noArgs);
-        if (catchScope.exception()) [[unlikely]]
-            catchScope.clearExceptionExceptTermination();
-    }
+    JSObject* sinkController = state->m_sinkController.get();
+    state->m_sinkController.clear();
     JSObject* underlyingSource = state->m_underlyingSource.get();
     state->m_underlyingSource.clear();
-    if (underlyingSource) {
-        JSValue cancelFunction = underlyingSource->get(globalObject, builtinNames(vm).cancelPublicName());
-        RETURN_IF_EXCEPTION(scope, );
-        bool hasCancel = cancelFunction.toBoolean(globalObject);
-        if (hasCancel) {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            if (cancelFunction.isCallable()) {
-                MarkedArgumentBuffer cancelArgs;
-                cancelArgs.append(reason);
-                ASSERT(!cancelArgs.hasOverflowed());
-                JSValue cancelResult = call(globalObject, cancelFunction, getCallData(cancelFunction), underlyingSource, cancelArgs);
-                if (!catchScope.exception()) {
-                    if (auto* cancelPromise = dynamicDowncast<JSPromise>(cancelResult))
-                        markPromiseAsHandled(vm, cancelPromise);
-                }
-            }
-            if (catchScope.exception()) [[unlikely]] {
-                if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
-                    return;
-            }
-        }
-    }
+
     if (auto* stream = dynamicDowncast<JSReadableStream>(streamValue)) {
         clearStreamControllerSlots(stream);
         stream->m_reader.clear();
@@ -851,6 +774,27 @@ static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject,
         state->m_closePromise.clear();
         resolvePromise(globalObject, closePromise, jsUndefined());
         RETURN_IF_EXCEPTION(scope, );
+    }
+
+    // The sink closed (or is closing): end() detaches the controller cell from the native
+    // sink so a later GC of the cell cannot release a reference it does not own.
+    if (sinkController) {
+        MarkedArgumentBuffer noArgs;
+        invokeMethod(vm, globalObject, sinkController, builtinNames(vm).endPublicName(), noArgs);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    if (underlyingSource) {
+        JSValue cancelFunction = underlyingSource->get(globalObject, builtinNames(vm).cancelPublicName());
+        RETURN_IF_EXCEPTION(scope, );
+        if (cancelFunction.isCallable()) {
+            MarkedArgumentBuffer cancelArgs;
+            cancelArgs.append(reason);
+            ASSERT(!cancelArgs.hasOverflowed());
+            JSValue cancelResult = call(globalObject, cancelFunction, getCallData(cancelFunction), underlyingSource, cancelArgs);
+            RETURN_IF_EXCEPTION(scope, );
+            if (auto* cancelPromise = dynamicDowncast<JSPromise>(cancelResult))
+                markPromiseAsHandled(vm, cancelPromise);
+        }
     }
 }
 
@@ -950,6 +894,7 @@ using WebCore::JSReadStreamIntoSinkOperation;
 static void rsisIssueRead(JSGlobalObject*, JSReadStreamIntoSinkOperation*);
 static void rsisFinish(JSGlobalObject*, JSReadStreamIntoSinkOperation*);
 static void rsisAbrupt(JSC::VM&, JSGlobalObject*, JSReadStreamIntoSinkOperation*, JSValue error);
+static void rsisRejectWithPendingException(JSGlobalObject*, ThrowScope&, JSReadStreamIntoSinkOperation*);
 
 static JSValue rsisSinkWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk)
 {
@@ -979,22 +924,14 @@ static void rsisSinkClose(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStrea
     invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).closePublicName(), args);
 }
 
-// Runs one synchronous segment of the pump; an abrupt completion becomes the pump's catch path.
-template<typename Body>
-static void rsisRunCatching(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, const Body& body)
+// BOUNDARY handler for the pump: called only by the host functions that drive a pump segment
+// (promise reactions, the sink's onReady/onClose, readStreamIntoSink itself). Whatever the segment
+// threw is the pump's `catch (e)`.
+static void rsisRejectWithPendingException(JSGlobalObject* globalObject, ThrowScope& scope, JSReadStreamIntoSinkOperation* op)
 {
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        body();
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return;
-        }
-    }
-    if (!thrown.isEmpty())
-        rsisAbrupt(vm, globalObject, op, thrown);
+    JSValue error = takeException(scope);
+    RETURN_IF_EXCEPTION(scope, );
+    rsisAbrupt(getVM(globalObject), globalObject, op, error);
 }
 
 // Detach the native byte transform from this sink. Called BEFORE sink end()/close()
@@ -1019,16 +956,10 @@ static void rsisFinally(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamI
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* reader = op->m_reader.get()) {
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            readableStreamDefaultReaderRelease(globalObject, reader);
-            if (catchScope.exception()) [[unlikely]] {
-                if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
-                    return;
-            }
-        }
         reader->m_pipeOperation.clear();
         op->m_reader.clear();
+        readableStreamDefaultReaderRelease(globalObject, reader);
+        RETURN_IF_EXCEPTION(scope, );
     }
     rsisDetachNativeTransform(globalObject, op);
     op->m_sink.clear();
@@ -1060,32 +991,44 @@ static void rsisFinish(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperati
     RELEASE_AND_RETURN(scope, resolvePromise(globalObject, result, endResult));
 }
 
-// The pump's `catch (e)`: the reader is deliberately orphaned, never released.
+static JSValue aggregateErrors(JSGlobalObject* globalObject, JSValue first, JSValue second)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* errors = constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    errors->putDirectIndex(globalObject, 0, first);
+    RETURN_IF_EXCEPTION(scope, {});
+    errors->putDirectIndex(globalObject, 1, second);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), jsUndefined()));
+}
+
+// The pump's `catch (e)` + `finally`, run at a BOUNDARY (rsisRejectWithPendingException, or the
+// read's rejection reaction): cancel the source, close the sink with the error, tear down, and reject
+// the result — with an AggregateError of both if closing the sink throws as well. The reader is
+// deliberately orphaned, never released.
 static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue error)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     op->m_didThrow = true;
     op->m_reader.clear();
     auto* result = op->m_result.get();
-    if (auto* stream = op->m_stream.get())
-        publicStreamCancelIgnoringResult(vm, globalObject, stream, error);
     JSValue rejectionValue = error;
+    if (auto* stream = op->m_stream.get(); stream && !isReadableStreamLocked(stream)) {
+        auto* cancelPromise = readableStreamCancel(globalObject, stream, error);
+        RETURN_IF_EXCEPTION(scope, );
+        markPromiseAsHandled(vm, cancelPromise);
+    }
     rsisDetachNativeTransform(globalObject, op);
     if (op->m_sink && !op->m_didClose) {
         op->m_didClose = true;
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         rsisSinkClose(vm, globalObject, op, error);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue secondError = takeAbruptCompletion(globalObject, catchScope);
-            if (secondError.isEmpty())
-                return;
-            auto* errors = constructEmptyArray(globalObject, nullptr, 0);
+        if (scope.exception()) [[unlikely]] {
+            JSValue secondError = takeException(scope);
             RETURN_IF_EXCEPTION(scope, );
-            errors->putDirectIndex(globalObject, 0, error);
+            rejectionValue = aggregateErrors(globalObject, error, secondError);
             RETURN_IF_EXCEPTION(scope, );
-            errors->putDirectIndex(globalObject, 1, secondError);
-            RETURN_IF_EXCEPTION(scope, );
-            rejectionValue = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), jsUndefined());
         }
     }
     rsisFinally(vm, globalObject, op);
@@ -1328,50 +1271,45 @@ JSPromise* readStreamIntoSink(JSGlobalObject* globalObject, JSReadableStream* st
     op->m_sink.set(vm, op, sink);
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
     op->m_result.set(vm, op, result);
-    rsisRunCatching(vm, globalObject, op, [&] {
-        rsisBegin(vm, globalObject, op);
-    });
+    // BOUNDARY: this returns the pump's promise, so a throw while starting it is its rejection.
+    rsisBegin(vm, globalObject, op);
+    if (scope.exception()) [[unlikely]]
+        rsisRejectWithPendingException(globalObject, scope, op);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;
 }
 
-// readStreamIntoSinkOnClose(op, stream, reason) — the JSSink onClose [bound-convention] body.
+// readStreamIntoSinkOnClose(op, stream, reason) — the JSSink onClose [bound-convention] body. Its
+// host function routes a throw from here into the pump's catch path, so m_result always settles.
 static void readStreamIntoSinkOnCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue streamValue, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    const bool wasClosed = op->m_didThrow || op->m_didClose;
+    op->m_didClose = true;
     rsisDetachNativeTransform(globalObject, op);
     // The sink closed underneath the pump (which may stay suspended forever): end() FIRST,
     // before the fallible cancel below, so the controller cell always detaches from the
     // native sink instead of being collected attached (its destructor would over-release).
     if (JSObject* sink = op->m_sink.get()) {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer noArgs;
         invokeMethod(vm, globalObject, sink, builtinNames(vm).endPublicName(), noArgs);
-        if (catchScope.exception()) [[unlikely]]
-            catchScope.clearExceptionExceptTermination();
+        RETURN_IF_EXCEPTION(scope, );
     }
-    if (!op->m_didThrow && !op->m_didClose) {
+    if (!wasClosed) {
         auto* stream = dynamicDowncast<JSReadableStream>(streamValue);
         if (stream && stream->m_state != ReadableStreamState::Closed) {
             auto* cancelPromise = readableStreamCancel(globalObject, stream, reason);
-            if (scope.exception()) [[unlikely]] {
-                op->m_didClose = true;
-                return;
-            }
+            RETURN_IF_EXCEPTION(scope, );
             // The sink initiated this cancel (peer abort / sink close); the source's
             // cancel() rejection has no consumer, so keep it out of unhandledRejection.
             if (cancelPromise)
                 markPromiseAsHandled(vm, cancelPromise);
         }
     }
-    op->m_didClose = true;
     // end() detached m_onPull; drive a parked pump to completion so m_result settles.
     if (op->m_waitingOnSink) {
         op->m_waitingOnSink = false;
-        scope.release();
-        rsisRunCatching(vm, globalObject, op, [&] {
-            rsisContinueAfterReady(vm, globalObject, op);
-        });
+        RELEASE_AND_RETURN(scope, rsisContinueAfterReady(vm, globalObject, op));
     }
 }
 
@@ -1392,24 +1330,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativePullFulfilled, (JSGlobalObj
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(callFrame->argument(1));
-    JSValue result = callFrame->argument(0);
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        Bun::WebStreams::nativeSourcePullFulfilled(vm, globalObject, adapter, result);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return {};
-        }
+    Bun::WebStreams::nativeSourcePullFulfilled(vm, globalObject, adapter, callFrame->argument(0));
+    // BOUNDARY: a decode/enqueue failure while delivering the pull result errors the stream (the
+    // spec's "upon rejection of pullPromise"); with no live controller it is left to the runner.
+    if (auto* controller = adapter->controller(); scope.exception() && controller) [[unlikely]] {
+        JSValue thrown = takeException(scope);
+        RETURN_IF_EXCEPTION(scope, {});
+        readableStreamDefaultControllerError(globalObject, controller, thrown);
     }
-    // Boundary: an internal decode failure errors the stream instead of escaping.
-    if (!thrown.isEmpty()) {
-        if (auto* controller = adapter->controller()) {
-            readableStreamDefaultControllerError(globalObject, controller, thrown);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -1439,9 +1368,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkReadManyFulfill
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(1));
     JSValue many = callFrame->argument(0);
-    Bun::WebStreams::rsisRunCatching(vm, globalObject, op, [&] {
-        Bun::WebStreams::rsisContinueWithMany(vm, globalObject, op, many);
-    });
+    Bun::WebStreams::rsisContinueWithMany(vm, globalObject, op, many);
+    if (scope.exception()) [[unlikely]]
+        Bun::WebStreams::rsisRejectWithPendingException(globalObject, scope, op);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1452,9 +1381,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkChunk, (JSGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(1));
     JSValue chunk = callFrame->argument(0);
-    Bun::WebStreams::rsisRunCatching(vm, globalObject, op, [&] {
-        Bun::WebStreams::rsisHandleChunk(vm, globalObject, op, chunk);
-    });
+    Bun::WebStreams::rsisHandleChunk(vm, globalObject, op, chunk);
+    if (scope.exception()) [[unlikely]]
+        Bun::WebStreams::rsisRejectWithPendingException(globalObject, scope, op);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1464,9 +1393,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkClose, (JSGloba
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(1));
-    Bun::WebStreams::rsisRunCatching(vm, globalObject, op, [&] {
-        Bun::WebStreams::rsisFinish(globalObject, op);
-    });
+    Bun::WebStreams::rsisFinish(globalObject, op);
+    if (scope.exception()) [[unlikely]]
+        Bun::WebStreams::rsisRejectWithPendingException(globalObject, scope, op);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1519,6 +1448,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundReadStreamIntoSinkOnClose, (JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(0));
     Bun::WebStreams::readStreamIntoSinkOnCloseImpl(vm, globalObject, op, callFrame->argument(1), callFrame->argument(2));
+    if (scope.exception()) [[unlikely]]
+        Bun::WebStreams::rsisRejectWithPendingException(globalObject, scope, op);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1544,9 +1475,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundReadStreamIntoSinkOnReady, (JS
     if (!op->m_waitingOnSink)
         return JSValue::encode(jsUndefined());
     op->m_waitingOnSink = false;
-    Bun::WebStreams::rsisRunCatching(vm, globalObject, op, [&] {
-        Bun::WebStreams::rsisContinueAfterReady(vm, globalObject, op);
-    });
+    Bun::WebStreams::rsisContinueAfterReady(vm, globalObject, op);
+    if (scope.exception()) [[unlikely]]
+        Bun::WebStreams::rsisRejectWithPendingException(globalObject, scope, op);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

@@ -30,7 +30,6 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
 
 namespace Bun {
@@ -415,18 +414,10 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_read, (JSGl
     if (!reader) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamBYOBReader.prototype.read can only be called on a ReadableStreamBYOBReader"_s))));
 
-    // A promise-returning operation turns argument-conversion failures into rejections.
-    BYOBReadArguments arguments;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        arguments = convertBYOBReadArguments(vm, lexicalGlobalObject, callFrame->argument(0), callFrame->argument(1));
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(lexicalGlobalObject, catchScope);
-            if (thrown.isEmpty())
-                return {};
-            RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, thrown)));
-        }
-    }
+    // WebIDL: a promise-returning operation turns argument-conversion failures into rejections.
+    BYOBReadArguments arguments = convertBYOBReadArguments(vm, lexicalGlobalObject, callFrame->argument(0), callFrame->argument(1));
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWithPendingException(lexicalGlobalObject, scope)));
     JSArrayBufferView* view = arguments.view;
     uint64_t minRequested = arguments.min;
 

@@ -64,6 +64,8 @@ pub struct NodeHTTPResponse {
     /// Native OpenTelemetry server span, ended in `on_request_complete`/`deinit`.
     pub(crate) otel_span: Cell<bun_telemetry::NativeSpan>,
     pub(crate) otel_status: Cell<u16>,
+    /// The handler threw / rejected: mark the span as an error even if a 2xx went out.
+    pub(crate) otel_handler_error: Cell<bool>,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
     /// req.headers materialize lazily (takeRawHeaders) instead of paying
@@ -1289,6 +1291,7 @@ impl NodeHTTPResponse {
 
         if EVENT == AbortEvent::Abort {
             self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
+            self.otel_end();
         }
 
         self.ref_();
@@ -1557,7 +1560,9 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
             raw_response.clear_timeout();
             if !raw_response.state().is_http_status_called() {
                 raw_response.write_status(b"500 Internal Server Error");
+                this.otel_status.set(500);
             }
+            this.otel_handler_error.set(true);
             raw_response.end_stream(raw_response.state().is_http_connection_close());
         }
 
@@ -2566,7 +2571,7 @@ impl NodeHTTPResponse {
         if span.is_some() {
             let flags = self.flags.get();
             let aborted = flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED);
-            crate::telemetry::server::end(span, self.otel_status.get(), aborted);
+            crate::telemetry::server::end_with(span, self.otel_status.get(), aborted, self.otel_handler_error.get());
         }
     }
 
@@ -2741,6 +2746,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         armed_this_value: Cell::new(JSValue::ZERO),
         otel_span: Cell::new(bun_telemetry::NativeSpan::NONE),
         otel_status: Cell::new(0),
+        otel_handler_error: Cell::new(false),
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),

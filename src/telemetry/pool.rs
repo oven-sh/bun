@@ -124,7 +124,7 @@ impl Slot {
                 &mut self.attrs,
                 field::ATTRIBUTES,
                 key,
-                &Value::Str(&s[..limits.attribute_value_length as usize]),
+                &Value::Str(otlp::truncate_utf8(s, limits.attribute_value_length as usize)),
             ),
             _ => otlp::write_key_value(&mut self.attrs, field::ATTRIBUTES, key, v),
         }
@@ -134,7 +134,7 @@ impl Slot {
     /// header and key become inline stores, leaving one copy for the value.
     #[inline(always)]
     pub fn push_str(&mut self, key: &'static str, v: &[u8], limits: &Limits) {
-        let v = if v.len() > limits.attribute_value_length as usize { &v[..limits.attribute_value_length as usize] } else { v };
+        let v = otlp::truncate_utf8(v, limits.attribute_value_length as usize);
         let key = key.as_bytes();
         let kv = 2 + key.len() + 2 + 2 + v.len();
         if self.n_attrs >= limits.attributes || kv >= 128 {

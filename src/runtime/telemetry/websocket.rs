@@ -41,15 +41,18 @@ pub fn begin_message(
 
 /// End a message span after the handler returned `result`.
 pub fn end_message(span: NativeSpan, global: &JSGlobalObject, result: JSValue) -> bun_jsc::JsResult<()> {
-    if result.to_error().is_some() {
-        record_exception_value(span, global, result)?;
-    } else if let Some(p) = result.as_any_promise() {
-        if p.status() == bun_jsc::js_promise::Status::Rejected {
-            pool::with(span, |s| s.set_status(StatusCode::Error, b""));
+    let r = if result.to_error().is_some() {
+        record_exception_value(span, global, result)
+    } else {
+        if let Some(p) = result.as_any_promise() {
+            if p.status() == bun_jsc::js_promise::Status::Rejected {
+                pool::with(span, |s| s.set_status(StatusCode::Error, b""));
+            }
         }
-    }
+        Ok(())
+    };
     super::end_native(span, 0, |_| {});
-    Ok(())
+    r
 }
 
 /// Record a thrown JS value as an `exception` event and set Error status.

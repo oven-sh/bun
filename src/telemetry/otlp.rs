@@ -211,6 +211,20 @@ pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>)
     write_any_value_body(out, v);
 }
 
+/// Longest prefix of `s` that is at most `max` bytes and does not split a
+/// UTF-8 sequence.
+#[inline]
+pub fn truncate_utf8(s: &[u8], max: usize) -> &[u8] {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && (s[end] & 0xC0) == 0x80 {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Locate the encoded `KeyValue` for `key` in a buffer of concatenated
 /// `Span.attributes` entries: `(offset, total_len)` of the whole entry.
 pub fn find_attribute(attrs: &[u8], key: &[u8]) -> Option<(usize, usize)> {

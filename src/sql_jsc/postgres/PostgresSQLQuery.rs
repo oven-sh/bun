@@ -500,6 +500,18 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let r = Self::do_run_inner(this, global_object, callframe);
+        if r.is_err() {
+            this.otel_end(Some((b"_OTHER", b"failed to run query")));
+        }
+        r
+    }
+
+    fn do_run_inner(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // R-2: `this` is the live m_ctx payload for `callframe.this()`; the JS
         // wrapper is on-stack so GC cannot finalize it. Every mutated field is
         // `Cell`/`JsCell`-backed, so `&Self` suffices. The pointer pushed into

@@ -34,10 +34,13 @@ pub trait Exporter: Send + Sync {
     /// Called on every processor tick (~scheduled delay) so exporters can
     /// drive retries without their own timers.
     fn tick(&self, _processor: &'static Processor) {}
-    /// Payloads held for retry (still counted as in flight).
+    /// Payloads parked for a later retry (see [`Processor::park`]).
     fn pending_retries(&self) -> usize {
         0
     }
+    /// Send parked retries now instead of at their backoff deadline
+    /// (`forceFlush()` / shutdown).
+    fn retry_now(&self, _processor: &'static Processor) {}
     fn name(&self) -> &str;
 }
 
@@ -156,6 +159,18 @@ impl Processor {
     }
 
     /// Called from any thread once nothing is in flight.
+    /// Payloads parked for retry across all exporters.
+    pub fn pending_retries(&self) -> usize {
+        self.exporters.read().unwrap().iter().map(|e| e.pending_retries()).sum()
+    }
+
+    /// Kick parked retries immediately.
+    pub fn retry_now(&'static self) {
+        for e in self.exporters.read().unwrap().clone() {
+            e.retry_now(self);
+        }
+    }
+
     pub fn on_idle(&self, f: Box<dyn Fn() + Send + Sync>) {
         self.idle_hooks.write().unwrap().push(f);
     }
@@ -304,8 +319,9 @@ impl Processor {
         true
     }
 
-    /// Exporters call this exactly once per `export` call.
-    pub fn export_done(&self, payload: &ExportPayload, result: ExportResult) {
+    /// Stats for a finished export attempt, without touching `inflight`
+    /// (for payloads that were parked for retry).
+    pub fn record_result(&self, payload: &ExportPayload, result: ExportResult) {
         match result {
             ExportResult::Success => {
                 self.stats.exports_ok.fetch_add(1, Ordering::Relaxed);
@@ -320,6 +336,26 @@ impl Processor {
                     .fetch_add(payload.span_count as u64, Ordering::Relaxed);
             }
         }
+    }
+
+    /// An exporter is holding a payload for a later retry: stop counting it
+    /// as in flight (so batching and shutdown are not blocked on the backoff)
+    /// until [`Processor::unpark`].
+    pub fn park(&self) {
+        self.finish_one();
+    }
+
+    pub fn unpark(&self) {
+        self.inflight.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Exporters call this exactly once per `export` call.
+    pub fn export_done(&self, payload: &ExportPayload, result: ExportResult) {
+        self.record_result(payload, result);
+        self.finish_one();
+    }
+
+    fn finish_one(&self) {
         if self.inflight.fetch_sub(1, Ordering::AcqRel) == 1 {
             {
                 let _g = self.idle_lock.lock().unwrap();

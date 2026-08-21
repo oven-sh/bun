@@ -17,7 +17,7 @@ pub fn begin(
     req: &bun_uws::AnyRequest,
     resp: bun_uws::AnyResponse,
     is_https: bool,
-) -> Option<(NativeSpan, Option<Entered>)> {
+) -> Option<(NativeSpan, Entered)> {
     if !bun_telemetry::enabled(Instrument::HttpServer) {
         return None;
     }
@@ -57,7 +57,7 @@ pub fn begin(
         if let Some(b) = baggage {
             s.baggage.extend_from_slice(b);
         }
-        if !stub.ctx.flags.sampled() || bun_telemetry::exp(2) {
+        if !stub.ctx.flags.sampled() {
             return;
         }
         let l = &st.limits;
@@ -83,13 +83,11 @@ pub fn begin(
         if let Some(ua) = req.header(b"user-agent") {
             s.push_str("user_agent.original", ua, l);
         }
-        if !bun_telemetry::exp(4) {
-            if let Some((ip, port)) = resp.get_remote_address_raw() {
-                let mut buf = [0u8; 46];
-                s.push_str("client.address", ip.format(&mut buf), l);
-                if port > 0 {
-                    s.push_uint("client.port", port as u64, l);
-                }
+        if let Some((ip, port)) = resp.get_remote_address_raw() {
+            let mut buf = [0u8; 46];
+            s.push_str("client.address", ip.format(&mut buf), l);
+            if port > 0 {
+                s.push_uint("client.port", port as u64, l);
             }
         }
         for name in &st.capture_request_headers {
@@ -101,11 +99,8 @@ pub fn begin(
             }
         }
     });
-    if bun_telemetry::exp(1) {
-        return Some((span, None));
-    }
     let js = super::create_native_cell(global, &stub, ScopeId::from(Instrument::HttpServer), SpanKind::Server, span);
-    Some((span, Some(Entered::new(global, js))))
+    Some((span, Entered::new(global, js)))
 }
 
 /// Refine the span name to `METHOD /route` once the matched route is known.
@@ -130,15 +125,20 @@ pub fn set_route(span: NativeSpan, method: Method, route: &[u8]) {
 /// Finish the request span. `status == 0` means no status line was written
 /// (aborted before headers).
 pub fn end(span: NativeSpan, status: u16, aborted: bool) {
-    if bun_telemetry::exp(8) {
-        pool::discard(span);
-        return;
-    }
+    end_with(span, status, aborted, false)
+}
+
+/// `handler_error`: the JS handler threw or rejected (node:http), which is an
+/// error even when the status line that went out was not 5xx.
+pub fn end_with(span: NativeSpan, status: u16, aborted: bool, handler_error: bool) {
     super::end_native(span, 0, |w| {
         http::status_attrs(w, status, true);
         if aborted && status < 500 {
             w.attr("error.type", "aborted");
             w.status(StatusCode::Error, b"request aborted");
+        } else if handler_error && status < 500 {
+            w.attr("error.type", "uncaught exception");
+            w.status(StatusCode::Error, b"handler threw");
         }
     });
 }

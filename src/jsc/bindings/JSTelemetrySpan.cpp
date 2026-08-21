@@ -91,6 +91,7 @@ extern "C" void Bun__Telemetry__stubWrap(Bun::SpanStub* out, const uint8_t* trac
 extern "C" uint64_t Bun__Telemetry__nowNs();
 extern "C" uint16_t Bun__Telemetry__userScope();
 extern "C" uint32_t Bun__Telemetry__attributeLimits(uint32_t* valueLengthLimit);
+extern "C" uint32_t Bun__Telemetry__propagationFlags();
 extern "C" void Bun__Telemetry__encodeSpan(const BunEndDesc*);
 extern "C" bool Bun__Telemetry__nativeIsLive(uint64_t);
 extern "C" bool Bun__Telemetry__nativeEnd(uint64_t, uint64_t endNs);
@@ -1000,6 +1001,72 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryCreateTracer, (JSGlobalObject * lexicalGloba
     return JSValue::encode(JSTelemetryTracer::create(globalObject->vm(), globalObject, scopeId, callFrame->argument(1), callFrame->argument(2)));
 }
 
+// propagationHeaders(span) → [traceparent | undefined, tracestate | undefined, baggage | undefined]
+// for a native-owned span (node:http client), honouring OTEL_PROPAGATORS.
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto* span = toTelemetrySpan(callFrame->argument(0));
+    JSArray* out = constructEmptyArray(globalObject, nullptr, 3);
+    if (!out)
+        return JSValue::encode(jsUndefined());
+    if (!span)
+        return JSValue::encode(out);
+    uint32_t flags = Bun__Telemetry__propagationFlags();
+    static const uint8_t zero[16] = {};
+    if ((flags & 1) && memcmp(span->m_stub.traceId, zero, 16)) {
+        // 00-<trace>-<span>-<flags>
+        std::span<Latin1Character> buf;
+        auto tp = String::createUninitialized(55, buf);
+        buf[0] = '0';
+        buf[1] = '0';
+        buf[2] = '-';
+        for (size_t i = 0; i < 16; ++i) {
+            buf[3 + i * 2] = hexDigits[span->m_stub.traceId[i] >> 4];
+            buf[4 + i * 2] = hexDigits[span->m_stub.traceId[i] & 15];
+        }
+        buf[35] = '-';
+        for (size_t i = 0; i < 8; ++i) {
+            buf[36 + i * 2] = hexDigits[span->m_stub.spanId[i] >> 4];
+            buf[37 + i * 2] = hexDigits[span->m_stub.spanId[i] & 15];
+        }
+        buf[52] = '-';
+        uint8_t w3c = span->m_stub.flags & SpanStub::Sampled;
+        buf[53] = hexDigits[w3c >> 4];
+        buf[54] = hexDigits[w3c & 15];
+        out->putDirectIndex(globalObject, 0, jsString(vm, WTF::move(tp)));
+    }
+    if (span->m_native) {
+        Vector<uint8_t, 256> tmp;
+        for (int i = 0; i < 2; ++i) {
+            uint8_t which = i == 0 ? 't' : 'b';
+            if (!(flags & (i == 0 ? 1u : 2u)))
+                continue;
+            tmp.grow(256);
+            size_t n = Bun__Telemetry__nativePropagation(span->m_native, which, tmp.begin(), tmp.size());
+            if (n > tmp.size()) {
+                tmp.grow(n);
+                n = Bun__Telemetry__nativePropagation(span->m_native, which, tmp.begin(), tmp.size());
+            }
+            if (n)
+                out->putDirectIndex(globalObject, 1 + i, jsString(vm, String::fromUTF8(std::span(tmp.begin(), n))));
+        }
+    } else {
+        if (flags & 1) {
+            JSValue t = JSValue::decode(Bun__TelemetrySpan__extraString(globalObject, JSValue::encode(span), 't'));
+            if (t.isString() && asString(t)->length())
+                out->putDirectIndex(globalObject, 1, t);
+        }
+        if (flags & 2) {
+            JSValue b = JSValue::decode(Bun__TelemetrySpan__extraString(globalObject, JSValue::encode(span), 'b'));
+            if (b.isString() && asString(b)->length())
+                out->putDirectIndex(globalObject, 2, b);
+        }
+    }
+    return JSValue::encode(out);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryCreateBinding, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1191,7 +1258,7 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
     AttrScratch sc;
     Vector<BunAttrRef, 16> attrs;
     EncodedAttrs enc;
-    unsigned dropped = static_cast<uint32_t>(state) >> 8;
+    unsigned dropped = 0;
     JSValue attrsV = span->get(JSTelemetrySpan::Field::Attributes);
     if (attrsV.isCell()) {
         uint32_t valueLengthLimit;
@@ -1447,8 +1514,19 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncSpanContext, (JSGlobalObject * 
     if (span->m_stub.flags & SpanStub::Remote)
         ctx->putDirect(vm, Identifier::fromString(vm, "isRemote"_s), jsBoolean(true));
     JSValue ts = JSValue::decode(Bun__TelemetrySpan__extraString(globalObject, JSValue::encode(span), 't'));
-    if (ts.isObject())
+    if (ts.isObject() || (ts.isString() && asString(ts)->length()))
         ctx->putDirect(vm, Identifier::fromString(vm, "traceState"_s), ts);
+    else if (span->m_native) {
+        Vector<uint8_t, 256> buf;
+        buf.grow(256);
+        size_t n = Bun__Telemetry__nativePropagation(span->m_native, 't', buf.begin(), buf.size());
+        if (n > buf.size()) {
+            buf.grow(n);
+            n = Bun__Telemetry__nativePropagation(span->m_native, 't', buf.begin(), buf.size());
+        }
+        if (n)
+            ctx->putDirect(vm, Identifier::fromString(vm, "traceState"_s), jsString(vm, String::fromUTF8(std::span(buf.begin(), n))));
+    }
     span->field(JSTelemetrySpan::Field::Context).set(vm, span, ctx);
     return JSValue::encode(ctx);
 }

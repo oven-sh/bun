@@ -97,10 +97,11 @@ fn extra_propagation(global: &JSGlobalObject, cell: JSValue) -> [Vec<u8>; 2] {
     out
 }
 
-/// Create the JS cell for a native-owned span (request spans etc.).
+/// Create the JS cell for a native-owned span (request spans etc.). The
+/// cell stores the @opentelemetry/api SpanKind numbering (INTERNAL=0..).
 #[inline]
 pub fn create_native_cell(global: &JSGlobalObject, stub: &SpanStub, scope: ScopeId, kind: SpanKind, native: NativeSpan) -> JSValue {
-    Bun__TelemetrySpan__createNative(global, stub, scope.0, kind as u8, native.0)
+    Bun__TelemetrySpan__createNative(global, stub, scope.0, kind as u8 - 1, native.0)
 }
 
 /// Is `value` a JSTelemetrySpan?
@@ -517,7 +518,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
             }
             with_attrs(desc.attrs, n_attrs, sc, |k, v| match *v {
                 Value::Str(s) if s.len() > l.attribute_value_length as usize => {
-                    w.attr_bytes_key(k, Value::Str(&s[..l.attribute_value_length as usize]));
+                    w.attr_bytes_key(k, Value::Str(bun_telemetry::otlp::truncate_utf8(s, l.attribute_value_length as usize)));
                 }
                 _ => {
                     w.attr_bytes_key(k, *v);
@@ -707,4 +708,11 @@ pub extern "C" fn Bun__Telemetry__nativePropagation(handle: u64, which: u8, out:
         src.len()
     })
     .unwrap_or(0)
+}
+
+/// bit 0: W3C trace context, bit 1: baggage.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__propagationFlags() -> u32 {
+    let st = super::state();
+    (st.propagate_trace_context as u32) | ((st.propagate_baggage as u32) << 1)
 }

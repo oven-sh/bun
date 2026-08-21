@@ -173,7 +173,10 @@ function otelClientRequestStart(req, protocol, host, port) {
   if (!span) return;
   req[kOtelSpan] = span;
   if (!req.getHeader("traceparent")) {
-    otel.propagator.inject(otel.contextWithSpan(span), req, otelHeaderSetter);
+    const [traceparent, tracestate, baggage] = otel.propagationHeaders(span);
+    if (traceparent) req.setHeader("traceparent", traceparent);
+    if (tracestate && !req.getHeader("tracestate")) req.setHeader("tracestate", tracestate);
+    if (baggage && !req.getHeader("baggage")) req.setHeader("baggage", baggage);
   }
   if (span.isRecording()) {
     const defaultPort = protocol === "https:" ? 443 : 80;
@@ -186,11 +189,6 @@ function otelClientRequestStart(req, protocol, host, port) {
     });
   }
 }
-const otelHeaderSetter = {
-  set(req, key, value) {
-    req.setHeader(key, value);
-  },
-};
 function otelClientRequestEnd(req, res, err) {
   const span = req[kOtelSpan];
   if (span === undefined) return;

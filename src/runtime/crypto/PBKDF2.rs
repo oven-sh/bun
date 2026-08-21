@@ -318,13 +318,24 @@ impl JobContext for Pbkdf2Job {
         let output_slice = core::mem::take(&mut this.output);
         debug_assert!(output_slice.len() == this.pbkdf2.length);
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
-        let buffer_value = JSValue::create_buffer(global_this, output_slice.leak())?;
-        event_loop.run_callback(
-            callback,
-            global_this,
-            JSValue::UNDEFINED,
-            &[JSValue::NULL, buffer_value],
-        );
+        match JSValue::create_buffer(global_this, output_slice.leak()) {
+            Ok(buffer_value) => event_loop.run_callback(
+                callback,
+                global_this,
+                JSValue::UNDEFINED,
+                &[JSValue::NULL, buffer_value],
+            ),
+            // The result could not be built (allocation failure): that is this
+            // derivation's error, so the callback still runs. A terminating VM
+            // runs no callbacks; its termination goes back to the event loop.
+            Err(err) => {
+                let error = global_this.take_error(err);
+                if error.is_termination_exception() {
+                    return Err(err);
+                }
+                event_loop.run_callback(callback, global_this, JSValue::UNDEFINED, &[error]);
+            }
+        }
         Ok(())
     }
 }

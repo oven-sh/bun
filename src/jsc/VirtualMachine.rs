@@ -5078,6 +5078,8 @@ impl VirtualMachine {
     }
 
     /// Replaces the global object between test files so each file runs in a fresh realm.
+    /// With `TestIsolationState::global_reuse`, a global the finished file left pristine
+    /// is scrubbed and kept instead (`Zig__GlobalObject__tryResetForTestIsolation`).
     ///
     /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
     /// first so leaked watchers/servers are stopped (dropping their JS-side
@@ -5087,10 +5089,19 @@ impl VirtualMachine {
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 
+        // Stopping the context is permanent, so a global that may still be
+        // reused is left unstopped here. The candidate check guarantees it has
+        // no worker, port, channel or socket with pending activity, so the
+        // sweeps below dispatch nothing into it either way.
+        let reuse_candidate = self.test_isolation_state.global_reuse
+            && JSGlobalObject::is_test_isolation_reuse_candidate(self.global());
+
         // The finished file's workers, ports, channels and sockets are stopped
         // first (no events dispatched), before its socket groups and timers are
         // swept and before the new global exists.
-        Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
+        if !reuse_candidate {
+            Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
+        }
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
             let mut buf = bun_paths::PathBuffer::uninit();
@@ -5136,11 +5147,6 @@ impl VirtualMachine {
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();
-            // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
-            // `BindingData::SetCallbacks`), so a holder left by the outgoing
-            // global makes the next file's call a no-op and dispatches
-            // node:quic events into the dead realm.
-            rare.node_quic_callbacks.deinit();
         }
         let _ = self.event_loop_mut().drain_microtasks();
 
@@ -5198,11 +5204,22 @@ impl VirtualMachine {
         // Scrub and reuse the global if the file left it in its post-preload
         // shape; node_modules CodeBlocks and JIT'd code then survive. Preload
         // re-evaluates on the reused global, so re-capture the baseline after.
-        if self.test_isolation_state.global_reuse
-            && JSGlobalObject::try_reset_for_test_isolation(old_global_ref)
-        {
-            self.test_isolation_state.baseline_captured = false;
-            return;
+        if reuse_candidate {
+            if JSGlobalObject::try_reset_for_test_isolation(old_global_ref) {
+                self.test_isolation_state.baseline_captured = false;
+                return;
+            }
+            Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(old_global_ref);
+        }
+
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
+            // `BindingData::SetCallbacks`), so a holder left by the outgoing
+            // global makes the next file's call a no-op and dispatches
+            // node:quic events into the dead realm. A reused global keeps its
+            // realm, and with it the node:quic module instance that registered
+            // the holder, so this only applies to the swap.
+            rare.node_quic_callbacks.deinit();
         }
 
         // `old_global` valid for VM lifetime (safe ZST-handle deref);

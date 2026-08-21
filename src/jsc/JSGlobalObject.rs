@@ -1346,6 +1346,12 @@ impl JSGlobalObject {
         Zig__GlobalObject__captureTestIsolationBaseline(global)
     }
 
+    /// Whether the finished file may still be able to reuse `global`. Decided
+    /// before the context is stopped, because a stopped context cannot be reused.
+    pub(crate) fn is_test_isolation_reuse_candidate(global: &JSGlobalObject) -> bool {
+        Zig__GlobalObject__isTestIsolationReuseCandidate(global)
+    }
+
     pub(crate) fn try_reset_for_test_isolation(global: &JSGlobalObject) -> bool {
         Zig__GlobalObject__tryResetForTestIsolation(global)
     }
@@ -1588,6 +1594,7 @@ unsafe extern "C" {
         console: *mut c_void,
     ) -> *mut JSGlobalObject;
     safe fn Zig__GlobalObject__captureTestIsolationBaseline(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__isTestIsolationReuseCandidate(global: &JSGlobalObject) -> bool;
     safe fn Zig__GlobalObject__tryResetForTestIsolation(global: &JSGlobalObject) -> bool;
 }
 

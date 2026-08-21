@@ -583,7 +583,7 @@ describe.concurrent("--isolate experimental global reuse", () => {
     "node_modules/pkg/package.json": `{"name":"pkg","main":"index.js"}`,
     "state.ts": `export const counter = { n: 0 };`,
     "a.test.ts": `
-      import { test, expect } from "bun:test";
+      import { test, expect, mock } from "bun:test";
       import { counter } from "./state";
       import pkg from "pkg";
       test("a", () => {
@@ -710,6 +710,172 @@ describe.concurrent("--isolate experimental global reuse", () => {
     const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
     expect(stats).toEqual({ reuse: 1, swap: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("falls back to a full swap when the file called mock.module", async () => {
+    using dir = tempDir(
+      "isolate-reuse-mock-module",
+      // mock.module rewrites the exports of the already-loaded node_modules
+      // record in place. The scrub keeps that record, so the file has to get a
+      // full swap for b to see the real module again.
+      reuseFixtures(
+        `mock.module("pkg", () => ({ default: { tag: "mocked", slot: "mocked" } }));
+         expect(pkg.tag).toBe("mocked");`,
+        `expect(pkg.tag).toBe("pkg");
+         expect(pkg.slot).toBe(null);`,
+      ),
+    );
+    const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(stats).toEqual({ reuse: 1, swap: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("falls back to a full swap when the file leaks a channel that can still receive events", async () => {
+    using dir = tempDir(
+      "isolate-reuse-pending-activity",
+      // An unclosed BroadcastChannel with a listener has pending activity. Only
+      // the swap path stops it, so the node_modules record must be gone in b.
+      reuseFixtures(`new BroadcastChannel("leaked-by-a").onmessage = () => {};`, `expect(pkg.slot).toBe(null);`),
+    );
+    const { stderr, stats, exitCode } = await runIsolate(String(dir), REUSE_ENV);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(stats).toEqual({ reuse: 1, swap: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a reused global still runs workers and delivers MessagePort close events", async () => {
+    using dir = tempDir("isolate-reuse-context-alive", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a", () => { expect(1).toBe(1); });
+      `,
+      "worker.ts": `postMessage("from-worker");`,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { testIsolationResetStats } from "bun:internal-for-testing";
+        test("b runs on a reused global", () => {
+          console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
+        });
+        test("MessagePort close event fires", async () => {
+          const { port1, port2 } = new MessageChannel();
+          const { promise, resolve } = Promise.withResolvers<void>();
+          port1.addEventListener("close", () => resolve());
+          port1.close();
+          port2.close();
+          await promise;
+        });
+        test("Worker starts and posts back", async () => {
+          const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+          const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+          worker.onmessage = e => resolve(e.data);
+          worker.onerror = e => reject(new Error(e.message));
+          expect(await promise).toBe("from-worker");
+          worker.terminate();
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 1, swap: 0 });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("4 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a --preload that calls mock.module does not prevent reuse and applies to every file", async () => {
+    const testFile = (name: string, extra = "") => `
+      import { test, expect } from "bun:test";
+      import pkg from "pkg";
+      test(${JSON.stringify(name)}, () => {
+        expect(pkg.tag).toBe("mocked");
+        ${extra}
+      });
+    `;
+    using dir = tempDir("isolate-reuse-preload-mock", {
+      "node_modules/pkg/index.js": `module.exports = { tag: "pkg" };`,
+      "node_modules/pkg/package.json": `{"name":"pkg","main":"index.js"}`,
+      "preload.ts": `
+        import { mock } from "bun:test";
+        mock.module("pkg", () => ({ default: { tag: "mocked" } }));
+      `,
+      "a.test.ts": testFile("a"),
+      "b.test.ts": testFile("b"),
+      "c.test.ts": testFile(
+        "c",
+        `const { testIsolationResetStats } = require("bun:internal-for-testing");
+         console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));`,
+      ),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 2, swap: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("node:quic still dispatches events in a file that runs on a reused global", async () => {
+    const keysDir = join(import.meta.dir, "..", "..", "js", "node", "test", "fixtures", "keys");
+    // Each file opens a loopback QUIC session. The node:quic module instance
+    // survives a reuse, so the callbacks it registered on first load must too.
+    const quicFile = (name: string, extra = "") => `
+      import { test, expect } from "bun:test";
+      import { createPrivateKey } from "node:crypto";
+      import { readFileSync } from "node:fs";
+      import { connect, listen } from "node:quic";
+      const keysDir = ${JSON.stringify(keysDir)};
+      test(${JSON.stringify(name)}, async () => {
+        const key = createPrivateKey(readFileSync(keysDir + "/agent1-key.pem"));
+        const cert = readFileSync(keysDir + "/agent1-cert.pem");
+        const { promise: accepted, resolve: onSession } = Promise.withResolvers<void>();
+        await using server = await listen(
+          (session: any) => {
+            session.closed.catch(() => {});
+            onSession();
+          },
+          { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["isolate-test"] },
+        );
+        const client = await connect(server.address, { alpn: "isolate-test", verifyPeer: "manual" });
+        await client.opened;
+        await accepted;
+        client.close();
+        await client.closed.catch(() => {});
+        ${extra}
+      });
+    `;
+    using dir = tempDir("isolate-reuse-quic", {
+      "a.test.ts": quicFile("a"),
+      "b.test.ts": quicFile(
+        "b",
+        `const { testIsolationResetStats } = require("bun:internal-for-testing");
+         console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));`,
+      ),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 1, swap: 0 });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
 

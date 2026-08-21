@@ -3,6 +3,7 @@
 #include "ZigGlobalObject.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
+#include "ActiveDOMObject.h"
 #include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -748,7 +749,39 @@ public:
     Zig::GlobalObject* capturedGlobal { nullptr };
     unsigned reuseCount { 0 };
     unsigned swapCount { 0 };
+
+    // The captured global is being replaced: release its values now rather than
+    // when the next global's capture overwrites them.
+    bool noteSwap()
+    {
+        ownProperties.clear();
+        prepareStackTraceValue.clear();
+        swapCount++;
+        return false;
+    }
 };
+
+static TestIsolationBaseline* testIsolationBaselineFor(Zig::GlobalObject* globalObject)
+{
+    auto* baseline = WebCore::clientData(globalObject->vm())->testIsolationBaseline.get();
+    return baseline && baseline->capturedGlobal == globalObject ? baseline : nullptr;
+}
+
+// State the reuse scrub cannot undo. mock.module() rewrote the exports of records the scrub
+// keeps; an ActiveDOMObject (Worker, WebSocket, MessagePort, BroadcastChannel) with pending
+// activity may still fire events into this file's realm and is only stopped by the swap path's
+// context stop.
+static bool hasUnscrubbableStateForTestIsolation(Zig::GlobalObject* globalObject)
+{
+    if (globalObject->moduleMockCalledSinceTestIsolationBaseline)
+        return true;
+    bool pendingActivity = false;
+    globalObject->scriptExecutionContext()->forEachActiveDOMObject([&](WebCore::ActiveDOMObject& object) {
+        pendingActivity = object.hasPendingActivity();
+        return pendingActivity ? WebCore::ScriptExecutionContext::ShouldContinue::No : WebCore::ScriptExecutionContext::ShouldContinue::Yes;
+    });
+    return pendingActivity;
+}
 
 } // namespace Bun
 
@@ -767,6 +800,7 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     const bool isRecapture = baseline.capturedGlobal == globalObject;
     baseline.ownProperties.clear();
     baseline.capturedGlobal = globalObject;
+    globalObject->moduleMockCalledSinceTestIsolationBaseline = false;
     baseline.lexicalSymbolTableSize = globalObject->globalLexicalEnvironment()->symbolTable()->size();
 
     // Reify static hash-table entries (setTimeout, fetch, process, …) into
@@ -819,25 +853,40 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     }
 }
 
+// First half of the file boundary, called before the runtime-side cleanup. The swap path stops
+// the finished file's ScriptExecutionContext (Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation),
+// which is permanent: every Worker / MessagePort / WebSocket the next file creates on a stopped
+// context is stopped at construction. So a global is only left unstopped when it may still be
+// reused; tryResetForTestIsolation makes the final call once the cleanup has run.
+extern "C" bool Zig__GlobalObject__isTestIsolationReuseCandidate(Zig::GlobalObject* globalObject)
+{
+    JSC::JSLockHolder locker(globalObject->vm());
+    auto* baseline = Bun::testIsolationBaselineFor(globalObject);
+    if (!baseline)
+        return false;
+    if (Bun::hasUnscrubbableStateForTestIsolation(globalObject))
+        return baseline->noteSwap();
+    return true;
+}
+
 // Returns true if `globalObject` was scrubbed in place and can be reused for
 // the next file; false if a full swap (createForTestIsolation) is required.
-// Callers have already run the runtime-side cleanup (sockets, timers, handles).
+// Callers have already run the runtime-side cleanup (sockets, timers, handles),
+// which can run user JS (microtasks, close callbacks), so everything the
+// candidate check looked at is checked again here.
 extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* clientData = WebCore::clientData(vm);
-    auto* baseline = clientData->testIsolationBaseline.get();
-    if (!baseline || baseline->capturedGlobal != globalObject)
+    auto* baseline = Bun::testIsolationBaselineFor(globalObject);
+    if (!baseline)
         return false;
 
-    auto swap = [&] {
-        baseline->ownProperties.clear();
-        baseline->prepareStackTraceValue.clear();
-        baseline->swapCount++;
-        return false;
-    };
+    auto swap = [&] { return baseline->noteSwap(); };
+
+    if (Bun::hasUnscrubbableStateForTestIsolation(globalObject))
+        return swap();
 
     // These watchpoints are one-shot; a fresh global re-arms them.
     if (globalObject->isHavingABadTime()
@@ -952,11 +1001,12 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     }
 
     globalObject->mockModule.activeMocks.clear();
-    globalObject->globalEventScope->removeAllEventListeners();
+    // The listener half of what the swap path's prepareForDestruction() does; the context
+    // itself stays live (no ActiveDOMObject with pending activity exists, checked above).
+    globalObject->scriptExecutionContext()->removeAllEventListeners();
     globalObject->overridenDateNow = JSC::PNaN;
-    delete std::exchange(globalObject->onLoadPlugins.virtualModules, nullptr);
-    globalObject->onLoadPlugins = {};
-    globalObject->onResolvePlugins = {};
+    globalObject->onLoadPlugins.clear();
+    globalObject->onResolvePlugins.clear();
     if (globalObject->hasProcessObject()) {
         auto* process = globalObject->processObject();
         process->wrapped().removeAllListeners();

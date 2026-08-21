@@ -789,6 +789,10 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+    // mock.module() patches already-loaded module records in place, which the `--isolate`
+    // global-reuse scrub cannot undo. Set by JSMock__jsModuleMock, cleared when the reuse
+    // baseline is captured (after --preload), so only the test file's own calls count.
+    bool moduleMockCalledSinceTestIsolationBaseline = false;
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

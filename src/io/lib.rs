@@ -882,10 +882,18 @@ impl IoRequestLoop {
         }
 
         // smaller thread, since it's not doing much.
-        std::thread::Builder::new()
-            .stack_size(1024 * 1024 * 2)
-            .spawn(Self::on_spawn_io_thread)
-            .unwrap_or_else(|_| panic!("Failed to spawn IO watcher thread"));
+        let spawned = bun_threading::spawn_with_retry("IO", || {
+            std::thread::Builder::new()
+                .stack_size(1024 * 1024 * 2)
+                .spawn(Self::on_spawn_io_thread)
+        });
+        if let Err(err) = spawned {
+            // The callers of `schedule` are in the middle of a read or write
+            // that cannot be failed from here, so the process reports the
+            // limit and exits, rather than filing a crash report for it.
+            err.print();
+            bun_core::Global::exit(1);
+        }
         // The JoinHandle detaches on drop.
     }
 

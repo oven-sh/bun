@@ -535,7 +535,9 @@ impl UpgradeCommand {
     }
 
     fn _exec(ctx: Command::Context) -> crate::Result<()> {
-        HTTP::http_thread::init(&Default::default());
+        // An upgrade is nothing but downloads, so a refused thread ends it
+        // here, through the "upgrade manually" message of the caller.
+        HTTP::http_thread::init(&Default::default()).map_err(HTTP::Error::from)?;
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
         let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };

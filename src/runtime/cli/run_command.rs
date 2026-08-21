@@ -841,7 +841,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if preconnect.is_empty() {
             return;
         }
-        bun_http::http_thread::init(&Default::default());
+        // A preconnect is only a hint: without the thread the URLs are still
+        // validated, and the script's own requests report the refused thread.
+        let http_thread_started = bun_http::http_thread::init(&Default::default()).is_ok();
 
         for url_str in preconnect {
             // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
@@ -874,7 +876,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(1);
             }
 
-            bun_http::async_http::preconnect(url, false);
+            if http_thread_started {
+                bun_http::async_http::preconnect(url, false);
+            }
         }
     }
 
@@ -3165,7 +3169,11 @@ impl RunCommand {
             return;
         }
 
-        bun_http::http_thread::init(&Default::default());
+        // Silent like every other download failure here: the images render
+        // as their alt text.
+        if bun_http::http_thread::init(&Default::default()).is_err() {
+            return;
+        }
 
         // Heap-allocate each Download so AsyncHTTP.task has a stable
         // address (see RemoteImageDownload doc comment).

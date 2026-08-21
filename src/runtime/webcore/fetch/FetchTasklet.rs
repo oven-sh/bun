@@ -2339,12 +2339,14 @@ impl FetchTasklet {
         }
     }
 
+    /// The caller (`fetch_impl`) has started the HTTP thread with
+    /// `http_thread::init` before it created `promise`, so that a thread the
+    /// OS refuses rejects the fetch instead of leaving a promise behind.
     pub(crate) fn queue(
         global: &JSGlobalObject,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
-        http::http_thread::init(&http::http_thread::InitOpts::default());
         let node = Self::get(global, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);

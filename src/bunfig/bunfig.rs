@@ -944,24 +944,30 @@ impl<'a> Parser<'a> {
         }
 
         // ── jsx ──────────────────────────────────────────────────────────────
+        use bun_options_types::jsx::{JsxField, JsxFieldSet};
         let mut jsx_factory: Box<[u8]> = Box::default();
         let mut jsx_fragment: Box<[u8]> = Box::default();
         let mut jsx_import_source: Box<[u8]> = Box::default();
         let mut jsx_runtime = api::JsxRuntime::Automatic;
         let mut jsx_dev = true;
+        let mut jsx_set = JsxFieldSet::empty();
 
         if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
                 if value == b"react" {
                     jsx_runtime = api::JsxRuntime::Classic;
+                    jsx_set |= JsxField::Runtime;
                 } else if value == b"solid" {
                     jsx_runtime = api::JsxRuntime::Solid;
+                    jsx_set |= JsxField::Runtime;
                 } else if value == b"react-jsx" {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = false;
+                    jsx_set |= JsxField::Runtime | JsxField::Development;
                 } else if value == b"react-jsxDEV" {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = true;
+                    jsx_set |= JsxField::Runtime | JsxField::Development;
                 } else {
                     self.add_error(
                         expr.loc,
@@ -973,19 +979,22 @@ impl<'a> Parser<'a> {
         if let Some(expr) = json.get(b"jsxImportSource") {
             if let Some(value) = expr.as_string(self.bump) {
                 jsx_import_source = Box::<[u8]>::from(value);
+                jsx_set |= JsxField::ImportSource;
             }
         }
         if let Some(expr) = json.get(b"jsxFragment") {
             if let Some(value) = expr.as_string(self.bump) {
                 jsx_fragment = Box::<[u8]>::from(value);
+                jsx_set |= JsxField::Fragment;
             }
         }
         if let Some(expr) = json.get(b"jsxFactory") {
             if let Some(value) = expr.as_string(self.bump) {
                 jsx_factory = Box::<[u8]>::from(value);
+                jsx_set |= JsxField::Factory;
             }
         }
-        {
+        if !jsx_set.is_empty() {
             if let Some(jsx) = self.ctx.args.jsx.as_mut() {
                 if !jsx_factory.is_empty() {
                     jsx.factory = jsx_factory;
@@ -996,8 +1005,13 @@ impl<'a> Parser<'a> {
                 if !jsx_import_source.is_empty() {
                     jsx.import_source = jsx_import_source;
                 }
-                jsx.runtime = jsx_runtime;
-                jsx.development = jsx_dev;
+                if jsx_set.contains(JsxField::Runtime) {
+                    jsx.runtime = jsx_runtime;
+                }
+                if jsx_set.contains(JsxField::Development) {
+                    jsx.development = jsx_dev;
+                }
+                jsx.set_fields |= jsx_set;
             } else {
                 self.ctx.args.jsx = Some(api::Jsx {
                     factory: jsx_factory,
@@ -1005,6 +1019,7 @@ impl<'a> Parser<'a> {
                     import_source: jsx_import_source,
                     runtime: jsx_runtime,
                     development: jsx_dev,
+                    set_fields: jsx_set,
                     ..Default::default()
                 });
             }

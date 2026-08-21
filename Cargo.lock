@@ -1052,6 +1052,7 @@ dependencies = [
  "bun_wyhash",
  "const_format",
  "enum-map",
+ "enumset",
  "strum",
  "thiserror",
 ]
@@ -1230,7 +1231,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zstd",
  "const_format",
- "enumset",
  "libc",
  "scopeguard",
  "strum",

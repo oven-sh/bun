@@ -2,7 +2,6 @@ use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
-use enumset::{EnumSet, EnumSetType};
 
 // D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
 // the canonical `bun_options_types::jsx` module. `merge_jsx` uses
@@ -10,6 +9,7 @@ use enumset::{EnumSet, EnumSetType};
 pub mod options {
     pub use bun_options_types::jsx;
 }
+pub(crate) use options::jsx::{JsxField, JsxFieldSet};
 
 /// Selects strict JSON vs JSONC (comments + trailing commas) parsing in
 /// `JsonCache::parse_json`.
@@ -120,18 +120,6 @@ impl JsonCache {
 // Both keys and values are owned (`Box`/`Vec`) and freed when the map drops.
 pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
 
-// Hand-listed Pragma fields actually used below.
-#[derive(EnumSetType, Debug)]
-pub(crate) enum JsxField {
-    Factory,
-    Fragment,
-    ImportSource,
-    Runtime,
-    Development,
-}
-
-pub(crate) type JsxFieldSet = EnumSet<JsxField>;
-
 pub struct TSConfigJSON {
     pub(crate) abs_path: Box<[u8]>,
 
@@ -226,26 +214,31 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
+    /// Apply this tsconfig's JSX settings on top of `current`, skipping fields in `current.set_fields`.
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
         let mut out = current;
+        let apply = self.jsx_flags.difference(out.set_fields);
 
-        if self.jsx_flags.contains(JsxField::Factory) {
+        if apply.contains(JsxField::Factory) {
             out.factory = self.jsx.factory.clone();
         }
 
-        if self.jsx_flags.contains(JsxField::Fragment) {
+        if apply.contains(JsxField::Fragment) {
             out.fragment = self.jsx.fragment.clone();
         }
 
-        if self.jsx_flags.contains(JsxField::ImportSource) {
+        if apply.contains(JsxField::ImportSource) {
             out.import_source = self.jsx.import_source.clone();
+            out.package_name.clone_from(&self.jsx.package_name);
+            out.classic_import_source
+                .clone_from(&self.jsx.classic_import_source);
         }
 
-        if self.jsx_flags.contains(JsxField::Runtime) {
+        if apply.contains(JsxField::Runtime) {
             out.runtime = self.jsx.runtime;
         }
 
-        if self.jsx_flags.contains(JsxField::Development) {
+        if apply.contains(JsxField::Development) {
             out.development = self.jsx.development;
         }
 

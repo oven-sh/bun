@@ -1346,14 +1346,25 @@ describe("DONT_CONTEXTIFY", () => {
   });
 
   test("vm.runInNewContext honors contextCodeGeneration with DONT_CONTEXTIFY", () => {
-    let thrown: unknown;
-    try {
-      runInNewContext("eval('1')", constants.DONT_CONTEXTIFY, { contextCodeGeneration: { strings: false } });
-    } catch (e) {
-      thrown = e;
-    }
-    // The EvalError comes from the context's own realm, so compare by name.
-    expect((thrown as Error)?.name).toBe("EvalError");
+    // The errors come from the context's own realm, so compare by name.
+    const thrownName = (code: string, contextCodeGeneration: object) => {
+      try {
+        runInNewContext(code, constants.DONT_CONTEXTIFY, { contextCodeGeneration });
+      } catch (e) {
+        return (e as Error).name;
+      }
+      return "did not throw";
+    };
+    const wasmModule = "new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))";
+    expect({
+      strings: thrownName("eval('1')", { strings: false }),
+      wasm: thrownName(wasmModule, { wasm: false }),
+      wasmAllowedByDefault: thrownName(wasmModule, {}),
+    }).toEqual({
+      strings: "EvalError",
+      wasm: "CompileError",
+      wasmAllowedByDefault: "did not throw",
+    });
   });
 
   test("invalid contextCodeGeneration is rejected when reusing a DONT_CONTEXTIFY context", () => {

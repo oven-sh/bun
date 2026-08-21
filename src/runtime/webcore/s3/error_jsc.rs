@@ -192,7 +192,6 @@ pub(crate) fn s3_error_to_js_with_async_stack(
 /// Forwards to the free fn above; returns `JsResult` because the consuming
 /// `JSPromiseStrong::reject` takes `JsResult<JSValue>`.
 pub trait S3ErrorJsc {
-    fn to_js(&self, global_object: &JSGlobalObject, path: Option<&[u8]>) -> JSValue;
     fn to_js_with_async_stack(
         &self,
         global_object: &JSGlobalObject,
@@ -201,10 +200,6 @@ pub trait S3ErrorJsc {
     ) -> bun_jsc::JsResult<JSValue>;
 }
 impl S3ErrorJsc for S3Error<'_> {
-    #[inline]
-    fn to_js(&self, global_object: &JSGlobalObject, path: Option<&[u8]>) -> JSValue {
-        s3_error_to_js(self, global_object, path)
-    }
     #[inline]
     fn to_js_with_async_stack(
         &self,

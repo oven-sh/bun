@@ -32,6 +32,7 @@ bun_resolver.workspace = true
 # (both already in this graph), so no cycle.
 bun_resolve_builtins.workspace = true
 bun_core.workspace = true
+bun_zstd.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 # bun_css — needed by Chunk.rs/ParseTask.rs/LinkerContext.rs. Unconditional:
@@ -54,7 +55,6 @@ bun_md.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_perf.workspace = true
-bun_router.workspace = true
 bun_sourcemap.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true

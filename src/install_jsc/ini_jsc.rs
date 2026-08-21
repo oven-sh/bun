@@ -29,7 +29,7 @@ impl IniTestingAPIs {
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;
         use bun_dotenv as dotenv;
-        use bun_ini::{config_iterator, load_npmrc};
+        use bun_ini::{RegistryAuth, load_npmrc};
         use bun_install::npm::Registry;
 
         let arg = frame.argument(0);
@@ -82,7 +82,7 @@ impl IniTestingAPIs {
         };
 
         let mut install = Box::new(BunInstall::default());
-        let mut configs: Vec<config_iterator::Item> = Vec::new();
+        let mut configs: Vec<RegistryAuth> = Vec::new();
         if load_npmrc(&mut install, env, &mut log, &source, &mut configs).is_err() {
             return bun_ast_jsc::log_to_js(&log, global, b"error");
         }
@@ -186,7 +186,6 @@ impl IniTestingAPIs {
             Ok(v) => Ok(v),
             Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
             Err(ToJSError::JSError) => Err(JsError::Thrown),
-            Err(ToJSError::JSTerminated) => Err(JsError::Terminated),
             Err(e) => {
                 Err(global.throw_error(bun_jsc::CrateError::from(e), "failed to turn AST into JS"))
             }

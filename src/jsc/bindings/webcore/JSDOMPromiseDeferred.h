@@ -84,18 +84,6 @@ public:
         DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
     }
 
-    void resolveWithJSValue(JSC::JSValue resolution)
-    {
-        if (shouldIgnoreRequestToFulfill())
-            return;
-
-        ASSERT(deferred());
-        ASSERT(globalObject());
-        JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
-        JSC::JSLockHolder locker(lexicalGlobalObject);
-        resolve(*lexicalGlobalObject, resolution);
-    }
-
     void resolve()
     {
         if (shouldIgnoreRequestToFulfill())
@@ -106,40 +94,6 @@ public:
         JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
         JSC::JSLockHolder locker(lexicalGlobalObject);
         resolve(*lexicalGlobalObject, JSC::jsUndefined());
-    }
-
-    template<class IDLType>
-    void resolveWithNewlyCreated(typename IDLType::ParameterType value)
-    {
-        if (shouldIgnoreRequestToFulfill())
-            return;
-
-        ASSERT(deferred());
-        ASSERT(globalObject());
-        JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
-        auto& vm = lexicalGlobalObject->vm();
-        JSC::JSLockHolder locker(vm);
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto value_js = toJSNewlyCreated<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value));
-        DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
-        resolve(*lexicalGlobalObject, value_js);
-    }
-
-    template<class IDLType>
-    void resolveCallbackValueWithNewlyCreated(const Function<typename IDLType::InnerParameterType(ScriptExecutionContext&)>& createValue)
-    {
-        if (shouldIgnoreRequestToFulfill())
-            return;
-
-        ASSERT(deferred());
-        ASSERT(globalObject());
-        auto* lexicalGlobalObject = globalObject();
-        auto& vm = lexicalGlobalObject->vm();
-        JSC::JSLockHolder locker(vm);
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto value_js = toJSNewlyCreated<IDLType>(*lexicalGlobalObject, *globalObject(), createValue(*globalObject()->scriptExecutionContext()));
-        DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
-        resolve(*lexicalGlobalObject, value_js);
     }
 
     template<class IDLType>
@@ -232,112 +186,6 @@ private:
     Mode m_mode;
 };
 
-class DOMPromiseDeferredBase {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMPromiseDeferredBase);
-
-public:
-    DOMPromiseDeferredBase(Ref<DeferredPromise>&& genericPromise)
-        : m_promise(WTF::move(genericPromise))
-    {
-    }
-
-    DOMPromiseDeferredBase(DOMPromiseDeferredBase&& promise)
-        : m_promise(WTF::move(promise.m_promise))
-    {
-    }
-
-    DOMPromiseDeferredBase(const DOMPromiseDeferredBase& other)
-        : m_promise(other.m_promise.copyRef())
-    {
-    }
-
-    DOMPromiseDeferredBase& operator=(const DOMPromiseDeferredBase& other)
-    {
-        m_promise = other.m_promise.copyRef();
-        return *this;
-    }
-
-    DOMPromiseDeferredBase& operator=(DOMPromiseDeferredBase&& other)
-    {
-        m_promise = WTF::move(other.m_promise);
-        return *this;
-    }
-
-    void reject(RejectAsHandled rejectAsHandled = RejectAsHandled::No)
-    {
-        m_promise->reject(rejectAsHandled);
-    }
-
-    template<typename... ErrorType>
-    void reject(ErrorType&&... error)
-    {
-        m_promise->reject(std::forward<ErrorType>(error)...);
-    }
-
-    template<typename IDLType>
-    void rejectType(typename IDLType::ParameterType value, RejectAsHandled rejectAsHandled = RejectAsHandled::No)
-    {
-        m_promise->reject<IDLType>(std::forward<typename IDLType::ParameterType>(value), rejectAsHandled);
-    }
-
-    JSC::JSValue promise() const { return m_promise->promise(); };
-
-    void whenSettled(Function<void()>&& function)
-    {
-        m_promise->whenSettled(WTF::move(function));
-    }
-
-protected:
-    Ref<DeferredPromise> m_promise;
-};
-
-template<typename IDLType>
-class DOMPromiseDeferred : public DOMPromiseDeferredBase {
-public:
-    using DOMPromiseDeferredBase::DOMPromiseDeferredBase;
-    using DOMPromiseDeferredBase::operator=;
-    using DOMPromiseDeferredBase::promise;
-    using DOMPromiseDeferredBase::reject;
-
-    void resolve(typename IDLType::ParameterType value)
-    {
-        m_promise->resolve<IDLType>(std::forward<typename IDLType::ParameterType>(value));
-    }
-
-    template<typename U>
-    void settle(ExceptionOr<U>&& result)
-    {
-        if (result.hasException()) {
-            reject(result.releaseException());
-            return;
-        }
-        resolve(result.releaseReturnValue());
-    }
-};
-
-template<> class DOMPromiseDeferred<void> : public DOMPromiseDeferredBase {
-public:
-    using DOMPromiseDeferredBase::DOMPromiseDeferredBase;
-    using DOMPromiseDeferredBase::operator=;
-    using DOMPromiseDeferredBase::promise;
-    using DOMPromiseDeferredBase::reject;
-
-    void resolve()
-    {
-        m_promise->resolve();
-    }
-
-    void settle(ExceptionOr<void>&& result)
-    {
-        if (result.hasException()) {
-            reject(result.releaseException());
-            return;
-        }
-        resolve();
-    }
-};
-
-void fulfillPromiseWithJSON(Ref<DeferredPromise>&&, const String&);
 void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&&, ArrayBuffer*);
 void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&&, const void*, size_t);
 WEBCORE_EXPORT void rejectPromiseWithExceptionIfAny(JSC::JSGlobalObject&, JSDOMGlobalObject&, JSC::JSPromise&, JSC::TopExceptionScope&);

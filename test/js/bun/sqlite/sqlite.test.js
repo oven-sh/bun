@@ -184,10 +184,143 @@ describe("safeIntegers", () => {
             });
           }
         });
+
+        it("gap in ?N numbering reports the missing parameter instead of crashing", () => {
+          const db = Database.open(":memory:", { strict: true });
+
+          // "select ?2" makes sqlite implicitly allocate parameter 1, which has no name.
+          expect(() => db.query("select ?2 as x").all({})).toThrow('Missing parameter "?1"');
+          expect(() => db.query("select ?2 as x").all({ 1: "a", 2: "b" })).toThrow('Missing parameter "?1"');
+          expect(() => db.query("select ?1, ?3 as x").all({ 0: "a" })).toThrow('Missing parameter "?2"');
+          expect(db.query("select ?2 as x").all({ 0: "a", 1: "b" })).toEqual([{ x: "b" }]);
+        });
       }
     });
   }
 }
+
+describe("bind parameters object mutated by a getter during bind", () => {
+  // A getter that runs while binding can add/delete properties, changing the
+  // object's layout mid-bind. Lookups for later parameters must see the
+  // current layout; reading through the old one binds whatever property now
+  // occupies the stale slot, or crashes on an empty slot.
+
+  it("strict mode: throws missing parameter instead of binding a foreign value", () => {
+    const db = new Database(":memory:", { strict: true });
+    const q = db.query("select ?1 as a, $b as b, $c as c");
+    const t = {};
+    t[0] = "i";
+    Object.defineProperty(t, "b", {
+      enumerable: true,
+      get() {
+        delete t.c;
+        t.secret = "SECRET-NOT-A-PARAM";
+        return "two";
+      },
+    });
+    t.c = "three";
+    expect(() => q.all(t)).toThrow('Missing parameter "$c"');
+  });
+
+  it("strict mode: binds the value the parameter holds at bind time", () => {
+    const db = new Database(":memory:", { strict: true });
+    const q = db.query("select ?1 as a, $b as b, $c as c");
+    const t = {};
+    t[0] = "i";
+    Object.defineProperty(t, "b", {
+      enumerable: true,
+      get() {
+        delete t.c;
+        t.filler = "FILLER";
+        t.c = "three-new";
+        return "two";
+      },
+    });
+    t.c = "three-old";
+    expect(q.all(t)).toEqual([{ a: "i", b: "two", c: "three-new" }]);
+  });
+
+  it("strict mode: positional + named, index getter deletes a later parameter", () => {
+    const db = new Database(":memory:", { strict: true });
+    const q = db.query("select ? as a, $c as c");
+    const u = { c: "three" };
+    Object.defineProperty(u, 0, {
+      enumerable: true,
+      get() {
+        delete u.c;
+        u.secret = "SECRET-NOT-A-PARAM";
+        return 0;
+      },
+    });
+    expect(() => q.all(u)).toThrow('Missing parameter "c"');
+  });
+
+  it("default mode: treats a parameter deleted by an index getter as missing", () => {
+    const db = new Database(":memory:");
+    const q = db.query("select ? as a, $c as c");
+    const u = { $c: "three" };
+    Object.defineProperty(u, 0, {
+      enumerable: true,
+      get() {
+        delete u.$c;
+        u.secret = "S";
+        return 0;
+      },
+    });
+    expect(q.all(u)).toEqual([{ a: 0, c: null }]);
+  });
+
+  it("default mode: calls a getter installed for a later parameter mid-bind", () => {
+    const db = new Database(":memory:");
+    const q = db.query("select ? as a, $c as c");
+    const u = {};
+    Object.defineProperty(u, 0, {
+      enumerable: true,
+      get() {
+        delete u.$c;
+        Object.defineProperty(u, "$c", { enumerable: true, get: () => "via-getter" });
+        return 0;
+      },
+    });
+    u.$c = "three";
+    expect(q.all(u)).toEqual([{ a: 0, c: "via-getter" }]);
+  });
+
+  it("does not crash when a getter deletes a later parameter", async () => {
+    // Crashed before the fix: the stale layout said $c was present, and the
+    // bind read an empty slot.
+    const code = `
+      import { Database } from "bun:sqlite";
+      const db = new Database(":memory:", { strict: true });
+      const q = db.query("select ?1 as a, $b as b, $c as c");
+      const t = {};
+      t[0] = "i";
+      Object.defineProperty(t, "b", {
+        enumerable: true,
+        get() {
+          delete t.c;
+          return "two";
+        },
+      });
+      t.c = "three";
+      try {
+        q.all(t);
+        console.log("no-error");
+      } catch (e) {
+        console.log("error: " + e.message);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('error: Missing parameter "$c"');
+    expect(exitCode).toBe(0);
+  });
+});
 
 var encode = text => new TextEncoder().encode(text);
 
@@ -1785,6 +1918,51 @@ it("close() releases the database file when only query() statements are outstand
   db.exec("CREATE TABLE t (a INTEGER)");
   for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) db.query(`SELECT a + ${i} FROM t`).all();
   db.close();
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("close() does not crash with FTS5 virtual tables (#37044)", async () => {
+  // close() must not finalize FTS5's internal prepared statements behind the
+  // vtab's back; doing so use-after-frees in sqlite3_close's vtab disconnect.
+  const src = `
+    import { Database } from "bun:sqlite";
+    for (let i = 0; i < 10; i++) {
+      const db = new Database(":memory:");
+      db.exec("CREATE VIRTUAL TABLE notes_fts USING fts5(body)");
+      db.exec("INSERT INTO notes_fts(body) VALUES ('hello world'), ('goodbye moon')");
+      db.query("SELECT rowid FROM notes_fts WHERE notes_fts MATCH 'hello'").all();
+      db.query("SELECT count(*) c FROM notes_fts").get();
+      db.close(i % 2 === 0);
+    }
+    console.log("survived");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("survived");
+  expect(exitCode).toBe(0);
+});
+
+it("close() releases an FTS5 database file once the last prepare() statement is finalized (#37044)", () => {
+  using dir = tempDir("sqlite-close-unlink-fts5", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE VIRTUAL TABLE t USING fts5(a)");
+  // FTS5 caches internal prepared statements on the connection; they must not
+  // keep the deferred close from ever happening.
+  db.query("SELECT rowid FROM t WHERE t MATCH 'x'").all();
+  const stmt = db.prepare("SELECT 1");
+  db.close();
+  stmt.finalize();
+  // On Windows rmSync throws EBUSY if the handle stayed open past the last finalize.
   rmSync(file);
   expect(existsSync(file)).toBe(false);
 });

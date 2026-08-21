@@ -10,8 +10,6 @@ pub enum Error {
     /// nothing to negate.
     #[error("InvalidNegation")]
     InvalidNegation,
-    #[error("WriteFailed")]
-    WriteFailed,
 }
 
 impl Error {
@@ -22,7 +20,6 @@ impl Error {
             Self::MissingValue => "MissingValue",
             Self::InvalidArgument => "InvalidArgument",
             Self::InvalidNegation => "InvalidNegation",
-            Self::WriteFailed => "WriteFailed",
         }
     }
 }
@@ -30,12 +27,6 @@ impl Error {
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()
-    }
-}
-
-impl From<core::fmt::Error> for Error {
-    fn from(_: core::fmt::Error) -> Self {
-        Self::WriteFailed
     }
 }
 

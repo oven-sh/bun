@@ -9,6 +9,7 @@ use bun_io::Write as _;
 // `lockfile_real` module (this file is `lockfile_real::bun_lockb`). The
 // `bun_install::lockfile::*` path is the stub surface and lacks these items.
 use super::PatchedDep;
+use super::override_map::ScopedOverride;
 use super::{
     FormatVersion, Lockfile, Scratch, Stream, StringPool, buffers, package,
     package_index as PackageIndex,
@@ -16,6 +17,7 @@ use super::{
 use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
 use crate::config_version::ConfigVersion;
 use crate::dependency;
+use crate::dependency::{Behavior, Dependency};
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_ast::Log;
@@ -37,6 +39,7 @@ const HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG: u64 = u64::from_ne_bytes(*b"eMpTrUsT")
 const HAS_OVERRIDES_TAG: u64 = u64::from_ne_bytes(*b"oVeRriDs");
 const HAS_CATALOGS_TAG: u64 = u64::from_ne_bytes(*b"cAtAlOgS");
 const HAS_CONFIG_VERSION_TAG: u64 = u64::from_ne_bytes(*b"cNfGvRsN");
+const HAS_SCOPED_OVERRIDES_TAG: u64 = u64::from_ne_bytes(*b"sCoPdOvR");
 
 /// Wraps a growing `Vec<u8>` to provide both positional-write semantics
 /// (`get_pos`/`pwrite`) and append semantics (`write_all`/`write_int_*`) for
@@ -340,6 +343,37 @@ pub(crate) fn save(
     stream.write_all(&HAS_CONFIG_VERSION_TAG.to_ne_bytes())?;
     let config_version: ConfigVersion = options.config_version.unwrap_or(ConfigVersion::CURRENT);
     stream.write_int_le::<u64>(config_version as u64)?;
+
+    if this.overrides.has_scoped() {
+        stream.write_all(&HAS_SCOPED_OVERRIDES_TAG.to_ne_bytes())?;
+
+        let scoped = &this.overrides.scoped;
+        let mut externals: Vec<dependency::External> = Vec::with_capacity(scoped.len());
+        for rule in scoped {
+            externals.push(rule.parent.as_ref().map_or_else(
+                || dependency::to_external(&Dependency::default()),
+                dependency::to_external,
+            ));
+        }
+        write_array::<dependency::External>(&mut stream, &externals, PREFIX_DEP_EXTERNAL)?;
+
+        externals.clear();
+        for rule in scoped {
+            externals.push(dependency::to_external(&Dependency {
+                name: rule.dep.name,
+                name_hash: rule.dep.name_hash,
+                version: rule.target_range.clone(),
+                behavior: Behavior::default(),
+            }));
+        }
+        write_array::<dependency::External>(&mut stream, &externals, PREFIX_DEP_EXTERNAL)?;
+
+        externals.clear();
+        for rule in scoped {
+            externals.push(dependency::to_external(&rule.dep));
+        }
+        write_array::<dependency::External>(&mut stream, &externals, PREFIX_DEP_EXTERNAL)?;
+    }
 
     *total_size = stream.get_pos()?;
 
@@ -733,6 +767,43 @@ pub(crate) fn load(
                     return Err(crate::Error::InvalidLockfile);
                 };
                 lockfile.saved_config_version = Some(config_version);
+            }
+        }
+    }
+
+    {
+        let remaining_in_buffer = total_buffer_size.saturating_sub(stream.pos as u64);
+
+        if remaining_in_buffer > 8 && total_buffer_size <= stream.buffer.len() as u64 {
+            let next_num = stream.read_int_le::<u64>()?;
+            if next_num == HAS_SCOPED_OVERRIDES_TAG {
+                let parents: Vec<dependency::External> = buffers::read_array(stream)?;
+                let ranges: Vec<dependency::External> = buffers::read_array(stream)?;
+                let deps: Vec<dependency::External> = buffers::read_array(stream)?;
+                debug_assert_eq!(parents.len(), ranges.len());
+                debug_assert_eq!(parents.len(), deps.len());
+
+                let Lockfile {
+                    buffers, overrides, ..
+                } = &mut *lockfile;
+                let string_bytes: &[u8] = buffers.string_bytes.as_slice();
+                overrides.scoped.reserve(parents.len());
+                for ((parent, range), dep) in parents.iter().zip(ranges.iter()).zip(deps.iter()) {
+                    let mut context = dependency::Context {
+                        log: &mut *log,
+                        buffer: string_bytes,
+                        package_manager: manager.as_deref_mut(),
+                    };
+                    let parent = dependency::to_dependency(*parent, &mut context);
+                    let rule = ScopedOverride {
+                        parent: (!parent.name.is_empty()).then_some(parent),
+                        target_range: dependency::to_dependency(*range, &mut context).version,
+                        dep: dependency::to_dependency(*dep, &mut context),
+                    };
+                    overrides.push_scoped(rule, string_bytes);
+                }
+            } else {
+                stream.pos -= 8;
             }
         }
     }

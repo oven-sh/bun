@@ -82,12 +82,6 @@ DOMHighResTimeStamp Performance::timeOrigin() const
     return m_timeOrigin.secondsSinceEpoch().milliseconds();
 }
 
-// ReducedResolutionSeconds Performance::nowInReducedResolutionSeconds() const
-// {
-//     Seconds now = MonotonicTime::now() - m_timeOrigin;
-//     return reduceTimeResolution(now);
-// }
-
 Seconds Performance::reduceTimeResolution(Seconds seconds)
 {
     double resolution = timePrecision.seconds();
@@ -270,12 +264,6 @@ void Performance::unregisterPerformanceObserver(PerformanceObserver& observer)
 {
     m_observers.remove(&observer);
 }
-
-// void Performance::scheduleNavigationObservationTaskIfNeeded()
-// {
-//     if (m_navigationTiming)
-//         scheduleTaskIfNeeded();
-// }
 
 void Performance::queueEntry(PerformanceEntry& entry)
 {

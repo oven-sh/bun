@@ -70,7 +70,7 @@
 #include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/ObjectPrototype.h"
+#include "JavaScriptCore/ObjectPrototypeInlines.h"
 #include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
@@ -81,7 +81,6 @@
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
-#include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
@@ -99,8 +98,18 @@
 #include "JavaScriptCore/IntlObject.h"
 #include "JavaScriptCore/ISO8601.h"
 #include "JavaScriptCore/JSCTimeZone.h"
+#include "JavaScriptCore/InstantCore.h"
 #include "JavaScriptCore/TemporalCoreTypes.h"
+#include "JavaScriptCore/TemporalDuration.h"
 #include "JavaScriptCore/TemporalEnums.h"
+#include "JavaScriptCore/TemporalInstant.h"
+#include "JavaScriptCore/TemporalPlainDate.h"
+#include "JavaScriptCore/TemporalPlainDateTime.h"
+#include "JavaScriptCore/TemporalPlainMonthDay.h"
+#include "JavaScriptCore/TemporalPlainTime.h"
+#include "JavaScriptCore/TemporalPlainYearMonth.h"
+#include "JavaScriptCore/TemporalZonedDateTime.h"
+#include "JavaScriptCore/TemporalObject.h"
 #include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
@@ -1090,6 +1099,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             bool result = true;
             bool sameStructure = o2Structure->id() == o1Structure->id();
+            // Comparing values runs user getters that can rehash this PropertyTable mid-walk (use-after-free), so collect the pairs first and compare after.
+            MarkedArgumentBuffer pairs;
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
@@ -1110,18 +1121,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return false;
                     }
 
-                    if (left == right) return true;
-                    auto same = JSC::sameValue(globalObject, left, right);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) return true;
-
-                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (!eql) {
-                        result = false;
-                        return false;
-                    }
-
+                    pairs.appendWithCrashOnOverflow(left);
+                    pairs.appendWithCrashOnOverflow(right);
                     return true;
                 });
             } else {
@@ -1159,18 +1160,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return false;
                     }
 
-                    if (left == right) return true;
-                    auto same = JSC::sameValue(globalObject, left, right);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) return true;
-
-                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (!eql) {
-                        result = false;
-                        return false;
-                    }
-
+                    pairs.appendWithCrashOnOverflow(left);
+                    pairs.appendWithCrashOnOverflow(right);
                     return true;
                 });
 
@@ -1187,10 +1178,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                             }
                         }
 
-                        // Try to get the right value from the left. We don't need to check if they're equal
-                        // because the above loop has already iterated each property in the left. If we've
-                        // seen this property before, it was already `deepEquals`ed. If it doesn't exist,
-                        // the objects are not equal.
+                        // Membership check only; every left property is in `pairs` and compared below.
                         if (o1->getDirectOffset(vm, JSC::PropertyName(entry.key())) == invalidOffset) {
                             result = false;
                             return false;
@@ -1207,7 +1195,27 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            return result;
+            if (!result) {
+                return false;
+            }
+
+            for (size_t i = 0; i < pairs.size(); i += 2) {
+                JSValue left = pairs.at(i);
+                JSValue right = pairs.at(i + 1);
+
+                if (left == right) continue;
+                auto same = JSC::sameValue(globalObject, left, right);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (same) continue;
+
+                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!eql) {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 
@@ -1301,6 +1309,682 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
+static bool isTemporalObject(JSC::JSObject* object)
+{
+    return object->inherits<JSC::TemporalInstant>()
+        || object->inherits<JSC::TemporalPlainDate>()
+        || object->inherits<JSC::TemporalPlainDateTime>()
+        || object->inherits<JSC::TemporalPlainTime>()
+        || object->inherits<JSC::TemporalZonedDateTime>()
+        || object->inherits<JSC::TemporalPlainYearMonth>()
+        || object->inherits<JSC::TemporalPlainMonthDay>()
+        || object->inherits<JSC::TemporalDuration>();
+}
+
+// Temporal objects keep their state in internal slots and have no own
+// properties, so the generic own-property walk would call any two instances
+// of a class equal. Compare the internal fields instead, the way JSDateType
+// compares Dates. Returns std::nullopt only when neither side is a Temporal
+// object.
+static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObject* o2)
+{
+    if (auto* instant1 = dynamicDowncast<JSC::TemporalInstant>(o1)) {
+        auto* instant2 = dynamicDowncast<JSC::TemporalInstant>(o2);
+        return instant2 && instant1->exactTime() == instant2->exactTime();
+    }
+    if (auto* date1 = dynamicDowncast<JSC::TemporalPlainDate>(o1)) {
+        auto* date2 = dynamicDowncast<JSC::TemporalPlainDate>(o2);
+        return date2 && date1->plainDate() == date2->plainDate() && date1->calendarID() == date2->calendarID();
+    }
+    if (auto* dateTime1 = dynamicDowncast<JSC::TemporalPlainDateTime>(o1)) {
+        auto* dateTime2 = dynamicDowncast<JSC::TemporalPlainDateTime>(o2);
+        return dateTime2 && dateTime1->plainDate() == dateTime2->plainDate() && dateTime1->plainTime() == dateTime2->plainTime() && dateTime1->calendarID() == dateTime2->calendarID();
+    }
+    if (auto* time1 = dynamicDowncast<JSC::TemporalPlainTime>(o1)) {
+        auto* time2 = dynamicDowncast<JSC::TemporalPlainTime>(o2);
+        return time2 && time1->plainTime() == time2->plainTime();
+    }
+    if (auto* zoned1 = dynamicDowncast<JSC::TemporalZonedDateTime>(o1)) {
+        auto* zoned2 = dynamicDowncast<JSC::TemporalZonedDateTime>(o2);
+        return zoned2 && zoned1->exactTime() == zoned2->exactTime() && zoned1->timeZone() == zoned2->timeZone() && zoned1->calendarID() == zoned2->calendarID();
+    }
+    if (auto* yearMonth1 = dynamicDowncast<JSC::TemporalPlainYearMonth>(o1)) {
+        auto* yearMonth2 = dynamicDowncast<JSC::TemporalPlainYearMonth>(o2);
+        return yearMonth2 && yearMonth1->plainYearMonth() == yearMonth2->plainYearMonth() && yearMonth1->calendarID() == yearMonth2->calendarID();
+    }
+    if (auto* monthDay1 = dynamicDowncast<JSC::TemporalPlainMonthDay>(o1)) {
+        auto* monthDay2 = dynamicDowncast<JSC::TemporalPlainMonthDay>(o2);
+        return monthDay2 && monthDay1->plainMonthDay() == monthDay2->plainMonthDay() && monthDay1->calendarID() == monthDay2->calendarID();
+    }
+    if (auto* duration1 = dynamicDowncast<JSC::TemporalDuration>(o1)) {
+        auto* duration2 = dynamicDowncast<JSC::TemporalDuration>(o2);
+        if (!duration2)
+            return false;
+        // Field-wise: PT1H and PT60M are different Duration values.
+        for (size_t i = 0; i < JSC::numberOfTemporalUnits; i++) {
+            if (duration1->duration()[i] != duration2->duration()[i])
+                return false;
+        }
+        return true;
+    }
+    // `o1` is not a Temporal object; a Temporal `o2` can then never be equal
+    // (and must not reach the own-property walk).
+    if (isTemporalObject(o2))
+        return false;
+    return std::nullopt;
+}
+
+struct DeepEqualsMode {
+    bool isStrict;
+    bool enableAsymmetricMatchers;
+    bool checkPrototypes;
+    bool skipPrototypeIdentity;
+    bool (*deepEquals)(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, bool);
+    bool (*nonIndexOwnPropertiesEqual)(JSC::JSGlobalObject*, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, JSObject*, JSObject*);
+};
+
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+static constexpr DeepEqualsMode deepEqualsMode {
+    isStrict,
+    enableAsymmetricMatchers,
+    checkPrototypes,
+    skipPrototypeIdentity,
+    &Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>,
+    checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
+};
+
+// The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
+// and take the mode at runtime; only the dispatch and the plain-object tail in
+// `specialObjectsDequal` below stay specialised per mode.
+static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
+{
+    uint8_t c1Type = c1->type();
+    uint8_t c2Type = c2->type();
+
+    switch (c1Type) {
+    case ArrayBufferType: {
+        if (c2Type != ArrayBufferType) {
+            return false;
+        }
+
+        JSC::ArrayBuffer* left = uncheckedDowncast<JSArrayBuffer>(c1)->impl();
+        JSC::ArrayBuffer* right = uncheckedDowncast<JSArrayBuffer>(c2)->impl();
+        size_t byteLength = left->byteLength();
+
+        if (right->byteLength() != byteLength) {
+            return false;
+        }
+
+        if (left->isShared() != right->isShared()) [[unlikely]] {
+            return false;
+        }
+
+        if (left->isDetached() || right->isDetached()) [[unlikely]] {
+            if (!mode.enableAsymmetricMatchers) {
+                // Node wraps each side in `new Uint8Array(buf)` to compare bytes, which
+                // throws on a detached ArrayBuffer; match that contract for node:assert/util.
+                throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
+            }
+            return false;
+        }
+
+        if (!WTF::equalSpans(left->span(), right->span()))
+            return false;
+
+        if (mode.checkPrototypes) {
+            // node also compares own enumerable properties of ArrayBuffers.
+            break;
+        }
+        return true;
+    }
+    case DataViewType: {
+        if (!mode.checkPrototypes) {
+            // Bun.deepEquals / bun:test compare DataViews as plain objects; reserve the byte
+            // comparison for the node-parity instantiations.
+            break;
+        }
+        if (c2Type != DataViewType) {
+            return false;
+        }
+
+        // node compares DataViews by contents (their bytes at the view's
+        // offset), then falls through to own enumerable properties.
+        JSC::JSDataView* left = uncheckedDowncast<JSC::JSDataView>(c1);
+        JSC::JSDataView* right = uncheckedDowncast<JSC::JSDataView>(c2);
+        if (left->isDetached() || right->isDetached()) [[unlikely]] {
+            // The C++ byteLength() accessor silently reports 0 for a detached
+            // view; node reads the JS accessor, which throws. Keep node's
+            // exact error contract.
+            throwTypeError(globalObject, scope, "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer"_s);
+            return false;
+        }
+        size_t byteLength = left->byteLength();
+        if (right->byteLength() != byteLength) {
+            return false;
+        }
+        if (!WTF::equalSpans(std::span { static_cast<const uint8_t*>(left->vector()), byteLength },
+                std::span { static_cast<const uint8_t*>(right->vector()), byteLength }))
+            return false;
+        // node compares DataView own properties via getOwnNonIndexProperties
+        // (an extra integer-index key is ignored), so compare the non-index
+        // keys directly instead of falling through to the full own-key walk.
+        return mode.nonIndexOwnPropertiesEqual(globalObject, gcBuffer, stack, scope, left, right);
+    }
+    case JSDateType: {
+        if (c2Type != JSDateType) {
+            return false;
+        }
+
+        JSC::DateInstance* left = uncheckedDowncast<DateInstance>(c1);
+        JSC::DateInstance* right = uncheckedDowncast<DateInstance>(c2);
+
+        if (mode.checkPrototypes) {
+            double time1 = left->internalNumber();
+            double time2 = right->internalNumber();
+            // node treats two invalid dates as equal, and compares own
+            // enumerable properties as well.
+            if (time1 != time2 && !(std::isnan(time1) && std::isnan(time2))) {
+                return false;
+            }
+            break;
+        }
+
+        return left->internalNumber() == right->internalNumber();
+    }
+    case RegExpObjectType: {
+        if (c2Type != RegExpObjectType) {
+            return false;
+        }
+
+        if (JSC::RegExpObject* left = dynamicDowncast<JSC::RegExpObject>(c1)) {
+            JSC::RegExpObject* right = dynamicDowncast<JSC::RegExpObject>(c2);
+
+            if (!right) [[unlikely]] {
+                return false;
+            }
+
+            if (left->regExp()->key() != right->regExp()->key()) {
+                return false;
+            }
+            if (mode.checkPrototypes) {
+                // node also compares `lastIndex` and own enumerable properties.
+                bool sameLastIndex = JSC::sameValue(globalObject, left->getLastIndex(), right->getLastIndex());
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!sameLastIndex) {
+                    return false;
+                }
+                break;
+            }
+            return true;
+        }
+
+        return false;
+    }
+    case ErrorInstanceType: {
+        if (c2Type != ErrorInstanceType) {
+            return false;
+        }
+
+        // NOTE(@DonIsaac): could `left` ever _not_ be a JSC::ErrorInstance?
+        if (JSC::ErrorInstance* left = dynamicDowncast<JSC::ErrorInstance>(c1)) {
+            JSC::ErrorInstance* right = dynamicDowncast<JSC::ErrorInstance>(c2);
+
+            if (!right) [[unlikely]] {
+                return false;
+            }
+
+            if (left->errorType() != right->errorType()) {
+                // quick check on ctors (does not handle subclasses)
+                return false;
+            }
+
+            auto leftName = left->sanitizedNameString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto rightName = right->sanitizedNameString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (leftName != rightName) {
+                // manual `.name` changes (usually in subclasses)
+                return false;
+            }
+
+            auto leftMessage = left->sanitizedMessageString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto rightMessage = right->sanitizedMessageString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (leftMessage != rightMessage) {
+                // `.message`
+                return false;
+            }
+
+            if (mode.isStrict) {
+                if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
+                    return false;
+                }
+            }
+
+            VM& vm = JSC::getVM(globalObject);
+
+            // `.cause` is non-enumerable, so it must be checked explicitly.
+            // note that an undefined cause is different than a missing cause in
+            // strict mode.
+            const PropertyName cause(vm.propertyNames->cause);
+            if (mode.isStrict) {
+                bool leftHasCause = left->hasProperty(globalObject, cause);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool rightHasCause = right->hasProperty(globalObject, cause);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (leftHasCause != rightHasCause) {
+                    return false;
+                }
+            }
+            auto leftCause = left->get(globalObject, cause);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto rightCause = right->get(globalObject, cause);
+            RETURN_IF_EXCEPTION(scope, {});
+            bool causesEqual = mode.deepEquals(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!causesEqual) {
+                return false;
+            }
+
+            // `.errors` (AggregateError) is non-enumerable; node compares it unless RHS owns
+            // it enumerably: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L400
+            const PropertyName errorsName(vm.propertyNames->errors);
+            PropertySlot rightErrorsSlot(right, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool rightOwnsEnumerableErrors = right->methodTable()->getOwnPropertySlot(right, globalObject, errorsName, rightErrorsSlot)
+                && !(rightErrorsSlot.attributes() & PropertyAttribute::DontEnum);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!rightOwnsEnumerableErrors) {
+                auto leftErrors = left->get(globalObject, errorsName);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto rightErrors = right->get(globalObject, errorsName);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool errorsEqual = mode.deepEquals(globalObject, leftErrors, rightErrors, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!errorsEqual) {
+                    return false;
+                }
+            }
+
+            // check arbitrary enumerable properties. `.stack` is not checked.
+            left->materializeErrorInfoIfNeeded(vm);
+            RETURN_IF_EXCEPTION(scope, {});
+            right->materializeErrorInfoIfNeeded(vm);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+            JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+            left->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, {});
+            right->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            const size_t propertyArrayLength1 = a1.size();
+            const size_t propertyArrayLength2 = a2.size();
+            if (mode.isStrict) {
+                if (propertyArrayLength1 != propertyArrayLength2) {
+                    return false;
+                }
+            }
+
+            // take a property name from one, try to get it from both
+            size_t i;
+            for (i = 0; i < propertyArrayLength1; i++) {
+                Identifier i1 = a1[i];
+                if (i1 == vm.propertyNames->stack) continue;
+                PropertyName propertyName1 = PropertyName(i1);
+
+                JSValue prop1 = left->get(globalObject, propertyName1);
+                RETURN_IF_EXCEPTION(scope, {});
+                ASSERT(prop1);
+
+                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName1);
+                RETURN_IF_EXCEPTION(scope, {});
+
+                if (!mode.isStrict) {
+                    if (prop1.isUndefined() && prop2.isEmpty()) {
+                        continue;
+                    }
+                }
+
+                if (!prop2) {
+                    return false;
+                }
+
+                bool propertiesEqual = mode.deepEquals(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!propertiesEqual) {
+                    return false;
+                }
+            }
+
+            // for the remaining properties in the other object, make sure they are undefined
+            for (; i < propertyArrayLength2; i++) {
+                Identifier i2 = a2[i];
+                if (i2 == vm.propertyNames->stack) continue;
+                PropertyName propertyName2 = PropertyName(i2);
+
+                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
+                RETURN_IF_EXCEPTION(scope, {});
+
+                if (!prop2.isUndefined()) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        break;
+    }
+    case Int8ArrayType:
+    case Uint8ArrayType:
+    case Uint8ClampedArrayType:
+    case Int16ArrayType:
+    case Uint16ArrayType:
+    case Int32ArrayType:
+    case Uint32ArrayType:
+    case Float16ArrayType:
+    case Float32ArrayType:
+    case Float64ArrayType:
+    case BigInt64ArrayType:
+    case BigUint64ArrayType: {
+        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
+            return false;
+        }
+
+        auto info = c1->classInfo();
+        auto info2 = c2->classInfo();
+        if (!info || !info2) {
+            return false;
+        }
+
+        // Strict mode also compares own non-index properties (e.g. symbols); loose
+        // ignores them. The byte checks below still run first so a mismatch stays
+        // O(bytes) and node's byte-level semantics (NaN payload bits) are preserved;
+        // only the "bytes equal" exits defer to the property walk when extras exist.
+        bool compareOwnProperties = false;
+        if (mode.isStrict) {
+            compareOwnProperties = hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure());
+        }
+
+        JSC::JSArrayBufferView* left = uncheckedDowncast<JSArrayBufferView>(c1);
+        JSC::JSArrayBufferView* right = uncheckedDowncast<JSArrayBufferView>(c2);
+        size_t byteLength = left->byteLength();
+
+        if (right->byteLength() != byteLength) {
+            return false;
+        }
+
+        if (byteLength == 0) {
+            if (mode.checkPrototypes) {
+                return mode.nonIndexOwnPropertiesEqual(globalObject, gcBuffer, stack, scope, left, right);
+            }
+            if (compareOwnProperties) break;
+            return true;
+        }
+
+        if (right->isDetached() || left->isDetached()) [[unlikely]] {
+            return false;
+        }
+
+        const void* vector = left->vector();
+        const void* rightVector = right->vector();
+        if (!vector || !rightVector) [[unlikely]] {
+            return false;
+        }
+
+        if (vector == rightVector) [[unlikely]] {
+            if (mode.checkPrototypes) {
+                return mode.nonIndexOwnPropertiesEqual(globalObject, gcBuffer, stack, scope, left, right);
+            }
+            if (compareOwnProperties) break;
+            return true;
+        }
+
+        // Float arrays in non-strict mode use IEEE == (+0/-0 equal, NaN != NaN); everything else
+        // compares raw bytes. All results funnel to one tail so node-parity never skips own props.
+        bool contentsEqual;
+        if (!mode.isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
+            if (c1Type == Float16ArrayType) {
+                contentsEqual = looseFloatContentsEqual(std::span { static_cast<const WTF::Float16*>(vector), byteLength / sizeof(WTF::Float16) },
+                    std::span { static_cast<const WTF::Float16*>(rightVector), byteLength / sizeof(WTF::Float16) });
+            } else if (c1Type == Float32ArrayType) {
+                contentsEqual = looseFloatContentsEqual(std::span { static_cast<const float*>(vector), byteLength / sizeof(float) },
+                    std::span { static_cast<const float*>(rightVector), byteLength / sizeof(float) });
+            } else { // Float64Array
+                contentsEqual = looseFloatContentsEqual(std::span { static_cast<const double*>(vector), byteLength / sizeof(double) },
+                    std::span { static_cast<const double*>(rightVector), byteLength / sizeof(double) });
+            }
+        } else {
+            contentsEqual = WTF::equalSpans(std::span { static_cast<const uint8_t*>(vector), byteLength },
+                std::span { static_cast<const uint8_t*>(rightVector), byteLength });
+        }
+        if (!contentsEqual) {
+            return false;
+        }
+        if (mode.checkPrototypes) {
+            return mode.nonIndexOwnPropertiesEqual(globalObject, gcBuffer, stack, scope, left, right);
+        }
+        if (compareOwnProperties) break;
+        return true;
+    }
+    case StringObjectType: {
+        if (c2Type != StringObjectType) {
+            // A String subclass instance is DerivedStringObjectType. Only skipPrototype
+            // mode, where the constructor is ignored, treats it as an equivalent boxed
+            // string; every other mode keeps the existing "different type" answer.
+            if (!(mode.isStrict && mode.skipPrototypeIdentity)) {
+                return false;
+            } else if (c2Type != DerivedStringObjectType) {
+                return false;
+            }
+        }
+
+        if (!mode.skipPrototypeIdentity) {
+            if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
+                return false;
+            }
+        }
+
+        JSString* s1 = c1->toStringInline(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSString* s2 = c2->toStringInline(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        bool stringsEqual = s1->equal(globalObject, s2);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!stringsEqual) {
+            return false;
+        }
+        if (mode.checkPrototypes || mode.isStrict) {
+            // Only these modes compare extra own props on boxed primitives. Guarded so a plain
+            // boxed string skips the per-char-index walk; `break` (not nonIndexOwnPropertiesEqual)
+            // when extras exist so an out-of-range index still fails the compare, like node.
+            if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
+                break;
+            }
+        }
+        return true;
+    }
+    case JSFunctionType: {
+        return false;
+    }
+
+    case JSAsJSONType:
+    case JSDOMWrapperType: {
+        if (c2Type == c1Type) {
+
+            // https://github.com/oven-sh/bun/issues/4089
+            // https://github.com/oven-sh/bun/issues/6492
+            auto* url2 = dynamicDowncast<JSDOMURL>(c2);
+            auto* url1 = dynamicDowncast<JSDOMURL>(c1);
+
+            if (mode.isStrict) {
+                // if one is a URL and the other is not a URL, toStrictEqual returns false.
+                if ((url2 == nullptr) != (url1 == nullptr)) {
+                    return false;
+                }
+            } else {
+                if ((url1 == nullptr) != (url2 == nullptr)) {
+                    goto compareAsNormalValue;
+                }
+            }
+
+            if (url2 && url1) {
+                // toEqual or toStrictEqual should return false when the URLs' href is not equal
+                // But you could have added additional properties onto the
+                // url object itself, so we must check those as well
+                // But it's definitely not equal if the href() is not the same
+                if (url1->wrapped().href() != url2->wrapped().href()) {
+                    return false;
+                }
+
+                goto compareAsNormalValue;
+            }
+
+            // TODO: FormData.
+            // It's complicated because it involves Blob.
+
+            {
+                auto urlSearchParams1 = dynamicDowncast<JSURLSearchParams>(c1);
+                auto urlSearchParams2 = dynamicDowncast<JSURLSearchParams>(c2);
+                if (urlSearchParams1 && urlSearchParams2) {
+                    auto& wrapped1 = urlSearchParams1->wrapped();
+                    const auto& wrapped2 = urlSearchParams2->wrapped();
+                    if (wrapped1.size() != wrapped2.size()) {
+                        return false;
+                    }
+
+                    auto iter1 = wrapped1.createIterator();
+                    while (const auto& maybePair = iter1.next()) {
+                        const auto& key = maybePair->key;
+                        const auto& value = maybePair->value;
+                        const auto& maybeValue = wrapped2.get(key);
+                        if (!maybeValue || maybeValue != value) {
+                            return false;
+                        }
+                    }
+
+                    goto compareAsNormalValue;
+                } else {
+                    if (mode.isStrict) {
+                        // if one is a URLSearchParams and the other is not a URLSearchParams, toStrictEqual should return false.
+                        if ((urlSearchParams2 == nullptr) != (urlSearchParams1 == nullptr)) {
+                            return false;
+                        }
+                    } else {
+                        if ((urlSearchParams1 == nullptr) != (urlSearchParams2 == nullptr)) {
+                            goto compareAsNormalValue;
+                        }
+                    }
+                }
+            }
+
+            {
+                auto headers1 = dynamicDowncast<JSFetchHeaders>(c1);
+                auto headers2 = dynamicDowncast<JSFetchHeaders>(c2);
+                if (headers1 && headers2) {
+                    auto& wrapped1 = headers1->wrapped();
+                    const auto& wrapped2 = headers2->wrapped();
+                    if (wrapped1.size() != wrapped2.size()) {
+                        return false;
+                    }
+
+                    auto iter1 = wrapped1.createIterator();
+                    while (const auto& maybePair = iter1.next()) {
+                        const auto& key = maybePair->key;
+                        const auto& value = maybePair->value;
+                        const auto& maybeValue = wrapped2.get(key);
+                        if (maybeValue.hasException()) {
+                            return false;
+                        }
+
+                        if (maybeValue.returnValue() != value) {
+                            return false;
+                        }
+                    }
+
+                    goto compareAsNormalValue;
+                } else {
+                    if (mode.isStrict) {
+                        // if one is a FetchHeaders and the other is not a FetchHeaders, toStrictEqual should return false.
+                        if ((headers2 == nullptr) != (headers1 == nullptr)) {
+                            return false;
+                        }
+                    } else {
+                        if ((headers1 == nullptr) != (headers2 == nullptr)) {
+                            goto compareAsNormalValue;
+                        }
+                    }
+                }
+            }
+        }
+
+        goto compareAsNormalValue;
+
+    compareAsNormalValue:
+        break;
+    }
+    // globalThis is only equal to globalThis
+    // NOTE: globalThis from JS is a JSGlobalProxy (GlobalProxyType) wrapping Zig::GlobalObject (GlobalObjectType)
+    case GlobalObjectType: {
+        if (c1Type != c2Type) return false;
+        auto* g1 = dynamicDowncast<JSC::JSGlobalObject>(c1);
+        auto* g2 = dynamicDowncast<JSC::JSGlobalObject>(c2);
+        return g1->m_globalThis == g2->m_globalThis;
+    }
+    case GlobalProxyType: {
+        if (c1Type != c2Type) return false;
+        auto* gp1 = dynamicDowncast<JSC::JSGlobalProxy>(c1);
+        auto* gp2 = dynamicDowncast<JSC::JSGlobalProxy>(c2);
+        return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
+    }
+    case NumberObjectType:
+    case BooleanObjectType: {
+        // Number and Boolean wrapper objects must be the same type and have the same internal value
+        if (c1Type != c2Type) return false;
+        JSValue val1 = uncheckedDowncast<JSWrapperObject>(c1)->internalValue();
+        JSValue val2 = uncheckedDowncast<JSWrapperObject>(c2)->internalValue();
+        bool same = JSC::sameValue(globalObject, val1, val2);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!same) return false;
+        // Fall through to check own properties
+        break;
+    }
+    default:
+        break;
+    }
+
+    // Symbol and BigInt wrapper objects are plain ObjectType in JSC, so they are not
+    // reachable from the switch above. Like Number and Boolean wrappers, they must be
+    // the same kind of wrapper and hold the same internal value. Everything else --
+    // object literals, arrays -- has its own JSType and skips this.
+    if (c1Type == ObjectType) {
+        JSObject* obj1 = c1->getObject();
+        JSObject* obj2 = c2->getObject();
+        if (obj1 && obj2) {
+            std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
+            if (temporalEqual.has_value())
+                return temporalEqual;
+
+            const bool isSymbol1 = obj1->inherits<SymbolObject>();
+            const bool isBigInt1 = obj1->inherits<BigIntObject>();
+            if (isSymbol1 || isBigInt1) {
+                if (isSymbol1 != obj2->inherits<SymbolObject>() || isBigInt1 != obj2->inherits<BigIntObject>()) {
+                    return false;
+                }
+                JSValue val1 = uncheckedDowncast<JSWrapperObject>(obj1)->internalValue();
+                JSValue val2 = uncheckedDowncast<JSWrapperObject>(obj2)->internalValue();
+                bool same = JSC::sameValue(globalObject, val1, val2);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!same) return false;
+                // Fall through to check own properties
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
@@ -1309,6 +1993,8 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     uint8_t c2Type = c2->type();
 
     switch (c1Type) {
+    // Map/Set stay specialised: expect(...).toEqual on collections is hot enough
+    // that the per-entry recursion should be a direct call.
     case JSSetType: {
         if (c2Type != JSSetType) {
             return false;
@@ -1492,279 +2178,11 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
         return true;
     }
-    case ArrayBufferType: {
-        if (c2Type != ArrayBufferType) {
-            return false;
-        }
-
-        JSC::ArrayBuffer* left = uncheckedDowncast<JSArrayBuffer>(c1)->impl();
-        JSC::ArrayBuffer* right = uncheckedDowncast<JSArrayBuffer>(c2)->impl();
-        size_t byteLength = left->byteLength();
-
-        if (right->byteLength() != byteLength) {
-            return false;
-        }
-
-        if (left->isShared() != right->isShared()) [[unlikely]] {
-            return false;
-        }
-
-        if (left->isDetached() || right->isDetached()) [[unlikely]] {
-            if constexpr (!enableAsymmetricMatchers) {
-                // Node wraps each side in `new Uint8Array(buf)` to compare bytes, which
-                // throws on a detached ArrayBuffer; match that contract for node:assert/util.
-                throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
-            }
-            return false;
-        }
-
-        if (!WTF::equalSpans(left->span(), right->span()))
-            return false;
-
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of ArrayBuffers.
-            break;
-        }
-        return true;
-    }
-    case DataViewType: {
-        if constexpr (!checkPrototypes) {
-            // Bun.deepEquals / bun:test compare DataViews as plain objects; reserve the byte
-            // comparison for the node-parity instantiations.
-            break;
-        }
-        if (c2Type != DataViewType) {
-            return false;
-        }
-
-        // node compares DataViews by contents (their bytes at the view's
-        // offset), then falls through to own enumerable properties.
-        JSC::JSDataView* left = uncheckedDowncast<JSC::JSDataView>(c1);
-        JSC::JSDataView* right = uncheckedDowncast<JSC::JSDataView>(c2);
-        if (left->isDetached() || right->isDetached()) [[unlikely]] {
-            // The C++ byteLength() accessor silently reports 0 for a detached
-            // view; node reads the JS accessor, which throws. Keep node's
-            // exact error contract.
-            throwTypeError(globalObject, scope, "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer"_s);
-            return false;
-        }
-        size_t byteLength = left->byteLength();
-        if (right->byteLength() != byteLength) {
-            return false;
-        }
-        if (!WTF::equalSpans(std::span { static_cast<const uint8_t*>(left->vector()), byteLength },
-                std::span { static_cast<const uint8_t*>(right->vector()), byteLength }))
-            return false;
-        // node compares DataView own properties via getOwnNonIndexProperties
-        // (an extra integer-index key is ignored), so compare the non-index
-        // keys directly instead of falling through to the full own-key walk.
-        return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, left, right);
-    }
-    case JSDateType: {
-        if (c2Type != JSDateType) {
-            return false;
-        }
-
-        JSC::DateInstance* left = uncheckedDowncast<DateInstance>(c1);
-        JSC::DateInstance* right = uncheckedDowncast<DateInstance>(c2);
-
-        if constexpr (checkPrototypes) {
-            double time1 = left->internalNumber();
-            double time2 = right->internalNumber();
-            // node treats two invalid dates as equal, and compares own
-            // enumerable properties as well.
-            if (time1 != time2 && !(std::isnan(time1) && std::isnan(time2))) {
-                return false;
-            }
-            break;
-        }
-
-        return left->internalNumber() == right->internalNumber();
-    }
-    case RegExpObjectType: {
-        if (c2Type != RegExpObjectType) {
-            return false;
-        }
-
-        if (JSC::RegExpObject* left = dynamicDowncast<JSC::RegExpObject>(c1)) {
-            JSC::RegExpObject* right = dynamicDowncast<JSC::RegExpObject>(c2);
-
-            if (!right) [[unlikely]] {
-                return false;
-            }
-
-            if (left->regExp()->key() != right->regExp()->key()) {
-                return false;
-            }
-            if constexpr (checkPrototypes) {
-                // node also compares `lastIndex` and own enumerable properties.
-                bool sameLastIndex = JSC::sameValue(globalObject, left->getLastIndex(), right->getLastIndex());
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!sameLastIndex) {
-                    return false;
-                }
-                break;
-            }
-            return true;
-        }
-
-        return false;
-    }
-    case ErrorInstanceType: {
-        if (c2Type != ErrorInstanceType) {
-            return false;
-        }
-
-        // NOTE(@DonIsaac): could `left` ever _not_ be a JSC::ErrorInstance?
-        if (JSC::ErrorInstance* left = dynamicDowncast<JSC::ErrorInstance>(c1)) {
-            JSC::ErrorInstance* right = dynamicDowncast<JSC::ErrorInstance>(c2);
-
-            if (!right) [[unlikely]] {
-                return false;
-            }
-
-            if (left->errorType() != right->errorType()) {
-                // quick check on ctors (does not handle subclasses)
-                return false;
-            }
-
-            auto leftName = left->sanitizedNameString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto rightName = right->sanitizedNameString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (leftName != rightName) {
-                // manual `.name` changes (usually in subclasses)
-                return false;
-            }
-
-            auto leftMessage = left->sanitizedMessageString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto rightMessage = right->sanitizedMessageString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (leftMessage != rightMessage) {
-                // `.message`
-                return false;
-            }
-
-            if constexpr (isStrict) {
-                if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
-                    return false;
-                }
-            }
-
-            VM& vm = JSC::getVM(globalObject);
-
-            // `.cause` is non-enumerable, so it must be checked explicitly.
-            // note that an undefined cause is different than a missing cause in
-            // strict mode.
-            const PropertyName cause(vm.propertyNames->cause);
-            if constexpr (isStrict) {
-                bool leftHasCause = left->hasProperty(globalObject, cause);
-                RETURN_IF_EXCEPTION(scope, {});
-                bool rightHasCause = right->hasProperty(globalObject, cause);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (leftHasCause != rightHasCause) {
-                    return false;
-                }
-            }
-            auto leftCause = left->get(globalObject, cause);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto rightCause = right->get(globalObject, cause);
-            RETURN_IF_EXCEPTION(scope, {});
-            bool causesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!causesEqual) {
-                return false;
-            }
-
-            // `.errors` (AggregateError) is non-enumerable; node compares it unless RHS owns
-            // it enumerably: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L400
-            const PropertyName errorsName(vm.propertyNames->errors);
-            PropertySlot rightErrorsSlot(right, PropertySlot::InternalMethodType::GetOwnProperty);
-            bool rightOwnsEnumerableErrors = right->methodTable()->getOwnPropertySlot(right, globalObject, errorsName, rightErrorsSlot)
-                && !(rightErrorsSlot.attributes() & PropertyAttribute::DontEnum);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!rightOwnsEnumerableErrors) {
-                auto leftErrors = left->get(globalObject, errorsName);
-                RETURN_IF_EXCEPTION(scope, {});
-                auto rightErrors = right->get(globalObject, errorsName);
-                RETURN_IF_EXCEPTION(scope, {});
-                bool errorsEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, leftErrors, rightErrors, gcBuffer, stack, scope, true);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!errorsEqual) {
-                    return false;
-                }
-            }
-
-            // check arbitrary enumerable properties. `.stack` is not checked.
-            left->materializeErrorInfoIfNeeded(vm);
-            RETURN_IF_EXCEPTION(scope, {});
-            right->materializeErrorInfoIfNeeded(vm);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-            JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-            left->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, {});
-            right->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            const size_t propertyArrayLength1 = a1.size();
-            const size_t propertyArrayLength2 = a2.size();
-            if constexpr (isStrict) {
-                if (propertyArrayLength1 != propertyArrayLength2) {
-                    return false;
-                }
-            }
-
-            // take a property name from one, try to get it from both
-            size_t i;
-            for (i = 0; i < propertyArrayLength1; i++) {
-                Identifier i1 = a1[i];
-                if (i1 == vm.propertyNames->stack) continue;
-                PropertyName propertyName1 = PropertyName(i1);
-
-                JSValue prop1 = left->get(globalObject, propertyName1);
-                RETURN_IF_EXCEPTION(scope, {});
-                ASSERT(prop1);
-
-                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName1);
-                RETURN_IF_EXCEPTION(scope, {});
-
-                if constexpr (!isStrict) {
-                    if (prop1.isUndefined() && prop2.isEmpty()) {
-                        continue;
-                    }
-                }
-
-                if (!prop2) {
-                    return false;
-                }
-
-                bool propertiesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!propertiesEqual) {
-                    return false;
-                }
-            }
-
-            // for the remaining properties in the other object, make sure they are undefined
-            for (; i < propertyArrayLength2; i++) {
-                Identifier i2 = a2[i];
-                if (i2 == vm.propertyNames->stack) continue;
-                PropertyName propertyName2 = PropertyName(i2);
-
-                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
-                RETURN_IF_EXCEPTION(scope, {});
-
-                if (!prop2.isUndefined()) {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-        break;
-    }
+    case ArrayBufferType:
+    case DataViewType:
+    case JSDateType:
+    case RegExpObjectType:
+    case ErrorInstanceType:
     case Int8ArrayType:
     case Uint8ArrayType:
     case Uint8ClampedArrayType:
@@ -1776,270 +2194,16 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     case Float32ArrayType:
     case Float64ArrayType:
     case BigInt64ArrayType:
-    case BigUint64ArrayType: {
-        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
-            return false;
-        }
-
-        auto info = c1->classInfo();
-        auto info2 = c2->classInfo();
-        if (!info || !info2) {
-            return false;
-        }
-
-        // Strict mode also compares own non-index properties (e.g. symbols); loose
-        // ignores them. The byte checks below still run first so a mismatch stays
-        // O(bytes) and node's byte-level semantics (NaN payload bits) are preserved;
-        // only the "bytes equal" exits defer to the property walk when extras exist.
-        bool compareOwnProperties = false;
-        if constexpr (isStrict) {
-            compareOwnProperties = hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure());
-        }
-
-        JSC::JSArrayBufferView* left = uncheckedDowncast<JSArrayBufferView>(c1);
-        JSC::JSArrayBufferView* right = uncheckedDowncast<JSArrayBufferView>(c2);
-        size_t byteLength = left->byteLength();
-
-        if (right->byteLength() != byteLength) {
-            return false;
-        }
-
-        if (byteLength == 0) {
-            if constexpr (checkPrototypes) {
-                return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, left, right);
-            }
-            if (compareOwnProperties) break;
-            return true;
-        }
-
-        if (right->isDetached() || left->isDetached()) [[unlikely]] {
-            return false;
-        }
-
-        const void* vector = left->vector();
-        const void* rightVector = right->vector();
-        if (!vector || !rightVector) [[unlikely]] {
-            return false;
-        }
-
-        if (vector == rightVector) [[unlikely]] {
-            if constexpr (checkPrototypes) {
-                return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, left, right);
-            }
-            if (compareOwnProperties) break;
-            return true;
-        }
-
-        // Float arrays in non-strict mode use IEEE == (+0/-0 equal, NaN != NaN); everything else
-        // compares raw bytes. All results funnel to one tail so node-parity never skips own props.
-        bool contentsEqual;
-        if (!isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
-            if (c1Type == Float16ArrayType) {
-                contentsEqual = looseFloatContentsEqual(std::span { static_cast<const WTF::Float16*>(vector), byteLength / sizeof(WTF::Float16) },
-                    std::span { static_cast<const WTF::Float16*>(rightVector), byteLength / sizeof(WTF::Float16) });
-            } else if (c1Type == Float32ArrayType) {
-                contentsEqual = looseFloatContentsEqual(std::span { static_cast<const float*>(vector), byteLength / sizeof(float) },
-                    std::span { static_cast<const float*>(rightVector), byteLength / sizeof(float) });
-            } else { // Float64Array
-                contentsEqual = looseFloatContentsEqual(std::span { static_cast<const double*>(vector), byteLength / sizeof(double) },
-                    std::span { static_cast<const double*>(rightVector), byteLength / sizeof(double) });
-            }
-        } else {
-            contentsEqual = WTF::equalSpans(std::span { static_cast<const uint8_t*>(vector), byteLength },
-                std::span { static_cast<const uint8_t*>(rightVector), byteLength });
-        }
-        if (!contentsEqual) {
-            return false;
-        }
-        if constexpr (checkPrototypes) {
-            return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, left, right);
-        }
-        if (compareOwnProperties) break;
-        return true;
-    }
-    case StringObjectType: {
-        if (c2Type != StringObjectType) {
-            // A String subclass instance is DerivedStringObjectType. Only skipPrototype
-            // mode, where the constructor is ignored, treats it as an equivalent boxed
-            // string; every other mode keeps the existing "different type" answer.
-            if constexpr (!(isStrict && skipPrototypeIdentity)) {
-                return false;
-            } else if (c2Type != DerivedStringObjectType) {
-                return false;
-            }
-        }
-
-        if constexpr (!skipPrototypeIdentity) {
-            if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
-                return false;
-            }
-        }
-
-        JSString* s1 = c1->toStringInline(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSString* s2 = c2->toStringInline(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        bool stringsEqual = s1->equal(globalObject, s2);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!stringsEqual) {
-            return false;
-        }
-        if constexpr (checkPrototypes || isStrict) {
-            // Only these modes compare extra own props on boxed primitives. Guarded so a plain
-            // boxed string skips the per-char-index walk; `break` (not nonIndexOwnPropertiesEqual)
-            // when extras exist so an out-of-range index still fails the compare, like node.
-            if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
-                break;
-            }
-        }
-        return true;
-    }
-    case JSFunctionType: {
-        return false;
-    }
-
+    case BigUint64ArrayType:
+    case StringObjectType:
+    case JSFunctionType:
     case JSAsJSONType:
-    case JSDOMWrapperType: {
-        if (c2Type == c1Type) {
-
-            // https://github.com/oven-sh/bun/issues/4089
-            // https://github.com/oven-sh/bun/issues/6492
-            auto* url2 = dynamicDowncast<JSDOMURL>(c2);
-            auto* url1 = dynamicDowncast<JSDOMURL>(c1);
-
-            if constexpr (isStrict) {
-                // if one is a URL and the other is not a URL, toStrictEqual returns false.
-                if ((url2 == nullptr) != (url1 == nullptr)) {
-                    return false;
-                }
-            } else {
-                if ((url1 == nullptr) != (url2 == nullptr)) {
-                    goto compareAsNormalValue;
-                }
-            }
-
-            if (url2 && url1) {
-                // toEqual or toStrictEqual should return false when the URLs' href is not equal
-                // But you could have added additional properties onto the
-                // url object itself, so we must check those as well
-                // But it's definitely not equal if the href() is not the same
-                if (url1->wrapped().href() != url2->wrapped().href()) {
-                    return false;
-                }
-
-                goto compareAsNormalValue;
-            }
-
-            // TODO: FormData.
-            // It's complicated because it involves Blob.
-
-            {
-                auto urlSearchParams1 = dynamicDowncast<JSURLSearchParams>(c1);
-                auto urlSearchParams2 = dynamicDowncast<JSURLSearchParams>(c2);
-                if (urlSearchParams1 && urlSearchParams2) {
-                    auto& wrapped1 = urlSearchParams1->wrapped();
-                    const auto& wrapped2 = urlSearchParams2->wrapped();
-                    if (wrapped1.size() != wrapped2.size()) {
-                        return false;
-                    }
-
-                    auto iter1 = wrapped1.createIterator();
-                    while (const auto& maybePair = iter1.next()) {
-                        const auto& key = maybePair->key;
-                        const auto& value = maybePair->value;
-                        const auto& maybeValue = wrapped2.get(key);
-                        if (!maybeValue || maybeValue != value) {
-                            return false;
-                        }
-                    }
-
-                    goto compareAsNormalValue;
-                } else {
-                    if constexpr (isStrict) {
-                        // if one is a URLSearchParams and the other is not a URLSearchParams, toStrictEqual should return false.
-                        if ((urlSearchParams2 == nullptr) != (urlSearchParams1 == nullptr)) {
-                            return false;
-                        }
-                    } else {
-                        if ((urlSearchParams1 == nullptr) != (urlSearchParams2 == nullptr)) {
-                            goto compareAsNormalValue;
-                        }
-                    }
-                }
-            }
-
-            {
-                auto headers1 = dynamicDowncast<JSFetchHeaders>(c1);
-                auto headers2 = dynamicDowncast<JSFetchHeaders>(c2);
-                if (headers1 && headers2) {
-                    auto& wrapped1 = headers1->wrapped();
-                    const auto& wrapped2 = headers2->wrapped();
-                    if (wrapped1.size() != wrapped2.size()) {
-                        return false;
-                    }
-
-                    auto iter1 = wrapped1.createIterator();
-                    while (const auto& maybePair = iter1.next()) {
-                        const auto& key = maybePair->key;
-                        const auto& value = maybePair->value;
-                        const auto& maybeValue = wrapped2.get(key);
-                        if (maybeValue.hasException()) {
-                            return false;
-                        }
-
-                        if (maybeValue.returnValue() != value) {
-                            return false;
-                        }
-                    }
-
-                    goto compareAsNormalValue;
-                } else {
-                    if constexpr (isStrict) {
-                        // if one is a FetchHeaders and the other is not a FetchHeaders, toStrictEqual should return false.
-                        if ((headers2 == nullptr) != (headers1 == nullptr)) {
-                            return false;
-                        }
-                    } else {
-                        if ((headers1 == nullptr) != (headers2 == nullptr)) {
-                            goto compareAsNormalValue;
-                        }
-                    }
-                }
-            }
-        }
-
-        goto compareAsNormalValue;
-
-    compareAsNormalValue:
-        break;
-    }
-    // globalThis is only equal to globalThis
-    // NOTE: globalThis from JS is a JSGlobalProxy (GlobalProxyType) wrapping Zig::GlobalObject (GlobalObjectType)
-    case GlobalObjectType: {
-        if (c1Type != c2Type) return false;
-        auto* g1 = dynamicDowncast<JSC::JSGlobalObject>(c1);
-        auto* g2 = dynamicDowncast<JSC::JSGlobalObject>(c2);
-        return g1->m_globalThis == g2->m_globalThis;
-    }
-    case GlobalProxyType: {
-        if (c1Type != c2Type) return false;
-        auto* gp1 = dynamicDowncast<JSC::JSGlobalProxy>(c1);
-        auto* gp2 = dynamicDowncast<JSC::JSGlobalProxy>(c2);
-        return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
-    }
+    case JSDOMWrapperType:
+    case GlobalObjectType:
+    case GlobalProxyType:
     case NumberObjectType:
-    case BooleanObjectType: {
-        // Number and Boolean wrapper objects must be the same type and have the same internal value
-        if (c1Type != c2Type) return false;
-        JSValue val1 = uncheckedDowncast<JSWrapperObject>(c1)->internalValue();
-        JSValue val2 = uncheckedDowncast<JSWrapperObject>(c2)->internalValue();
-        bool same = JSC::sameValue(globalObject, val1, val2);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!same) return false;
-        // Fall through to check own properties
-        break;
-    }
+    case BooleanObjectType:
+        return specialObjectsDequalSlow(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, c1, c2);
     default:
         break;
     }
@@ -2052,6 +2216,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         JSObject* obj1 = c1->getObject();
         JSObject* obj2 = c2->getObject();
         if (obj1 && obj2) {
+            std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
+            if (temporalEqual.has_value())
+                return temporalEqual;
+
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
             if (isSymbol1 || isBigInt1) {
@@ -2648,13 +2816,19 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
         return JSValue::encode(value);
     }
 
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = asObject(value);
 
     if (object->inherits<NumberObject>()) {
-        return JSValue::encode(jsNumber(object->toNumber(globalObject)));
+        double number = object->toNumber(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsNumber(number));
     }
-    if (object->inherits<StringObject>())
-        return JSValue::encode(object->toString(globalObject));
+    if (object->inherits<StringObject>()) {
+        JSString* string = object->toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(string);
+    }
     if (object->inherits<BooleanObject>() || object->inherits<BigIntObject>())
         return JSValue::encode(uncheckedDowncast<JSWrapperObject>(object)->internalValue());
 
@@ -2670,8 +2844,8 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
     if (str.isNull()) {
         // isNull() will be true for empty strings and for strings which are too long.
         // So we need to check the length is plausibly due to a long string.
-        if (strPtr->len > Bun__stringSyntheticAllocationLimit) {
-            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
+        if (strPtr->len > Bun__stringSyntheticAllocationLimit || strPtr->len > WTF::String::MaxLength) {
+            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
             return {};
         }
     }
@@ -3185,16 +3359,6 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
-{
-    JSC::JSLockHolder locker(vm);
-    if (vm->watchdog()) {
-        return vm->watchdog()->hasTimeLimit();
-    }
-
-    return false;
-}
-
 size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();
@@ -3284,6 +3448,15 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+
+    // The native→JS boundary for the Rust side (Node: InternalMakeCallback's can_call_into_js;
+    // WebCore: JSEventListener's isJSExecutionForbidden): once the VM's stop was requested or
+    // teardown has forbidden script, a callback from any event source is a silent no-op rather
+    // than each source checking.
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
 
     JSC::JSValue jsObject = JSValue::decode(object);
     ASSERT_WITH_MESSAGE(jsObject, "Cannot call function with JSValue zero.");
@@ -3618,14 +3791,14 @@ bool JSC__JSValue__asArrayBuffer(
     }
     out->_value = JSValue::encode(value);
     out->ptr = static_cast<char*>(data);
+    out->pinned = false;
     return true;
 }
 
-// Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
-// its storage cannot move or be freed while a native borrower holds a slice
-// into it. SharedArrayBuffer is never detachable and never moves, so it is left
-// unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
-// impl.
+// Pin/unpin the storage behind a JSArrayBuffer or JSArrayBufferView so it
+// cannot move or be freed while a native borrower holds a slice into it.
+// SharedArrayBuffer is never detachable and never moves, so it is left
+// unpinned rather than rejected. Returns false if `value` has no storage.
 //
 // A pin does not make detaching fail, it makes it copy. `pin()` clears
 // `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
@@ -3635,54 +3808,69 @@ bool JSC__JSValue__asArrayBuffer(
 // `port.postMessage(v, [ab])` each return normally, give the destination an
 // independent copy, and leave `ab` attached; the bytes being read never move.
 //
-// That departs from ES2024, where transfer() must detach or throw, and from
-// Node, which detaches. It is deliberate: the borrow stays zero-copy in the
-// common case and memory-safe in every case, at the cost of a transfer that
-// silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
-// Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
-static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
+// A view with no ArrayBuffer yet (`Buffer.allocUnsafeSlow`, `new Uint8Array(n)`
+// past fastSizeLimit: OversizeTypedArray) is held, not adopted: materializing
+// an ArrayBuffer just to pin it registers the bytes with the heap a second
+// time and, because ArrayBuffers are only reclaimed by full collections,
+// turns every threadpool fs/zlib/crypto op over a fresh Buffer into full-GC
+// pressure. Such a view cannot be detached without JS first touching
+// `.buffer`; if it does so mid-op the new ArrayBuffer is unpinned and a
+// `transfer()` moves (does not free) the storage — the same window Node has.
+// The caller keeps the returned kind and only calls unpin for `Pinned`; a
+// held view is kept alive by the caller's own root, and nothing here needs
+// undoing for it.
+enum class PinKind : uint8_t { None = 0,
+    Pinned = 1,
+    Held = 2 };
+static PinKind pinStorage(JSC::JSValue value)
 {
+    JSC::ArrayBuffer* buf = nullptr;
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
-        return jb->impl();
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
-        return view->possiblySharedBuffer();
-    return nullptr;
-}
-CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
-{
-    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
-        if (!buf->isShared())
-            buf->pin();
-        return true;
+        buf = jb->impl();
+    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (view->isDetached())
+            return PinKind::None;
+        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray)
+            return PinKind::Held;
+        buf = view->possiblySharedBuffer();
     }
-    return false;
+    if (!buf)
+        return PinKind::None;
+    if (!buf->isShared())
+        buf->pin();
+    return PinKind::Pinned;
 }
+CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
+{
+    return static_cast<uint8_t>(pinStorage(JSC::JSValue::decode(v)));
+}
+// Only for a value `pinStorage` answered `Pinned` for: that buffer still exists (pinned buffers are not detached).
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
-    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
-        if (!buf->isShared())
-            buf->unpin();
-    }
+    auto value = JSC::JSValue::decode(v);
+    JSC::ArrayBuffer* buf = nullptr;
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
+        buf = jb->impl();
+    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value); view && view->hasArrayBuffer())
+        buf = view->possiblySharedBuffer();
+    if (buf && !buf->isShared())
+        buf->unpin();
 }
 
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data
 // (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
-// the caller dupes instead. Every other mode either already has a real
-// ArrayBuffer or, for `OversizeTypedArray`, is ADOPTED in-place by
-// `slowDownAndWasteMemory()` (`ArrayBuffer::createAdopted` — wraps the
-// existing fastMalloc pointer; zero byte copy, just a wrapper + butterfly
-// alloc), so `possiblySharedBuffer()` + `pin()` is the right and cheap thing.
-// Oversize MUST be pinned: once adopted (which JS can trigger via `.buffer`
-// at any moment) it becomes detachable, and a `transfer()` would free the
-// storage the worker is reading.
+// the caller dupes instead. Every other mode goes through `pinStorage` (pin an
+// existing ArrayBuffer, hold an OversizeTypedArray without adopting it).
 //
 //   0  Detached/null — nothing to read.
 //   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
 //      should dupe `out_ptr[0..out_len]`; no unpin.
-//   2  Everything else — `pin()`ed via `possiblySharedBuffer()`; caller
-//      MUST `unpinArrayBuffer(v)` when done.
+//   2  Pinned an existing ArrayBuffer; caller MUST `unpinArrayBuffer(v)`
+//      when done.
+//   3  Held: a bufferless OversizeTypedArray; nothing to unpin, caller roots
+//      the value for the duration as it already does for 2.
 //
 // `out_ptr`/`out_len` describe the VIEW's byte range (offset+length).
 CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
@@ -3695,18 +3883,11 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
             *out_len = view->byteLength();
             return 1;
         }
-        // Oversize/Wasteful/DataView: possiblySharedBuffer() is either a
-        // getter or an in-place adopt (Oversize → createAdopted) — never a
-        // byte copy past this point. vector() is read AFTER because adoption
-        // can in principle repoint m_vector (it doesn't today, but the API
-        // contract allows it).
-        auto* buf = view->possiblySharedBuffer();
-        if (!buf) return 0;
-        if (!buf->isShared())
-            buf->pin();
+        auto kind = pinStorage(view);
+        if (kind == PinKind::None) return 0;
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
-        return 2;
+        return kind == PinKind::Held ? 3 : 2;
     }
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();
@@ -3943,7 +4124,9 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        (void)scope.tryClearException();
+        // A termination is not a value to settle the promise with; it stays pending and unwinds.
+        if (!scope.tryClearException())
+            return;
 
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
             promise->reject(vm, exception->value());
@@ -3981,7 +4164,9 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        (void)scope.tryClearException();
+        // A termination is not a value to reject with; it stays pending and the caller unwinds on it.
+        if (!scope.tryClearException())
+            RELEASE_AND_RETURN(scope, {});
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 
@@ -3996,7 +4181,9 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     JSValue resolved = JSC::JSPromise::resolvedPromise(globalObject, result);
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        (void)scope.tryClearException();
+        // A termination is not a value to reject with; it stays pending and the caller unwinds on it.
+        if (!scope.tryClearException())
+            RELEASE_AND_RETURN(scope, {});
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 
@@ -4030,9 +4217,18 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     arg0->rejectAsHandled(vm, JSC::JSValue::decode(JSValue2));
 }
 
-JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1)
+JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
 {
-    return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
+    auto value = JSC::JSValue::decode(JSValue1);
+    if (!value) [[unlikely]] {
+        // Building the rejection value threw — a stopped worker's pending TerminationException cuts
+        // error creation short. That exception is what the caller's frame reports; hand back an
+        // inert promise rather than reject with nothing.
+        auto& vm = JSC::getVM(globalObject);
+        ASSERT(vm.exceptionForInspection());
+        return JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    }
+    return JSC::JSPromise::rejectedPromise(globalObject, value);
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
@@ -4307,6 +4503,14 @@ bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isBigInt32(JSC::EncodedJSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).isBigInt32();
+}
+
+[[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isLiveCell(JSC::EncodedJSValue JSValue0)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (!value.isCell())
+        return false;
+    return !value.asCell()->isPendingDestruction();
 }
 
 void JSC__JSValue__put(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const ZigString* arg2, JSC::EncodedJSValue JSValue3)
@@ -4601,6 +4805,13 @@ JSC::EncodedJSValue JSC__JSValue__bigIntSum(JSC::JSGlobalObject* globalObject, J
 JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* globalObject, uint64_t val)
 {
     return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));
+}
+
+// Decimal integer literal (Latin-1) -> BigInt. Returns the empty value when
+// the text is not a valid StringToBigInt input.
+JSC::EncodedJSValue JSC__JSValue__bigIntFromLatin1(JSC::JSGlobalObject* globalObject, const uint8_t* ptr, size_t len)
+{
+    return JSC::JSValue::encode(JSC::JSBigInt::stringToBigInt(globalObject, WTF::StringView(std::span { reinterpret_cast<const char*>(ptr), len })));
 }
 
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
@@ -4966,12 +5177,6 @@ CPP_DECL double Bun__JSValue__toNumber(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     return value.toInt32(arg1);
 }
 
-JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global)
-{
-    JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
-    return JSC::JSValue::encode(obj->getDirect(global->vm(), global->vm().propertyNames->errors));
-}
-
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsTDZValue()
 {
     return JSC::JSValue::encode(JSC::jsTDZValue());
@@ -5150,6 +5355,9 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
     case JSC::CellType:
         if (cell->inherits<JSC::Exception>()) {
             JSC::Exception* exception = uncheckedDowncast<JSC::Exception>(cell);
+            // The VM's TerminationException wraps a bare string; it is not an error anyone should see as a value.
+            if (exception->vm().isTerminationException(exception))
+                return {};
             return JSC::JSValue::encode(exception->value());
         }
     default: {
@@ -5199,19 +5407,6 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 [[ZIG_EXPORT(nothrow)]] bool JSC__VM__isJITEnabled()
 {
     return JSC::Options::useJIT();
-}
-
-void JSC__VM__clearExecutionTimeLimit(JSC::VM* vm)
-{
-    JSC::JSLockHolder locker(vm);
-    if (vm->watchdog())
-        vm->watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
-}
-void JSC__VM__setExecutionTimeLimit(JSC::VM* vm, double limit)
-{
-    JSC::JSLockHolder locker(vm);
-    JSC::Watchdog& watchdog = vm->ensureWatchdog();
-    watchdog.setTimeLimit(WTF::Seconds { limit });
 }
 
 bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
@@ -5291,6 +5486,12 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
     return (*arg0).isEntered();
 }
 
+// The TerminationException cell itself (what a pending one reads as), not the error object it wraps.
+extern "C" JSC::EncodedJSValue JSC__VM__terminationException(JSC::VM* vm)
+{
+    return JSC::JSValue::encode(JSC::JSValue(vm->ensureTerminationException()));
+}
+
 [[ZIG_EXPORT(nothrow)]]
 bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
 {
@@ -5298,31 +5499,45 @@ bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
 }
 
 [[ZIG_EXPORT(nothrow)]]
-void JSC__VM__clearHasTerminationRequest(JSC::VM* vm)
-{
-    vm->clearHasTerminationRequest();
-}
-[[ZIG_EXPORT(nothrow)]]
 bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
 {
     return vm->hasTerminationRequest();
 }
 
-void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
+// The one crossing from the loop-level stop into the exception currency: a nested wait/drain inside a
+// host function learned of a stop and must hand a JsError to its caller, so it throws the VM's
+// TerminationException for real -- what VMTraps::handleTraps(NeedTermination) does. Always leaves it
+// pending. The exception object is materialized here (a main-thread VM stopped by SIGINT/forbidExecution
+// never had one), and the request bit set (a gate closed by teardown rather than terminate()).
+// A nested wait cannot run under a DeferTermination scope: JSC re-throws a deferred termination only at
+// that scope's end, so nothing could be pending here for the caller to unwind with.
+[[ZIG_EXPORT(check_slow)]]
+void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
 {
-    (*arg0).setExecutionForbidden();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (vm.hasPendingTerminationException())
+        return;
+    ASSERT_WITH_MESSAGE(!vm.traps().isDeferringTermination(), "a nested wait learned of a stop inside a DeferTermination scope; nothing can be thrown here");
+    vm.ensureTerminationException();
+    if (!vm.hasTerminationRequest())
+        vm.setHasTerminationRequest();
+    scope.release();
+    vm.throwTerminationException();
 }
 
-// These may be called concurrently from another thread.
+[[ZIG_EXPORT(nothrow)]]
+bool JSC__JSGlobalObject__hasPendingTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::getVM(globalObject).hasPendingTerminationException();
+}
+
+// These may be called concurrently from another thread — or from the VM's own thread inside a host call,
+// API lock held: VMTraps::fireTrap is CONCURRENT_SAFE and needs no lock either way (releasing the API lock
+// here would run JSLock's microtask checkpoint mid-host-call).
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {
-    JSC::VM& vm = *arg0;
-    bool didEnter = vm.currentThreadIsHoldingAPILock();
-    if (didEnter)
-        vm.apiLock().unlock();
-    vm.notifyNeedTermination();
-    if (didEnter)
-        vm.apiLock().lock();
+    arg0->notifyNeedTermination();
 }
 void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
 {
@@ -5331,10 +5546,6 @@ void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
 void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
 {
     (*arg0).notifyNeedShellTimeoutCheck();
-}
-void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0)
-{
-    (*arg0).notifyNeedWatchdogCheck();
 }
 
 void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
@@ -5419,6 +5630,10 @@ enum class BuiltinNamesMap : uint8_t {
     type,
     signal,
     cmd,
+    errors,
+    // Private names below: set by builtins via $putByIdDirectPrivate, unreachable from user code.
+    internal,
+    sharedFd,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5497,6 +5712,15 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::cmd: {
         return clientData->builtinNames().cmdPublicName();
+    }
+    case BuiltinNamesMap::errors: {
+        return vm.propertyNames->errors;
+    }
+    case BuiltinNamesMap::internal: {
+        return clientData->builtinNames().internalPrivateName();
+    }
+    case BuiltinNamesMap::sharedFd: {
+        return clientData->builtinNames().sharedFdPrivateName();
     }
     default: {
         ASSERT_NOT_REACHED();
@@ -5599,6 +5823,21 @@ restart:
     if (fast) {
         bool anyHits = false;
         JSC::JSObject* objectToUse = prototypeObject.getObject();
+
+        // The iter callback can run user code (a nested value's inspect.custom, Proxy
+        // traps) that adds properties to this object, rehashing the PropertyTable
+        // mid-walk (use-after-free). Same for getters resolved through
+        // getIfPropertyExists. Collect the entries with no side effects first, then
+        // do the getter calls and callbacks on the snapshot.
+        struct SnapshottedProperty {
+            Identifier key;
+            unsigned attributes;
+        };
+        WTF::Vector<SnapshottedProperty, 16> snapshot;
+        // Parallel to `snapshot`; keeps the collected values visible to GC. Empty
+        // slots mark prototype properties that are fetched after the walk.
+        MarkedArgumentBuffer snapshotValues;
+
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
@@ -5618,18 +5857,25 @@ restart:
             }
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
-            ZigString key = toZigString(prop);
             JSC::JSValue propertyValue = JSValue();
-
             if (objectToUse == object) {
                 propertyValue = objectToUse->getDirect(entry.offset());
-                if (!propertyValue) {
-                    (void)scope.tryClearException();
+                if (!propertyValue)
                     return true;
-                }
             }
 
-            if (!propertyValue || propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
+            snapshot.append({ Identifier::fromUid(vm, prop), entry.attributes() });
+            snapshotValues.appendWithCrashOnOverflow(propertyValue);
+            return true;
+        });
+
+        for (size_t i = 0; i < snapshot.size(); i++) {
+            const auto& snapshotted = snapshot[i];
+            auto* prop = snapshotted.key.impl();
+            ZigString key = toZigString(prop);
+
+            JSC::JSValue propertyValue = snapshotValues.at(i);
+            if (!propertyValue || propertyValue.isGetterSetter() && !((snapshotted.attributes & PropertyAttribute::Accessor) != 0)) {
                 propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
             }
 
@@ -5637,24 +5883,20 @@ restart:
             CLEAR_IF_EXCEPTION(scope);
 
             if (!propertyValue)
-                return true;
+                continue;
 
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
 
-            bool isPrivate = prop->isSymbol() && Identifier::fromUid(vm, prop).isPrivateName();
+            bool isPrivate = prop->isSymbol() && snapshotted.key.isPrivateName();
 
             if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
-                return true;
+                continue;
 
             iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
             // Propagate exceptions from callbacks.
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        });
-
-        // Propagate exceptions from callbacks.
-        RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, );
+        }
 
         if (anyHits) {
             if (prototypeCount++ < 5) {
@@ -5704,10 +5946,11 @@ restart:
                 }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                if (!object->getPropertySlot(globalObject, property, slot))
-                    continue;
-                // Ignore exceptions from "Get" proxy traps.
+                bool hasProperty = object->getPropertySlot(globalObject, property, slot);
+                // Ignore exceptions from "Get" proxy traps and lazy initializers; they also report the property as not found.
                 CLEAR_IF_EXCEPTION(scope);
+                if (!hasProperty)
+                    continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == propertyNames->underscoreProto
@@ -5779,7 +6022,12 @@ restart:
                 break;
             if (iterating == globalObject)
                 break;
-            iterating = iterating->getPrototype(globalObject).getObject();
+            JSValue prototype = iterating->getPrototype(globalObject);
+            // Ignore exceptions from Proxy "getPrototypeOf" trap.
+            CLEAR_IF_EXCEPTION(scope);
+            if (!prototype)
+                break;
+            iterating = prototype.getObject();
         }
     }
 
@@ -6043,15 +6291,12 @@ extern "C" void WebCore__AbortSignal__decrementPendingActivity(WebCore::AbortSig
     abortSignal->decrementPendingActivityCount();
 }
 
-extern "C" WebCore::AbortSignal* WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)
+extern "C" void WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)
 {
-
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->signalAbort(
         globalObject,
         static_cast<WebCore::CommonAbortReason>(reason));
-    ;
-    return arg0;
 }
 
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__reasonIfAborted(WebCore::AbortSignal* signal, JSC::JSGlobalObject* globalObject, CommonAbortReason* reason)
@@ -6089,6 +6334,11 @@ extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore:
         return nullptr;
     }
     return abortSignal->getTimeout();
+}
+
+extern "C" void WebCore__AbortSignal__cancelTimer(WebCore::AbortSignal* abortSignal)
+{
+    abortSignal->cancelTimer();
 }
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* abortSignal)
@@ -6241,6 +6491,159 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::
     if (!r)
         return std::numeric_limits<double>::quiet_NaN();
     return static_cast<double>(r->epochMilliseconds());
+}
+
+// Materializes a date/time literal as a Temporal object through the same
+// paths `Temporal.*.from(string)` takes. `kind` mirrors the Rust
+// `bun_ast::E::TomlDateTimeKind` discriminants.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateTimeLiteral(JSC::JSGlobalObject* globalObject, const uint8_t* text, size_t len, uint8_t kind)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The Temporal structures on the global object only exist when the
+    // option is on; reaching for them would crash.
+    if (!JSC::Options::useTemporal()) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Date/time values require Temporal, which is disabled in this process"_s);
+        return {};
+    }
+
+    WTF::String string { std::span(reinterpret_cast<const Latin1Character*>(text), len) };
+    JSC::JSValue item = JSC::jsString(vm, string);
+
+    JSC::JSObject* result = nullptr;
+    switch (kind) {
+    case 1:
+        result = JSC::TemporalInstant::toInstant(globalObject, item);
+        break;
+    case 2:
+        result = JSC::TemporalPlainDateTime::from(globalObject, item, JSC::jsUndefined());
+        break;
+    case 3:
+        result = JSC::TemporalPlainDate::from(globalObject, item, JSC::jsUndefined());
+        break;
+    case 4:
+        result = JSC::TemporalPlainTime::from(globalObject, item, JSC::jsUndefined());
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(result);
+    return JSValue::encode(result);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::TemporalType Bun__JSValue__temporalType(JSC::EncodedJSValue encodedValue)
+{
+    return JSC::temporalType(JSC::JSValue::decode(encodedValue));
+}
+
+static Int128 ceilToMultiple(Int128 ns, Int128 unit)
+{
+    Int128 rem = ns % unit;
+    return rem == 0 ? ns : ns - rem + (ns > 0 ? unit : 0);
+}
+
+static Int128 floorToMultiple(Int128 ns, Int128 unit)
+{
+    Int128 rem = ns % unit;
+    return rem == 0 ? ns : ns - rem - (ns < 0 ? unit : 0);
+}
+
+// The `±HH:MM` offset to spell `exactTime` with so its local year has TOML's
+// four digits: `preferredNs` if that fits, else the closest whole-hour (then
+// whole-minute) offset that does; nullopt if none within ±23:59 does.
+static std::optional<int64_t> tomlOffsetForInstant(JSC::ISO8601::ExactTime exactTime, int64_t preferredNs)
+{
+    using JSC::ISO8601::ExactTime;
+    constexpr Int128 minLocal = Int128 { -62167219200 } * ExactTime::nsPerSecond; // 0000-01-01T00:00:00
+    constexpr Int128 maxLocal = Int128 { 253402300800 } * ExactTime::nsPerSecond; // +010000-01-01T00:00:00
+    constexpr Int128 maxOffset = ExactTime::nsPerHour * 23 + ExactTime::nsPerMinute * 59;
+
+    Int128 epoch = exactTime.epochNanoseconds();
+    // Whole-minute offsets o with minLocal <= epoch + o < maxLocal.
+    Int128 lo = std::max(ceilToMultiple(minLocal - epoch, ExactTime::nsPerMinute), -maxOffset);
+    Int128 hi = std::min(floorToMultiple(maxLocal - Int128 { 1 } - epoch, ExactTime::nsPerMinute), maxOffset);
+    if (lo > hi)
+        return std::nullopt;
+    Int128 preferred { preferredNs };
+    if (preferred < lo) {
+        Int128 hour = ceilToMultiple(lo, ExactTime::nsPerHour);
+        return static_cast<int64_t>(hour <= hi ? hour : lo);
+    }
+    if (preferred > hi) {
+        Int128 hour = floorToMultiple(hi, ExactTime::nsPerHour);
+        return static_cast<int64_t>(hour >= lo ? hour : hi);
+    }
+    return preferredNs;
+}
+
+// Formats a Temporal object as a TOML date/time literal into `buf` and
+// returns the length written, or -1 if its year is outside TOML's
+// 0000..9999. The `[u-ca=...]` and `[Time/Zone]` annotations, which TOML
+// cannot carry, are dropped.
+extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, JSC::TemporalType temporalType, uint8_t* buf, size_t bufLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSCell* cell = JSC::JSValue::decode(encodedValue).asCell();
+    constexpr JSC::PrecisionData autoPrecision { { JSC::Precision::Auto, 0 }, JSC::TemporalUnit::Nanosecond, 1 };
+
+    WTF::String string;
+    switch (temporalType) {
+    case JSC::TemporalType::Instant: {
+        auto exactTime = uncheckedDowncast<JSC::TemporalInstant>(cell)->exactTime();
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(exactTime, 0);
+        if (!offsetNs)
+            return -1;
+        if (!*offsetNs)
+            offsetNs = std::nullopt; // `Z`
+        string = JSC::TemporalCore::instantToString(exactTime, offsetNs, autoPrecision);
+        break;
+    }
+    case JSC::TemporalType::PlainDateTime: {
+        auto* dateTime = uncheckedDowncast<JSC::TemporalPlainDateTime>(cell);
+        string = JSC::ISO8601::temporalDateTimeToString(dateTime->plainDate(), dateTime->plainTime(), { JSC::Precision::Auto, 0 });
+        break;
+    }
+    case JSC::TemporalType::PlainDate:
+        string = JSC::ISO8601::temporalDateToString(uncheckedDowncast<JSC::TemporalPlainDate>(cell)->plainDate());
+        break;
+    case JSC::TemporalType::PlainTime:
+        string = JSC::ISO8601::temporalTimeToString(uncheckedDowncast<JSC::TemporalPlainTime>(cell)->plainTime(), { JSC::Precision::Auto, 0 });
+        break;
+    case JSC::TemporalType::ZonedDateTime: {
+        auto* zoned = uncheckedDowncast<JSC::TemporalZonedDateTime>(cell);
+        std::optional<int64_t> zoneOffsetNs = zoned->getOffsetNanoseconds(globalObject);
+        RETURN_IF_EXCEPTION(scope, 0);
+        ASSERT(zoneOffsetNs);
+        // TOML offsets are `HH:MM`; a historic sub-minute (LMT) offset is
+        // spelled as `Z` instead.
+        bool wholeMinutes = *zoneOffsetNs % 60000000000ll == 0;
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(zoned->exactTime(), wholeMinutes ? *zoneOffsetNs : 0);
+        if (!offsetNs)
+            return -1;
+        if (!wholeMinutes && !*offsetNs)
+            offsetNs = std::nullopt;
+        string = JSC::TemporalCore::instantToString(zoned->exactTime(), offsetNs, autoPrecision);
+        break;
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // The expanded-year form of a PlainDate/PlainDateTime (`+010000-…`, `-000001-…`).
+    if (!isASCIIDigit(string[0]))
+        return -1;
+
+    unsigned length = string.length();
+    RELEASE_ASSERT(length <= bufLen);
+    for (unsigned i = 0; i < length; i++) {
+        ASSERT(isASCII(string[i]));
+        buf[i] = static_cast<uint8_t>(string[i]);
+    }
+    return static_cast<int32_t>(length);
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)
@@ -6409,18 +6812,17 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::J
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
 }
 
-CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+CPP_DECL [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map)
 {
     return map->size();
 }
 
-CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
+// Enable only: compiled instrumented code holds raw pointers into the profiler,
+// so it lives as long as the VM (see JSInspectorProfiler.cpp).
+CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* vm)
 {
-    if (isEnabled) {
+    if (!vm->controlFlowProfiler())
         vm->enableControlFlowProfiler();
-    } else {
-        vm->disableControlFlowProfiler();
-    }
 }
 
 CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC::VM* vm, double until)
@@ -6575,6 +6977,17 @@ CPP_DECL JSC::EncodedJSValue Bun__JSValue__getArrayBufferViewBuffer(JSC::Encoded
     return JSValue::encode(JSValue());
 }
 
+CPP_DECL bool Bun__JSValue__materializeArrayBufferViewBuffer(JSC::EncodedJSValue encoded)
+{
+    JSC::JSValue value = JSValue::decode(encoded);
+    if (!value || !value.isCell())
+        return true;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell()))
+        return view->possiblySharedBuffer() != nullptr;
+    // Not a view: nothing to materialize; the caller's type checks decide.
+    return true;
+}
+
 CPP_DECL size_t Bun__JSValue__getArrayBufferViewByteOffset(JSC::EncodedJSValue encoded)
 {
     JSC::JSValue value = JSValue::decode(encoded);
@@ -6705,6 +7118,32 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
     return operationMathPow(x, y);
 }
 
+// See BunClientData.h.
+bool Bun::takeTerminationOutsideScript(JSC::VM& vm, JSC::TopExceptionScope& scope)
+{
+    if (vm.isEntered())
+        return false;
+    auto* exception = scope.exception();
+    if (!exception || !vm.isTerminationException(exception))
+        return false;
+    // Every termination that unwinds past the outermost script frame is the VM's stop (node:vm withdraws its own
+    // beneath script), and the stop closed the gate before firing the trap.
+    ASSERT(!WebCore::clientData(vm)->scriptAllowed());
+    scope.clearException();
+    // Thrown by a trap check out here, no VM entry exit will reset this for JSC (VM::executeEntryScopeServicesOnExit).
+    if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
+        vm.clearHasTerminationRequest();
+    vm.setExecutionForbidden();
+    return true;
+}
+
+extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    return Bun::takeTerminationOutsideScript(vm, scope);
+}
+
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) bool Bun__RETURN_IF_EXCEPTION(JSC::JSGlobalObject* globalObject)
 {
@@ -6819,7 +7258,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     if (evalException) {
         *exception = JSC::JSValue::encode(evalException->value());
         // Set _error on the globalObject directly (not globalThis proxy)
-        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), evalException->value());
+        Bun::putDirectNamed(vm, globalObject, "_error"_s, evalException->value());
         scope.clearException();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -6827,7 +7266,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     if (scope.exception()) {
         *exception = JSC::JSValue::encode(scope.exception()->value());
         // Set _error on the globalObject directly (not globalThis proxy)
-        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), scope.exception()->value());
+        Bun::putDirectNamed(vm, globalObject, "_error"_s, scope.exception()->value());
         scope.clearException();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -6847,7 +7286,12 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     size_t prefixLen)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The Rust caller (repl.rs) has no exception scope, so nothing may escape.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto clearAndEncode = [&](JSC::JSValue v) {
+        scope.clearException();
+        return JSC::JSValue::encode(v);
+    };
 
     JSC::JSValue target = JSC::JSValue::decode(targetValue);
     if (!target || target.isUndefined() || target.isNull()) {
@@ -6856,7 +7300,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 
     if (!target.isObject()) {
         JSObject* boxed = target.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(JSC::jsUndefined());
         target = boxed;
     }
 
@@ -6864,46 +7309,58 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         ? WTF::String::fromUTF8(std::span { prefixPtr, prefixLen })
         : WTF::String();
 
+    // getPropertyNames already walks (and dedups) the prototype chain, throwing past maximumPrototypeChainDepth.
     JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) [[unlikely]]
+        return clearAndEncode(JSC::jsUndefined());
 
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) [[unlikely]]
+        return clearAndEncode(JSC::jsUndefined());
 
     unsigned completionIndex = 0;
     for (const auto& propertyName : propertyNames) {
         WTF::String name = propertyName.string();
         if (prefix.isEmpty() || name.startsWith(prefix)) {
             completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+            if (scope.exception()) [[unlikely]]
+                return clearAndEncode(JSC::jsUndefined());
         }
-    }
-
-    // Also check the prototype chain
-    JSC::JSValue proto = object->getPrototype(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-
-    while (proto && proto.isObject()) {
-        JSC::JSObject* protoObj = proto.getObject();
-        JSC::PropertyNameArrayBuilder protoNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-        protoObj->getPropertyNames(globalObject, protoNames, DontEnumPropertiesMode::Include);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-
-        for (const auto& propertyName : protoNames) {
-            WTF::String name = propertyName.string();
-            if (prefix.isEmpty() || name.startsWith(prefix)) {
-                completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-            }
-        }
-
-        proto = protoObj->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
     }
 
     return JSC::JSValue::encode(completions);
+}
+
+// One `base.name` step of a completion chain: ordinary property semantics (primitives boxed, prototype chain, getters run), UTF-8 name; a miss or a throwing getter yields undefined.
+extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue baseValue,
+    const unsigned char* namePtr,
+    size_t nameLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    // As in Bun__REPL__getCompletions: the Rust caller has no exception scope.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSValue base = JSC::JSValue::decode(baseValue);
+    WTF::String name = WTF::String::fromUTF8(std::span { namePtr, nameLen });
+    if (!base || base.isUndefinedOrNull() || name.isNull())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSObject* object = base.toObject(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSValue result = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, name));
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    return JSC::JSValue::encode(result ? result : JSC::jsUndefined());
 }
 
 // Format a value for REPL output using util.inspect style
@@ -6930,11 +7387,11 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 
     // Create options object
     JSC::JSObject* options = JSC::constructEmptyObject(globalObject);
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "depth"_s), JSC::jsNumber(depth));
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "colors"_s), JSC::jsBoolean(colors));
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "maxArrayLength"_s), JSC::jsNumber(100));
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "maxStringLength"_s), JSC::jsNumber(10000));
-    options->putDirect(vm, JSC::Identifier::fromString(vm, "breakLength"_s), JSC::jsNumber(80));
+    Bun::putDirectNamed(vm, options, "depth"_s, JSC::jsNumber(depth));
+    Bun::putDirectNamed(vm, options, "colors"_s, JSC::jsBoolean(colors));
+    Bun::putDirectNamed(vm, options, "maxArrayLength"_s, JSC::jsNumber(100));
+    Bun::putDirectNamed(vm, options, "maxStringLength"_s, JSC::jsNumber(10000));
+    Bun::putDirectNamed(vm, options, "breakLength"_s, JSC::jsNumber(80));
 
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::JSValue::decode(valueEncoded));
@@ -7138,4 +7595,5 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->cell_type = JSC::JSType::ArrayBufferType;
     out->shared = self->isShared();
     out->resizable = self->isResizableOrGrowableShared();
+    out->pinned = false;
 }

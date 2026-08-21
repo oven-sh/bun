@@ -5029,9 +5029,7 @@ pub mod bv2_impl {
                         drop(result.namespace);
                         drop(result.path);
                     } else {
-                        // `{ path, external: true }` from an onResolve plugin: rewrite the
-                        // import record's path so the emitted external import uses the
-                        // plugin-returned specifier (esbuild parity).
+                        // Like esbuild, the external import is printed with the plugin's path.
                         let source_import_records = &mut this.graph.ast.items_import_records_mut()
                             [resolve.import_record.importer_source_index as usize];
                         if (source_import_records.len() as u32)

@@ -1601,22 +1601,11 @@ mod draft {
     static SIGALTSTACK: bun_core::RacyCell<[u8; 512 * 1024]> =
         bun_core::RacyCell::new([0; 512 * 1024]);
 
-    /// Signals the handler is installed for. SIGABRT/SIGTRAP cover abort() and traps (#34771).
-    #[cfg(unix)]
-    const HANDLED_SIGNALS: [c_int; 6] = [
-        libc::SIGSEGV,
-        libc::SIGILL,
-        libc::SIGBUS,
-        libc::SIGFPE,
-        libc::SIGABRT,
-        libc::SIGTRAP,
-    ];
-
     /// `process.kill()` (BunProcess.cpp) gives a self-sent one of these its default action first.
     #[cfg(unix)]
     #[unsafe(no_mangle)]
     extern "C" fn CrashHandler__isCrashSignal(signal: c_int) -> bool {
-        HANDLED_SIGNALS.contains(&signal)
+        bun_core::CRASH_HANDLER_SIGNALS.contains(&signal)
     }
 
     #[cfg(unix)]
@@ -1643,7 +1632,7 @@ mod draft {
         let act_ptr: *const libc::sigaction = act
             .map(|a| std::ptr::from_ref(a))
             .unwrap_or(core::ptr::null());
-        for signal in HANDLED_SIGNALS {
+        for signal in bun_core::CRASH_HANDLER_SIGNALS {
             // SAFETY: valid sigaction pointer or null; null oldact is permitted.
             unsafe {
                 libc::sigaction(signal, act_ptr, core::ptr::null_mut());

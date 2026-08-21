@@ -529,6 +529,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     // Only Zig::GlobalObject creates ImportMetaObject structures (see createStructure). Its Bun.main and thread
     // are the ones that matter, no matter which realm reads the property.
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(thisObject->globalObject());
+    if (!globalObject->scriptExecutionContext()->isMainThread())
+        return JSValue::encode(jsBoolean(false));
+
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -538,7 +541,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return JSValue::encode(jsBoolean(isMain && globalObject->scriptExecutionContext()->isMainThread()));
+    return JSValue::encode(jsBoolean(isMain));
 }
 
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {

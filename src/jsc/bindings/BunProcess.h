@@ -35,8 +35,6 @@ class Process : public WebCore::JSEventEmitter {
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
 
-    void installDefaultWarningListener(JSC::VM&);
-
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
@@ -81,6 +79,8 @@ public:
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
 
     JSObject* ensureOnWarning(Zig::GlobalObject*);
+    // Registered once by finishCreation; callable again after a removeAllListeners() on a surviving Process (the --isolate reuse scrub).
+    void installDefaultWarningListener(JSC::VM&);
 
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);

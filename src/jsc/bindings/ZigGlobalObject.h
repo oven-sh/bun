@@ -354,6 +354,8 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
+    // Drops queued unhandled rejections without reporting them, the same way a full global swap drops them with the old global.
+    void clearAboutToBeNotifiedRejectedPromises();
     ALWAYS_INLINE void initGeneratedLazyClasses();
 
     template<typename Visitor>

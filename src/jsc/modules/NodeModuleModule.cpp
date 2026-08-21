@@ -608,8 +608,13 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
-        ->lazyRequireCacheObject();
+    // PropertyCallback builder: TopExceptionScope for the same reason as the `process` builders
+    // (reifyAllStaticProperties only inspects the VM between builders). Empty with the exception
+    // pending if creating the cache object threw.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* cache = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())->lazyRequireCacheObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return cache;
 }
 
 static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
@@ -1111,6 +1116,15 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
     return JSValue::encode(object);
 }
 
+JSObject* createRequireCacheObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, result.toObject(globalObject));
+}
+
 void addNodeModuleConstructorProperties(JSC::VM& vm,
     Zig::GlobalObject* globalObject)
 {
@@ -1165,20 +1179,9 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
 
     globalObject->m_lazyRequireCacheObject.initLater(
         [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            JSC::VM& vm = init.vm;
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
-
-            // TopExceptionScope: this also runs as a static-table PropertyCallback (Module._cache),
-            // where a ThrowScope's simulated throw would go unchecked by reifyAllStaticProperties.
-            // An exception (termination / stack exhaustion) is left pending for the getter's caller.
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList());
-            RETURN_IF_EXCEPTION(scope, init.property.setMayBeNull(vm, init.owner, nullptr));
-            JSObject* object = result.toObject(globalObject);
-            RETURN_IF_EXCEPTION(scope, init.property.setMayBeNull(vm, init.owner, nullptr));
-            init.set(object);
+            // Null with the exception pending if the builtin threw (termination / stack
+            // exhaustion); lazyRequireCacheObject() retries on the next access.
+            init.property.setMayBeNull(init.vm, init.owner, createRequireCacheObject(init.vm, init.owner));
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(

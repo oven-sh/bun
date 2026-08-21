@@ -309,7 +309,7 @@ public:
     JSObject* processBindingFs() const { return m_processBindingFs.getInitializedOnMainThread(this); }
     JSObject* processBindingHTTPParser() const { return m_processBindingHTTPParser.getInitializedOnMainThread(this); }
 
-    JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
+    JSObject* lazyRequireCacheObject();
     Bun::JSCommonJSExtensions* lazyRequireExtensionsObject() const { return m_lazyRequireExtensionsObject.getInitializedOnMainThread(this); }
     JSC::JSFunction* modulePrototypeUnderscoreCompileFunction() const { return m_modulePrototypeUnderscoreCompileFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }

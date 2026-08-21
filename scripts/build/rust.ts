@@ -454,7 +454,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
     rustflags.push("-Crelocation-model=static");
   }
-  // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
+  // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
   // Parallel frontend: rustc's default is single-threaded for parse / macro

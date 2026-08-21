@@ -512,11 +512,12 @@ describe("link: specifier longer than the path buffers", () => {
     const link_name = basename(link_dir).slice("bun-link.".length);
     await writeFile(join(link_dir, "package.json"), JSON.stringify({ name: link_name, version: "0.0.1" }));
     const registered = await run(link_dir, "link");
-    expect(registered.err).toBe("");
-    expect(registered.out).toContain(`Success! Registered "${link_name}"`);
-    expect(registered.exitCode).toBe(0);
-
+    let unlinked: Awaited<ReturnType<typeof run>>;
     try {
+      expect(registered.err).toBe("");
+      expect(registered.out).toContain(`Success! Registered "${link_name}"`);
+      expect(registered.exitCode).toBe(0);
+
       const target = Buffer.alloc(LONG_SPEC_BYTES, "x/../").toString() + link_name;
       await writeFile(
         join(package_dir, "package.json"),
@@ -533,8 +534,12 @@ describe("link: specifier longer than the path buffers", () => {
       // Like the other per-package failures, the error respects --silent.
       expect(await run(package_dir, "install", "--silent")).toEqual({ out: "", err: "", exitCode: 1 });
     } finally {
-      await run(link_dir, "unlink");
+      // Runs whether or not the assertions above passed; checked below so that a
+      // failure above is the one reported.
+      unlinked = await run(link_dir, "unlink");
     }
+    expect(unlinked.out).toContain(`success: unlinked package "${link_name}"`);
+    expect(unlinked.exitCode).toBe(0);
   });
 
   it("still resolves a specifier that normalizes to a linked package", async () => {

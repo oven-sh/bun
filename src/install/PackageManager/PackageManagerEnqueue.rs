@@ -674,9 +674,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     let version: dependency::Version = 'version: {
         // An `npm:` alias names its registry target explicitly, so only plain
         // dependencies may be redirected to a same-named alias elsewhere in the
-        // tree. An override that matches this dependency wins over the
-        // redirect: without this check the redirect would `break 'version`
-        // past the override lookup below and silently drop the override.
+        // tree, and a matching override wins over the redirect.
         if dependency.version.tag == dependency::version::Tag::Npm
             && !dependency.version.npm().is_alias
             && (dependency.behavior.is_workspace()

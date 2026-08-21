@@ -1010,10 +1010,8 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
-                // An npm alias can put a package under a dependency name that is
-                // not the package's own name. Deduping a peer onto such an entry
-                // would serve a different package than the one the lockfile bound
-                // the peer to, so only dedupe onto the same package name.
+                // Only dedupe onto the same package name: an npm alias can hold
+                // a different package than the one the lockfile bound this peer to.
                 let pkg_name_hashes = builder.lockfile().packages.items_name_hash();
                 if pkg_name_hashes[res_id as usize] != pkg_name_hashes[package_id as usize] {
                     return HoistDependencyResult::DependencyLoop; // 3

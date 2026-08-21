@@ -673,7 +673,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isPipelinedDispatch?: boolean,
       ) {
         if (!socket) {
-          socket = new (NodeHTTPServerSocket ??= makeNodeHTTPServerSocket())(server, socketHandle, !!tls);
+          socket = new (getNodeHTTPServerSocket())(server, socketHandle, !!tls);
         }
 
         // Like Node.js's resetSocketTimeout (parserOnIncoming): a new request
@@ -1131,7 +1131,7 @@ function onServerConnection(this: Server, socketHandle) {
     return;
   }
   const isTLS = !!this[tlsSymbol];
-  const socket = new (NodeHTTPServerSocket ??= makeNodeHTTPServerSocket())(this, socketHandle, isTLS);
+  const socket = new (getNodeHTTPServerSocket())(this, socketHandle, isTLS);
 
   // Node's net.Server accept path refuses at maxConnections and emits 'drop'; the native
   // listener bypasses that, so gate it here. `>` (not Node's `>=`) because the constructor
@@ -1220,7 +1220,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   // kTrackedConnections. Reuse it, and only announce genuinely new
   // connections - the existing duplex already had its 'connection' event.
   const existingDuplex = (socket as any).duplex;
-  const nodeSocket = existingDuplex ?? new (NodeHTTPServerSocket ??= makeNodeHTTPServerSocket())(self, socket, ssl);
+  const nodeSocket = existingDuplex ?? new (getNodeHTTPServerSocket())(self, socket, ssl);
   if (!existingDuplex) {
     nodeSocket.parser = createServerParserShim(nodeSocket);
     self.emit("connection", nodeSocket);
@@ -1464,10 +1464,11 @@ function onSocketTimeoutTimerExpired(socket) {
 // contract (`req.socket instanceof net.Socket`); all I/O still goes through
 // the native NodeHTTP handle, not a net handle.
 let NodeHTTPServerSocket;
-type NodeHTTPServerSocket = InstanceType<ReturnType<typeof makeNodeHTTPServerSocket>>;
-function makeNodeHTTPServerSocket() {
+type NodeHTTPServerSocket = InstanceType<ReturnType<typeof getNodeHTTPServerSocket>>;
+function getNodeHTTPServerSocket() {
+  if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
   const { Socket: NetSocket } = require("node:net");
-  const Socket = class Socket extends NetSocket {
+  NodeHTTPServerSocket = class Socket extends NetSocket {
     bytesRead = 0;
     connecting = false;
     timeout = 0;
@@ -1981,8 +1982,8 @@ function makeNodeHTTPServerSocket() {
       return this[kHandle]?.response;
     }
   } as unknown as typeof import("node:net").Socket;
-  Object.defineProperty(Socket, "name", { value: "Socket" });
-  return Socket;
+  Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
+  return NodeHTTPServerSocket;
 }
 
 // Node validates the `Trailer` header inside _storeHeader, after the body framing has

@@ -1767,6 +1767,99 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
       signalCode: null,
     });
   });
+
+  // libuv reports a missing pipe from the connect callback, not from
+  // uv_pipe_connect itself. On that path the pipe was never handed to the
+  // writer, so closing the writer reported no close, and the native context
+  // (which holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX)
+  // stayed alive once per failed attempt.
+  it.concurrent.each([
+    ["plain", "", 0],
+    ["tls", "tls: true,", 1],
+  ])(
+    "a connect that fails asynchronously (%s) releases the native context",
+    async (_name, tlsOption, sslCtxPerAttempt) => {
+      const attempts = 8;
+      const pipePrefix = "\\\\.\\pipe\\bun-test-missing-" + Math.random().toString(36).slice(2) + "-";
+      const src = /* js */ `
+        const { namedPipeInternals, sslCtxLiveCount } = require("bun:internal-for-testing");
+        const contextsBefore = namedPipeInternals.liveCount();
+        const sslCtxBefore = sslCtxLiveCount();
+
+        let connectErrors = 0;
+        let closes = 0;
+        let firstAttempt = null;
+        const outcomes = new Set();
+
+        for (let i = 0; i < ${attempts}; i++) {
+          try {
+            await Bun.connect({
+              unix: ${JSON.stringify(pipePrefix)} + i,
+              ${tlsOption}
+              socket: {
+                data() {},
+                open() {},
+                close() { closes++; },
+                error() {},
+                connectError(_socket, err) {
+                  connectErrors++;
+                  outcomes.add("connectError:" + err.code);
+                  // This attempt's context is still alive while it reports the failure.
+                  firstAttempt ??= {
+                    contexts: namedPipeInternals.liveCount() - contextsBefore,
+                    sslCtx: sslCtxLiveCount() - sslCtxBefore,
+                  };
+                },
+              },
+            });
+            outcomes.add("resolved");
+          } catch (err) {
+            outcomes.add("rejected:" + err.code);
+          }
+        }
+
+        // Finalizing the wrappers must not touch a socket its context already released.
+        Bun.gc(true);
+        // A context frees itself from a task it queues when its last ref drops.
+        for (let i = 0; i < 100 && namedPipeInternals.liveCount() > contextsBefore; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+
+        console.log(JSON.stringify({
+          connectErrors,
+          closes,
+          outcomes: [...outcomes].sort(),
+          firstAttempt,
+          leaked: {
+            contexts: namedPipeInternals.liveCount() - contextsBefore,
+            sslCtx: sslCtxLiveCount() - sslCtxBefore,
+          },
+        }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // If the child died before reporting, the diff shows its raw output.
+      const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+      expect({ result, stderr, exitCode }).toEqual({
+        result: {
+          connectErrors: attempts,
+          closes: 0,
+          outcomes: ["connectError:ENOENT", "rejected:ENOENT"],
+          firstAttempt: { contexts: 1, sslCtx: sslCtxPerAttempt },
+          leaked: { contexts: 0, sslCtx: 0 },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {

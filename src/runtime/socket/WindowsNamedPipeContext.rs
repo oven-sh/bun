@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::api::{TCPSocket, TLSSocket};
 use crate::socket::NewSocket;
@@ -18,6 +19,11 @@ use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
 bun_output::declare_scope!(WindowsNamedPipeContext, visible);
+
+/// Live contexts, read by `bun:internal-for-testing` leak tests: `heapStats()`
+/// only sees the JS wrappers, and a failed connect lets those be collected
+/// while the context (and its ref on the native socket) stays behind.
+pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = schedule_deinit)]
@@ -403,6 +409,7 @@ impl WindowsNamedPipeContext {
                     .root
                     .set(ptr::addr_of_mut!((*this).named_pipe));
             }
+            LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
 
             // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
             match_socket!(socket, |s: NewSocket<SSL>| {
@@ -491,6 +498,7 @@ impl WindowsNamedPipeContext {
 impl Drop for WindowsNamedPipeContext {
     fn drop(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipeContext, "deinit");
+        LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         // Deref the wrapped socket, then let `named_pipe` drop.
         match_socket!(
             core::mem::replace(&mut self.socket, SocketType::None),

@@ -1001,6 +1001,85 @@ it.if(isWindows)(
   20_000,
 );
 
+// The Windows counterpart of the synchronous-failure test below: a client
+// that polls for a daemon's pipe gets one asynchronous ENOENT per attempt,
+// and each failed attempt used to leave its native pipe context (and the
+// context's ref on the native socket) behind. Runs in a child so the context
+// count starts from zero: the test above leaves connections still closing.
+it.if(isWindows)("should not leak when connect({path}) fails asynchronously while polling for a pipe", async () => {
+  const script = /* js */ `
+    const { createServer, Socket } = require("node:net");
+    const { once } = require("node:events");
+    const { namedPipeInternals } = require("bun:internal-for-testing");
+    const path = "\\\\\\\\.\\\\pipe\\\\bun-test-polling-" + process.pid;
+    const events = [];
+    // Not events.once(): it rejects on the 'error' that precedes each 'close' here.
+    function watch(socket) {
+      socket.on("error", err => events.push("error:" + err.code));
+      socket.on("connect", () => events.push("connect"));
+      return new Promise(resolve => socket.on("close", hadError => (events.push("close:" + hadError), resolve())));
+    }
+
+    for (let i = 0; i < 4; i++) {
+      const socket = new Socket();
+      const closed = watch(socket);
+      socket.connect({ path });
+      await closed;
+    }
+
+    // The daemon shows up: the same path now connects, and that connection closes cleanly on both ends.
+    const serverSideClosed = Promise.withResolvers();
+    const server = createServer(socket => {
+      socket.on("close", serverSideClosed.resolve);
+      socket.end("ready");
+    });
+    server.listen(path);
+    await once(server, "listening");
+    const client = new Socket();
+    const clientClosed = watch(client);
+    client.setEncoding("utf8");
+    let received = "";
+    let contextsWhileConnected = -1;
+    client.on("data", chunk => {
+      received += chunk;
+      // Both ends of the live connection own a context; the failed attempts' contexts must be gone.
+      contextsWhileConnected = namedPipeInternals.liveCount();
+    });
+    client.connect({ path });
+    await clientClosed;
+    await serverSideClosed.promise;
+    server.close();
+
+    // Finalizing the handles must not touch a socket its context already released.
+    Bun.gc(true);
+    // A context frees itself from a task it queues once its pipe has closed.
+    for (let i = 0; i < 100 && namedPipeInternals.liveCount() > 0; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    console.log(JSON.stringify({ events, received, contextsWhileConnected, contextsAtEnd: namedPipeInternals.liveCount() }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // If the child died before reporting, the diff shows its raw output.
+  const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+  expect({ result, stderr, exitCode }).toEqual({
+    result: {
+      events: [...Array(4).fill(["error:ENOENT", "close:true"]).flat(), "connect", "close:false"],
+      received: "ready",
+      contextsWhileConnected: 2,
+      contextsAtEnd: 0,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // On Windows, unix paths route through the named-pipe codepath which reports
 // failure asynchronously; this test targets the synchronous-failure branch in
 // Listener.connectInner.

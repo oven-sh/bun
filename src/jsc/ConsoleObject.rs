@@ -1802,28 +1802,16 @@ pub mod formatter {
 
     impl core::fmt::Display for ZigFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            // Move the unique `&mut Formatter` out of the cell for the body;
-            // re-seat it (and clear `remaining_values`) on the way out so the
-            // adapter stays reusable.
             let formatter: &mut Formatter<'_> = self
                 .formatter
                 .take()
                 .expect("ZigFormatter::fmt re-entered or used after consumption");
 
-            let one = [self.value];
-            formatter.remaining_values = bun_ptr::RawSlice::new(&one);
+            let mut sink = bun_io::FmtAdapter::new(f);
+            let result = formatter
+                .format_value::<false>(self.value, &mut sink)
+                .map_err(|_| core::fmt::Error);
 
-            let result = (|| {
-                let tag =
-                    Tag::get(self.value, formatter.global_this).map_err(|_| core::fmt::Error)?;
-                let mut sink = bun_io::FmtAdapter::new(f);
-                let global = formatter.global_this;
-                formatter
-                    .format::<false>(tag, &mut sink, self.value, global)
-                    .map_err(|_| core::fmt::Error)
-            })();
-
-            formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
             self.formatter.set(Some(formatter));
             result
         }

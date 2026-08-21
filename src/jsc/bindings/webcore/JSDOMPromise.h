@@ -44,6 +44,11 @@ public:
         return guarded();
     }
 
+    enum class IsCallbackRegistered { No,
+        Yes };
+
+    static IsCallbackRegistered whenPromiseIsSettled(JSDOMGlobalObject*, JSC::JSObject* promise, Function<void()>&&);
+
 private:
     DOMPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& promise)
         : DOMGuarded<JSC::JSPromise>(globalObject, promise)

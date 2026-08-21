@@ -247,10 +247,10 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
-  // Deleting a watched file evicts its watchlist entry, which owns the handle
-  // the file was transpiled through. Eviction used to close that handle on
-  // POSIX only, so on Windows every evicted entry leaked it, and the reload
-  // that watched the file again opened a new one.
+  // Evicting a watchlist entry used to close the handle stored in it on POSIX
+  // only. On Windows every evicted entry leaked its handle: under --hot a
+  // deleted import (the reload then watched it again through a new handle),
+  // in the dev server a freed directory watch. This drives the --hot case.
   //
   // A raw handle count is not flat under --hot even without that leak: every
   // directory event busts the resolver's directory cache, which abandons the
@@ -261,6 +261,11 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
   // coalesce into one reload per step in both phases. Each cycle evicts `files`
   // entries, so the leak is `files` handles per cycle, far more than the one
   // handle an occasional extra reload would cost.
+  //
+  // The first assertion guards against a vacuous pass: watching the files again
+  // must show up as `files` handles. Once file entries stop holding a handle
+  // outside kqueue, re-anchor this on the dev server's directory watches
+  // (`DirectoryWatchStore::free_entry`), the evicted entries that still hold one.
   test.skipIf(!isWindows)("evicting watchlist entries closes their handles", async () => {
     const files = 16;
     const cycles = 6;
@@ -344,7 +349,9 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     // reload), and the last reload watches the recreated files again. Deleting
     // the never-imported other* files instead raises the same directory events
     // without touching the watchlist, so that step gets its reload from the
-    // trigger. Every step is one reload in both phases.
+    // trigger. Every step is one reload in both phases. Returns how many handles
+    // the last reload added: the deps it watches again, plus the same directory
+    // handle in both phases.
     const cycle = async (victim: "dep" | "other", value: number) => {
       writeTrigger(false);
       await releaseAndWaitFor(`RELOAD ${seq} skipped`);
@@ -356,29 +363,39 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
         writeTrigger(false);
         await releaseAndWaitFor(`RELOAD ${seq} skipped`);
       }
+      const beforeLoad = handleCount(proc.pid);
 
       for (const i of indexes) writeFileSync(join(root, `${victim}${i}.js`), `export const value = ${value};`);
       writeTrigger(true);
       await releaseAndWaitFor(`RELOAD ${seq} ${victim === "dep" ? files * value : 0}`);
+      return handleCount(proc.pid) - beforeLoad;
+    };
+    const phase = async (victim: "dep" | "other") => {
+      const start = handleCount(proc.pid);
+      let addedByLoads = 0;
+      for (let i = 1; i <= cycles; i++) addedByLoads += await cycle(victim, i);
+      return { growth: handleCount(proc.pid) - start, addedByLoads };
     };
 
     await waitForLine("RELOAD 0 0");
     for (let i = 1; i <= 2; i++) await cycle("other", i);
-    const start = handleCount(proc.pid);
-    for (let i = 1; i <= cycles; i++) await cycle("other", i);
-    const afterBaseline = handleCount(proc.pid);
-    for (let i = 1; i <= cycles; i++) await cycle("dep", i);
-    const afterEvictions = handleCount(proc.pid);
+    const baseline = await phase("other");
+    const evictions = await phase("dep");
 
-    const baselineGrowth = afterBaseline - start;
-    const evictionGrowth = afterEvictions - afterBaseline;
-    // Unfixed, every eviction cycle leaks `files` handles more than a baseline
-    // cycle. Fixed, the two phases grow by about the same amount.
-    const leakedByEvictions = evictionGrowth - baselineGrowth;
-    expect({ baselineGrowth, evictionGrowth, leakedByEvictions }).toEqual({
-      baselineGrowth,
-      evictionGrowth,
-      leakedByEvictions: Math.min(leakedByEvictions, (files * cycles) / 2),
+    // In the eviction phase the deps are watched again on every cycle, so its
+    // loads add `files` handles per cycle that the baseline's loads (the deps
+    // stayed watched) do not.
+    const rewatched = evictions.addedByLoads - baseline.addedByLoads;
+    // Unfixed, every eviction cycle also keeps the `files` handles it evicted,
+    // so the phase grows by that much more than the baseline. Fixed, the two
+    // phases grow by about the same amount.
+    const leaked = evictions.growth - baseline.growth;
+    const half = (files * cycles) / 2;
+    expect({ baseline, evictions, rewatched, leaked }).toEqual({
+      baseline,
+      evictions,
+      rewatched: Math.max(rewatched, half),
+      leaked: Math.min(leaked, half),
     });
   });
 });

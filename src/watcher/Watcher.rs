@@ -420,7 +420,7 @@ impl Watcher {
                 continue;
             }
 
-            // The watchlist owns the stored descriptor (`FdOwnership::Watcher`).
+            // Same rule as the shutdown sweep: a stored descriptor goes with its entry.
             if fds[item as usize].is_valid() {
                 let _ = bun_sys::close(fds[item as usize]);
             }

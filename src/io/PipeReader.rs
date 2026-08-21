@@ -1191,8 +1191,8 @@ impl WindowsBufferedReader {
             buffer.clear();
             // SAFETY: `this` is still live (see above).
             unsafe {
-                let nested_read = !had_inflight_read
-                    && (*this).flags.contains(WindowsFlags::HAS_INFLIGHT_READ);
+                let nested_read =
+                    !had_inflight_read && (*this).flags.contains(WindowsFlags::HAS_INFLIGHT_READ);
                 if !nested_read && (*this)._buffer.is_empty() {
                     (*this)._buffer = buffer;
                 }

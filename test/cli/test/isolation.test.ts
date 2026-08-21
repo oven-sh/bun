@@ -854,17 +854,12 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
 // (the last file sees 8); collectable ones plateau (current + a lagging one
 // or two).
 //
-// The fixture's Bun.gc(true) calls must be the only collections in the child.
-// Any other collection (at BUN_GARBAGE_COLLECTOR_LEVEL=1, which the CI runner
-// sets and bunEnv forwards, every expect() matcher requests one; at any level
-// Bun.serve()'s listen hint and the idle GC timer request one through
-// GarbageCollectionController) is run by JSC on the JS thread from whatever
-// stack depth the next allocation happens at. Processing its conservative
-// roots there leaves pointers to the finishing file's global in stack slots
-// that the next file's Bun.gc(true) frames do not overwrite, so that scan keeps
-// the global alive, and each later extra collection carries the retained
-// globals forward: the count snowballed to 6-7 on alpine x64 with nothing
-// pinning the globals.
+// The fixture's own full GCs must be the only collections in the child, which
+// maxLiveGlobals asserts from the GC log. A collection requested from anywhere
+// else runs at whatever stack depth the next allocation has, and the stack
+// slots it leaves behind are what a later conservative scan picks up: with the
+// collection that BUN_GARBAGE_COLLECTOR_LEVEL=1 (set by the CI runner) adds
+// after every matcher, unpinned globals counted 6-7 on alpine x64.
 describe.concurrent("--isolate: collects globals pinned by leaked handles", () => {
   const LEAK_FILE_COUNT = 8;
   const MAX_LIVE_GLOBALS = 4;
@@ -891,7 +886,15 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
   async function maxLiveGlobals(dir: string): Promise<number> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--isolate"],
-      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0", BUN_GC_TIMER_DISABLE: "1" },
+      env: {
+        ...bunEnv,
+        // Level 1 requests a collection after every expect() matcher. The GC
+        // timer knob also covers Bun.serve()'s listen hint, which goes through
+        // GarbageCollectionController::perform_gc() too.
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        BUN_GC_TIMER_DISABLE: "1",
+        BUN_JSC_logGC: "true",
+      },
       cwd: dir,
       stdout: "pipe",
       stderr: "pipe",
@@ -899,6 +902,18 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain(`${LEAK_FILE_COUNT} pass`);
     expect(exitCode).toBe(0);
+
+    // The fixture requests two full collections per file and nothing else:
+    // these heaps never reach JSC's own allocation budget, so an eden
+    // collection was requested by Bun. The one permitted extra full collection
+    // is the VM teardown under BUN_DESTRUCT_VM_ON_EXIT, which the ASAN lanes set.
+    const full = stderr.match(/=> FullCollection/g)?.length ?? 0;
+    const eden = stderr.match(/=> EdenCollection/g)?.length ?? 0;
+    const collections = `${full} full and ${eden} eden collections ran, the fixture requests ${2 * LEAK_FILE_COUNT} full`;
+    expect(full, collections).toBeGreaterThanOrEqual(2 * LEAK_FILE_COUNT);
+    expect(full, collections).toBeLessThanOrEqual(2 * LEAK_FILE_COUNT + 1);
+    expect(eden, collections).toBe(0);
+
     const counts = [...stdout.matchAll(/GLOBALS=(\d+)/g)].map(m => Number(m[1]));
     expect(counts).toHaveLength(LEAK_FILE_COUNT);
     const max = Math.max(...counts);

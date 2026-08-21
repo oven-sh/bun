@@ -92,13 +92,10 @@ function internalBinding(name: string) {
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
     case "util":
       return { isInsideNodeModules };
-    // Vendored tls engine tests construct binding.SecureContext (or replace it)
-    // before requiring node:tls; Bun's SecureContext class is the equivalent
-    // native surface.
+    // The engine tests construct or replace binding.SecureContext before requiring node:tls.
     case "crypto":
       return { SecureContext: require("node:tls").SecureContext };
-    // BoringSSL does not compile in OpenSSL's SSL_trace(), so a Node built
-    // against it reports HAVE_SSL_TRACE = false; --trace-tls tests skip.
+    // BoringSSL has no SSL_trace(), the same as a node built without it.
     case "tls_wrap":
       return { HAVE_SSL_TRACE: false };
     case "cares_wrap":

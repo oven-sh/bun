@@ -141,9 +141,7 @@ const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 
-// The keepalive delay is stored in whole seconds, as node does for libuv. Bun's
-// native setKeepAlive takes an int32 of milliseconds, so convert at the call
-// and clamp: node never rejects a large delay, it passes the seconds on.
+// The delay is stored in whole seconds like node; the native handle takes int32 milliseconds.
 function keepAliveDelayMs(seconds) {
   return MathMin(seconds * 1000, 2147483647);
 }
@@ -1592,8 +1590,7 @@ function Socket(options?) {
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
-  // Node stores whole seconds here (libuv's unit); keepAliveDelayMs converts
-  // for Bun's native _handle.setKeepAlive.
+  // Whole seconds, as in node.
   this[kSetKeepAliveInitialDelay] = MathMax(0, ~~(keepAliveInitialDelay / 1000));
 
   this[khandlers] = SocketHandlers2;
@@ -2156,9 +2153,7 @@ Socket.prototype.connect = function connect(...args) {
 Socket.prototype[kReinitializeHandle] = function reinitializeHandle(handle) {
   this._handle?.close();
 
-  // Node's TLSSocket override creates the replacement handle itself when none
-  // is passed (net.Socket's version requires one); Bun's TLS sockets share
-  // this method, so default it here for both flavors.
+  // node's TLSSocket override creates the handle itself; Bun's TLS sockets share this method.
   this._handle = handle ?? newDetachedSocket(typeof this[bunTlsSymbol] === "function");
   this._handle[owner_symbol] = this;
 
@@ -2602,9 +2597,7 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
 
 Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDelayMsecs = 0) {
   enable = Boolean(enable);
-  // Node truncates to whole seconds (libuv's TCP_KEEPIDLE unit) and stores
-  // seconds in kSetKeepAliveInitialDelay; keepAliveDelayMs converts for the
-  // native call.
+  // Whole seconds, as in node.
   const initialDelay = MathMax(0, ~~(initialDelayMsecs / 1000));
 
   if (!this._handle) {

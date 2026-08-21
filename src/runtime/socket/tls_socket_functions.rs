@@ -430,9 +430,7 @@ pub(super) fn set_max_send_fragment(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::FALSE);
     };
-    // No range gate here: Node returns SSL_set_max_send_fragment's own verdict,
-    // and BoringSSL clamps out-of-range sizes into [512, 16384] and reports
-    // success (vendor/boringssl/ssl/ssl_lib.cc, SSL_set_max_send_fragment).
+    // Like node, return SSL_set_max_send_fragment's own verdict (BoringSSL clamps the size).
     Ok(JSValue::from(
         ffi::SSL_set_max_send_fragment(
             boringssl::SSL::opaque_ref(ssl_ptr),

@@ -11,8 +11,7 @@ use super::{Kind, TimerObjectInternals};
 super::impl_timer_object!(ImmediateObject, ImmediateObject, "Immediate");
 
 impl ImmediateObject {
-    /// Hook called by the `dispose` host function `impl_timer_object!` generates.
-    /// An Immediate has no `_idleTimeout`, so there is nothing to record.
+    /// `impl_timer_object!`'s `dispose` hook; an Immediate has no `_idleTimeout`.
     #[inline]
     pub(crate) fn before_explicit_cancel(&self, _global: &JSGlobalObject, _this_value: JSValue) {}
 

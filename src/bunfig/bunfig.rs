@@ -940,6 +940,40 @@ impl<'a> Parser<'a> {
                         );
                     }
                 }
+
+                if let Some(expr) = _bun.get(b"internal") {
+                    match &expr.data {
+                        ExprData::EString(s) => {
+                            self.ctx.args.internal = vec![estring_to_owned(s, self.bump)];
+                        }
+                        ExprData::EArray(array) => {
+                            let items = array.items.slice();
+                            let mut internals: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                            for item in items {
+                                match &item.data {
+                                    ExprData::EString(s) => {
+                                        internals.push(estring_to_owned(s, self.bump));
+                                    }
+                                    _ => self.add_error_format(
+                                        item.loc,
+                                        format_args!(
+                                            "bundle.internal must be a string or an array of strings, but received {}",
+                                            item.data.tag_name()
+                                        ),
+                                    )?,
+                                }
+                            }
+                            self.ctx.args.internal = internals;
+                        }
+                        _ => self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "bundle.internal must be a string or an array of strings, but received {}",
+                                expr.data.tag_name()
+                            ),
+                        )?,
+                    }
+                }
             }
         }
 

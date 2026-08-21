@@ -83,6 +83,8 @@ pub mod api {
         pub output_dir: Option<Box<[u8]>>,
         /// external
         pub external: Vec<Box<[u8]>>,
+        /// internal — never-external modules (overrides `--packages external` and `--external`)
+        pub internal: Vec<Box<[u8]>>,
         /// loaders
         pub loaders: Option<LoaderMap>,
         /// main_fields

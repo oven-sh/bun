@@ -270,7 +270,7 @@ impl PathWatcher {
         let is_file = !me.handle.is_dir();
 
         // The watched directory itself was removed: libuv names that report with
-        // the directory's own path (its only absolute filename) and repeats it on
+        // the path it was given (no child name is absolute) and repeats it on
         // every loop iteration until the handle is stopped (nodejs/node#61398).
         if !is_file
             && event_type == WatchEventKind::Rename

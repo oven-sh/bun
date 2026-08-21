@@ -285,6 +285,12 @@ fn run_tasks_erased(
         }
     };
 
+    // retries whose backoff has elapsed go back on the wire first
+    if !manager.retry_queue.is_empty() {
+        manager.flush_network_queue();
+        let _ = manager.schedule_tasks();
+    }
+
     let patch_tasks_batch = manager.patch_task_queue.pop_batch();
     let mut patch_tasks_iter = patch_tasks_batch.iterator();
     loop {
@@ -469,13 +475,17 @@ fn run_tasks_erased(
                     }
                 }
 
-                if !has_network_error && task.response.metadata.is_none() {
+                // Connection-level failure (no HTTP response at all). One blip should not
+                // throttle the whole install: only after the SAME request has failed twice
+                // do we assume the link is saturated and shed 25% of concurrency (once per
+                // run_tasks pass, never below the floor).
+                if !has_network_error && task.response.metadata.is_none() && task.retried >= 1 {
                     has_network_error = true;
                     let min = manager.options.min_simultaneous_requests;
                     let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
                     if max > min {
                         AsyncHTTP::max_simultaneous_requests()
-                            .store(min.max(max / 2), Ordering::Relaxed);
+                            .store(min.max(max - max / 4), Ordering::Relaxed);
                     }
                 }
 
@@ -498,7 +508,13 @@ fn run_tasks_erased(
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
-                        enqueue::enqueue_network_task(manager, task_ptr);
+                        let retry_after = retry_after_secs(task);
+                        enqueue::enqueue_network_task_for_retry(
+                            manager,
+                            task_ptr,
+                            task.retried,
+                            retry_after,
+                        );
 
                         if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
@@ -745,13 +761,17 @@ fn run_tasks_erased(
                 // arrives here is taking the buffered path.
                 debug_assert!(!task.streaming_committed);
 
-                if !has_network_error && task.response.metadata.is_none() {
+                // Connection-level failure (no HTTP response at all). One blip should not
+                // throttle the whole install: only after the SAME request has failed twice
+                // do we assume the link is saturated and shed 25% of concurrency (once per
+                // run_tasks pass, never below the floor).
+                if !has_network_error && task.response.metadata.is_none() && task.retried >= 1 {
                     has_network_error = true;
                     let min = manager.options.min_simultaneous_requests;
                     let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
                     if max > min {
                         AsyncHTTP::max_simultaneous_requests()
-                            .store(min.max(max / 2), Ordering::Relaxed);
+                            .store(min.max(max - max / 4), Ordering::Relaxed);
                     }
                 }
 
@@ -776,8 +796,14 @@ fn run_tasks_erased(
                         // Streaming never committed (asserted above), so
                         // the pre-allocated stream is safe to reuse for
                         // the retry attempt.
+                        let retry_after = retry_after_secs(task);
                         task.reset_streaming_for_retry();
-                        enqueue::enqueue_network_task(manager, task_ptr);
+                        enqueue::enqueue_network_task_for_retry(
+                            manager,
+                            task_ptr,
+                            task.retried,
+                            retry_after,
+                        );
 
                         if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
@@ -1678,7 +1704,10 @@ fn run_tasks_erased(
 
 #[inline]
 pub fn pending_task_count(manager: &PackageManager) -> u32 {
-    manager.pending_tasks.load(Ordering::Acquire)
+    // Retries waiting out their backoff are pending work too (they were decremented
+    // when their failed attempt was processed and are re-counted by `schedule_tasks`
+    // once flushed back onto the wire).
+    manager.pending_tasks.load(Ordering::Acquire) + manager.retry_queue.len() as u32
 }
 
 #[inline]
@@ -1711,6 +1740,7 @@ impl PackageManager {
 }
 
 pub fn flush_network_queue(this: &mut PackageManager) {
+    enqueue::flush_due_retries(this);
     while let Some(network_task) = this.network_task_fifo.read_item() {
         // SAFETY: fifo stores live `*mut NetworkTask` pushed by
         // `enqueue_network_task`; exclusive ownership transferred here.
@@ -2112,4 +2142,14 @@ fn process_dependency_list_for_ctx(
         },
         install_peer,
     )
+}
+
+/// `Retry-After: <seconds>` from a 429/503 response, if present and sane.
+fn retry_after_secs(task: &NetworkTask) -> Option<u32> {
+    let md = task.response.metadata.as_ref()?;
+    let v = md
+        .header(b"retry-after")
+        .or_else(|| md.header(b"Retry-After"))?;
+    let s = core::str::from_utf8(v).ok()?.trim();
+    s.parse::<u32>().ok().filter(|n| *n <= 120)
 }

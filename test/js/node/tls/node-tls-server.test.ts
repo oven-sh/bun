@@ -2595,6 +2595,7 @@ describe.each(["tls", "net"])("%s server socket that unpipe() paused after it en
     const front = transport === "tls" ? createServer(COMMON_CERT, onConnection) : net.createServer(onConnection);
     await once(front.listen(0, "127.0.0.1"), "listening");
     const frontClosed = Promise.withResolvers<void>();
+    const upstreamClosed = Promise.withResolvers<void>();
     try {
       const port = (front.address() as AddressInfo).port;
       const clientEvents: string[] = [];
@@ -2618,9 +2619,10 @@ describe.each(["tls", "net"])("%s server socket that unpipe() paused after it en
         serverEvents: ["upstream closed, paused=true", "end", "close hadError=false"],
       });
     } finally {
-      upstream.close();
       front.close(err => (err ? frontClosed.reject(err) : frontClosed.resolve()));
+      upstream.close(err => (err ? upstreamClosed.reject(err) : upstreamClosed.resolve()));
     }
-    await frontClosed.promise;
+    // Both connections are gone, so both servers call back.
+    await Promise.all([frontClosed.promise, upstreamClosed.promise]);
   });
 });

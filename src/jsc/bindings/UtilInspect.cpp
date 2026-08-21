@@ -7,6 +7,8 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/PropertyNameArray.h"
+#include "JavaScriptCore/JSArray.h"
 
 namespace Bun {
 
@@ -63,6 +65,59 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
+}
+
+
+// Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by
+// util.inspect and the REPL completer: own keys minus array indices, without materializing
+// a name (or descriptor) per element the way Object.getOwnPropertyNames() on an array would.
+// `filter` is Node's PropertyFilter bitmask: ONLY_ENUMERABLE = 2, SKIP_STRINGS = 8, SKIP_SYMBOLS = 16.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* object = callFrame->argument(0).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int32_t filter = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    constexpr int32_t ONLY_ENUMERABLE = 1 << 1;
+    constexpr int32_t SKIP_STRINGS = 1 << 3;
+    constexpr int32_t SKIP_SYMBOLS = 1 << 4;
+
+    PropertyNameMode propertyNameMode = PropertyNameMode::StringsAndSymbols;
+    if (filter & SKIP_STRINGS)
+        propertyNameMode = PropertyNameMode::Symbols;
+    else if (filter & SKIP_SYMBOLS)
+        propertyNameMode = PropertyNameMode::Strings;
+    DontEnumPropertiesMode dontEnumMode = (filter & ONLY_ENUMERABLE) ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include;
+
+    PropertyNameArrayBuilder propertyNames(vm, propertyNameMode, PrivateSymbolMode::Exclude);
+    // Arrays and typed arrays only add their indices on top of the ordinary path, so skip
+    // straight to the non-index part. Anything else that customizes [[OwnPropertyKeys]]
+    // (Proxy, module namespace, String objects, arguments, ...) goes through the method table
+    // and has index-looking keys filtered out below.
+    JSC::JSType type = object->type();
+    bool onlyAddsIndices = type == ArrayType || type == DerivedArrayType || isTypedArrayType(type)
+        || object->methodTable()->getOwnPropertyNames == JSObject::getOwnPropertyNames;
+    if (onlyAddsIndices) {
+        object->getOwnNonIndexPropertyNames(globalObject, propertyNames, dontEnumMode);
+    } else {
+        object->methodTable()->getOwnPropertyNames(object, globalObject, propertyNames, dontEnumMode);
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+
+    MarkedArgumentBuffer keys;
+    for (auto& propertyName : propertyNames) {
+        if (propertyName.isSymbol()) {
+            keys.append(Symbol::create(vm, static_cast<SymbolImpl&>(*propertyName.impl())));
+            continue;
+        }
+        if (!onlyAddsIndices && parseIndex(propertyName))
+            continue;
+        keys.append(jsOwnedString(vm, propertyName.string()));
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys)));
 }
 
 }

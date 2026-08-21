@@ -291,7 +291,21 @@ pub fn pack(
     let folders = cache_folder_names(pm);
     let mut tmp = out_path.to_vec();
     let _ = write!(tmp, ".{}.tmp", std::process::id());
-    let file = bun_sys::File::create(bun_sys::Fd::cwd(), &tmp, true).map_err(sys_err)?;
+    let result = pack_impl(&folders, cache_dir, out_path, &tmp);
+    if result.is_err() {
+        // never leave a partial temp file behind (ENOSPC, unreadable cache entry, …)
+        let _ = bun_sys::unlinkat(bun_sys::Fd::cwd(), &z(&tmp));
+    }
+    result
+}
+
+fn pack_impl(
+    folders: &[(Vec<u8>, bool)],
+    cache_dir: &[u8],
+    out_path: &[u8],
+    tmp: &[u8],
+) -> std::io::Result<PackSummary> {
+    let file = bun_sys::File::create(bun_sys::Fd::cwd(), tmp, true).map_err(sys_err)?;
     let mut w = BufWriter::with_capacity(1 << 20, FileWriter(file));
     w.write_all(MAGIC)?;
     let mut summary = PackSummary {
@@ -300,7 +314,7 @@ pub fn pack(
         bytes: 0,
         skipped_missing: 0,
     };
-    for (f, expected_here) in &folders {
+    for (f, expected_here) in folders {
         let dir = join(cache_dir, f);
         if folder_root_kind(&dir)?.is_none() {
             // optional binaries for other platforms are legitimately absent
@@ -316,10 +330,7 @@ pub fn pack(
     write_record(&mut w, 0, b"", 0, &[])?;
     w.flush()?;
     drop(w);
-    if let Err(e) = rename(&tmp, out_path) {
-        let _ = bun_sys::unlinkat(bun_sys::Fd::cwd(), &z(&tmp));
-        return Err(e);
-    }
+    rename(tmp, out_path)?;
     Ok(summary)
 }
 
@@ -341,6 +352,42 @@ fn safe_rel(path: &[u8]) -> bool {
         && !strings::contains_char(path, 0)
         && !strings::contains_char(path, b':')
         && !strings::split_any(path, b"/\\").any(|seg| seg == b"..")
+}
+
+/// May a symlink at package-relative `link_path` point at `target`? Relative targets
+/// are resolved against the link's own directory and must stay inside the package
+/// (`bin/cli -> ../lib/cli.js` is fine, `x -> ../../etc` is not); absolute targets,
+/// drive letters and NULs are refused. Mirrors the extractor's own rule for tarballs.
+fn symlink_target_stays_inside(link_path: &[u8], target: &[u8]) -> bool {
+    if target.is_empty()
+        || target[0] == b'/'
+        || target[0] == b'\\'
+        || strings::contains_char(target, 0)
+        || strings::contains_char(target, b':')
+    {
+        return false;
+    }
+    // depth of the directory containing the link, relative to the package root
+    let mut depth: i64 = strings::split_any(link_path, b"/\\")
+        .filter(|c| !c.is_empty() && *c != b".")
+        .count() as i64
+        - 1;
+    if depth < 0 {
+        return false;
+    }
+    for comp in strings::split_any(target, b"/\\") {
+        match comp {
+            b"" | b"." => {}
+            b".." => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => depth += 1,
+        }
+    }
+    true
 }
 
 /// A cache folder name is either `name@ver…` or `@scope/name@ver…` (one slash).
@@ -509,9 +556,8 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                             return Err(bad("symlink target too long", record_no));
                         }
                         let target = read_exact_vec(&mut r, size as usize)?;
-                        // links inside a package may only point within it (no `..`, not absolute)
-                        let t: &[u8] = target.strip_prefix(b"./").unwrap_or(&target);
-                        if !safe_rel(t) {
+                        // links inside a package may only point within it
+                        if !symlink_target_stays_inside(&path, &target) {
                             return Err(bad("unsafe symlink target in pack", record_no));
                         }
                         if let Some(parent) = parent(&dest) {

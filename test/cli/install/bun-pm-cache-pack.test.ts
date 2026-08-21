@@ -166,6 +166,45 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   // no staging directory is left behind after a failed unpack
   expect((await readdirSorted(cache)).filter(n => n.startsWith(".unpack-"))).toEqual([]);
 
+  // a file written *through* a symlink created earlier in the same package: the link
+  // itself is legal (points inside the package), the write through it is not
+  await writeFile(
+    join(dir, "through.pack"),
+    Buffer.concat([
+      MAGIC,
+      rec(1, "through@1.0.0", 0, ""),
+      rec(4, "real", 0o755, ""),
+      rec(3, "esc", 0o777, "real"),
+      rec(2, "esc/pwned", 0o644, "owned"),
+      rec(0, "", 0, ""),
+    ]),
+  );
+  r = await run(["pm", "cache", "unpack", join(dir, "through.pack")], dir, cache);
+  expect(r.err).toContain("traverses");
+  expect(r.code).not.toBe(0);
+
+  // intra-package relative links are fine (bin/cli -> ../lib/cli.js), climbing out is not
+  await writeFile(
+    join(dir, "links.pack"),
+    Buffer.concat([
+      MAGIC,
+      rec(1, "links@1.0.0", 0, ""),
+      rec(2, "lib/cli.js", 0o644, "x"),
+      rec(3, "bin/cli", 0o777, "../lib/cli.js"),
+      rec(0, "", 0, ""),
+    ]),
+  );
+  r = await run(["pm", "cache", "unpack", join(dir, "links.pack")], dir, cache);
+  expect(r.err).not.toContain("error:");
+  expect(r.code).toBe(0);
+  await writeFile(
+    join(dir, "climb.pack"),
+    Buffer.concat([MAGIC, rec(1, "climb@1.0.0", 0, ""), rec(3, "bin/cli", 0o777, "../../victim"), rec(0, "", 0, "")]),
+  );
+  r = await run(["pm", "cache", "unpack", join(dir, "climb.pack")], dir, cache);
+  expect(r.err).toContain("unsafe symlink target");
+  expect(r.code).not.toBe(0);
+
   // an absurd symlink target length
   await writeFile(
     join(dir, "long.pack"),

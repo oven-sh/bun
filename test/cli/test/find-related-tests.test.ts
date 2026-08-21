@@ -15,9 +15,9 @@ const fixture = {
 
 const testFiles = ["a.test.ts", "b.test.ts", "c.test.ts"];
 
-async function runRelated(cwd: string, paths: string[], flag = "--find-related-tests") {
+async function runRelated(cwd: string, paths: string[], flag = "--find-related-tests", extraArgs: string[] = []) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", flag, ...paths],
+    cmd: [bunExe(), "test", ...extraArgs, flag, ...paths],
     cwd,
     env: bunEnv,
     stdout: "pipe",
@@ -82,11 +82,24 @@ describe.concurrent("bun test --find-related-tests", () => {
   });
 
   test("reports a missing source file", async () => {
-    using dir = tempDir("find-related-missing", fixture);
+    using dir = tempDir("find-related-missing", {
+      "package.json": fixture["package.json"],
+    });
 
     const { stderr, exitCode } = await runRelated(String(dir), ["src/missing.ts"]);
 
     expect(stderr).toContain("source file not found");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("rejects --changed with --find-related-tests", async () => {
+    using dir = tempDir("find-related-changed", fixture);
+
+    const { stderr, exitCode } = await runRelated(String(dir), ["src/helper.ts"], "--find-related-tests", [
+      "--changed",
+    ]);
+
+    expect(stderr).toContain("--changed and --find-related-tests cannot be used together");
     expect(exitCode).not.toBe(0);
   });
 });

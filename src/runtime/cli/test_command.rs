@@ -2566,9 +2566,6 @@ impl TestCommand {
             }
         } else if !ctx.test_options.related_files.is_empty() {
             'brk: {
-                if all_test_files.is_empty() {
-                    break 'brk &mut all_test_files[..];
-                }
                 let result = match ChangedFilesFilter::filter_related(
                     &ctx,
                     vm,

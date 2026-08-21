@@ -3,23 +3,13 @@ import { bunEnv, bunExe } from "harness";
 import { connect } from "node:net";
 import { join } from "node:path";
 
-async function waitForPendingRequests(server: ReturnType<typeof Bun.serve>, expected: number) {
-  for (let i = 0; i < 100; i++) {
-    if (server.pendingRequests === expected) return;
-    Bun.gc(true);
-    await Bun.sleep(10);
-  }
-  throw new Error(`Timed out waiting for pendingRequests === ${expected}; got ${server.pendingRequests}`);
-}
-
-// Deliberately never calls Bun.gc: these tests assert the context is torn
-// down by the abort itself, not by GC collecting the pending promise.
-async function waitForPendingRequestsWithoutGC(server: ReturnType<typeof Bun.serve>, expected: number) {
-  for (let i = 0; i < 200; i++) {
-    if (server.pendingRequests === expected) return;
-    await Bun.sleep(10);
-  }
-  throw new Error(`Timed out waiting for pendingRequests === ${expected}; got ${server.pendingRequests}`);
+// The teardown condition, with no timers and no GC: server.stop() resolves
+// only once pendingRequests reaches 0 and every connection is gone. On an
+// unfixed build a parked context pins the count, so this await never settles
+// and the test times out.
+async function stopAndAssertDrained(server: ReturnType<typeof Bun.serve>) {
+  await server.stop();
+  expect(server.pendingRequests).toBe(0);
 }
 
 test("RequestContext is freed when client aborts before Promise<Response> settles", async () => {
@@ -57,10 +47,12 @@ test("Promise<Response> still works normally when not aborted", async () => {
 
 test("resolve() inside abort handler is handled safely", async () => {
   let aborted = false;
+  const { promise: handlerEntered, resolve: signalHandler } = Promise.withResolvers<void>();
   using server = Bun.serve({
     port: 0,
     idleTimeout: 0,
     fetch(req) {
+      signalHandler();
       return new Promise<Response>(resolve => {
         req.signal.addEventListener(
           "abort",
@@ -78,13 +70,12 @@ test("resolve() inside abort handler is handled safely", async () => {
 
   const ac = new AbortController();
   const p = fetch(server.url, { signal: ac.signal }).catch(() => {});
-  await waitForPendingRequests(server, 1);
+  await handlerEntered;
   ac.abort();
   await p;
-  await waitForPendingRequests(server, 0);
+  await stopAndAssertDrained(server);
 
   expect(aborted).toBe(true);
-  expect(server.pendingRequests).toBe(0);
 });
 
 test("streaming 413 detaches the response so a late resolve/reject is a no-op", async () => {
@@ -224,7 +215,7 @@ test("chunked request body consumed as a ReadableStream is capped at maxRequestB
   expect(streamError).toBe("Request body exceeded maxRequestBodySize");
   expect(streamed).toBeLessThan(overflowTotal);
 
-  await waitForPendingRequests(server, 0);
+  await stopAndAssertDrained(server);
 }, 15_000);
 
 test("client abort frees the context even while the resolve function stays reachable", async () => {
@@ -232,34 +223,39 @@ test("client abort frees the context even while the resolve function stays reach
   // NativePromiseContext cell) alive forever, so GC can never release the
   // cell's ref on the RequestContext. The abort itself must reclaim it.
   let capturedResolve: ((r: Response) => void) | undefined;
+  let capturedPromise: Promise<Response> | undefined;
   const { promise: abortObserved, resolve: signalAbort } = Promise.withResolvers<void>();
+  const { promise: handlerEntered, resolve: signalHandler } = Promise.withResolvers<void>();
 
   using server = Bun.serve({
     port: 0,
     idleTimeout: 0,
     fetch(req) {
-      return new Promise<Response>(resolve => {
+      signalHandler();
+      capturedPromise = new Promise<Response>(resolve => {
         capturedResolve = resolve;
         req.signal.addEventListener("abort", () => signalAbort(), { once: true });
       });
+      return capturedPromise;
     },
   });
 
   const ac = new AbortController();
   const p = fetch(server.url, { signal: ac.signal }).catch(() => {});
-  await waitForPendingRequests(server, 1);
+  await handlerEntered;
   ac.abort();
   await p;
   await abortObserved;
 
   // The context is torn down on abort, not when GC collects the promise.
-  await waitForPendingRequestsWithoutGC(server, 0);
+  await stopAndAssertDrained(server);
 
   // Resolving after the context is gone is a safe no-op: the reaction's
-  // take() returns null.
+  // take() returns null. Awaiting the handler promise orders the assertion
+  // after the native reaction, which was attached first.
   capturedResolve!(new Response("very late"));
+  await capturedPromise;
   capturedResolve = undefined;
-  await Bun.sleep(0);
   expect(server.pendingRequests).toBe(0);
 });
 
@@ -360,7 +356,7 @@ test.each(bodyConsumers)(
     const err = await bodyRead;
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).name).toBe("AbortError");
-    await waitForPendingRequestsWithoutGC(server, 0);
+    await stopAndAssertDrained(server);
     pumpHold = undefined;
   },
 );
@@ -372,6 +368,7 @@ test("pendingRequests drops when the client aborts a parked direct-stream pull()
   // reaction's take() returns null, and pendingRequests must not move.
   const parked: Array<() => void> = [];
   const pullEntered: Array<() => void> = [];
+  const pullSettled: Array<() => void> = [];
 
   using server = Bun.serve({
     port: 0,
@@ -385,6 +382,7 @@ test("pendingRequests drops when the client aborts a parked direct-stream pull()
             await c.flush();
             pullEntered.shift()?.();
             await new Promise<void>(r => parked.push(r));
+            pullSettled.shift()?.();
           },
         }),
         { headers: { "Content-Length": "100000" } },
@@ -405,27 +403,28 @@ test("pendingRequests drops when the client aborts a parked direct-stream pull()
     await reader.closed.catch(() => {});
   }
 
-  async function releaseParkedPulls(expectedCount: number) {
-    const resolvers = parked.splice(0);
-    expect(resolvers.length).toBe(expectedCount);
-    for (const r of resolvers) r();
-    await Bun.sleep(0);
-    Bun.gc(true);
-    await Bun.sleep(0);
-    expect(server.pendingRequests).toBe(0);
-  }
-
-  const iterations = 3;
+  const iterations = 4;
   for (let i = 0; i < iterations; i++) {
     await abortWhileParked();
   }
-  await waitForPendingRequestsWithoutGC(server, 0);
-  await releaseParkedPulls(iterations);
 
-  // The server still serves after the late settles, and the counter stays balanced.
-  await abortWhileParked();
-  await waitForPendingRequestsWithoutGC(server, 0);
-  await releaseParkedPulls(1);
+  // stop() resolves only once every abort tore its context down.
+  await stopAndAssertDrained(server);
+
+  // Release the parked pulls: each settle targets a context that is already
+  // gone. The stream reaction's take() returns null and the counter stays 0.
+  // Awaiting the settle signals orders the assertion after those reactions.
+  const resolvers = parked.splice(0);
+  expect(resolvers.length).toBe(iterations);
+  const settled = resolvers.map(() => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    pullSettled.push(resolve);
+    return promise;
+  });
+  for (const r of resolvers) r();
+  await Promise.all(settled);
+  Bun.gc(true);
+  expect(server.pendingRequests).toBe(0);
 });
 
 // Between the abort and the late settle, the server itself goes away: stop()
@@ -441,6 +440,8 @@ for (const stopFirst of [true, false]) {
         `
         let release;
         const gate = new Promise(r => (release = r));
+        let pullDone;
+        const pullExited = new Promise(r => (pullDone = r));
         let server = Bun.serve({
           port: 0,
           idleTimeout: 0,
@@ -451,6 +452,7 @@ for (const stopFirst of [true, false]) {
                 c.write("x");
                 await c.flush();
                 await gate;
+                pullDone();
               },
             }), { headers: { "Content-Length": "100000" } });
           },
@@ -458,19 +460,18 @@ for (const stopFirst of [true, false]) {
         const ac = new AbortController();
         const reader = (await fetch(server.url, { signal: ac.signal })).body.getReader();
         await reader.read();
-        ${stopFirst ? "server.stop();" : ""}
+        ${stopFirst ? "const stopped = server.stop();" : ""}
         ac.abort();
         await reader.closed.catch(() => {});
-        ${stopFirst ? "" : "server.stop();"}
-        // No Bun.gc here: the abort itself has to tear the context down.
-        for (let i = 0; server.pendingRequests !== 0; i++) {
-          if (i === 200) throw new Error("pendingRequests=" + server.pendingRequests);
-          await Bun.sleep(10);
-        }
+        // The stop() promise resolves only once the abort tears the parked
+        // context down. No Bun.gc before it: the abort itself has to do it.
+        ${stopFirst ? "await stopped;" : "await server.stop();"}
+        if (server.pendingRequests !== 0) throw new Error("pendingRequests=" + server.pendingRequests);
         server = undefined;
-        for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+        Bun.gc(true);
         release();
-        for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+        await pullExited;
+        Bun.gc(true);
         console.log("ok");
         `,
       ],
@@ -491,17 +492,19 @@ test("async server.upgrade() frees the context while the handler promise stays p
   // on_abort nor an end path can run afterwards. The upgrade itself must
   // reclaim the cell's ref, or the held resolve parks the context forever.
   let capturedResolve: ((r: Response) => void) | undefined;
+  let capturedPromise: Promise<Response> | undefined;
 
   using server = Bun.serve({
     port: 0,
     idleTimeout: 0,
     fetch(req, srv) {
-      return new Promise<Response>(resolve => {
+      capturedPromise = new Promise<Response>(resolve => {
         capturedResolve = resolve;
         // Upgrade from a macrotask, so on_response parks the promise and
         // takes the cell ref before the upgrade runs.
         setImmediate(() => srv.upgrade(req));
       });
+      return capturedPromise;
     },
     websocket: {
       message() {},
@@ -511,17 +514,24 @@ test("async server.upgrade() frees the context while the handler promise stays p
   const ws = new WebSocket(`ws://localhost:${server.port}/`);
   try {
     const { promise: opened, resolve: signalOpen, reject: failOpen } = Promise.withResolvers<void>();
+    const { promise: closed, resolve: signalClose } = Promise.withResolvers<void>();
     ws.onopen = () => signalOpen();
+    ws.onclose = () => signalClose();
     ws.onerror = () => failOpen(new Error("websocket upgrade failed"));
     await opened;
 
-    await waitForPendingRequestsWithoutGC(server, 0);
+    // Close the socket first: stop() also waits for open WebSockets. After
+    // that, its resolution is exactly the context teardown the upgrade owes.
+    ws.close();
+    await closed;
+    await stopAndAssertDrained(server);
 
     // Resolving after the context is gone is a safe no-op: the reaction's
-    // take() returns null.
+    // take() returns null. Awaiting the handler promise orders the assertion
+    // after the native reaction, which was attached first.
     capturedResolve!(new Response("late"));
+    await capturedPromise;
     capturedResolve = undefined;
-    await Bun.sleep(0);
     expect(server.pendingRequests).toBe(0);
   } finally {
     ws.close();
@@ -590,7 +600,8 @@ test("413 on a chunked upload frees the context while the handler promise stays 
     expect(received.split("\r\n")[0]).toBe("HTTP/1.1 413 Payload Too Large");
 
     // The context is torn down by the 413, not by GC collecting the promise.
-    await waitForPendingRequestsWithoutGC(server, 0);
+    // The 413 closed the connection, so stop() waits only on the teardown.
+    await stopAndAssertDrained(server);
     capturedResolve = undefined;
   } finally {
     socket.destroy();

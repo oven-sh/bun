@@ -990,10 +990,7 @@ impl PackageManager {
         // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
         // reference, only a place projection.
         let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
-        // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
-        // calls (never across them), so the callback's `&mut PackageManager`
-        // never overlaps a live `&mut AnyEventLoop`.
-        fn retry_deadline<C>(_p: *mut c_void) -> Option<u64> {
+        fn retry_deadline(_p: *mut c_void) -> Option<u64> {
             // Retry backoff deadlines are the only timer the install loop keeps: when any
             // are pending, never block in the socket loop past the earliest one.
             let pm = PackageManager::get();
@@ -1003,12 +1000,15 @@ impl PackageManager {
                 .map(|(t, _)| t.saturating_sub(now).max(1))
                 .min()
         }
+        // SAFETY: `tick_raw_with_deadline` reborrows `*event_loop` only between
+        // `is_done` calls (never across them), so the callback's `&mut PackageManager`
+        // never overlaps a live `&mut AnyEventLoop`.
         unsafe {
             AnyEventLoop::tick_raw_with_deadline(
                 event_loop,
                 (&raw mut erased).cast::<c_void>(),
                 trampoline::<C>,
-                retry_deadline::<C>,
+                retry_deadline,
             )
         };
     }

@@ -749,6 +749,36 @@ describe("resolved peer bins", () => {
     expect(await runWhatBin(packageDir)).toBe("what-bin@1.5.0");
   });
 
+  test.concurrent("peer resolved to a workspace package links from the workspace dir", async () => {
+    // A workspace's files live at the workspace directory, not in the store.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-bin-ws-provider",
+        workspaces: ["packages/*"],
+        dependencies: { "peer-what-bin": "1.0.0" },
+      }),
+    );
+    await write(
+      join(packageDir, "packages", "what-bin", "package.json"),
+      JSON.stringify({
+        name: "what-bin",
+        version: "1.0.0",
+        bin: { "what-bin": "what-bin.js" },
+      }),
+    );
+    await write(
+      join(packageDir, "packages", "what-bin", "what-bin.js"),
+      `#!/usr/bin/env node\nrequire("fs").writeFileSync("what-bin.txt", "what-bin@workspace");\n`,
+    );
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bin", whatBin))).toBe(true);
+    expect(await runWhatBin(packageDir)).toBe("what-bin@workspace");
+  });
+
   test.concurrent("peer of a workspace dependency links into the workspace bin dir", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 

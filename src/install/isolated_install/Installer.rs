@@ -1538,7 +1538,11 @@ impl Task {
 
                 Step::SymlinkDependencyBinaries => {
                     let current_step = Step::SymlinkDependencyBinaries;
-                    if let Err(err) = installer.link_dependency_bins(self.entry_id) {
+                    // Resolved peer bins are linked after every entry is done
+                    // (see `install_isolated_packages`): their link targets
+                    // live in other entries' store locations, which are not
+                    // guaranteed to exist yet while entries install.
+                    if let Err(err) = installer.link_dependency_bins(self.entry_id, false) {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
 
@@ -2300,7 +2304,11 @@ impl<'a> Installer<'a> {
         Ok(changed)
     }
 
-    pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {
+    pub(crate) fn link_dependency_bins(
+        &self,
+        parent_entry_id: StoreEntryId,
+        include_resolved_peers: bool,
+    ) -> crate::Result<()> {
         let lockfile = self.lockfile();
         let store = self.store;
 
@@ -2427,14 +2435,16 @@ impl<'a> Installer<'a> {
             }
         }
 
-        self.link_resolved_peer_bins(
-            parent_entry_id,
-            &mut node_modules_path,
-            &mut seen,
-            &mut *link_target_buf,
-            &mut *link_dest_buf,
-            &mut *link_rel_buf,
-        )?;
+        if include_resolved_peers {
+            self.link_resolved_peer_bins(
+                parent_entry_id,
+                &mut node_modules_path,
+                &mut seen,
+                &mut *link_target_buf,
+                &mut *link_dest_buf,
+                &mut *link_rel_buf,
+            )?;
+        }
 
         Ok(())
     }
@@ -2442,7 +2452,9 @@ impl<'a> Installer<'a> {
     /// Link the bins of peers wired anywhere in an importer's subtree into
     /// that importer's `node_modules/.bin` (#39857). Peers are otherwise only
     /// reachable inside the store, and pnpm links them the same way. Runs
-    /// after the direct dependencies, so their bin names win.
+    /// after the direct dependencies, so their bin names win. The link
+    /// targets live in other entries' store locations, so this runs only
+    /// after every entry is done (`install_isolated_packages`).
     fn link_resolved_peer_bins(
         &self,
         parent_entry_id: StoreEntryId,
@@ -2532,27 +2544,54 @@ impl<'a> Installer<'a> {
                     pkg_metas,
                     dep_pkg_id,
                 );
-                let target_entry_id = replacement_entry_id.unwrap_or(dep.entry_id);
+                // The peer has no symlink in this node_modules, so the link
+                // target is the peer's real location: its store entry, or the
+                // package directory itself for workspace and link: packages.
+                let mut target_node_modules_path = DefaultAbsPath::init_top_level_dir();
                 let target_package_name = match replacement_entry_id {
                     Some(replacement_entry_id) => {
                         let replacement_node_id =
                             entry_node_ids[replacement_entry_id.get() as usize];
                         let replacement_pkg_id = node_pkg_ids[replacement_node_id.get() as usize];
+                        self.append_real_store_node_modules_path(
+                            &mut target_node_modules_path,
+                            replacement_entry_id,
+                            Which::Final,
+                        );
                         strings::StringOrTinyString::init(
                             lockfile.str(&pkg_names[replacement_pkg_id as usize]),
                         )
                     }
-                    None => package_name,
+                    None => {
+                        let pkg_res = &pkg_resolutions[dep_pkg_id as usize];
+                        match pkg_res.tag {
+                            ResolutionTag::Workspace => {
+                                let workspace_path = pkg_res.workspace().slice(string_buf);
+                                if let Some(dir) = paths::dirname(workspace_path) {
+                                    let _ = target_node_modules_path.append(dir); // OOM/capacity: fire-and-forget
+                                }
+                                strings::StringOrTinyString::init(paths::basename(workspace_path))
+                            }
+                            ResolutionTag::Symlink => {
+                                let symlink_dir_path: &[u8] =
+                                    &self.manager().global_link_dir_path;
+                                paths::PathLike::clear(&mut target_node_modules_path);
+                                let _ = target_node_modules_path.append(symlink_dir_path); // OOM/capacity: fire-and-forget
+                                strings::StringOrTinyString::init(paths::basename(
+                                    pkg_res.symlink().slice(string_buf),
+                                ))
+                            }
+                            _ => {
+                                self.append_real_store_node_modules_path(
+                                    &mut target_node_modules_path,
+                                    dep.entry_id,
+                                    Which::Final,
+                                );
+                                package_name
+                            }
+                        }
+                    }
                 };
-
-                // the peer has no symlink in this node_modules; target its
-                // store location
-                let mut target_node_modules_path = DefaultAbsPath::init_top_level_dir();
-                self.append_real_store_node_modules_path(
-                    &mut target_node_modules_path,
-                    target_entry_id,
-                    Which::Final,
-                );
 
                 let mut bin_linker = bin_real::Linker {
                     bin,

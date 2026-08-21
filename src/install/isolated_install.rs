@@ -2662,6 +2662,29 @@ pub(crate) fn install_isolated_packages(
             debug_assert!(done);
         }
 
+        // Resolved peer bins link from other entries' store locations, which
+        // all exist only once every entry is done, so this pass runs after
+        // the install loop instead of inside the per-entry bin step.
+        {
+            let pkg_resolutions = lockfile.packages.items_resolution();
+            let entry_node_ids = store.entries.items_node_id();
+            let node_pkg_ids = store.nodes.items_pkg_id();
+            for _entry_id in 0..store.entries.len() {
+                let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
+                let node_id = entry_node_ids[_entry_id];
+                let pkg_id = node_pkg_ids[node_id.get() as usize];
+                let is_importer = entry_id == store::entry::Id::ROOT
+                    || pkg_resolutions[pkg_id as usize].tag == ResolutionTag::Workspace;
+                if !is_importer {
+                    continue;
+                }
+                if let Err(err) = installer.link_dependency_bins(entry_id, true) {
+                    Output::err(err, "failed to link binaries", format_args!(""));
+                    installer.summary.fail += 1;
+                }
+            }
+        }
+
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
 

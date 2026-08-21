@@ -5,6 +5,7 @@ use crate::error::{Error, Result};
 use crate::objc::appkit::{ControlStateValue, NSApplication, NSMenu, NSMenuItem};
 use crate::objc::foundation::{NSObject, NSString};
 use crate::objc::{self, AutoreleasePool, Sel, sel};
+use crate::{Named, named_enum};
 
 /// One top-level menu.
 pub struct Menu {
@@ -44,23 +45,65 @@ pub enum Action {
     Selector(ActionSelector),
 }
 
-/// A one-argument Objective-C action selector such as `copy:` or `toggleFullScreen:`.
-#[derive(Clone, Copy)]
-pub struct ActionSelector(Sel);
+/// The standard AppKit action methods a menu item may send down the responder
+/// chain with itself as `sender`. A closed list: an arbitrary selector would
+/// let a menu item invoke any one-argument method on whatever responds first.
+macro_rules! action_selectors {
+    ($( $Variant:ident = $sel:literal ),* $(,)?) => {
+        named_enum! {
+            pub enum ActionSelector { $( $Variant = $sel ),* }
+        }
+
+        impl ActionSelector {
+            pub(crate) fn sel(self) -> Sel {
+                match self { $( ActionSelector::$Variant => sel!($sel) ),* }
+            }
+        }
+    };
+}
+
+action_selectors! {
+    // NSApplication
+    OrderFrontStandardAboutPanel = "orderFrontStandardAboutPanel:",
+    Hide = "hide:",
+    HideOtherApplications = "hideOtherApplications:",
+    UnhideAllApplications = "unhideAllApplications:",
+    Terminate = "terminate:",
+    MiniaturizeAll = "miniaturizeAll:",
+    ArrangeInFront = "arrangeInFront:",
+    ShowHelp = "showHelp:",
+    OrderFrontCharacterPalette = "orderFrontCharacterPalette:",
+    OrderFrontColorPanel = "orderFrontColorPanel:",
+    OrderFrontFontPanel = "orderFrontFontPanel:",
+    RunPageLayout = "runPageLayout:",
+    // NSWindow
+    PerformClose = "performClose:",
+    PerformMiniaturize = "performMiniaturize:",
+    PerformZoom = "performZoom:",
+    ToggleFullScreen = "toggleFullScreen:",
+    ToggleToolbarShown = "toggleToolbarShown:",
+    RunToolbarCustomizationPalette = "runToolbarCustomizationPalette:",
+    Print = "print:",
+    // NSResponder / NSText / NSTextView
+    Undo = "undo:",
+    Redo = "redo:",
+    Cut = "cut:",
+    Copy = "copy:",
+    Paste = "paste:",
+    PasteAsPlainText = "pasteAsPlainText:",
+    Delete = "delete:",
+    SelectAll = "selectAll:",
+    CenterSelectionInVisibleArea = "centerSelectionInVisibleArea:",
+    CheckSpelling = "checkSpelling:",
+    ShowGuessPanel = "showGuessPanel:",
+    ToggleContinuousSpellChecking = "toggleContinuousSpellChecking:",
+    StartSpeaking = "startSpeaking:",
+    StopSpeaking = "stopSpeaking:",
+}
 
 impl ActionSelector {
     pub fn parse(name: &str) -> Result<ActionSelector> {
-        crate::objc::load()?;
-        let valid = name.strip_suffix(':').is_some_and(|body| {
-            !body.is_empty()
-                && !body.as_bytes()[0].is_ascii_digit()
-                && body.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-        });
-        if !valid {
-            return Err(Error::BadSelector(name.to_owned()));
-        }
-        let c = std::ffi::CString::new(name).expect("validated: no NUL");
-        Ok(ActionSelector(objc::register_sel(&c)))
+        ActionSelector::from_name(name).ok_or_else(|| Error::BadSelector(name.to_owned()))
     }
 }
 
@@ -105,7 +148,7 @@ impl MenuBar {
         b.add(
             &app_menu,
             &format!("About {name}"),
-            Target::Sel(sel!("orderFrontStandardAboutPanel:")),
+            Target::Action(ActionSelector::OrderFrontStandardAboutPanel),
             "",
             0,
         );
@@ -118,21 +161,21 @@ impl MenuBar {
         b.add(
             &app_menu,
             &format!("Hide {name}"),
-            Target::Sel(sel!("hide:")),
+            Target::Action(ActionSelector::Hide),
             "h",
             0,
         );
         b.add(
             &app_menu,
             "Hide Others",
-            Target::Sel(sel!("hideOtherApplications:")),
+            Target::Action(ActionSelector::HideOtherApplications),
             "h",
             OPTION,
         );
         b.add(
             &app_menu,
             "Show All",
-            Target::Sel(sel!("unhideAllApplications:")),
+            Target::Action(ActionSelector::UnhideAllApplications),
             "",
             0,
         );
@@ -140,28 +183,46 @@ impl MenuBar {
         b.add(
             &app_menu,
             &format!("Quit {name}"),
-            Target::Sel(sel!("terminate:")),
+            Target::Action(ActionSelector::Terminate),
             "q",
             0,
         );
         attach(&bar, &app_menu);
 
         let edit = new_menu("Edit");
-        b.add(&edit, "Undo", Target::Sel(sel!("undo:")), "z", 0);
-        b.add(&edit, "Redo", Target::Sel(sel!("redo:")), "Z", 0);
+        b.add(&edit, "Undo", Target::Action(ActionSelector::Undo), "z", 0);
+        b.add(&edit, "Redo", Target::Action(ActionSelector::Redo), "Z", 0);
         separator(&edit);
-        b.add(&edit, "Cut", Target::Sel(sel!("cut:")), "x", 0);
-        b.add(&edit, "Copy", Target::Sel(sel!("copy:")), "c", 0);
-        b.add(&edit, "Paste", Target::Sel(sel!("paste:")), "v", 0);
-        b.add(&edit, "Delete", Target::Sel(sel!("delete:")), "", 0);
-        b.add(&edit, "Select All", Target::Sel(sel!("selectAll:")), "a", 0);
+        b.add(&edit, "Cut", Target::Action(ActionSelector::Cut), "x", 0);
+        b.add(&edit, "Copy", Target::Action(ActionSelector::Copy), "c", 0);
+        b.add(
+            &edit,
+            "Paste",
+            Target::Action(ActionSelector::Paste),
+            "v",
+            0,
+        );
+        b.add(
+            &edit,
+            "Delete",
+            Target::Action(ActionSelector::Delete),
+            "",
+            0,
+        );
+        b.add(
+            &edit,
+            "Select All",
+            Target::Action(ActionSelector::SelectAll),
+            "a",
+            0,
+        );
         attach(&bar, &edit);
 
         let view = new_menu("View");
         b.add(
             &view,
             "Enter Full Screen",
-            Target::Sel(sel!("toggleFullScreen:")),
+            Target::Action(ActionSelector::ToggleFullScreen),
             "f",
             CONTROL,
         );
@@ -171,16 +232,22 @@ impl MenuBar {
         b.add(
             &window,
             "Minimize",
-            Target::Sel(sel!("performMiniaturize:")),
+            Target::Action(ActionSelector::PerformMiniaturize),
             "m",
             0,
         );
-        b.add(&window, "Zoom", Target::Sel(sel!("performZoom:")), "", 0);
+        b.add(
+            &window,
+            "Zoom",
+            Target::Action(ActionSelector::PerformZoom),
+            "",
+            0,
+        );
         separator(&window);
         b.add(
             &window,
             "Bring All to Front",
-            Target::Sel(sel!("arrangeInFront:")),
+            Target::Action(ActionSelector::ArrangeInFront),
             "",
             0,
         );
@@ -213,7 +280,7 @@ impl MenuBar {
 #[derive(Clone, Copy)]
 enum Target {
     None,
-    Sel(Sel),
+    Action(ActionSelector),
     Tag(u32),
 }
 
@@ -280,7 +347,7 @@ impl Builder<'_> {
     ) -> NSMenuItem {
         let (action, receiver) = match target {
             Target::None => (None, None),
-            Target::Sel(sel) => (Some(sel), None),
+            Target::Action(action) => (Some(action.sel()), None),
             Target::Tag(_) => (Some(sel!("onMenuItem:")), Some(self.delegate)),
         };
         let item = add_item(menu, &NSString::from(title), action, receiver, key, mask);
@@ -316,7 +383,7 @@ impl Builder<'_> {
                     } else {
                         match &e.action {
                             Action::Callback(id) => Target::Tag(*id),
-                            Action::Selector(s) => Target::Sel(s.0),
+                            Action::Selector(s) => Target::Action(*s),
                         }
                     };
                     let mut mask = 0;

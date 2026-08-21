@@ -1,7 +1,7 @@
-//! `Table`: a view-based `NSTableView` in a scroll view, fed from rows of
-//! strings held here.
+//! `Table`: a view-based `NSTableView` in a scroll view, fed a cell at a
+//! time from the [`TableRows`] it holds.
 
-use super::{Attr, Cx, Event, Prop, Rel, Widget};
+use super::{Attr, Cx, Event, Prop, Rel, TableRows, Widget};
 use crate::error::Result;
 use crate::geometry::{Positive, Rect};
 use crate::objc::appkit::{
@@ -47,7 +47,7 @@ pub(crate) struct Table {
     header: Option<NSView>,
     header_wanted: Option<bool>,
     columns: Columns,
-    rows: Vec<Vec<NSString>>,
+    rows: Box<dyn TableRows>,
     /// What the caller asked to select; re-applied when rows or columns change
     /// so prop order does not matter.
     selected_wanted: Vec<usize>,
@@ -108,7 +108,7 @@ impl Table {
             header,
             header_wanted: None,
             columns,
-            rows: Vec::new(),
+            rows: Box::new(NoRows),
             selected_wanted: Vec::new(),
             default_row_height,
             cell_id: NSString::from("BunAppKitTextCell"),
@@ -131,8 +131,8 @@ impl Table {
     /// Selects the wanted rows that exist right now; at most one on a
     /// single-selection table, because AppKit only enforces that for clicks.
     /// Inside `set` the table's row-count question is refused, so there this
-    /// selects against a stale count and only sticks when `settle` runs
-    /// [`Widget::reload`].
+    /// selects against a stale count and only sticks once the setter's
+    /// borrow ends and runs [`Widget::reload`].
     fn apply_selection(&self) {
         let in_range = self
             .selected_wanted
@@ -178,6 +178,18 @@ impl Table {
             .set_active(true);
         }
         cell
+    }
+}
+
+/// A table's contents until `rows` is set.
+struct NoRows;
+
+impl TableRows for NoRows {
+    fn len(&self) -> usize {
+        0
+    }
+    fn cell(&self, _row: usize, _column: usize) -> Option<NsStr<'_>> {
+        None
     }
 }
 
@@ -231,10 +243,7 @@ impl Widget for Table {
                 self.reload();
             }
             Prop::Rows(rows) => {
-                self.rows = rows
-                    .iter()
-                    .map(|r| r.iter().map(|c| NSString::from_str(*c)).collect())
-                    .collect();
+                self.rows = rows;
                 self.reload();
             }
             Prop::SelectedIndexes(indexes) => {
@@ -286,11 +295,6 @@ impl Widget for Table {
     ) -> Option<NSView> {
         let column = column?;
         let index = self.columns.as_slice().iter().position(|c| c == column)?;
-        let text = self
-            .rows
-            .get(row)
-            .and_then(|r| r.get(index))
-            .unwrap_or(&self.empty);
         let cell = match table
             .make_view_with_identifier(&self.cell_id, None)
             .and_then(|v| v.downcast::<NSTableCellView>().ok())
@@ -299,7 +303,10 @@ impl Widget for Table {
             None => self.new_cell(),
         };
         if let Some(label) = cell.text_field() {
-            label.set_string_value(text);
+            match self.rows.cell(row, index) {
+                Some(text) => label.set_string_value(&NSString::from_str(text)),
+                None => label.set_string_value(&self.empty),
+            }
         }
         Some(NSView::clone(&cell))
     }

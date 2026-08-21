@@ -10,16 +10,15 @@ objc_class!(pub struct NSObject = "NSObject");
 objc_methods! { impl NSObject {
     // pub(crate) fn responds_to_selector(&self, sel: super::Sel) -> bool = "respondsToSelector:";
     pub fn is_equal(&self, other: Option<&NSObject>) -> bool = "isEqual:";
-    fn autorelease_raw(&self) -> Ptr = "autorelease";
-    fn retain_raw(&self) -> Ptr = "retain";
 }}
 
 impl NSObject {
     /// For IMPs that must return an object to AppKit: retains once more and
     /// autoreleases, so the pointer outlives this wrapper's drop by one pool.
     pub(crate) fn autorelease_return(&self) -> super::Obj {
-        self.retain_raw();
-        self.autorelease_raw().0.cast_mut()
+        // SAFETY: self is live; the extra reference taken here is the one the
+        // autorelease pool releases later.
+        unsafe { (rt().objc_autorelease)((rt().objc_retain)(self.as_obj())) }
     }
 }
 
@@ -98,7 +97,8 @@ impl NSString {
         // SAFETY: Create rule (+1); NULL only on allocation failure since
         // `&str` rules out invalid UTF-8.
         match unsafe { Id::from_retained(raw) } {
-            Some(id) => <NSString as Object>::from_id(id),
+            // SAFETY: a CFString is an NSString.
+            Some(id) => unsafe { <NSString as Object>::from_id(id) },
             None => super::nil_from_nonnull("CFStringCreateWithBytes/Characters", "+1"),
         }
     }
@@ -187,7 +187,7 @@ objc_class!(pub struct NSDate: NSObject = "NSDate");
 objc_methods! { impl NSDate {
     pub fn distant_past() -> NSDate = "distantPast";
     pub fn distant_future() -> NSDate = "distantFuture";
-    pub fn seconds_from_now(seconds: f64) -> NSDate = "dateWithTimeIntervalSinceNow:";
+    // pub fn seconds_from_now(seconds: f64) -> NSDate = "dateWithTimeIntervalSinceNow:";
 }}
 
 objc_class!(pub struct NSData: NSObject = "NSData");
@@ -261,7 +261,16 @@ objc_class!(pub struct NSProcessInfo: NSObject = "NSProcessInfo");
 objc_methods! { impl NSProcessInfo {
     pub fn process_info() -> NSProcessInfo = "processInfo";
     pub fn process_name(&self) -> NSString = "processName";
+    /// `options` is `NSActivityOptions`; keep the returned token alive for as long as the activity lasts.
+    pub fn begin_activity(&self, options: u64, reason: &NSString) -> NSObject = "beginActivityWithOptions:reason:";
+    pub fn end_activity(&self, activity: &NSObject) = "endActivity:";
 }}
+
+// objc_class!(pub struct NSException: NSObject = "NSException");
+// objc_methods! { impl NSException {
+//     pub fn name(&self) -> NSString = "name";
+//     pub fn reason(&self) -> Option<NSString> = "reason";
+// }}
 
 objc_class!(pub struct NSError: NSObject = "NSError");
 objc_methods! { impl NSError {

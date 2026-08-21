@@ -7,6 +7,7 @@
 
 use core::cell::{Cell, OnceCell, Ref, RefCell, RefMut};
 use core::ops::{Deref, DerefMut};
+use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 
 use crate::color::Color;
@@ -15,12 +16,13 @@ use crate::font::Font;
 use crate::geometry::{Insets, Positive, Rect, Size};
 use crate::named_enum;
 use crate::objc::appkit::{
-    BitmapImageFileType, NSColor, NSControl, NSLayoutConstraint, NSTableColumn, NSTableView,
-    NSUndoManager, NSView, StackDistribution, TextAlignment,
+    BitmapImageFileType, NSAppearance, NSApplication, NSColor, NSControl, NSLayoutConstraint,
+    NSStackView, NSTableColumn, NSTableView, NSUndoManager, NSView, StackDistribution,
+    TextAlignment,
 };
 use crate::objc::foundation::{NSObject, NSString};
 use crate::objc::{
-    self, AutoreleasePool, CGColorRef, ControlEvents, Delegate, MetalViewEvents, NsStr, Object, sel,
+    self, AutoreleasePool, ControlEvents, Delegate, MetalViewEvents, NsStr, Object, sel,
 };
 
 mod button;
@@ -202,6 +204,14 @@ pub struct Column<'a> {
     pub width: Option<Positive>,
 }
 
+/// A table's contents. Cells are read as their rows scroll into view, so
+/// this is asked for a handful of cells at a time however many rows it has.
+pub trait TableRows {
+    fn len(&self) -> usize;
+    /// `None` past the end of the row (or of the table) shows an empty cell.
+    fn cell(&self, row: usize, column: usize) -> Option<NsStr<'_>>;
+}
+
 /// A typed property assignment. Which kinds accept which props is decided
 /// by each [`Widget`]; the rest come back as [`Error::UnknownProp`].
 pub enum Prop<'a> {
@@ -275,7 +285,7 @@ pub enum Prop<'a> {
     },
     // table
     Columns(Vec<Column<'a>>),
-    Rows(Vec<Vec<NsStr<'a>>>),
+    Rows(Box<dyn TableRows>),
     SelectedIndexes(Vec<usize>),
     Multiple(bool),
     /// `None` restores the kind's default (shown once real columns exist).
@@ -318,7 +328,9 @@ pub enum Event {
 /// Receives a view's events. Called on the main thread from inside AppKit
 /// event dispatch.
 pub trait ViewSink {
-    fn event(&self, e: Event);
+    /// `false` when nothing was listening for `e`; the view then applies
+    /// AppKit's default for it, if there is one.
+    fn event(&self, e: Event) -> bool;
 }
 
 /// What [`View`] hands each widget: the object controls use as their target
@@ -366,6 +378,12 @@ pub(crate) trait Widget {
         Err(Error::NotAContainer(cx.kind))
     }
 
+    /// Reorders `child`, already in this container, to `index` (counted
+    /// with `child` taken out) without it leaving the view hierarchy.
+    fn move_child(&mut self, cx: &Cx<'_>, _child: &NSView, _index: usize) -> Result<()> {
+        Err(Error::NotAContainer(cx.kind))
+    }
+
     /// The control's action fired (`onAction:` on the target).
     fn on_action(&mut self, _emit: &mut dyn FnMut(Event)) {}
 
@@ -404,12 +422,22 @@ pub(crate) trait Widget {
         None
     }
 
-    /// Programmatic activation for tests (`performClick:` on controls).
-    fn click(&self) {
-        if let Ok(control) = self.view().clone().downcast::<NSControl>() {
-            control.perform_click(None);
-        }
+    /// Programmatic activation for tests: `performClick:` on the kinds a
+    /// user clicks. `false` when this kind has nothing to click.
+    fn click(&self) -> bool {
+        false
     }
+
+    /// Re-derives the per-child layout that follows `grow`: share
+    /// constraints in a stack, holding priorities in a split view.
+    /// `children` are the current children, in no particular order, with
+    /// their weights (see [`View::grow_weight`]).
+    fn regrow(&mut self, _children: &[(NSView, f64)]) {}
+
+    /// How many containers now enclose this view: told when it or an
+    /// ancestor joins or leaves one. A stack weakens its fill constraints
+    /// by that much so an outer stack's fill beats an inner one's.
+    fn nested(&mut self, _depth: usize) {}
 
     /// The axis children are laid out along, if this container has one.
     fn axis(&self) -> Option<Orientation> {
@@ -444,16 +472,63 @@ pub(crate) enum TextEvent {
     Ended,
 }
 
-/// Owned constraints for the size props, so a later assignment edits the
-/// constant instead of stacking a second constraint.
+/// One axis's size props as last requested, plus the constraints that
+/// realise them (kept so a later assignment edits the constant instead of
+/// stacking a second constraint). Props arrive one at a time and in any
+/// order, so conflicts are settled here rather than left to Auto Layout:
+/// `min` wins over `max`, and the exact length is clamped between them.
+#[derive(Default)]
+struct AxisSize {
+    exact: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+    exact_constraint: Option<NSLayoutConstraint>,
+    min_constraint: Option<NSLayoutConstraint>,
+    max_constraint: Option<NSLayoutConstraint>,
+}
+
+impl AxisSize {
+    fn apply(&mut self, view: &NSView, attr: Attr) {
+        let min = self.min.map(|v| v.max(0.0));
+        let floor = min.unwrap_or(0.0);
+        let max = self.max.map(|v| v.max(floor));
+        let exact = self.exact.map(|v| {
+            let v = v.max(floor);
+            max.map_or(v, |max| v.min(max))
+        });
+        let p = priority::ALMOST_REQUIRED;
+        size_constraint(
+            view,
+            &mut self.min_constraint,
+            attr,
+            Rel::GreaterOrEqual,
+            min,
+            p,
+        );
+        size_constraint(
+            view,
+            &mut self.max_constraint,
+            attr,
+            Rel::LessOrEqual,
+            max,
+            p,
+        );
+        size_constraint(view, &mut self.exact_constraint, attr, Rel::Equal, exact, p);
+    }
+}
+
 #[derive(Default)]
 struct SizeConstraints {
-    width: Option<NSLayoutConstraint>,
-    height: Option<NSLayoutConstraint>,
-    min_width: Option<NSLayoutConstraint>,
-    max_width: Option<NSLayoutConstraint>,
-    min_height: Option<NSLayoutConstraint>,
-    max_height: Option<NSLayoutConstraint>,
+    width: AxisSize,
+    height: AxisSize,
+}
+
+/// Layer colours as given; a layer holds a fixed `CGColor`, so both are
+/// resolved together against the view's appearance whenever either is set.
+#[derive(Default)]
+struct Decoration {
+    background: Option<Color>,
+    border: Option<Color>,
 }
 
 #[derive(Clone, Copy)]
@@ -472,6 +547,18 @@ struct Emphasis {
     saved: Option<[AxisPriorities; 2]>,
 }
 
+/// Horizontal compression resistance for controls that draw a title: above
+/// a label's (250) so plain text truncates first, below the window holding
+/// its size (500) so a long title truncates instead of widening the window.
+pub(crate) const TITLE_COMPRESSION: f32 = 490.0;
+/// Hugging of a view with `grow`: below stock hugging (250), a stack's own
+/// (249) and the window's bottom pin (240), so growers stretch first.
+const GROWER_HUGGING: f32 = 200.0;
+/// Share constraints between growing siblings sit above `GROWER_HUGGING`
+/// so the ratio decides who stretches, and below a grower's compression
+/// (249) so the ratio never squeezes one below its content.
+pub(crate) const GROW_SHARE: f32 = 225.0;
+
 /// Which widget event hook an AppKit callback maps to.
 #[derive(Clone, Copy)]
 enum Callback {
@@ -483,43 +570,139 @@ enum Callback {
     DrawableResized(Size),
 }
 
+impl Callback {
+    /// The callbacks a setter can cause by itself (`setStringValue:` posts a
+    /// change, `reloadData` moves the selection): inside one they report our
+    /// own change back, not user input. Editing beginning or ending is the
+    /// user's focus moving even when a setter (say `hidden`) provoked it.
+    fn echoes_setter(self) -> bool {
+        matches!(
+            self,
+            Callback::Action | Callback::Text(TextEvent::Changed) | Callback::Selection
+        )
+    }
+
+    /// A frame is rendered inside `drawInMTKView:` or not at all; run
+    /// later, it would draw into a drawable nobody presents.
+    fn deferrable(self) -> bool {
+        !matches!(self, Callback::Frame)
+    }
+}
+
+thread_local! {
+    /// How many [`Hold`]s are alive on this thread.
+    static HOLDS: Cell<usize> = const { Cell::new(0) };
+    /// `Inner::run` frames on the stack; each ends with a `Hold::drain`.
+    static RUNS: Cell<usize> = const { Cell::new(0) };
+    /// Event deliveries that arrived under a [`Hold`], oldest first.
+    static HELD_EVENTS: RefCell<VecDeque<Box<dyn FnOnce()>>> =
+        const { RefCell::new(VecDeque::new()) };
+}
+
+/// AppKit reports many things synchronously from inside the call that
+/// caused them: removing a focused text field ends its editing, resizing a
+/// window sends `windowDidResize:`, `performClick:` fires the action. The
+/// receivers run JavaScript, which may call straight back into the view or
+/// window whose state is halfway through changing. While a `Hold` is alive
+/// on the thread such deliveries are queued instead, and the last one to
+/// drop runs them, so handlers always see settled state and no `RefCell`
+/// here is ever borrowed when they run.
+#[must_use]
+pub(crate) struct Hold;
+
+impl Hold {
+    pub(crate) fn new() -> Hold {
+        HOLDS.set(HOLDS.get() + 1);
+        Hold
+    }
+
+    pub(crate) fn is_held() -> bool {
+        HOLDS.get() > 0
+    }
+
+    /// Runs `deliver` now, or after the outermost `Hold` if one is alive.
+    pub(crate) fn deliver(deliver: impl FnOnce() + 'static) {
+        if Hold::is_held() {
+            Hold::queue(deliver);
+        } else {
+            deliver();
+        }
+    }
+
+    /// Only sound while something on the stack will [`Hold::drain`]: a live
+    /// `Hold`, or an [`Inner::run`] whose widget borrow caused the callback.
+    fn queue(deliver: impl FnOnce() + 'static) {
+        debug_assert!(
+            Hold::is_held() || RUNS.get() > 0,
+            "event queued with nothing on the stack to deliver it"
+        );
+        HELD_EVENTS.with_borrow_mut(|queue| queue.push_back(Box::new(deliver)));
+    }
+
+    /// Delivers what was queued, oldest first, unless a `Hold` is alive.
+    /// A delivery that takes and drops holds of its own drains what those
+    /// queued before the next one here runs, so a handler sees the events
+    /// its own calls caused before anyone sees later ones.
+    fn drain() {
+        if Hold::is_held() {
+            return;
+        }
+        let batch = HELD_EVENTS.with_borrow_mut(core::mem::take);
+        for deliver in batch {
+            deliver();
+        }
+    }
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        HOLDS.set(HOLDS.get() - 1);
+        Hold::drain();
+    }
+}
+
 /// AppKit calls back into a view synchronously from inside the very calls a
 /// widget makes while `widget` is borrowed (`performClick:` fires the action,
 /// `reloadData` asks the data source, `setStringValue:` posts a change
-/// notification). `in_setter`, `pending` and `data_wanted` are how those
-/// re-entrant calls are told apart, and [`WidgetBorrow`] answers them once
-/// the borrow ends. Borrow `widget` directly only for getters that make no
-/// AppKit call.
+/// notification). Every borrow for a call into AppKit goes through
+/// [`WidgetBorrow`], which keeps a [`Hold`] so those callbacks wait for the
+/// borrow to end; `in_setter` and `data_wanted` mark the two that need more
+/// than waiting. Borrow `widget` directly only to read a field.
 struct Inner {
     kind: Kind,
     widget: RefCell<Box<dyn Widget>>,
     target: Delegate<dyn ControlEvents>,
     sizes: RefCell<SizeConstraints>,
     emphasis: RefCell<Emphasis>,
+    decoration: RefCell<Decoration>,
     sink: Box<dyn ViewSink>,
     has_parent: Cell<bool>,
+    /// The containing view (not a window), told again when `grow` or
+    /// `hidden` changes what it lays out.
+    parent: RefCell<Weak<Inner>>,
     /// Told the container's axis again when a prop changes it.
     children: RefCell<Vec<Weak<Inner>>>,
-    /// Event callbacks during a setter echo our own change, not user input,
-    /// and are dropped.
+    /// Containers above this view; see [`Widget::nested`].
+    depth: Cell<usize>,
+    /// A setter on this view is running: callbacks that echo it are dropped
+    /// (see [`Callback::echoes_setter`]).
     in_setter: Cell<bool>,
-    /// Event callbacks that arrived while `widget` was borrowed outside a
-    /// setter; replayed by `settle`.
-    pending: RefCell<Vec<Callback>>,
-    /// A data-source query was refused while `widget` was borrowed.
-    /// NSTableView caches that empty answer, so `settle` makes it ask again.
+    /// A data-source query was refused while `widget` was borrowed; see
+    /// [`Inner::answer_data_source`].
     data_wanted: Cell<bool>,
+    /// A [`View::regrow`] is queued for when the holds unwind.
+    regrow_pending: Cell<bool>,
 }
 
 /// A borrow of [`Inner::widget`] for a call into AppKit. Dropping it ends
-/// the borrow first and then settles: callbacks AppKit fired meanwhile are
-/// replayed (or, for a setter, were our own echo and were dropped) and a
-/// refused data-source query is asked again.
+/// the borrow, re-asks a refused data-source query, and then releases its
+/// [`Hold`], which delivers the callbacks AppKit fired meanwhile.
 struct WidgetBorrow<'a, B> {
     inner: &'a Inner,
-    /// `None` only inside `drop`, so the borrow can end before `settle`.
+    /// `None` only inside `drop`, so the borrow ends before the hold does.
     widget: Option<B>,
     setter: bool,
+    _hold: Hold,
 }
 
 type WidgetRef<'a> = WidgetBorrow<'a, Ref<'a, Box<dyn Widget>>>;
@@ -531,6 +714,7 @@ impl Inner {
             inner: self,
             widget: Some(self.widget.borrow()),
             setter: false,
+            _hold: Hold::new(),
         }
     }
 
@@ -539,17 +723,19 @@ impl Inner {
             inner: self,
             widget: Some(self.widget.borrow_mut()),
             setter: false,
+            _hold: Hold::new(),
         }
     }
 
-    /// Like [`widget_mut`](Self::widget_mut), but event callbacks fired
-    /// until it drops echo our own change and are discarded, not replayed.
+    /// Like [`widget_mut`](Self::widget_mut), but callbacks that echo the
+    /// setter are discarded rather than delivered late.
     fn widget_for_setter(&self) -> WidgetMut<'_> {
         self.in_setter.set(true);
         WidgetBorrow {
             inner: self,
             widget: Some(self.widget.borrow_mut()),
             setter: true,
+            _hold: Hold::new(),
         }
     }
 }
@@ -573,7 +759,7 @@ impl<B> Drop for WidgetBorrow<'_, B> {
         if self.setter {
             self.inner.in_setter.set(false);
         }
-        self.inner.settle();
+        self.inner.answer_data_source();
     }
 }
 
@@ -664,12 +850,15 @@ impl View {
                 target,
                 sizes: RefCell::default(),
                 emphasis: RefCell::default(),
+                decoration: RefCell::default(),
                 sink,
                 has_parent: Cell::new(false),
+                parent: RefCell::new(Weak::new()),
                 children: RefCell::default(),
+                depth: Cell::new(0),
                 in_setter: Cell::new(false),
-                pending: RefCell::default(),
                 data_wanted: Cell::new(false),
+                regrow_pending: Cell::new(false),
             }
         });
         LIVE_VIEWS.set(LIVE_VIEWS.get() + 1);
@@ -701,11 +890,13 @@ impl View {
     /// Applies one property.
     pub fn set(&self, prop: Prop<'_>) -> Result<()> {
         let inner = &*self.inner;
+        let _hold = Hold::new();
         let _pool = AutoreleasePool::new();
         let cx = Cx {
             target: inner.target.as_nsobject(),
             kind: inner.kind,
         };
+        let regrows_parent = matches!(prop, Prop::Grow(_) | Prop::Hidden(_));
         let mut widget = inner.widget_for_setter();
         let axis_before = widget.axis();
         let reprioritizes = widget.rewrites_own_priorities(&prop);
@@ -714,13 +905,7 @@ impl View {
         }
         let result = match widget.set(&cx, prop) {
             Ok(None) => Ok(()),
-            Ok(Some(prop)) => set_common(
-                inner.kind,
-                widget.view(),
-                &mut inner.sizes.borrow_mut(),
-                &mut inner.emphasis.borrow_mut(),
-                prop,
-            ),
+            Ok(Some(prop)) => self.set_common(widget.view(), prop),
             Err(e) => Err(e),
         };
         if reprioritizes {
@@ -730,8 +915,14 @@ impl View {
         drop(widget);
         if axis != axis_before {
             for child in self.children() {
-                child.inner.widget_mut().attached(axis);
+                child.attached(axis);
             }
+        }
+        if regrows_parent
+            && result.is_ok()
+            && let Some(parent) = self.parent()
+        {
+            parent.regrow();
         }
         result
     }
@@ -745,55 +936,133 @@ impl View {
             .collect()
     }
 
+    fn parent(&self) -> Option<View> {
+        self.inner
+            .parent
+            .borrow()
+            .upgrade()
+            .map(|inner| View { inner })
+    }
+
+    /// Tells the widget its container's axis. A widget may set its own
+    /// priorities again for the new axis (a `Divider` turns), so `grow` and
+    /// `loose` are lifted around the call and derived afresh.
+    fn attached(&self, axis: Option<Orientation>) {
+        let view = self.nsview();
+        restore_own_priorities(&view, &mut self.inner.emphasis.borrow_mut());
+        self.inner.widget_mut().attached(axis);
+        sync_emphasis(&view, &mut self.inner.emphasis.borrow_mut());
+    }
+
+    /// [`regrow`](View::regrow) once when the outermost [`Hold`] unwinds,
+    /// however many children asked.
+    fn regrow_later(&self) {
+        if self.inner.regrow_pending.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(&self.inner);
+        Hold::queue(move || {
+            if let Some(inner) = weak.upgrade() {
+                inner.regrow_pending.set(false);
+                View { inner }.regrow();
+            }
+        });
+    }
+
+    /// Hands the container widget every child's grow weight again.
+    fn regrow(&self) {
+        let children: Vec<(NSView, f64)> = self
+            .children()
+            .iter()
+            .map(|child| (child.nsview(), child.grow_weight()))
+            .collect();
+        self.inner.widget_mut().regrow(&children);
+    }
+
+    /// Records this view's container depth and renumbers everything below it.
+    fn nest(&self, depth: usize) {
+        if self.inner.depth.replace(depth) == depth {
+            return;
+        }
+        self.inner.widget_mut().nested(depth);
+        for child in self.children() {
+            child.nest(depth + 1);
+        }
+    }
+
+    /// `grow`, except that a `Spacer` left at 0 counts as 1: taking up
+    /// leftover space is what it is for, and two of them should share it.
+    fn grow_weight(&self) -> f64 {
+        let grow = self.inner.emphasis.borrow().grow;
+        if grow == 0.0 && self.kind() == Kind::Spacer {
+            1.0
+        } else {
+            grow
+        }
+    }
+
     /// A text input's current text; `None` for other kinds.
     pub fn text(&self) -> Option<Vec<u16>> {
         let _pool = AutoreleasePool::new();
-        self.inner.widget.borrow().text()
+        self.inner.widget_ref().text()
     }
 
     /// A slider's current value; `None` for other kinds.
     pub fn number(&self) -> Option<f64> {
         let _pool = AutoreleasePool::new();
-        self.inner.widget.borrow().number()
+        self.inner.widget_ref().number()
     }
 
     /// Whether a checkbox, radio or switch is on; `None` for other kinds.
     pub fn checked(&self) -> Option<bool> {
         let _pool = AutoreleasePool::new();
-        self.inner.widget.borrow().checked()
+        self.inner.widget_ref().checked()
     }
 
     /// A picker's or segmented control's selection (`Some(None)` when nothing
     /// is selected); `None` for other kinds.
     pub fn selected_index(&self) -> Option<Option<usize>> {
         let _pool = AutoreleasePool::new();
-        self.inner.widget.borrow().selected_index()
+        self.inner.widget_ref().selected_index()
     }
 
     /// A table's selected rows; `None` for other kinds.
     pub fn selected_indexes(&self) -> Option<Vec<usize>> {
         let _pool = AutoreleasePool::new();
-        self.inner.widget.borrow().selected_indexes()
+        self.inner.widget_ref().selected_indexes()
     }
 
-    /// Inserts `child` at `index` among this container's children.
+    /// Inserts `child` at `index` among this container's children, or, when
+    /// it is already one of them, moves it there (`index` then counts the
+    /// children without it). A move keeps keyboard focus inside `child`.
     pub fn insert_child(&self, child: &View, index: usize) -> Result<()> {
         if Rc::ptr_eq(&self.inner, &child.inner) {
             return Err(Error::WouldCycle);
         }
-        if child.has_parent() {
+        let moving = child
+            .parent()
+            .is_some_and(|parent| Rc::ptr_eq(&parent.inner, &self.inner));
+        if child.has_parent() && !moving {
             return Err(Error::ChildHasParent);
         }
+        let _hold = Hold::new();
         let _pool = AutoreleasePool::new();
         let child_view = child.nsview();
-        if self.nsview().is_descendant_of(&child_view) {
-            return Err(Error::WouldCycle);
-        }
         let kind = self.kind();
         let cx = Cx {
             target: self.inner.target.as_nsobject(),
             kind,
         };
+        if moving {
+            self.inner
+                .widget_mut()
+                .move_child(&cx, &child_view, index)?;
+            self.regrow();
+            return Ok(());
+        }
+        if self.nsview().is_descendant_of(&child_view) {
+            return Err(Error::WouldCycle);
+        }
         let (result, axis, loose) = {
             let mut parent = self.inner.widget_mut();
             let result = parent.insert_child(&cx, &child_view, index);
@@ -804,17 +1073,17 @@ impl View {
             .children
             .borrow_mut()
             .push(Rc::downgrade(&child.inner));
-        {
-            let mut emphasis = child.inner.emphasis.borrow_mut();
-            emphasis.loose = loose;
-            sync_emphasis(&child_view, &mut emphasis);
-        }
+        *child.inner.parent.borrow_mut() = Rc::downgrade(&self.inner);
         child.inner.has_parent.set(true);
-        child.inner.widget_mut().attached(axis);
+        child.inner.emphasis.borrow_mut().loose = loose;
+        child.attached(axis);
+        child.nest(self.inner.depth.get() + 1);
+        self.regrow();
         Ok(())
     }
 
     pub fn remove_child(&self, child: &View) -> Result<()> {
+        let _hold = Hold::new();
         let _pool = AutoreleasePool::new();
         let child_view = child.nsview();
         let cx = Cx {
@@ -826,60 +1095,179 @@ impl View {
             weak.upgrade()
                 .is_some_and(|other| !Rc::ptr_eq(&other, &child.inner))
         });
-        {
-            let mut emphasis = child.inner.emphasis.borrow_mut();
-            emphasis.loose = false;
-            sync_emphasis(&child_view, &mut emphasis);
-        }
+        *child.inner.parent.borrow_mut() = Weak::new();
         child.inner.has_parent.set(false);
-        child.inner.widget_mut().attached(None);
+        child.inner.emphasis.borrow_mut().loose = false;
+        child.attached(None);
+        child.nest(0);
+        self.regrow();
         Ok(())
     }
 
     /// Detaches from a parent that keeps no per-child state (window content):
     /// removes the NSView from its superview and clears `has_parent`.
     pub(crate) fn detach_from_parent(&self) {
+        let _hold = Hold::new();
         self.nsview().remove_from_superview();
         self.inner.has_parent.set(false);
     }
 
-    /// Frame in the superview's coordinates after layout.
+    /// Frame in the superview's coordinates once the view is in a window,
+    /// with that window's pending layout run first so the answer reflects
+    /// every change made so far; all zeros while it is not in one. Callbacks
+    /// the layout pass provokes (a window `did_resize`) go out after this
+    /// returns.
     pub fn frame(&self) -> Rect {
-        self.inner.widget.borrow().view().frame()
+        let _hold = Hold::new();
+        let _pool = AutoreleasePool::new();
+        let view = self.nsview();
+        match view.window() {
+            Some(window) => {
+                window.layout_if_needed();
+                view.frame()
+            }
+            None => Rect::default(),
+        }
     }
 
     /// Simulates the user activating the control.
-    pub fn click(&self) {
+    pub fn click(&self) -> Result<()> {
         let _pool = AutoreleasePool::new();
-        self.inner.widget_ref().click();
+        if self.inner.widget_ref().click() {
+            Ok(())
+        } else {
+            Err(Error::Unsupported(
+                "click() only applies to a Button, Checkbox, Radio or Switch",
+            ))
+        }
     }
 
-    /// PNG snapshot of the view as currently laid out.
+    /// Props every kind understands.
+    fn set_common(&self, view: &NSView, prop: Prop<'_>) -> Result<()> {
+        let inner = &*self.inner;
+        match prop {
+            Prop::Hidden(v) => view.set_hidden(v),
+            Prop::Alpha(v) => view.set_alpha_value(v.clamp(0.0, 1.0)),
+            Prop::Tooltip(v) => view.set_tool_tip(v.map(NSString::from_str).as_ref()),
+            Prop::Identifier(v) => view.set_identifier(v.map(NSString::from_str).as_ref()),
+            Prop::Width(v) => {
+                let mut sizes = inner.sizes.borrow_mut();
+                sizes.width.exact = v;
+                sizes.width.apply(view, Attr::Width);
+            }
+            Prop::MinWidth(v) => {
+                let mut sizes = inner.sizes.borrow_mut();
+                sizes.width.min = v;
+                sizes.width.apply(view, Attr::Width);
+            }
+            Prop::MaxWidth(v) => {
+                let mut sizes = inner.sizes.borrow_mut();
+                sizes.width.max = v;
+                sizes.width.apply(view, Attr::Width);
+            }
+            Prop::Height(v) => {
+                let mut sizes = inner.sizes.borrow_mut();
+                sizes.height.exact = v;
+                sizes.height.apply(view, Attr::Height);
+            }
+            Prop::MinHeight(v) => {
+                let mut sizes = inner.sizes.borrow_mut();
+                sizes.height.min = v;
+                sizes.height.apply(view, Attr::Height);
+            }
+            Prop::MaxHeight(v) => {
+                let mut sizes = inner.sizes.borrow_mut();
+                sizes.height.max = v;
+                sizes.height.apply(view, Attr::Height);
+            }
+            Prop::Grow(v) => {
+                let mut emphasis = inner.emphasis.borrow_mut();
+                emphasis.grow = v.max(0.0);
+                sync_emphasis(view, &mut emphasis);
+            }
+            Prop::Background(color) => {
+                view.set_wants_layer(true);
+                let mut decoration = inner.decoration.borrow_mut();
+                decoration.background = color;
+                decoration.paint(view);
+            }
+            Prop::CornerRadius(r) => {
+                view.set_wants_layer(true);
+                if let Some(layer) = view.layer() {
+                    layer.set_corner_radius(r.max(0.0));
+                    layer.set_masks_to_bounds(r > 0.0);
+                }
+            }
+            Prop::Border { width, color } => {
+                view.set_wants_layer(true);
+                if let Some(layer) = view.layer() {
+                    layer.set_border_width(width.max(0.0));
+                }
+                let mut decoration = inner.decoration.borrow_mut();
+                decoration.border = color;
+                decoration.paint(view);
+            }
+            _ => return Err(Error::UnknownProp(inner.kind)),
+        }
+        Ok(())
+    }
+
+    /// PNG snapshot of the view as currently laid out. Callbacks the layout
+    /// and display pass provoke go out after this returns.
     pub fn snapshot_png(&self) -> Option<Vec<u8>> {
+        let _hold = Hold::new();
         snapshot_png(&self.nsview())
     }
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
+        // Removing a focused field ends editing, which reports `Ended`/`blur`
+        // synchronously; hold so that goes out after the view is gone rather
+        // than from inside this drop (which may itself be a GC finalizer).
+        let hold = Hold::new();
         let _pool = AutoreleasePool::new();
         let widget = self.widget.get_mut();
         widget.detach();
         // Constraints deactivate themselves when their view leaves the hierarchy.
         widget.view().remove_from_superview();
         LIVE_VIEWS.set(LIVE_VIEWS.get().saturating_sub(1));
+        // A child that dies while still parented takes its `grow` share
+        // constraints with it; the parent lays the surviving growers out
+        // again (once, when the holds unwind) if it is itself still placed.
+        if let Some(parent) = self.parent.get_mut().upgrade() {
+            let me: *const Inner = self;
+            parent
+                .children
+                .borrow_mut()
+                .retain(|weak| !core::ptr::eq(weak.as_ptr(), me));
+            let grower = self.emphasis.get_mut().grow > 0.0;
+            let parent = View { inner: parent };
+            if grower && parent.nsview().superview().is_some() {
+                parent.regrow_later();
+            }
+        }
+        drop(hold);
     }
 }
 
 impl Inner {
-    /// Runs one widget hook and forwards what it emits. Events are collected
-    /// first and delivered after the widget borrow ends, because the sink
-    /// runs JavaScript that may call straight back into this view.
-    fn run(&self, callback: Callback) {
+    /// Runs one widget hook and forwards what it emits. Only ever called
+    /// with no [`Hold`] alive. Events are collected first and delivered
+    /// after the widget borrow ends, because the sink runs JavaScript that
+    /// may call straight back into this view.
+    fn run(self: &Rc<Self>, callback: Callback) {
+        let _pool = AutoreleasePool::new();
+        RUNS.set(RUNS.get() + 1);
         let mut events = Vec::new();
         {
+            // No `Hold` around the hook: releasing one would deliver older
+            // queued events ahead of the ones this hook is about to emit.
+            // Anything AppKit reports during the hook finds `widget`
+            // borrowed, is queued, and goes out right after them.
             let Ok(mut widget) = self.widget.try_borrow_mut() else {
-                self.pending.borrow_mut().push(callback);
+                self.defer(callback);
+                RUNS.set(RUNS.get() - 1);
                 return;
             };
             let emit: &mut dyn FnMut(Event) = &mut |e| events.push(e);
@@ -892,31 +1280,65 @@ impl Inner {
                 Callback::DrawableResized(size) => widget.on_drawable_resized(size, emit),
             }
         }
+        self.answer_data_source();
         for event in events {
-            self.sink.event(event);
+            let submitted = event == Event::Submitted;
+            let taken = self.sink.event(event);
+            if submitted && !taken {
+                self.press_default_button();
+            }
         }
+        RUNS.set(RUNS.get() - 1);
+        Hold::drain();
     }
 
-    /// Only called by [`WidgetBorrow`]'s `drop`, right after the borrow of
-    /// `widget` ends: replays event callbacks that arrived meanwhile and
-    /// re-asks a refused data source.
-    fn settle(&self) {
-        loop {
-            let batch = core::mem::take(&mut *self.pending.borrow_mut());
-            if batch.is_empty() {
-                break;
-            }
-            for callback in batch {
-                self.run(callback);
-            }
+    /// Queues `callback` for the next [`Hold::drain`].
+    fn defer(self: &Rc<Self>, callback: Callback) {
+        if !callback.deferrable() {
+            return;
         }
+        let inner = Rc::downgrade(self);
+        Hold::queue(move || {
+            if let Some(inner) = inner.upgrade() {
+                inner.run(callback);
+            }
+        });
+    }
+
+    /// NSTableView caches the empty answer a refused data-source query got
+    /// while `widget` was borrowed, so once the borrow ends it is made to
+    /// ask again. The reload is ours, so selection changes it causes are
+    /// not user input either; its queries take a shared borrow and are
+    /// answered while this one is held.
+    fn answer_data_source(&self) {
         if self.data_wanted.take() {
-            // The reload is ours, so selection changes it causes are not
-            // user input either. Data-source queries take a shared borrow,
-            // so they are answered while this one is held.
             self.in_setter.set(true);
             self.widget.borrow().reload();
             self.in_setter.set(false);
+        }
+    }
+
+    /// Return in a text field whose `Submitted` nobody listens for goes to
+    /// the window's default button, as it does for an `NSTextField` with no
+    /// action of its own. A text field's action also fires for a search
+    /// field's cancel button; like AppKit, only a key press is passed on.
+    fn press_default_button(&self) {
+        /// `NSEventTypeKeyDown`
+        const KEY_DOWN: usize = 10;
+        let from_key = NSApplication::shared()
+            .current_event()
+            .is_some_and(|event| event.kind() == KEY_DOWN);
+        if !from_key {
+            return;
+        }
+        let cell = self
+            .widget
+            .borrow()
+            .view()
+            .window()
+            .and_then(|window| window.default_button_cell());
+        if let Some(cell) = cell {
+            cell.perform_click(None);
         }
     }
 }
@@ -933,13 +1355,16 @@ struct Handler {
 }
 
 impl Handler {
-    /// The view, for an event callback: not while a setter is echoing.
-    fn for_event(&self) -> Option<Rc<Inner>> {
-        self.inner.upgrade().filter(|inner| !inner.in_setter.get())
-    }
-
     fn forward(&self, callback: Callback) {
-        if let Some(inner) = self.for_event() {
+        let Some(inner) = self.inner.upgrade() else {
+            return;
+        };
+        if inner.in_setter.get() && callback.echoes_setter() {
+            return;
+        }
+        if Hold::is_held() {
+            inner.defer(callback);
+        } else {
             inner.run(callback);
         }
     }
@@ -965,9 +1390,9 @@ impl ControlEvents for Handler {
         Some(self.undo.get_or_init(NSUndoManager::new).clone())
     }
 
-    // Data-source queries ignore `in_setter` (the reload `settle` issues runs
-    // under it); only a held borrow refuses them, and then `settle` repeats
-    // the question.
+    // Data-source queries ignore `in_setter` (the reload a `WidgetBorrow`
+    // issues as it ends runs under it) and holds (they run no JavaScript);
+    // only a held borrow refuses them, and then its end repeats the question.
     fn number_of_rows(&self) -> usize {
         let Some(inner) = self.inner.upgrade() else {
             return 0;
@@ -1005,78 +1430,23 @@ impl MetalViewEvents for Handler {
     }
 }
 
-/// Props every kind understands.
-fn set_common(
-    kind: Kind,
-    view: &NSView,
-    sizes: &mut SizeConstraints,
-    emphasis: &mut Emphasis,
-    prop: Prop<'_>,
-) -> Result<()> {
-    match prop {
-        Prop::Hidden(v) => view.set_hidden(v),
-        Prop::Alpha(v) => view.set_alpha_value(v.clamp(0.0, 1.0)),
-        Prop::Tooltip(v) => view.set_tool_tip(v.map(NSString::from_str).as_ref()),
-        Prop::Identifier(v) => view.set_identifier(v.map(NSString::from_str).as_ref()),
-        Prop::Width(v) => size_constraint(view, &mut sizes.width, Attr::Width, Rel::Equal, v),
-        Prop::Height(v) => size_constraint(view, &mut sizes.height, Attr::Height, Rel::Equal, v),
-        Prop::MinWidth(v) => size_constraint(
-            view,
-            &mut sizes.min_width,
-            Attr::Width,
-            Rel::GreaterOrEqual,
-            v,
-        ),
-        Prop::MaxWidth(v) => {
-            size_constraint(view, &mut sizes.max_width, Attr::Width, Rel::LessOrEqual, v)
-        }
-        Prop::MinHeight(v) => size_constraint(
-            view,
-            &mut sizes.min_height,
-            Attr::Height,
-            Rel::GreaterOrEqual,
-            v,
-        ),
-        Prop::MaxHeight(v) => size_constraint(
-            view,
-            &mut sizes.max_height,
-            Attr::Height,
-            Rel::LessOrEqual,
-            v,
-        ),
-        Prop::Grow(v) => {
-            emphasis.grow = v.max(0.0);
-            sync_emphasis(view, emphasis);
-        }
-        Prop::Background(color) => {
-            view.set_wants_layer(true);
-            if let Some(layer) = view.layer() {
-                let ns = color.map(|c| c.to_nscolor());
-                layer.set_background_color(cg_color(ns.as_ref()));
-            }
-        }
-        Prop::CornerRadius(r) => {
-            view.set_wants_layer(true);
-            if let Some(layer) = view.layer() {
-                layer.set_corner_radius(r.max(0.0));
-                layer.set_masks_to_bounds(r > 0.0);
-            }
-        }
-        Prop::Border { width, color } => {
-            view.set_wants_layer(true);
-            if let Some(layer) = view.layer() {
-                layer.set_border_width(width.max(0.0));
-                let ns = color.map(|c| c.to_nscolor());
-                layer.set_border_color(cg_color(ns.as_ref()));
-            }
-        }
-        _ => return Err(Error::UnknownProp(kind)),
+impl Decoration {
+    /// `-[NSColor CGColor]` resolves a dynamic colour against
+    /// `NSAppearance.currentAppearance`, which AppKit only points at the
+    /// right appearance while drawing, so it is pointed at the view's own
+    /// around the conversion.
+    fn paint(&self, view: &NSView) {
+        let Some(layer) = view.layer() else {
+            return;
+        };
+        let previous = NSAppearance::current_appearance();
+        NSAppearance::set_current_appearance(Some(&view.effective_appearance()));
+        let background = self.background.as_ref().map(Color::to_nscolor);
+        layer.set_background_color(background.as_ref().map(NSColor::cg_color));
+        let border = self.border.as_ref().map(Color::to_nscolor);
+        layer.set_border_color(border.as_ref().map(NSColor::cg_color));
+        NSAppearance::set_current_appearance(Some(&previous));
     }
-    Ok(())
-}
-
-fn cg_color(color: Option<&NSColor>) -> Option<CGColorRef<'_>> {
-    color.map(NSColor::cg_color)
 }
 
 /// Derives `view`'s hugging and compression priorities from its own values
@@ -1095,21 +1465,18 @@ fn sync_emphasis(view: &NSView, e: &mut Emphasis) {
         })
     });
     for (axis, own) in Orientation::BOTH.into_iter().zip(saved) {
-        // Lower hugging stretches sooner; growers and loose panes must sit
-        // below NSStackView's filler.
+        // Growers stretch and squeeze before anything at stock priorities;
+        // how much each takes among siblings is the container's `regrow`.
+        // Loose panes only need to sit below NSStackView's filler.
         let (hugging, compression) = if e.grow > 0.0 {
-            (
-                (priority::BELOW_STACK_FILLER - e.grow as f32 * 10.0)
-                    .clamp(priority::YIELDING, priority::BELOW_STACK_FILLER),
-                priority::BELOW_STACK_FILLER,
-            )
+            (GROWER_HUGGING, priority::BELOW_STACK_FILLER)
         } else {
             (
                 own.hugging.min(priority::BELOW_STACK_FILLER),
                 own.compression,
             )
         };
-        view.set_content_hugging_priority(hugging, axis);
+        set_hugging(view, hugging, axis);
         view.set_content_compression_resistance_priority(compression, axis);
     }
 }
@@ -1119,18 +1486,31 @@ fn sync_emphasis(view: &NSView, e: &mut Emphasis) {
 fn restore_own_priorities(view: &NSView, e: &mut Emphasis) {
     if let Some(saved) = e.saved.take() {
         for (axis, own) in Orientation::BOTH.into_iter().zip(saved) {
-            view.set_content_hugging_priority(own.hugging, axis);
+            set_hugging(view, own.hugging, axis);
             view.set_content_compression_resistance_priority(own.compression, axis);
         }
     }
 }
 
-fn size_constraint(
+/// A stack view has no content of its own for `contentHuggingPriority` to
+/// hold on to; how tightly it wraps its children is a separate priority,
+/// kept equal to it (see `Stack::new`).
+fn set_hugging(view: &NSView, hugging: f32, axis: Orientation) {
+    view.set_content_hugging_priority(hugging, axis);
+    if let Ok(stack) = view.clone().downcast::<NSStackView>() {
+        stack.set_hugging_priority(hugging, axis);
+    }
+}
+
+/// Keeps `slot` holding one active `view.attr rel value` constraint, or
+/// none when `value` is `None`.
+pub(crate) fn size_constraint(
     view: &NSView,
     slot: &mut Option<NSLayoutConstraint>,
     attr: Attr,
     rel: Rel,
     value: Option<f64>,
+    priority: f32,
 ) {
     match (value, slot.as_ref()) {
         (None, None) => {}
@@ -1138,18 +1518,11 @@ fn size_constraint(
             c.set_active(false);
             *slot = None;
         }
-        (Some(v), Some(c)) => c.set_constant(v.max(0.0)),
+        (Some(v), Some(c)) => c.set_constant(v),
         (Some(v), None) => {
-            let c = NSLayoutConstraint::with_items(
-                view,
-                attr,
-                rel,
-                None,
-                Attr::NotAnAttribute,
-                1.0,
-                v.max(0.0),
-            );
-            c.set_priority(priority::ALMOST_REQUIRED);
+            let c =
+                NSLayoutConstraint::with_items(view, attr, rel, None, Attr::NotAnAttribute, 1.0, v);
+            c.set_priority(priority);
             c.set_active(true);
             *slot = Some(c);
         }

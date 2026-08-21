@@ -4,6 +4,7 @@ import { emit, run } from "./_util";
 await run(async () => {
   app.activationPolicy = "accessory";
   app.keepAlive = true;
+  emit({ step: "started", running: app.isRunning });
 
   const win = new Window({ width: 200, height: 100, content: new Text({ text: "keepAlive" }) });
   win.show();

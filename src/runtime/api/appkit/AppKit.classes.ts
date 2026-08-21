@@ -13,7 +13,7 @@ function slots(...names: string[]) {
 // The Metal objects are only ever created natively (by `gpu.*()` and
 // MetalView frames). They still get constructors, which throw, so that
 // `bun:appkit` can export the classes for `instanceof`.
-function gpuClass(name: string, proto: Record<string, any>) {
+function gpuClass(name: string, proto: Record<string, any>, extra: { estimatedSize?: boolean } = {}) {
   return define({
     name,
     construct: true,
@@ -22,6 +22,7 @@ function gpuClass(name: string, proto: Record<string, any>) {
     klass: {},
     rustPath: `crate::api::appkit::${name}`,
     proto,
+    ...extra,
   });
 }
 
@@ -49,6 +50,8 @@ export default [
       frame: { getter: "getFrame" },
       draw: { fn: "draw", length: 0 },
       drawableSize: { getter: "getDrawableSize" },
+      release: { fn: "release", length: 0 },
+      released: { getter: "getReleased" },
       ...slots(
         "onAction",
         "onChange",
@@ -103,6 +106,7 @@ export default [
       isDark: { getter: "getIsDark" },
       hasDisplay: { getter: "getHasDisplay" },
       liveViews: { getter: "getLiveViews" },
+      testing: { fn: "testing", length: 3 },
       ...slots("onBeforeQuit", "onReopen", "onMenu"),
     },
   }),
@@ -118,6 +122,7 @@ export default [
       available: { getter: "getAvailable" },
       name: { getter: "getName" },
       unifiedMemory: { getter: "getUnifiedMemory" },
+      registerErrors: fn("registerErrors", 1),
       buffer: fn("buffer", 2),
       texture: fn("texture", 1),
       library: fn("library", 2),
@@ -128,21 +133,37 @@ export default [
       frame: fn("frame", 1),
     },
   }),
-  gpuClass("GpuBuffer", {
-    byteLength: { getter: "getByteLength" },
-    storage: { getter: "getStorage" },
-    write: fn("write", 2),
-    read: fn("read", 2),
-    label: { getter: "getLabel", setter: "setLabel" },
-  }),
-  gpuClass("GpuTexture", {
-    width: { getter: "getWidth" },
-    height: { getter: "getHeight" },
-    format: { getter: "getFormat" },
-    replace: fn("replace", 2),
-    readPixels: fn("readPixels", 0),
-    label: { getter: "getLabel", setter: "setLabel" },
-  }),
+  // Buffers and textures report their Metal allocation to the collector and
+  // can be released early with destroy().
+  gpuClass(
+    "GpuBuffer",
+    {
+      byteLength: { getter: "getByteLength" },
+      storage: { getter: "getStorage" },
+      inFlight: { getter: "getInFlight" },
+      destroyed: { getter: "getDestroyed" },
+      write: fn("write", 2),
+      read: fn("read", 2),
+      destroy: fn("destroy", 0),
+      label: { getter: "getLabel", setter: "setLabel" },
+    },
+    { estimatedSize: true },
+  ),
+  gpuClass(
+    "GpuTexture",
+    {
+      width: { getter: "getWidth" },
+      height: { getter: "getHeight" },
+      format: { getter: "getFormat" },
+      inFlight: { getter: "getInFlight" },
+      destroyed: { getter: "getDestroyed" },
+      replace: fn("replace", 2),
+      readPixels: fn("readPixels", 0),
+      destroy: fn("destroy", 0),
+      label: { getter: "getLabel", setter: "setLabel" },
+    },
+    { estimatedSize: true },
+  ),
   gpuClass("GpuLibrary", {
     function: fn("function", 1),
     functionNames: { getter: "getFunctionNames" },
@@ -150,6 +171,7 @@ export default [
   }),
   gpuClass("GpuFunction", {
     name: { getter: "getName" },
+    type: { getter: "getType" },
   }),
   gpuClass("GpuRenderPipeline", {
     label: { getter: "getLabel" },
@@ -170,9 +192,11 @@ export default [
   gpuClass("GpuFrame", {
     committed: { getter: "getCommitted" },
     state: { getter: "getState" },
+    gpuStatus: { getter: "getGpuStatus" },
+    error: { getter: "getError" },
     label: { getter: "getLabel", setter: "setLabel" },
     ...chained(
-      ["renderPass", 1],
+      ["renderPass", 2],
       ["pipeline", 1],
       ["vertexBuffer", 3],
       ["vertexBytes", 2],

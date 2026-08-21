@@ -1,8 +1,9 @@
 //! Shader libraries and the pipeline states built from their functions.
 
 use super::{
-    BlendFactor, BlendOperation, ColorWriteMask, Gpu, MAX_BUFFER_SLOTS, MAX_COLOR_ATTACHMENTS,
-    PixelFormat, VertexFormat, VertexStepFunction, check_max, check_slot, ns_label,
+    BlendFactor, BlendOperation, ColorWriteMask, FunctionType, Gpu, MAX_BUFFER_SLOTS,
+    MAX_COLOR_ATTACHMENTS, PixelFormat, VertexFormat, VertexStepFunction, check_max, check_slot,
+    ns_label,
 };
 use crate::Named;
 use crate::error::{Error, Result};
@@ -36,6 +37,8 @@ pub struct Library {
 pub struct Function {
     raw: MTLFunction,
     name: String,
+    /// Raw `MTLFunctionType`.
+    kind: usize,
 }
 
 impl Gpu {
@@ -65,6 +68,7 @@ impl Library {
         let _pool = AutoreleasePool::new();
         match self.raw.new_function_with_name(&NSString::from(name)) {
             Some(raw) => Ok(Function {
+                kind: raw.function_type(),
                 raw,
                 name: name.to_owned(),
             }),
@@ -87,6 +91,19 @@ impl Function {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Which stage the function was written for; `None` for a type this crate does not name.
+    pub fn kind(&self) -> Option<FunctionType> {
+        FunctionType::from_raw(self.kind)
+    }
+
+    fn check_kind(&self, wanted: FunctionType, message: &'static str) -> Result<()> {
+        if self.kind == wanted as usize {
+            Ok(())
+        } else {
+            Err(Error::Unsupported(message))
+        }
     }
 
     pub fn set_label(&self, label: NsStr<'_>) {
@@ -153,62 +170,76 @@ impl Named for Blend {
     }
 }
 
-/// One `[[attribute(n)]]` input: `format` bytes at `offset` within each
-/// `stride` of vertex buffer `buffer_index`.
+/// One `[[attribute(index)]]` input: `format` bytes at `offset` within
+/// each stride of the enclosing [`VertexBufferLayout`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VertexAttribute {
+    pub index: usize,
     pub format: VertexFormat,
     pub offset: usize,
-    pub buffer_index: usize,
 }
 
-/// How `[[stage_in]]` vertex data is fetched. Attribute `n` in `attributes`
-/// is `[[attribute(n)]]`; every buffer the attributes name advances `stride`
-/// bytes per vertex (or per instance).
+/// One vertex buffer's layout: it advances `stride` bytes per vertex (or per
+/// instance) and carries these attributes.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VertexLayout {
+pub struct VertexBufferLayout {
     pub stride: usize,
     pub step: VertexStepFunction,
     pub attributes: Vec<VertexAttribute>,
 }
 
+/// How `[[stage_in]]` vertex data is fetched: `buffers[i]` describes vertex
+/// buffer argument `i` (`MTLVertexDescriptor.layouts[i]`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VertexLayout {
+    pub buffers: Vec<VertexBufferLayout>,
+}
+
 impl VertexLayout {
     fn validate(&self) -> Result<()> {
         let invalid = |message: String| Err(Error::Pipeline { message });
-        if self.stride == 0 {
-            return Err(Error::ZeroSize("vertex layout stride"));
-        }
-        if !self.stride.is_multiple_of(4) {
-            return invalid(format!(
-                "vertex layout stride {} is not a multiple of 4",
-                self.stride
-            ));
-        }
-        if self.attributes.is_empty() {
-            return invalid("vertex layout has no attributes".into());
+        if self.buffers.is_empty() {
+            return invalid("vertex layout has no buffers".into());
         }
         check_max(
-            "vertex attribute count",
-            self.attributes.len(),
-            MAX_VERTEX_ATTRIBUTES,
+            "vertex layout buffer count",
+            self.buffers.len(),
+            MAX_BUFFER_SLOTS,
         )?;
-        for (i, a) in self.attributes.iter().enumerate() {
-            check_slot(
-                "vertex attribute buffer index",
-                a.buffer_index,
-                MAX_BUFFER_SLOTS,
-            )?;
-            match a.offset.checked_add(a.format.bytes()) {
-                Some(end) if end <= self.stride => {}
-                _ => {
-                    return invalid(format!(
-                        "vertex attribute {i} ({} at offset {}) does not fit in stride {}",
-                        a.format.name(),
-                        a.offset,
-                        self.stride
-                    ));
+        let mut seen = [false; MAX_VERTEX_ATTRIBUTES];
+        let mut any = false;
+        for (b, layout) in self.buffers.iter().enumerate() {
+            if layout.stride == 0 {
+                return Err(Error::ZeroSize("vertex layout stride"));
+            }
+            if !layout.stride.is_multiple_of(4) {
+                return invalid(format!(
+                    "vertex buffer {b} stride {} is not a multiple of 4",
+                    layout.stride
+                ));
+            }
+            for a in &layout.attributes {
+                any = true;
+                check_slot("vertex attribute index", a.index, MAX_VERTEX_ATTRIBUTES)?;
+                if core::mem::replace(&mut seen[a.index], true) {
+                    return invalid(format!("vertex attribute {} is described twice", a.index));
+                }
+                match a.offset.checked_add(a.format.bytes()) {
+                    Some(end) if end <= layout.stride => {}
+                    _ => {
+                        return invalid(format!(
+                            "vertex attribute {} ({} at offset {}) does not fit in vertex buffer {b}'s stride {}",
+                            a.index,
+                            a.format.name(),
+                            a.offset,
+                            layout.stride
+                        ));
+                    }
                 }
             }
+        }
+        if !any {
+            return invalid("vertex layout has no attributes".into());
         }
         Ok(())
     }
@@ -217,18 +248,23 @@ impl VertexLayout {
         let vd = MTLVertexDescriptor::new();
         let attributes = vd.attributes();
         let layouts = vd.layouts();
-        for (i, a) in self.attributes.iter().enumerate() {
-            let ad = attributes.object_at(i);
-            ad.set_format(a.format);
-            ad.set_offset(a.offset);
-            ad.set_buffer_index(a.buffer_index);
-            let ld = layouts.object_at(a.buffer_index);
-            ld.set_stride(self.stride);
-            ld.set_step_function(self.step);
-            ld.set_step_rate(match self.step {
+        for (b, layout) in self.buffers.iter().enumerate() {
+            if layout.attributes.is_empty() {
+                continue;
+            }
+            let ld = layouts.object_at(b);
+            ld.set_stride(layout.stride);
+            ld.set_step_function(layout.step);
+            ld.set_step_rate(match layout.step {
                 VertexStepFunction::Constant => 0,
                 VertexStepFunction::PerVertex | VertexStepFunction::PerInstance => 1,
             });
+            for a in &layout.attributes {
+                let ad = attributes.object_at(a.index);
+                ad.set_format(a.format);
+                ad.set_offset(a.offset);
+                ad.set_buffer_index(b);
+            }
         }
         vd
     }
@@ -301,6 +337,16 @@ impl Gpu {
         if let Some(layout) = &desc.vertex_layout {
             layout.validate()?;
         }
+        desc.vertex.check_kind(
+            FunctionType::Vertex,
+            "the vertex function of a render pipeline must be a [[vertex]] function",
+        )?;
+        if let Some(fragment) = desc.fragment {
+            fragment.check_kind(
+                FunctionType::Fragment,
+                "the fragment function of a render pipeline must be a [[fragment]] function",
+            )?;
+        }
         let sample_count = desc.sample_count.max(1);
 
         let _pool = AutoreleasePool::new();
@@ -324,7 +370,7 @@ impl Gpu {
         }
         if let Some(format) = desc.depth_format {
             d.set_depth_attachment_pixel_format(format);
-            if format == PixelFormat::Depth32FloatStencil8 {
+            if format.has_stencil() {
                 d.set_stencil_attachment_pixel_format(format);
             }
         }
@@ -379,6 +425,10 @@ pub struct ComputePipeline {
 
 impl Gpu {
     pub fn compute_pipeline(&self, function: &Function) -> Result<ComputePipeline> {
+        function.check_kind(
+            FunctionType::Kernel,
+            "a compute pipeline needs a [[kernel]] function",
+        )?;
         let _pool = AutoreleasePool::new();
         let raw = self
             .device()

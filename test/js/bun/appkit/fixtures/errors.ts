@@ -1,7 +1,5 @@
-import appkit, { app, Button, Slider, Text, View, VStack, Window } from "bun:appkit";
+import { app, Button, Image, Slider, Text, View, VStack, Window } from "bun:appkit";
 import { emit, run } from "./_util";
-
-const applyProp = (appkit as any).__applyProp as (target: unknown, key: string, value: unknown) => void;
 
 function attempt(name: string, f: () => unknown) {
   try {
@@ -10,7 +8,14 @@ function attempt(name: string, f: () => unknown) {
   } catch (e) {
     const err = e as Error & { code?: string };
     if (err?.code === "ERR_APPKIT_UNAVAILABLE") throw err;
-    emit({ step: name, threw: true, isTypeError: err instanceof TypeError, message: String(err?.message) });
+    emit({
+      step: name,
+      threw: true,
+      isTypeError: err instanceof TypeError,
+      message: String(err?.message),
+      code: err?.code,
+      path: (err as { path?: string }).path,
+    });
   }
 }
 
@@ -39,6 +44,22 @@ await run(() => {
   a.append(text);
   attempt("append twice", () => b.append(text));
   attempt("removeChild stranger", () => b.removeChild(button));
+  // A rejected insertBefore/replaceChildren leaves both trees exactly as they were.
+  const first = new Text({ text: "first" });
+  b.append(first);
+  attempt("insertBefore stranger ref", () => a.insertBefore(text, button));
+  attempt("insertBefore move stranger ref", () => b.insertBefore(first, button));
+  attempt("replaceChildren foreign child", () => b.replaceChildren(new Text({ text: "new" }), text));
+  attempt("replaceChildren duplicate", () => b.replaceChildren(first, first));
+  attempt("replaceChildren non-view", () => b.replaceChildren(first, {} as View));
+  emit({
+    step: "tree after rejected edits",
+    a: a.children.map(c => (c as Text).text),
+    b: b.children.map(c => (c as Text).text),
+    textParent: text.parent === a,
+    firstParent: first.parent === b,
+  });
+  attempt("image missing file", () => new Image({ image: { file: "/definitely/missing.png" } }));
   attempt("valid props", () => {
     slider.value = 3;
     text.lineLimit = 2;
@@ -94,12 +115,15 @@ await run(() => {
     new Window({ restoreName: "bun-appkit-errors-test", visible: false }).close(),
   );
   const closed = new Window({ visible: false });
-  attempt("window create-only after create", () => applyProp(closed, "resizable", false));
-  attempt("window unknown via applyProp", () => applyProp(closed, "bogus", 1));
+  attempt("window create-only after create", () => ((closed as unknown as { resizable: boolean }).resizable = false));
   closed.close();
   attempt("hide after close", () => closed.hide());
   attempt("title after close", () => (closed.title = "late"));
   attempt("menu action without colon", () => (app.menu = [{ title: "X", items: [{ title: "Copy", action: "copy" }] }]));
+  attempt(
+    "menu action outside the standard list",
+    () => (app.menu = [{ title: "X", items: [{ title: "Bad", action: "doesNotRecognizeSelector:" }] }]),
+  );
   attempt("content after close", () => {
     closed.content = new Text({ text: "late" });
   });

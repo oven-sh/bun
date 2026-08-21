@@ -717,7 +717,14 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     ),
     entry!("bun:test"),
     entry!("bun:app"),
+    // Every "is this a builtin" query (import, require.resolve,
+    // process.getBuiltinModule, Module._resolveLookupPaths) goes through these
+    // tables, so leaving the alias out is what makes `bun:appkit` not a
+    // builtin off macOS. isBuiltinModule.cpp and NodeModuleModule.cpp gate
+    // their name lists the same way.
+    #[cfg(target_os = "macos")]
     entry!("bun:appkit"),
+    #[cfg(target_os = "macos")]
     entry!("bun:appkit/react"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),

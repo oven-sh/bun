@@ -8840,12 +8840,12 @@ declare module "bun" {
    * new Window({ title: "Hi", content: new Text({ text: "Hello" }) }).show();
    * ```
    *
-   * `undefined` on platforms other than macOS.
+   * Only present on macOS; feature-test with `if (Bun.AppKit)`.
    *
    * @platform macOS
    * @experimental
    */
-  const AppKit: typeof import("bun:appkit");
+  const AppKit: typeof import("bun:appkit") | undefined;
 
   namespace WebView {
     type Modifier = "Shift" | "Control" | "Alt" | "Meta";

@@ -2,7 +2,7 @@
 //! on a machine with no GPU, an empty `NSView` that lays out the same so the
 //! rest of the interface still comes up.
 
-use core::cell::Ref;
+use core::cell::{Cell, Ref};
 use std::time::Instant;
 
 use super::{Cx, Event, Orientation, Prop, View, Widget, priority};
@@ -12,7 +12,9 @@ use crate::error::{Error, Result};
 use crate::geometry::{ClearColor, Rect, Size};
 use crate::gpu::Gpu;
 use crate::objc::appkit::{NSColorSpace, NSScreen, NSView};
-use crate::objc::metal::{CAMetalDrawable, MTKView, MTLRenderPassDescriptor, PixelFormat};
+use crate::objc::metal::{
+    CAMetalDrawable, MTKView, MTLRenderPassDescriptor, MTLTexture, PixelFormat,
+};
 use crate::objc::{self, AutoreleasePool, Delegate, MetalViewEvents};
 
 /// The colour format of every Metal view's drawable. A render pipeline that
@@ -28,11 +30,15 @@ const DEFAULT_CLEAR_COLOR: ClearColor = ClearColor {
 const DEFAULT_PREFERRED_FPS: usize = 60;
 const DEFAULT_RUNNING: bool = true;
 
-/// What the frame in progress renders into. Colour attachment 0 of
-/// `descriptor` is the drawable's texture, set to clear to the view's colour;
-/// `drawable` is what the command buffer presents once scheduled.
+/// What the frame in progress renders into. `descriptor` is a fresh one
+/// each time (the pass may adjust its load actions): colour attachment 0 is
+/// `color`, the drawable's texture, set to clear to the view's colour, and
+/// the depth (and stencil) attachment is `depth` when the view has a depth
+/// format. `drawable` is what the command buffer presents once scheduled.
 pub struct MetalSurface {
     pub descriptor: MTLRenderPassDescriptor,
+    pub color: MTLTexture,
+    pub depth: Option<MTLTexture>,
     pub drawable: Option<CAMetalDrawable>,
     /// Pixels.
     pub size: Size,
@@ -57,6 +63,12 @@ pub(crate) struct MetalView {
     /// Seconds since the first frame and since the previous one, for the
     /// frame being drawn.
     timing: (f64, f64),
+    /// Last format given to `setDepthStencilPixelFormat:`, which
+    /// reallocates on every call, so it is only sent on change.
+    depth_format: Cell<Option<PixelFormat>>,
+    /// Set by the sink around delivering [`Event::Frame`]; the drawable is
+    /// only handed out inside that window.
+    in_frame: Cell<bool>,
 }
 
 impl MetalView {
@@ -69,6 +81,11 @@ impl MetalView {
                     Some(gpu.device()),
                 );
                 view.set_color_pixel_format(PIXEL_FORMAT);
+                // Colour-matched like the sRGB colours the other views are
+                // given, rather than sent to a wide-gamut display raw.
+                if let Some(srgb) = NSColorSpace::srgb().cg_color_space() {
+                    view.set_colorspace(Some(&srgb));
+                }
                 view.set_framebuffer_only(true);
                 view.set_auto_resize_drawable(true);
                 // Frames come from the display timer or an explicit `draw`,
@@ -96,6 +113,8 @@ impl MetalView {
             first_frame_at: None,
             last_frame_at: None,
             timing: (0.0, 0.0),
+            depth_format: Cell::new(None),
+            in_frame: Cell::new(false),
         };
         // No intrinsic size: like a scroll view, it takes whatever room the
         // layout leaves and gives way to everything else.
@@ -143,21 +162,65 @@ impl MetalView {
         self.mtk().map(MTKView::drawable_size)
     }
 
-    /// The render target for the frame in progress. `NoDrawable` for a
-    /// zero-sized (not yet laid out) view or when the layer has none free.
-    pub(crate) fn current_surface(&self) -> Result<MetalSurface> {
+    /// The render target for the frame in progress, with the view's depth
+    /// texture in `depth_format` attached (`None` for colour only).
+    /// `Unsupported` outside a frame; `NoDrawable` for a zero-sized (not yet
+    /// laid out) view or when the layer has none free.
+    pub(crate) fn current_surface(
+        &self,
+        depth_format: Option<PixelFormat>,
+    ) -> Result<MetalSurface> {
         let view = self.mtk().ok_or(Error::NoGpu)?;
+        if !self.in_frame.get() {
+            return Err(Error::InvalidState(
+                "a MetalView can only be rendered into from inside its onFrame handler",
+            ));
+        }
         let size = view.drawable_size();
         if size.width < 1.0 || size.height < 1.0 {
             // `currentDrawable` would block for its full timeout before
             // giving up on a layer this size.
             return Err(Error::NoDrawable);
         }
+        if let Some(format) = depth_format {
+            if !format.is_depth() {
+                return Err(Error::Unsupported(
+                    "a view's depthFormat must be depth32float or depth32float-stencil8",
+                ));
+            }
+            if self.depth_format.get() != Some(format) {
+                view.set_depth_stencil_pixel_format(format);
+                self.depth_format.set(Some(format));
+            }
+        }
         let descriptor = view
             .current_render_pass_descriptor()
             .ok_or(Error::NoDrawable)?;
+        let color = descriptor
+            .color_attachments()
+            .object_at(0)
+            .texture()
+            .ok_or(Error::NoDrawable)?;
+        let depth = if depth_format.is_some() {
+            Some(
+                descriptor
+                    .depth_attachment()
+                    .texture()
+                    .ok_or(Error::Unsupported(
+                        "the view could not allocate a depth texture",
+                    ))?,
+            )
+        } else {
+            // The view keeps its depth texture for the next pass that wants
+            // it; this pass goes without.
+            descriptor.set_depth_attachment(None);
+            descriptor.set_stencil_attachment(None);
+            None
+        };
         Ok(MetalSurface {
             descriptor,
+            color,
+            depth,
             drawable: view.current_drawable(),
             size,
             format: PixelFormat::from_raw(view.color_pixel_format()).unwrap_or(PIXEL_FORMAT),
@@ -267,30 +330,59 @@ impl Widget for MetalView {
 /// Metal view accessors. Each is `None`, or does nothing, for other kinds.
 impl View {
     /// Draws one frame now: the view emits [`Event::Frame`] before this
-    /// returns. Does nothing without a GPU.
-    pub fn draw(&self) {
+    /// returns. Does nothing without a GPU. `Unsupported` from inside this
+    /// view's own frame handler: a frame is one drawable, and it is in use.
+    pub fn draw(&self) -> Result<()> {
         let _pool = AutoreleasePool::new();
-        let view = self
-            .inner
-            .widget
-            .borrow()
-            .metal()
-            .and_then(|metal| metal.mtk().cloned());
+        let view = {
+            let widget = self.inner.widget.borrow();
+            let Some(metal) = widget.metal() else {
+                return Err(Error::Unsupported("only a MetalView draws frames"));
+            };
+            if metal.in_frame.get() {
+                return Err(Error::InvalidState(
+                    "MetalView.draw() cannot run inside that view's onFrame; schedule it (setImmediate) instead",
+                ));
+            }
+            metal.mtk().cloned()
+        };
         // The widget borrow has ended: the frame handler runs JavaScript,
         // which may set props on this very view.
         if let Some(view) = view {
             view.draw();
         }
+        Ok(())
     }
 
-    /// What the frame in progress renders into; ask while handling
-    /// [`Event::Frame`]. `NoGpu` for a placeholder view, `NoDrawable` when
-    /// the view has no size yet or is not a Metal view.
-    pub fn render_target(&self) -> Result<MetalSurface> {
+    /// What the frame in progress renders into; only answers between
+    /// [`begin_frame`](View::begin_frame) and [`end_frame`](View::end_frame)
+    /// (`Unsupported` otherwise). `depth_format` attaches the view's depth
+    /// texture of that format, allocating it on first use or when the format
+    /// changes. `NoGpu` for a placeholder view, `NoDrawable` when the view
+    /// has no size yet or is not a Metal view.
+    pub fn render_target(
+        &self,
+        depth_format: Option<crate::gpu::PixelFormat>,
+    ) -> Result<MetalSurface> {
         let _pool = AutoreleasePool::new();
         match self.inner.widget.borrow().metal() {
-            Some(metal) => metal.current_surface(),
+            Some(metal) => metal.current_surface(depth_format),
             None => Err(Error::NoDrawable),
+        }
+    }
+
+    /// The sink calls this before handing [`Event::Frame`] on and
+    /// [`end_frame`](View::end_frame) after, marking the span in which
+    /// [`render_target`](View::render_target) may fetch the drawable.
+    pub fn begin_frame(&self) {
+        if let Some(metal) = self.inner.widget.borrow().metal() {
+            metal.in_frame.set(true);
+        }
+    }
+
+    pub fn end_frame(&self) {
+        if let Some(metal) = self.inner.widget.borrow().metal() {
+            metal.in_frame.set(false);
         }
     }
 

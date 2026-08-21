@@ -2,6 +2,7 @@ import {
   app,
   Button,
   Checkbox,
+  Divider,
   gpu,
   GpuCompileError,
   HStack,
@@ -10,6 +11,7 @@ import {
   Picker,
   Progress,
   ScrollView,
+  SecureField,
   Slider,
   Spacer,
   Table,
@@ -28,15 +30,26 @@ import {
 import * as React from "bun:appkit/react";
 import { expectType } from "./utilities";
 
-expectType(Bun.AppKit.app).is<typeof app>();
-expectType(Bun.AppKit.Window).is<typeof Window>();
+expectType(Bun.AppKit).is<typeof import("bun:appkit") | undefined>();
+if (Bun.AppKit) {
+  expectType(Bun.AppKit.app).is<typeof app>();
+  expectType(Bun.AppKit.Window).is<typeof Window>();
+}
 
 app.activationPolicy = "accessory";
+expectType(app.name).is<string>();
 app.name = "Fixture";
+app.name = null;
 app.keepAlive = false;
+expectType(app.badge).is<string | null>();
+app.badge = 3;
 app.badge = null;
 expectType(app.isDark).is<boolean>();
+expectType(app.hasDisplay).is<boolean>();
+expectType(app.isRunning).is<boolean>();
 expectType(app.windows).is<readonly Window[]>();
+// @ts-expect-error not part of the public app object
+app.liveViews;
 app
   .on("beforequit", event => {
     expectType(event.preventDefault).is<() => void>();
@@ -55,12 +68,15 @@ const menus: MenuSpec[] = [
     items: [
       { title: "New", key: "n", onClick() {} },
       "separator",
-      { title: "Export", submenu: [{ title: "PNG", key: "e", shift: true, onClick: () => {} }] },
+      { title: "Export", submenu: [{ title: "PNG", key: "e", shift: true, onClick: () => {} }, "-"] },
+      { title: "Wrap", checked: true, onClick() {} },
     ],
   },
 ];
 app.menu = menus;
 app.menu = null;
+// @ts-expect-error only the standard responder-chain actions
+app.menu = [{ title: "X", items: [{ title: "Bad", action: "doesNotRecognizeSelector:" }] }];
 
 const accent: Color = "accent";
 const hex: Color = "#ff8800";
@@ -81,7 +97,14 @@ const button = new Button({
 });
 button.click();
 button.onClick = undefined;
+button.onClick = null;
 expectType(button.enabled).is<boolean>();
+expectType(button.symbol).is<string | null>();
+// @ts-expect-error only Button, Checkbox, Radio and Switch click
+label.click();
+const secure: TextField = new SecureField({ placeholder: "Password" });
+expectType(secure.continuous).is<boolean>();
+expectType(new Divider().vertical).is<boolean | null>();
 
 const field = new TextField({
   placeholder: "Name",
@@ -113,6 +136,7 @@ const table = new Table({
   onActivate: row => expectType(row).is<number>(),
 });
 expectType(table.selectedIndexes).is<readonly number[]>();
+expectType(table.rowHeight).is<number | null>();
 
 new Image({ image: { symbol: "star.fill" }, tint: "yellow", size: 32, scaling: "fit" });
 new Image({ image: { data: new Uint8Array() } });
@@ -143,6 +167,15 @@ const win = new Window({
 });
 win.show();
 win.onClose = () => {};
+win.maxWidth = 800;
+win.minHeight = null;
+win.alpha = 0.9;
+win.background = "underPageBackground";
+expectType(win.maxHeight).is<number | null>();
+expectType(win.resizable).is<boolean>();
+expectType(win.restoreName).is<string | null>();
+// @ts-expect-error fixed once the window exists
+win.resizable = false;
 expectType(win.snapshot()).is<Uint8Array | null>();
 expectType(win.content).is<View | null>();
 expectType(label.frame.width).is<number>();

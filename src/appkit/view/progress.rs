@@ -14,6 +14,10 @@ const DEFAULT_SPINNER: bool = false;
 
 pub(crate) struct Progress {
     view: NSProgressIndicator,
+    /// The value as asked for, once one has been. NSProgressIndicator clamps
+    /// into `[min, max]` on assignment, so it is applied again whenever the
+    /// range changes.
+    wanted: Option<f64>,
     running: bool,
     indeterminate: bool,
     spinner: bool,
@@ -30,12 +34,19 @@ impl Progress {
         view.set_displayed_when_stopped(true);
         let progress = Progress {
             view,
+            wanted: None,
             running: DEFAULT_RUNNING,
             indeterminate: DEFAULT_INDETERMINATE,
             spinner: DEFAULT_SPINNER,
         };
         progress.sync();
         progress
+    }
+
+    fn reapply_value(&self) {
+        if let Some(v) = self.wanted {
+            self.view.set_double_value(v);
+        }
     }
 
     fn sync(&self) {
@@ -63,9 +74,18 @@ impl Widget for Progress {
 
     fn set<'p>(&mut self, _cx: &Cx<'_>, prop: Prop<'p>) -> Result<Option<Prop<'p>>> {
         match prop {
-            Prop::Number(v) => self.view.set_double_value(v),
-            Prop::Min(v) => self.view.set_min_value(v.unwrap_or(DEFAULT_MIN)),
-            Prop::Max(v) => self.view.set_max_value(v.unwrap_or(DEFAULT_MAX)),
+            Prop::Number(v) => {
+                self.wanted = Some(v);
+                self.view.set_double_value(v);
+            }
+            Prop::Min(v) => {
+                self.view.set_min_value(v.unwrap_or(DEFAULT_MIN));
+                self.reapply_value();
+            }
+            Prop::Max(v) => {
+                self.view.set_max_value(v.unwrap_or(DEFAULT_MAX));
+                self.reapply_value();
+            }
             Prop::Indeterminate(b) => {
                 self.indeterminate = b.unwrap_or(DEFAULT_INDETERMINATE);
                 self.sync();

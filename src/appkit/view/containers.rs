@@ -1,7 +1,7 @@
 //! Kinds that hold other views: stacks, a plain pinning container, scroll
 //! views, titled boxes and split views.
 
-use super::{Align, Attr, Cx, Distribution, Orientation, Prop, Rel, Widget, priority};
+use super::{Align, Attr, Cx, Distribution, GROW_SHARE, Orientation, Prop, Rel, Widget, priority};
 use crate::error::{Error, Result};
 use crate::geometry::{Insets, Rect};
 use crate::objc::appkit::{
@@ -18,7 +18,14 @@ const FILL_IDENTIFIER: &str = "bun.stack.fill";
 /// Beats default content hugging (250) so labels and fields stretch; loses to
 /// the window holding its size (500) so a lone hugging child (a button, 750)
 /// cannot shrink the window to itself, and to an explicit width/height (999).
+/// A fill constraint pulls both ways: a child that will not stretch pulls
+/// the stack towards its own width just as hard. Each level of nesting
+/// takes one off, so where an inner stack's fill and an outer one's
+/// disagree the outer one wins instead of the solver picking either.
 const FILL_PRIORITY: f32 = 400.0;
+/// Fill stops dropping this far below `FILL_PRIORITY`, still above every
+/// hugging priority it has to beat.
+const FILL_LEVELS: usize = 100;
 
 /// `NSStackView`.
 pub(crate) struct Stack {
@@ -26,6 +33,13 @@ pub(crate) struct Stack {
     vertical: bool,
     /// Children span the cross axis (see `fill_child`).
     fill: bool,
+    /// Containers between this one and the window content; see `FILL_PRIORITY`.
+    depth: usize,
+    distribution: Distribution,
+    /// Children with a `grow` weight, as last told by `regrow`.
+    growers: Vec<(NSView, f64)>,
+    /// Ties the growers' lengths together in `grow` ratio; see `share`.
+    shares: Vec<NSLayoutConstraint>,
 }
 
 const DEFAULT_SPACING: f64 = 8.0;
@@ -48,20 +62,73 @@ impl Stack {
         view.set_distribution(DEFAULT_DISTRIBUTION.into());
         view.set_detaches_hidden_views(true);
         // A stack should be as easy to stretch as its most willing child,
-        // and never clip its children.
+        // and never clip its children. `contentHuggingPriority` does nothing
+        // for a stack itself; it carries the value `grow` saves and restores.
         for axis in Orientation::BOTH {
             view.set_hugging_priority(priority::BELOW_STACK_FILLER, axis);
+            view.set_content_hugging_priority(priority::BELOW_STACK_FILLER, axis);
             view.set_content_compression_resistance_priority(priority::DEFAULT_HIGH, axis);
         }
         let mut stack = Stack {
             view,
             vertical,
             fill: false,
+            depth: 0,
+            distribution: DEFAULT_DISTRIBUTION,
+            growers: Vec::new(),
+            shares: Vec::new(),
         };
         stack
             .set_align(default_align(vertical))
             .expect("Fill/Center are valid for either orientation");
         stack
+    }
+
+    fn set_distribution(&mut self, distribution: Distribution) {
+        self.distribution = distribution;
+        self.view.set_distribution(distribution.into());
+        self.share();
+    }
+
+    /// Hugging priorities only say who stretches first, and views with no
+    /// intrinsic size (spacers, nested stacks) have none to hug, so with
+    /// `Fill` distribution leftover length is handed out explicitly: each
+    /// grower's length is tied to the first one's in the ratio of their
+    /// weights. Other distributions size children themselves.
+    fn share(&mut self) {
+        for c in self.shares.drain(..) {
+            c.set_active(false);
+        }
+        if self.distribution != Distribution::Fill {
+            return;
+        }
+        let attr = if self.vertical {
+            Attr::Height
+        } else {
+            Attr::Width
+        };
+        // A hidden child is detached from the stack's layout; relating it
+        // to a sibling would pin that sibling to a stale length.
+        let mut growers = self.growers.iter().filter(|(view, _)| {
+            !view.is_hidden() && view.superview().as_ref() == Some::<&NSView>(&self.view)
+        });
+        let Some((first, first_weight)) = growers.next() else {
+            return;
+        };
+        for (view, weight) in growers {
+            let c = NSLayoutConstraint::with_items(
+                view,
+                attr,
+                Rel::Equal,
+                Some(first),
+                attr,
+                weight / first_weight,
+                0.0,
+            );
+            c.set_priority(GROW_SHARE);
+            c.set_active(true);
+            self.shares.push(c);
+        }
     }
 
     fn set_align(&mut self, align: Align) -> Result<()> {
@@ -113,7 +180,7 @@ impl Stack {
             1.0,
             -inset,
         );
-        c.set_priority(FILL_PRIORITY);
+        c.set_priority(FILL_PRIORITY - self.depth.min(FILL_LEVELS) as f32);
         c.set_identifier(Some(&NSString::from(FILL_IDENTIFIER)));
         c.set_active(true);
     }
@@ -121,6 +188,13 @@ impl Stack {
     fn set_padding(&self, insets: Insets) {
         self.view.set_edge_insets(insets);
         self.refill();
+    }
+
+    fn set_depth(&mut self, depth: usize) {
+        if self.depth != depth {
+            self.depth = depth;
+            self.refill();
+        }
     }
 
     /// Re-applies or removes fill constraints on every arranged child after
@@ -167,12 +241,23 @@ impl Widget for Stack {
             Prop::Spacing(s) => self.view.set_spacing(s.unwrap_or(DEFAULT_SPACING).max(0.0)),
             Prop::Padding(i) => self.set_padding(i.unwrap_or(DEFAULT_PADDING)),
             Prop::Align(a) => self.set_align(a.unwrap_or_else(|| default_align(self.vertical)))?,
-            Prop::Distribution(d) => self
-                .view
-                .set_distribution(d.unwrap_or(DEFAULT_DISTRIBUTION).into()),
+            Prop::Distribution(d) => self.set_distribution(d.unwrap_or(DEFAULT_DISTRIBUTION)),
             other => return Ok(Some(other)),
         }
         Ok(None)
+    }
+
+    fn regrow(&mut self, children: &[(NSView, f64)]) {
+        self.growers = children
+            .iter()
+            .filter(|(_, weight)| *weight > 0.0)
+            .cloned()
+            .collect();
+        self.share();
+    }
+
+    fn nested(&mut self, depth: usize) {
+        self.set_depth(depth);
     }
 
     fn axis(&self) -> Option<Orientation> {
@@ -187,6 +272,22 @@ impl Widget for Stack {
         self.view
             .insert_arranged_subview(child, index.min(self.arranged_count()));
         self.fill_child(child);
+        Ok(())
+    }
+
+    /// `insertArrangedSubview:atIndex:` on a view already arranged only
+    /// reorders it: it stays in the hierarchy with its constraints.
+    fn move_child(&mut self, _cx: &Cx<'_>, child: &NSView, index: usize) -> Result<()> {
+        if self
+            .view
+            .arranged_subviews()
+            .position(child.upcast())
+            .is_none()
+        {
+            return Err(Error::NotAChild);
+        }
+        self.view
+            .insert_arranged_subview(child, index.min(self.arranged_count()));
         Ok(())
     }
 
@@ -255,6 +356,30 @@ impl Widget for Plain {
             None => self.view.add_subview(child),
         }
         pin_edges(&self.view, child, 0.0);
+        Ok(())
+    }
+
+    /// Re-adding a subview to its own superview only changes its z-order.
+    fn move_child(&mut self, _cx: &Cx<'_>, child: &NSView, index: usize) -> Result<()> {
+        if child.superview().as_ref() != Some(&self.view) {
+            return Err(Error::NotAChild);
+        }
+        let siblings: Vec<NSView> = self
+            .view
+            .subviews()
+            .iter()
+            .filter_map(|o| o.downcast::<NSView>().ok())
+            .filter(|sibling| sibling != child)
+            .collect();
+        match siblings.get(index) {
+            Some(anchor) => {
+                self.view
+                    .add_subview_positioned(child, WindowOrderingMode::Below, Some(anchor));
+            }
+            None => self
+                .view
+                .add_subview_positioned(child, WindowOrderingMode::Above, None),
+        }
         Ok(())
     }
 
@@ -395,6 +520,13 @@ impl Widget for Scroll {
         Ok(())
     }
 
+    fn move_child(&mut self, _cx: &Cx<'_>, child: &NSView, _index: usize) -> Result<()> {
+        if self.document.as_ref().map(|d| &d.view) != Some(child) {
+            return Err(Error::NotAChild);
+        }
+        Ok(())
+    }
+
     fn remove_child(&mut self, _cx: &Cx<'_>, child: &NSView) -> Result<()> {
         if self.document.as_ref().map(|d| &d.view) != Some(child) {
             return Err(Error::NotAChild);
@@ -419,9 +551,13 @@ impl Group {
         let stack = Stack::new(cx, true);
         let view = NSBox::init_with_frame(objc::alloc::<NSBox>(), Rect::default());
         view.set_title_position(TitlePosition::NoTitle);
-        stack.view.set_translates_autoresizing_mask(false);
-        view.set_content_view(Some(&stack.view));
-        debug_assert!(view.content_view().as_ref() == Some::<&NSView>(&stack.view));
+        // The box lays its own content view out by frame (autoresizing
+        // constraints that track the box, its margins and title), so the
+        // stack goes inside that view rather than replacing it: pinned edge
+        // to edge, the stack's size then decides the box's.
+        let content = view.content_view().expect("a new NSBox has a content view");
+        content.add_subview(&stack.view);
+        pin_edges(&content, &stack.view, 0.0);
         stack.set_padding(GROUP_PADDING);
         Group { view, stack }
     }
@@ -459,8 +595,20 @@ impl Widget for Group {
         self.stack.insert_child(cx, child, index)
     }
 
+    fn move_child(&mut self, cx: &Cx<'_>, child: &NSView, index: usize) -> Result<()> {
+        self.stack.move_child(cx, child, index)
+    }
+
     fn remove_child(&mut self, cx: &Cx<'_>, child: &NSView) -> Result<()> {
         self.stack.remove_child(cx, child)
+    }
+
+    fn regrow(&mut self, children: &[(NSView, f64)]) {
+        self.stack.regrow(children);
+    }
+
+    fn nested(&mut self, depth: usize) {
+        self.stack.set_depth(depth);
     }
 }
 
@@ -526,6 +674,16 @@ impl Widget for Split {
         Ok(())
     }
 
+    fn move_child(&mut self, _cx: &Cx<'_>, child: &NSView, index: usize) -> Result<()> {
+        let panes = self.view.arranged_subviews();
+        if panes.position(child.upcast()).is_none() {
+            return Err(Error::NotAChild);
+        }
+        self.view
+            .insert_arranged_subview(child, index.min(panes.count()));
+        Ok(())
+    }
+
     fn remove_child(&mut self, _cx: &Cx<'_>, child: &NSView) -> Result<()> {
         if child.superview().as_ref() != Some::<&NSView>(&self.view) {
             return Err(Error::NotAChild);
@@ -533,5 +691,25 @@ impl Widget for Split {
         self.view.remove_arranged_subview(child);
         child.remove_from_superview();
         Ok(())
+    }
+
+    /// The pane with the lowest holding priority is the one the split view
+    /// resizes, so a larger `grow` holds less; no `grow` keeps AppKit's
+    /// default.
+    fn regrow(&mut self, children: &[(NSView, f64)]) {
+        let panes = self.view.arranged_subviews();
+        for (view, weight) in children {
+            let Some(index) = panes.position(view.upcast()) else {
+                continue;
+            };
+            let holding = if *weight > 0.0 {
+                (priority::BELOW_STACK_FILLER - *weight as f32 * 10.0)
+                    .clamp(priority::YIELDING, priority::BELOW_STACK_FILLER)
+            } else {
+                priority::DEFAULT_LOW
+            };
+            self.view
+                .set_holding_priority(holding, isize::try_from(index).unwrap_or(isize::MAX));
+        }
     }
 }

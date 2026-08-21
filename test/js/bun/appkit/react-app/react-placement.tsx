@@ -7,7 +7,7 @@ const windowCount = () => Array.from(app.windows).length;
 
 async function attempt(step: string, element: ReactNode) {
   const errors: string[] = [];
-  const root = createRoot({ onError: e => errors.push(String((e as Error)?.message ?? e)) });
+  const root = createRoot({ onUncaughtError: e => errors.push(String((e as Error)?.message ?? e)) });
   root.render(element);
   await tick();
   // Counted before unmount: a native window created for a rejected element shows up here.
@@ -40,6 +40,25 @@ function Phases() {
   const [phase, set] = useState(0);
   setPhase = set;
   return <Window visible={false}>{phases[phase]}</Window>;
+}
+
+// <Group> takes both text pieces and views, so either can be the sibling a
+// new child is inserted before.
+let setAnchors!: (on: boolean) => void;
+function Anchors() {
+  const [on, set] = useState(false);
+  setAnchors = set;
+  return (
+    <Window visible={false}>
+      <Group>
+        {on && "A"}
+        <VStack />
+        {on && <Button title="btn" />}
+        {"B"}
+        <Text text="t" />
+      </Group>
+    </Window>
+  );
 }
 
 let setGroupTitle!: (title: string) => void;
@@ -99,7 +118,7 @@ await run(async () => {
 
   {
     const errors: string[] = [];
-    const root = createRoot({ onError: e => errors.push(String((e as Error)?.message ?? e)) });
+    const root = createRoot({ onUncaughtError: e => errors.push(String((e as Error)?.message ?? e)) });
     root.render(<Phases />);
     const button = () => root.windows[0]!.content as AppKitButton;
     const titles = [button().title];
@@ -114,13 +133,28 @@ await run(async () => {
 
   {
     const errors: string[] = [];
-    const root = createRoot({ onError: e => errors.push(String((e as Error)?.message ?? e)) });
+    const root = createRoot({ onUncaughtError: e => errors.push(String((e as Error)?.message ?? e)) });
     root.render(<TitledGroup />);
     const group = () => root.windows[0]!.content as AppKitGroup;
     const titles = [group().title];
     flushSync(() => setGroupTitle("second"));
     titles.push(group().title);
     emit({ step: "titled-group", errors, titles, kinds: group().children.map(c => c.constructor.name) });
+    root.unmount();
+    await tick();
+  }
+
+  {
+    const errors: string[] = [];
+    const root = createRoot({ onUncaughtError: e => errors.push(String((e as Error)?.message ?? e)) });
+    root.render(<Anchors />);
+    const group = () => root.windows[0]!.content as AppKitGroup;
+    const shape = () => ({ title: group().title, kinds: group().children.map(c => c.constructor.name) });
+    const before = shape();
+    flushSync(() => setAnchors(true));
+    const after = shape();
+    flushSync(() => setAnchors(false));
+    emit({ step: "group-anchors", errors, before, after, restored: shape() });
     root.unmount();
     await tick();
   }

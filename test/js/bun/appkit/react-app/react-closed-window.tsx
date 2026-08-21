@@ -28,7 +28,7 @@ await run(async () => {
   app.keepAlive = true;
 
   const errors: string[] = [];
-  const root = render(<TwoWindows />, { onError: e => errors.push(String((e as Error)?.message ?? e)) });
+  const root = render(<TwoWindows />, { onUncaughtError: e => errors.push(String((e as Error)?.message ?? e)) });
   const [main, panel] = root.windows as [AppKitWindow, AppKitWindow];
 
   // What the red close button does: the <Window> stays mounted, its NSWindow is gone.

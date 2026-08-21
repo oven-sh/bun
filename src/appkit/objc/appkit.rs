@@ -7,7 +7,7 @@
 //! `Option<T>` from the generated method). Nullability follows Apple's headers.
 
 use super::foundation::{NSArray, NSData, NSDate, NSIndexSet, NSObject, NSString};
-use super::{CGColorRef, Sel, objc_class, objc_global, objc_methods};
+use super::{CGColor, Sel, objc_class, objc_global, objc_methods};
 use crate::geometry::{Insets, Point, Rect, Size};
 
 // ───────────────────────────── application ─────────────────────────────────
@@ -29,7 +29,8 @@ objc_methods! { impl NSApplication {
     pub fn finish_launching(&self) = "finishLaunching";
     pub fn run(&self) = "run";
     pub fn stop(&self, sender: Option<&NSObject>) = "stop:";
-    // pub fn is_running(&self) -> bool = "isRunning";
+    pub fn terminate(&self, sender: Option<&NSObject>) = "terminate:";
+    pub fn is_running(&self) -> bool = "isRunning";
     pub fn hide(&self, sender: Option<&NSObject>) = "hide:";
     pub fn unhide(&self, sender: Option<&NSObject>) = "unhide:";
     pub fn next_event(&self, mask: u64, until: Option<&NSDate>, mode: &NSString, dequeue: bool) -> Option<NSEvent>
@@ -43,7 +44,8 @@ objc_methods! { impl NSApplication {
     pub fn set_services_menu(&self, menu: Option<&NSMenu>) = "setServicesMenu:";
     pub fn dock_tile(&self) -> NSDockTile = "dockTile";
     pub fn effective_appearance(&self) -> NSAppearance = "effectiveAppearance";
-    pub fn windows(&self) -> NSArray = "windows";
+    // pub fn windows(&self) -> NSArray = "windows";
+    pub fn current_event(&self) -> Option<NSEvent> = "currentEvent";
     // pub fn key_window(&self) -> Option<NSWindow> = "keyWindow";
     // pub fn set_application_icon_image(&self, image: Option<&NSImage>) = "setApplicationIconImage:";
 }}
@@ -57,6 +59,10 @@ objc_class!(pub struct NSAppearance: NSObject = "NSAppearance");
 objc_methods! { impl NSAppearance {
     // pub fn named(name: &NSString) -> Option<NSAppearance> = "appearanceNamed:";
     pub fn name(&self) -> NSString = "name";
+    /// The appearance dynamic colours resolve against (`-[NSColor CGColor]`); AppKit sets it only while drawing.
+    /// Deprecated pair (macOS 12); the replacement, `performAsCurrentDrawingAppearance:`, takes a block.
+    pub fn current_appearance() -> NSAppearance = "currentAppearance";
+    pub fn set_current_appearance(appearance: Option<&NSAppearance>) = "setCurrentAppearance:";
 }}
 
 objc_class!(pub struct NSEvent: NSObject = "NSEvent");
@@ -67,6 +73,12 @@ objc_methods! { impl NSEvent {
         = "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:";
     pub fn kind(&self) -> usize = "type";
     pub fn subtype(&self) -> i16 = "subtype";
+}}
+
+objc_class!(pub struct NSRunningApplication: NSObject = "NSRunningApplication");
+objc_methods! { impl NSRunningApplication {
+    pub fn current() -> NSRunningApplication = "currentApplication";
+    pub fn is_finished_launching(&self) -> bool = "isFinishedLaunching";
 }}
 
 objc_class!(pub struct NSScreen: NSObject = "NSScreen");
@@ -164,6 +176,7 @@ objc_methods! { impl NSWindow {
     pub fn layout_if_needed(&self) = "layoutIfNeeded";
     // pub fn display_if_needed(&self) = "displayIfNeeded";
     // pub fn set_default_button_cell(&self, cell: Option<&NSCell>) = "setDefaultButtonCell:";
+    pub fn default_button_cell(&self) -> Option<NSCell> = "defaultButtonCell";
 }}
 
 // ─────────────────────────────── views ─────────────────────────────────────
@@ -179,9 +192,9 @@ objc_methods! { impl NSView {
     pub fn is_descendant_of(&self, view: &NSView) -> bool = "isDescendantOf:";
     pub fn superview(&self) -> Option<NSView> = "superview";
     pub fn subviews(&self) -> NSArray = "subviews";
-    // pub fn window(&self) -> Option<NSWindow> = "window";
+    pub fn window(&self) -> Option<NSWindow> = "window";
     pub fn set_hidden(&self, hidden: bool) = "setHidden:";
-    // pub fn is_hidden(&self) -> bool = "isHidden";
+    pub fn is_hidden(&self) -> bool = "isHidden";
     pub fn set_alpha_value(&self, alpha: f64) = "setAlphaValue:";
     pub fn set_tool_tip(&self, text: Option<&NSString>) = "setToolTip:";
     pub fn set_identifier(&self, identifier: Option<&NSString>) = "setIdentifier:";
@@ -203,6 +216,7 @@ objc_methods! { impl NSView {
     // pub fn set_needs_display(&self, flag: bool) = "setNeedsDisplay:";
     // pub fn set_needs_layout(&self, flag: bool) = "setNeedsLayout:";
     pub fn layout_subtree_if_needed(&self) = "layoutSubtreeIfNeeded";
+    pub fn effective_appearance(&self) -> NSAppearance = "effectiveAppearance";
     pub fn constraints(&self) -> NSArray = "constraints";
     // pub fn set_autoresizing_mask(&self, mask: usize) = "setAutoresizingMask:";
     pub fn bitmap_image_rep_for_caching_display_in_rect(&self, rect: Rect) -> Option<NSBitmapImageRep>
@@ -214,11 +228,11 @@ objc_methods! { impl NSView {
 
 objc_class!(pub struct CALayer: NSObject = "CALayer");
 objc_methods! { impl CALayer {
-    pub fn set_background_color(&self, color: Option<CGColorRef<'_>>) = "setBackgroundColor:";
+    pub fn set_background_color(&self, color: Option<CGColor>) = "setBackgroundColor:";
     pub fn set_corner_radius(&self, radius: f64) = "setCornerRadius:";
     pub fn set_masks_to_bounds(&self, flag: bool) = "setMasksToBounds:";
     pub fn set_border_width(&self, width: f64) = "setBorderWidth:";
-    pub fn set_border_color(&self, color: Option<CGColorRef<'_>>) = "setBorderColor:";
+    pub fn set_border_color(&self, color: Option<CGColor>) = "setBorderColor:";
 }}
 
 objc_class!(pub struct NSBitmapImageRep: NSObject = "NSBitmapImageRep");
@@ -259,7 +273,7 @@ pub(crate) enum LayoutRelation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(isize)]
 pub(crate) enum WindowOrderingMode {
-    // Above = 1,
+    Above = 1,
     Below = -1,
     // Out = 0,
 }
@@ -531,12 +545,19 @@ objc_methods! { impl NSStackView {
     pub fn set_distribution(&self, distribution: StackDistribution) = "setDistribution:";
     pub fn arranged_subviews(&self) -> NSArray = "arrangedSubviews";
     // pub fn add_arranged_subview(&self, view: &NSView) = "addArrangedSubview:";
-    pub fn insert_arranged_subview(&self, view: &NSView, index: usize) = "insertArrangedSubview:atIndex:";
+    fn insert_arranged_subview_at(&self, view: &NSView, index: isize) = "insertArrangedSubview:atIndex:";
     pub fn remove_arranged_subview(&self, view: &NSView) = "removeArrangedSubview:";
     pub fn set_detaches_hidden_views(&self, flag: bool) = "setDetachesHiddenViews:";
     pub fn set_hugging_priority(&self, priority: f32, orientation: Orientation) = "setHuggingPriority:forOrientation:";
     // pub fn set_custom_spacing_after(&self, spacing: f64, view: &NSView) = "setCustomSpacing:afterView:";
 }}
+
+impl NSStackView {
+    /// `index` is an `NSInteger` in the header; past `isize::MAX` it is out of range either way.
+    pub(crate) fn insert_arranged_subview(&self, view: &NSView, index: usize) {
+        self.insert_arranged_subview_at(view, isize::try_from(index).unwrap_or(isize::MAX));
+    }
+}
 
 objc_class!(pub struct NSClipView: NSView = "NSClipView");
 objc_methods! { impl NSClipView {
@@ -565,11 +586,18 @@ objc_methods! { impl NSSplitView {
     pub fn set_divider_style(&self, style: SplitViewDividerStyle) = "setDividerStyle:";
     pub fn set_arranges_all_subviews(&self, flag: bool) = "setArrangesAllSubviews:";
     pub fn arranged_subviews(&self) -> NSArray = "arrangedSubviews";
-    pub fn insert_arranged_subview(&self, view: &NSView, index: usize) = "insertArrangedSubview:atIndex:";
+    fn insert_arranged_subview_at(&self, view: &NSView, index: isize) = "insertArrangedSubview:atIndex:";
     pub fn remove_arranged_subview(&self, view: &NSView) = "removeArrangedSubview:";
     // pub fn set_position_of_divider(&self, position: f64, index: isize) = "setPosition:ofDividerAtIndex:";
-    // pub fn set_holding_priority(&self, priority: f32, index: isize) = "setHoldingPriority:forSubviewAtIndex:";
+    pub fn set_holding_priority(&self, priority: f32, index: isize) = "setHoldingPriority:forSubviewAtIndex:";
 }}
+
+impl NSSplitView {
+    /// As [`NSStackView::insert_arranged_subview`].
+    pub(crate) fn insert_arranged_subview(&self, view: &NSView, index: usize) {
+        self.insert_arranged_subview_at(view, isize::try_from(index).unwrap_or(isize::MAX));
+    }
+}
 
 objc_class!(pub struct NSBox: NSView = "NSBox");
 objc_methods! { impl NSBox {
@@ -577,7 +605,7 @@ objc_methods! { impl NSBox {
     pub fn set_box_type(&self, kind: BoxType) = "setBoxType:";
     pub fn set_title(&self, title: &NSString) = "setTitle:";
     pub fn set_title_position(&self, position: TitlePosition) = "setTitlePosition:";
-    pub fn set_content_view(&self, view: Option<&NSView>) = "setContentView:";
+    // pub fn set_content_view(&self, view: Option<&NSView>) = "setContentView:";
     pub fn content_view(&self) -> Option<NSView> = "contentView";
     // pub fn set_content_view_margins(&self, size: Size) = "setContentViewMargins:";
     // pub fn set_transparent(&self, flag: bool) = "setTransparent:";
@@ -618,6 +646,7 @@ objc_methods! { impl NSCell {
     // pub fn set_wraps(&self, flag: bool) = "setWraps:";
     pub fn set_truncates_last_visible_line(&self, flag: bool) = "setTruncatesLastVisibleLine:";
     pub fn set_sends_action_on_end_editing(&self, flag: bool) = "setSendsActionOnEndEditing:";
+    pub fn perform_click(&self, sender: Option<&NSObject>) = "performClick:";
 }}
 
 objc_class!(pub struct NSTextField: NSControl = "NSTextField");
@@ -855,8 +884,8 @@ objc_methods! { impl NSTableCellView {
 objc_class!(pub struct NSColor: NSObject = "NSColor");
 objc_methods! { impl NSColor {
     pub fn srgb(red: f64, green: f64, blue: f64, alpha: f64) -> NSColor = "colorWithSRGBRed:green:blue:alpha:";
-    /// Borrowed; valid while self is.
-    pub fn cg_color(&self) -> CGColorRef<'_> = "CGColor";
+    /// A new reference; the colour AppKit returns is only owned by the current autorelease pool.
+    pub fn cg_color(&self) -> CGColor = "CGColor";
     /// nil when the colour has no component form in `space` (patterns). Dynamic colours resolve for the current appearance.
     pub fn color_using_color_space(&self, space: &NSColorSpace) -> Option<NSColor> = "colorUsingColorSpace:";
     /// These three raise unless the colour's space has an RGB model; convert with `color_using_color_space` first.

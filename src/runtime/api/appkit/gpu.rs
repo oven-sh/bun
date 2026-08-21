@@ -1,21 +1,24 @@
 //! `gpu` (`AppKitGpu`) and the `Gpu*` classes: Metal through `bun_appkit::gpu`.
 //! Argument types are checked here; ranges, encoder state and device limits
-//! are checked by `bun_appkit`, whose errors `conv::throw` turns into the
-//! matching JavaScript exception.
+//! are checked by `bun_appkit`, whose errors [`throw`] turns into the
+//! matching JavaScript exception (`GpuCompileError` / `GpuExecutionError`
+//! for the GPU ones, `conv::throw` for the rest).
 
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, Ref, RefCell};
+use core::mem::ManuallyDrop;
 
 use bun_appkit::geometry::{ClearColor, ScissorRect, Size3, Viewport};
 use bun_appkit::gpu::{
     Blend, Buffer, CompareFunction, ComputePipeline, CullMode, DepthStencil, Frame, Function, Gpu,
-    IndexType, Library, PassTarget, PixelFormat, PrimitiveType, RenderPipeline, RenderPipelineDesc,
-    Sampler, SamplerAddressMode, SamplerDesc, SamplerMinMagFilter, SamplerMipFilter, Storage,
-    Texture, TextureDesc, TextureUsage, VertexAttribute, VertexFormat, VertexLayout,
-    VertexStepFunction, Winding,
+    GpuStatus, IndexType, Library, Load, PassTarget, PixelFormat, PrimitiveType, RenderPipeline,
+    RenderPipelineDesc, Sampler, SamplerAddressMode, SamplerDesc, SamplerMinMagFilter,
+    SamplerMipFilter, Storage, Texture, TextureDesc, TextureUsage, VertexAttribute,
+    VertexBufferLayout, VertexFormat, VertexLayout, VertexStepFunction, Winding,
 };
 use bun_appkit::{Color, Kind, Named, NsStr, View};
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsResult, StringJsc,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsError, JsResult,
+    StringJsc, Strong,
 };
 
 use super::conv::{self, JsStr};
@@ -26,10 +29,59 @@ use crate::generated_classes::js_AppKitView as js_view;
 
 type What<'a> = core::fmt::Arguments<'a>;
 
+// ──────────────────────────────── errors ─────────────────────────────────────
+
+thread_local! {
+    /// `(kind, message) => Error` from `appkit.ts`, which owns the
+    /// `GpuCompileError` / `GpuExecutionError` classes. Never dropped: it
+    /// lives as long as the module does.
+    static MAKE_ERROR: RefCell<Option<ManuallyDrop<Strong>>> = const { RefCell::new(None) };
+}
+
+/// A `GpuCompileError` / `GpuExecutionError` instance for the GPU failures
+/// (`None` for every other error): made by the factory `appkit.ts`
+/// registered, or before that a plain `Error` with the matching `name`.
+fn gpu_error_instance(
+    global: &JSGlobalObject,
+    err: &bun_appkit::Error,
+) -> JsResult<Option<JSValue>> {
+    use bun_appkit::Error as E;
+    let (kind, name) = match err {
+        E::ShaderCompile { .. } | E::Pipeline { .. } => ("compile", "GpuCompileError"),
+        E::GpuExecution { .. } => ("execution", "GpuExecutionError"),
+        _ => return Ok(None),
+    };
+    let message = bun_core::String::clone_utf8(format!("{err}").as_bytes());
+    match MAKE_ERROR.with(|f| f.borrow().as_ref().map(|s| s.get())) {
+        Some(make) => {
+            let args = [string_to_js(global, kind)?, message.to_js(global)?];
+            make.call(global, JSValue::UNDEFINED, &args).map(Some)
+        }
+        None => {
+            let instance = message.to_error_instance(global);
+            instance.put(global, b"name", string_to_js(global, name)?);
+            Ok(Some(instance))
+        }
+    }
+}
+
+/// The JavaScript exception for a `bun_appkit` error.
+fn throw(global: &JSGlobalObject, err: &bun_appkit::Error) -> JsError {
+    match gpu_error_instance(global, err) {
+        Ok(Some(instance)) => global.throw_value(instance),
+        Ok(None) => conv::throw(global, err),
+        Err(pending) => pending,
+    }
+}
+
+fn check<T>(global: &JSGlobalObject, result: bun_appkit::Result<T>) -> JsResult<T> {
+    result.map_err(|e| throw(global, &e))
+}
+
 // ───────────────────────────── argument readers ─────────────────────────────
 
 fn device(global: &JSGlobalObject) -> JsResult<std::rc::Rc<Gpu>> {
-    conv::check(global, Gpu::shared())
+    check(global, Gpu::shared())
 }
 
 /// A non-negative integer.
@@ -320,27 +372,47 @@ impl AppKitGpu {
         ))
     }
 
+    /// `registerErrors((kind: "compile" | "execution", message) => Error)`, once, from `appkit.ts`.
+    pub fn register_errors(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let make = frame.argument(0);
+        if !make.is_callable() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("registerErrors() needs a function"))
+            );
+        }
+        MAKE_ERROR.with(|f| {
+            let mut slot = f.borrow_mut();
+            if let Some(old) = slot.take() {
+                drop(ManuallyDrop::into_inner(old));
+            }
+            *slot = Some(ManuallyDrop::new(Strong::create(make, global)));
+        });
+        Ok(JSValue::UNDEFINED)
+    }
+
     /// `gpu.buffer(byteLength | data, { storage, label })`.
     pub fn buffer(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let what = format_args!("gpu.buffer()");
         let opts = Opts::new(global, frame.argument(1), format_args!("{what} options"))?;
-        let storage = opts
-            .one_of::<Storage>("storage", what)?
-            .unwrap_or(Storage::Shared);
+        // Shared buffers work on every GPU, so that is the one CPU-visible mode offered.
+        let storage = match opts.one_of::<Storage>("storage", what)? {
+            Some(Storage::Private) => Storage::Private,
+            Some(Storage::Shared | Storage::Managed) | None => Storage::Shared,
+        };
         let (label, ns_label) = Label::from_opts(&opts, what)?;
         let source = frame.argument(0);
         let gpu = device(global)?;
         let buffer = if source.is_number() {
             let len = count(global, source, format_args!("{what} byteLength"))?;
-            conv::check(global, gpu.buffer_with_len(len, storage))?
+            check(global, gpu.buffer_with_len(len, storage))?
         } else {
             let data = bytes(global, source, format_args!("{what} data"))?;
-            conv::check(global, gpu.buffer_from_bytes(data.byte_slice(), storage))?
+            check(global, gpu.buffer_from_bytes(data.byte_slice(), storage))?
         };
         if let Some(l) = &ns_label {
             buffer.set_label(l.ns());
         }
-        Ok(JsClass::to_js(GpuBuffer { buffer, label }, global))
+        Ok(JsClass::to_js(GpuBuffer::new(buffer, label), global))
     }
 
     /// `gpu.texture({ width, height, format, usage, storage, mipmapped, label })`.
@@ -364,7 +436,7 @@ impl AppKitGpu {
         let mipmapped = opts.boolean("mipmapped", what)?.unwrap_or(false);
         let (label, ns_label) = Label::from_opts(&opts, what)?;
         let gpu = device(global)?;
-        let texture = conv::check(
+        let texture = check(
             global,
             gpu.texture(&TextureDesc {
                 width,
@@ -376,7 +448,7 @@ impl AppKitGpu {
                 label: ns_label.as_ref().map(JsStr::ns),
             }),
         )?;
-        Ok(JsClass::to_js(GpuTexture { texture, label }, global))
+        Ok(JsClass::to_js(GpuTexture::new(texture, label), global))
     }
 
     /// `gpu.library(source, { label })`: compiles Metal Shading Language.
@@ -386,7 +458,7 @@ impl AppKitGpu {
         let opts = Opts::new(global, frame.argument(1), format_args!("{what} options"))?;
         let (label, ns_label) = Label::from_opts(&opts, what)?;
         let gpu = device(global)?;
-        let library = conv::check(global, gpu.library(source.ns()))?;
+        let library = check(global, gpu.library(source.ns()))?;
         if let Some(l) = &ns_label {
             library.set_label(l.ns());
         }
@@ -459,7 +531,7 @@ impl AppKitGpu {
         let (label, ns_label) = Label::from_opts(&opts, what)?;
         let color_names: Vec<&'static str> = color_formats.iter().map(|(f, _)| f.name()).collect();
         let gpu = device(global)?;
-        let pipeline = conv::check(
+        let pipeline = check(
             global,
             gpu.render_pipeline(&RenderPipelineDesc {
                 vertex: &vertex.function,
@@ -498,7 +570,7 @@ impl AppKitGpu {
         let opts = Opts::new(global, frame.argument(1), format_args!("{what} options"))?;
         let (label, _) = Label::from_opts(&opts, what)?;
         let gpu = device(global)?;
-        let pipeline = conv::check(global, gpu.compute_pipeline(&function.function))?;
+        let pipeline = check(global, gpu.compute_pipeline(&function.function))?;
         Ok(JsClass::to_js(
             GpuComputePipeline { pipeline, label },
             global,
@@ -540,7 +612,7 @@ impl AppKitGpu {
         let (label, ns_label) = Label::from_opts(&opts, what)?;
         desc.label = ns_label.as_ref().map(JsStr::ns);
         let gpu = device(global)?;
-        let sampler = conv::check(global, gpu.sampler(&desc))?;
+        let sampler = check(global, gpu.sampler(&desc))?;
         Ok(JsClass::to_js(GpuSampler { sampler, label }, global))
     }
 
@@ -554,7 +626,7 @@ impl AppKitGpu {
         let write = opts.boolean("write", what)?.unwrap_or(true);
         let (label, _) = Label::from_opts(&opts, what)?;
         let gpu = device(global)?;
-        let state = conv::check(global, gpu.depth_stencil(compare, write))?;
+        let state = check(global, gpu.depth_stencil(compare, write))?;
         Ok(JsClass::to_js(GpuDepthStencil { state, label }, global))
     }
 
@@ -564,7 +636,7 @@ impl AppKitGpu {
         let opts = Opts::new(global, frame.argument(0), format_args!("{what} options"))?;
         let (label, ns_label) = Label::from_opts(&opts, what)?;
         let gpu = device(global)?;
-        let frame = conv::check(global, gpu.frame())?;
+        let frame = check(global, gpu.frame())?;
         if let Some(l) = &ns_label {
             frame.set_label(l.ns());
         }
@@ -597,12 +669,40 @@ fn texture_usage(global: &JSGlobalObject, list: JSValue, what: What<'_>) -> JsRe
     Ok(usage)
 }
 
-/// `{ stride, step, attributes: [{ format, offset, buffer }] }`.
+/// `{ stride, step, attributes: [{ format, offset, index }] }` for vertex
+/// buffer 0 alone, or an array of those, one per vertex buffer. `index`
+/// counts on from the previous attribute when left out.
 fn vertex_layout(
     global: &JSGlobalObject,
     value: JSValue,
     what: What<'_>,
 ) -> JsResult<VertexLayout> {
+    let mut next_index = 0usize;
+    let mut buffers = Vec::new();
+    if value.is_array() {
+        let mut iter = value.array_iterator(global)?;
+        let mut b = 0usize;
+        while let Some(item) = iter.next()? {
+            buffers.push(vertex_buffer_layout(
+                global,
+                item,
+                format_args!("{what}[{b}]"),
+                &mut next_index,
+            )?);
+            b += 1;
+        }
+    } else {
+        buffers.push(vertex_buffer_layout(global, value, what, &mut next_index)?);
+    }
+    Ok(VertexLayout { buffers })
+}
+
+fn vertex_buffer_layout(
+    global: &JSGlobalObject,
+    value: JSValue,
+    what: What<'_>,
+    next_index: &mut usize,
+) -> JsResult<VertexBufferLayout> {
     let opts = Opts::new(global, value, what)?;
     let stride = opts
         .count("stride", what)?
@@ -612,7 +712,7 @@ fn vertex_layout(
         .unwrap_or(VertexStepFunction::PerVertex);
     let Some(list) = opts.get("attributes")?.filter(|l| l.is_array()) else {
         return Err(global.throw_invalid_arguments(format_args!(
-            "{what} attributes must be an array of {{ format, offset, buffer }} objects"
+            "{what} attributes must be an array of {{ format, offset, index }} objects"
         )));
     };
     let mut attributes = Vec::new();
@@ -626,14 +726,21 @@ fn vertex_layout(
                 global
                     .throw_invalid_arguments(format_args!("{what} attributes[{i}] needs a format"))
             })?;
+        if attr.get("buffer")?.is_some() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{what} attributes[{i}]: attributes do not name a buffer; describe each vertex buffer as its own {{ stride, attributes }} entry of a vertexLayout array"
+            )));
+        }
+        let index = attr.count("index", what)?.unwrap_or(*next_index);
+        *next_index = index + 1;
         attributes.push(VertexAttribute {
+            index,
             format,
             offset: attr.count("offset", what)?.unwrap_or(0),
-            buffer_index: attr.count("buffer", what)?.unwrap_or(0),
         });
         i += 1;
     }
-    Ok(VertexLayout {
+    Ok(VertexBufferLayout {
         stride,
         step,
         attributes,
@@ -642,10 +749,22 @@ fn vertex_layout(
 
 // ──────────────────────────────── resources ──────────────────────────────────
 
-/// A `MTLBuffer`.
+fn destroyed(global: &JSGlobalObject, class: &str) -> JsError {
+    global
+        .err(
+            bun_jsc::ErrorCode::INVALID_STATE,
+            format_args!("{class} was destroyed"),
+        )
+        .throw()
+}
+
+/// A `MTLBuffer`. `destroy()` releases it ahead of garbage collection.
 #[bun_jsc::JsClass]
 pub struct GpuBuffer {
-    buffer: Buffer,
+    buffer: RefCell<Option<Buffer>>,
+    /// `allocatedSize`, reported to the collector; 0 once destroyed. Kept
+    /// here because `estimated_size` may run off the main thread.
+    size: Cell<usize>,
     label: Label,
 }
 
@@ -654,12 +773,42 @@ impl GpuBuffer {
         Err(not_constructible(global, "GpuBuffer", "gpu.buffer()"))
     }
 
+    fn new(buffer: Buffer, label: Label) -> GpuBuffer {
+        GpuBuffer {
+            size: Cell::new(buffer.allocated_size()),
+            buffer: RefCell::new(Some(buffer)),
+            label,
+        }
+    }
+
+    fn get(&self, global: &JSGlobalObject) -> JsResult<Ref<'_, Buffer>> {
+        Ref::filter_map(self.buffer.borrow(), Option::as_ref)
+            .map_err(|_| destroyed(global, "GpuBuffer"))
+    }
+
+    pub fn estimated_size(&self) -> usize {
+        core::mem::size_of::<GpuBuffer>() + self.size.get()
+    }
+
     pub fn get_byte_length(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(self.buffer.len() as f64))
+        Ok(JSValue::js_number(
+            self.buffer.borrow().as_ref().map_or(0, Buffer::len) as f64,
+        ))
     }
 
     pub fn get_storage(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        string_to_js(global, self.buffer.storage().name())
+        string_to_js(global, self.get(global)?.storage().name())
+    }
+
+    /// Whether a committed frame that used the buffer is still running on the GPU.
+    pub fn get_in_flight(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(
+            self.buffer.borrow().as_ref().is_some_and(Buffer::in_flight),
+        ))
+    }
+
+    pub fn get_destroyed(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(self.buffer.borrow().is_none()))
     }
 
     /// `write(data, offset = 0)`.
@@ -668,7 +817,8 @@ impl GpuBuffer {
         let data = bytes(global, frame.argument(0), format_args!("{what} data"))?;
         let offset =
             optional_count(global, frame.argument(1), format_args!("{what} offset"))?.unwrap_or(0);
-        conv::check(global, self.buffer.write(offset, data.byte_slice()))?;
+        let buffer = self.get(global)?;
+        check(global, buffer.write(offset, data.byte_slice()))?;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -677,13 +827,25 @@ impl GpuBuffer {
         let what = format_args!("GpuBuffer.read()");
         let offset =
             optional_count(global, frame.argument(0), format_args!("{what} offset"))?.unwrap_or(0);
+        let buffer = self.get(global)?;
         let length = match optional_count(global, frame.argument(1), format_args!("{what} length"))?
         {
             Some(n) => n,
-            None => self.buffer.len().saturating_sub(offset),
+            None => buffer.len().saturating_sub(offset),
         };
-        let out = conv::check(global, self.buffer.read(offset, length))?;
+        let out = check(global, buffer.read(offset, length))?;
+        drop(buffer);
         Ok(JSUint8Array::from_bytes(global, out.into_boxed_slice()))
+    }
+
+    /// Releases the Metal buffer now. Frames already encoded keep it alive
+    /// until they finish; every later use from JavaScript throws.
+    pub fn destroy(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        if let Ok(mut slot) = self.buffer.try_borrow_mut() {
+            slot.take();
+            self.size.set(0);
+        }
+        Ok(JSValue::UNDEFINED)
     }
 
     pub fn get_label(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -691,14 +853,20 @@ impl GpuBuffer {
     }
 
     pub fn set_label(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        self.label.set(global, value, |l| self.buffer.set_label(l))
+        self.label.set(global, value, |l| {
+            if let Some(buffer) = self.buffer.borrow().as_ref() {
+                buffer.set_label(l);
+            }
+        })
     }
 }
 
 /// A 2D `MTLTexture`.
 #[bun_jsc::JsClass]
 pub struct GpuTexture {
-    texture: Texture,
+    texture: RefCell<Option<Texture>>,
+    /// As on [`GpuBuffer`].
+    size: Cell<usize>,
     label: Label,
 }
 
@@ -707,16 +875,50 @@ impl GpuTexture {
         Err(not_constructible(global, "GpuTexture", "gpu.texture()"))
     }
 
+    fn new(texture: Texture, label: Label) -> GpuTexture {
+        GpuTexture {
+            size: Cell::new(texture.allocated_size()),
+            texture: RefCell::new(Some(texture)),
+            label,
+        }
+    }
+
+    fn get(&self, global: &JSGlobalObject) -> JsResult<Ref<'_, Texture>> {
+        Ref::filter_map(self.texture.borrow(), Option::as_ref)
+            .map_err(|_| destroyed(global, "GpuTexture"))
+    }
+
+    pub fn estimated_size(&self) -> usize {
+        core::mem::size_of::<GpuTexture>() + self.size.get()
+    }
+
     pub fn get_width(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(self.texture.width() as f64))
+        Ok(JSValue::js_number(
+            self.texture.borrow().as_ref().map_or(0, Texture::width) as f64,
+        ))
     }
 
     pub fn get_height(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(self.texture.height() as f64))
+        Ok(JSValue::js_number(
+            self.texture.borrow().as_ref().map_or(0, Texture::height) as f64,
+        ))
     }
 
     pub fn get_format(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        string_to_js(global, self.texture.format().name())
+        string_to_js(global, self.get(global)?.format().name())
+    }
+
+    pub fn get_in_flight(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(
+            self.texture
+                .borrow()
+                .as_ref()
+                .is_some_and(Texture::in_flight),
+        ))
+    }
+
+    pub fn get_destroyed(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(self.texture.borrow().is_none()))
     }
 
     /// `replace(data, bytesPerRow = tightly packed)`: uploads all of level 0.
@@ -729,17 +931,26 @@ impl GpuTexture {
             format_args!("{what} bytesPerRow"),
         )?
         .unwrap_or(0);
-        conv::check(
-            global,
-            self.texture.replace(data.byte_slice(), bytes_per_row),
-        )?;
+        let texture = self.get(global)?;
+        check(global, texture.replace(data.byte_slice(), bytes_per_row))?;
         Ok(JSValue::UNDEFINED)
     }
 
     /// Level 0, tightly packed, after the GPU work that wrote it has completed.
     pub fn read_pixels(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        let out = conv::check(global, self.texture.read_pixels())?;
+        let texture = self.get(global)?;
+        let out = check(global, texture.read_pixels())?;
+        drop(texture);
         Ok(JSUint8Array::from_bytes(global, out.into_boxed_slice()))
+    }
+
+    /// As [`GpuBuffer::destroy`].
+    pub fn destroy(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        if let Ok(mut slot) = self.texture.try_borrow_mut() {
+            slot.take();
+            self.size.set(0);
+        }
+        Ok(JSValue::UNDEFINED)
     }
 
     pub fn get_label(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -747,7 +958,11 @@ impl GpuTexture {
     }
 
     pub fn set_label(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        self.label.set(global, value, |l| self.texture.set_label(l))
+        self.label.set(global, value, |l| {
+            if let Some(texture) = self.texture.borrow().as_ref() {
+                texture.set_label(l);
+            }
+        })
     }
 }
 
@@ -771,7 +986,7 @@ impl GpuLibrary {
             format_args!("GpuLibrary.function() name"),
         )?
         .to_utf8();
-        let function = conv::check(global, self.library.function(&name))?;
+        let function = check(global, self.library.function(&name))?;
         Ok(JsClass::to_js(GpuFunction { function }, global))
     }
 
@@ -805,6 +1020,14 @@ impl GpuFunction {
 
     pub fn get_name(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         string_to_js(global, self.function.name())
+    }
+
+    /// `"vertex"`, `"fragment"` or `"kernel"`; `null` for the other Metal function kinds.
+    pub fn get_type(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        match self.function.kind() {
+            Some(kind) => string_to_js(global, kind.name()),
+            None => Ok(JSValue::NULL),
+        }
     }
 }
 
@@ -923,13 +1146,31 @@ impl GpuDepthStencil {
 
 // ────────────────────────────────── frame ────────────────────────────────────
 
+/// Where a `GpuFrame` is in its life. A committed frame keeps its command
+/// buffer only until a status query sees the GPU finish with it.
+enum Slot {
+    Live(Frame),
+    /// Dropped unsubmitted because the `onFrame` handler threw.
+    Dropped,
+    /// Committed and finished on the GPU; `Some` is the error it failed with.
+    Done(Option<bun_appkit::Error>),
+}
+
+impl Slot {
+    fn live(&self) -> Option<&Frame> {
+        match self {
+            Slot::Live(frame) => Some(frame),
+            _ => None,
+        }
+    }
+}
+
 /// One command buffer being encoded from JavaScript. Every encoder method
 /// works on the pass the last `renderPass()`/`computePass()`/`blit()` began
 /// and returns the frame; after `commit()` the frame is spent and they throw.
 #[bun_jsc::JsClass]
 pub struct GpuFrame {
-    /// `None` once committed or abandoned.
-    frame: RefCell<Option<Frame>>,
+    frame: RefCell<Slot>,
     /// `(threadExecutionWidth, maxTotalThreadsPerThreadgroup)` of the compute
     /// pipeline set last, for sizing threadgroups `dispatch()` is not given.
     group_hint: Cell<Option<(usize, usize)>>,
@@ -956,54 +1197,124 @@ impl GpuFrame {
 
     fn with_label(frame: Frame, label: Label) -> GpuFrame {
         GpuFrame {
-            frame: RefCell::new(Some(frame)),
+            frame: RefCell::new(Slot::Live(frame)),
             group_hint: Cell::new(None),
             label,
         }
     }
 
-    /// Runs `f` on the open frame. Nothing in `f` may run script.
+    /// Runs `f` on the frame. Nothing in `f` may run script.
     fn with<R>(
         &self,
         global: &JSGlobalObject,
         f: impl FnOnce(&mut Frame) -> bun_appkit::Result<R>,
     ) -> JsResult<R> {
-        let mut slot = self.frame.borrow_mut();
-        let Some(frame) = slot.as_mut() else {
-            return Err(global.throw_type_error(format_args!("frame already committed")));
+        let result = {
+            let mut slot = self.frame.borrow_mut();
+            match &mut *slot {
+                Slot::Live(frame) => f(frame),
+                Slot::Dropped => {
+                    return Err(global.throw_type_error(format_args!(
+                        "frame was dropped without being committed because the onFrame handler threw"
+                    )));
+                }
+                Slot::Done(_) => Err(bun_appkit::Error::FrameState {
+                    expected: "open",
+                    actual: "committed",
+                }),
+            }
         };
-        conv::check(global, f(frame))
+        check(global, result)
     }
 
     /// Commits whatever the `onFrame` handler left open. Errors are reported
     /// like an exception thrown from the handler.
+    /// After `onFrame` returned: commit if the handler did not, and have a
+    /// GPU failure reported at the view's next frame unless JavaScript reads
+    /// `gpuStatus` / `error` first.
     fn finish(&self, global: &JSGlobalObject) {
-        let Some(mut frame) = self.frame.borrow_mut().take() else {
+        let mut slot = self.frame.borrow_mut();
+        let Slot::Live(frame) = &mut *slot else {
             return;
         };
-        if let Err(err) = frame.commit() {
-            let _ = bun_jsc::task::report_error_or_terminate(global, conv::throw(global, &err));
+        let result = if frame.is_committed() {
+            Ok(())
+        } else {
+            frame.commit()
+        };
+        frame.watch();
+        drop(slot);
+        if let Err(err) = result {
+            let _ = bun_jsc::task::report_error_or_terminate(global, throw(global, &err));
         }
     }
 
-    /// Drops the command buffer unsubmitted (the handler threw).
+    /// Drops the command buffer unsubmitted (the handler threw), unless the
+    /// handler got as far as committing it.
     fn abandon(&self) {
-        self.frame.borrow_mut().take();
+        let mut slot = self.frame.borrow_mut();
+        if slot.live().is_some_and(|f| !f.is_committed()) {
+            *slot = Slot::Dropped;
+        }
+    }
+
+    /// Asks Metal where a committed frame is and, once it has finished, lets
+    /// go of the command buffer and keeps only the outcome.
+    fn settle(&self) {
+        let mut slot = self.frame.borrow_mut();
+        let outcome = match &*slot {
+            Slot::Live(frame) => match frame.gpu_status() {
+                GpuStatus::Completed => None,
+                GpuStatus::Failed(err) => Some(err),
+                GpuStatus::NotCommitted | GpuStatus::Running => return,
+            },
+            Slot::Dropped | Slot::Done(_) => return,
+        };
+        if let Slot::Live(frame) = &*slot {
+            // JavaScript is looking; the uncaught-error path need not.
+            frame.unwatch();
+        }
+        *slot = Slot::Done(outcome);
     }
 
     pub fn get_committed(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_boolean(
-            self.frame.borrow().as_ref().is_none_or(Frame::is_committed),
-        ))
+        let committed = match &*self.frame.borrow() {
+            Slot::Live(frame) => frame.is_committed(),
+            Slot::Dropped => false,
+            Slot::Done(_) => true,
+        };
+        Ok(JSValue::js_boolean(committed))
     }
 
-    /// `"open"`, `"in a render pass"`, …, `"committed"`.
+    /// `"open"`, `"in a render pass"`, …, `"committed"`, or `"dropped"`.
     pub fn get_state(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let name = match self.frame.borrow().as_ref() {
-            Some(frame) => frame.state().name(),
-            None => bun_appkit::gpu::FrameState::Committed.name(),
+        let name = match &*self.frame.borrow() {
+            Slot::Live(frame) => frame.state().name(),
+            Slot::Dropped => "dropped",
+            Slot::Done(_) => "committed",
         };
         string_to_js(global, name)
+    }
+
+    /// `"notCommitted"`, `"running"`, `"completed"` or `"failed"`, without blocking.
+    pub fn get_gpu_status(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.settle();
+        let name = match &*self.frame.borrow() {
+            Slot::Live(frame) if frame.is_committed() => "running",
+            Slot::Live(_) | Slot::Dropped => "notCommitted",
+            Slot::Done(None) => "completed",
+            Slot::Done(Some(_)) => "failed",
+        };
+        string_to_js(global, name)
+    }
+
+    /// The `GpuExecutionError` the GPU reported for this frame, or `null`.
+    pub fn get_error(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.settle();
+        match &*self.frame.borrow() {
+            Slot::Done(Some(err)) => Ok(gpu_error_instance(global, err)?.unwrap_or(JSValue::NULL)),
+            _ => Ok(JSValue::NULL),
+        }
     }
 
     pub fn get_label(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1012,7 +1323,7 @@ impl GpuFrame {
 
     pub fn set_label(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         self.label.set(global, value, |l| {
-            if let Some(frame) = self.frame.borrow().as_ref() {
+            if let Some(frame) = self.frame.borrow().live() {
                 frame.set_label(l);
             }
         })
@@ -1020,21 +1331,50 @@ impl GpuFrame {
 
     // ── render pass ──
 
-    /// `renderPass(view | { color, clear, depth, clearDepth })`.
+    /// `renderPass(view, { clear, depthFormat, clearDepth }?)` or
+    /// `renderPass({ color, clear, depth, clearDepth })`.
     pub fn render_pass(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let what = format_args!("frame.renderPass()");
         let target = frame.argument(0);
         if let Some(view) = target.as_class_ref::<AppKitView>() {
-            let view = view.native();
+            let view = view.native(global)?;
             if view.kind() != Kind::MetalView {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "{what} target must be a MetalView, not a {}",
                     view.kind().name()
                 )));
             }
-            let target = conv::check(global, view.render_target())?;
+            let opts = Opts::new(global, frame.argument(1), format_args!("{what} options"))?;
+            // Left out: the first pass into the view this frame clears to the
+            // view's clearColor (depth 1.0) and later ones keep what is there.
+            let clear = match opts.get("clear")? {
+                Some(v) if v.is_boolean() && !v.as_boolean() => Some(Load::Keep),
+                Some(v) => Some(Load::Clear(clear_color(
+                    global,
+                    v,
+                    format_args!("{what} clear"),
+                )?)),
+                None => None,
+            };
+            let depth_format = opts.one_of::<PixelFormat>("depthFormat", what)?;
+            let clear_depth = match opts.get("clearDepth")? {
+                Some(v) if v.is_boolean() && !v.as_boolean() => Some(Load::Keep),
+                Some(v) if v.is_boolean() => Some(Load::Clear(1.0)),
+                Some(v) => Some(Load::Clear(conv::number(
+                    global,
+                    v,
+                    format_args!("{what} clearDepth"),
+                )?)),
+                None => None,
+            };
+            let surface = check(global, view.render_target(depth_format))?;
             self.with(global, |f| {
-                f.begin_render_pass(&PassTarget::View(&target)).map(drop)
+                f.begin_render_pass(&PassTarget::View {
+                    surface: &surface,
+                    clear,
+                    clear_depth,
+                })
+                .map(drop)
             })?;
             return Ok(frame.this());
         }
@@ -1073,11 +1413,13 @@ impl GpuFrame {
             Some(v) => Some(conv::number(global, v, format_args!("{what} clearDepth"))?),
             None => Some(1.0),
         };
+        let color = color.get(global)?;
+        let depth = depth.map(|d| d.get(global)).transpose()?;
         self.with(global, |f| {
             f.begin_render_pass(&PassTarget::Texture {
-                color: &color.texture,
+                color: &color,
                 clear,
-                depth: depth.map(|d| &d.texture),
+                depth: depth.as_deref(),
                 clear_depth,
             })
             .map(drop)
@@ -1121,9 +1463,10 @@ impl GpuFrame {
         )?;
         let offset =
             optional_count(global, frame.argument(2), format_args!("{what} offset"))?.unwrap_or(0);
+        let buffer = buffer.get(global)?;
         self.with(global, |f| {
             f.current_render_pass()?
-                .set_vertex_buffer(index, &buffer.buffer, offset)
+                .set_vertex_buffer(index, &buffer, offset)
         })?;
         Ok(frame.this())
     }
@@ -1149,9 +1492,9 @@ impl GpuFrame {
             format_args!("{what} texture"),
             "GpuTexture",
         )?;
+        let texture = texture.get(global)?;
         self.with(global, |f| {
-            f.current_render_pass()?
-                .set_vertex_texture(index, &texture.texture)
+            f.current_render_pass()?.set_vertex_texture(index, &texture)
         })?;
         Ok(frame.this())
     }
@@ -1168,9 +1511,10 @@ impl GpuFrame {
         )?;
         let offset =
             optional_count(global, frame.argument(2), format_args!("{what} offset"))?.unwrap_or(0);
+        let buffer = buffer.get(global)?;
         self.with(global, |f| {
             f.current_render_pass()?
-                .set_fragment_buffer(index, &buffer.buffer, offset)
+                .set_fragment_buffer(index, &buffer, offset)
         })?;
         Ok(frame.this())
     }
@@ -1199,9 +1543,10 @@ impl GpuFrame {
             format_args!("{what} texture"),
             "GpuTexture",
         )?;
+        let texture = texture.get(global)?;
         self.with(global, |f| {
             f.current_render_pass()?
-                .set_fragment_texture(index, &texture.texture)
+                .set_fragment_texture(index, &texture)
         })?;
         Ok(frame.this())
     }
@@ -1342,12 +1687,13 @@ impl GpuFrame {
         let primitive = opts
             .one_of("primitive", what)?
             .unwrap_or(PrimitiveType::Triangle);
+        let indexes = indexes.get(global)?;
         self.with(global, |f| {
             f.current_render_pass()?.draw_indexed(
                 primitive,
                 index_count,
                 index_type,
-                &indexes.buffer,
+                &indexes,
                 offset,
                 instances,
             )
@@ -1375,9 +1721,9 @@ impl GpuFrame {
         )?;
         let offset =
             optional_count(global, frame.argument(2), format_args!("{what} offset"))?.unwrap_or(0);
+        let buffer = buffer.get(global)?;
         self.with(global, |f| {
-            f.current_compute_pass()?
-                .set_buffer(index, &buffer.buffer, offset)
+            f.current_compute_pass()?.set_buffer(index, &buffer, offset)
         })?;
         Ok(frame.this())
     }
@@ -1402,9 +1748,9 @@ impl GpuFrame {
             format_args!("{what} texture"),
             "GpuTexture",
         )?;
+        let texture = texture.get(global)?;
         self.with(global, |f| {
-            f.current_compute_pass()?
-                .set_texture(index, &texture.texture)
+            f.current_compute_pass()?.set_texture(index, &texture)
         })?;
         Ok(frame.this())
     }
@@ -1497,15 +1843,17 @@ impl GpuFrame {
         let opts = Opts::new(global, frame.argument(2), format_args!("{what} options"))?;
         let source_offset = opts.count("srcOffset", what)?.unwrap_or(0);
         let destination_offset = opts.count("dstOffset", what)?.unwrap_or(0);
+        let source = source.get(global)?;
+        let destination = destination.get(global)?;
         let size = match opts.count("size", what)? {
             Some(n) => n,
-            None => source.buffer.len().saturating_sub(source_offset),
+            None => source.len().saturating_sub(source_offset),
         };
         self.with(global, |f| {
             f.current_blit_pass()?.copy_buffer(
-                &source.buffer,
+                &source,
                 source_offset,
-                &destination.buffer,
+                &destination,
                 destination_offset,
                 size,
             )
@@ -1524,8 +1872,9 @@ impl GpuFrame {
             format_args!("frame.generateMipmaps() texture"),
             "GpuTexture",
         )?;
+        let texture = texture.get(global)?;
         self.with(global, |f| {
-            f.current_blit_pass()?.generate_mipmaps(&texture.texture)
+            f.current_blit_pass()?.generate_mipmaps(&texture)
         })?;
         Ok(frame.this())
     }
@@ -1577,54 +1926,78 @@ impl GpuFrame {
     /// Submits the frame (presenting the view's drawable if a view pass was encoded).
     pub fn commit(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         self.with(global, |f| f.commit())?;
-        self.frame.borrow_mut().take();
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `commit()` and block until the GPU has finished, for readbacks.
+    /// `commit()` (if not already) and block until the GPU has finished, for readbacks.
     pub fn commit_and_wait(
         &self,
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let result = self.with(global, |f| f.commit_and_wait());
-        self.frame.borrow_mut().take();
-        result?;
+        self.with(global, |f| f.commit_and_wait())?;
         Ok(JSValue::UNDEFINED)
     }
 }
 
 // ─────────────────────────────── MetalView frames ─────────────────────────────
 
+/// Clears [`View::begin_frame`]'s mark however `deliver_frame` returns.
+struct InFrame<'a>(&'a View);
+
+impl<'a> InFrame<'a> {
+    fn new(view: &'a View) -> InFrame<'a> {
+        view.begin_frame();
+        InFrame(view)
+    }
+}
+
+impl Drop for InFrame<'_> {
+    fn drop(&mut self) {
+        self.0.end_frame();
+    }
+}
+
 /// Runs a MetalView's `onFrame(frame, { time, dt, width, height })` for one
 /// `drawInMTKView:`. Whatever the handler leaves open is committed (and the
 /// drawable presented) when it returns; if it throws, the frame is dropped
 /// unsubmitted. Without a handler the view is just cleared to its `clearColor`.
+/// Frames committed earlier that the GPU has since failed are reported first,
+/// the way an exception thrown from the handler is.
 pub(super) fn deliver_frame(slots: &JsSlots, view: &View) {
     let global = slots.global();
     let report = |err: &bun_appkit::Error| {
-        let _ = bun_jsc::task::report_error_or_terminate(global, conv::throw(global, err));
+        let _ = bun_jsc::task::report_error_or_terminate(global, throw(global, err));
     };
     // The placeholder view of a machine without Metal never draws.
     let Ok(gpu) = Gpu::shared() else {
         return;
     };
+    for err in gpu.take_errors() {
+        report(&err);
+    }
     let mut frame = match gpu.frame() {
         Ok(frame) => frame,
         Err(err) => return report(&err),
     };
+    let _in_frame = InFrame::new(view);
     let has_handler = slots
         .this()
         .and_then(js_view::on_frame_get_cached)
         .is_some_and(|f| f.is_callable());
     if !has_handler {
-        if let Ok(target) = view.render_target() {
+        if let Ok(surface) = view.render_target(None) {
             let cleared = frame
-                .begin_render_pass(&PassTarget::View(&target))
+                .begin_render_pass(&PassTarget::View {
+                    surface: &surface,
+                    clear: None,
+                    clear_depth: None,
+                })
                 .map(drop)
                 .and_then(|()| frame.commit());
-            if let Err(err) = cleared {
-                report(&err);
+            match cleared {
+                Ok(()) => frame.watch(),
+                Err(err) => report(&err),
             }
         }
         return;

@@ -7,7 +7,7 @@ use bun_appkit::{
     Weight,
 };
 use bun_core::OwnedString;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, StringJsc};
+use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult, StringJsc};
 
 /// A JavaScript string held alive so AppKit can read its characters in place.
 pub(crate) struct JsStr(OwnedString);
@@ -265,7 +265,9 @@ pub(crate) fn color(
     let s = JsStr::new(global, value, what)?;
     match Color::parse(&s.to_utf8()) {
         Ok(c) => Ok(Some(c)),
-        Err(e) => Err(global.throw_invalid_arguments(format_args!("{what}: {e}"))),
+        Err(e) => Err(global
+            .err(ErrorCode::INVALID_ARG_VALUE, format_args!("{what}: {e}"))
+            .throw()),
     }
 }
 
@@ -628,14 +630,7 @@ pub(crate) fn with_prop<R>(
             }
         }
         b"columns" => return columns(global, value, what, apply),
-        b"rows" => {
-            let owned = rows(global, value, what)?;
-            let rows: Vec<Vec<NsStr<'_>>> = owned
-                .iter()
-                .map(|r| r.iter().map(JsStr::ns).collect())
-                .collect();
-            return Ok(apply(Prop::Rows(rows)));
-        }
+        b"rows" => Prop::Rows(Box::new(super::view::JsRows(rows(global, value, what)?))),
         b"selectedIndexes" => {
             let mut indexes = Vec::new();
             if !value.is_undefined_or_null() {
@@ -821,29 +816,36 @@ fn named_error(global: &JSGlobalObject, name: &'static str, err: &bun_appkit::Er
 pub(crate) fn throw(global: &JSGlobalObject, err: &bun_appkit::Error) -> JsError {
     use bun_appkit::Error as E;
     match err {
-        E::Load(_) => {
-            let instance = global.create_error_instance(format_args!("{err}"));
-            match bun_core::String::static_("ERR_APPKIT_UNAVAILABLE").to_js(global) {
-                Ok(code) => instance.put(global, b"code", code),
-                Err(err) => return err,
-            }
-            global.throw_value(instance)
-        }
-        E::UnknownProp(_)
-        | E::NotAContainer(_)
-        | E::AlreadyHasChild(_)
-        | E::ChildHasParent
-        | E::WouldCycle
-        | E::NotAChild
+        E::Load(_) => global
+            .err(ErrorCode::APPKIT_UNAVAILABLE, format_args!("{err}"))
+            .throw(),
+        E::UnknownProp(_) | E::NotAContainer(_) => global
+            .err(ErrorCode::INVALID_ARG_TYPE, format_args!("{err}"))
+            .throw(),
+        E::WouldCycle
         | E::BaselineAlignOnVerticalStack
         | E::BadColor(_)
         | E::BadSelector(_)
         | E::UnknownSymbol(_)
-        | E::BadImageFile(_)
-        | E::BadImageData
-        | E::RestoreNameInUse(_) => global.throw_invalid_arguments(format_args!("{err}")),
-        E::WrongThread | E::WindowClosed | E::ActivationPolicyRefused(_) => {
-            global.throw(format_args!("{err}"))
+        | E::BadImageData => global
+            .err(ErrorCode::INVALID_ARG_VALUE, format_args!("{err}"))
+            .throw(),
+        E::AlreadyHasChild(_)
+        | E::ChildHasParent
+        | E::NotAChild
+        | E::RestoreNameInUse(_)
+        | E::WrongThread
+        | E::WindowClosed
+        | E::ActivationPolicyRefused(_) => global
+            .err(ErrorCode::INVALID_STATE, format_args!("{err}"))
+            .throw(),
+        E::BadImageFile(path) => {
+            let instance = global.create_error_instance(format_args!("{err}"));
+            match bun_core::String::borrow_utf8(path.as_bytes()).to_js(global) {
+                Ok(path) => instance.put(global, b"path", path),
+                Err(err) => return err,
+            }
+            global.throw_value(instance)
         }
         E::NoGpu => global.throw_type_error(format_args!("Metal is not available on this machine")),
         E::ShaderCompile { .. } | E::Pipeline { .. } => named_error(global, "GpuCompileError", err),
@@ -854,13 +856,17 @@ pub(crate) fn throw(global: &JSGlobalObject, err: &bun_appkit::Error) -> JsError
         | E::ZeroSize(_) => {
             global.throw_value(global.create_range_error_instance(format_args!("{err}")))
         }
-        E::NoSuchFunction { .. }
-        | E::FrameState { .. }
+        E::FrameState { .. }
         | E::NoPipeline
         | E::NoDrawable
         | E::TextureNotReadable
         | E::BufferNotAccessible
-        | E::Unsupported(_) => global.throw_type_error(format_args!("{err}")),
+        | E::InvalidState(_) => global
+            .err(ErrorCode::INVALID_STATE, format_args!("{err}"))
+            .throw(),
+        E::NoSuchFunction { .. } | E::Unsupported(_) => {
+            global.throw_type_error(format_args!("{err}"))
+        }
     }
 }
 

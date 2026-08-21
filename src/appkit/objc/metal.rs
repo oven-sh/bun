@@ -4,14 +4,12 @@
 //!
 //! Most Metal objects are typed in the headers as `id<MTLSomething>`: a
 //! protocol, not a class (the concrete classes are private and differ per
-//! GPU driver). They are declared here as `objc_class!(… : NSObject = "NSObject")`,
-//! so [`Object::class`](super::Object::class) for them is plain `NSObject`.
-//! That class is only consulted by `alloc` and `is_kind_of`/`downcast`, and
-//! this crate never allocates or downcasts to a protocol type: every instance
-//! arrives already made from a `MTLDevice`, command buffer or `MTKView`
-//! method whose binding names the right wrapper. Everything else about a
-//! wrapper (retain/release, `Deref` to the parent protocol's wrapper, message
-//! sends) is independent of the class.
+//! GPU driver). They are declared here with [`objc_protocol!`], which gives a
+//! wrapper everything [`objc_class!`] does (retain/release, `Deref` to the
+//! parent protocol's wrapper, message sends) except [`super::ClassType`], so
+//! there is no `alloc`, subclassing or `downcast` to a protocol type: every
+//! instance arrives already made from a `MTLDevice`, command buffer or
+//! `MTKView` method whose binding names the right wrapper.
 //!
 //! The descriptor types (`MTLTextureDescriptor`, `MTLRenderPipelineDescriptor`,
 //! …) and `MTKView` are real classes and resolve by name once
@@ -24,10 +22,11 @@
 
 use core::ffi::c_void;
 use core::ops::{BitOr, BitOrAssign};
+use core::ptr::NonNull;
 
-use super::appkit::NSView;
+use super::appkit::{NSColorSpace, NSView};
 use super::foundation::{NSArray, NSError, NSObject, NSString};
-use super::{Object, Out, Ptr, objc_class, objc_methods};
+use super::{Arg, Object, Out, Ptr, Ret, objc_class, objc_methods, objc_protocol, rt};
 use crate::error::{Error, Result};
 use crate::geometry::{ClearColor, Range, Rect, Region, ScissorRect, Size, Size3, Viewport};
 
@@ -122,6 +121,35 @@ impl PixelFormat {
         matches!(
             self,
             PixelFormat::Depth32Float | PixelFormat::Depth32FloatStencil8
+        )
+    }
+
+    pub(crate) const fn has_stencil(self) -> bool {
+        matches!(self, PixelFormat::Depth32FloatStencil8)
+    }
+
+    /// Colour-renderable and filterable on every Mac GPU family, which is
+    /// what `generateMipmapsForTexture:` and linear sampling need. Integer
+    /// and depth formats are neither.
+    pub(crate) const fn is_filterable_color(self) -> bool {
+        // The normalized and float colour formats that every Mac GPU family
+        // filters (Metal feature set tables); anything added to the enum later
+        // is not filterable until listed here.
+        matches!(
+            self,
+            PixelFormat::R8Unorm
+                | PixelFormat::R16Float
+                | PixelFormat::RG8Unorm
+                | PixelFormat::R32Float
+                | PixelFormat::RG16Float
+                | PixelFormat::RGBA8Unorm
+                | PixelFormat::RGBA8UnormSrgb
+                | PixelFormat::BGRA8Unorm
+                | PixelFormat::BGRA8UnormSrgb
+                | PixelFormat::RGB10A2Unorm
+                | PixelFormat::RG32Float
+                | PixelFormat::RGBA16Float
+                | PixelFormat::RGBA32Float
         )
     }
 }
@@ -358,6 +386,15 @@ metal_enum! {
     }
 }
 
+metal_enum! {
+    /// `MTLFunctionType` (MTLLibrary.h); the visible/intersection/mesh/object kinds left out.
+    enum FunctionType: usize {
+        Vertex = 1 => "vertex",
+        Fragment = 2 => "fragment",
+        Kernel = 3 => "kernel",
+    }
+}
+
 // /// `MTLTriangleFillMode` (MTLRenderCommandEncoder.h).
 // #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 // #[repr(usize)]
@@ -373,8 +410,10 @@ metal_enum! {
 // D2Multisample = 4,
 // }
 /// `MTLCommandBufferStatus` (MTLCommandBuffer.h), as returned by
-/// [`MTLCommandBuffer::status`]; the other states (0 to 4) are progress, not failure.
+/// [`MTLCommandBuffer::status`]; the states below `COMPLETED` (not enqueued,
+/// enqueued, committed, scheduled) are progress.
 pub(crate) mod command_buffer_status {
+    pub(crate) const COMPLETED: usize = 4;
     pub(crate) const ERROR: usize = 5;
 }
 
@@ -474,7 +513,7 @@ metal_options! {
 
 // ─────────────────────────────── device ─────────────────────────────────────
 
-objc_class!(pub struct MTLDevice: NSObject = "NSObject");
+objc_protocol!(pub struct MTLDevice: NSObject = "MTLDevice");
 objc_methods! { impl MTLDevice {
     pub fn name(&self) -> NSString = "name";
     // pub fn registry_id(&self) -> u64 = "registryID";
@@ -482,23 +521,23 @@ objc_methods! { impl MTLDevice {
     pub fn new_buffer_with_length(&self, length: usize, options: ResourceOptions) -> Retained<Option<MTLBuffer>>
         = "newBufferWithLength:options:";
     /// Copies `length` bytes from `bytes`; see [`MTLDevice::new_buffer_with_bytes`]. `length` 0 is a Metal error.
-    pub(crate) fn new_buffer_with_bytes_raw(&self, bytes: Ptr, length: usize, options: ResourceOptions) -> Retained<Option<MTLBuffer>>
+    fn new_buffer_with_bytes_raw(&self, bytes: Ptr, length: usize, options: ResourceOptions) -> Retained<Option<MTLBuffer>>
         = "newBufferWithBytes:length:options:";
     pub fn new_texture_with_descriptor(&self, descriptor: &MTLTextureDescriptor) -> Retained<Option<MTLTexture>>
         = "newTextureWithDescriptor:";
     /// Synchronous compile. nil with `error` set on failure; `error` may carry warnings on success.
-    pub(crate) fn new_library_with_source_raw(&self, source: &NSString, options: Option<&MTLCompileOptions>, error: &Out<NSError>)
+    fn new_library_with_source_raw(&self, source: &NSString, options: Option<&MTLCompileOptions>, error: &Out<NSError>)
         -> Retained<Option<MTLLibrary>> = "newLibraryWithSource:options:error:";
-    pub(crate) fn new_render_pipeline_state_raw(&self, descriptor: &MTLRenderPipelineDescriptor, error: &Out<NSError>)
+    fn new_render_pipeline_state_raw(&self, descriptor: &MTLRenderPipelineDescriptor, error: &Out<NSError>)
         -> Retained<Option<MTLRenderPipelineState>> = "newRenderPipelineStateWithDescriptor:error:";
-    pub(crate) fn new_compute_pipeline_state_raw(&self, function: &MTLFunction, error: &Out<NSError>)
+    fn new_compute_pipeline_state_raw(&self, function: &MTLFunction, error: &Out<NSError>)
         -> Retained<Option<MTLComputePipelineState>> = "newComputePipelineStateWithFunction:error:";
     pub fn new_depth_stencil_state(&self, descriptor: &MTLDepthStencilDescriptor) -> Retained<Option<MTLDepthStencilState>>
         = "newDepthStencilStateWithDescriptor:";
     pub fn new_sampler_state(&self, descriptor: &MTLSamplerDescriptor) -> Retained<Option<MTLSamplerState>>
         = "newSamplerStateWithDescriptor:";
-    // /// `MTLGPUFamily` is an `NSInteger` (`MTLGPUFamilyApple7` = 1007, `Mac2` = 2002). macOS 10.15+.
-    // pub fn supports_family(&self, family: isize) -> bool = "supportsFamily:";
+    /// `MTLGPUFamily` is an `NSInteger`; see [`gpu_family`]. macOS 10.15+.
+    pub fn supports_family(&self, family: isize) -> bool = "supportsFamily:";
     pub fn has_unified_memory(&self) -> bool = "hasUnifiedMemory";
     // pub fn recommended_max_working_set_size(&self) -> u64 = "recommendedMaxWorkingSetSize";
     pub fn max_buffer_length(&self) -> usize = "maxBufferLength";
@@ -506,6 +545,12 @@ objc_methods! { impl MTLDevice {
     pub fn is_low_power(&self) -> bool = "isLowPower";
     // pub fn is_headless(&self) -> bool = "isHeadless";
 }}
+
+/// `MTLGPUFamily` values (MTLDevice.h) for [`MTLDevice::supports_family`].
+pub(crate) mod gpu_family {
+    /// Every Apple-designed GPU; the family that takes shared-storage textures.
+    pub(crate) const APPLE1: isize = 1001;
+}
 
 impl MTLDevice {
     /// A shared/managed buffer initialised with a copy of `bytes` (which must not be empty).
@@ -562,7 +607,7 @@ fn check_range(what: &'static str, len: usize, offset: usize, size: usize) -> Re
     }
 }
 
-objc_class!(pub struct MTLResource: NSObject = "NSObject");
+objc_protocol!(pub struct MTLResource: NSObject = "MTLResource");
 objc_methods! { impl MTLResource {
     pub fn label(&self) -> Option<NSString> = "label";
     pub fn set_label(&self, label: Option<&NSString>) = "setLabel:";
@@ -572,11 +617,11 @@ objc_methods! { impl MTLResource {
     pub fn allocated_size(&self) -> usize = "allocatedSize";
 }}
 
-objc_class!(pub struct MTLBuffer: MTLResource = "NSObject");
+objc_protocol!(pub struct MTLBuffer: MTLResource = "MTLBuffer");
 objc_methods! { impl MTLBuffer {
     pub fn length(&self) -> usize = "length";
     /// NULL for private storage; otherwise `length` bytes valid while the buffer is alive.
-    pub(crate) fn contents(&self) -> Ptr = "contents";
+    fn contents(&self) -> Ptr = "contents";
     /// Managed storage only: tells Metal the CPU wrote this range.
     pub fn did_modify_range(&self, range: Range) = "didModifyRange:";
 }}
@@ -634,7 +679,7 @@ impl MTLBuffer {
     }
 }
 
-objc_class!(pub struct MTLTexture: MTLResource = "NSObject");
+objc_protocol!(pub struct MTLTexture: MTLResource = "MTLTexture");
 objc_methods! { impl MTLTexture {
     /// Raw `MTLTextureType`.
     pub fn texture_type(&self) -> usize = "textureType";
@@ -648,9 +693,9 @@ objc_methods! { impl MTLTexture {
     pub fn array_length(&self) -> usize = "arrayLength";
     pub fn usage(&self) -> TextureUsage = "usage";
     pub fn is_framebuffer_only(&self) -> bool = "isFramebufferOnly";
-    pub(crate) fn replace_region_raw(&self, region: Region, level: usize, bytes: Ptr, bytes_per_row: usize)
+    fn replace_region_raw(&self, region: Region, level: usize, bytes: Ptr, bytes_per_row: usize)
         = "replaceRegion:mipmapLevel:withBytes:bytesPerRow:";
-    pub(crate) fn get_bytes_raw(&self, bytes: Ptr, bytes_per_row: usize, region: Region, level: usize)
+    fn get_bytes_raw(&self, bytes: Ptr, bytes_per_row: usize, region: Region, level: usize)
         = "getBytes:bytesPerRow:fromRegion:mipmapLevel:";
 }}
 
@@ -744,7 +789,7 @@ objc_methods! { impl MTLTextureDescriptor {
 
 // ───────────────────────────── shaders ──────────────────────────────────────
 
-objc_class!(pub struct MTLLibrary: NSObject = "NSObject");
+objc_protocol!(pub struct MTLLibrary: NSObject = "MTLLibrary");
 objc_methods! { impl MTLLibrary {
     // pub fn label(&self) -> Option<NSString> = "label";
     pub fn set_label(&self, label: Option<&NSString>) = "setLabel:";
@@ -763,11 +808,13 @@ impl MTLLibrary {
     }
 }
 
-objc_class!(pub struct MTLFunction: NSObject = "NSObject");
+objc_protocol!(pub struct MTLFunction: NSObject = "MTLFunction");
 objc_methods! { impl MTLFunction {
     // pub fn name(&self) -> NSString = "name";
     // pub fn label(&self) -> Option<NSString> = "label";
     pub fn set_label(&self, label: Option<&NSString>) = "setLabel:";
+    /// Raw `MTLFunctionType`; see [`FunctionType::from_raw`].
+    pub fn function_type(&self) -> usize = "functionType";
 }}
 
 objc_class!(pub struct MTLCompileOptions: NSObject = "MTLCompileOptions");
@@ -815,7 +862,7 @@ objc_methods! { impl MTLRenderPipelineColorAttachmentDescriptor {
     pub fn set_write_mask(&self, mask: ColorWriteMask) = "setWriteMask:";
 }}
 
-objc_class!(pub struct MTLRenderPipelineState: NSObject = "NSObject");
+objc_protocol!(pub struct MTLRenderPipelineState: NSObject = "MTLRenderPipelineState");
 objc_methods! { impl MTLRenderPipelineState {
     // pub fn label(&self) -> Option<NSString> = "label";
 }}
@@ -855,7 +902,7 @@ objc_methods! { impl MTLVertexAttributeDescriptor {
     pub fn set_buffer_index(&self, index: usize) = "setBufferIndex:";
 }}
 
-objc_class!(pub struct MTLComputePipelineState: NSObject = "NSObject");
+objc_protocol!(pub struct MTLComputePipelineState: NSObject = "MTLComputePipelineState");
 objc_methods! { impl MTLComputePipelineState {
     // pub fn label(&self) -> Option<NSString> = "label";
     pub fn max_total_threads_per_threadgroup(&self) -> usize = "maxTotalThreadsPerThreadgroup";
@@ -871,7 +918,7 @@ objc_methods! { impl MTLDepthStencilDescriptor {
     // pub fn set_label(&self, label: Option<&NSString>) = "setLabel:";
 }}
 
-objc_class!(pub struct MTLDepthStencilState: NSObject = "NSObject");
+objc_protocol!(pub struct MTLDepthStencilState: NSObject = "MTLDepthStencilState");
 objc_methods! { impl MTLDepthStencilState {
     // pub fn label(&self) -> Option<NSString> = "label";
 }}
@@ -894,7 +941,7 @@ objc_methods! { impl MTLSamplerDescriptor {
     pub fn set_label(&self, label: Option<&NSString>) = "setLabel:";
 }}
 
-objc_class!(pub struct MTLSamplerState: NSObject = "NSObject");
+objc_protocol!(pub struct MTLSamplerState: NSObject = "MTLSamplerState");
 objc_methods! { impl MTLSamplerState {
     // pub fn label(&self) -> Option<NSString> = "label";
 }}
@@ -910,6 +957,7 @@ objc_methods! { impl MTLRenderPassDescriptor {
     pub fn depth_attachment(&self) -> MTLRenderPassDepthAttachmentDescriptor = "depthAttachment";
     pub fn set_depth_attachment(&self, attachment: Option<&MTLRenderPassDepthAttachmentDescriptor>) = "setDepthAttachment:";
     pub fn stencil_attachment(&self) -> MTLRenderPassStencilAttachmentDescriptor = "stencilAttachment";
+    pub fn set_stencil_attachment(&self, attachment: Option<&MTLRenderPassStencilAttachmentDescriptor>) = "setStencilAttachment:";
     pub fn set_render_target_width(&self, width: usize) = "setRenderTargetWidth:";
     pub fn set_render_target_height(&self, height: usize) = "setRenderTargetHeight:";
 }}
@@ -955,15 +1003,17 @@ objc_methods! { impl MTLRenderPassStencilAttachmentDescriptor {
 
 // ───────────────────────────── command submission ───────────────────────────
 
-objc_class!(pub struct MTLCommandQueue: NSObject = "NSObject");
+objc_protocol!(pub struct MTLCommandQueue: NSObject = "MTLCommandQueue");
 objc_methods! { impl MTLCommandQueue {
     // pub fn label(&self) -> Option<NSString> = "label";
     pub fn set_label(&self, label: Option<&NSString>) = "setLabel:";
-    /// +0 (autoreleased) despite making a new object; nil once the queue's in-flight limit (64) is exhausted.
+    /// +0 (autoreleased) despite making a new object. Blocks the calling
+    /// thread while `maxCommandBufferCount` (64) buffers from this queue are
+    /// uncommitted or still executing; nil only if the queue is unusable.
     pub fn command_buffer(&self) -> Option<MTLCommandBuffer> = "commandBuffer";
 }}
 
-objc_class!(pub struct MTLCommandBuffer: NSObject = "NSObject");
+objc_protocol!(pub struct MTLCommandBuffer: NSObject = "MTLCommandBuffer");
 objc_methods! { impl MTLCommandBuffer {
     // pub fn label(&self) -> Option<NSString> = "label";
     pub fn set_label(&self, label: Option<&NSString>) = "setLabel:";
@@ -986,7 +1036,7 @@ objc_methods! { impl MTLCommandBuffer {
     // pub fn gpu_end_time(&self) -> f64 = "GPUEndTime";
 }}
 
-objc_class!(pub struct MTLCommandEncoder: NSObject = "NSObject");
+objc_protocol!(pub struct MTLCommandEncoder: NSObject = "MTLCommandEncoder");
 objc_methods! { impl MTLCommandEncoder {
     // pub fn label(&self) -> Option<NSString> = "label";
     pub fn set_label(&self, label: Option<&NSString>) = "setLabel:";
@@ -997,18 +1047,18 @@ objc_methods! { impl MTLCommandEncoder {
     pub fn pop_debug_group(&self) = "popDebugGroup";
 }}
 
-objc_class!(pub struct MTLRenderCommandEncoder: MTLCommandEncoder = "NSObject");
+objc_protocol!(pub struct MTLRenderCommandEncoder: MTLCommandEncoder = "MTLRenderCommandEncoder");
 objc_methods! { impl MTLRenderCommandEncoder {
     pub fn set_render_pipeline_state(&self, state: &MTLRenderPipelineState) = "setRenderPipelineState:";
     pub fn set_vertex_buffer(&self, buffer: Option<&MTLBuffer>, offset: usize, index: usize) = "setVertexBuffer:offset:atIndex:";
     // pub fn set_vertex_buffer_offset(&self, offset: usize, index: usize) = "setVertexBufferOffset:atIndex:";
     /// Copies `length` (≤ 4096) bytes; see [`MTLRenderCommandEncoder::set_vertex_bytes`].
-    pub(crate) fn set_vertex_bytes_raw(&self, bytes: Ptr, length: usize, index: usize) = "setVertexBytes:length:atIndex:";
+    fn set_vertex_bytes_raw(&self, bytes: Ptr, length: usize, index: usize) = "setVertexBytes:length:atIndex:";
     pub fn set_vertex_texture(&self, texture: Option<&MTLTexture>, index: usize) = "setVertexTexture:atIndex:";
     pub fn set_vertex_sampler_state(&self, sampler: Option<&MTLSamplerState>, index: usize) = "setVertexSamplerState:atIndex:";
     pub fn set_fragment_buffer(&self, buffer: Option<&MTLBuffer>, offset: usize, index: usize) = "setFragmentBuffer:offset:atIndex:";
     // pub fn set_fragment_buffer_offset(&self, offset: usize, index: usize) = "setFragmentBufferOffset:atIndex:";
-    pub(crate) fn set_fragment_bytes_raw(&self, bytes: Ptr, length: usize, index: usize) = "setFragmentBytes:length:atIndex:";
+    fn set_fragment_bytes_raw(&self, bytes: Ptr, length: usize, index: usize) = "setFragmentBytes:length:atIndex:";
     pub fn set_fragment_texture(&self, texture: Option<&MTLTexture>, index: usize) = "setFragmentTexture:atIndex:";
     pub fn set_fragment_sampler_state(&self, sampler: Option<&MTLSamplerState>, index: usize) = "setFragmentSamplerState:atIndex:";
     pub fn set_depth_stencil_state(&self, state: Option<&MTLDepthStencilState>) = "setDepthStencilState:";
@@ -1043,12 +1093,12 @@ impl MTLRenderCommandEncoder {
     }
 }
 
-objc_class!(pub struct MTLComputeCommandEncoder: MTLCommandEncoder = "NSObject");
+objc_protocol!(pub struct MTLComputeCommandEncoder: MTLCommandEncoder = "MTLComputeCommandEncoder");
 objc_methods! { impl MTLComputeCommandEncoder {
     pub fn set_compute_pipeline_state(&self, state: &MTLComputePipelineState) = "setComputePipelineState:";
     pub fn set_buffer(&self, buffer: Option<&MTLBuffer>, offset: usize, index: usize) = "setBuffer:offset:atIndex:";
     // pub fn set_buffer_offset(&self, offset: usize, index: usize) = "setBufferOffset:atIndex:";
-    pub(crate) fn set_bytes_raw(&self, bytes: Ptr, length: usize, index: usize) = "setBytes:length:atIndex:";
+    fn set_bytes_raw(&self, bytes: Ptr, length: usize, index: usize) = "setBytes:length:atIndex:";
     pub fn set_texture(&self, texture: Option<&MTLTexture>, index: usize) = "setTexture:atIndex:";
     pub fn set_sampler_state(&self, sampler: Option<&MTLSamplerState>, index: usize) = "setSamplerState:atIndex:";
     // pub fn set_threadgroup_memory_length(&self, length: usize, index: usize) = "setThreadgroupMemoryLength:atIndex:";
@@ -1065,7 +1115,7 @@ impl MTLComputeCommandEncoder {
     }
 }
 
-objc_class!(pub struct MTLBlitCommandEncoder: MTLCommandEncoder = "NSObject");
+objc_protocol!(pub struct MTLBlitCommandEncoder: MTLCommandEncoder = "MTLBlitCommandEncoder");
 objc_methods! { impl MTLBlitCommandEncoder {
     /// Ranges must lie inside both buffers, else Metal asserts; the safe layer checks.
     pub fn copy_from_buffer(&self, source: &MTLBuffer, source_offset: usize, destination: &MTLBuffer, destination_offset: usize, size: usize)
@@ -1080,7 +1130,44 @@ objc_methods! { impl MTLBlitCommandEncoder {
 
 // ───────────────────────────── on screen ────────────────────────────────────
 
-objc_class!(pub struct CAMetalDrawable: NSObject = "NSObject");
+/// A `CGColorSpaceRef` this crate holds one reference to, like [`super::CGColor`].
+pub(crate) struct CGColorSpace(NonNull<c_void>);
+
+impl Drop for CGColorSpace {
+    fn drop(&mut self) {
+        // SAFETY: we own the reference `from_raw` took.
+        unsafe { (rt().cf.CFRelease)(self.0.as_ptr()) };
+    }
+}
+// SAFETY: `CGColorSpaceRef` return, +0, nullable.
+unsafe impl Ret for Option<CGColorSpace> {
+    type Raw = *const c_void;
+    const ENCODING: &'static str = "^{CGColorSpace=}";
+    type Out = Option<CGColorSpace>;
+    #[inline]
+    unsafe fn from_raw(raw: *const c_void, _: &'static str) -> Option<CGColorSpace> {
+        let space = NonNull::new(raw.cast_mut())?;
+        // SAFETY: a live CF object just returned to us on this thread.
+        unsafe { (rt().cf.CFRetain)(space.as_ptr()) };
+        Some(CGColorSpace(space))
+    }
+}
+// SAFETY: a `CGColorSpaceRef` (kept alive by the borrow for the call) or NULL.
+unsafe impl Arg for Option<&CGColorSpace> {
+    type Raw = *const c_void;
+    const ENCODING: &'static str = "^{CGColorSpace=}";
+    #[inline]
+    fn to_raw(&self) -> *const c_void {
+        self.map_or(core::ptr::null(), |c| c.0.as_ptr())
+    }
+}
+
+objc_methods! { impl NSColorSpace {
+    /// NULL for a space CoreGraphics cannot represent. macOS 10.5+.
+    pub fn cg_color_space(&self) -> Option<CGColorSpace> = "CGColorSpace";
+}}
+
+objc_protocol!(pub struct CAMetalDrawable: NSObject = "CAMetalDrawable");
 objc_methods! { impl CAMetalDrawable {
     pub fn texture(&self) -> MTLTexture = "texture";
     /// Prefer [`MTLCommandBuffer::present_drawable`], which waits until the buffer is scheduled.
@@ -1103,8 +1190,8 @@ objc_methods! { impl MTKView {
     pub fn set_color_pixel_format(&self, format: PixelFormat) = "setColorPixelFormat:";
     /// Raw `MTLPixelFormat`.
     pub fn color_pixel_format(&self) -> usize = "colorPixelFormat";
-    // /// `PixelFormat::Invalid` (the default) means no depth texture.
-    // pub fn set_depth_stencil_pixel_format(&self, format: PixelFormat) = "setDepthStencilPixelFormat:";
+    /// `PixelFormat::Invalid` (the default) means no depth texture.
+    pub fn set_depth_stencil_pixel_format(&self, format: PixelFormat) = "setDepthStencilPixelFormat:";
     // pub fn depth_stencil_pixel_format(&self) -> usize = "depthStencilPixelFormat";
     // pub fn depth_stencil_texture(&self) -> Option<MTLTexture> = "depthStencilTexture";
     // pub fn set_sample_count(&self, count: usize) = "setSampleCount:";
@@ -1112,6 +1199,8 @@ objc_methods! { impl MTKView {
     pub fn set_clear_color(&self, color: ClearColor) = "setClearColor:";
     // pub fn clear_color(&self) -> ClearColor = "clearColor";
     // pub fn set_clear_depth(&self, depth: f64) = "setClearDepth:";
+    /// The `CAMetalLayer`'s: nil (the default) sends pixels to the display unmatched. macOS 10.12+.
+    pub fn set_colorspace(&self, colorspace: Option<&CGColorSpace>) = "setColorspace:";
     pub fn set_preferred_frames_per_second(&self, fps: isize) = "setPreferredFramesPerSecond:";
     // pub fn preferred_frames_per_second(&self) -> isize = "preferredFramesPerSecond";
     /// YES: draws only from `setNeedsDisplay:`; with `paused` also YES nothing draws until `draw`.

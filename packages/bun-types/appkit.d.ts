@@ -12,7 +12,8 @@
  * {@link App.keepAlive `app.keepAlive`} to stay running with no windows).
  *
  * While AppKit runs a tracking loop (an open menu, a window being live-resized)
- * JavaScript timers and I/O callbacks pause until it finishes.
+ * timers and I/O pause and resume when the gesture ends; a long synchronous
+ * callback stalls the UI like it would any other.
  *
  * @example
  * ```ts
@@ -34,15 +35,18 @@
  * window.show();
  * ```
  *
- * On platforms other than macOS importing this module throws
- * `AppKit is only available on macOS`.
+ * On platforms other than macOS `bun:appkit` is not a builtin module (importing
+ * it fails to resolve) and `Bun.AppKit` is `undefined`.
  *
  * @module bun:appkit
  */
 declare module "bun:appkit" {
   /**
    * A dynamic system colour name. These follow the user's appearance
-   * (light/dark mode, accent colour, increased contrast).
+   * (light/dark mode, accent colour, increased contrast) wherever AppKit
+   * draws them (`Text.color`, control tints). Layer colours (a view's
+   * `background` and `border`) are resolved once, when set, and keep that
+   * value across a later appearance change.
    */
   export type SystemColor =
     | "label"
@@ -205,8 +209,8 @@ declare module "bun:appkit" {
    * How a stack distributes children along its own axis
    * (`NSStackViewDistribution`).
    *
-   * - `"fill"`: children keep their natural size; {@link View.grow `grow`}
-   *   decides which child takes leftover space.
+   * - `"fill"`: children keep their natural size and those with
+   *   {@link View.grow `grow`} share the leftover length in proportion to it.
    * - `"fillEqually"`: every child gets the same length.
    * - `"fillProportionally"`: lengths proportional to natural sizes.
    * - `"equalSpacing"`: natural sizes, equal gaps.
@@ -228,8 +232,9 @@ declare module "bun:appkit" {
    * The look and role of a {@link Button}.
    *
    * - `"default"`: a rounded push button.
-   * - `"primary"`: the window's default button; Return activates it and it is
-   *   drawn in the accent colour.
+   * - `"primary"`: the window's default button, drawn in the accent colour;
+   *   Return activates it, including from a text field that has no
+   *   `onSubmit` handler.
    * - `"destructive"`: marks a destructive action.
    * - `"link"`: borderless, like a hyperlink.
    * - `"toolbar"`: a square toolbar-style bezel.
@@ -266,6 +271,50 @@ declare module "bun:appkit" {
   export type ActivationPolicy = "regular" | "accessory" | "background";
 
   /**
+   * The standard AppKit responder-chain actions a {@link MenuItem} may send,
+   * exactly as the built-in menus do. AppKit routes each to the focused view,
+   * its window or the application, and enables the item only while something
+   * can respond.
+   */
+  export type MenuAction =
+    | "orderFrontStandardAboutPanel:"
+    | "hide:"
+    | "hideOtherApplications:"
+    | "unhideAllApplications:"
+    | "terminate:"
+    | "miniaturizeAll:"
+    | "arrangeInFront:"
+    | "showHelp:"
+    | "orderFrontCharacterPalette:"
+    | "orderFrontColorPanel:"
+    | "orderFrontFontPanel:"
+    | "runPageLayout:"
+    | "performClose:"
+    | "performMiniaturize:"
+    | "performZoom:"
+    | "toggleFullScreen:"
+    | "toggleToolbarShown:"
+    | "runToolbarCustomizationPalette:"
+    | "print:"
+    | "undo:"
+    | "redo:"
+    | "cut:"
+    | "copy:"
+    | "paste:"
+    | "pasteAsPlainText:"
+    | "delete:"
+    | "selectAll:"
+    | "centerSelectionInVisibleArea:"
+    | "checkSpelling:"
+    | "showGuessPanel:"
+    | "toggleContinuousSpellChecking:"
+    | "startSpeaking:"
+    | "stopSpeaking:";
+
+  /** A line between menu items. */
+  export type MenuSeparator = "separator" | "-";
+
+  /**
    * One item in a menu.
    *
    * @example
@@ -283,14 +332,12 @@ declare module "bun:appkit" {
      */
     onClick?: () => void;
     /**
-     * Instead of a callback, the name of a standard AppKit responder-chain
-     * action to send to the focused view or window, exactly as the built-in
-     * menus do. Examples: `"copy:"`, `"paste:"`, `"selectAll:"`, `"undo:"`,
-     * `"performClose:"`, `"performMiniaturize:"`, `"toggleFullScreen:"`,
-     * `"hide:"`, `"terminate:"`. AppKit enables and disables such items
+     * Instead of a callback, one of the standard AppKit responder-chain
+     * actions listed in {@link MenuAction}, sent to the focused view or window
+     * exactly as the built-in menus do. AppKit enables and disables such items
      * automatically depending on what has focus.
      */
-    action?: string;
+    action?: MenuAction;
     /**
      * Key equivalent, a single character such as `"s"` or `","`. Command is
      * implied unless {@link MenuItem.command `command`} is `false`; an
@@ -314,8 +361,10 @@ declare module "bun:appkit" {
      * @default true
      */
     enabled?: boolean;
+    /** Draw a check mark next to the item. @default false */
+    checked?: boolean;
     /** Nested items shown as a submenu of this item. */
-    submenu?: ReadonlyArray<MenuItem | "separator">;
+    submenu?: ReadonlyArray<MenuItem | MenuSeparator>;
   }
 
   /**
@@ -325,7 +374,7 @@ declare module "bun:appkit" {
    */
   export interface MenuSpec {
     title: string;
-    items: ReadonlyArray<MenuItem | "separator">;
+    items: ReadonlyArray<MenuItem | MenuSeparator>;
   }
 
   /** Passed to `"beforequit"` listeners. */
@@ -336,10 +385,17 @@ declare module "bun:appkit" {
 
   export interface AppEventMap {
     /**
-     * The user asked to quit (Cmd-Q, the Dock menu, or {@link App.quit}).
-     * Call `event.preventDefault()` to cancel; otherwise every window is
-     * closed and the process exits once nothing else keeps it alive, running
-     * the usual `beforeExit`/`exit` process events.
+     * The user asked to quit (Cmd-Q, the Dock menu, a logout, or
+     * {@link App.quit}). Call `event.preventDefault()` or return `false` to
+     * cancel; a listener that throws is reported like an uncaught error and
+     * neither cancels nor hides another listener's veto. If no listener
+     * cancels, every open window's {@link Window.shouldClose} is asked next
+     * (hidden and minimized ones too), oldest first, and the first `false`
+     * stops the quit there; otherwise every window closes and the process
+     * exits as `process.exit()` would (`process.on("exit")` runs, the code
+     * is `process.exitCode`): at the next turn of the event loop for
+     * {@link App.quit}, before AppKit's terminate returns for the others.
+     * Once a quit is accepted, later requests do not fire this again.
      */
     beforequit: [event: QuitEvent];
     /**
@@ -354,32 +410,38 @@ declare module "bun:appkit" {
 
   /**
    * The application object. AppKit starts lazily the first time a
-   * {@link Window} is created or {@link App.activate} is called; set
-   * {@link App.activationPolicy} and {@link App.name} before that if you
-   * want to change them.
+   * {@link Window} is created, {@link App.keepAlive} is set, or
+   * {@link App.activate} / {@link App.quit} is called; set
+   * {@link App.activationPolicy} before that if you want to change it.
+   * Reading properties never starts it.
    */
   export interface App {
     /**
-     * The name used in the application menu ("About …", "Quit …"). Defaults to
-     * the process name.
+     * The name used in the standard menus ("About …", "Quit …"). Defaults to
+     * the executable's name; assigning `null` restores that.
      */
-    name: string;
+    get name(): string;
+    set name(value: string | null);
     /**
      * @default "regular"
      */
     activationPolicy: ActivationPolicy;
     /**
      * Keep the process alive even when no window is open (for menu-bar style
-     * utilities, or apps that reopen a window from the Dock).
+     * utilities, or apps that reopen a window from the Dock). Setting it to
+     * `true` starts the application so that it can receive events. A quit
+     * that nothing vetoes ends the process regardless.
      * @default false
      */
     keepAlive: boolean;
-    /** Text drawn on the Dock tile, or `null` for none. */
-    badge: string | null;
+    /** Text drawn on the Dock tile, or `null` for none. A number is converted. */
+    get badge(): string | null;
+    set badge(value: string | number | null);
     /**
      * The menu bar. `null` installs the standard application, Edit, View and
      * Window menus so text editing shortcuts, full screen and Cmd-Q work out
-     * of the box; an array replaces the whole menu bar.
+     * of the box; an array replaces the whole menu bar, so include the
+     * standard items you want to keep.
      *
      * @example
      * ```ts
@@ -394,23 +456,26 @@ declare module "bun:appkit" {
     menu: MenuSpec[] | null;
     /** Every window that has been created and not yet closed. */
     readonly windows: readonly Window[];
-    /** Whether the app's effective appearance is dark. */
+    /** Whether the app's effective appearance is dark. `false` until the application has started. */
     readonly isDark: boolean;
     /**
      * `false` when no screen is attached (over `ssh`, on CI agents, inside a
-     * sandbox). Windows still work there — layout, events and `snapshot()` —
-     * but nothing is ever shown. Starts the application if it has not been.
+     * sandbox). Windows still work there (layout, events and `snapshot()`)
+     * but nothing is ever shown. Does not start the application.
      */
     readonly hasDisplay: boolean;
-    /** Number of native views currently alive. Intended for leak tests. */
-    readonly liveViews: number;
+    /** Whether the application has started on this thread. */
+    readonly isRunning: boolean;
     /** Start AppKit if needed and bring the app to the foreground. */
     activate(): void;
     /** Hide every window of the app (like Cmd-H). */
     hide(): void;
     /**
-     * Ask to quit: emits `"beforequit"`, then closes every window. The process
-     * exits through Bun's normal shutdown once nothing keeps it alive.
+     * Ask to quit, exactly as Cmd-Q does: see
+     * {@link AppEventMap.beforequit `"beforequit"`}. Unless a listener or a
+     * window's `shouldClose` cancels it, every window closes before this
+     * returns and the process exits at the next turn of the event loop.
+     * Before the application has started this is `process.exit()`.
      */
     quit(): void;
     on<K extends keyof AppEventMap>(event: K, listener: (...args: AppEventMap[K]) => void): this;
@@ -446,11 +511,24 @@ declare module "bun:appkit" {
     x?: number;
     /** Screen y of the window's bottom-left corner (origin at the bottom of the screen). */
     y?: number;
-    minWidth?: number;
-    minHeight?: number;
-    maxWidth?: number;
-    maxHeight?: number;
-    /** @default true */
+    /**
+     * Size limits for the content. They bound user resizing, content-driven
+     * growth, the initial size and later `width`/`height` assignments alike;
+     * where a minimum exceeds a maximum the minimum wins.
+     * @default null
+     */
+    minWidth?: number | null;
+    /** @default null */
+    minHeight?: number | null;
+    /** @default null */
+    maxWidth?: number | null;
+    /** @default null */
+    maxHeight?: number | null;
+    /**
+     * Whether the user can resize the window. Content that needs more room
+     * and `width`/`height` assignments still can.
+     * @default true
+     */
     resizable?: boolean;
     /** @default true */
     closable?: boolean;
@@ -467,11 +545,15 @@ declare module "bun:appkit" {
     titleHidden?: boolean;
     /** Window background colour. @default "windowBackground" */
     background?: Color;
+    /** Opacity of the whole window from 0 to 1. @default 1 */
+    alpha?: number;
     /**
      * A name under which AppKit saves and restores the window's frame between
-     * launches (`setFrameAutosaveName:`).
+     * launches (`setFrameAutosaveName:`). Only one open window may use a name
+     * at a time.
+     * @default null
      */
-    restoreName?: string;
+    restoreName?: string | null;
     /** The root view. Same as assigning {@link Window.content} afterwards. */
     content?: View | null;
     /** Show the window as soon as it is created. @default true */
@@ -498,7 +580,9 @@ declare module "bun:appkit" {
    * The root {@link Window.content view} is pinned to the window's edges. A
    * `VStack` whose children do not {@link View.grow grow} sits at the top at
    * its natural height; a `ScrollView`, `SplitView` or growing stack fills
-   * the window.
+   * the window. Content that needs more width or height than the window has
+   * grows the window (up to `maxWidth`/`maxHeight`); content that fits
+   * leaves its size alone.
    *
    * @example
    * ```ts
@@ -518,16 +602,29 @@ declare module "bun:appkit" {
   export class Window {
     constructor(options?: WindowOptions);
     title: string;
-    /** Content width in points. */
+    /** Content width in points. Assignments are clamped into the size limits. */
     width: number;
-    /** Content height in points. */
+    /** Content height in points. Assignments are clamped into the size limits. */
     height: number;
     /** Screen x of the bottom-left corner. */
     x: number;
     /** Screen y of the bottom-left corner. */
     y: number;
-    minWidth: number;
-    minHeight: number;
+    /** See {@link WindowOptions.minWidth}. Lowering a maximum under the current size shrinks the window to it. */
+    minWidth: number | null;
+    minHeight: number | null;
+    maxWidth: number | null;
+    maxHeight: number | null;
+    background: Color;
+    alpha: number;
+    /** The options fixed at creation, read back. Assigning one throws. */
+    readonly resizable: boolean;
+    readonly closable: boolean;
+    readonly minimizable: boolean;
+    readonly fullSizeContent: boolean;
+    readonly titlebarTransparent: boolean;
+    readonly titleHidden: boolean;
+    readonly restoreName: string | null;
     /** The root view, or `null` for an empty window. */
     content: View | null;
     /** Whether the window is on screen. Assigning calls {@link Window.show} or {@link Window.hide}. */
@@ -536,7 +633,7 @@ declare module "bun:appkit" {
     readonly closed: boolean;
     /** Whether this is the key window (the one receiving keyboard input). */
     readonly key: boolean;
-    /** Put the window on screen and make it key. Activates the app on first show. */
+    /** Put the window on screen, make it key and bring the app to the front. */
     show(): void;
     /** Take the window off screen without closing it. */
     hide(): void;
@@ -545,31 +642,42 @@ declare module "bun:appkit" {
     /** Make the window key and bring it to the front. */
     focus(): void;
     /**
-     * Close the window. {@link Window.onClose} fires; when this was the last
-     * open window and {@link App.keepAlive} is `false` the process can exit.
-     * Calling `close()` again does nothing.
+     * Close the window without asking {@link Window.shouldClose}.
+     * {@link Window.onClose} fires; when this was the last open window and
+     * {@link App.keepAlive} is `false` the process can exit. Calling
+     * `close()` again does nothing.
      */
     close(): void;
     /**
-     * PNG bytes of the window's current contents, or `null` when it has no
-     * backing store yet (never shown) or there is no window server.
+     * PNG bytes of the window's content view (no title bar) as currently
+     * drawn, or `null` when it has no backing store yet (never shown) or
+     * there is no window server.
      */
     snapshot(): Uint8Array | null;
-    /** Called after the window has closed, whether by the user or by {@link Window.close}. */
-    onClose: (() => void) | undefined;
+    /** Called after the window has closed, whether by the user, a quit, or {@link Window.close}. */
+    onClose: (() => void) | null | undefined;
     /**
-     * Called when the user clicks the close button. Return `false` to keep the
-     * window open. Not consulted by {@link Window.close}.
+     * Called when the user clicks the close button, and for every visible
+     * closable window when the app is asked to quit. Return `false` to keep
+     * the window open (and, during a quit, cancel the quit). Not consulted
+     * by {@link Window.close}.
      */
-    shouldClose: (() => boolean) | undefined;
-    /** Called with the new content size after the window is resized. */
-    onResize: ((size: Size) => void) | undefined;
-    /** Called with the new bottom-left screen position after the window moves. */
-    onMove: ((position: Point) => void) | undefined;
+    shouldClose: (() => boolean) | null | undefined;
+    /**
+     * Called with the new content size after the user resizes the window, it
+     * zooms or enters full screen, or its content makes it grow. Not called
+     * for the program's own `width`/`height`/size-limit assignments.
+     */
+    onResize: ((size: Size) => void) | null | undefined;
+    /**
+     * Called with the new bottom-left screen position after the user moves
+     * the window. Not called for `x`/`y` assignments or {@link Window.center}.
+     */
+    onMove: ((position: Point) => void) | null | undefined;
     /** Called when the window becomes the key window. */
-    onFocus: (() => void) | undefined;
+    onFocus: (() => void) | null | undefined;
     /** Called when the window stops being the key window. */
-    onBlur: (() => void) | undefined;
+    onBlur: (() => void) | null | undefined;
   }
 
   /**
@@ -604,7 +712,12 @@ declare module "bun:appkit" {
     width?: number | null;
     /** Fixed height, or `null` for natural height. @default null */
     height?: number | null;
-    /** @default null */
+    /**
+     * Lower and upper bounds on the size. Where a minimum exceeds a maximum
+     * the minimum wins, and `width`/`height` are clamped between them,
+     * whichever order they are assigned in.
+     * @default null
+     */
     minWidth?: number | null;
     /** @default null */
     maxWidth?: number | null;
@@ -613,13 +726,21 @@ declare module "bun:appkit" {
     /** @default null */
     maxHeight?: number | null;
     /**
-     * How eagerly the view takes leftover space along its parent stack's
-     * axis. `0` keeps the natural size; among siblings, larger values stretch
-     * first. In the window's root, a growing view fills the window.
+     * The view's share of leftover space along its parent's axis. `0` keeps
+     * the natural size. In a `VStack`, `HStack` or `Group` with the default
+     * `"fill"` distribution, siblings with `grow > 0` split the leftover
+     * length in proportion to their values (this works for views with no
+     * natural size, such as nested stacks, too). In a `SplitView` the pane
+     * with the larger `grow` is the one that absorbs a window resize or
+     * divider drag. As a window's root, a growing view fills the window.
      * @default 0
      */
     grow?: number;
-    /** Fill colour behind the view's content. @default null */
+    /**
+     * Fill colour behind the view's content. A system colour name is
+     * resolved for the view's appearance at the time it is set.
+     * @default null
+     */
     background?: Color | null;
     /** Rounds the view's corners (and clips the background to them). @default 0 */
     cornerRadius?: number;
@@ -630,6 +751,11 @@ declare module "bun:appkit" {
   /**
    * Base class of every view. Not constructible directly; use one of the
    * concrete views below.
+   *
+   * Every settable prop reads back the last value assigned, or its
+   * documented default while unset; assigning `null` returns a prop to its
+   * default. Props described as "as the user left it" read the live control
+   * state instead.
    *
    * @category AppKit
    */
@@ -653,8 +779,16 @@ declare module "bun:appkit" {
     /** The window this view is shown in, or `null` when not mounted. */
     readonly window: Window | null;
     /**
-     * The view's frame in its parent's coordinates after the last layout
-     * pass. All zeros before the view has been laid out.
+     * `true` once the native view has been freed ahead of garbage collection
+     * (the React renderer does this when it unmounts a host element). Props
+     * still read their last value; setters, `click()`, `snapshot()` and
+     * adding it to a container throw `ERR_INVALID_STATE`.
+     */
+    readonly released: boolean;
+    /**
+     * The view's frame in its parent's coordinates. Reading it lays the
+     * window out first, so it reflects every change made so far; all zeros
+     * while the view is not in a window.
      */
     readonly frame: Rect;
     /** Remove the view from its parent (no-op when it has none). */
@@ -673,11 +807,20 @@ declare module "bun:appkit" {
     readonly children: readonly View[];
     /** Add views at the end. A view can only be in one container at a time. */
     append(...views: View[]): void;
-    /** Insert `view` before `ref`, or at the end when `ref` is `null`. */
+    /**
+     * Insert `view` before `ref`, or at the end when `ref` is `null`. A view
+     * that is already a child of this container is moved in place and keeps
+     * its focus and editing state. Throws, changing nothing, if `ref` is not
+     * a child or `view` belongs to another container.
+     */
     insertBefore(view: View, ref: View | null): void;
     /** Remove a direct child. */
     removeChild(view: View): void;
-    /** Remove every child, then append `views`. */
+    /**
+     * Make `views` the children, in that order: views already here are moved,
+     * the rest are removed or added. Throws, changing nothing, if a view is
+     * listed twice or belongs to another container.
+     */
     replaceChildren(...views: View[]): void;
   }
 
@@ -898,7 +1041,7 @@ declare module "bun:appkit" {
     keyEquivalent: string | null;
     font: Font | null;
     tint: Color | null;
-    onClick: (() => void) | undefined;
+    onClick: (() => void) | null | undefined;
     /** Act as if the user clicked the button (highlights, then fires `onClick`). */
     click(): void;
   }
@@ -936,7 +1079,7 @@ declare module "bun:appkit" {
     checked: boolean;
     enabled: boolean;
     font: Font | null;
-    onChange: ((checked: boolean) => void) | undefined;
+    onChange: ((checked: boolean) => void) | null | undefined;
     /** Toggle as if clicked. */
     click(): void;
   }
@@ -947,8 +1090,11 @@ declare module "bun:appkit" {
   }
 
   /**
-   * A radio button with a title. Grouping is up to you: clear the others in
-   * `onChange`.
+   * A radio button with a title. Radios that are direct children of the same
+   * container act as one group: turning one on (by click or by assigning
+   * `checked`) turns the others in that container off, and only the one that
+   * was clicked fires `onChange`. Radios in different containers are
+   * independent.
    *
    * @category AppKit
    */
@@ -958,7 +1104,7 @@ declare module "bun:appkit" {
     checked: boolean;
     enabled: boolean;
     font: Font | null;
-    onChange: ((checked: boolean) => void) | undefined;
+    onChange: ((checked: boolean) => void) | null | undefined;
     click(): void;
   }
 
@@ -977,7 +1123,7 @@ declare module "bun:appkit" {
   export class Switch extends View {
     constructor(props?: SwitchProps);
     checked: boolean;
-    onChange: ((checked: boolean) => void) | undefined;
+    onChange: ((checked: boolean) => void) | null | undefined;
     click(): void;
   }
 
@@ -1002,14 +1148,25 @@ declare module "bun:appkit" {
     continuous?: boolean;
     /**
      * Called with the field's text when the user changes it. Assigning
-     * {@link TextField.value} from code does not call it.
+     * {@link TextField.value} from code does not call it. With
+     * `continuous: false` it is called once when editing ends, whatever ends
+     * it.
      */
     onChange?: (value: string) => void;
-    /** Called with the field's text when the user presses Return. */
+    /**
+     * Called with the field's text when the user presses Return. A field
+     * without an `onSubmit` handler lets Return press the window's
+     * `kind: "primary"` button instead, as in a native dialog.
+     */
     onSubmit?: (value: string) => void;
     /** Called when the field starts editing (gains keyboard focus and the user types). */
     onFocus?: () => void;
-    /** Called when editing ends (focus leaves the field or Return is pressed). */
+    /**
+     * Called when editing ends: focus leaves the field, Return is pressed, or
+     * the program ends it (hiding or removing the field, replacing the
+     * window's content, closing the window). Delivered before that call
+     * returns.
+     */
     onBlur?: () => void;
   }
 
@@ -1041,10 +1198,10 @@ declare module "bun:appkit" {
     font: Font | null;
     textAlign: TextAlign;
     continuous: boolean;
-    onChange: ((value: string) => void) | undefined;
-    onSubmit: ((value: string) => void) | undefined;
-    onFocus: (() => void) | undefined;
-    onBlur: (() => void) | undefined;
+    onChange: ((value: string) => void) | null | undefined;
+    onSubmit: ((value: string) => void) | null | undefined;
+    onFocus: (() => void) | null | undefined;
+    onBlur: (() => void) | null | undefined;
   }
 
   export interface SecureFieldProps extends TextFieldProps {}
@@ -1103,7 +1260,7 @@ declare module "bun:appkit" {
     editable: boolean;
     font: Font | null;
     color: Color | null;
-    onChange: ((value: string) => void) | undefined;
+    onChange: ((value: string) => void) | null | undefined;
   }
 
   export interface SliderProps extends ViewProps {
@@ -1146,13 +1303,13 @@ declare module "bun:appkit" {
     max: number;
     step: number;
     continuous: boolean;
-    onChange: ((value: number) => void) | undefined;
+    onChange: ((value: number) => void) | null | undefined;
   }
 
   export interface PickerProps extends ViewProps {
     /** The choices, in order. @default [] */
     items?: readonly string[];
-    /** Index of the selected item, `-1` for none. @default 0 */
+    /** Index of the selected item, `-1` for none. @default 0 once there are items, -1 while `items` is empty */
     selectedIndex?: number;
     /** Called with the index the user picked. */
     onChange?: (index: number) => void;
@@ -1173,13 +1330,13 @@ declare module "bun:appkit" {
     items: readonly string[];
     /** The selected index as the user left it, `-1` for none. */
     selectedIndex: number;
-    onChange: ((index: number) => void) | undefined;
+    onChange: ((index: number) => void) | null | undefined;
   }
 
   export interface SegmentedProps extends ViewProps {
     /** One label per segment. @default [] */
     items?: readonly string[];
-    /** Index of the selected segment, `-1` for none. @default 0 */
+    /** Index of the selected segment, `-1` for none. @default 0 once there are items, -1 while `items` is empty */
     selectedIndex?: number;
     /** Called with the index of the segment the user clicked. */
     onChange?: (index: number) => void;
@@ -1194,7 +1351,7 @@ declare module "bun:appkit" {
     constructor(props?: SegmentedProps);
     items: readonly string[];
     selectedIndex: number;
-    onChange: ((index: number) => void) | undefined;
+    onChange: ((index: number) => void) | null | undefined;
   }
 
   export interface ProgressProps extends ViewProps {
@@ -1279,10 +1436,13 @@ declare module "bun:appkit" {
 
   export interface DividerProps extends ViewProps {
     /**
-     * `true` for a vertical line (for use in an `HStack`).
-     * @default false
+     * `true` for a vertical line, `false` for a horizontal one. `null` runs
+     * across the parent's axis: vertical in an `HStack` or side-by-side
+     * `SplitView`, horizontal in a `VStack`, `Group` or on its own, following
+     * the divider when it moves.
+     * @default null
      */
-    vertical?: boolean;
+    vertical?: boolean | null;
   }
 
   /**
@@ -1292,7 +1452,7 @@ declare module "bun:appkit" {
    */
   export class Divider extends View {
     constructor(props?: DividerProps);
-    vertical: boolean;
+    vertical: boolean | null;
   }
 
   export interface SpacerProps extends ViewProps {
@@ -1302,7 +1462,10 @@ declare module "bun:appkit" {
 
   /**
    * Empty, stretchable space inside a stack: pushes the views after it to
-   * the far edge.
+   * the far edge. Spacers share leftover space like views with `grow: 1`
+   * (a larger `grow` still applies), so one on each side of a view centres
+   * it and two spacers split the space equally. In a `SplitView`,
+   * `minLength` holds along the split's axis.
    *
    * @example
    * ```ts
@@ -1331,7 +1494,8 @@ declare module "bun:appkit" {
     /** @default [] */
     columns?: ReadonlyArray<TableColumn | string>;
     /**
-     * Cell text, one inner array per row in column order.
+     * Cell text, one inner array per row in column order. Cells are read
+     * when they are displayed, so a large array is cheap to assign.
      * @default []
      */
     rows?: ReadonlyArray<ReadonlyArray<string>>;
@@ -1339,12 +1503,12 @@ declare module "bun:appkit" {
     selectedIndexes?: readonly number[];
     /** Allow selecting more than one row. @default false */
     multiple?: boolean;
-    /** @default true */
-    headerVisible?: boolean;
+    /** Show the column header row. `null` shows it once `columns` are given and hides it for the implicit single column. @default null */
+    headerVisible?: boolean | null;
     /** Alternate row background colours. @default false */
     alternatingRows?: boolean;
-    /** Row height in points. @default the system default (about 24 on current macOS) */
-    rowHeight?: number;
+    /** Row height in points; `null` for the system default (about 24 on current macOS). @default null */
+    rowHeight?: number | null;
     /** Called with the selected row indexes whenever the user changes the selection. */
     onSelect?: (indexes: number[]) => void;
     /** Called with the row index when the user double-clicks a row. */
@@ -1375,11 +1539,11 @@ declare module "bun:appkit" {
     /** The selection as the user left it. */
     selectedIndexes: readonly number[];
     multiple: boolean;
-    headerVisible: boolean;
+    headerVisible: boolean | null;
     alternatingRows: boolean;
-    rowHeight: number;
-    onSelect: ((indexes: number[]) => void) | undefined;
-    onActivate: ((row: number) => void) | undefined;
+    rowHeight: number | null;
+    onSelect: ((indexes: number[]) => void) | null | undefined;
+    onActivate: ((row: number) => void) | null | undefined;
   }
 
   // ---------------------------------------------------------------------
@@ -1460,12 +1624,13 @@ declare module "bun:appkit" {
   /**
    * Where a buffer or texture lives (`MTLStorageMode`).
    *
-   * - `"shared"`: one allocation visible to CPU and GPU. The default, and the
-   *   only mode whose contents JavaScript can read and write directly.
-   * - `"private"`: GPU-only memory; fill it with a blit from a shared buffer.
-   * - `"managed"`: separate CPU/GPU copies kept in sync (Intel Macs).
+   * - `"shared"`: memory JavaScript can read and write directly. The default.
+   *   (On Intel and AMD GPUs a shared texture is backed by Metal's managed
+   *   mode; reads and writes behave the same.)
+   * - `"private"`: GPU-only memory; fill it with a blit from a shared buffer
+   *   or by rendering into it.
    */
-  export type StorageMode = "shared" | "private" | "managed";
+  export type StorageMode = "shared" | "private";
 
   /**
    * How a {@link Gpu.texture texture} may be used (`MTLTextureUsage`).
@@ -1529,8 +1694,11 @@ declare module "bun:appkit" {
   }
 
   /**
-   * Thrown by {@link GpuFrame.commitAndWait} when the GPU reported an error
-   * executing the command buffer (a shader fault, a timeout).
+   * The GPU failed to run a command buffer (a shader fault, a timeout), or
+   * Metal could not create a resource. Thrown by {@link GpuFrame.commitAndWait};
+   * returned by {@link GpuFrame.error} for a frame submitted with
+   * {@link GpuFrame.commit}; and, for frames a {@link MetalView} committed,
+   * reported as an uncaught error before the view's next `onFrame`.
    */
   export class GpuExecutionError extends Error {
     readonly name: "GpuExecutionError";
@@ -1548,7 +1716,13 @@ declare module "bun:appkit" {
    *
    * A buffer referenced by an encoded {@link GpuFrame} is kept alive by Metal
    * until that work completes, so letting the JavaScript object be collected
-   * mid-frame is safe.
+   * (or calling {@link GpuBuffer.destroy}) mid-frame is safe.
+   *
+   * {@link GpuBuffer.write} and {@link GpuBuffer.read} never overlap the GPU:
+   * if a committed frame that used the buffer is still running they block
+   * until it finishes ({@link GpuBuffer.inFlight} says whether they would).
+   * For a few KB of per-frame data prefer {@link GpuFrame.vertexBytes} /
+   * {@link GpuFrame.bytes}, or rotate between two or three buffers.
    *
    * @category AppKit
    */
@@ -1556,20 +1730,32 @@ declare module "bun:appkit" {
     private constructor();
     readonly byteLength: number;
     readonly storage: StorageMode;
+    /** Whether a committed frame that used the buffer is still running on the GPU. */
+    readonly inFlight: boolean;
+    /** Whether {@link GpuBuffer.destroy} has been called. */
+    readonly destroyed: boolean;
     /** Debug label shown in Xcode's GPU tools; `""` when unset. */
     label: string;
     /**
-     * Copy `data` into the buffer at `offset` bytes.
+     * Copy `data` into the buffer at `offset` bytes, first waiting for any
+     * committed frame that used the buffer to finish.
      * @throws RangeError if it does not fit, TypeError for a `"private"` buffer.
      */
     write(data: BufferSource, offset?: number): void;
     /**
-     * Copy bytes out of the buffer. Reads what the GPU wrote once the frame
-     * that wrote it has completed ({@link GpuFrame.commitAndWait}).
+     * Copy bytes out of the buffer, first waiting for any committed frame
+     * that used the buffer to finish, so GPU writes from those frames are
+     * visible. Work that was encoded but not committed is not waited for.
      * @param offset @default 0
      * @param length @default byteLength - offset
      */
     read(offset?: number, length?: number): Uint8Array;
+    /**
+     * Release the GPU memory now rather than when the object is collected.
+     * Frames already encoded keep it alive until they finish; any later use
+     * of this object throws `TypeError`.
+     */
+    destroy(): void;
   }
 
   export interface GpuTextureOptions {
@@ -1581,16 +1767,22 @@ declare module "bun:appkit" {
     format?: PixelFormat;
     /** @default ["render", "read"] */
     usage?: readonly TextureUsage[];
-    /** @default "shared" (readable from JavaScript) */
+    /** @default "shared" (readable from JavaScript); depth formats default to `"private"` */
     storage?: StorageMode;
-    /** Allocate a full mipmap chain (fill it with {@link GpuFrame.generateMipmaps}). @default false */
+    /**
+     * Allocate a full mipmap chain (fill it with {@link GpuFrame.generateMipmaps}).
+     * Only filterable colour formats (not `"r32uint"` or depth formats) can have their mipmaps generated.
+     * @default false
+     */
     mipmapped?: boolean;
     label?: string;
   }
 
   /**
    * A 2D texture (`MTLTexture`): a render target, something to sample, or
-   * both. Create one with {@link Gpu.texture}.
+   * both. Create one with {@link Gpu.texture}. As with {@link GpuBuffer},
+   * {@link GpuTexture.replace} and {@link GpuTexture.readPixels} wait for any
+   * committed frame that used the texture.
    *
    * @category AppKit
    */
@@ -1599,20 +1791,28 @@ declare module "bun:appkit" {
     readonly width: number;
     readonly height: number;
     readonly format: PixelFormat;
+    /** Whether a committed frame that used the texture is still running on the GPU. */
+    readonly inFlight: boolean;
+    /** Whether {@link GpuTexture.destroy} has been called. */
+    readonly destroyed: boolean;
     label: string;
     /**
      * Upload pixel data for the whole texture (mip level 0).
-     * @param bytesPerRow @default width × bytes per pixel
+     * @param bytesPerRow distance between rows in `data`: at least one packed
+     * row and a whole number of pixels. @default width × bytes per pixel
+     * @throws TypeError for a `"private"` texture.
      */
     replace(data: BufferSource, bytesPerRow?: number): void;
     /**
      * Copy the texture's pixels back to JavaScript as tightly packed rows
      * (`width * height * bytesPerPixel` bytes, in the texture's own format, so
-     * a `"bgra8unorm"` texture yields B, G, R, A bytes). GPU writes are visible
-     * once the frame that made them has completed.
+     * a `"bgra8unorm"` texture yields B, G, R, A bytes), after any committed
+     * frame that used the texture has finished.
      * @throws TypeError for a `"private"` texture.
      */
     readPixels(): Uint8Array;
+    /** Release the GPU memory now; see {@link GpuBuffer.destroy}. */
+    destroy(): void;
   }
 
   /**
@@ -1624,6 +1824,8 @@ declare module "bun:appkit" {
   export class GpuFunction {
     private constructor();
     readonly name: string;
+    /** Which stage the function was written for; `null` for kinds this API does not use. */
+    readonly type: "vertex" | "fragment" | "kernel" | null;
   }
 
   /**
@@ -1644,26 +1846,31 @@ declare module "bun:appkit" {
     function(name: string): GpuFunction;
   }
 
-  /** One attribute the vertex function reads from a vertex buffer via `[[stage_in]]`. */
+  /** One `[[attribute(index)]]` input the vertex function reads via `[[stage_in]]`. */
   export interface VertexAttribute {
     format: VertexFormat;
-    /** Byte offset of the attribute inside one vertex. */
-    offset: number;
+    /** Byte offset of the attribute inside one vertex (or instance). @default 0 */
+    offset?: number;
     /**
-     * Which vertex buffer (the `index` given to {@link GpuFrame.vertexBuffer}) it comes from.
-     * @default 0
+     * The `n` of `[[attribute(n)]]`. Each index may be described once.
+     * @default one more than the previous attribute's, counting across buffers from 0
      */
-    buffer?: number;
+    index?: number;
   }
 
   /**
-   * How vertices are laid out in a vertex buffer, for pipelines whose vertex
-   * function takes a `[[stage_in]]` argument. Attribute `i` in `attributes`
-   * is `[[attribute(i)]]` in the shader. Pipelines that index buffers by
+   * How one vertex buffer is laid out, for pipelines whose vertex function
+   * takes a `[[stage_in]]` argument. Pipelines that index buffers by
    * `[[vertex_id]]` themselves do not need one.
+   *
+   * @example
+   * ```ts
+   * // position: float2 at [[attribute(0)]], color: uchar4norm at [[attribute(1)]], 12 bytes per vertex
+   * const layout: VertexBufferLayout = { stride: 12, attributes: [{ format: "float2" }, { format: "uchar4norm", offset: 8 }] };
+   * ```
    */
-  export interface VertexLayout {
-    /** Bytes from one vertex to the next. */
+  export interface VertexBufferLayout {
+    /** Bytes from one vertex (or instance) to the next; a multiple of 4. */
     stride: number;
     /**
      * `"vertex"` advances per vertex, `"instance"` per instance.
@@ -1686,10 +1893,18 @@ declare module "bun:appkit" {
     colorFormats?: readonly PixelFormat[];
     /** Blending for every colour attachment. @default false */
     blend?: BlendMode;
-    /** Set when the render pass has a depth attachment. @default undefined */
-    depthFormat?: PixelFormat;
-    /** Vertex buffer layout for a `[[stage_in]]` vertex function. */
-    vertexLayout?: VertexLayout;
+    /**
+     * Set when the render pass has a depth attachment: an offscreen pass with
+     * a `depth` texture, or a view pass with the same `depthFormat`.
+     * @default undefined
+     */
+    depthFormat?: "depth32float" | "depth32float-stencil8";
+    /**
+     * Vertex buffer layout for a `[[stage_in]]` vertex function: one entry
+     * for vertex buffer 0, or an array whose element `i` describes the buffer
+     * bound with {@link GpuFrame.vertexBuffer vertexBuffer(i, …)}.
+     */
+    vertexLayout?: VertexBufferLayout | readonly VertexBufferLayout[];
     /** MSAA sample count; must match the render target. @default 1 */
     sampleCount?: number;
     label?: string;
@@ -1786,9 +2001,34 @@ declare module "bun:appkit" {
      * @default [0, 0, 0, 1]
      */
     clear?: ClearColor | false;
-    /** A `"depth32float"` texture, the same size as `color`, to use as the depth attachment. */
+    /** A `"depth32float"` or `"depth32float-stencil8"` texture, the same size as `color`, to use as the depth attachment. */
     depth?: GpuTexture;
     /** Value the depth attachment is cleared to first, or `false` to keep its contents. @default 1 */
+    clearDepth?: number | false;
+  }
+
+  /** Options for a {@link GpuFrame.renderPass} into a {@link MetalView}. */
+  export interface ViewPassOptions {
+    /**
+     * Clear the drawable to this colour first, or `false` to keep what is
+     * there. Left out, the first pass into the view in a frame clears to the
+     * view's {@link MetalViewProps.clearColor clearColor} and later passes in
+     * the same frame keep what the earlier ones drew.
+     */
+    clear?: ClearColor | false;
+    /**
+     * Give the pass a depth attachment: the view keeps a depth texture of
+     * this format, sized to the drawable, from the first pass that asks for
+     * one (changing the format reallocates it). Passes that leave this out
+     * have no depth attachment. Pipelines used in the pass need the same
+     * {@link GpuRenderPipelineOptions.depthFormat depthFormat}.
+     */
+    depthFormat?: "depth32float" | "depth32float-stencil8";
+    /**
+     * Value the depth attachment is cleared to first, or `false` to keep its
+     * contents. Left out, it is cleared to 1 on the first pass into the view
+     * in a frame and kept after that.
+     */
     clearDepth?: number | false;
   }
 
@@ -1866,16 +2106,32 @@ declare module "bun:appkit" {
     private constructor();
     /** Whether `commit()` or `commitAndWait()` has been called. */
     readonly committed: boolean;
-    /** Which kind of pass, if any, the encoder methods currently apply to. */
-    readonly state: "open" | "in a render pass" | "in a compute pass" | "in a blit pass" | "committed";
+    /**
+     * Which kind of pass, if any, the encoder methods currently apply to;
+     * `"dropped"` for a {@link MetalView.onFrame} frame whose handler threw
+     * before committing it.
+     */
+    readonly state: "open" | "in a render pass" | "in a compute pass" | "in a blit pass" | "committed" | "dropped";
+    /**
+     * How far the GPU has got with the frame, without blocking:
+     * `"notCommitted"`, then `"running"` after {@link GpuFrame.commit}, then
+     * `"completed"` or `"failed"` (see {@link GpuFrame.error}).
+     */
+    readonly gpuStatus: "notCommitted" | "running" | "completed" | "failed";
+    /** What the GPU reported once {@link GpuFrame.gpuStatus} is `"failed"`; `null` otherwise. */
+    readonly error: GpuExecutionError | null;
     label: string;
 
     /**
-     * Start a render pass into a {@link MetalView}'s current drawable (it is
-     * presented on commit) or into offscreen texture(s).
-     * @throws if the view has no drawable (no GPU, or the view has no size yet).
+     * Start a render pass into a {@link MetalView}'s current drawable, which
+     * is presented on commit. Only valid from inside that view's
+     * {@link MetalView.onFrame onFrame} handler (call {@link MetalView.draw}
+     * to run one on demand).
+     * @throws TypeError outside the view's `onFrame`, or if the view has no drawable (no GPU, or no size yet).
      */
-    renderPass(target: MetalView | RenderPassTarget): this;
+    renderPass(target: MetalView, options?: ViewPassOptions): this;
+    /** Start a render pass into offscreen texture(s). */
+    renderPass(target: RenderPassTarget): this;
     /** Start a compute pass. */
     computePass(): this;
     /** Start a blit (copy) pass. */
@@ -1893,10 +2149,12 @@ declare module "bun:appkit" {
     popDebugGroup(): this;
 
     // Render pass bindings: `[[buffer(index)]]`, `[[texture(index)]]`, `[[sampler(index)]]`.
+    /** Bind `buffer` from byte `offset` (a multiple of 4 inside the buffer). @param offset @default 0 */
     vertexBuffer(index: number, buffer: GpuBuffer, offset?: number): this;
     /** Bind up to 4 KB of data copied from `data` (uniforms) without a `GpuBuffer`. */
     vertexBytes(index: number, data: BufferSource): this;
     vertexTexture(index: number, texture: GpuTexture): this;
+    /** @param offset a multiple of 4 inside the buffer. @default 0 */
     fragmentBuffer(index: number, buffer: GpuBuffer, offset?: number): this;
     /** Bind up to 4 KB of data copied from `data` without a `GpuBuffer`. */
     fragmentBytes(index: number, data: BufferSource): this;
@@ -1910,6 +2168,10 @@ declare module "bun:appkit" {
     cull(mode: CullMode): this;
     /** @default "cw" */
     winding(winding: Winding): this;
+    /**
+     * Set the depth test for the pass.
+     * @throws TypeError if the pass has no depth attachment ({@link RenderPassTarget.depth} / {@link ViewPassOptions.depthFormat}).
+     */
     depthStencil(state: GpuDepthStencil): this;
     /**
      * Draw `vertexCount` vertices with the current pipeline and bindings.
@@ -1920,6 +2182,7 @@ declare module "bun:appkit" {
     drawIndexed(indexCount: number, indexBuffer: GpuBuffer, options?: DrawIndexedOptions): this;
 
     // Compute pass bindings.
+    /** @param offset a multiple of 4 inside the buffer. @default 0 */
     buffer(index: number, buffer: GpuBuffer, offset?: number): this;
     /** Bind up to 4 KB of data copied from `data` without a `GpuBuffer`. */
     bytes(index: number, data: BufferSource): this;
@@ -1930,7 +2193,10 @@ declare module "bun:appkit" {
      * `threads` (`[[thread_position_in_grid]]`); Metal handles a grid that is
      * not a multiple of the threadgroup size.
      * @param threads total grid size, e.g. `1024` or `[width, height]`.
-     * @param threadsPerGroup threadgroup size. @default as many of the pipeline's threads as fit, along the grid's axes
+     * @param threadsPerGroup threadgroup size. @default the pipeline's
+     * `maxTotalThreadsPerThreadgroup` for a one-dimensional grid; for two or
+     * three dimensions, `threadExecutionWidth` wide by as many rows as
+     * `maxTotalThreadsPerThreadgroup` allows (depth 1), each capped at the grid's size
      */
     dispatch(
       threads: number | readonly [x: number, y?: number, z?: number],
@@ -1945,12 +2211,16 @@ declare module "bun:appkit" {
     // Blit pass.
     /** Copy bytes between buffers on the GPU (the way to fill a `"private"` buffer). */
     copyBuffer(src: GpuBuffer, dst: GpuBuffer, options?: CopyBufferOptions): this;
-    /** Fill a `mipmapped` texture's smaller levels from level 0. */
+    /**
+     * Fill a `mipmapped` texture's smaller levels from level 0.
+     * @throws TypeError for a texture created without `mipmapped` or with a non-filterable format.
+     */
     generateMipmaps(texture: GpuTexture): this;
 
     /**
      * Submit the work and return immediately. A pass into a {@link MetalView}
-     * is presented when the GPU finishes.
+     * is presented when the GPU finishes. {@link GpuFrame.gpuStatus} and
+     * {@link GpuFrame.error} tell how it went.
      */
     commit(): void;
     /**
@@ -2103,7 +2373,12 @@ declare module "bun:appkit" {
     computePipeline(fn: GpuFunction, options?: { label?: string }): GpuComputePipeline;
     sampler(options?: GpuSamplerOptions): GpuSampler;
     depthStencil(options?: GpuDepthStencilOptions): GpuDepthStencil;
-    /** A new command buffer for offscreen work (rendering to textures, compute, copies). */
+    /**
+     * A new command buffer for offscreen work (rendering to textures,
+     * compute, copies).
+     * @throws TypeError when 32 frames are already open (created and neither
+     * committed nor garbage collected); commit frames as you go.
+     */
     frame(options?: { label?: string }): GpuFrame;
     /**
      * Describe an MSL struct so JavaScript can pack data for it. Pure layout
@@ -2127,8 +2402,10 @@ declare module "bun:appkit" {
 
   export interface MetalViewProps extends ViewProps {
     /**
-     * Colour the drawable is cleared to at the start of a
-     * {@link GpuFrame.renderPass renderPass(view)}.
+     * Colour the drawable is cleared to by the first
+     * {@link GpuFrame.renderPass renderPass(view)} of each frame (see
+     * {@link ViewPassOptions.clear}). The view's output is colour-matched as
+     * sRGB, like every other view's colours.
      * @default "#000000"
      */
     clearColor?: Color;
@@ -2152,10 +2429,11 @@ declare module "bun:appkit" {
   /**
    * A view you draw into with Metal (`MTKView`). Each frame it hands
    * {@link MetalView.onFrame} a {@link GpuFrame}; encode a render pass into
-   * the view with `frame.renderPass(view)` and the result is presented when
-   * the frame commits (automatically after `onFrame` returns, unless you
-   * committed it yourself). It sizes like any other view: give it
-   * `width`/`height` or `grow`.
+   * the view with `frame.renderPass(view)` (add `{ depthFormat }` for a depth
+   * buffer) and the result is presented when the frame commits
+   * (automatically after `onFrame` returns, unless you committed it
+   * yourself). It sizes like any other view: give it `width`/`height` or
+   * `grow`.
    *
    * Without a GPU ({@link Gpu.available} `false`) the view still takes part
    * in layout but never produces frames.
@@ -2185,11 +2463,13 @@ declare module "bun:appkit" {
     /**
      * Called once per frame with a fresh {@link GpuFrame}. If the handler
      * returns without committing the frame it is committed for you; if it
-     * throws, the frame is dropped and the error is reported.
+     * throws, the frame is dropped and the error is reported. A frame the
+     * GPU later fails to run is reported the same way, as a
+     * {@link GpuExecutionError}, before the next call.
      */
-    onFrame: ((frame: GpuFrame, info: FrameInfo) => void) | undefined;
+    onFrame: ((frame: GpuFrame, info: FrameInfo) => void) | null | undefined;
     /** Called with the new drawable size in pixels when the view resizes or changes screen. */
-    onResize: ((size: Size) => void) | undefined;
+    onResize: ((size: Size) => void) | null | undefined;
     /**
      * Render one frame now, synchronously running `onFrame`. This is how a
      * paused view, a headless process or a test produces frames.
@@ -2207,7 +2487,13 @@ declare module "bun:appkit" {
  * swapping HTML tags for these. Props are the same as the options of the
  * matching `bun:appkit` class; changed props are assigned to the live view.
  * String children of `Text`, `Button`, `Checkbox`, `Radio` and `Group` become
- * their `text`/`title`.
+ * their `text`/`title`. A prop that cannot be applied to a mounted view (an
+ * invalid value, or a create-only `Window` option) is logged with
+ * `console.error` and skipped rather than unmounting the tree.
+ *
+ * An app bundled with `bun build` or `bun build --compile` carries its own
+ * copy of React, which this module cannot find by itself; pass it in with
+ * {@link RootOptions.modules}.
  *
  * @example
  * ```tsx
@@ -2297,12 +2583,70 @@ declare module "bun:appkit/react" {
   /** A Metal-backed view; see {@link AppKit.MetalView}. `onFrame` is an ordinary prop. */
   export const MetalView: AppKitComponent<MetalViewProps>;
 
+  /** What React passes to the error callbacks alongside the error. */
+  export interface ErrorInfo {
+    componentStack?: string;
+    /** The error boundary that caught it ({@link RootOptions.onCaughtError} only). */
+    errorBoundary?: unknown;
+  }
+
+  /**
+   * The React modules the renderer drives. Every root in a process uses the
+   * same ones: the first root fixes them, and a later root that passes a
+   * different `react` throws.
+   *
+   * @example
+   * ```tsx
+   * import * as react from "react";
+   * import reconciler from "react-reconciler";
+   * import * as constants from "react-reconciler/constants";
+   * import { render } from "bun:appkit/react";
+   *
+   * render(<App />, { modules: { react, reconciler, constants } });
+   * ```
+   */
+  export interface ReactModules {
+    /** The `"react"` module (19 or newer). */
+    react: object;
+    /** The default export of `"react-reconciler"` (0.31 or newer), or the module itself. */
+    reconciler: Function | { default: Function };
+    /** The `"react-reconciler/constants"` module. */
+    constants: object;
+  }
+
+  /** Options for {@link createRoot} and {@link render}; the error callbacks are React 19's. */
+  export interface RootOptions {
+    /**
+     * An error nothing caught (no error boundary above it). React has already
+     * unmounted the tree. Default: reported as an uncaught exception.
+     */
+    onUncaughtError?: (error: unknown, info: ErrorInfo) => void;
+    /** An error an error boundary caught. Default: logged with `console.error`. */
+    onCaughtError?: (error: unknown, info: ErrorInfo) => void;
+    /**
+     * An error React recovered from by itself (for example by retrying the
+     * render). Default: logged with `console.error`.
+     */
+    onRecoverableError?: (error: unknown, info: ErrorInfo) => void;
+    /**
+     * Where React comes from. By default `react`, `react-reconciler` and
+     * `react-reconciler/constants` are resolved from the directory of the
+     * entry point (`Bun.main`). An app that bundles React (`bun build`,
+     * `bun build --compile`), or keeps it somewhere else, imports the three
+     * modules itself and passes them here so components and renderer share
+     * one copy.
+     */
+    modules?: ReactModules;
+  }
+
   /** A mounted React tree. */
   export interface Root {
-    /** Render (or re-render) `element` into this root. */
+    /** Render (or re-render) `element` into this root. Windows in the tree exist by the time it returns. */
     render(element: unknown): void;
     /** Unmount everything, closing the windows the tree created. */
     unmount(): void;
+    /** The open windows this root created, in mount order. */
+    readonly windows: readonly AppKit.Window[];
   }
 
   /**
@@ -2310,26 +2654,27 @@ declare module "bun:appkit/react" {
    *
    * @example
    * ```tsx
-   * const root = createRoot();
+   * const root = createRoot({ onUncaughtError: (error) => console.error("render failed", error) });
    * root.render(<App />);
    * // later
    * root.unmount();
    * ```
+   *
+   * @throws if `react` and `react-reconciler` cannot be found (see {@link ReactModules}).
    */
-  export function createRoot(): Root;
+  export function createRoot(options?: RootOptions): Root;
 
   /**
-   * Mount `element` synchronously: windows in the tree exist by the time
-   * `render` returns.
+   * Create a root and mount `element` into it synchronously: windows in the
+   * tree exist by the time `render` returns.
    *
-   * @throws if `react` and `react-reconciler` cannot be resolved from the
-   * application's directory.
+   * @throws if `react` and `react-reconciler` cannot be found (see {@link ReactModules}).
    */
-  export function render(element: unknown): Root;
+  export function render(element: unknown, options?: RootOptions): Root;
 
   /**
    * Run `fn` and flush the state updates it schedules before returning, like
-   * `react-dom`'s `flushSync`.
+   * `react-dom`'s `flushSync`. Before the first root exists it only calls `fn`.
    */
   export function flushSync<R>(fn: () => R): R;
   export function flushSync(): void;

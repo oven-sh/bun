@@ -12,6 +12,8 @@ type NativeView = {
   removeChild(child: NativeView): void;
   click(): void;
   snapshot(): Uint8Array | null;
+  release(): void;
+  readonly released: boolean;
   readonly frame: { x: number; y: number; width: number; height: number };
   onAction: Function | undefined;
   onChange: Function | undefined;
@@ -56,6 +58,7 @@ type NativeApp = {
   readonly isDark: boolean;
   readonly hasDisplay: boolean;
   readonly liveViews: number;
+  testing(op: string, a?: unknown, b?: unknown): unknown;
   onBeforeQuit: Function | undefined;
   onReopen: Function | undefined;
   onMenu: Function | undefined;
@@ -65,6 +68,7 @@ type NativeGpu = {
   readonly available: boolean;
   readonly name: string | null;
   readonly unifiedMemory: boolean;
+  registerErrors(make: (kind: "compile" | "execution", message: string) => Error): void;
   buffer(data: unknown, opts?: unknown): unknown;
   texture(opts: unknown): unknown;
   library(source: unknown, opts?: unknown): unknown;
@@ -76,7 +80,7 @@ type NativeGpu = {
 };
 
 type NativeFrame = {
-  renderPass(target: unknown): NativeFrame;
+  renderPass(target: unknown, options?: unknown): NativeFrame;
   commitAndWait(): void;
   readonly committed: boolean;
 };
@@ -98,30 +102,40 @@ type Binding = {
   GpuFrame: { prototype: NativeFrame };
 };
 
-function unavailable(): never {
-  throw new Error("AppKit is only available on macOS");
-}
-// A call rather than a bare `throw` so the bundler does not treat the rest of
-// the module as dead code on other platforms.
-if (process.platform !== "darwin") unavailable();
-
 const binding = $rust("appkit.rs", "createBinding") as Binding;
 const AppKitView = binding.AppKitView;
 const AppKitWindow = binding.AppKitWindow;
 const nativeApp = binding.app;
 const nativeGpu = binding.gpu;
+// What bun:appkit/react and bun:internal-for-testing reach that is not public API.
+const hooks = require("internal/appkit_private") as typeof import("../internal/appkit_private").default;
+const { basename } = require("node:path") as typeof import("node:path");
 
 const ArrayIsArray = Array.isArray;
 const ObjectKeys = Object.keys;
 const ObjectFreeze = Object.freeze;
+const ObjectHasOwn = Object.hasOwn;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 
-// bun:appkit/react replaces this so handlers run inside flushSync.
-let dispatch: (fn: Function, args: unknown[]) => unknown = (fn, args) => fn.$apply(undefined, args);
+const plainDispatch = (fn: Function, args: unknown[]) => fn.$apply(undefined, args);
+// bun:appkit/react replaces this so handlers run inside its batching.
+let dispatch: (fn: Function, args: unknown[]) => unknown = plainDispatch;
+hooks.setEventDispatcher = function (fn) {
+  dispatch = typeof fn === "function" ? fn : plainDispatch;
+};
+hooks.liveViews = () => nativeApp.liveViews;
+hooks.testing = (op, a, b) => nativeApp.testing(op, a, b);
 
-function __setEventDispatcher(fn: ((handler: Function, args: unknown[]) => unknown) | null | undefined) {
-  dispatch = typeof fn === "function" ? fn : (handler, args) => handler.$apply(undefined, args);
+// A listener that throws must not stop the others or change their verdict;
+// the error surfaces the way an uncaught one does.
+function guarded(fn: Function, args: unknown[]): unknown {
+  try {
+    return dispatch(fn, args);
+  } catch (error) {
+    reportError(error);
+    return undefined;
+  }
 }
 
 function typeError(message: string) {
@@ -138,14 +152,16 @@ const listeners = new Map<string, Set<Listener>>();
 const appEvents = ["beforequit", "reopen", "menu"];
 let started = false;
 let activationPolicy = "regular";
-// name/badge/menu assigned before NSApp exists are replayed at start.
-const pendingAppProps = new Map<string, unknown>();
-let appName: string | null = null;
+const defaultAppName: string = basename(process.execPath);
+let appName = defaultAppName;
 let appBadge: string | null = null;
 let keepAlive = false;
 let menuSpec: MenuSpec[] | null = null;
 // id -> the user's MenuItem, for items without a native `action`.
 let menuItems = new Map<number, MenuItem>();
+// Assigned before NSApp exists; replayed in order at start. `name` is always
+// sent so the menu titles and `app.name` agree on the default.
+const pendingAppProps = new Map<string, unknown>([["name", appName]]);
 
 function emit(event: string, args: unknown[]): unknown[] {
   const set = listeners.get(event);
@@ -164,7 +180,6 @@ function setAppProp(key: string, value: unknown) {
 
 function ensureStarted() {
   if (started) return;
-  started = true;
   nativeApp.onBeforeQuit = function () {
     let vetoed = false;
     const event = {
@@ -172,8 +187,12 @@ function ensureStarted() {
         vetoed = true;
       },
     };
-    const results = emit("beforequit", [event]);
-    for (const r of results) if (r === false) vetoed = true;
+    const set = listeners.get("beforequit");
+    if (set) {
+      for (const fn of Array.from(set)) {
+        if (guarded(fn, [event]) === false) vetoed = true;
+      }
+    }
     return !vetoed;
   };
   nativeApp.onReopen = function (hasVisibleWindows: boolean) {
@@ -187,8 +206,11 @@ function ensureStarted() {
     emit("menu", [item]);
   };
   nativeApp.start(activationPolicy);
-  for (const [key, value] of pendingAppProps) nativeApp.set(key, value);
-  pendingAppProps.clear();
+  started = true;
+  for (const [key, value] of pendingAppProps) {
+    pendingAppProps.delete(key);
+    nativeApp.set(key, value);
+  }
 }
 
 type MenuItem = {
@@ -243,9 +265,8 @@ function normalizeMenuItems(items: unknown, path: string, registry: Map<number, 
       throw typeError(`${path}[${i}]: an item with a submenu does not fire onClick or an action`);
     }
     if (action !== undefined) {
-      if (typeof action !== "string") throw typeError(`${path}[${i}].action must be a selector string`);
-      if (!/^[A-Za-z_][A-Za-z0-9_]*:$/.test(action)) {
-        throw typeError(`${path}[${i}].action must be a selector name ending in ":", like "copy:"`);
+      if (typeof action !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*:$/.test(action)) {
+        throw typeError(`${path}[${i}].action must be one of the standard action selectors, like "copy:"`);
       }
       normalized.action = action;
     }
@@ -280,12 +301,12 @@ function normalizeMenus(spec: unknown): { menus: object[]; registry: Map<number,
 }
 
 const app = {
-  get name(): string | null {
+  get name(): string {
     return appName;
   },
-  set name(value: string | null) {
+  set name(value: string | null | undefined) {
     if (value != null && typeof value !== "string") throw typeError("app.name must be a string or null");
-    appName = value ?? null;
+    appName = value == null || value === "" ? defaultAppName : value;
     setAppProp("name", appName);
   },
   get activationPolicy(): string {
@@ -302,14 +323,18 @@ const app = {
     return keepAlive;
   },
   set keepAlive(value: boolean) {
-    keepAlive = !!value;
-    nativeApp.set("keepAlive", keepAlive);
+    const on = !!value;
+    // Holding the process open is only useful with the application running to
+    // receive events (a menu bar tool with no window yet), so this starts it.
+    if (on) ensureStarted();
+    keepAlive = on;
+    if (started) nativeApp.set("keepAlive", on);
   },
   get badge(): string | null {
     return appBadge;
   },
   set badge(value: string | number | null) {
-    appBadge = value == null ? null : String(value);
+    appBadge = value == null || value === "" ? null : String(value);
     setAppProp("badge", appBadge);
   },
   get menu(): MenuSpec[] | null {
@@ -327,17 +352,11 @@ const app = {
   get isDark(): boolean {
     return !!nativeApp.isDark;
   },
-  /** False when no screen is attached (ssh, CI, sandboxes): windows still work but are never shown. */
   get hasDisplay(): boolean {
-    ensureStarted();
     return !!nativeApp.hasDisplay;
   },
   get isRunning(): boolean {
     return started;
-  },
-  /** Number of native views alive; for leak tests. */
-  get liveViews(): number {
-    return nativeApp.liveViews;
   },
   activate() {
     ensureStarted();
@@ -347,7 +366,8 @@ const app = {
     if (started) nativeApp.hide();
   },
   quit() {
-    if (started) nativeApp.quit();
+    // Before anything started AppKit there is nobody to ask: plain process.exit().
+    nativeApp.quit();
   },
   on(event: string, listener: Listener) {
     if (!appEvents.includes(event)) throw typeError(`Unknown app event "${event}"`);
@@ -388,23 +408,6 @@ function hasProp(view: View, key: string): boolean {
   }
   return false;
 }
-
-const commonProps = [
-  "hidden",
-  "alpha",
-  "tooltip",
-  "id",
-  "width",
-  "height",
-  "minWidth",
-  "maxWidth",
-  "minHeight",
-  "maxHeight",
-  "grow",
-  "background",
-  "cornerRadius",
-  "border",
-];
 
 class View {
   #native: NativeView;
@@ -450,7 +453,13 @@ class View {
   }
 
   get frame() {
+    if (this.#native.released) return { x: 0, y: 0, width: 0, height: 0 };
     return this.#native.frame;
+  }
+
+  /** Whether the native view has been freed (React unmounted it); reads keep answering, mutations throw. */
+  get released(): boolean {
+    return this.#native.released;
   }
 
   remove(): void {
@@ -460,33 +469,45 @@ class View {
     else (parent as Container).removeChild(this);
   }
 
-  click(): void {
-    this.#native.click();
-  }
-
   snapshot(): Uint8Array | null {
     return this.#native.snapshot();
   }
 }
 
+// The cache is written before the native call so that a handler the call
+// fires synchronously (hiding a focused field ends its editing) reads the new
+// value; it is put back if the native side rejects it.
 function setProp(view: View, key: string, value: unknown) {
   const props = propsOf(view);
   if (value === undefined) value = null;
-  nativeOf(view).set(key, value);
+  const had = ObjectHasOwn(props, key);
+  const previous = props[key];
   if (value === null) delete props[key];
   else props[key] = value;
+  try {
+    nativeOf(view).set(key, value);
+  } catch (e) {
+    if (had) props[key] = previous;
+    else delete props[key];
+    throw e;
+  }
 }
 
-/** Defines cached accessors; `live` keys read through to the native control. */
-function defineProps(Class: { prototype: object }, keys: string[], live: string[] = []) {
-  for (const key of keys) {
+/**
+ * Defines one accessor per key of `defaults`. An unset (or `null`-reset) prop
+ * reads as its default; `live` keys read through to the native control instead.
+ */
+function defineProps(Class: { prototype: object }, defaults: Record<string, unknown>, live: string[] = []) {
+  for (const key of ObjectKeys(defaults)) {
     const isLive = live.includes(key);
+    const fallback = defaults[key];
     registerProp(Class.prototype, key);
     ObjectDefineProperty(Class.prototype, key, {
       get(this: View) {
-        if (isLive) return nativeOf(this).get(key);
+        const native = nativeOf(this);
+        if (isLive && !native.released) return native.get(key);
         const value = propsOf(this)[key];
-        return value === undefined ? null : value;
+        return value === undefined ? (fallback === LIVE ? null : fallback) : value;
       },
       set(this: View, value: unknown) {
         setProp(this, key, value);
@@ -495,6 +516,17 @@ function defineProps(Class: { prototype: object }, keys: string[], live: string[
       configurable: true,
     });
   }
+}
+
+function defineClick(Class: { prototype: object }) {
+  ObjectDefineProperty(Class.prototype, "click", {
+    value: function click(this: View) {
+      nativeOf(this).click();
+    },
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
 }
 
 type Slot =
@@ -551,14 +583,50 @@ const noArgs = () => [];
 const liveOr =
   (key: string) =>
   (native: NativeView, [payload]: unknown[]) => [payload !== undefined ? payload : native.get(key)];
+const LIVE = undefined;
 
-defineProps(View, commonProps);
+defineProps(View, {
+  hidden: false,
+  alpha: 1,
+  tooltip: null,
+  id: null,
+  width: null,
+  height: null,
+  minWidth: null,
+  maxWidth: null,
+  minHeight: null,
+  maxHeight: null,
+  grow: 0,
+  background: null,
+  cornerRadius: 0,
+  border: null,
+});
 
 // ---------------------------------------------------------------------------
 // Containers
 
+let childrenOf: (container: Container) => View[];
+
+/** Throws unless `child` is a View this container may take: not an ancestor, and not in another parent. */
+function adoptable(container: Container, child: unknown, method: string): void {
+  if (!(child instanceof View)) throw typeError(`${kindOf(container)}.${method}: child must be a View`);
+  for (let ancestor: Container | null = container; ancestor; ancestor = ancestor.parent) {
+    if (ancestor === (child as View)) throw typeError("A view cannot contain itself or one of its ancestors");
+  }
+  const parent = rawParentOf(child);
+  if (parent !== null && parent !== container) {
+    throw $ERR_INVALID_STATE(
+      `${kindOf(container)}.${method}: this ${kindOf(child)} already has a parent; call remove() on it first`,
+    );
+  }
+}
+
 class Container extends View {
   #children: View[] = [];
+
+  static {
+    childrenOf = container => container.#children;
+  }
 
   // `children` cannot go through the View constructor: #children does not
   // exist until super() returns.
@@ -586,62 +654,76 @@ class Container extends View {
   }
 
   insertBefore(child: View, before: View | null | undefined): void {
-    if (!(child instanceof View)) throw typeError(`${kindOf(this)}.insertBefore: child must be a View`);
-    for (let ancestor: Container | null = this; ancestor; ancestor = ancestor.parent) {
-      if (ancestor === (child as View)) throw typeError("A view cannot contain itself or one of its ancestors");
-    }
-    const currentParent = rawParentOf(child);
-    if (currentParent === this) {
-      if (child === before) return;
-      // Re-inserting an existing child moves it (React reorders this way).
-      this.removeChild(child);
-    } else if (currentParent) {
-      throw typeError(
-        `${kindOf(this)}.insertBefore: this ${kindOf(child)} already has a parent; call remove() on it first`,
-      );
-    }
+    adoptable(this, child, "insertBefore");
+    const children = this.#children;
+    // Re-inserting an existing child moves it in place (React reorders this
+    // way); natively the view never leaves the window, so it keeps focus.
+    const from = children.indexOf(child);
+    if (from >= 0 && child === before) return;
     let index: number;
     if (before == null) {
-      index = this.#children.length;
+      index = children.length;
     } else {
-      index = this.#children.indexOf(before);
-      if (index < 0) throw typeError(`${kindOf(this)}.insertBefore: reference view is not a child of this container`);
+      index = children.indexOf(before);
+      if (index < 0)
+        throw $ERR_INVALID_STATE(`${kindOf(this)}.insertBefore: reference view is not a child of this container`);
     }
+    // The native index counts the children with the moved one taken out.
+    if (from >= 0 && from < index) index--;
     nativeOf(this).insertChild(nativeOf(child), index);
-    this.#children.splice(index, 0, child);
+    if (from >= 0) children.splice(from, 1);
+    children.splice(index, 0, child);
     setParentOf(child, this);
   }
 
+  // Bookkeeping happens before the native call: removing a focused field fires
+  // its onBlur from inside removeChild, and that handler must see the child gone.
   removeChild(child: View): void {
-    const index = this.#children.indexOf(child);
-    if (index < 0) throw typeError(`${kindOf(this)}.removeChild: view is not a child of this container`);
-    nativeOf(this).removeChild(nativeOf(child));
-    this.#children.splice(index, 1);
+    const children = this.#children;
+    const index = children.indexOf(child);
+    if (index < 0) throw $ERR_INVALID_STATE(`${kindOf(this)}.removeChild: view is not a child of this container`);
+    children.splice(index, 1);
     setParentOf(child, null);
+    try {
+      nativeOf(this).removeChild(nativeOf(child));
+    } catch (e) {
+      children.splice(index, 0, child);
+      setParentOf(child, this);
+      throw e;
+    }
   }
 
   replaceChildren(...views: View[]): void {
-    for (let i = this.#children.length - 1; i >= 0; i--) this.removeChild(this.#children[i]);
+    const wanted = new Set<View>();
+    for (const view of views) {
+      adoptable(this, view, "replaceChildren");
+      if (wanted.has(view)) throw typeError(`${kindOf(this)}.replaceChildren: the same view appears twice`);
+      wanted.add(view);
+    }
+    const children = this.#children;
+    for (let i = children.length - 1; i >= 0; i--) {
+      if (!wanted.has(children[i])) this.removeChild(children[i]);
+    }
     for (const view of views) this.insertBefore(view, null);
   }
 }
 registerProp(Container.prototype, "children");
 
-const stackProps = ["spacing", "padding", "align", "distribution"];
+const stackDefaults = { spacing: 8, padding: 0, align: "fill", distribution: "fill" };
 
 class VStack extends Container {
   constructor(props?: Record<string, unknown>) {
     super("VStack", props);
   }
 }
-defineProps(VStack, stackProps);
+defineProps(VStack, stackDefaults);
 
 class HStack extends Container {
   constructor(props?: Record<string, unknown>) {
     super("HStack", props);
   }
 }
-defineProps(HStack, stackProps);
+defineProps(HStack, { ...stackDefaults, align: "center" });
 
 class ZStack extends Container {
   constructor(props?: Record<string, unknown>) {
@@ -654,21 +736,21 @@ class Group extends Container {
     super("Group", props);
   }
 }
-defineProps(Group, [...stackProps, "title"]);
+defineProps(Group, { ...stackDefaults, padding: 4, title: "" });
 
 class ScrollView extends Container {
   constructor(props?: Record<string, unknown>) {
     super("ScrollView", props);
   }
 }
-defineProps(ScrollView, ["scrollBars"]);
+defineProps(ScrollView, { scrollBars: ObjectFreeze({ horizontal: false, vertical: true }) });
 
 class SplitView extends Container {
   constructor(props?: Record<string, unknown>) {
     super("SplitView", props);
   }
 }
-defineProps(SplitView, ["vertical"]);
+defineProps(SplitView, { vertical: false });
 
 // ---------------------------------------------------------------------------
 // Leaves
@@ -678,77 +760,100 @@ class Text extends View {
     super("Text", typeof props === "string" ? { text: props } : props);
   }
 }
-defineProps(Text, ["text", "font", "color", "textAlign", "selectable", "lineLimit"]);
+defineProps(Text, { text: "", font: null, color: null, textAlign: "natural", selectable: false, lineLimit: 1 });
 
 class Button extends View {
   constructor(props?: Record<string, unknown> | string) {
     super("Button", typeof props === "string" ? { title: props } : props);
   }
 }
-defineProps(Button, ["title", "kind", "enabled", "symbol", "keyEquivalent", "font", "tint"]);
+defineProps(Button, {
+  title: "",
+  kind: "default",
+  enabled: true,
+  symbol: null,
+  keyEquivalent: null,
+  font: null,
+  tint: null,
+});
 defineEvent(Button, "onClick", "onAction", noArgs);
+defineClick(Button);
+
+const toggleDefaults = { title: "", checked: LIVE, enabled: true, font: null };
 
 class Checkbox extends View {
   constructor(props?: Record<string, unknown>) {
     super("Checkbox", props);
   }
 }
-defineProps(Checkbox, ["title", "checked", "enabled", "font"], ["checked"]);
+defineProps(Checkbox, toggleDefaults, ["checked"]);
 defineEvent(Checkbox, "onChange", "onChange", liveOr("checked"));
+defineClick(Checkbox);
 
 class Radio extends View {
   constructor(props?: Record<string, unknown>) {
     super("Radio", props);
   }
 }
-defineProps(Radio, ["title", "checked", "enabled", "font"], ["checked"]);
+defineProps(Radio, toggleDefaults, ["checked"]);
 defineEvent(Radio, "onChange", "onChange", liveOr("checked"));
+defineClick(Radio);
 
 class Switch extends View {
   constructor(props?: Record<string, unknown>) {
     super("Switch", props);
   }
 }
-defineProps(Switch, ["checked"], ["checked"]);
+defineProps(Switch, { checked: LIVE }, ["checked"]);
 defineEvent(Switch, "onChange", "onChange", liveOr("checked"));
+defineClick(Switch);
 
-const textFieldProps = ["value", "placeholder", "editable", "enabled", "font", "textAlign", "continuous"];
-
-function defineTextField(Class: { prototype: object }) {
-  defineProps(Class, textFieldProps, ["value"]);
-  defineEvent(Class, "onChange", "onChange", liveOr("value"));
-  defineEvent(Class, "onSubmit", "onSubmit", liveOr("value"));
-  defineEvent(Class, "onFocus", "onFocus", noArgs);
-  defineEvent(Class, "onBlur", "onBlur", noArgs);
-}
+// SecureField and SearchField are TextFields natively too; these tokens let
+// their constructors pick the kind without opening that up to callers.
+const secureKind = Symbol("SecureField");
+const searchKind = Symbol("SearchField");
 
 class TextField extends View {
-  constructor(props?: Record<string, unknown>) {
-    super("TextField", props);
+  constructor(props?: Record<string, unknown>, kind?: symbol) {
+    super(kind === secureKind ? "SecureField" : kind === searchKind ? "SearchField" : "TextField", props);
   }
 }
-defineTextField(TextField);
+defineProps(
+  TextField,
+  {
+    value: LIVE,
+    placeholder: null,
+    editable: true,
+    enabled: true,
+    font: null,
+    textAlign: "natural",
+    continuous: true,
+  },
+  ["value"],
+);
+defineEvent(TextField, "onChange", "onChange", liveOr("value"));
+defineEvent(TextField, "onSubmit", "onSubmit", liveOr("value"));
+defineEvent(TextField, "onFocus", "onFocus", noArgs);
+defineEvent(TextField, "onBlur", "onBlur", noArgs);
 
-class SecureField extends View {
+class SecureField extends TextField {
   constructor(props?: Record<string, unknown>) {
-    super("SecureField", props);
+    super(props, secureKind);
   }
 }
-defineTextField(SecureField);
 
-class SearchField extends View {
+class SearchField extends TextField {
   constructor(props?: Record<string, unknown>) {
-    super("SearchField", props);
+    super(props, searchKind);
   }
 }
-defineTextField(SearchField);
 
 class TextEditor extends View {
   constructor(props?: Record<string, unknown>) {
     super("TextEditor", props);
   }
 }
-defineProps(TextEditor, ["value", "editable", "font", "color"], ["value"]);
+defineProps(TextEditor, { value: LIVE, editable: true, font: null, color: null }, ["value"]);
 defineEvent(TextEditor, "onChange", "onChange", liveOr("value"));
 
 class Slider extends View {
@@ -756,15 +861,17 @@ class Slider extends View {
     super("Slider", props);
   }
 }
-defineProps(Slider, ["value", "min", "max", "step", "continuous"], ["value"]);
+defineProps(Slider, { value: LIVE, min: 0, max: 1, step: 0, continuous: true }, ["value"]);
 defineEvent(Slider, "onChange", "onChange", liveOr("value"));
+
+const emptyList = ObjectFreeze([]);
 
 class Picker extends View {
   constructor(props?: Record<string, unknown>) {
     super("Picker", props);
   }
 }
-defineProps(Picker, ["items", "selectedIndex"], ["selectedIndex"]);
+defineProps(Picker, { items: emptyList, selectedIndex: LIVE }, ["selectedIndex"]);
 defineEvent(Picker, "onChange", "onChange", liveOr("selectedIndex"));
 
 class Segmented extends View {
@@ -772,7 +879,7 @@ class Segmented extends View {
     super("Segmented", props);
   }
 }
-defineProps(Segmented, ["items", "selectedIndex"], ["selectedIndex"]);
+defineProps(Segmented, { items: emptyList, selectedIndex: LIVE }, ["selectedIndex"]);
 defineEvent(Segmented, "onChange", "onChange", liveOr("selectedIndex"));
 
 class Progress extends View {
@@ -780,28 +887,28 @@ class Progress extends View {
     super("Progress", props);
   }
 }
-defineProps(Progress, ["value", "min", "max", "indeterminate", "running", "spinner"]);
+defineProps(Progress, { value: 0, min: 0, max: 100, indeterminate: false, running: true, spinner: false });
 
 class Image extends View {
   constructor(props?: Record<string, unknown>) {
     super("Image", props);
   }
 }
-defineProps(Image, ["image", "scaling", "tint", "size"]);
+defineProps(Image, { image: null, scaling: "down", tint: null, size: 0 });
 
 class Divider extends View {
   constructor(props?: Record<string, unknown>) {
     super("Divider", props);
   }
 }
-defineProps(Divider, ["vertical"]);
+defineProps(Divider, { vertical: null });
 
 class Spacer extends View {
   constructor(props?: Record<string, unknown>) {
     super("Spacer", props);
   }
 }
-defineProps(Spacer, ["minLength"]);
+defineProps(Spacer, { minLength: 0 });
 
 class Table extends View {
   constructor(props?: Record<string, unknown>) {
@@ -810,7 +917,15 @@ class Table extends View {
 }
 defineProps(
   Table,
-  ["columns", "rows", "selectedIndexes", "multiple", "headerVisible", "alternatingRows", "rowHeight"],
+  {
+    columns: emptyList,
+    rows: emptyList,
+    selectedIndexes: LIVE,
+    multiple: false,
+    headerVisible: null,
+    alternatingRows: false,
+    rowHeight: null,
+  },
   ["selectedIndexes"],
 );
 defineEvent(Table, "onSelect", "onSelect", liveOr("selectedIndexes"));
@@ -831,18 +946,9 @@ ObjectDefineProperty(GpuExecutionError.prototype, "name", {
   configurable: true,
   writable: true,
 });
-
-/** Natives report these two by `name`; give callers a class to `instanceof` against. */
-function asGpuError(error: unknown): unknown {
-  const name = (error as Error | null)?.name;
-  let Class: typeof GpuCompileError | undefined;
-  if (name === "GpuCompileError") Class = GpuCompileError;
-  else if (name === "GpuExecutionError") Class = GpuExecutionError;
-  if (!Class || error instanceof Class) return error;
-  const converted = new Class((error as Error).message, { cause: (error as Error).cause });
-  if (typeof (error as Error).stack === "string") converted.stack = (error as Error).stack;
-  return converted;
-}
+nativeGpu.registerErrors((kind, message) =>
+  kind === "compile" ? new GpuCompileError(message) : new GpuExecutionError(message),
+);
 
 const GpuBuffer = binding.GpuBuffer;
 const GpuTexture = binding.GpuTexture;
@@ -854,29 +960,14 @@ const GpuSampler = binding.GpuSampler;
 const GpuDepthStencil = binding.GpuDepthStencil;
 const GpuFrame = binding.GpuFrame;
 
-/** Re-throws the native's named errors as the exported classes. */
-function rethrowTyped(Class: { prototype: any }, method: string) {
-  const original = Class.prototype[method];
-  Class.prototype[method] = function (this: unknown, ...args: unknown[]) {
-    try {
-      return original.$apply(this, args);
-    } catch (e) {
-      throw asGpuError(e);
-    }
-  };
-}
-
-// The only JavaScript between a caller and the natives: `renderPass` unwraps
-// a MetalView, and the methods that can fail with a Gpu*Error name its class.
+// The only JavaScript between a caller and the natives: `renderPass` unwraps a MetalView.
 {
   const proto = GpuFrame.prototype;
   const renderPass = proto.renderPass;
-  proto.renderPass = function (this: NativeFrame, target: unknown) {
+  proto.renderPass = function (this: NativeFrame, target: unknown, options?: unknown) {
     if (target instanceof MetalView) target = nativeOf(target);
-    return renderPass.$call(this, target);
+    return renderPass.$call(this, target, options);
   };
-  rethrowTyped(GpuFrame, "pipeline");
-  rethrowTyped(GpuFrame, "commitAndWait");
 }
 
 // MSL size/alignment (Metal Shading Language spec §2): 3-wide vectors take the
@@ -969,7 +1060,7 @@ class StructLayout {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
         throw typeError(`gpu.struct: field name "${key}" is not an identifier`);
       const type = spec[key];
-      const info = typeof type === "string" && Object.hasOwn(mslTypes, type) ? mslTypes[type] : undefined;
+      const info = typeof type === "string" && ObjectHasOwn(mslTypes, type) ? mslTypes[type] : undefined;
       if (!info) {
         throw typeError(
           `gpu.struct: field "${key}" has unknown type ${JSON.stringify(type)}; expected one of ${ObjectKeys(mslTypes).join(", ")}`,
@@ -1029,7 +1120,7 @@ class StructLayout {
       );
     }
     for (const key of ObjectKeys(values)) {
-      if (!Object.hasOwn(this.fields, key)) throw typeError(`${this.name}.pack: unknown field "${key}"`);
+      if (!ObjectHasOwn(this.fields, key)) throw typeError(`${this.name}.pack: unknown field "${key}"`);
     }
     const view = new DataView(buffer, base + byteOffset, this.size);
     for (const field of this.#order) {
@@ -1091,25 +1182,13 @@ const gpu = {
     return nativeGpu.texture(opts);
   },
   library(source: unknown, opts?: unknown) {
-    try {
-      return nativeGpu.library(source, opts);
-    } catch (e) {
-      throw asGpuError(e);
-    }
+    return nativeGpu.library(source, opts);
   },
   renderPipeline(opts: unknown) {
-    try {
-      return nativeGpu.renderPipeline(opts);
-    } catch (e) {
-      throw asGpuError(e);
-    }
+    return nativeGpu.renderPipeline(opts);
   },
   computePipeline(fn: unknown, opts?: unknown) {
-    try {
-      return nativeGpu.computePipeline(fn, opts);
-    } catch (e) {
-      throw asGpuError(e);
-    }
+    return nativeGpu.computePipeline(fn, opts);
   },
   sampler(opts?: unknown) {
     return nativeGpu.sampler(opts);
@@ -1145,38 +1224,67 @@ class MetalView extends View {
     nativeOf(this).draw();
   }
 }
-defineProps(MetalView, ["clearColor", "preferredFPS", "running"]);
+defineProps(MetalView, { clearColor: "#000000", preferredFPS: 60, running: true });
 // Native payloads: onFrame(frame, { time, dt, width, height }), onResize({ width, height }).
 defineEvent(MetalView, "onFrame", "onFrame", (_native, payload) => payload);
 defineEvent(MetalView, "onResize", "onResize", (_native, payload) => payload);
 
+// React deletes whole subtrees; each deleted view comes through here once, in
+// no particular order, so only the JavaScript links are undone (the container
+// is going too) before the NSView is freed.
+function releaseView(view: View): void {
+  if (!(view instanceof View)) throw typeError("releaseView: argument must be a View");
+  const native = nativeOf(view);
+  if (native.released) return;
+  const parent = rawParentOf(view);
+  if (parent instanceof Container) {
+    const siblings = childrenOf(parent);
+    const index = siblings.indexOf(view);
+    if (index >= 0) siblings.splice(index, 1);
+  } else if (parent instanceof Window && windowContentOf(parent) === view) {
+    setWindowContent(parent, null);
+  }
+  setParentOf(view, null);
+  if (view instanceof Container) {
+    const children = childrenOf(view);
+    for (const child of children) setParentOf(child, null);
+    children.length = 0;
+  }
+  // Handlers go (they hold closures); plain props stay so getters keep answering.
+  const props = propsOf(view);
+  for (const key of ObjectKeys(props)) if (typeof props[key] === "function") delete props[key];
+  native.release();
+}
+
 // ---------------------------------------------------------------------------
 // Window
 
-/** Native options that stay assignable after creation (each gets an accessor below). */
-const windowSettable = [
-  "title",
-  "width",
-  "height",
-  "x",
-  "y",
-  "minWidth",
-  "minHeight",
-  "maxWidth",
-  "maxHeight",
-  "background",
-  "alpha",
-];
-/** Native options fixed once the window exists. */
-const windowCreateOnly = [
-  "resizable",
-  "closable",
-  "minimizable",
-  "fullSizeContent",
-  "titlebarTransparent",
-  "titleHidden",
-  "restoreName",
-];
+/** Native options that stay assignable after creation, with what each reads as until assigned. */
+const windowDefaults: Record<string, unknown> = {
+  title: LIVE,
+  width: LIVE,
+  height: LIVE,
+  x: LIVE,
+  y: LIVE,
+  minWidth: null,
+  minHeight: null,
+  maxWidth: null,
+  maxHeight: null,
+  background: "windowBackground",
+  alpha: 1,
+};
+const windowSettable = ObjectKeys(windowDefaults);
+/** Native options fixed once the window exists; readable afterwards, and this is what they read as if not given. */
+const windowCreateOnlyDefaults: Record<string, unknown> = {
+  resizable: true,
+  closable: true,
+  minimizable: true,
+  fullSizeContent: false,
+  titlebarTransparent: false,
+  titleHidden: false,
+  restoreName: null,
+};
+const windowCreateOnly = ObjectFreeze(ObjectKeys(windowCreateOnlyDefaults));
 const windowNativeOptions = [...windowSettable, ...windowCreateOnly];
 const windowLiveProps = ["title", "width", "height", "x", "y"];
 const windowEvents = ["onClose", "shouldClose", "onResize", "onMove", "onFocus", "onBlur"];
@@ -1188,7 +1296,7 @@ function isWindowProp(key: string): boolean {
 function contentError(view: unknown): Error | null {
   if (!(view instanceof View)) return typeError("Window.content must be a View or null");
   if (rawParentOf(view)) {
-    return typeError(`Window.content: this ${kindOf(view)} already has a parent; call remove() on it first`);
+    return $ERR_INVALID_STATE(`Window.content: this ${kindOf(view)} already has a parent; call remove() on it first`);
   }
   return null;
 }
@@ -1196,10 +1304,9 @@ function contentError(view: unknown): Error | null {
 /** The one place a user-supplied prop name is checked and assigned, for constructors and bun:appkit/react alike. */
 function applyProp(target: View | Window, key: string, value: unknown): void {
   if (target instanceof Window) {
-    if (windowCreateOnly.includes(key)) {
-      throw typeError(`Window.${key} cannot be changed after the window is created`);
-    }
-    if (!isWindowProp(key)) throw typeError(`Unknown Window option "${key}"`);
+    if (!isWindowProp(key) && !windowCreateOnly.includes(key)) throw typeError(`Unknown Window option "${key}"`);
+  } else if (!(target instanceof View)) {
+    throw typeError("applyProp: target must be a View or a Window");
   } else if (!hasProp(target, key)) {
     throw typeError(`Unknown property "${key}" for ${kindOf(target)}`);
   }
@@ -1209,6 +1316,8 @@ function applyProp(target: View | Window, key: string, value: unknown): void {
 let windowNativeOf: (window: Window) => NativeWindow;
 let windowPropsOf: (window: Window) => Record<string, unknown>;
 let windowHandlersOf: (window: Window) => Record<string, Function | undefined>;
+let windowContentOf: (window: Window) => View | null;
+let setWindowContent: (window: Window, view: View | null) => void;
 
 class Window {
   #native: NativeWindow;
@@ -1220,6 +1329,10 @@ class Window {
     windowNativeOf = window => window.#native;
     windowPropsOf = window => window.#props;
     windowHandlersOf = window => window.#handlers;
+    windowContentOf = window => window.#content;
+    setWindowContent = (window, view) => {
+      window.#content = view;
+    };
   }
 
   constructor(options: Record<string, unknown> = {}) {
@@ -1244,7 +1357,7 @@ class Window {
       const value = options[key];
       if (value === undefined) continue;
       nativeOptions[key] = value;
-      if (windowSettable.includes(key) && !windowLiveProps.includes(key)) this.#props[key] = value;
+      if (!windowLiveProps.includes(key) && value !== null) this.#props[key] = value;
     }
 
     const native = (this.#native = new AppKitWindow(nativeOptions));
@@ -1264,7 +1377,7 @@ class Window {
     native.shouldClose = function () {
       const handler = self.#handlers.shouldClose;
       if (!handler) return true;
-      return dispatch(handler, []) !== false;
+      return guarded(handler, []) !== false;
     };
     native.onResize = function (size: { width: number; height: number }) {
       const handler = self.#handlers.onResize;
@@ -1294,6 +1407,8 @@ class Window {
     return this.#content;
   }
 
+  // Links are switched before the native call so that a handler it fires (the
+  // old content's focused field blurring) already sees the new content.
   set content(view: View | null | undefined) {
     if (view == null) view = null;
     const previous = this.#content;
@@ -1302,10 +1417,19 @@ class Window {
       const error = contentError(view);
       if (error) throw error;
     }
-    this.#native.setContent(view ? nativeOf(view) : null);
-    if (previous) setParentOf(previous, null);
     this.#content = view;
+    if (previous) setParentOf(previous, null);
     if (view) setParentOf(view, this);
+    try {
+      this.#native.setContent(view ? nativeOf(view) : null);
+    } catch (e) {
+      if (this.#content === view) {
+        this.#content = previous;
+        if (view) setParentOf(view, null);
+        if (previous) setParentOf(previous, this);
+      }
+      throw e;
+    }
   }
 
   get visible(): boolean {
@@ -1352,19 +1476,46 @@ class Window {
 
 for (const key of windowSettable) {
   const live = windowLiveProps.includes(key);
+  const fallback = windowDefaults[key];
   ObjectDefineProperty(Window.prototype, key, {
     get(this: Window) {
       if (live) return windowNativeOf(this).get(key);
       const value = windowPropsOf(this)[key];
-      return value === undefined ? null : value;
+      return value === undefined ? fallback : value;
     },
     set(this: Window, value: unknown) {
       if (value === undefined) value = null;
-      windowNativeOf(this).set(key, value);
-      if (live) return;
+      if (live) {
+        windowNativeOf(this).set(key, value);
+        return;
+      }
       const props = windowPropsOf(this);
+      const had = ObjectHasOwn(props, key);
+      const previous = props[key];
       if (value === null) delete props[key];
       else props[key] = value;
+      try {
+        windowNativeOf(this).set(key, value);
+      } catch (e) {
+        if (had) props[key] = previous;
+        else delete props[key];
+        throw e;
+      }
+    },
+    enumerable: true,
+    configurable: true,
+  });
+}
+
+for (const key of windowCreateOnly) {
+  const fallback = windowCreateOnlyDefaults[key];
+  ObjectDefineProperty(Window.prototype, key, {
+    get(this: Window) {
+      const value = windowPropsOf(this)[key];
+      return value === undefined ? fallback : value;
+    },
+    set(this: Window, _value: unknown) {
+      throw typeError(`Window.${key} cannot be changed after the window is created`);
     },
     enumerable: true,
     configurable: true,
@@ -1384,6 +1535,10 @@ for (const key of windowEvents) {
     configurable: true,
   });
 }
+
+hooks.applyProp = applyProp;
+hooks.releaseView = releaseView;
+hooks.windowCreateOnly = windowCreateOnly;
 
 export default {
   app,
@@ -1426,6 +1581,4 @@ export default {
   GpuFrame,
   GpuCompileError,
   GpuExecutionError,
-  __setEventDispatcher,
-  __applyProp: applyProp,
 };

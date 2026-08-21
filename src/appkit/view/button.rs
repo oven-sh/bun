@@ -1,6 +1,6 @@
 //! `PushButton`, `Toggle` (checkbox, radio) and `Switch`.
 
-use super::{ButtonKind, Cx, Event, Orientation, Prop, Widget, priority};
+use super::{ButtonKind, Cx, Event, Orientation, Prop, TITLE_COMPRESSION, Widget, priority};
 use crate::color::Color;
 use crate::error::Result;
 use crate::geometry::Rect;
@@ -27,6 +27,10 @@ impl PushButton {
         view.set_bezel_style(BezelStyle::Push);
         // A button keeps its natural width in a Fill stack instead of stretching.
         view.set_content_hugging_priority(priority::DEFAULT_HIGH, Orientation::Horizontal);
+        view.set_content_compression_resistance_priority(
+            TITLE_COMPRESSION,
+            Orientation::Horizontal,
+        );
         super::wire_action(cx, &view);
         PushButton {
             view,
@@ -125,6 +129,11 @@ impl Widget for PushButton {
         emit(Event::Action);
     }
 
+    fn click(&self) -> bool {
+        self.view.perform_click(None);
+        true
+    }
+
     fn detach(&mut self) {
         super::unwire_action(&self.view);
     }
@@ -145,6 +154,10 @@ impl Toggle {
     }
 
     fn wired(cx: &Cx<'_>, view: NSButton) -> Toggle {
+        view.set_content_compression_resistance_priority(
+            TITLE_COMPRESSION,
+            Orientation::Horizontal,
+        );
         super::wire_action(cx, &view);
         Toggle { view }
     }
@@ -176,6 +189,11 @@ impl Widget for Toggle {
 
     fn on_action(&mut self, emit: &mut dyn FnMut(Event)) {
         emit(Event::Toggled(self.is_on()));
+    }
+
+    fn click(&self) -> bool {
+        self.view.perform_click(None);
+        true
     }
 
     fn detach(&mut self) {
@@ -219,6 +237,11 @@ impl Widget for Switch {
 
     fn on_action(&mut self, emit: &mut dyn FnMut(Event)) {
         emit(Event::Toggled(self.is_on()));
+    }
+
+    fn click(&self) -> bool {
+        self.view.perform_click(None);
+        true
     }
 
     fn detach(&mut self) {

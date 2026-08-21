@@ -21,9 +21,11 @@ use crate::objc::foundation::NSObject;
 /// What the application delegate reports. All methods run on the main thread
 /// inside AppKit event dispatch.
 pub(crate) trait AppEvents {
-    /// `applicationShouldTerminate:`. AppKit's own termination is always cancelled (its path ends in
-    /// exit()); the handler closes the windows and lets the process wind down through Bun.
-    fn terminate_requested(&self);
+    /// `applicationShouldTerminate:`: true lets AppKit terminate (it then
+    /// sends `applicationWillTerminate:` and exits), false cancels.
+    fn terminate_requested(&self) -> bool;
+    /// `applicationWillTerminate:`: the last callout before AppKit's `exit`.
+    fn will_terminate(&self);
     fn did_finish_launching(&self);
     /// `applicationShouldHandleReopen:hasVisibleWindows:` — the Dock icon was clicked while running.
     fn reopened(&self, has_visible_windows: bool);
@@ -71,14 +73,25 @@ pub(crate) trait MetalViewEvents {
     fn drawable_size_will_change(&self, size: Size);
 }
 
+// SAFETY (every `.method(...)` below): each IMP's signature transcribes the
+// named protocol's (or overridden superclass's) declaration of that selector,
+// which debug builds assert; `onAction:`, `onDoubleAction:` and `onMenuItem:`
+// are target/action selectors of our own, always called as `v@:@`.
+
 fn app_class() -> &'static DelegateClass<dyn AppEvents> {
     static CLASS: OnceLock<DelegateClass<dyn AppEvents>> = OnceLock::new();
-    CLASS.get_or_init(|| {
+    // SAFETY: see above.
+    CLASS.get_or_init(|| unsafe {
         ClassBuilder::<NSObject>::new(c"BunAppKitAppDelegate")
             .owned::<dyn AppEvents>()
+            .protocol(c"NSApplicationDelegate")
             .method(
                 sel!("applicationShouldTerminate:"),
                 app_should_terminate as extern "C" fn(App, Sel, Obj) -> usize,
+            )
+            .method(
+                sel!("applicationWillTerminate:"),
+                app_will_terminate as extern "C" fn(App, Sel, Obj),
             )
             .method(
                 sel!("applicationShouldTerminateAfterLastWindowClosed:"),
@@ -106,9 +119,11 @@ fn app_class() -> &'static DelegateClass<dyn AppEvents> {
 
 fn window_class() -> &'static DelegateClass<dyn WindowEvents> {
     static CLASS: OnceLock<DelegateClass<dyn WindowEvents>> = OnceLock::new();
-    CLASS.get_or_init(|| {
+    // SAFETY: see above.
+    CLASS.get_or_init(|| unsafe {
         ClassBuilder::<NSObject>::new(c"BunAppKitWindowDelegate")
             .owned::<dyn WindowEvents>()
+            .protocol(c"NSWindowDelegate")
             .method(
                 sel!("windowShouldClose:"),
                 win_should_close as extern "C" fn(Win, Sel, Obj) -> Bool,
@@ -139,9 +154,14 @@ fn window_class() -> &'static DelegateClass<dyn WindowEvents> {
 
 fn control_class() -> &'static DelegateClass<dyn ControlEvents> {
     static CLASS: OnceLock<DelegateClass<dyn ControlEvents>> = OnceLock::new();
-    CLASS.get_or_init(|| {
+    // SAFETY: see above.
+    CLASS.get_or_init(|| unsafe {
         ClassBuilder::<NSObject>::new(c"BunAppKitTarget")
             .owned::<dyn ControlEvents>()
+            .protocol(c"NSTextFieldDelegate")
+            .protocol(c"NSTextViewDelegate")
+            .protocol(c"NSTableViewDataSource")
+            .protocol(c"NSTableViewDelegate")
             .method(
                 sel!("onAction:"),
                 ctl_action as extern "C" fn(Ctl, Sel, Obj),
@@ -188,9 +208,12 @@ fn control_class() -> &'static DelegateClass<dyn ControlEvents> {
 
 fn metal_view_class() -> &'static DelegateClass<dyn MetalViewEvents> {
     static CLASS: OnceLock<DelegateClass<dyn MetalViewEvents>> = OnceLock::new();
-    CLASS.get_or_init(|| {
+    // SAFETY: see above; `MTKViewDelegate` (MTKView.h) declares
+    // `drawInMTKView:(MTKView *)` and `mtkView:(MTKView *) drawableSizeWillChange:(CGSize)`.
+    CLASS.get_or_init(|| unsafe {
         ClassBuilder::<NSObject>::new(c"BunAppKitMetalDelegate")
             .owned::<dyn MetalViewEvents>()
+            .protocol(c"MTKViewDelegate")
             .method(
                 sel!("drawInMTKView:"),
                 mtk_draw as extern "C" fn(Mtk, Sel, Obj),
@@ -208,8 +231,9 @@ fn metal_view_class() -> &'static DelegateClass<dyn MetalViewEvents> {
 pub(crate) fn flipped_clip_view_class() -> Subclass<NSClipView> {
     static CLASS: OnceLock<Subclass<NSClipView>> = OnceLock::new();
     *CLASS.get_or_init(|| {
-        ClassBuilder::<NSClipView>::new(c"BunAppKitFlippedClipView")
-            .method(sel!("isFlipped"), yes0 as extern "C" fn(Obj, Sel) -> Bool)
+        let class = ClassBuilder::<NSClipView>::new(c"BunAppKitFlippedClipView");
+        // SAFETY: see above; overrides `-[NSView isFlipped]` (`BOOL`, no arguments).
+        unsafe { class.method(sel!("isFlipped"), yes0 as extern "C" fn(Obj, Sel) -> Bool) }
             .register()
     })
 }
@@ -221,13 +245,27 @@ pub(crate) fn flipped_clip_view_class() -> Subclass<NSClipView> {
 pub(crate) fn unconstrained_window_class() -> Subclass<NSWindow> {
     static CLASS: OnceLock<Subclass<NSWindow>> = OnceLock::new();
     *CLASS.get_or_init(|| {
-        ClassBuilder::<NSWindow>::new(c"BunAppKitHeadlessWindow")
-            .method(
+        let class = ClassBuilder::<NSWindow>::new(c"BunAppKitHeadlessWindow");
+        // SAFETY: see above; overrides `-[NSWindow constrainFrameRect:(NSRect) toScreen:(NSScreen *)]`.
+        let class = unsafe {
+            class.method(
                 sel!("constrainFrameRect:toScreen:"),
                 win_identity_frame as extern "C" fn(Obj, Sel, Rect, Obj) -> Rect,
             )
-            .register()
+        };
+        class.register()
     })
+}
+
+/// Registers every class this file defines, so the check of each IMP
+/// against its protocol or superclass declaration runs now.
+pub(super) fn register_all() {
+    app_class();
+    window_class();
+    control_class();
+    metal_view_class();
+    flipped_clip_view_class();
+    unconstrained_window_class();
 }
 
 impl Delegate<dyn AppEvents> {
@@ -282,8 +320,11 @@ fn mtk<R>(this: Mtk, f: impl FnOnce(&(dyn MetalViewEvents + 'static)) -> R) -> O
 }
 
 extern "C" fn app_should_terminate(this: App, _: Sel, _sender: Obj) -> usize {
-    let _ = app(this, |h| h.terminate_requested());
-    0 // NSTerminateCancel
+    // NSTerminateNow / NSTerminateCancel
+    usize::from(app(this, |h| h.terminate_requested()).unwrap_or(false))
+}
+extern "C" fn app_will_terminate(this: App, _: Sel, _note: Obj) {
+    let _ = app(this, |h| h.will_terminate());
 }
 extern "C" fn app_no(_: App, _: Sel, _: Obj) -> Bool {
     Bool::NO

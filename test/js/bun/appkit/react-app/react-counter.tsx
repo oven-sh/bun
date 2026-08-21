@@ -49,7 +49,7 @@ await run(async () => {
 
   const errors: string[] = [];
   const bad = render(<Window visible={false}>{createElement("constructor")}</Window>, {
-    onError: e => errors.push(String((e as Error)?.message ?? e).split(".")[0]),
+    onUncaughtError: e => errors.push(String((e as Error)?.message ?? e).split(".")[0]),
   });
   await tick();
   emit({ step: "unknown-element", errors: [...new Set(errors)] });

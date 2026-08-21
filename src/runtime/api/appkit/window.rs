@@ -260,7 +260,10 @@ impl AppKitWindow {
                 "Window content must be an AppKitView or null"
             )));
         };
-        conv::check(global, self.window.set_content(Some(view.native())))?;
+        conv::check(
+            global,
+            self.window.set_content(Some(&*view.native(global)?)),
+        )?;
         Ok(JSValue::UNDEFINED)
     }
 

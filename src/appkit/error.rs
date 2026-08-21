@@ -31,8 +31,9 @@ pub enum Error {
     BaselineAlignOnVerticalStack,
     #[error("invalid color {0:?}")]
     BadColor(String),
+    /// Not one of the standard action selectors [`crate::ActionSelector`] lists.
     #[error(
-        "{0:?} is not an action selector; expected an identifier ending in one \":\", like \"copy:\""
+        "{0:?} is not a supported menu action selector; expected a standard one such as \"copy:\", \"performClose:\" or \"toggleFullScreen:\""
     )]
     BadSelector(String),
     /// No SF Symbol with this name.
@@ -109,4 +110,7 @@ pub enum Error {
     /// An operation the object was not created to support; `.0` says which and why.
     #[error("{0}")]
     Unsupported(&'static str),
+    /// The object is not in a state where this can be done now; `.0` says which and why.
+    #[error("{0}")]
+    InvalidState(&'static str),
 }

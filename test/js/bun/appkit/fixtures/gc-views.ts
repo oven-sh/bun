@@ -1,4 +1,5 @@
 import { app, Button, Text, VStack, Window } from "bun:appkit";
+import { appKitInternals } from "bun:internal-for-testing";
 import { emit, run, waitFor } from "./_util";
 
 await run(async () => {
@@ -7,7 +8,7 @@ await run(async () => {
   const win = new Window({ width: 200, height: 100, content: new Text({ text: "gc" }) });
   win.show();
   Bun.gc(true);
-  const baseline = app.liveViews;
+  const baseline = appKitInternals.liveViews();
 
   (() => {
     const loose: unknown[] = [];
@@ -16,14 +17,14 @@ await run(async () => {
         i % 3 === 0 ? new Text({ text: `t${i}` }) : i % 3 === 1 ? new Button({ title: `b${i}` }) : new VStack(),
       );
     }
-    emit({ step: "created", live: app.liveViews, baseline });
+    emit({ step: "created", live: appKitInternals.liveViews(), baseline });
   })();
 
-  let after = app.liveViews;
+  let after = appKitInternals.liveViews();
   await waitFor(
     () => {
       Bun.gc(true);
-      after = app.liveViews;
+      after = appKitInternals.liveViews();
       return after <= baseline + 5;
     },
     "views to be collected",

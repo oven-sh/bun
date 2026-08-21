@@ -6,10 +6,16 @@ use crate::geometry::{Positive, Rect};
 use crate::objc;
 use crate::objc::appkit::{BoxType, NSBox, NSLayoutConstraint, NSView};
 
+/// A divider with no `vertical` prop and no parent axis to go by.
 const DEFAULT_DIVIDER_VERTICAL: bool = false;
 
 pub(crate) struct Divider {
     view: NSBox,
+    /// The `vertical` prop, when set; otherwise the line runs across the
+    /// parent container's axis.
+    explicit: Option<bool>,
+    /// The parent container's main axis, known once the divider has one.
+    axis: Option<Orientation>,
     vertical: bool,
     /// Pins the short axis to one pixel; swapped when `vertical` changes.
     thickness: NSLayoutConstraint,
@@ -22,6 +28,8 @@ impl Divider {
         let thickness = Divider::orient(&view, DEFAULT_DIVIDER_VERTICAL);
         Divider {
             view,
+            explicit: None,
+            axis: None,
             vertical: DEFAULT_DIVIDER_VERTICAL,
             thickness,
         }
@@ -49,6 +57,19 @@ impl Divider {
         thickness.set_active(true);
         thickness
     }
+
+    fn reorient(&mut self) {
+        let vertical = self.explicit.unwrap_or(match self.axis {
+            Some(Orientation::Horizontal) => true,
+            Some(Orientation::Vertical) => false,
+            None => DEFAULT_DIVIDER_VERTICAL,
+        });
+        if vertical != self.vertical {
+            self.thickness.set_active(false);
+            self.thickness = Divider::orient(&self.view, vertical);
+            self.vertical = vertical;
+        }
+    }
 }
 
 impl Widget for Divider {
@@ -59,16 +80,17 @@ impl Widget for Divider {
     fn set<'p>(&mut self, _cx: &Cx<'_>, prop: Prop<'p>) -> Result<Option<Prop<'p>>> {
         match prop {
             Prop::Vertical(b) => {
-                let b = b.unwrap_or(DEFAULT_DIVIDER_VERTICAL);
-                if b != self.vertical {
-                    self.thickness.set_active(false);
-                    self.thickness = Divider::orient(&self.view, b);
-                    self.vertical = b;
-                }
+                self.explicit = b;
+                self.reorient();
             }
             other => return Ok(Some(other)),
         }
         Ok(None)
+    }
+
+    fn attached(&mut self, axis: Option<Orientation>) {
+        self.axis = axis;
+        self.reorient();
     }
 
     fn rewrites_own_priorities(&self, prop: &Prop<'_>) -> bool {

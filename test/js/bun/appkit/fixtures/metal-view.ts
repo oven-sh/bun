@@ -53,5 +53,71 @@ await run(async () => {
   await tick();
   emit({ step: "cleared", count: frames.length });
 
+  // renderPass(view) is refused outside the view's own onFrame.
+  {
+    let outside: { message: string; code: unknown } | "ok" = "ok";
+    const stray = gpu.frame();
+    try {
+      stray.renderPass(view);
+    } catch (e) {
+      outside = { message: String((e as Error)?.message), code: (e as { code?: unknown })?.code };
+    }
+    stray.commit();
+    emit({ step: "outside onFrame", outside });
+  }
+
+  // A handler that throws leaves the frame dropped, not committed; two passes
+  // into the view in one frame and a depth pass both encode; draw() from
+  // inside the handler is refused and does not disturb the frame in progress.
+  {
+    let thrownFrame: { committed: boolean; state: string } | undefined;
+    let secondPass = "ok";
+    let depthPass = "ok";
+    let nestedDraw: { message: string; code: unknown } | "returned" = "returned";
+    let afterNested = "ok";
+    let runs = 0;
+    const uncaught: string[] = [];
+    process.on("uncaughtException", e => uncaught.push(String((e as Error)?.message)));
+    view.onFrame = frame => {
+      runs++;
+      try {
+        frame.renderPass(view).end();
+        frame.renderPass(view).end();
+      } catch (e) {
+        secondPass = String((e as Error)?.message);
+      }
+      try {
+        frame.renderPass(view, { depthFormat: "depth32float", clearDepth: 0.5 }).end();
+      } catch (e) {
+        depthPass = String((e as Error)?.message);
+      }
+      try {
+        view.draw();
+      } catch (e) {
+        nestedDraw = { message: String((e as Error)?.message), code: (e as { code?: unknown })?.code };
+      }
+      try {
+        frame.renderPass(view).end();
+      } catch (e) {
+        afterNested = String((e as Error)?.message);
+      }
+      thrownFrame = frame;
+      throw new Error("handler failed");
+    };
+    view.draw();
+    await tick();
+    emit({
+      step: "thrown handler",
+      dropped: thrownFrame && { committed: thrownFrame.committed, state: thrownFrame.state },
+      secondPass,
+      depthPass,
+      nestedDraw,
+      afterNested,
+      runs,
+      uncaught,
+    });
+    view.onFrame = undefined;
+  }
+
   win.close();
 });

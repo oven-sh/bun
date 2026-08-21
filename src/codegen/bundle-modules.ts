@@ -77,12 +77,26 @@ async function retry(n, fn) {
 
 const bunRepoRoot = path.join(CMAKE_BUILD_ROOT, "..", "..");
 
+// Modules that only exist on one platform. Other targets keep the registry
+// slot (module IDs stay target-independent) but bundle a one-line stub instead
+// of the source; the resolver does not expose the name there, so the stub is
+// unreachable from user code.
+const targetPlatform = process.env.TARGET_PLATFORM ?? process.platform;
+const platformOnlyModules: Record<string, string> = {
+  "bun/appkit.ts": "darwin",
+  "bun/appkit.react.ts": "darwin",
+};
+
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
 for (let i = 0; i < nativeStartIndex; i++) {
   try {
     const file = path.join(BASE, moduleList[i]);
     let input = fs.readFileSync(file, "utf8");
+    const onlyOn = platformOnlyModules[moduleList[i]];
+    if (onlyOn && onlyOn !== targetPlatform) {
+      input = `export default (() => { throw new Error(${JSON.stringify(`${moduleList[i]} is only built for ${onlyOn}`)}); })();`;
+    }
 
     if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
       if (input.includes("module.exports")) {
@@ -683,7 +697,7 @@ for (const file of evalFiles) {
     format: "esm",
     env: "disable",
     define: {
-      "process.platform": JSON.stringify(process.env.TARGET_PLATFORM ?? process.platform),
+      "process.platform": JSON.stringify(targetPlatform),
       "process.arch": JSON.stringify(process.env.TARGET_ARCH ?? process.arch),
     },
   });

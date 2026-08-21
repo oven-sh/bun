@@ -1,24 +1,54 @@
 //! Buffers, textures, samplers and depth/stencil state.
 
+use std::rc::Rc;
+
 use super::{
-    Gpu, MAX_TEXTURE_SIZE, PixelFormat, Storage, TextureUsage, check_max, check_range, ns_label,
+    BUFFER_OFFSET_ALIGNMENT, Gpu, LastUse, MAX_TEXTURE_SIZE, PixelFormat, Storage, TextureUsage,
+    check_max, check_range, command_buffer_error, ns_label,
 };
 use crate::error::{Error, Result};
 use crate::geometry::{Range, Region};
 use crate::objc::metal::{
     CompareFunction, MTLBuffer, MTLCommandQueue, MTLDepthStencilDescriptor, MTLDepthStencilState,
-    MTLSamplerDescriptor, MTLSamplerState, MTLTexture, MTLTextureDescriptor, SamplerAddressMode,
-    SamplerMinMagFilter, SamplerMipFilter, command_buffer_status,
+    MTLResource, MTLSamplerDescriptor, MTLSamplerState, MTLTexture, MTLTextureDescriptor,
+    SamplerAddressMode, SamplerMinMagFilter, SamplerMipFilter, command_buffer_status,
 };
 use crate::objc::{AutoreleasePool, NsStr};
 
+/// Encodes a `synchronizeResource:` for a managed resource on its own command
+/// buffer and blocks until it has run, so the CPU copy holds the GPU's writes.
+fn synchronize_blocking(queue: &MTLCommandQueue, resource: &MTLResource) -> Result<()> {
+    let cb = queue.command_buffer().ok_or_else(|| Error::GpuExecution {
+        message: "the command queue could not make a command buffer".into(),
+    })?;
+    let blit = cb
+        .blit_command_encoder()
+        .ok_or_else(|| Error::GpuExecution {
+            message: "could not start a blit pass".into(),
+        })?;
+    blit.synchronize_resource(resource);
+    blit.end_encoding();
+    cb.commit();
+    cb.wait_until_completed();
+    if cb.status() == command_buffer_status::ERROR {
+        return Err(command_buffer_error(&cb));
+    }
+    Ok(())
+}
+
 // ─────────────────────────────── buffers ────────────────────────────────────
 
-/// A `MTLBuffer` that knows its length and storage mode.
+/// A `MTLBuffer` that knows its length and storage mode. CPU access
+/// ([`write`](Buffer::write), [`read`](Buffer::read)) first waits for the
+/// last committed frame that used the buffer, so it never overlaps the GPU's.
 pub struct Buffer {
     raw: MTLBuffer,
+    /// For the blit that makes a managed buffer's GPU writes CPU-visible.
+    queue: MTLCommandQueue,
     len: usize,
+    allocated_size: usize,
     storage: Storage,
+    last_use: Rc<LastUse>,
 }
 
 impl Gpu {
@@ -32,7 +62,7 @@ impl Gpu {
             .ok_or_else(|| Error::GpuExecution {
                 message: format!("the device could not allocate a {len}-byte buffer"),
             })?;
-        Ok(Buffer { raw, len, storage })
+        Ok(self.wrap_buffer(raw, len, storage))
     }
 
     /// A buffer holding a copy of `bytes`. `Storage::Private` goes through a
@@ -57,11 +87,18 @@ impl Gpu {
                     bytes.len()
                 ),
             })?;
-        Ok(Buffer {
+        Ok(self.wrap_buffer(raw, bytes.len(), storage))
+    }
+
+    fn wrap_buffer(&self, raw: MTLBuffer, len: usize, storage: Storage) -> Buffer {
+        Buffer {
+            allocated_size: raw.allocated_size(),
             raw,
-            len: bytes.len(),
+            queue: self.queue().clone(),
+            len,
             storage,
-        })
+            last_use: LastUse::new(),
+        }
     }
 
     fn check_buffer_len(&self, len: usize) -> Result<()> {
@@ -85,7 +122,23 @@ impl Buffer {
         self.storage
     }
 
-    /// Copies `bytes` in at `offset`. Not for private storage.
+    /// Bytes of device memory the buffer occupies (at least `len`).
+    pub fn allocated_size(&self) -> usize {
+        self.allocated_size
+    }
+
+    pub(crate) fn last_use(&self) -> Rc<LastUse> {
+        Rc::clone(&self.last_use)
+    }
+
+    /// Whether a committed frame that bound the buffer is still running, so
+    /// that a [`write`](Buffer::write) or [`read`](Buffer::read) now would block.
+    pub fn in_flight(&self) -> bool {
+        self.last_use.in_flight()
+    }
+
+    /// Copies `bytes` in at `offset`, once the GPU has finished any committed
+    /// frame that used the buffer. Not for private storage.
     pub fn write(&self, offset: usize, bytes: &[u8]) -> Result<()> {
         if !self.storage.cpu_accessible() {
             return Err(Error::BufferNotAccessible);
@@ -94,6 +147,7 @@ impl Buffer {
         if bytes.is_empty() {
             return Ok(());
         }
+        self.last_use.wait();
         self.raw.copy_to_contents(offset, bytes)?;
         if self.storage == Storage::Managed {
             self.raw.did_modify_range(Range {
@@ -104,8 +158,10 @@ impl Buffer {
         Ok(())
     }
 
-    /// Copies `len` bytes out from `offset`. Not for private storage; a managed
-    /// buffer the GPU wrote needs a completed [`BlitPass::synchronize_buffer`](super::BlitPass::synchronize_buffer) first.
+    /// Copies `len` bytes out from `offset`, once the GPU has finished any
+    /// committed frame that used the buffer; a managed buffer is synchronised
+    /// first, so either way this sees what those frames wrote. Not for
+    /// private storage.
     pub fn read(&self, offset: usize, len: usize) -> Result<Vec<u8>> {
         if !self.storage.cpu_accessible() {
             return Err(Error::BufferNotAccessible);
@@ -113,6 +169,11 @@ impl Buffer {
         check_range("buffer read", self.len, offset, len)?;
         if len == 0 {
             return Ok(Vec::new());
+        }
+        self.last_use.wait();
+        if self.storage == Storage::Managed {
+            let _pool = AutoreleasePool::new();
+            synchronize_blocking(&self.queue, &self.raw)?;
         }
         self.raw.copy_from_contents(offset, len)
     }
@@ -125,12 +186,31 @@ impl Buffer {
     pub(crate) fn check_range(&self, what: &'static str, offset: usize, size: usize) -> Result<()> {
         check_range(what, self.len, offset, size)
     }
+
+    /// A shader bind offset: inside the buffer and 4-byte aligned.
+    pub(crate) fn check_bind_offset(&self, what: &'static str, offset: usize) -> Result<()> {
+        if offset >= self.len {
+            return Err(Error::OutOfBounds {
+                what,
+                len: self.len,
+                offset,
+                size: 1,
+            });
+        }
+        if !offset.is_multiple_of(BUFFER_OFFSET_ALIGNMENT) {
+            return Err(Error::Unsupported(
+                "buffer bind offset must be a multiple of 4",
+            ));
+        }
+        Ok(())
+    }
 }
 
 // ─────────────────────────────── textures ───────────────────────────────────
 
 /// How to create a [`Texture`]. `storage: None` picks what the format needs:
-/// private for depth formats, otherwise the device's CPU-visible mode.
+/// private for depth formats, otherwise the device's CPU-visible texture
+/// mode, which is also what `Shared` and `Managed` both mean here.
 #[derive(Clone, Debug)]
 pub struct TextureDesc<'a> {
     pub width: usize,
@@ -157,7 +237,8 @@ impl TextureDesc<'_> {
     }
 }
 
-/// A 2D `MTLTexture` with its creation parameters.
+/// A 2D `MTLTexture` with its creation parameters. Like [`Buffer`], CPU
+/// access waits for the last committed frame that used it.
 pub struct Texture {
     raw: MTLTexture,
     /// For the blit that makes a managed texture's GPU writes CPU-visible.
@@ -168,6 +249,8 @@ pub struct Texture {
     usage: TextureUsage,
     storage: Storage,
     mip_levels: usize,
+    allocated_size: usize,
+    last_use: Rc<LastUse>,
 }
 
 impl Gpu {
@@ -183,13 +266,11 @@ impl Gpu {
         if desc.format == PixelFormat::Invalid {
             return Err(Error::Unsupported("a texture needs a pixel format"));
         }
-        // Discrete (Intel-era) GPUs refuse shared textures outright; managed is
-        // their CPU-visible mode and reads back the same way.
         let storage = match desc.storage {
-            Some(Storage::Shared) | Some(Storage::Managed) => self.cpu_storage(),
+            Some(Storage::Shared) | Some(Storage::Managed) => self.texture_cpu_storage(),
             Some(Storage::Private) => Storage::Private,
             None if desc.format.is_depth() => Storage::Private,
-            None => self.cpu_storage(),
+            None => self.texture_cpu_storage(),
         };
         let _pool = AutoreleasePool::new();
         let d =
@@ -212,6 +293,7 @@ impl Gpu {
         }
         Ok(Texture {
             mip_levels: raw.mipmap_level_count(),
+            allocated_size: raw.allocated_size(),
             raw,
             queue: self.queue().clone(),
             width: desc.width,
@@ -219,6 +301,7 @@ impl Gpu {
             format: desc.format,
             usage: desc.usage,
             storage,
+            last_use: LastUse::new(),
         })
     }
 }
@@ -252,6 +335,20 @@ impl Texture {
         self.mip_levels
     }
 
+    /// Bytes of device memory the texture and its mip levels occupy.
+    pub fn allocated_size(&self) -> usize {
+        self.allocated_size
+    }
+
+    pub(crate) fn last_use(&self) -> Rc<LastUse> {
+        Rc::clone(&self.last_use)
+    }
+
+    /// Whether a committed frame that used the texture is still running.
+    pub fn in_flight(&self) -> bool {
+        self.last_use.in_flight()
+    }
+
     pub fn bytes_per_pixel(&self) -> usize {
         self.format.bytes_per_texel()
     }
@@ -274,7 +371,9 @@ impl Texture {
     }
 
     /// Replaces all of level 0 with `bytes`, laid out `bytes_per_row` apart
-    /// (`0` = tightly packed).
+    /// (`0` = tightly packed; otherwise at least one packed row and a whole
+    /// number of texels), once the GPU has finished any committed frame that
+    /// used the texture.
     pub fn replace(&self, bytes: &[u8], bytes_per_row: usize) -> Result<()> {
         self.check_cpu_access()?;
         let packed = self.bytes_per_row();
@@ -291,6 +390,12 @@ impl Texture {
                 size: packed,
             });
         }
+        if !bytes_per_row.is_multiple_of(self.format.bytes_per_texel()) {
+            return Err(Error::Unsupported(
+                "bytes per row must be a multiple of the format's bytes per pixel",
+            ));
+        }
+        self.last_use.wait();
         self.raw.replace_region(
             Region::new_2d(0, 0, self.width, self.height),
             0,
@@ -299,14 +404,14 @@ impl Texture {
         )
     }
 
-    /// Level 0 as tightly packed rows. The GPU work that wrote the texture must
-    /// have completed ([`Frame::commit_and_wait`](super::Frame::commit_and_wait));
-    /// a managed texture is synchronised here first.
+    /// Level 0 as tightly packed rows, once the GPU has finished any committed
+    /// frame that used the texture; a managed texture is synchronised first.
     pub fn read_pixels(&self) -> Result<Vec<u8>> {
         self.check_cpu_access()?;
         let _pool = AutoreleasePool::new();
+        self.last_use.wait();
         if self.storage == Storage::Managed {
-            self.synchronize_blocking()?;
+            synchronize_blocking(&self.queue, &self.raw)?;
         }
         let bytes_per_row = self.bytes_per_row();
         let total = bytes_per_row
@@ -325,33 +430,6 @@ impl Texture {
             0,
         )?;
         Ok(out)
-    }
-
-    fn synchronize_blocking(&self) -> Result<()> {
-        let cb = self
-            .queue
-            .command_buffer()
-            .ok_or_else(|| Error::GpuExecution {
-                message: "the command queue has too many uncommitted command buffers".into(),
-            })?;
-        let blit = cb
-            .blit_command_encoder()
-            .ok_or_else(|| Error::GpuExecution {
-                message: "could not start a blit pass".into(),
-            })?;
-        blit.synchronize_resource(&self.raw);
-        blit.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
-        if cb.status() == command_buffer_status::ERROR {
-            return Err(Error::GpuExecution {
-                message: cb.error().map_or_else(
-                    || "unknown error".into(),
-                    |e| e.localized_description().to_string_lossy(),
-                ),
-            });
-        }
-        Ok(())
     }
 }
 

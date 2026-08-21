@@ -123,10 +123,20 @@ mod unsupported {
     stub!(
         #[bun_jsc::JsClass]
         AppKitView {
-            methods: [set, get, insert_child, remove_child, click, snapshot, draw],
+            methods: [
+                set,
+                get,
+                insert_child,
+                remove_child,
+                click,
+                snapshot,
+                draw,
+                release
+            ],
             getters: [
                 get_frame,
                 get_drawable_size,
+                get_released,
                 get_on_action,
                 get_on_change,
                 get_on_submit,
@@ -191,7 +201,7 @@ mod unsupported {
     stub!(
         #[bun_jsc::JsClass(no_constructor)]
         AppKitApp {
-            methods: [start, quit, activate, hide, set],
+            methods: [start, quit, activate, hide, set, testing],
             getters: [
                 get_is_dark,
                 get_has_display,
@@ -207,6 +217,7 @@ mod unsupported {
         #[bun_jsc::JsClass(no_constructor)]
         AppKitGpu {
             methods: [
+                register_errors,
                 buffer,
                 texture,
                 library,
@@ -223,8 +234,14 @@ mod unsupported {
     stub!(
         #[bun_jsc::JsClass]
         GpuBuffer {
-            methods: [write, read],
-            getters: [get_byte_length, get_storage, get_label],
+            methods: [write, read, destroy],
+            getters: [
+                get_byte_length,
+                get_storage,
+                get_in_flight,
+                get_destroyed,
+                get_label
+            ],
             setters: [set_label]
         }
     );
@@ -232,11 +249,30 @@ mod unsupported {
     stub!(
         #[bun_jsc::JsClass]
         GpuTexture {
-            methods: [replace, read_pixels],
-            getters: [get_width, get_height, get_format, get_label],
+            methods: [replace, read_pixels, destroy],
+            getters: [
+                get_width,
+                get_height,
+                get_format,
+                get_in_flight,
+                get_destroyed,
+                get_label
+            ],
             setters: [set_label]
         }
     );
+
+    impl GpuBuffer {
+        pub fn estimated_size(&self) -> usize {
+            core::mem::size_of::<GpuBuffer>()
+        }
+    }
+
+    impl GpuTexture {
+        pub fn estimated_size(&self) -> usize {
+            core::mem::size_of::<GpuTexture>()
+        }
+    }
 
     stub!(
         #[bun_jsc::JsClass]
@@ -251,7 +287,7 @@ mod unsupported {
         #[bun_jsc::JsClass]
         GpuFunction {
             methods: [],
-            getters: [get_name]
+            getters: [get_name, get_type]
         }
     );
 
@@ -327,7 +363,13 @@ mod unsupported {
                 commit,
                 commit_and_wait
             ],
-            getters: [get_committed, get_state, get_label],
+            getters: [
+                get_committed,
+                get_state,
+                get_gpu_status,
+                get_error,
+                get_label
+            ],
             setters: [set_label]
         }
     );

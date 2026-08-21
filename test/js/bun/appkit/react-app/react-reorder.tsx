@@ -1,7 +1,8 @@
 import { app } from "bun:appkit";
 import { Button, Text, VStack, Window, flushSync, render } from "bun:appkit/react";
+import { appKitInternals } from "bun:internal-for-testing";
 import { useState } from "react";
-import { emit, run } from "./_util";
+import { emit, run, tick } from "./_util";
 
 let setItems!: (items: string[]) => void;
 let setHidden!: (hidden: boolean) => void;
@@ -28,7 +29,21 @@ function List() {
   );
 }
 
-await run(() => {
+// A view React deleted has had its native side freed: `released` says so,
+// reads keep answering with the last value, and mutations throw ERR_INVALID_STATE.
+function released(view: import("bun:appkit").View): boolean | Record<string, unknown> {
+  if (!view.released) return false;
+  const text = (view as import("bun:appkit").Text).text;
+  let setter: unknown = "no throw";
+  try {
+    (view as import("bun:appkit").Text).text = "again";
+  } catch (e) {
+    setter = (e as { code?: string })?.code;
+  }
+  return { text, frame: view.frame, setter };
+}
+
+await run(async () => {
   app.activationPolicy = "accessory";
   render(<List />);
   const win = Array.from(app.windows)[0];
@@ -37,10 +52,21 @@ await run(() => {
     stack.children.map(c => (c as import("bun:appkit").Text).text ?? (c as import("bun:appkit").Button).title);
 
   emit({ step: "initial", order: order() });
+  const [a, b, , d] = stack.children;
+  const liveBefore = appKitInternals.liveViews();
   flushSync(() => setItems(["d", "a", "c", "b"]));
-  emit({ step: "reordered", order: order() });
+  emit({ step: "reordered", order: order(), sameViews: stack.children[1] === a && stack.children[3] === b });
   flushSync(() => setItems(["c", "btn", "e", "a"]));
+  await tick();
   emit({ step: "replaced", order: order(), kinds: stack.children.map(c => c.constructor.name) });
+  // b and d went away, btn and e arrived: freed at the commit, not at a later collection.
+  emit({
+    step: "released",
+    a: released(a),
+    b: released(b),
+    d: released(d),
+    liveViewsDelta: appKitInternals.liveViews() - liveBefore,
+  });
   flushSync(() => setHidden(true));
   emit({ step: "hidden", hidden: stack.children.map(c => !!c.hidden) });
   flushSync(() => setItems([]));

@@ -1,7 +1,7 @@
 //! `Picker` (a pop-up button) and `Segmented`: one index chosen from a list
 //! of titles.
 
-use super::{Cx, Event, Prop, Widget};
+use super::{Cx, Event, Orientation, Prop, TITLE_COMPRESSION, Widget};
 use crate::error::Result;
 use crate::geometry::Rect;
 use crate::objc;
@@ -39,6 +39,10 @@ impl Picker {
     pub(crate) fn new(cx: &Cx<'_>) -> Picker {
         let view =
             NSPopUpButton::init_pulls_down(objc::alloc::<NSPopUpButton>(), Rect::default(), false);
+        view.set_content_compression_resistance_priority(
+            TITLE_COMPRESSION,
+            Orientation::Horizontal,
+        );
         super::wire_action(cx, &view);
         Picker {
             view,
@@ -118,6 +122,10 @@ impl Segmented {
             NSSegmentedControl::with_labels(&empty, SegmentSwitchTracking::SelectOne, None, None);
         // Fill, so the control spans a Fill-aligned stack.
         view.set_segment_distribution(SegmentDistribution::Fill);
+        view.set_content_compression_resistance_priority(
+            TITLE_COMPRESSION,
+            Orientation::Horizontal,
+        );
         super::wire_action(cx, &view);
         Segmented {
             view,

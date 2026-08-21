@@ -5,9 +5,12 @@
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use bun_appkit::app::LoopHooks;
 use bun_appkit::menu::{Action, ActionSelector, Entry, Item, Menu, Modifiers};
 use bun_appkit::{ActivationPolicy, App, AppSink};
+use bun_core::Timespec;
 use bun_io::KeepAlive;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::conv::{self, JsStr};
@@ -20,6 +23,8 @@ struct State {
     windows: Cell<usize>,
     /// `app.keepAlive`: hold the process even with no window open.
     keep_flag: Cell<bool>,
+    /// A quit passed every veto; the process exits at the next loop turn.
+    quit_requested: Cell<bool>,
 }
 
 thread_local! {
@@ -27,16 +32,23 @@ thread_local! {
         keep_alive: RefCell::new(KeepAlive::init()),
         windows: Cell::new(0),
         keep_flag: Cell::new(false),
+        quit_requested: Cell::new(false),
     };
 }
 
+/// Holds the process open, and App Nap off, exactly while a window is open,
+/// `app.keepAlive` is set, or an accepted quit is waiting for the next loop
+/// turn to exit.
 fn sync_keep_alive(state: &State) {
-    let wanted = state.windows.get() > 0 || state.keep_flag.get();
+    let wanted = state.windows.get() > 0 || state.keep_flag.get() || state.quit_requested.get();
     let mut keep_alive = state.keep_alive.borrow_mut();
     if wanted {
         keep_alive.ref_(bun_io::js_vm_ctx());
     } else {
         keep_alive.unref(bun_io::js_vm_ctx());
+    }
+    if let Some(app) = App::get() {
+        app.set_responsive(wanted);
     }
 }
 
@@ -70,9 +82,54 @@ fn set_keep_flag(on: bool) {
     });
 }
 
-/// The running application, or a JavaScript error if `app.start()` has not been called.
+/// The running application, or a JavaScript error if `bun:appkit` has not
+/// started it on this thread yet.
 pub(super) fn started(global: &JSGlobalObject) -> JsResult<&'static App> {
-    App::get().ok_or_else(|| global.throw(format_args!("app.start() has not been called")))
+    App::get().ok_or_else(|| {
+        global.throw(format_args!(
+            "the AppKit application has not been started on this thread"
+        ))
+    })
+}
+
+/// [`LoopHooks::next_due`]: zero while tasks or immediates are queued,
+/// otherwise the time to the earliest armed timer (either heap) or QUIC
+/// tick. Peeks only; runs nothing.
+fn next_due() -> Option<Timespec> {
+    let vm = VirtualMachine::get();
+    let event_loop = vm.event_loop_mut();
+    let has_pending = !event_loop.immediate_tasks.is_empty()
+        || !event_loop.next_immediate_tasks.is_empty()
+        || event_loop.has_pending_tasks();
+    let quic_next_tick_us = {
+        let ild = &vm.uws_loop_mut().internal_loop_data;
+        (!ild.quic_head.is_null()).then_some(ild.quic_next_tick_us)
+    };
+    crate::jsc_hooks::timer_all_mut().peek_next_due(has_pending, quic_next_tick_us)
+}
+
+/// [`LoopHooks::outermost`]: no JavaScript frame is on the stack (so no
+/// native code JavaScript called into can be holding an autorelease pool
+/// across this park), and the loop is not inside `EventLoop::enter`.
+fn outermost() -> bool {
+    let vm = VirtualMachine::get();
+    !vm.jsc_vm().is_entered() && vm.event_loop_mut().entered_event_loop_count == 0
+}
+
+/// [`LoopHooks::exit_if_requested`]: a quit that got past `beforequit` and
+/// every `shouldClose` ends the process here, at the top of a loop turn, so no
+/// AppKit frame is on the stack while exit handlers and finalizers run.
+fn exit_if_requested() {
+    if STATE.with(|state| state.quit_requested.get()) {
+        exit_now();
+    }
+}
+
+/// `process.exit(process.exitCode)`.
+fn exit_now() {
+    let global = VirtualMachine::get().global();
+    let code = global.bun_vm().as_mut().exit_handler.exit_code;
+    crate::node::process::exit(global, code);
 }
 
 struct Events {
@@ -82,6 +139,18 @@ struct Events {
 impl AppSink for Events {
     fn before_quit(&self) -> bool {
         self.slots.allows(js::on_before_quit_get_cached, &[])
+    }
+
+    fn quit(&self) {
+        STATE.with(|state| {
+            state.quit_requested.set(true);
+            sync_keep_alive(state);
+        });
+        VirtualMachine::get().event_loop_mut().wakeup();
+    }
+
+    fn exit_now(&self) {
+        exit_now();
     }
 
     fn reopened(&self, has_visible_windows: bool) {
@@ -126,19 +195,86 @@ impl AppKitApp {
         };
         if App::get().is_none() {
             let loop_ = global.bun_vm().uws_loop_mut();
-            let app = conv::check(global, App::start(loop_, policy))?;
+            let hooks = LoopHooks {
+                next_due,
+                outermost,
+                exit_if_requested,
+            };
+            let app = conv::check(global, App::start(loop_, hooks, policy))?;
             app.set_sink(Box::new(Events {
                 slots: Rc::clone(&self.slots),
             }));
+            STATE.with(sync_keep_alive);
         }
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Before the application has started there is nothing to ask, so this
+    /// is `process.exit()` with the current `process.exitCode`.
     pub fn quit(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        if let Some(app) = App::get() {
-            app.request_quit();
+        match App::get() {
+            Some(app) => {
+                app.request_quit();
+            }
+            None => exit_now(),
         }
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Hooks for `bun:internal-for-testing`; `op` picks one.
+    pub fn testing(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let op = JsStr::new(global, frame.argument(0), format_args!("op"))?.to_utf8();
+        match op.as_str() {
+            // Every compiled Objective-C binding checked against the loaded
+            // frameworks; one string per mismatch.
+            "verifyBindings" => {
+                let problems = conv::check(global, bun_appkit::verify_bindings())?;
+                let array = JSValue::create_empty_array(global, problems.len())?;
+                for (i, p) in problems.iter().enumerate() {
+                    let s = bun_jsc::StringJsc::to_js(
+                        &bun_core::String::clone_utf8(p.as_bytes()),
+                        global,
+                    )?;
+                    array.put_index(global, i as u32, s)?;
+                }
+                Ok(array)
+            }
+            // Runs `callback` after `ms` from inside AppKit's wait rather than
+            // from Bun's timer heap, like a display timer or an Apple Event.
+            "runInsideWait" => {
+                let app = started(global)?;
+                let ms = conv::number(global, frame.argument(1), format_args!("ms"))?;
+                let callback = frame.argument(2);
+                if !callback.is_callable() {
+                    return Err(
+                        global.throw_invalid_arguments(format_args!("callback must be a function"))
+                    );
+                }
+                let callback = bun_jsc::Strong::create(callback, global);
+                app.run_after(
+                    ms / 1000.0,
+                    Box::new(move || {
+                        let global = VirtualMachine::get().global();
+                        let _ = global.bun_vm().event_loop_mut().run_callback_with_result(
+                            callback.get(),
+                            global,
+                            JSValue::UNDEFINED,
+                            &[],
+                        );
+                    }),
+                );
+                Ok(JSValue::UNDEFINED)
+            }
+            // `-[NSApplication terminate:]`, the path the Quit menu item, the
+            // Dock and a logout take.
+            "terminate" => {
+                started(global)?.terminate();
+                Ok(JSValue::UNDEFINED)
+            }
+            other => {
+                Err(global.throw_invalid_arguments(format_args!("unknown testing op \"{other}\"")))
+            }
+        }
     }
 
     pub fn activate(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
@@ -200,10 +336,12 @@ impl AppKitApp {
         Ok(JSValue::js_boolean(App::get().is_some_and(App::is_dark)))
     }
 
-    pub fn get_has_display(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_boolean(
-            App::get().is_some_and(App::has_display),
-        ))
+    /// Answers without starting the application.
+    pub fn get_has_display(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(conv::check(
+            global,
+            App::query_display(),
+        )?))
     }
 
     pub fn get_live_views(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {

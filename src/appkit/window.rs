@@ -14,7 +14,7 @@ use crate::objc::appkit::{
 };
 use crate::objc::foundation::NSString;
 use crate::objc::{self, AutoreleasePool, Delegate, NsStr, WindowEvents};
-use crate::view::{View, WeakView};
+use crate::view::{Hold, View, WeakView};
 
 // NSWindowStyleMask
 const TITLED: usize = 1;
@@ -28,6 +28,11 @@ const FULL_SCREEN_PRIMARY: usize = 1 << 7;
 /// stack that hugs its content stays compact at the top while a scroll view or
 /// `grow` child stretches to fill the window.
 const CONTENT_BOTTOM_PRIORITY: f32 = 240.0;
+/// The window's `minWidth`/`maxWidth`/... held on the container: above every
+/// priority a child can bring (titled controls 490, stack fill 400, `grow`
+/// shares) but not required, so a frame AppKit imposes on its own (screen
+/// smaller than `minHeight`, zoom, full screen) wins instead of conflicting.
+const LIMIT_PRIORITY: f32 = crate::objc::appkit::priority::ALMOST_REQUIRED;
 
 /// Where a window reports what happened to it.
 pub trait WindowSink {
@@ -52,6 +57,31 @@ pub struct SizeLimits {
 }
 
 impl SizeLimits {
+    /// The limits as applied: negative values count as 0 and, when a
+    /// minimum exceeds its maximum, the minimum wins (as it does for views).
+    fn resolved(self) -> SizeLimits {
+        let min_width = self.min_width.map(|v| v.max(0.0));
+        let min_height = self.min_height.map(|v| v.max(0.0));
+        SizeLimits {
+            min_width,
+            min_height,
+            max_width: self.max_width.map(|v| v.max(min_width.unwrap_or(0.0))),
+            max_height: self.max_height.map(|v| v.max(min_height.unwrap_or(0.0))),
+        }
+    }
+
+    /// `size` brought inside these (resolved) limits.
+    fn clamp(&self, size: Size) -> Size {
+        let axis = |v: f64, min: Option<f64>, max: Option<f64>| {
+            let v = v.max(min.unwrap_or(0.0));
+            max.map_or(v, |max| v.min(max))
+        };
+        Size {
+            width: axis(size.width, self.min_width, self.max_width),
+            height: axis(size.height, self.min_height, self.max_height),
+        }
+    }
+
     /// AppKit's own "no limit" values are 0 and FLT_MAX, so unset halves need no special casing.
     fn min_size(&self) -> Size {
         Size {
@@ -111,6 +141,31 @@ impl Default for WindowOptions {
     }
 }
 
+thread_local! {
+    /// Every window on this thread that has not closed yet, for [`close_all`].
+    static OPEN: RefCell<Vec<Weak<Shared>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Asks each window that has not closed (visible, hidden or minimized;
+/// closable or not, oldest first) whether it may close, through the same sink
+/// hook the close button uses, and closes it if so. Stops at the first
+/// refusal and returns false; windows after that one are not asked.
+pub(crate) fn close_all() -> bool {
+    let open: Vec<Rc<Shared>> =
+        OPEN.with(|open| open.borrow().iter().filter_map(Weak::upgrade).collect());
+    for shared in open {
+        if shared.closed.get() {
+            continue;
+        }
+        if !shared.sink.should_close() {
+            return false;
+        }
+        shared.ns.close();
+        shared.finish_close();
+    }
+    true
+}
+
 struct Shared {
     ns: NSWindow,
     app: &'static App,
@@ -118,9 +173,32 @@ struct Shared {
     /// Pinned to all edges of AppKit's contentView; content goes in here.
     container: NSView,
     child: RefCell<Option<WeakView>>,
+    /// As given; `SizeLimits::resolved` is what gets applied.
     limits: Cell<SizeLimits>,
+    /// `container`'s width and height held inside `limits`; see `apply_limits`.
+    bounds: RefCell<[Option<NSLayoutConstraint>; 4]>,
     closed: Cell<bool>,
     shown_once: Cell<bool>,
+    /// A geometry setter is running: the `windowDidResize:` /
+    /// `windowDidMove:` it causes echo the caller's own change and are not
+    /// reported, the same as a view's setters.
+    in_setter: Cell<bool>,
+}
+
+/// Marks a geometry setter for its lifetime; see [`Shared::in_setter`].
+struct Setter<'a>(&'a Shared);
+
+impl<'a> Setter<'a> {
+    fn new(shared: &'a Shared) -> Setter<'a> {
+        shared.in_setter.set(true);
+        Setter(shared)
+    }
+}
+
+impl Drop for Setter<'_> {
+    fn drop(&mut self) {
+        self.0.in_setter.set(false);
+    }
 }
 
 impl Shared {
@@ -128,12 +206,53 @@ impl Shared {
         self.ns.content_rect_for_frame_rect(self.ns.frame()).size
     }
 
+    /// AppKit's content size limits only bound the user's drags. The same
+    /// limits as required constraints on the container also bound what the
+    /// content can grow or shrink the window to under Auto Layout.
+    fn apply_limits(&self, limits: SizeLimits) {
+        let limits = limits.resolved();
+        self.ns.set_content_min_size(limits.min_size());
+        self.ns.set_content_max_size(limits.max_size());
+        let mut bounds = self.bounds.borrow_mut();
+        let [min_width, max_width, min_height, max_height] = &mut *bounds;
+        for (slot, attr, rel, value) in [
+            (
+                min_width,
+                Attr::Width,
+                Rel::GreaterOrEqual,
+                limits.min_width,
+            ),
+            (max_width, Attr::Width, Rel::LessOrEqual, limits.max_width),
+            (
+                min_height,
+                Attr::Height,
+                Rel::GreaterOrEqual,
+                limits.min_height,
+            ),
+            (
+                max_height,
+                Attr::Height,
+                Rel::LessOrEqual,
+                limits.max_height,
+            ),
+        ] {
+            crate::view::size_constraint(&self.container, slot, attr, rel, value, LIMIT_PRIORITY);
+        }
+    }
+
     /// Bookkeeping for a close, whichever path noticed it first.
     fn finish_close(&self) {
         if self.closed.replace(true) {
             return;
         }
-        if let Some(view) = self.child.borrow_mut().take().and_then(|w| w.upgrade()) {
+        OPEN.with(|open| {
+            open.borrow_mut().retain(|w| {
+                w.upgrade()
+                    .is_some_and(|s| !core::ptr::eq(Rc::as_ptr(&s), self))
+            })
+        });
+        let child = self.child.borrow_mut().take();
+        if let Some(view) = child.and_then(|w| w.upgrade()) {
             view.detach_from_parent();
         }
         // A closed NSWindow lives until its wrapper is collected; free the name for the next one now.
@@ -150,6 +269,25 @@ impl Events {
     fn with<R>(&self, f: impl FnOnce(&Shared) -> R) -> Option<R> {
         self.shared.upgrade().map(|s| f(&s))
     }
+
+    /// Hands `report` to the sink once no [`Hold`] is alive, so a handler
+    /// never runs while a view or window is halfway through a change.
+    fn report(&self, report: impl FnOnce(&Shared) + 'static) {
+        let shared = Weak::clone(&self.shared);
+        Hold::deliver(move || {
+            if let Some(shared) = shared.upgrade() {
+                report(&shared);
+            }
+        });
+    }
+
+    /// Like `report`, for the geometry events a setter would echo.
+    fn report_geometry(&self, report: impl FnOnce(&Shared) + 'static) {
+        if self.with(|s| s.in_setter.get()).unwrap_or(true) {
+            return;
+        }
+        self.report(report);
+    }
 }
 
 impl WindowEvents for Events {
@@ -160,16 +298,16 @@ impl WindowEvents for Events {
         self.with(Shared::finish_close);
     }
     fn did_resize(&self) {
-        self.with(|s| s.sink.resized(s.content_size()));
+        self.report_geometry(|s| s.sink.resized(s.content_size()));
     }
     fn did_move(&self) {
-        self.with(|s| s.sink.moved(s.ns.frame().origin));
+        self.report_geometry(|s| s.sink.moved(s.ns.frame().origin));
     }
     fn did_become_key(&self) {
-        self.with(|s| s.sink.focused());
+        self.report(|s| s.sink.focused());
     }
     fn did_resign_key(&self) {
-        self.with(|s| s.sink.blurred());
+        self.report(|s| s.sink.blurred());
     }
 }
 
@@ -218,10 +356,10 @@ impl Window {
         }
         let rect = Rect {
             origin: opts.origin.unwrap_or_default(),
-            size: Size {
+            size: opts.limits.resolved().clamp(Size {
                 width: opts.width,
                 height: opts.height,
-            },
+            }),
         };
         let allocated = if app.has_display() {
             objc::alloc::<NSWindow>()
@@ -241,8 +379,6 @@ impl Window {
         if let Some(title) = &opts.title {
             ns.set_title(&nsstring(title));
         }
-        ns.set_content_min_size(opts.limits.min_size());
-        ns.set_content_max_size(opts.limits.max_size());
         if opts.titlebar_transparent {
             ns.set_titlebar_appears_transparent(true);
         }
@@ -280,9 +416,13 @@ impl Window {
             container,
             child: RefCell::new(None),
             limits: Cell::new(opts.limits),
+            bounds: RefCell::default(),
             closed: Cell::new(false),
             shown_once: Cell::new(false),
+            in_setter: Cell::new(false),
         });
+        OPEN.with(|open| open.borrow_mut().push(Rc::downgrade(&shared)));
+        shared.apply_limits(opts.limits);
         let delegate = Delegate::window(Box::new(Events {
             shared: Rc::downgrade(&shared),
         }));
@@ -314,12 +454,25 @@ impl Window {
         self.shared.ns.title().to_utf16()
     }
 
+    /// The content area's size with pending layout applied first, so it
+    /// reflects content added a moment ago; a `did_resize` that layout
+    /// provokes goes out after this returns.
     pub fn content_size(&self) -> Size {
+        let _hold = Hold::new();
+        let _pool = AutoreleasePool::new();
+        if !self.shared.closed.get() {
+            self.shared.ns.layout_if_needed();
+        }
         self.shared.content_size()
     }
 
+    /// Clamped into the window's size limits. Not reported to
+    /// [`WindowSink::resized`]: the caller knows.
     pub fn set_content_size(&self, size: Size) -> Result<()> {
-        self.live()?.set_content_size(size);
+        let ns = self.live()?;
+        let _setter = Setter::new(&self.shared);
+        let size = self.shared.limits.get().resolved().clamp(size);
+        ns.set_content_size(size);
         Ok(())
     }
 
@@ -328,8 +481,11 @@ impl Window {
         self.shared.ns.frame().origin
     }
 
+    /// Not reported to [`WindowSink::moved`]: the caller knows.
     pub fn set_position(&self, origin: Point) -> Result<()> {
-        self.live()?.set_frame_origin(origin);
+        let ns = self.live()?;
+        let _setter = Setter::new(&self.shared);
+        ns.set_frame_origin(origin);
         Ok(())
     }
 
@@ -337,11 +493,18 @@ impl Window {
         self.shared.limits.get()
     }
 
+    /// A window already outside the new limits is resized to the nearest
+    /// size inside them (without a [`WindowSink::resized`]).
     pub fn set_limits(&self, limits: SizeLimits) -> Result<()> {
         let ns = self.live()?;
-        ns.set_content_min_size(limits.min_size());
-        ns.set_content_max_size(limits.max_size());
+        let _setter = Setter::new(&self.shared);
+        self.shared.apply_limits(limits);
         self.shared.limits.set(limits);
+        let size = self.shared.content_size();
+        let clamped = limits.resolved().clamp(size);
+        if clamped != size {
+            ns.set_content_size(clamped);
+        }
         Ok(())
     }
 
@@ -380,8 +543,11 @@ impl Window {
         Ok(())
     }
 
+    /// Not reported to [`WindowSink::moved`]: the caller asked for it.
     pub fn center(&self) -> Result<()> {
-        self.live()?.center();
+        let ns = self.live()?;
+        let _setter = Setter::new(&self.shared);
+        ns.center();
         Ok(())
     }
 
@@ -416,15 +582,19 @@ impl Window {
     }
 
     /// Replaces the single content view. The child is pinned leading, trailing
-    /// and top at required priority and bottom at [`CONTENT_BOTTOM_PRIORITY`].
+    /// and top at required priority; at the bottom it may end short of the
+    /// window (an equality at [`CONTENT_BOTTOM_PRIORITY`]) but never beyond
+    /// it, so content the window cannot hold makes the window taller, the
+    /// same as content wider than the window makes it wider.
     pub fn set_content(&self, child: Option<&View>) -> Result<()> {
         self.live()?;
+        let _hold = Hold::new();
         let _pool = AutoreleasePool::new();
         if child.is_some_and(View::has_parent) {
             return Err(Error::ChildHasParent);
         }
-        let mut slot = self.shared.child.borrow_mut();
-        if let Some(old) = slot.take().and_then(|w| w.upgrade()) {
+        let old = self.shared.child.borrow_mut().take();
+        if let Some(old) = old.and_then(|w| w.upgrade()) {
             old.detach_from_parent();
         }
         if let Some(child) = child {
@@ -438,14 +608,27 @@ impl Window {
             let bottom = constraint(&view, Attr::Bottom, container);
             bottom.set_priority(CONTENT_BOTTOM_PRIORITY);
             bottom.set_active(true);
+            NSLayoutConstraint::with_items(
+                &view,
+                Attr::Bottom,
+                Rel::LessOrEqual,
+                Some(container),
+                Attr::Bottom,
+                1.0,
+                0.0,
+            )
+            .set_active(true);
             child.set_has_parent(true);
-            *slot = Some(child.downgrade());
+            *self.shared.child.borrow_mut() = Some(child.downgrade());
         }
         Ok(())
     }
 
-    /// PNG of the content area as currently laid out; `None` if it has no size yet.
+    /// PNG of the content area as currently laid out; `None` if it has no
+    /// size yet. Callbacks the layout and display pass provoke go out after
+    /// this returns.
     pub fn snapshot_png(&self) -> Option<Vec<u8>> {
+        let _hold = Hold::new();
         let _pool = AutoreleasePool::new();
         self.shared.ns.layout_if_needed();
         crate::view::snapshot_png(&self.shared.container)

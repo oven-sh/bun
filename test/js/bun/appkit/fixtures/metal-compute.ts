@@ -41,4 +41,23 @@ await run(() => {
   frame.blit().copyBuffer(hidden, back, { size: input.byteLength });
   frame.commitAndWait();
   emit({ step: "private", storage: hidden.storage, values: Array.from(new Float32Array(back.read().buffer)) });
+
+  // commit() alone: read() waits for the frame that wrote the buffer.
+  gpu
+    .frame()
+    .computePass()
+    .pipeline(twice)
+    .buffer(0, buffer)
+    .bytes(1, Float32Array.of(0.5))
+    .dispatch(input.length)
+    .end()
+    .commit();
+  emit({
+    step: "read after commit",
+    values: Array.from(new Float32Array(buffer.read().buffer)),
+    inFlightAfter: buffer.inFlight,
+  });
+
+  // "managed" is taken as "shared" for buffers.
+  emit({ step: "managed alias", storage: gpu.buffer(4, { storage: "managed" as never }).storage });
 });

@@ -15,4 +15,8 @@ postMessage({
   view: attempt(() => new Text({ text: "off-main" })),
   start: attempt(() => app.activate()),
   window: attempt(() => new Window({ visible: false })),
+  keepAlive: attempt(() => (app.keepAlive = true)),
+  // A refused start leaves nothing behind: not "running", not holding the worker open.
+  running: app.isRunning,
+  keptAlive: app.keepAlive,
 });

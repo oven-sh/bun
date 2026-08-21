@@ -781,8 +781,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
 // names, a junction), while the entrypoint and the modules imported from it get
 // their real path. The watcher is rooted at the cwd and compared the two as
 // strings, so every module was reported as outside the project and nothing
-// reloaded. A module resolved against the cwd (here the preload) keeps the
-// cwd's spelling, so both spellings have to be watched at the same time.
+// reloaded. With an 8.3 cwd, a module resolved against the cwd (here the
+// preload) keeps the cwd's spelling, so both spellings have to be watched at
+// the same time.
 describe.concurrent.skipIf(!isWindows)("--hot when the cwd is spelled differently from the project's real path", () => {
   const warning = "is not in the project directory";
   const projectFiles = {
@@ -836,8 +837,9 @@ describe.concurrent.skipIf(!isWindows)("--hot when the cwd is spelled differentl
 
   // The entrypoint is passed by its real path so that the test does not depend
   // on how a relative entrypoint is resolved; the preload is resolved against
-  // the cwd. Editing either file has to reload.
-  async function expectReloadsFrom(cwd: string, project: string, preload: string | ReturnType<typeof expect.any>) {
+  // the cwd. `preload` is the path the preload ends up with. Editing either
+  // file has to reload.
+  async function expectReloadsFrom(cwd: string, project: string, preload: string) {
     await using runner = spawn({
       cmd: [bunExe(), "--hot", "--preload", "./preload.js", join(project, "entry.js")],
       cwd,
@@ -850,20 +852,20 @@ describe.concurrent.skipIf(!isWindows)("--hot when the cwd is spelled differentl
     // Without the fix the watcher prints this for every module and never
     // reloads; failing on the warning is faster and clearer than a timeout.
     let stderr = "";
-    const { promise: warned, reject: failOnWarning } = Promise.withResolvers<never>();
-    warned.catch(() => {});
+    const { promise: failed, reject: fail } = Promise.withResolvers<never>();
+    failed.catch(() => {});
     (async () => {
       const decoder = new TextDecoder();
       for await (const chunk of runner.stderr) {
         stderr += decoder.decode(chunk, { stream: true });
-        if (stderr.includes(warning)) failOnWarning(new Error(`--hot refused to watch the project:\n${stderr}`));
+        if (stderr.includes(warning)) fail(new Error(`--hot refused to watch the project:\n${stderr}`));
       }
-    })();
+    })().catch(fail);
 
     const lines = forEachLine(runner.stdout);
     async function nextLoad(matches: (load: Load) => boolean): Promise<Load> {
       while (true) {
-        const { value, done } = await Promise.race([lines.next(), warned]);
+        const { value, done } = await Promise.race([lines.next(), failed]);
         if (done) throw new Error(`--hot exited with ${runner.exitCode} before reloading. stderr:\n${stderr}`);
         const load: Load = JSON.parse(value);
         if (matches(load)) return load;
@@ -883,20 +885,30 @@ describe.concurrent.skipIf(!isWindows)("--hot when the cwd is spelled differentl
     expect(afterDepEdit.loads).toBeGreaterThan(afterPreloadEdit.loads);
   }
 
-  it.skipIf(!hasShortNames)("reloads when the cwd uses 8.3 short names", async () => {
-    using project = tempDir("hot-short-cwd", projectFiles);
-    const cwd = shortPath(String(project));
-    expect(cwd.toLowerCase()).not.toBe(String(project).toLowerCase());
+  it.skipIf(!hasShortNames)(
+    "reloads when the cwd uses 8.3 short names",
+    async () => {
+      using project = tempDir("hot-short-cwd", projectFiles);
+      const cwd = shortPath(String(project));
+      expect(cwd.toLowerCase()).not.toBe(String(project).toLowerCase());
 
-    await expectReloadsFrom(cwd, String(project), join(cwd, "preload.js"));
-  });
+      await expectReloadsFrom(cwd, String(project), join(cwd, "preload.js"));
+    },
+    timeout,
+  );
 
-  it("reloads when the cwd is a junction to the project", async () => {
-    using project = tempDir("hot-junction-target", projectFiles);
-    using linkParent = tempDir("hot-junction-cwd", {});
-    const cwd = join(String(linkParent), "project");
-    symlinkSync(String(project), cwd, "junction");
+  it(
+    "reloads when the cwd is a junction to the project",
+    async () => {
+      using project = tempDir("hot-junction-target", projectFiles);
+      using linkParent = tempDir("hot-junction-cwd", {});
+      const cwd = join(String(linkParent), "project");
+      symlinkSync(String(project), cwd, "junction");
 
-    await expectReloadsFrom(cwd, String(project), expect.any(String));
-  });
+      // The resolver follows the junction, so here even the preload gets its real
+      // path and nothing is spelled like the cwd.
+      await expectReloadsFrom(cwd, String(project), join(String(project), "preload.js"));
+    },
+    timeout,
+  );
 });

@@ -401,12 +401,18 @@ impl WindowsWatcher {
     }
 }
 
-/// See [`WindowsWatcher::real_root`]. `given_prefix` is `root` plus a separator.
+/// See [`WindowsWatcher::real_root`]. A root that cannot be resolved is watched as given, as before.
 fn real_root_prefix(root: &[u8], given_prefix: &[u8]) -> Option<Box<[u8]>> {
     let mut root_buf = bun_paths::path_buffer_pool::get();
     let mut real_buf = bun_paths::path_buffer_pool::get();
     let root_z = bun_paths::resolve_path::z(root, &mut root_buf);
-    let real = bun_sys::realpath(root_z, &mut real_buf).ok()?;
+    let real = match bun_sys::realpath(root_z, &mut real_buf) {
+        Ok(real) => real,
+        Err(err) => {
+            bun_core::scoped_log!(watcher, "realpath of the watched root failed: {}", err);
+            return None;
+        }
+    };
     let mut prefix = Vec::with_capacity(real.len() + 1);
     prefix.extend_from_slice(real);
     if !real

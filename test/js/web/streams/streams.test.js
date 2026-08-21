@@ -574,10 +574,12 @@ it("ReadableStream (direct): an underlyingSource close() hook that throws is not
 
 it("ReadableStream (direct): controller.close() outside pull with a throwing close() hook settles the pending read and throws to the closer", async () => {
   let controller;
+  const pulled = Promise.withResolvers();
   const stream = new ReadableStream({
     type: "direct",
     pull(c) {
       controller = c;
+      pulled.resolve();
     },
     close() {
       throw new Error("close hook threw");
@@ -585,7 +587,7 @@ it("ReadableStream (direct): controller.close() outside pull with a throwing clo
   });
   const reader = stream.getReader();
   const pending = reader.read();
-  await Bun.sleep(0); // let pull() run and hand us the controller
+  await pulled.promise;
   controller.write("late");
   expect(() => controller.close()).toThrow("close hook threw");
   const first = await pending;

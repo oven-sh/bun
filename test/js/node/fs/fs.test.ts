@@ -9,6 +9,7 @@ import {
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -3195,6 +3196,105 @@ describe("rm", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
+
+  // Builds a single chain of at least `depth` nested directories under `parent`
+  // in chunks, each created with one mkdir and the part of the chain built so
+  // far renamed to its bottom, so that no path handed to the fs is longer than
+  // ~400 bytes past `parent` (macOS PATH_MAX is 1024; ~100 bytes on Windows for
+  // MAX_PATH) and a 2000-deep chain needs only 9 renames, which are slow on a
+  // busy host. Returns the top of the chain and the directory the last rename
+  // moved.
+  function makeDeepChain(parent: string, depth: number) {
+    const chunk = isWindows ? 50 : 200;
+    let top: string | undefined;
+    let seam: string | undefined;
+    for (let i = 0; depth > 0; i++) {
+      const levels = Math.min(chunk, depth);
+      const chunkTop = join(parent, `chunk${i}`);
+      const chunkBottom = join(chunkTop, Buffer.alloc(levels * 2 - 1, "a/").toString());
+      mkdirSync(chunkBottom, { recursive: true });
+      if (top !== undefined) {
+        seam = join(chunkBottom, "a");
+        renameSync(top, seam);
+      }
+      top = chunkTop;
+      depth -= levels;
+    }
+    return { top: top!, seam: seam! };
+  }
+
+  // Removing the 2000-deep chain costs ~0.4 s of CPU in a debug+ASAN build and
+  // 27 s or more with a walk quadratic in the depth (#37939). The bound is on CPU
+  // time, which process.cpuUsage() also counts for the fs thread pool, because
+  // the quadratic work is pure CPU while the wall-clock time of building and
+  // removing 2000 directories is dominated by fs contention on a busy machine
+  // (hence also the test timeout). Windows gets no bound: removing a directory
+  // costs 0.05 ms of CPU on a fast box but 3 ms on CI, so no bound is both safe
+  // on CI and below the quadratic walk's cost on a fast box; it only checks that
+  // a chain far deeper than the walk's 16-slot initial stack reservation is
+  // removed and cleaned up after.
+  const deepChain = isWindows ? { depth: 200, cpuBudgetMs: undefined } : { depth: 2000, cpuBudgetMs: 5_000 };
+  it.each([
+    ["rmSync", (p: string) => rmSync(p, { recursive: true, force: true })],
+    ["promises.rm", (p: string) => promises.rm(p, { recursive: true, force: true })],
+  ])(
+    `%s removes a directory chain nested ${deepChain.depth} levels deep`,
+    async (_, rm) => {
+      using dir = tempDir("rm-deep-chain", {});
+      const { top, seam } = makeDeepChain(String(dir), deepChain.depth);
+      expect(statSync(seam).isDirectory()).toBe(true);
+
+      const maxFDBefore = getMaxFD();
+      const cpuBefore = process.cpuUsage();
+      await rm(top);
+      const cpu = process.cpuUsage(cpuBefore);
+
+      expect(existsSync(top)).toBe(false);
+      // Every level's directory handle must have been released again; the fs
+      // thread pool may have opened a handful of fds of its own.
+      expect(getMaxFD() - maxFDBefore).toBeLessThan(5);
+      if (deepChain.cpuBudgetMs !== undefined) {
+        expect((cpu.user + cpu.system) / 1000).toBeLessThan(deepChain.cpuBudgetMs);
+      }
+    },
+    30_000,
+  );
+
+  // Node's test-fs-rm.js pins what a recursive rm reports when a directory in
+  // the tree is not writable: the EACCES from removing its child, except that
+  // on macOS node reports the ENOTEMPTY of removing the unwritable directory
+  // itself. Every level goes through the same walk, so a directory 40 levels
+  // down gets the same answer as one directly under the root, and bailing out
+  // releases every directory the walk had open.
+  it.skipIf(isWindows || process.getuid?.() === 0)(
+    "recursive rm reports an unwritable directory 40 levels down the same way as one at the top",
+    () => {
+      using dir = tempDir("rm-deep-unwritable", {});
+      const rmErrorCode = (levels: number) => {
+        const root = join(String(dir), `root-${levels}`);
+        const unwritable = join(root, Buffer.alloc(Math.max(levels * 2 - 1, 0), "a/").toString(), "unwritable");
+        mkdirSync(join(unwritable, "leaf"), { recursive: true });
+        fs.chmodSync(unwritable, 0o555);
+        try {
+          const maxFDBefore = getMaxFD();
+          let code: string | undefined;
+          try {
+            rmSync(root, { recursive: true });
+          } catch (e: any) {
+            code = e.code;
+          }
+          expect(getMaxFD()).toBe(maxFDBefore);
+          return code;
+        } finally {
+          if (existsSync(unwritable)) fs.chmodSync(unwritable, 0o755);
+        }
+      };
+
+      const atTop = rmErrorCode(0);
+      expect(atTop).toBe(isMacOS ? "ENOTEMPTY" : "EACCES");
+      expect(rmErrorCode(40)).toBe(atTop);
+    },
+  );
 });
 
 describe("rmdir", () => {

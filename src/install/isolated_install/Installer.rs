@@ -2542,8 +2542,7 @@ impl<'a> Installer<'a> {
                     Some(replacement_entry_id) => {
                         let replacement_node_id =
                             entry_node_ids[replacement_entry_id.get() as usize];
-                        let replacement_pkg_id =
-                            node_pkg_ids[replacement_node_id.get() as usize];
+                        let replacement_pkg_id = node_pkg_ids[replacement_node_id.get() as usize];
                         strings::StringOrTinyString::init(
                             lockfile.str(&pkg_names[replacement_pkg_id as usize]),
                         )
@@ -2587,11 +2586,7 @@ impl<'a> Installer<'a> {
                     && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
                 {
                     let mut p = DefaultAbsPath::init_top_level_dir();
-                    self.append_real_store_node_modules_path(
-                        &mut p,
-                        dep.entry_id,
-                        Which::Final,
-                    );
+                    self.append_real_store_node_modules_path(&mut p, dep.entry_id, Which::Final);
                     own_store_node_modules_path = p;
                     bin_linker.target_node_modules_path = &raw const own_store_node_modules_path;
                     bin_linker.target_package_name = package_name;

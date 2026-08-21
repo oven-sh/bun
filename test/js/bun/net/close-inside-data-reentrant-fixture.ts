@@ -1,7 +1,7 @@
-// Run with `bun test <this file>`: expect(promise).resolves waits by driving the
-// event loop synchronously, which is what nests event-loop ticks inside the
-// socket's data callback while the dispatch for that socket is still on the
-// stack.
+// Spawned by socket.test.ts as `bun test <this file>`: it has to run under the
+// test runner because expect(promise).resolves waits by driving the event loop
+// synchronously, which is what nests event-loop ticks inside the socket's data
+// callback while the dispatch for that socket is still on the stack.
 import { expect, test } from "bun:test";
 
 test("a socket closed inside its data callback survives nested event-loop ticks until the dispatch returns", async () => {
@@ -18,6 +18,7 @@ test("a socket closed inside its data callback survives nested event-loop ticks 
 
   for (let i = 0; i < 8; i++) {
     const returned = Promise.withResolvers<void>();
+    const churn: Promise<void>[] = [];
     await Bun.connect({
       hostname: "127.0.0.1",
       port: server.port,
@@ -32,9 +33,8 @@ test("a socket closed inside its data callback survives nested event-loop ticks 
           // prematurely freed block is likely to be handed out again before
           // the outer dispatch looks at it.
           for (let j = 0; j < 16; j++) {
-            Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } }).then(
-              s => s.terminate(),
-              () => {},
+            churn.push(
+              Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } }).then(s => s.terminate()),
             );
           }
           returned.resolve();
@@ -42,6 +42,7 @@ test("a socket closed inside its data callback survives nested event-loop ticks 
       },
     });
     await returned.promise;
+    await Promise.all(churn);
     // Let the outer dispatch unwind and the loop reach its post phase.
     await new Promise<void>(resolve => setImmediate(resolve));
   }

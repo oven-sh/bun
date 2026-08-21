@@ -4365,10 +4365,12 @@ describe.concurrent("a socket closed by data() which then re-enters the event lo
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", fileURLToPath(new URL("./close-inside-data-reentrant-fixture.ts", import.meta.url))],
       env: bunEnv,
-      stdout: "ignore",
+      stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stdout carries only the runner's version banner; results go to stderr.
+    expect(stdout).toMatch(/^bun test v\S+ \(\S+\)\n$/);
     expect(stderr).toContain(" 1 pass");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);

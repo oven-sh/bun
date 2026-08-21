@@ -255,6 +255,20 @@ Some services use volumes to persist data across container restarts:
 Control behavior with environment variables:
 - `COMPOSE_PROJECT_NAME`: Prefix for container names (default: "bun-test-services")
 - `BUN_DOCKER_COMPOSE_PATH`: Override docker-compose.yml location
+- `BUN_TEST_SERVICE_<service>` (for example `BUN_TEST_SERVICE_postgres_plain=127.0.0.1:5432`): `ensure()` returns this address instead of starting a container. Docker is not needed.
+
+### Skipping When No Service Is Available
+
+`describeWithContainer()` from `harness` skips itself when the service cannot be provided. A suite that calls `ensure()` directly must use `isDockerServiceEnabled("<service>")` from `harness` as its gate:
+
+```typescript
+if (isDockerServiceEnabled("postgres_plain")) {
+  const pg = await dockerCompose.ensure("postgres_plain");
+  // ... define tests
+}
+```
+
+`isDockerEnabled()` only checks for a docker daemon. It ignores `BUN_TEST_SERVICE_*` and the CI coordinator, so use it only for tests that need docker itself.
 
 ## Migration Guide
 

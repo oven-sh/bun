@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerServiceEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 import {
   listeningServer,
@@ -65,7 +65,9 @@ async function assertComputedDecimalsAreStrings(sql: SQL) {
   const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
   expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
 }
-if (isDockerEnabled()) {
+// Each describeWithContainer below checks its own image; this only skips the
+// file when the baseline image is unavailable.
+if (isDockerServiceEnabled("mysql_plain")) {
   // Ordered so the suites whose containers become healthy quickly (mysql_plain,
   // mysql:9) run first; the slow-to-start mysql_tls container warms up in the
   // background instead of stalling the whole file up front.

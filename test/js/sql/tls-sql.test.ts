@@ -1,11 +1,11 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled } from "harness";
+import { describeWithContainer, isDockerServiceEnabled } from "harness";
 import path from "node:path";
 import { listeningServer, pgAuthenticationCleartextPassword, pgSSLRequest, pgSSLResponse } from "./wire-frames";
 
-if (!isDockerEnabled()) {
-  test.skip("skipping TLS SQL tests - Docker is not available", () => {});
+if (!isDockerServiceEnabled("postgres_tls")) {
+  test.skip("skipping TLS SQL tests - the postgres_tls service is not available", () => {});
 } else {
   describeWithContainer(
     "PostgreSQL TLS",

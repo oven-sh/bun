@@ -9,7 +9,7 @@
 
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, tempDir } from "harness";
+import { bunEnv, bunExe, describeWithContainer, isDockerServiceEnabled, tempDir } from "harness";
 import net from "node:net";
 import path from "node:path";
 import {
@@ -973,7 +973,7 @@ describe("in a subprocess", () => {
   }, 30_000);
 });
 
-if (isDockerEnabled()) {
+if (isDockerServiceEnabled("postgres_plain")) {
   describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     const connect = () =>
       new SQL(`postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`, { max: 2 });

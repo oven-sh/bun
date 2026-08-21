@@ -22,11 +22,7 @@ using JSC::MarkedArgumentBuffer;
 
 namespace v8 {
 
-// These return to addon code, which does not check for exceptions between calls, so like the rest
-// of the V8 API (and NAPI_PREAMBLE) they use TopExceptionScope: under validateExceptionChecks a
-// ThrowScope's destructor simulates a throw to the caller, which the next scope the addon enters
-// (another V8 call or a napi_* call, when the addon was reached through Node-API) reports as an
-// unchecked exception.
+// TopExceptionScope, not ThrowScope, because these return to addon code: see NAPI_PREAMBLE.
 
 // Array::New with elements and length
 Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
@@ -100,8 +96,6 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
     JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
 
-    // Note: createLocal must not be called on an EscapableHandleScope -- it does not own a
-    // buffer (its constructor does not push a Bun handle scope; see V8EscapableHandleScopeBase).
     Local<Array> result = isolate->currentHandleScope()->createLocal<Array>(vm, array);
     return handleScope.Escape(result);
 }

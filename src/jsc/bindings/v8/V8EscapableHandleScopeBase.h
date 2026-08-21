@@ -12,13 +12,9 @@ namespace v8 {
 // unwinds the isolate's HandleScopeData using this object's three base words as
 // { isolate_, prev_next_, prev_limit_ }. Older Node headers (<= 24) instead reach Bun's exported
 // ~HandleScope through their inline-defaulted destructors. Therefore this constructor must NOT
-// push a Bun handle scope (nothing on either path would pop it); it initializes the base words
+// open a Bun handle scope (nothing on either path would close it); it initializes the base words
 // V8-style, and Bun's exported ~HandleScope detects such frames and unwinds them the same way the
 // inline destructor would. See V8EscapableHandleScopeBase.cpp and V8HandleScope.cpp.
-//
-// Consequently the inherited m_previousHandleScope/m_buffer words do NOT hold Bun pointers here,
-// so inherited HandleScope methods that use them (like createLocal) must not be called on these
-// objects; Bun-internal code should use isolate->currentHandleScope()->createLocal instead.
 class EscapableHandleScopeBase : public HandleScope {
 public:
     BUN_EXPORT EscapableHandleScopeBase(Isolate* isolate);

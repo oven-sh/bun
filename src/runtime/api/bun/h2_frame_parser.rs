@@ -3465,34 +3465,6 @@ impl H2FrameParser {
         });
     }
 
-    /// Free streams whose legacy lifecycle finished (queued by `free_resources`). Only runs
-    /// at a quiescent point — no JS dispatch on the stack and no in-progress receive()
-    /// borrowing the engine cell; otherwise ids stay queued for the next such point.
-    fn drain_pending_engine_stream_closes(&self) {
-        if self.dispatch_depth.get() != 0 || self.pending_engine_stream_closes.get().is_empty() {
-            return;
-        }
-        let Ok(mut engine_guard) = self.engine.try_borrow_mut() else {
-            return;
-        };
-        let Some(engine) = engine_guard.as_mut() else {
-            return;
-        };
-        self.pending_engine_stream_closes.with_mut(|v| {
-            for id in v.drain(..) {
-                engine.close_stream(id);
-                if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
-                    // SAFETY: sole owner just removed from the map; free_resources already ran;
-                    // dispatch-depth gate above proves no native frame still borrows it; stream
-                    // ids never repeat in a session → frees exactly once.
-                    unsafe {
-                        drop(bun_core::heap::take(stream));
-                    }
-                }
-            }
-        });
-    }
-
     /// Mirror the engine's frame counters into plain Cells so getFrameCounters() never
     /// contends with the engine borrow (destroy can run inside a dispatch).
     fn sync_engine_frame_counters(&self) {
@@ -3566,11 +3538,28 @@ impl H2FrameParser {
                     engine.pending_local_settings_acks.push_back(w);
                 }
             });
+            // Streams whose legacy lifecycle finished since the last batch: evict the engine
+            // entry and free the legacy slot. free_resources already ran for these (it is the
+            // only producer of this queue); duplicate ids are fine — remove() yields None.
+            if self.dispatch_depth.get() == 0 {
+                self.pending_engine_stream_closes.with_mut(|v| {
+                    for id in v.drain(..) {
+                        engine.close_stream(id);
+                        if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
+                            // SAFETY: stream is the heap::alloc'd *mut Stream owned by the
+                            // map entry just removed; free_resources ran when it was queued,
+                            // dispatch_depth == 0 means no caller below us on the stack holds
+                            // a `&mut Stream` across anything that can run user JS (every
+                            // such site arms enter_dispatch), ids never repeat within a
+                            // session, so this frees exactly once.
+                            unsafe {
+                                drop(bun_core::heap::take(stream));
+                            }
+                        }
+                    }
+                });
+            }
         }
-        // Streams whose legacy lifecycle finished since the last batch: evict the engine entry
-        // and free the legacy slot at this quiescent point (the helper enforces the safety
-        // rules; deferred ids are also reclaimed at the next host-call boundary).
-        self.drain_pending_engine_stream_closes();
         if self.rewrite_tail.get().is_empty() {
             let feed = {
                 let mut guard = self.engine.borrow_mut();
@@ -5084,9 +5073,6 @@ impl H2FrameParser {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         bun_output::scoped_log!(H2FrameParser, "rstStream");
-        // Quiescent host-call boundary: reclaim deferred stream closes before this frame
-        // materializes any `*mut Stream`.
-        this.drain_pending_engine_stream_closes();
         let [stream_arg, error_arg] = callframe.arguments_as_array::<2>();
         if callframe.arguments_count() < 2 {
             return Err(global_object.throw(format_args!("Expected stream and code arguments")));
@@ -5944,10 +5930,6 @@ impl H2FrameParser {
             callback_arg,
             defer_callback_arg,
         ] = args.ptr;
-
-        // Quiescent host-call boundary: reclaim deferred stream closes before this frame
-        // materializes any `*mut Stream`.
-        this.drain_pending_engine_stream_closes();
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));

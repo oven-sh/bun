@@ -62,6 +62,7 @@ impl Sampler {
         let ratio = || {
             arg.and_then(|a| core::str::from_utf8(a).ok())
                 .and_then(|a| a.trim().parse::<f64>().ok())
+                .filter(|r| (0.0..=1.0).contains(r))
                 .map(Sampler::ratio_threshold)
                 .unwrap_or(u64::MAX)
         };

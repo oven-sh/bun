@@ -167,12 +167,7 @@ pub fn end(span: NativeSpan, statement: &[u8], operation: Option<&[u8]>, error: 
         }
         if capture && !statement.is_empty() {
             // Cap very large statements; collectors reject multi-MB attributes.
-            let s = if statement.len() > 16 * 1024 {
-                &statement[..16 * 1024]
-            } else {
-                statement
-            };
-            w.attr("db.query.text", s);
+            w.attr("db.query.text", crate::otlp::truncate_utf8(statement, 16 * 1024));
         }
         if let Some((ty, msg)) = error {
             w.attr_opt("error.type", ty);

@@ -80,7 +80,7 @@ export function setAttributes(this: unknown, attributes: unknown) {
 export function updateName(this: unknown, name: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   const state = $getInternalField(this, 0) as number;
-  if (state & 2) return this;
+  if (!(state & 1)) return this;
   if (state & 4) {
     $telemetryNativeSpanOp(this, 1, name + "", undefined);
     return this;
@@ -94,14 +94,22 @@ export function isRecording(this: unknown) {
   return (($getInternalField(this, 0) as number) & 1) !== 0;
 }
 
-export function setStatus(this: unknown, status: { code?: number; message?: string }) {
+// setStatus({ code, message }) — or setStatus(code, message?)
+export function setStatus(this: unknown, status: any, messageArg?: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   const state = $getInternalField(this, 0) as number;
   if (!(state & 1) || status == null) return this;
   // api SpanStatusCode: UNSET=0 OK=1 ERROR=2
-  const code = status.code! | 0;
+  let code: number, msg: unknown;
+  if (typeof status === "number") {
+    code = status | 0;
+    msg = messageArg;
+  } else {
+    code = status.code | 0;
+    msg = status.message;
+  }
   if (code !== 1 && code !== 2) return this;
-  const message = code === 2 && status.message != null ? status.message + "" : "";
+  const message = code === 2 && msg != null ? msg + "" : "";
   if (state & 4) {
     $telemetryNativeSpanOp(this, 2, code, message);
     return this;
@@ -151,7 +159,8 @@ export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown)
     $putInternalField(this, 3, x);
   }
   if (x.e === null) x.e = [];
-  if (x.e.length < 128 * 3) {
+  // Loose cap; the configured event limit is applied natively at end().
+  if (x.e.length < 4096 * 3) {
     $arrayPush(x.e, name + "");
     $arrayPush(x.e, time === undefined ? $telemetryNativeSpanOp(undefined, 5, undefined, undefined) : time);
     $arrayPush(x.e, flat);
@@ -203,7 +212,7 @@ export function addLink(this: unknown, link: any) {
     $putInternalField(this, 3, x);
   }
   if (x.l === null) x.l = [];
-  if (x.l.length < 128 * 4) {
+  if (x.l.length < 4096 * 4) {
     $arrayPush(x.l, ctx.traceId + "");
     $arrayPush(x.l, ctx.spanId + "");
     $arrayPush(x.l, ctx.traceFlags | 0);

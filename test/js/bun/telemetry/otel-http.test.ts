@@ -110,12 +110,7 @@ describe("Bun.serve", () => {
   });
 
   test("5xx marks server span as error; 4xx does not", async () => {
-    using server = Bun.serve({
-      port: 0,
-      routes: { "/500": new Response("x", { status: 500 }), "/404": new Response("x", { status: 404 }) },
-      fetch: () => new Response("?"),
-    });
-    // Static route responses bypass RequestContext, so use fetch() to hit them via a dynamic handler instead.
+    // Static route responses bypass RequestContext, so use a dynamic handler.
     using server2 = Bun.serve({
       port: 0,
       fetch(req) {
@@ -338,6 +333,9 @@ describe("node:http", () => {
       stderr: "pipe",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // node:http currently answers 200 (empty body) when a handler throws with an
+    // uncaughtException listener installed — pre-existing behaviour on main. What
+    // this test pins is that the span is ERROR (2) and matches what was sent.
     expect(stdout.trim()).toMatch(/^(200 200|500 500) 2 undefined$/);
     expect(exitCode).toBe(0);
   });

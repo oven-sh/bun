@@ -54,26 +54,6 @@ pub struct Config {
     pub capture_response_headers: Vec<String>,
 }
 
-impl Clone for Limits {
-    fn clone(&self) -> Self {
-        Limits {
-            attributes: self.attributes,
-            events: self.events,
-            links: self.links,
-            attribute_value_length: self.attribute_value_length,
-        }
-    }
-}
-impl core::fmt::Debug for Limits {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Limits")
-            .field("attributes", &self.attributes)
-            .field("events", &self.events)
-            .field("links", &self.links)
-            .finish()
-    }
-}
-
 impl Default for Config {
     fn default() -> Self {
         let mut all = 0u32;
@@ -132,10 +112,8 @@ pub struct EnvConfig {
 }
 
 fn truthy(v: &[u8]) -> bool {
-    matches!(
-        v.trim_ascii(),
-        b"1" | b"true" | b"TRUE" | b"True" | b"yes" | b"on"
-    )
+    let v = v.trim_ascii();
+    v == b"1" || v.eq_ignore_ascii_case(b"true") || v.eq_ignore_ascii_case(b"yes") || v.eq_ignore_ascii_case(b"on")
 }
 
 fn s(v: &[u8]) -> String {
@@ -167,7 +145,7 @@ fn percent_decode(v: &[u8]) -> String {
     let mut out = Vec::with_capacity(v.len());
     let mut i = 0;
     while i < v.len() {
-        if v[i] == b'%' && i + 2 < v.len() + 0 && i + 2 <= v.len() - 1 {
+        if v[i] == b'%' && i + 2 < v.len() {
             let h = |c: u8| (c as char).to_digit(16);
             if let (Some(a), Some(b)) = (h(v[i + 1]), h(v[i + 2])) {
                 out.push((a * 16 + b) as u8);
@@ -320,7 +298,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             .map(|v| v.trim_ascii().to_vec())
             .as_deref()
         {
-            None | Some(b"http/protobuf") => Protocol::HttpProtobuf,
+            None | Some(b"" | b"http/protobuf") => Protocol::HttpProtobuf,
             Some(b"http/json") => Protocol::HttpJson,
             Some(b"grpc") => {
                 warnings.push("OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported yet; using http/protobuf on the same endpoint".into());

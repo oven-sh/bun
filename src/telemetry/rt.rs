@@ -27,15 +27,16 @@ pub fn hooks() -> Option<&'static Hooks> {
     HOOKS.get()
 }
 
-/// The active span's identity. Valid until the caller next runs JS.
+/// The active span's identity.
 #[inline]
-pub fn active_span<'a>(global: *mut c_void) -> Option<&'a SpanStub> {
+pub fn active_span(global: *mut c_void) -> Option<SpanStub> {
     let h = HOOKS.get()?;
     let p = (h.active_span)(global);
     if p.is_null() {
         None
     } else {
-        Some(unsafe { &*p })
+        // SAFETY: `Hooks::active_span` returns null or a pointer valid until JS next runs.
+        Some(unsafe { *p })
     }
 }
 

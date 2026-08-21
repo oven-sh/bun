@@ -2565,7 +2565,6 @@ impl NodeHTTPResponse {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    /// Called by intrusive RefCount when count reaches zero.
     pub(crate) fn otel_end(&self) {
         let span = self.otel_span.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
@@ -2575,6 +2574,7 @@ impl NodeHTTPResponse {
         }
     }
 
+    /// Called by intrusive RefCount when count reaches zero.
     fn deinit(&self) {
         self.otel_end();
         debug_assert!(!self.body_read_ref.get().has);

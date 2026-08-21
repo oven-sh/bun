@@ -1,0 +1,31 @@
+{
+  "jsm_installed": false,
+  "jsm_authenticated": false,
+  "skill_search_dirs": [
+    "<claude-skill-root>",
+    "<codex-skill-root>",
+    "<project>/.claude/skills"
+  ],
+  "skills": [
+    {"name": "operationalizing-expertise", "state": "installed", "location": "<claude-skill-root>/operationalizing-expertise"},
+    {"name": "codebase-archaeology", "state": "installed", "location": "<claude-skill-root>/codebase-archaeology"},
+    {"name": "codebase-report", "state": "installed", "location": "<claude-skill-root>/codebase-report"},
+    {"name": "extreme-software-optimization", "state": "installed", "location": "<claude-skill-root>/extreme-software-optimization"},
+    {"name": "multi-pass-bug-hunting", "state": "installed", "location": "<claude-skill-root>/multi-pass-bug-hunting"},
+    {"name": "multi-model-triangulation", "state": "installed", "location": "<claude-skill-root>/multi-model-triangulation"},
+    {"name": "idea-wizard", "state": "installed", "location": "<claude-skill-root>/idea-wizard"},
+    {"name": "beads-workflow", "state": "installed", "location": "<claude-skill-root>/beads-workflow"},
+    {"name": "beads-br", "state": "installed", "location": "<claude-skill-root>/beads-br"},
+    {"name": "beads-bv", "state": "installed", "location": "<claude-skill-root>/beads-bv"},
+    {"name": "ubs", "state": "installed", "location": "<claude-skill-root>/ubs"},
+    {"name": "agent-mail", "state": "installed", "location": "<claude-skill-root>/agent-mail"},
+    {"name": "cass", "state": "installed", "location": "<claude-skill-root>/cass"},
+    {"name": "testing-real-service-e2e-no-mocks", "state": "installed", "location": "<claude-skill-root>/testing-real-service-e2e-no-mocks"},
+    {"name": "testing-metamorphic", "state": "installed", "location": "<claude-skill-root>/testing-metamorphic"},
+    {"name": "testing-fuzzing", "state": "installed", "location": "<claude-skill-root>/testing-fuzzing"},
+    {"name": "testing-conformance-harnesses", "state": "installed", "location": "<claude-skill-root>/testing-conformance-harnesses"},
+    {"name": "deadlock-finder-and-fixer", "state": "installed", "location": "<claude-skill-root>/deadlock-finder-and-fixer"}
+  ],
+  "present_count": 18,
+  "missing_count": 0
+}

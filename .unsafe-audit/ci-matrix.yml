@@ -1,0 +1,123 @@
+# Bun unsafe-audit CI matrix entry
+#
+# This is a proposed CI shape for the unsafe-audit verification harness. It is
+# not installed by PR #30763 or PR #30765; landing it should be a separate,
+# maintainer-reviewed CI PR.
+#
+# Bun's existing CI is on Buildkite (`.buildkite/`), not GitHub Actions, so this
+# template is provided in YAML form for reference; the actual integration would
+# be a Buildkite pipeline step or a `.buildkite/scripts/unsafe-audit-verify.sh`
+# invocation.
+
+name: unsafe-audit-verify
+
+on:
+  pull_request:
+    paths:
+      # Trigger only when Rust source or Cargo.toml changes
+      - 'src/**/*.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.unsafe-audit/**'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Stage 1: baseline workspace check
+  # ---------------------------------------------------------------------------
+  workspace-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo check workspace
+        run: cargo check --workspace --all-targets
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: `safe-only` feature build matrix
+  # ---------------------------------------------------------------------------
+  # Verifies that every crate gating unsafe behind `safe-only` still compiles
+  # and passes tests with the feature enabled. This is the perf↔safety knob
+  # for B-001/B-002 sites.
+  safe-only-build:
+    runs-on: ubuntu-latest
+    if: ${{ false }}  # Disabled until Phase 11 lands the `safe-only` Cargo feature
+    strategy:
+      matrix:
+        crate:
+          - bun_base64
+          - bun_install
+          - bun_jsc
+          - bun_bundler
+          - bun_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test ${{ matrix.crate }} --features safe-only
+        run: cargo test -p ${{ matrix.crate }} --features safe-only
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: miri on rewrite-touched crates (per-cluster)
+  # ---------------------------------------------------------------------------
+  # We do NOT run miri on the entire workspace — Bun's test surface is too
+  # large and touches JSC/filesystem/network heavily. Per-crate miri only.
+  miri-per-crate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          # Crates touched by the C-001 (NonNull) and C-002 (transmute) refactors
+          - bun_ast
+          - bun_collections
+          - bun_errno
+          # The canonical *mut Self test bed (Invariant I-001)
+          - bun_io
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      - name: cargo +nightly miri test -p ${{ matrix.crate }}
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation
+        run: cargo +nightly miri test -p ${{ matrix.crate }} --lib
+
+  # ---------------------------------------------------------------------------
+  # Stage 4: cargo +nightly geiger drift detection
+  # ---------------------------------------------------------------------------
+  # Catches new unsafe additions vs the audit's baseline count.
+  geiger-drift:
+    runs-on: ubuntu-latest
+    if: ${{ false }}  # Disabled until vendor deps are CI-fetchable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: install cargo-geiger
+        run: cargo +nightly install --locked cargo-geiger
+      - name: count unsafe vs baseline
+        run: |
+          cargo +nightly geiger --output-format Json > current.json
+          # The baseline is the count at audit time: 11044 sites
+          # (see .unsafe-audit/audit/synthesis/phase1_inventory_summary.md)
+          # CI fails if new unsafe is introduced without a matching audit entry.
+          # TODO: implement diff vs baseline once the vendor-deps issue is fixed.
+          echo "Geiger output preserved; manual review for now."
+
+  # ---------------------------------------------------------------------------
+  # Stage 5: property-based equivalence tests (C-* rewrites)
+  # ---------------------------------------------------------------------------
+  proptest-equivalence:
+    runs-on: ubuntu-latest
+    if: ${{ false }}  # Disabled until Phase 5 plans land the proptests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test --test 'proptest_*'
+        run: |
+          cargo test -p bun_ast --test 'proptest_*'
+          cargo test -p bun_collections --test 'proptest_*'
+          cargo test -p bun_errno --test 'proptest_*'

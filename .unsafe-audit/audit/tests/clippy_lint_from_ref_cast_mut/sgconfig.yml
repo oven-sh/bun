@@ -1,0 +1,5 @@
+# ast-grep root config — checked into Bun once this audit lands.
+# Usage from repo root:
+#   sg scan --config .unsafe-audit/audit/tests/clippy_lint_from_ref_cast_mut/sgconfig.yml src/
+ruleDirs:
+  - rules

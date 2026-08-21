@@ -634,12 +634,16 @@ impl TarballStream {
         let _ = archive.read_support_filter_gzip();
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
         if unsafe { lib::archive_read_append_filter(archive.as_mut_ptr(), 1) } != 0 {
+            // SAFETY: see fn-level # Safety — raw-ptr field write.
+            unsafe { (*this).set_fail_detail(archive.error_string()) };
             return Err(crate::Error::Fail);
         }
         let _ = archive.read_support_format_tar();
         let _ = archive.read_set_options(c"read_concatenated_archives");
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
         if unsafe { lib::archive_read_set_format(archive.as_mut_ptr(), 0x30000) } != 0 {
+            // SAFETY: see fn-level # Safety — raw-ptr field write.
+            unsafe { (*this).set_fail_detail(archive.error_string()) };
             return Err(crate::Error::Fail);
         }
 

@@ -2,7 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { existsSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -41,14 +41,29 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     setHandler(dummyRegistry(urls, { "0.0.2": {}, "0.0.3": {}, "0.0.5": {} }));
     await writeFile(
       join(package_dir, "bunfig.toml"),
-      Bun.TOML.stringify({ install: { cache: { dir: join(package_dir, ".cache") }, registry: root_url + "/", saveTextLockfile: true, linker } }),
+      Bun.TOML.stringify({
+        install: {
+          cache: { dir: join(package_dir, ".cache") },
+          registry: root_url + "/",
+          saveTextLockfile: true,
+          linker,
+        },
+      }),
     );
     await mkdir(join(package_dir, "packages", "a"), { recursive: true });
     await writeFile(
       join(package_dir, "package.json"),
-      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { bar: "0.0.2" }, devDependencies: { qux: "0.0.2" } }),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: { bar: "0.0.2" },
+        devDependencies: { qux: "0.0.2" },
+      }),
     );
-    await writeFile(join(package_dir, "packages", "a", "package.json"), JSON.stringify({ name: "a", version: "1.0.0", dependencies: { baz: "0.0.3" } }));
+    await writeFile(
+      join(package_dir, "packages", "a", "package.json"),
+      JSON.stringify({ name: "a", version: "1.0.0", dependencies: { baz: "0.0.3" } }),
+    );
   });
   afterEach(dummyAfterEach);
 
@@ -66,7 +81,10 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     expect(urls.length).toBe(before);
 
     // 2. a workspace manifest edit is noticed
-    await writeFile(join(package_dir, "packages", "a", "package.json"), JSON.stringify({ name: "a", version: "1.0.0", dependencies: { baz: "0.0.5" } }));
+    await writeFile(
+      join(package_dir, "packages", "a", "package.json"),
+      JSON.stringify({ name: "a", version: "1.0.0", dependencies: { baz: "0.0.5" } }),
+    );
     r = await install(package_dir);
     expect(r.code).toBe(0);
     expect(r.err).toContain("Saved lockfile");
@@ -74,7 +92,10 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
 
     // 3. a new workspace appearing under the glob is noticed
     await mkdir(join(package_dir, "packages", "b"), { recursive: true });
-    await writeFile(join(package_dir, "packages", "b", "package.json"), JSON.stringify({ name: "b", version: "1.0.0" }));
+    await writeFile(
+      join(package_dir, "packages", "b", "package.json"),
+      JSON.stringify({ name: "b", version: "1.0.0" }),
+    );
     r = await install(package_dir);
     expect(r.code).toBe(0);
     expect(r.err).toContain("Saved lockfile");
@@ -118,7 +139,15 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     //    here as node_modules damage being repaired without any recorded state)
     await writeFile(
       join(package_dir, "bunfig.toml"),
-      Bun.TOML.stringify({ install: { cache: { dir: join(package_dir, ".cache") }, registry: root_url + "/", saveTextLockfile: true, linker, stateFile: false } }),
+      Bun.TOML.stringify({
+        install: {
+          cache: { dir: join(package_dir, ".cache") },
+          registry: root_url + "/",
+          saveTextLockfile: true,
+          linker,
+          stateFile: false,
+        },
+      }),
     );
     expect((await install(package_dir)).code).toBe(0);
     await rm(join(package_dir, ".cache", ".install-state"), { recursive: true, force: true });
@@ -130,7 +159,10 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     await mkdir(join(package_dir, "local"), { recursive: true });
     await writeFile(join(package_dir, "local", "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
     await writeFile(join(package_dir, "local", "index.js"), "module.exports = 1;");
-    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "root", dependencies: { local: "file:./local", bar: "0.0.2" } }));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "root", dependencies: { local: "file:./local", bar: "0.0.2" } }),
+    );
 
     let r = await install(package_dir);
     expect(r.err).not.toContain("error:");

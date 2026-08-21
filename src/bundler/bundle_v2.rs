@@ -5946,7 +5946,8 @@ pub mod bv2_impl {
 
     impl<'a> BundleV2<'a> {
         /// Resolve all unresolved import records for a module. Skips records that
-        /// are already resolved (valid source_index), unused, or internal.
+        /// are already resolved (valid source_index), that an earlier call
+        /// already handled (`RESOLVE_STARTED`), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
         /// Used by both initial parse resolution and barrel un-deferral.
         pub(crate) fn resolve_import_records(
@@ -5979,13 +5980,11 @@ pub mod bv2_impl {
                     import_record.source_index = Index::INVALID;
                 }
 
-                estimated_resolve_queue_count += (!(import_record
-                    .flags
-                    .contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
-                    || import_record
-                        .flags
-                        .contains(bun_ast::ImportRecordFlags::IS_UNUSED)
-                    || import_record.source_index.is_valid()))
+                estimated_resolve_queue_count += (!(import_record.flags.intersects(
+                    bun_ast::ImportRecordFlags::IS_INTERNAL
+                        | bun_ast::ImportRecordFlags::IS_UNUSED
+                        | bun_ast::ImportRecordFlags::RESOLVE_STARTED,
+                ) || import_record.source_index.is_valid()))
                     as usize;
             }
             let mut resolve_queue = ResolveQueue::default();
@@ -6006,9 +6005,17 @@ pub mod bv2_impl {
                 || import_record.flags.contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
                 // Don't resolve pre-resolved imports
                 || import_record.source_index.is_valid()
+                // Don't resolve a record twice. Barrel un-deferral runs this over
+                // the whole list again, and a record that came out external,
+                // unresolved, or waiting on an onResolve plugin has no
+                // source_index to show that it was already handled.
+                || import_record.flags.contains(bun_ast::ImportRecordFlags::RESOLVE_STARTED)
                 {
                     continue;
                 }
+                import_record
+                    .flags
+                    .insert(bun_ast::ImportRecordFlags::RESOLVE_STARTED);
 
                 if let Some(fw) = &self.framework {
                     if fw.server_components.is_some() {

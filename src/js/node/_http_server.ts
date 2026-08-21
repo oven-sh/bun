@@ -3062,8 +3062,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    // Standalone response: OutgoingMessage.end() owns the finished/outputData
-    // transition, whether or not writeHead() already rendered _header.
     return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
   }
 
@@ -3106,9 +3104,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // Socket already gone. Like Node, end() still finishes the response and
-    // emits 'prefinish'; 'finish' (and the end() callback) never fire, and
-    // 'close' comes from the socket close path.
+    // Socket already gone: like Node, 'prefinish' fires but 'finish' never does.
     this._header = " ";
     const req = this.req;
     if (!req._consuming && !req?._readableState?.resumeScheduled) {

@@ -84,7 +84,12 @@ impl PendingImport {
             Self::SourceIndex {
                 to_source_index, ..
             } => import_record.source_index = to_source_index,
-            Self::ExternalPath { path, .. } => import_record.path = path,
+            Self::ExternalPath { path, .. } => {
+                import_record.path = path;
+                import_record
+                    .flags
+                    .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL);
+            }
         }
     }
 }
@@ -4740,10 +4745,9 @@ pub mod bv2_impl {
                     let mut out_source_index: Option<Index> = None;
                     // SAFETY: `result.{path,namespace}` are `Box<[u8]>`. Every arm below
                     // either moves both boxes into `this.free_list`, which outlives the
-                    // graph, before it stores `path` (`!found_existing`, and the external
-                    // rewrite), or drops them after its last read of `path` without
-                    // storing it (`found_existing`, entry point, unchanged specifier). So
-                    // the erased `'static` borrow is never read after the bytes are freed.
+                    // graph, before it stores `path` (`!found_existing`, external), or
+                    // drops them without storing `path` (`found_existing`, entry point).
+                    // So the erased `'static` borrow is never read after the bytes are freed.
                     let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
                         (
                             &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
@@ -4889,9 +4893,6 @@ pub mod bv2_impl {
                                 bun_core::fmt::quote(&resolve.import_record.specifier),
                             ),
                         );
-                        drop(result.namespace);
-                        drop(result.path);
-                    } else if strings::eql_long(&resolve.import_record.specifier, path.text, true) {
                         drop(result.namespace);
                         drop(result.path);
                     } else {
@@ -6018,13 +6019,11 @@ pub mod bv2_impl {
                     import_record.source_index = Index::INVALID;
                 }
 
-                estimated_resolve_queue_count += (!(import_record
-                    .flags
-                    .contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
-                    || import_record
-                        .flags
-                        .contains(bun_ast::ImportRecordFlags::IS_UNUSED)
-                    || import_record.source_index.is_valid()))
+                estimated_resolve_queue_count += (!(import_record.flags.intersects(
+                    bun_ast::ImportRecordFlags::IS_INTERNAL
+                        | bun_ast::ImportRecordFlags::IS_UNUSED
+                        | bun_ast::ImportRecordFlags::IS_EXTERNAL,
+                ) || import_record.source_index.is_valid()))
                     as usize;
             }
             if let Some(only) = only_records {
@@ -6052,6 +6051,7 @@ pub mod bv2_impl {
                 || import_record.flags.contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
                 // Don't resolve pre-resolved imports
                 || import_record.source_index.is_valid()
+                || import_record.flags.contains(bun_ast::ImportRecordFlags::IS_EXTERNAL)
                 {
                     continue;
                 }
@@ -6067,7 +6067,8 @@ pub mod bv2_impl {
                         if import_record.path.text == src.path.pretty {
                             if self.dev_server.is_some() {
                                 import_record.flags.insert(
-                                    bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                                    bun_ast::ImportRecordFlags::IS_EXTERNAL
+                                        | bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
                                 );
                                 import_record.source_index = Index::INVALID;
                             } else {
@@ -6112,9 +6113,10 @@ pub mod bv2_impl {
                             };
                         import_record.tag = replacement.tag;
                         import_record.source_index = Index::INVALID;
-                        import_record
-                            .flags
-                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                        import_record.flags.insert(
+                            bun_ast::ImportRecordFlags::IS_EXTERNAL
+                                | bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                        );
                         continue;
                     }
 
@@ -6123,9 +6125,10 @@ pub mod bv2_impl {
                         import_record.path = bun_paths::fs::Path::init(new_text);
                         import_record.path.namespace = b"bun";
                         import_record.source_index = Index::INVALID;
-                        import_record
-                            .flags
-                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                        import_record.flags.insert(
+                            bun_ast::ImportRecordFlags::IS_EXTERNAL
+                                | bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                        );
 
                         // don't link bun
                         continue;
@@ -6134,9 +6137,10 @@ pub mod bv2_impl {
 
                 // By default, we treat .sqlite files as external.
                 if import_record.loader == Some(Loader::Sqlite) {
-                    import_record
-                        .flags
-                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                    import_record.flags.insert(
+                        bun_ast::ImportRecordFlags::IS_EXTERNAL
+                            | bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                    );
                     continue;
                 }
 
@@ -6479,6 +6483,9 @@ pub mod bv2_impl {
                     {
                         import_record.path = path_as_static(&resolve_result.path_pair.primary);
                     }
+                    import_record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL);
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
                         resolve_result.primary_side_effects_data

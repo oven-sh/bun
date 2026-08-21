@@ -485,6 +485,50 @@ describe("bundler", () => {
       expect(api.readFile("/out.js")).toContain(`from "react"`);
     },
   });
+  // A barrel's records are resolved again each time a consumer un-defers one of
+  // them. The rewritten external must be skipped by those passes, not resolved
+  // as the vendored specifier. late.js is loaded only after the react answer is
+  // queued, so its un-defer of `a` runs after the rewrite landed.
+  itBundled("plugin/ResolveExternalRewriteSurvivesBarrelRevisit", () => {
+    const reactAnswered = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import { React } from "barrel";
+          import "./late.js";
+          console.log(React);
+        `,
+        "/late.js": ``,
+        "/node_modules/barrel/package.json": JSON.stringify({
+          name: "barrel",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/barrel/index.js": /* js */ `
+          export { default as React } from "react";
+          export { a } from "./a.js";
+          export { b } from "./b.js";
+        `,
+        "/node_modules/barrel/a.js": `export const a = "a";`,
+        "/node_modules/barrel/b.js": `export const b = "b";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^react$/ }, () => {
+          reactAnswered.resolve();
+          return { path: "react-vendored", external: true };
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await reactAnswered.promise;
+          return { contents: `import { a } from "barrel"; console.log(a);`, loader: "js" };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`from "react-vendored"`);
+        expect(contents).not.toContain(`"react"`);
+      },
+    };
+  });
   itBundled("plugin/ResolveExternalRewritesPathRequire", {
     files: {
       "index.ts": /* ts */ `

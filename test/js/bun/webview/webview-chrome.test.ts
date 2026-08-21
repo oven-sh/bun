@@ -633,6 +633,112 @@ it("chrome: a new WebView respawns Chrome after the previous one died", async ()
   expect(exitCode).toBe(0);
 });
 
+it("chrome: views orphaned by a Chrome death are closed, even after a new view respawns Chrome", async () => {
+  // Subprocess-isolated for the same reason as the closeAll() test above.
+  // Three views die with Chrome: one with an op in flight, one idle (so
+  // it has no pending entry in the transport), one never navigated (no
+  // target yet). All three must end up closed. Without that, once a new
+  // view respawns Chrome, an op on an old view is sent to the new Chrome
+  // with a stale session and its reply is dropped, so the promise never
+  // settles and the slot it occupies is never freed.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Spawn args come from whichever construction spawns Chrome, so every
+        // view passes them: the one constructed after closeAll() spawns the
+        // second Chrome. --no-sandbox: Chrome refuses to start as root
+        // (containers) otherwise.
+        const backend = { type: "chrome", url: false, argv: ["--no-sandbox"] };
+        const open = () => new Bun.WebView({ backend, width: 200, height: 200 });
+        // An op on a dead view must throw synchronously, not hand back a
+        // promise. The catch handler keeps an unfixed build's promise from
+        // surfacing as an unhandled rejection, so its exit code stays 0
+        // and the comparison below is what fails.
+        const probe = fn => {
+          try {
+            fn().catch(() => {});
+            return "returned a promise";
+          } catch (e) {
+            return e.code;
+          }
+        };
+
+        const busy = open();
+        const idle = open();
+        const blank = open();
+        await busy.navigate("data:text/html,<body>busy</body>");
+        await idle.navigate("data:text/html,<body>idle</body>");
+        const inFlight = busy.evaluate("new Promise(() => {})");
+        Bun.WebView.closeAll();
+        const death = await inFlight.then(() => "resolved", e => e.message);
+
+        const whileDead = {
+          busy: probe(() => busy.evaluate("1")),
+          idle: probe(() => idle.evaluate("1")),
+          blank: probe(() => blank.navigate("data:text/html,<body>blank</body>")),
+        };
+
+        // Construction fails until the dead Chrome has been reaped (see the
+        // respawn test above), hence the retry.
+        let fresh;
+        for (;;) {
+          try {
+            fresh = open();
+            break;
+          } catch (e) {
+            if (!/Failed to spawn Chrome/.test(e.message)) throw e;
+            await Bun.sleep(1);
+          }
+        }
+        await fresh.navigate("data:text/html,<body>fresh</body>");
+        const freshBody = await fresh.evaluate("document.body.textContent");
+
+        const afterRespawn = {
+          evaluate: probe(() => busy.evaluate("1")),
+          navigate: probe(() => busy.navigate("data:text/html,<body>again</body>")),
+          screenshot: probe(() => busy.screenshot()),
+          click: probe(() => busy.click(1, 1)),
+          cdp: probe(() => busy.cdp("Runtime.evaluate", { expression: "1" })),
+          idle: probe(() => idle.evaluate("1")),
+          blank: probe(() => blank.navigate("data:text/html,<body>blank</body>")),
+        };
+        // close() must still be safe to call on the views that died.
+        busy.close();
+        idle.close();
+        blank.close();
+        fresh.close();
+        console.log(JSON.stringify({ death, whileDead, freshBody, afterRespawn }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr).toEndWith("}\n");
+  expect(JSON.parse(stdout)).toEqual({
+    // Pipe EOF and the exit notification race; the wording follows the winner.
+    death: expect.stringMatching(/^Chrome (killed by signal \d+|process closed the pipe|exited)$/),
+    whileDead: {
+      busy: "ERR_INVALID_STATE",
+      idle: "ERR_INVALID_STATE",
+      blank: "ERR_INVALID_STATE",
+    },
+    freshBody: "fresh",
+    afterRespawn: {
+      evaluate: "ERR_INVALID_STATE",
+      navigate: "ERR_INVALID_STATE",
+      screenshot: "ERR_INVALID_STATE",
+      click: "ERR_INVALID_STATE",
+      cdp: "ERR_INVALID_STATE",
+      idle: "ERR_INVALID_STATE",
+      blank: "ERR_INVALID_STATE",
+    },
+  });
+  expect(exitCode, stderr).toBe(0);
+});
+
 it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () => {
   // Subprocess-isolated — first spawn's stdio config wins for the shared
   // Chrome. Chrome prints GCM/updater/policy noise to stderr on launch;

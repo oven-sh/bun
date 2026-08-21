@@ -35,11 +35,12 @@ import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
+import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
+import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
-import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
+import { emitRust, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
@@ -201,11 +202,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     const lolhtmlDep = resolveDep(n, cfg, lolhtml, depsByName);
     assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
     depsByName.set(lolhtml.name, lolhtmlDep);
+    const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, depsByName);
+    assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
+    depsByName.set(rustArgon2.name, rustArgon2Dep);
     rustObjects = emitRust(n, cfg, {
       codegenInputs: codegen.rustInputs,
       codegenOrderOnly: codegen.rustOrderOnly,
       rustSources: sources.rust,
-      vendorStamps: lolhtmlDep.outputs,
+      vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
     });
   }
 
@@ -507,10 +511,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs, ...depChecks],
-    // Declare the `-Wl,-Map=` side-product so `perf` symbolication picks it
-    // up. Linux release only — the map flag itself is gated identically in
-    // flags.ts.
-    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+    // Declare the maps the release link writes as side-products (`perf`
+    // symbolication on linux; the order file tracer's symbol table on windows).
+    linkerMapOutputs: linkerMapOutputs(cfg),
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
@@ -572,10 +575,11 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("════════════════════════════════════════════════════════════════");
   n.blank();
 
-  // Only dep: lolhtml, fetched as a cargo path dependency. resolveDep
-  // emits its fetch; emitRust depends on the fetch stamp via vendorStamps.
+  // Only deps: the cargo path dependencies; emitRust waits on their fetch stamps.
   const lolhtmlDep = resolveDep(n, cfg, lolhtml, new Map());
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
+  const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, new Map());
+  assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
 
   // Codegen: emitted fully, but only the embed-input subset is pulled.
   // The cpp-related outputs (cppSources, bindgenV2Cpp) have no consumer
@@ -586,13 +590,13 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     codegenInputs: codegen.rustInputs,
     codegenOrderOnly: codegen.rustOrderOnly,
     rustSources: sources.rust,
-    vendorStamps: lolhtmlDep.outputs,
+    vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
   });
 
   n.phony("bun", rustObjects);
   n.default(["bun"]);
 
-  return { deps: [lolhtmlDep], codegen, rustObjects, objects: [] };
+  return { deps: [lolhtmlDep, rustArgon2Dep], codegen, rustObjects, objects: [] };
 }
 
 /**
@@ -653,7 +657,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
-    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+    linkerMapOutputs: linkerMapOutputs(cfg),
   });
 
   // Strip + smoke test — same as full mode.
@@ -689,11 +693,13 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.blank();
 
   // ─── Rust (built here) ───
-  // lolhtml fetch + codegen + cargo — same as emitRustOnly. The cargo edge
+  // Path-dep fetch + codegen + cargo — same as emitRustOnly. The cargo edge
   // runs while build-cpp is still compiling on its own agent; by the time
   // ninja reaches the link edge, ci.ts has already downloaded the archive.
   const lolhtmlDep = resolveDep(n, cfg, lolhtml, new Map());
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
+  const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, new Map());
+  assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
 
   const codegen = emitCodegen(n, cfg, sources);
 
@@ -701,7 +707,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     codegenInputs: codegen.rustInputs,
     codegenOrderOnly: codegen.rustOrderOnly,
     rustSources: sources.rust,
-    vendorStamps: lolhtmlDep.outputs,
+    vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
   });
 
   // ─── C++ archive + dep libs (downloaded, not built) ───
@@ -728,7 +734,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
-    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+    linkerMapOutputs: linkerMapOutputs(cfg),
   });
 
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
@@ -737,7 +743,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     exe,
     strippedExe,
     dsym,
-    deps: [lolhtmlDep],
+    deps: [lolhtmlDep, rustArgon2Dep],
     codegen,
     rustObjects,
     objects: [],

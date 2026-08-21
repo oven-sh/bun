@@ -83,7 +83,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceResourceTimingPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceResourceTimingPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceResourceTimingPrototype>(vm)) JSPerformanceResourceTimingPrototype(vm, globalObject, structure);
+        JSPerformanceResourceTimingPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceResourceTimingPrototype))) JSPerformanceResourceTimingPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -97,7 +97,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -121,11 +121,7 @@ template<> JSValue JSPerformanceResourceTimingDOMConstructor::prototypeForStruct
 
 template<> void JSPerformanceResourceTimingDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "PerformanceResourceTiming"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSPerformanceResourceTiming::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "PerformanceResourceTiming"_s, JSPerformanceResourceTiming::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -158,8 +154,8 @@ const ClassInfo JSPerformanceResourceTimingPrototype::s_info = { "PerformanceRes
 void JSPerformanceResourceTimingPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceResourceTiming::info(), JSPerformanceResourceTimingPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceResourceTiming::info(), JSPerformanceResourceTimingPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSPerformanceResourceTiming::s_info = { "PerformanceResourceTiming"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceResourceTiming) };
@@ -449,67 +445,67 @@ static inline EncodedJSValue jsPerformanceResourceTimingPrototypeFunction_toJSON
     result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto entryTypeValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.entryType());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "entryType"_s), entryTypeValue);
+    Bun::putDirectNamed(vm, result, "entryType"_s, entryTypeValue);
     auto startTimeValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.startTime());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "startTime"_s), startTimeValue);
+    Bun::putDirectNamed(vm, result, "startTime"_s, startTimeValue);
     auto durationValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.duration());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "duration"_s), durationValue);
+    Bun::putDirectNamed(vm, result, "duration"_s, durationValue);
     auto initiatorTypeValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.initiatorType());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "initiatorType"_s), initiatorTypeValue);
+    Bun::putDirectNamed(vm, result, "initiatorType"_s, initiatorTypeValue);
     auto nextHopProtocolValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.nextHopProtocol());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "nextHopProtocol"_s), nextHopProtocolValue);
+    Bun::putDirectNamed(vm, result, "nextHopProtocol"_s, nextHopProtocolValue);
     auto workerStartValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.workerStart());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "workerStart"_s), workerStartValue);
+    Bun::putDirectNamed(vm, result, "workerStart"_s, workerStartValue);
     auto redirectStartValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.redirectStart());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "redirectStart"_s), redirectStartValue);
+    Bun::putDirectNamed(vm, result, "redirectStart"_s, redirectStartValue);
     auto redirectEndValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.redirectEnd());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "redirectEnd"_s), redirectEndValue);
+    Bun::putDirectNamed(vm, result, "redirectEnd"_s, redirectEndValue);
     auto fetchStartValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.fetchStart());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "fetchStart"_s), fetchStartValue);
+    Bun::putDirectNamed(vm, result, "fetchStart"_s, fetchStartValue);
     auto domainLookupStartValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.domainLookupStart());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "domainLookupStart"_s), domainLookupStartValue);
+    Bun::putDirectNamed(vm, result, "domainLookupStart"_s, domainLookupStartValue);
     auto domainLookupEndValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.domainLookupEnd());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "domainLookupEnd"_s), domainLookupEndValue);
+    Bun::putDirectNamed(vm, result, "domainLookupEnd"_s, domainLookupEndValue);
     auto connectStartValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.connectStart());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "connectStart"_s), connectStartValue);
+    Bun::putDirectNamed(vm, result, "connectStart"_s, connectStartValue);
     auto connectEndValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.connectEnd());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "connectEnd"_s), connectEndValue);
+    Bun::putDirectNamed(vm, result, "connectEnd"_s, connectEndValue);
     auto secureConnectionStartValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.secureConnectionStart());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "secureConnectionStart"_s), secureConnectionStartValue);
+    Bun::putDirectNamed(vm, result, "secureConnectionStart"_s, secureConnectionStartValue);
     auto requestStartValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.requestStart());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "requestStart"_s), requestStartValue);
+    Bun::putDirectNamed(vm, result, "requestStart"_s, requestStartValue);
     auto responseStartValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.responseStart());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "responseStart"_s), responseStartValue);
+    Bun::putDirectNamed(vm, result, "responseStart"_s, responseStartValue);
     auto responseEndValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.responseEnd());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "responseEnd"_s), responseEndValue);
+    Bun::putDirectNamed(vm, result, "responseEnd"_s, responseEndValue);
     auto transferSizeValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.transferSize());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "transferSize"_s), transferSizeValue);
+    Bun::putDirectNamed(vm, result, "transferSize"_s, transferSizeValue);
     auto encodedBodySizeValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.encodedBodySize());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "encodedBodySize"_s), encodedBodySizeValue);
+    Bun::putDirectNamed(vm, result, "encodedBodySize"_s, encodedBodySizeValue);
     auto decodedBodySizeValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.decodedBodySize());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "decodedBodySize"_s), decodedBodySizeValue);
+    Bun::putDirectNamed(vm, result, "decodedBodySize"_s, decodedBodySizeValue);
     auto serverTimingValue = toJS<IDLFrozenArray<IDLInterface<PerformanceServerTiming>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.serverTiming());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "serverTiming"_s), serverTimingValue);
+    Bun::putDirectNamed(vm, result, "serverTiming"_s, serverTimingValue);
     return JSValue::encode(result);
 }
 
@@ -520,7 +516,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceResourceTimingPrototypeFunction_toJSON, (J
 
 JSC::GCClient::IsoSubspace* JSPerformanceResourceTiming::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceResourceTiming, UseCustomHeapCellType::No>(vm, [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceResourceTiming.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceResourceTiming = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForPerformanceResourceTiming.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceResourceTiming = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceResourceTiming, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceResourceTiming, m_subspaceForPerformanceResourceTiming));
 }
 
 void JSPerformanceResourceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

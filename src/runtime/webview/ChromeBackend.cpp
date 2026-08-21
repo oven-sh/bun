@@ -1304,8 +1304,10 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     auto* g = m_global;
     JSValue err = createError(g, reason);
     for (auto& weak : views.values()) {
-        if (JSWebView* v = weak.get())
-            rejectViewSlots(g, v, err);
+        JSWebView* v = weak.get();
+        if (!v) continue;
+        rejectViewSlots(g, v, err);
+        v->m_closed = true;
     }
     updateKeepAlive();
 }
@@ -1369,9 +1371,9 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     auto& vm = g->vm();
     auto& t = transport();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
-    // m_mode == None means neither ensureSpawned nor ensureConnected ran
-    // (constructor already called one, so this is unreachable unless
-    // rejectAllAndMarkDead reset it). WebSocket mode doesn't need
+    // Unreachable: the constructor spawned or connected, and the paths that
+    // kill or release the transport afterwards (rejectAllAndMarkDead,
+    // updateKeepAlive) leave no open view behind. WebSocket mode doesn't need
     // m_wsOpen here — send() queues until onOpen fires.
     if (t.m_dead || t.m_mode == TransportMode::None) {
         promise->reject(vm, createError(g, "Chrome connection is not available"_s));

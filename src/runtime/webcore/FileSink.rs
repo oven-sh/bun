@@ -326,7 +326,7 @@ impl FileSink {
                             );
                             crate::dispatch::fold(stream.cancel(global));
                         } else {
-                            stream.done(global);
+                            stream.done();
                         }
                     }
                 }
@@ -446,10 +446,18 @@ impl FileSink {
 
             // `end()`'s Pending flush branch leaves the writer running; finish the
             // teardown here regardless of `pending.state` (native path has no promise).
-            if (*this).done.get() && status == WriteStatus::Drained {
-                (*this).writer.with_mut(|w| w.end());
-            } else if (*this).done.get() && status == WriteStatus::EndOfFile && !has_pending_data {
-                (*this).writer.with_mut(|w| w.close());
+            //
+            // Not on `status`: `run_pending`/`src.ready()` above can re-enter
+            // `write()` (a short write buffers the tail) and then `end()` (flush
+            // Pending, sets `done`). `status` predates that, so a close on a stale
+            // `Drained` drops the tail. Re-read the buffer instead; draining the
+            // tail calls back here and finishes the teardown.
+            if (*this).done.get() && !(*this).writer.get().has_pending_data() {
+                if status == WriteStatus::EndOfFile {
+                    (*this).writer.with_mut(|w| w.close());
+                } else {
+                    (*this).writer.with_mut(|w| w.end());
+                }
             }
 
             if status == WriteStatus::EndOfFile {
@@ -512,11 +520,9 @@ impl FileSink {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
-            if (*this).readable_stream.get_mut().has() {
-                if let Some(global) = (*this).js_global() {
-                    if let Some(stream) = (*this).readable_stream.get().get() {
-                        stream.done(global);
-                    }
+            if (*this).readable_stream.get_mut().has() && (*this).js_global().is_some() {
+                if let Some(stream) = (*this).readable_stream.get().get() {
+                    stream.done();
                 }
             }
 
@@ -1313,9 +1319,6 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
         Some(unsafe { self.source.get_mut() })
     }
-    fn done(&self) -> bool {
-        self.done.get()
-    }
     fn pending_state_is_pending(&self) -> bool {
         self.pending.get().state == streams::PendingState::Pending
     }
@@ -1482,9 +1485,9 @@ impl FlushPendingTask {
 
 impl FileSink {
     /// Does not ref or unref.
-    fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
+    fn handle_resolve_stream(&self) {
         if let Some(stream) = self.readable_stream.get().get().as_mut() {
-            stream.done(global_this);
+            stream.done();
         }
 
         if !self.done.get() {
@@ -1507,14 +1510,14 @@ impl FileSink {
     }
 }
 
-fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+fn on_resolve_stream(_global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     bun_core::scoped_log!(FileSink, "onResolveStream");
     let args = callframe.arguments();
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
     let _guard = unsafe { FileSinkRef::adopt(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
-    unsafe { (*this).handle_resolve_stream(global_this) };
+    unsafe { (*this).handle_resolve_stream() };
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1620,7 +1623,7 @@ impl FileSink {
                     }
                     bun_jsc::js_promise::Status::Fulfilled => {
                         // These don't ref().
-                        self.handle_resolve_stream(global_this);
+                        self.handle_resolve_stream();
                     }
                     bun_jsc::js_promise::Status::Rejected => {
                         // These don't ref().

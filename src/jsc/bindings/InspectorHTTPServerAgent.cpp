@@ -67,43 +67,6 @@ Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::disable()
     return {};
 }
 
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::startListening(int serverId)
-{
-    if (!m_enabled)
-        return {};
-
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::stopListening(int serverId)
-{
-    if (!m_enabled)
-        return {};
-
-    // TODO:
-    // Bun__HTTPServerAgentStopListening(this, serverId);
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::getRequestBody(int requestId, int serverId)
-{
-    if (!m_enabled)
-        return {};
-
-    // TODO:
-    // Bun__HTTPServerAgentGetRequestBody(this, requestId, serverId);
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::getResponseBody(int requestId, int serverId)
-{
-    if (!m_enabled)
-        return {};
-    // TODO:
-    // Bun__HTTPServerAgentGetResponseBody(this, requestId, serverId);
-    return {};
-}
-
 // Event dispatchers
 
 void InspectorHTTPServerAgent::serverStarted(int serverId, const String& url, double startTime, AnyServerPtr serverInstance)

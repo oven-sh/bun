@@ -44,6 +44,7 @@ void CommonStrings::initialize()
         string.initLater([](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) {
             auto& self = defaultGlobalObject(init.owner)->commonStrings();
             size_t i = &init.property - self.m_strings;
+            ASSERT(i < std::size(self.m_strings));
             auto literal = commonStringLiterals[i];
             if (literal.isNull()) {
                 init.set(jsOwnedString(init.vm, builtinNameAt(init.vm, static_cast<Index>(i)).string()));

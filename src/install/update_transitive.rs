@@ -19,8 +19,8 @@ use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::package_manager_real::{PackageUpdateInfo, enqueue_dependency_with_main};
 use crate::update_scope::UpdateScope;
 use crate::{
-    DependencyID, DependencyVersionTag, GetJsonOptions, GetJsonResult, ManifestLoad, PackageID,
-    PackageManager, PackageNameHash, ResolutionTag, invalid_package_id,
+    DependencyID, DependencyVersionTag, GetJsonOptions, GetJsonResult, PackageID, PackageManager,
+    PackageNameHash, ResolutionTag, invalid_package_id,
 };
 
 /// Root/workspace dependency rows as loaded from bun.lock, taken before the differ re-enqueues them.
@@ -818,7 +818,6 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
         name,
         lockfile.packages.items_name_hash()[pkg],
         Some(&mut false),
-        ManifestLoad::LoadFromMemoryFallbackToDisk,
         min_age.is_some(),
     )?;
     let manifest_buf: &[u8] = &manifest.string_buf;
@@ -1154,7 +1153,6 @@ fn plan_edges(
             scope,
             name,
             Some(&mut expired),
-            ManifestLoad::LoadFromMemoryFallbackToDisk,
             min_age.is_some(),
         ) else {
             let entry = (Box::from(name), text(inst.current.fmt(buf)));

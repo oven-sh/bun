@@ -938,23 +938,19 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
         // Convert API JSX config back to options.JSX.Pragma
         let jsx_import = &config.jsx.import_source;
+        let default_factory = options::jsx::MemberList::Static(options::jsx::defaults::FACTORY);
+        let default_fragment = options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT);
         transpiler.options.jsx = options::jsx::Pragma {
-            factory: if !config.jsx.factory.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FACTORY),
-                    &config.jsx.factory,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FACTORY)
-            },
-            fragment: if !config.jsx.fragment.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT),
-                    &config.jsx.fragment,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT)
-            },
+            factory: options::jsx::Pragma::member_list_to_components_if_different(
+                &default_factory,
+                &config.jsx.factory,
+            )
+            .unwrap_or(default_factory),
+            fragment: options::jsx::Pragma::member_list_to_components_if_different(
+                &default_fragment,
+                &config.jsx.fragment,
+            )
+            .unwrap_or(default_fragment),
             runtime: options::jsx::Runtime::from(config.jsx.runtime),
             development: config.jsx.development,
             package_name: if !jsx_import.is_empty() {

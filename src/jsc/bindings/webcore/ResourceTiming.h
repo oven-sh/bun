@@ -33,11 +33,8 @@
 
 namespace WebCore {
 
-class CachedResource;
 class PerformanceServerTiming;
-class ResourceResponse;
 class ResourceLoadTiming;
-class SecurityOrigin;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceTiming);
 

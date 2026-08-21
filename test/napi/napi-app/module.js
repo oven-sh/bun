@@ -321,6 +321,75 @@ nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
   show("frozen writable:", apn(Object.freeze({ a: 1, b: 2 }), napi_key_writable));
 };
 
+nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  const show = (label, { status, keys, exception }) =>
+    console.log(label, `status=${status}`, `keys=${JSON.stringify(keys)}`, `exception=${exception?.message}`);
+
+  // ownKeys succeeds so key collection completes; the per-key descriptor walk
+  // required by napi_key_enumerable is what invokes the throwing trap.
+  const throwingDescriptor = new Proxy(
+    {},
+    {
+      ownKeys: () => ["a"],
+      getOwnPropertyDescriptor() {
+        throw new Error("gopd trap");
+      },
+    },
+  );
+  show(
+    "own_only gopd throws:",
+    nativeTests.get_all_property_names(
+      throwingDescriptor,
+      napi_key_own_only,
+      napi_key_enumerable,
+      napi_key_keep_numbers,
+    ),
+  );
+  show(
+    "include_prototypes gopd throws on prototype:",
+    nativeTests.get_all_property_names(
+      Object.create(throwingDescriptor),
+      napi_key_include_prototypes,
+      napi_key_enumerable,
+      napi_key_keep_numbers,
+    ),
+  );
+
+};
+
+nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  // Key collection asks the proxy for its prototype once and must succeed so
+  // the descriptor walk is reached; the walk asks again (the target does not
+  // own "a") and that second call throws.
+  let calls = 0;
+  const proxy = new Proxy(
+    {},
+    {
+      ownKeys: () => ["a"],
+      getPrototypeOf() {
+        if (calls++ > 0) throw new Error("getPrototypeOf trap");
+        return null;
+      },
+    },
+  );
+  const { status, keys, exception } = nativeTests.get_all_property_names(
+    Object.create(proxy),
+    napi_key_include_prototypes,
+    napi_key_enumerable,
+    napi_key_keep_numbers,
+  );
+  console.log(`status=${status} keys=${JSON.stringify(keys)} exception=${exception?.message} calls=${calls}`);
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},
@@ -695,6 +764,22 @@ nativeTests.test_type_tag = () => {
   console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));
   console.log("o2 matches o1:", nativeTests.check_tag(o2, 1, 2));
   console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
+};
+
+nativeTests.test_this_value_of_bare_call_through_closure = () => {
+  const { return_this } = nativeTests;
+  // return_this is captured by keep, so the bare call below is resolved through the closure's
+  // scope object, which JSC leaves in the call's this slot. A Node-API callback must still see
+  // the sloppy-mode receiver (globalThis), never that scope object.
+  function keep() {
+    return return_this;
+  }
+  console.log("bare call through closure returned globalThis:", return_this() === globalThis);
+  console.log("call(undefined) returned globalThis:", return_this.call(undefined) === globalThis);
+  console.log("call(5) returned a Number object:", return_this.call(5) instanceof Number);
+  const receiver = {};
+  console.log("call(receiver) returned receiver:", return_this.call(receiver) === receiver);
+  keep();
 };
 
 nativeTests.test_napi_class = () => {
@@ -1361,6 +1446,34 @@ nativeTests.test_cleanup_hook_modification_during_iteration = () => {
   addon.test();
 };
 
+nativeTests.test_create_reference_primitive_by_version = () => {
+  const v10 = require("./build/Debug/test_create_reference_primitive_v10.node");
+  const v8 = require("./build/Debug/test_create_reference_primitive_v8.node");
+  const cases = [
+    ["undefined", undefined],
+    ["null", null],
+    ["boolean", true],
+    ["number", 1.5],
+    ["string", "s"],
+    ["bigint", 7n],
+    ["symbol", Symbol("sym")],
+    ["registered symbol", Symbol.for("test_create_reference_primitive")],
+    ["object", { a: 1 }],
+    ["function", () => 0],
+  ];
+  for (const [declared, addon] of [
+    [10, v10],
+    [8, v8],
+  ]) {
+    for (const [name, value] of cases) {
+      const { status, roundTrip, heldAtZero, reref, declared: d } = addon.create_ref(value);
+      let line = `declared=${declared} header=${d} ${name}: status=${status}`;
+      if (status === 0) line += ` roundTrip=${roundTrip} heldAtZero=${heldAtZero} reref=${reref}`;
+      console.log(line);
+    }
+  }
+};
+
 // Test for napi_typeof with boxed primitive objects (String, Number, Boolean)
 // See: https://github.com/oven-sh/bun/issues/25351
 nativeTests.test_napi_typeof_boxed_primitives = () => {
@@ -1499,6 +1612,64 @@ nativeTests.test_threadsafe_function_orphan_leak = async () => {
     const closing = nativeTests.call_leaked_threadsafe_functions();
     console.log(`orphaned=${orphaned} closing=${closing} leaked=${napiThreadsafeFunctionLiveCount() - before}`);
   }
+};
+
+// Items still queued on a threadsafe function when the process exits are
+// dropped: node's process.exit() never gets back to the function, and an
+// addon's call_js usually cannot take a null env.
+nativeTests.test_threadsafe_function_queued_items_at_process_exit = () => {
+  nativeTests.queue_threadsafe_function_items(() => {}, 3, /* print_finalize */ false);
+  require("node:fs").writeSync(1, "exiting with 3 items queued\n");
+  process.exit(0);
+};
+
+// The same from inside the function's own callback: the items behind the one
+// that is running must not be delivered into the callback's frame.
+nativeTests.test_threadsafe_function_process_exit_inside_callback = () => {
+  nativeTests.queue_threadsafe_function_items(() => process.exit(0), 3, /* print_finalize */ false);
+  // Returning a pending promise keeps main.js quiet; the first item's callback
+  // exits the process.
+  return new Promise(() => {});
+};
+
+// A worker that exits (process.exit()) or is terminated with items queued: the
+// addon gets each item through call_js with the live env (calling into JS is
+// refused), then the finalizer, as when node's env cleanup turns the loop.
+async function runQueuedItemsWorker(how) {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "tsfn-queued-items-worker.js"), { workerData: { how } });
+  const code = await new Promise((resolve, reject) => {
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+    if (how === "terminate") {
+      worker.on("message", () => worker.terminate());
+    }
+  });
+  console.log("worker exited with", code);
+}
+
+nativeTests.test_threadsafe_function_queued_items_at_worker_exit = () => runQueuedItemsWorker("exit");
+nativeTests.test_threadsafe_function_queued_items_at_worker_terminate = () => runQueuedItemsWorker("terminate");
+
+// napi_tsfn_abort with items queued: none of them runs; each goes back to
+// call_js with a null env and js_callback so the addon can free it, and then
+// the function finalizes.
+nativeTests.test_threadsafe_function_abort_hands_queued_items_back = async () => {
+  // writeSync: these interleave with the addon's printf lines, so they must
+  // reach stdout synchronously.
+  const { writeSync } = require("node:fs");
+  nativeTests.queue_threadsafe_function_items(
+    () => writeSync(1, "js callback ran after abort\n"),
+    3,
+    /* print_finalize */ true,
+  );
+  writeSync(1, `abort: ${nativeTests.abort_threadsafe_function_with_queued_items()}\n`);
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.threadsafe_function_with_queued_items_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  writeSync(1, `finalized: ${nativeTests.threadsafe_function_with_queued_items_finalized()}\n`);
 };
 
 // When napi_create_threadsafe_function is given no JS func, the call_js

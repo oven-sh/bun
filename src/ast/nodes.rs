@@ -1021,15 +1021,6 @@ pub struct Dependency {
     pub part_index: u32, // Index.Int
 }
 
-impl Default for Dependency {
-    fn default() -> Self {
-        Self {
-            source_index: Index::INVALID,
-            part_index: 0,
-        }
-    }
-}
-
 pub type DependencyList = bun_alloc::AstVec<Dependency>;
 
 // PERF: these may be arena-backed in callers; revisit with
@@ -1187,20 +1178,6 @@ pub struct NamedImport {
     pub is_exported: bool,
 }
 
-impl Default for NamedImport {
-    fn default() -> Self {
-        Self {
-            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-            alias: None,
-            alias_loc: crate::Loc::EMPTY,
-            namespace_ref: Ref::NONE,
-            import_record_index: 0,
-            alias_is_star: false,
-            is_exported: false,
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub struct NamedExport {
     pub ref_: Ref,
@@ -1225,7 +1202,6 @@ pub enum ToJSError {
     CannotConvertArgumentTypeToJS,
     #[strum(serialize = "Cannot convert identifier to JS. Try a statically-known value")]
     CannotConvertIdentifierToJS,
-    MacroError,
     OutOfMemory,
     JSError,
 }

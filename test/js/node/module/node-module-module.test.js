@@ -29,6 +29,60 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("Module.prototype is not enumerable", async () => {
+    const Module = require("module");
+    const { value, ...descriptor } = Object.getOwnPropertyDescriptor(Module, "prototype");
+    expect(descriptor).toEqual({ writable: true, enumerable: false, configurable: false });
+    expect(value).toBe(Module.prototype);
+    expect(Object.keys(Module)).not.toContain("prototype");
+    // and so, as in Node, it is not a named export of the ES module either
+    const ns = await import("node:module");
+    expect(Object.keys(ns)).not.toContain("prototype");
+    expect(ns.default.prototype).toBe(Module.prototype);
+  });
+
+  // jest-runtime builds the `Module` it hands to tests this way. Assigning a class's `prototype` throws, so this
+  // needs `prototype` to be non-enumerable; and the copy goes through the inherited `wrapper` / `_resolveFilename`
+  // / `runMain` setters with their current values, which must not count as overriding them (an overridden wrapper
+  // re-wraps every CommonJS module from source and bypasses the --isolate SourceProvider cache).
+  test("Module's enumerable statics can be copied onto a subclass without overriding the CJS wrapper", async () => {
+    using dir = tempDir("module-statics-copy", {
+      "dep.cjs": `module.exports = "dep";`,
+      "dep2.cjs": `module.exports = "dep2";`,
+      "copy.test.js": `
+        const { test, expect } = require("bun:test");
+        const { isolatedModuleCacheSourceType } = require("bun:internal-for-testing");
+        const Module = require("node:module");
+        test("copy statics", () => {
+          class Sub extends Module.Module {}
+          for (const [key, value] of Object.entries(Module.Module)) Sub[key] = value;
+          expect(Sub.prototype).toBeInstanceOf(Module);
+          expect(Sub._extensions).toBe(Module._extensions);
+          expect(Sub.wrapper[0]).toBe(Module.wrapper[0]);
+
+          expect(require("./dep.cjs")).toBe("dep");
+          expect(isolatedModuleCacheSourceType(require.resolve("./dep.cjs"))).toBe("Program");
+
+          // A real override still takes effect (and such modules are not cached).
+          Module.wrapper = ["(function(exports,require,module,__filename,__dirname){module.wrapped = true;", "})"];
+          expect(require("./dep2.cjs")).toBe("dep2");
+          expect(require.cache[require.resolve("./dep2.cjs")].wrapped).toBe(true);
+          expect(isolatedModuleCacheSourceType(require.resolve("./dep2.cjs"))).toBe(null);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./copy.test.js"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("module.enableCompileCache validates its argument", () => {
     expect(Module.enableCompileCache.length).toBe(1);
     for (const invalid of [0, null, false, 1, NaN, true, Symbol(0)]) {

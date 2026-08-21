@@ -105,18 +105,6 @@ pub struct BlockHeader {
     pub(crate) n_lines: u32,
 }
 
-impl Default for BlockHeader {
-    fn default() -> Self {
-        Self {
-            block_type: BlockType::Doc,
-            _pad: [0, 0, 0],
-            flags: 0,
-            data: 0,
-            n_lines: 0,
-        }
-    }
-}
-
 /// `Parser`'s error type: the union of `{ OutOfMemory, JSError }`
 /// with the parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
 // (`bun_jsc::JsError` covers the first two, but the md crate sits below

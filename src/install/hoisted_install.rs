@@ -45,14 +45,6 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     ) {
         ctx.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
     }
-
-    fn as_package_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut PackageInstaller<'x> {
-        // SAFETY: identity cast — narrows the invariant `'a` param to the
-        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut PackageInstaller<'a>`).
-        // The returned reference cannot outlive `'x`, so all inner `'a` borrows
-        // remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<PackageInstaller<'x>>() }
-    }
 }
 
 pub(crate) fn install_hoisted_packages(
@@ -356,7 +348,6 @@ pub(crate) fn install_hoisted_packages(
             let names = bun_ptr::RawSlice::new(parts.items_name());
             let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
             let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
-            let pkg_dependencies = bun_ptr::RawSlice::new(parts.items_dependencies());
 
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for
@@ -378,7 +369,6 @@ pub(crate) fn install_hoisted_packages(
                 names,
                 pkg_name_hashes,
                 resolutions,
-                pkg_dependencies,
                 lockfile: lockfile_ptr,
                 root_node_modules_folder: node_modules_folder,
                 node: &mut install_node,

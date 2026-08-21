@@ -108,11 +108,6 @@ link_impl_ProcessExit! {
             unreachable!("SyncWindows exit handler is Windows-only"),
     }
 }
-/// Compat re-export: the `process::spawn_sys` shim module was dissolved into
-/// `bun_sys` (LAYERING — moved down so non-spawn callers don't depend on
-/// `bun_spawn`). Downstream `runtime/api/bun/*` still spells the old path.
-pub use bun_sys as spawn_sys;
-
 #[cfg(unix)]
 pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
 #[cfg(unix)]
@@ -239,7 +234,6 @@ pub mod subprocess {
 pub enum Term {
     Exited(u32),
     Signal(u32),
-    Stopped(u32),
     Unknown(u32),
 }
 

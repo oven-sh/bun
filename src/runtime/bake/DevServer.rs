@@ -155,11 +155,9 @@ pub(super) use crate::bake::dev_server::serialized_failure::SerializedFailure;
 pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 bun_output::declare_scope!(DevServer, visible);
-bun_output::declare_scope!(IncrementalGraph, visible);
 bun_output::declare_scope!(SourceMapStore, visible);
 
 bun_output::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
-bun_output::define_scoped_log!(ig_log, crate::bake::dev_server_body::IncrementalGraph);
 bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
 pub(crate) use map_log;
 
@@ -4952,7 +4950,7 @@ impl DevServer {
         log: &Log,
         bv2: &mut BundleV2,
     ) -> Result<(), AllocError> {
-        let _g = self.graph_safety_lock.guard();
+        let graph_lock = self.graph_safety_lock.guard();
 
         debug_log!(
             "handleParseTaskFailure({}, .{}, {}, {} messages)",
@@ -4962,13 +4960,31 @@ impl DevServer {
             log.msgs.len(),
         );
 
+        let mut watch_for_route_file = false;
         if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
-            // Special-case files being deleted.
+            // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
                     self.server_graph.on_file_deleted(abs_path, bv2)?
                 }
-                bake::Graph::Client => self.client_graph.on_file_deleted(abs_path, bv2)?,
+                bake::Graph::Client => {
+                    self.client_graph.on_file_deleted(abs_path, bv2)?;
+                    // The html file of a route has no importer.
+                    if let Some(file) = self
+                        .client_graph
+                        .bundled_files
+                        .get(abs_path)
+                        .filter(|file| file.html_route_bundle_index.is_some())
+                    {
+                        // `failed` is cleared by the next successful bundle.
+                        watch_for_route_file = !file.failed;
+                        self.client_graph.insert_failure(
+                            incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                            log,
+                            false,
+                        )?;
+                    }
+                }
             }
         } else {
             match graph {
@@ -4988,6 +5004,18 @@ impl DevServer {
                     false,
                 )?,
             }
+        }
+        // `track_resolution_failure` takes the graph lock itself.
+        drop(graph_lock);
+
+        if watch_for_route_file {
+            // Bundles the route again once its html file exists, like a failed import.
+            self.directory_watchers.track_resolution_failure(
+                abs_path,
+                paths::basename(abs_path),
+                bake::Graph::Client,
+                Loader::Html,
+            )?;
         }
         Ok(())
     }
@@ -5335,9 +5363,7 @@ impl DevServer {
         let post = "</script></body></html>";
 
         buf.extend_from_slice(pre.as_bytes());
-        buf.extend_from_slice(
-            bun_core::runtime_embed_file!(CodegenEager, "bake.error.js").as_bytes(),
-        );
+        buf.extend_from_slice(bun_zstd::embed_compressed!(codegen "bake.error.js"));
         buf.extend_from_slice(post.as_bytes());
 
         match resp {

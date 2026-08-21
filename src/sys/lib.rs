@@ -989,19 +989,6 @@ pub(crate) extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::f
     })
 }
 
-/// Small "fire and forget" wrapper around unlink for C usage that handles
-/// EINTR, Windows path conversion, etc.
-///
-/// # Safety
-/// `ptr[0..=len]` must be a valid NUL-terminated path slice for the call.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
-    // SAFETY: caller (C++) guarantees `ptr[0..=len]` is a valid NUL-terminated
-    // path slice for the duration of the call.
-    let path = unsafe { ZStr::from_raw(ptr, len) };
-    let _ = unlink(path);
-}
-
 // libuv-style error constants (negated errno on posix, UV_* on Windows). The
 // per-platform `bun_errno` module defines this as `mod uv_e`; re-export under
 // the canonical name so callers can write `bun_sys::UV_E::NOENT`.
@@ -3546,12 +3533,8 @@ impl TimeLike {
 }
 #[cfg(unix)]
 pub const UTIME_NOW: i64 = libc::UTIME_NOW;
-#[cfg(unix)]
-pub const UTIME_OMIT: i64 = libc::UTIME_OMIT;
 #[cfg(windows)]
 pub const UTIME_NOW: i64 = -1;
-#[cfg(windows)]
-pub const UTIME_OMIT: i64 = -2;
 
 #[cfg(windows)]
 #[path = "sys_uv.rs"]
@@ -4975,7 +4958,7 @@ pub mod c {
         pub safe fn getgid() -> libc::gid_t;
     }
     #[cfg(unix)]
-    pub use super::{UTIME_NOW, UTIME_OMIT};
+    pub use super::UTIME_NOW;
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -5070,9 +5053,7 @@ pub mod c {
         vm_statistics64,
         vm_statistics64_data_t,
     };
-    // `UTIME_NOW`/`UTIME_OMIT` — already re-exported via
-    // `pub use super::{UTIME_NOW, UTIME_OMIT}` above (top-level `#[cfg(unix)]`
-    // consts cast `libc::UTIME_NOW`/`_OMIT` to i64).
+
     /// Safe rc-returning `clonefile(2)` — callers that want their own
     /// `sys::Tag` / path boxing (`errno_sys_p`) take the raw `c_int` instead
     /// of the `Maybe<()>`-shaped [`super::clonefile`].
@@ -6975,12 +6956,16 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     let mut access_mask: u32 = w::READ_CONTROL | w::SYNCHRONIZE;
     if (flags & O::RDWR) != 0 {
         access_mask |= w::GENERIC_READ | w::GENERIC_WRITE;
-    } else if (flags & O::APPEND) != 0 {
-        access_mask |= w::GENERIC_WRITE | w::FILE_APPEND_DATA;
     } else if (flags & O::WRONLY) != 0 {
         access_mask |= w::GENERIC_WRITE;
     } else {
         access_mask |= w::GENERIC_READ;
+    }
+    // O_APPEND is orthogonal to the access mode, so it cannot be another arm of
+    // the chain above: `a+` is O_RDWR|O_APPEND and would otherwise never get
+    // FILE_APPEND_DATA, which is what the post-open seek to FILE_END keys off.
+    if (flags & O::APPEND) != 0 {
+        access_mask |= w::GENERIC_WRITE | w::FILE_APPEND_DATA;
     }
 
     // Create disposition is derived from O_CREAT/O_EXCL/O_TRUNC alone; the
@@ -8379,15 +8364,6 @@ pub mod net {
             }
         }
     }
-    impl Default for Address {
-        // SAFETY: POD, zero-valid — sockaddr union of integer fields.
-        fn default() -> Self {
-            Self {
-                // SAFETY: `sockaddr_storage` is POD; all-zeros is a valid value.
-                any: unsafe { bun_core::ffi::zeroed_unchecked() },
-            }
-        }
-    }
     impl fmt::Debug for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             fmt::Display::fmt(self, f)
@@ -9380,9 +9356,27 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
         ypixel: ws.ws_ypixel,
     })
 }
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
+    // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
+    let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+    // SAFETY: `info` is a valid out-pointer for the duration of the call; a
+    // handle that is not a console makes the call fail rather than misbehave.
+    let rc = unsafe { windows::kernel32::GetConsoleScreenBufferInfo(fd.native(), &raw mut info) };
+    if rc == windows::FALSE {
+        return None;
+    }
+    // `srWindow` is the visible part of the (possibly much taller) screen buffer.
+    let window = info.srWindow;
+    Some(bun_core::Winsize {
+        row: u16::try_from(i32::from(window.Bottom) - i32::from(window.Top) + 1).ok()?,
+        col: u16::try_from(i32::from(window.Right) - i32::from(window.Left) + 1).ok()?,
+        xpixel: 0,
+        ypixel: 0,
+    })
+}
+#[cfg(not(any(unix, windows)))]
 fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
-    // TODO(windows): GetConsoleScreenBufferInfo.
     None
 }
 

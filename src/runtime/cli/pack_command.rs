@@ -382,15 +382,6 @@ pub(crate) struct PackQueueItem {
     optional: bool,
 }
 
-impl Default for PackQueueItem {
-    fn default() -> Self {
-        Self {
-            path: ZBox::from_bytes(b""),
-            optional: false,
-        }
-    }
-}
-
 // `bun_collections` has no `PriorityQueue`; wrap `BinaryHeap` with a reversed `Ord`
 // (BinaryHeap is a max-heap, so invert `strings::order` to pop smallest first).
 impl Ord for PackQueueItem {

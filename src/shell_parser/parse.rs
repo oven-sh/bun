@@ -342,16 +342,6 @@ pub mod ast {
         pub else_parts: SmolList<SmolList<Stmt<'arena>, 1>, 1>,
     }
 
-    impl<'arena> Default for If<'arena> {
-        fn default() -> Self {
-            Self {
-                cond: SmolList::zeroes(),
-                then: SmolList::zeroes(),
-                else_parts: SmolList::zeroes(),
-            }
-        }
-    }
-
     impl<'arena> If<'arena> {
         pub(crate) fn to_expr(
             self,
@@ -4328,11 +4318,5 @@ impl<T, const N: usize> Drop for SmolList<T, N> {
             unsafe { core::ptr::drop_in_place(i.slice_mut()) };
             i.len = 0;
         }
-    }
-}
-
-impl<T: fmt::Debug, const N: usize> fmt::Display for SmolList<T, N> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.slice())
     }
 }

@@ -79,9 +79,6 @@ pub enum Start {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
 pub enum StartTag {
-    Empty,
-    Err,
-    ChunkSize,
     ArrayBufferSink,
     FileSink,
     HTTPSResponseSink,
@@ -90,9 +87,6 @@ pub enum StartTag {
     NetworkSink,
     FetchRequestBodySink,
     HTMLRewriterSink,
-    Ready,
-    OwnedAndDone,
-    Done,
 }
 
 impl Start {
@@ -161,8 +155,6 @@ impl Start {
             StartTag::HTMLRewriterSink => {
                 Self::from_js_with_tag::<{ StartTag::HTMLRewriterSink }>(global_this, value)
             }
-            // No `Start` variant carries these tags from JS.
-            _ => Self::from_js(global_this, value),
         }
     }
 
@@ -280,11 +272,6 @@ impl Start {
                 if !empty {
                     return Ok(Start::ChunkSize(chunk_size));
                 }
-            }
-            _ => {
-                // Dead for every valid TAG; runtime unreachable until
-                // `generic_const_exprs` lets us hoist to a compile error.
-                unreachable!("Unsupported StartTag");
             }
         }
 
@@ -529,15 +516,6 @@ impl Writable {
 pub struct IntoArray {
     pub value: JSValue,
     pub(crate) len: BlobSizeType,
-}
-
-impl Default for IntoArray {
-    fn default() -> Self {
-        Self {
-            value: JSValue::default(),
-            len: BlobSizeType::MAX,
-        }
-    }
 }
 
 // ─── Result.Pending ──────────────────────────────────────────────────────
@@ -991,6 +969,25 @@ impl SourceHandle {
             SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
             | SourceHandle::S3DownloadBody(_) => {}
+        }
+    }
+
+    /// The source's JS wrapper was collected while this producer still held the
+    /// source: nothing can read what it delivers from now on. Called from a GC
+    /// sweep: arms must not run JS.
+    pub fn consumer_collected(self) {
+        match self {
+            SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 
@@ -2133,9 +2130,6 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
-    fn done(&self) -> bool {
-        self.is_done()
-    }
 }
 
 pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
@@ -2546,9 +2540,6 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
-    }
-    fn done(&self) -> bool {
-        self.done
     }
 }
 

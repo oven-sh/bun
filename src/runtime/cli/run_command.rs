@@ -1471,6 +1471,39 @@ impl Run<'_> {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
+        // `--check`: the entry that just ran was a no-op stand-in (see
+        // `exec_check`). Like Node, check right after the preloads (which may
+        // override the CommonJS wrapper) and before anything they scheduled on
+        // the event loop runs; a syntax error exits like an uncaught exception.
+        if let Some((source, name, module_type)) = CHECK_SYNTAX_TARGET.get() {
+            unsafe extern "C" {
+                fn Bun__checkSyntaxForCLI(
+                    global: *const JSGlobalObject,
+                    source_ptr: *const u8,
+                    source_len: usize,
+                    name_ptr: *const u8,
+                    name_len: usize,
+                    module_type: i32,
+                ) -> i32;
+            }
+            // SAFETY: FFI; `vm.global` is live for the VM lifetime and the
+            // slices live in the process-lifetime `CHECK_SYNTAX_TARGET`.
+            let failed = unsafe {
+                Bun__checkSyntaxForCLI(
+                    vm.global,
+                    source.as_ptr(),
+                    source.len(),
+                    name.as_ptr(),
+                    name.len(),
+                    *module_type,
+                )
+            };
+            Output::flush();
+            if failed != 0 {
+                exit_with_unhandled_note(vm);
+            }
+        }
+
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
             vm.global().vm().release_weak_refs();
@@ -1513,38 +1546,6 @@ impl Run<'_> {
             // `--print` output is handled by internal/eval_print.ts (registered
             // when the eval entry point's completion value is captured): it
             // prints on beforeExit/exit, like Node.
-
-            // `--check`: the entry that just ran was a no-op stand-in (see
-            // `exec_check`); syntax-check the real target now that preloads
-            // (which may override the CommonJS module wrapper) have run.
-            if let Some((source, name, module_type)) = CHECK_SYNTAX_TARGET.get() {
-                unsafe extern "C" {
-                    fn Bun__checkSyntaxForCLI(
-                        global: *const JSGlobalObject,
-                        source_ptr: *const u8,
-                        source_len: usize,
-                        name_ptr: *const u8,
-                        name_len: usize,
-                        module_type: i32,
-                    ) -> i32;
-                }
-                // SAFETY: FFI; `vm.global` is live for the VM lifetime and the
-                // slices live in the process-lifetime `CHECK_SYNTAX_TARGET`.
-                let failed = unsafe {
-                    Bun__checkSyntaxForCLI(
-                        vm.global,
-                        source.as_ptr(),
-                        source.len(),
-                        name.as_ptr(),
-                        name.len(),
-                        *module_type,
-                    )
-                };
-                Output::flush();
-                if failed != 0 {
-                    vm.exit_handler.exit_code = 1;
-                }
-            }
 
             vm.on_before_exit();
         }
@@ -1612,11 +1613,12 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
 }
 
-/// Cold tail shared by the rejected-entry-point and load-failure paths in
-/// `Run::start`: flag the exit code, run `on_exit`, optionally print the
-/// "unhandled error" sourcemap note + version string, then hard-exit. Hoisted
-/// out (and parked in `.text.unlikely` on linux) so the linker keeps it off the
-/// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
+/// Cold tail shared by the rejected-entry-point, load-failure and failed
+/// `--check` paths in `Run::start`: flag the exit code, run `on_exit`,
+/// optionally print the "unhandled error" sourcemap note + version string,
+/// then hard-exit. Hoisted out (and parked in `.text.unlikely` on linux) so
+/// the linker keeps it off the `.text.hot` fault-around window the
+/// `require('fs')` startup path pulls in.
 #[cold]
 #[inline(never)]
 #[cfg_attr(

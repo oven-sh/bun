@@ -501,6 +501,54 @@ describe("--check / -c (syntax check)", () => {
     expect(overridden.exitCode).toBe(1);
   });
 
+  test("checks right after the preloads run, before work they scheduled on the event loop", () => {
+    using dir = tempDir("check-preload-order", {
+      // Long enough that it can only fire if the check is wrongly deferred
+      // until the event loop drains; a failed check must exit before it does.
+      "exit-later.js": "setTimeout(() => process.exit(0), 10_000);\n",
+      "log-later.js": "setTimeout(() => console.log('timer ran'), 0);\n",
+      "bad.js": "var foo bar;\n",
+      "good.js": "var foo = 'bar';\n",
+    });
+
+    const failed = Bun.spawnSync({
+      cmd: [bunExe(), "--require", join(String(dir), "exit-later.js"), "--check", join(String(dir), "bad.js")],
+      env: bunEnv,
+    });
+    expect(failed.stderr.toString("utf8")).toMatch(/^SyntaxError: /m);
+    expect(failed.stdout.toString("utf8")).toBe("");
+    expect(failed.exitCode).toBe(1);
+
+    // A passing check still lets the preload's pending work run, like Node.
+    const passed = Bun.spawnSync({
+      cmd: [bunExe(), "--require", join(String(dir), "log-later.js"), "--check", join(String(dir), "good.js")],
+      env: bunEnv,
+    });
+    expect(passed.stderr.toString("utf8")).toBe("");
+    expect(passed.stdout.toString("utf8")).toBe("timer ran\n");
+    expect(passed.exitCode).toBe(0);
+  });
+
+  test.each([[["run", "--filter", "*"]], [["--parallel"]]])(
+    "%j with --check still only syntax-checks the file",
+    args => {
+      using dir = tempDir("check-before-script-runners", {
+        "package.json": JSON.stringify({ name: "check-before-script-runners", scripts: { "bad.js": "exit 0" } }),
+        "bad.js": "var foo bar;\n",
+      });
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), ...args, "--check", "bad.js"],
+        env: bunEnv,
+        cwd: String(dir),
+      });
+      const errorOutput = stderr.toString("utf8");
+      expect(errorOutput.startsWith(join(String(dir), "bad.js"))).toBe(true);
+      expect(errorOutput).toMatch(/^SyntaxError: /m);
+      expect(stdout.toString("utf8")).toBe("");
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test("missing file reports Cannot find module with exit code 1", () => {
     using dir = tempDir("check-missing", {});
     const file = join(String(dir), "nope.js");

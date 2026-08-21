@@ -1419,6 +1419,14 @@ pub mod command {
         };
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
+        if matches!(tag, Tag::AutoCommand | Tag::RunCommand) && ctx.runtime_options.check_syntax {
+            // `--check` / `-c`: syntax-check the entry point (or stdin) without
+            // executing it, so it must win over every dispatch below that runs
+            // scripts (--filter, --parallel, ...). `--check` together with
+            // `--eval` already errored during argument parsing.
+            return run_command::RunCommand::exec_check(ctx, tag);
+        }
+
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::multi_run::run(ctx);
@@ -1431,13 +1439,6 @@ pub mod command {
             let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
             pretty_errorln!("<r><red>error<r>: {}", err.name());
             Global::exit(1);
-        }
-
-        if matches!(tag, Tag::AutoCommand | Tag::RunCommand) && ctx.runtime_options.check_syntax {
-            // `--check` / `-c`: syntax-check the entry point (or stdin) without
-            // executing it. `--check` together with `--eval` already errored
-            // during argument parsing.
-            return run_command::RunCommand::exec_check(ctx, tag);
         }
 
         // Node: `-i foo.js` runs the script; `-i -e code` evals then enters the

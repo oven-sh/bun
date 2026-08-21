@@ -12,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -252,8 +253,8 @@ async function installed(bunfig: BunfigOpts, files: Files) {
 }
 
 // bun links with relative targets, which a verbatim copy keeps pointing inside the copy. When Windows denies symlinks
-// bun falls back to junctions, whose targets are absolute (read back with a `\\?\` prefix): those are re-pointed from
-// the template into the copy.
+// bun falls back to junctions, whose targets are absolute: those are re-pointed at the same place inside the copy.
+// Both `template` and the resolved target are real paths, so they agree on the spelling of the temp dir.
 function copyTree(template: string, copy: string) {
   const copyDir = (from: string, to: string) => {
     for (const entry of readdirSync(from, { withFileTypes: true })) {
@@ -262,7 +263,7 @@ function copyTree(template: string, copy: string) {
       if (entry.isSymbolicLink()) {
         const link = readlinkSync(source);
         if (isAbsolute(link)) {
-          symlinkSync(join(copy, relative(template, link.replace(/^\\\\\?\\/, ""))), target, "junction");
+          symlinkSync(join(copy, relative(template, realpathSync.native(source))), target, "junction");
         } else {
           symlinkSync(link, target, statSync(source, { throwIfNoEntry: false })?.isDirectory() ? "dir" : "file");
         }

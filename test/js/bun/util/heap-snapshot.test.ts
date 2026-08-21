@@ -200,6 +200,82 @@ describe("Native types report their size correctly", () => {
 
     delete globalThis.ws;
   });
+
+  // These Blobs are created by the native bindings rather than by `new Blob()`,
+  // so each of those constructors has to record the size on its own.
+  describe("Blob handed to JS by the native bindings", () => {
+    const payloadSize = 1024 * 1024;
+
+    function multipartUpload() {
+      const upload = new FormData();
+      upload.append("file", new Blob([Buffer.alloc(payloadSize, "abc")]), "upload.bin");
+      return upload;
+    }
+
+    it.each(["Request", "Response"] as const)("File parsed from a multipart %s body", async bodyOwner => {
+      const parsed =
+        bodyOwner === "Request"
+          ? await new Request("http://example.com/", { method: "POST", body: multipartUpload() }).formData()
+          : await new Response(multipartUpload()).formData();
+
+      const file = parsed.get("file") as File;
+      expect(file.size).toBe(payloadSize);
+      expect(estimateShallowMemoryUsageOf(file)).toBeGreaterThan(payloadSize);
+      expect(estimateShallowMemoryUsageOf(file)).toBeLessThan(payloadSize * 2);
+
+      // FormData's own size goes through the entry it holds, not through the JS File.
+      expect(estimateShallowMemoryUsageOf(parsed)).toBeGreaterThan(payloadSize);
+      expect(estimateShallowMemoryUsageOf(parsed)).toBeLessThan(payloadSize * 2);
+    });
+
+    it("parsed multipart File appended to another FormData", async () => {
+      const parsed = await new Response(multipartUpload()).formData();
+
+      const forwarded = new FormData();
+      const empty = estimateShallowMemoryUsageOf(forwarded);
+      forwarded.append("file", parsed.get("file") as File);
+      expect(estimateShallowMemoryUsageOf(forwarded)).toBeGreaterThan(empty + payloadSize);
+      expect(estimateShallowMemoryUsageOf(forwarded)).toBeLessThan(empty + payloadSize * 2);
+    });
+
+    it('WebSocket message received with binaryType = "blob"', async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("expected a websocket upgrade", { status: 400 });
+        },
+        websocket: {
+          open(ws) {
+            ws.sendBinary(new Uint8Array(payloadSize));
+          },
+          message() {},
+        },
+      });
+
+      const ws = new WebSocket(server.url);
+      ws.binaryType = "blob";
+      const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+      ws.onmessage = resolve;
+      ws.onerror = reject;
+      ws.onclose = event => reject(new Error(`WebSocket closed before a message arrived (code ${event.code})`));
+      try {
+        const event = await promise;
+        const blob = event.data as Blob;
+        expect(blob).toBeInstanceOf(Blob);
+        expect(blob.size).toBe(payloadSize);
+        expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThan(payloadSize);
+        expect(estimateShallowMemoryUsageOf(blob)).toBeLessThan(payloadSize * 2);
+
+        // MessageEvent reports the Blob it holds as its own cost.
+        expect(estimateShallowMemoryUsageOf(event)).toBeGreaterThan(payloadSize);
+        expect(estimateShallowMemoryUsageOf(event)).toBeLessThan(payloadSize * 2);
+      } finally {
+        ws.onclose = null;
+        ws.close();
+      }
+    });
+  });
 });
 
 describe("CommonJS Module cached slots are visible in heap snapshots", () => {

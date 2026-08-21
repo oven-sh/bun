@@ -291,9 +291,6 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."
     ),
     parse_param!(
-        "--disallow-code-generation-from-strings  Make eval() and new Function() throw EvalError."
-    ),
-    parse_param!(
         "--no-deprecation                  Suppress all reporting of the custom deprecation."
     ),
     parse_param!(
@@ -355,6 +352,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // Also hidden: at 37 columns the name overflows the fixed 30-column flag
+    // column of `bun --help` (`simple_help_bun_top_level`).
+    parse_param!("--disallow-code-generation-from-strings"),
 ];
 
 const AUTO_OR_RUN_PARAMS: &[ParamType] = &[

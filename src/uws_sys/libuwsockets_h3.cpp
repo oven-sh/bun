@@ -322,19 +322,17 @@ void uws_h3_app_on_webtransport(uws_h3_app_t* app, uws_h3_wt_datagram_handler on
         (void (*)(Http3WebTransportSession*, uint32_t, const char*, size_t))on_close);
 }
 
-/* An extended CONNECT carrying `:protocol: webtransport` (RFC 9220 + the
- * WebTransport draft). Anything else on a CONNECT route is an ordinary
- * tunnel request and is left to the caller. */
+/* Extended CONNECT with `:protocol: webtransport` (RFC 9220). Anything else on
+ * a CONNECT route is an ordinary tunnel request. */
 bool uws_h3_req_is_webtransport(uws_h3_req_t* req)
 {
     Http3Request* r = (Http3Request*)req;
     return r->getCaseSensitiveMethod() == "CONNECT" && r->getHeader(":protocol") == "webtransport";
 }
 
-/* Answer the CONNECT with a 200 and keep the stream open as a session.
- * Returns null when the response has already been written to, or when the
- * connection never negotiated the extension — in both cases the caller still
- * owns the response and should answer it some other way. */
+/* Answer the CONNECT with 200 and keep the stream open as a session. Null when
+ * the response was already written to, or the connection never negotiated the
+ * extension; the caller still owns the response either way. */
 uws_h3_wt_t* uws_h3_res_upgrade_webtransport(uws_h3_res_t* res, uws_h3_req_t* req, void* user_data)
 {
     Http3Response* r = (Http3Response*)res;
@@ -343,26 +341,21 @@ uws_h3_wt_t* uws_h3_res_upgrade_webtransport(uws_h3_res_t* res, uws_h3_req_t* re
     if (d->state & (Http3ResponseData::HTTP_WRITE_CALLED | Http3ResponseData::HTTP_END_CALLED)) {
         return nullptr;
     }
-    /* Before the headers: lsquic has to know the stream is a session while it
-     * is still deciding how to frame what goes out on it. */
+    /* Before the headers: lsquic decides framing from this. */
     if (us_quic_stream_accept_webtransport((us_quic_stream_t*)r) != 0) return nullptr;
     r->writeStatus("200 OK");
-    /* draft-02 clients send `sec-webtransport-http3-draft02: 1` and require
-     * the answer echoed back before they will consider the session open;
-     * draft-07 dropped both. Echoing only when asked keeps a draft-07 session
-     * free of a header its own spec does not define. */
+    /* draft-02 clients require this echoed back before the session is open;
+     * draft-07 dropped it, so echo only when asked. */
     if (!req_draft02.empty()) {
         r->writeHeader("sec-webtransport-http3-draft", "draft02");
     }
     r->flushHeaders();
-    /* An ordinary response leaves the buffer through its body write or its
-     * FIN. A session has neither -- the CONNECT stream stays open and empty --
-     * so without this the 200 sits in lsquic's stream buffer and the client
-     * waits out its handshake timeout on a session the server thinks is open. */
+    /* A session has neither a body write nor a FIN to push the 200 out, so
+     * without this the client waits out its handshake timeout. */
     us_quic_stream_flush((us_quic_stream_t*)r);
     d->wtUserData = user_data;
-    /* Taken now rather than read at teardown: the context data this comes from
-     * is destructed before the engine that dispatches on_close. */
+    /* Taken now: the context data is destructed before the engine that
+     * dispatches on_close. */
     d->wtOnClose = ((Http3Context*)us_quic_stream_context((us_quic_stream_t*)r))
                        ->getContextData()
                        ->onWebTransportClose;
@@ -386,8 +379,6 @@ void uws_h3_wt_close(uws_h3_wt_t* wt, uint32_t code, const char* reason, size_t 
 {
     ((Http3WebTransportSession*)wt)->close(code, sv(reason, reason_len));
 }
-
-void uws_h3_wt_abort(uws_h3_wt_t* wt) { ((Http3WebTransportSession*)wt)->abort(); }
 
 void uws_h3_wt_drain(uws_h3_wt_t* wt) { ((Http3WebTransportSession*)wt)->drain(); }
 

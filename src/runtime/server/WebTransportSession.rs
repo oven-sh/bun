@@ -1,16 +1,10 @@
-//! `WebTransportSession` — one WebTransport session over HTTP/3, as the
-//! `webtransport` handlers on `Bun.serve` see it.
+//! One WebTransport session over HTTP/3, as `Bun.serve`'s `webtransport`
+//! handlers see it. Datagrams only — the unreliable half is the reason to
+//! reach for WebTransport over a WebSocket.
 //!
-//! Only datagrams. A session's streams would be a second, reliable channel
-//! with its own backpressure story; the reason an application reaches for
-//! WebTransport over a WebSocket in the first place is the unreliable half,
-//! and that is the half implemented here.
-//!
-//! Lifetime is the CONNECT stream's, which the native layer owns. This
-//! wrapper holds a strong self-reference for as long as that stream lives — a
-//! session with no JS references still has to be able to deliver a datagram —
-//! and downgrades it when the session goes, after which the wrapper is
-//! collectable and its finalizer drops the box.
+//! Lifetime is the CONNECT stream's, owned by the native layer. The wrapper
+//! holds a strong self-reference while that stream lives, since a session with
+//! no JS references must still deliver datagrams, and downgrades it on close.
 
 use core::cell::Cell;
 use core::ffi::{c_uint, c_void};
@@ -23,14 +17,12 @@ use bun_uws_sys::h3::{DatagramResult, Request, Response, WebTransport};
 use crate::server::WebTransportHandler;
 use crate::server::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult};
 
-/// R-2 (re-entrancy): every callback into a session can re-enter it — a
-/// `datagram` handler calling `session.close()` reaches this same object
-/// before the outer frame returns. Receivers take `&self` and the state lives
-/// behind `Cell`/`JsCell`.
+/// Every callback can re-enter: a `datagram` handler calling `session.close()`
+/// reaches this object before the outer frame returns. Hence `&self` receivers
+/// and `Cell`/`JsCell` state.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct WebTransportSession {
-    /// `None` once the session has gone. Checked by every method: JS can hold
-    /// the object indefinitely, and the native session dies with its stream.
+    /// `None` once the session has gone; JS can hold the object indefinitely.
     session: Cell<Option<NonNull<WebTransport>>>,
     this_value: JsCell<JsRef>,
     /// Points into `ServerConfig.webtransport_handler`, which outlives every
@@ -47,9 +39,8 @@ pub mod js {
 /// What the CONNECT route should do with a request, decided before anything is
 /// written back.
 pub(crate) enum Decision {
-    /// Not ours. Back to the router, which falls through to whatever the
-    /// application registered — answering every CONNECT here would take them
-    /// all away from `fetch` the moment a `webtransport` handler was added.
+    /// Not ours; back to the router. Answering every CONNECT here would take
+    /// them all away from `fetch` the moment `webtransport` was added.
     Yield,
     /// Accept, with the value the `upgrade` handler returned as the session's
     /// `data`.
@@ -61,11 +52,9 @@ pub(crate) enum Decision {
     Failed,
 }
 
-/// The CONNECT as a `Request`, for the `upgrade` handler to inspect.
-///
-/// `:authority` reaches Rust as `host` and `url()` is the path with its query,
-/// which is everything needed to rebuild the URL a browser asked for. HTTP/3 is
-/// always TLS, so the scheme is not in question.
+/// The CONNECT as a `Request` for the `upgrade` handler. `:authority` reaches
+/// Rust as `host`, `url()` is the path with its query, and HTTP/3 is always
+/// TLS, so the URL the browser asked for is recoverable.
 fn build_request(global: &JSGlobalObject, req: &mut Request) -> Option<JSValue> {
     use crate::webcore::Request as WebRequest;
     use crate::webcore::response::HeadersRef;
@@ -80,8 +69,8 @@ fn build_request(global: &JSGlobalObject, req: &mut Request) -> Option<JSValue> 
             core::ptr::from_mut(req).cast::<c_void>(),
         ))
     };
-    // The prefix is built while `host` is borrowed and owned before `url()`
-    // takes the second borrow — both alias the same uWS buffer.
+    // Owned before `url()` takes the second borrow: both alias the same uWS
+    // buffer.
     let prefix: Option<Vec<u8>> = req
         .header(b"host")
         .filter(|host| WebRequest::is_valid_host_header(host))
@@ -144,11 +133,9 @@ impl WebTransportSession {
         self.this_value.get().try_get()
     }
 
-    /// Ask the `upgrade` handler, if there is one, whether to open a session.
-    ///
-    /// Split from [`Self::accept`] because refusing means writing a `Response`,
-    /// and the machinery for that needs the server this route belongs to.
-    /// Nothing is written to `res` here, so the caller still owns it.
+    /// Ask the `upgrade` handler whether to open a session. Split from
+    /// [`Self::accept`] because refusing writes a `Response`, which needs the
+    /// server. Nothing is written to `res` here.
     pub(crate) fn decide(
         global: &JSGlobalObject,
         on_upgrade: JSValue,
@@ -160,12 +147,10 @@ impl WebTransportSession {
         if on_upgrade.is_empty_or_undefined_or_null() {
             return Decision::Accept(JSValue::UNDEFINED);
         }
-        // A `Request` built the cheap way: `init2` copies the URL and headers
-        // and holds no request context, so it carries nothing that dies with
-        // the uWS request under it, and a handler that keeps it keeps
-        // something valid. The fetch path's `Request` would drag a
-        // RequestContext, an abort signal and a body slot along for a CONNECT
-        // that has no body — which is the cost this route exists to avoid.
+        // `init2` copies the URL and headers and holds no request context, so
+        // a handler that keeps the Request keeps something valid. The fetch
+        // path would drag a RequestContext, abort signal and body slot along
+        // for a CONNECT that has none.
         let request_value = match build_request(global, req) {
             Some(v) => v,
             None => return Decision::Failed,
@@ -176,10 +161,9 @@ impl WebTransportSession {
             Ok(v) => v,
             Err(e) => {
                 let err = global.take_exception(e);
-                // Reported, not routed to the server's `error` handler: that
-                // one answers requests with a `Response`, and this throw has
-                // already decided its answer — the session is refused with a
-                // 500. Same treatment a throwing websocket handler gets.
+                // Reported rather than routed to the server's `error` handler,
+                // which answers with a `Response`: this throw has already
+                // decided its answer. Same as a throwing websocket handler.
                 VirtualMachine::get()
                     .as_mut()
                     .run_error_handler(err, None);
@@ -187,10 +171,9 @@ impl WebTransportSession {
             }
         };
         request_value.ensure_still_alive();
-        // A `Response` is the refusal; anything else becomes `session.data`.
-        // The two cannot be confused — nobody wants a `Response` as their
-        // session data — and it keeps one return value doing one job each way
-        // rather than a boolean plus an out-parameter.
+        // A `Response` is the refusal, anything else is `session.data`: one
+        // return value doing one job each way, and nobody wants a `Response`
+        // as session data.
         if crate::webcore::response::from_js(returned).is_some() {
             return Decision::Refuse(returned);
         }
@@ -249,19 +232,16 @@ impl WebTransportSession {
         let Some(this_value) = self.js_value() else {
             return;
         };
-        // A fresh Uint8Array per datagram. Handing out a view onto the
-        // receive buffer would be faster and wrong: the buffer is lsquic's and
-        // is reused before the next turn of the event loop, so anything the
-        // handler kept would change underneath it.
+        // A fresh Uint8Array per datagram: the receive buffer is lsquic's and
+        // is reused before the next turn of the loop.
         let bytes = match crate::server::jsc::ArrayBuffer::create::<
             { crate::server::jsc::JSType::Uint8Array },
         >(global, data)
         {
             Ok(bytes) => bytes,
-            // Allocation failure, which has already thrown. Take it here:
-            // this frame returns into lsquic's packet processing, and an
-            // exception left pending would be found by whichever JS ran next
-            // and reported against that instead.
+            // Allocation failure, already thrown. Taken here because this
+            // frame returns into lsquic's packet processing, where a pending
+            // exception would surface against whatever JS ran next.
             Err(e) => {
                 let err = global.take_exception(e);
                 report(global, err);
@@ -280,9 +260,8 @@ impl WebTransportSession {
         let cb = self.handler.get().on_close;
         let global = self.global.get();
         let this_value = self.js_value();
-        // The native session dies with its stream, so it is nulled before any
-        // user code runs: a `close` handler reaching for `sendDatagram()` gets
-        // the closed answer rather than a pointer into a stream on its way out.
+        // Nulled before any user code runs, so a `close` handler reaching for
+        // `sendDatagram()` gets the closed answer rather than a dying stream.
         self.session.set(None);
 
         if let (Some(this_value), false) = (this_value, cb.is_empty_or_undefined_or_null()) {
@@ -300,10 +279,8 @@ impl WebTransportSession {
             }
         }
 
-        // Only now release the self-reference. Until the handler has returned,
-        // this reference is the wrapper's only root, and dropping it earlier
-        // would let a GC inside the handler collect the wrapper — and with it
-        // the box `self` points at.
+        // Only now: until the handler returns this is the wrapper's only root,
+        // and a GC inside it would collect the box `self` points at.
         self.this_value.with_mut(|r| r.downgrade());
     }
 
@@ -316,9 +293,8 @@ impl WebTransportSession {
         if callframe.arguments_count() < 1 {
             return Err(global.throw(format_args!("sendDatagram requires 1 argument")));
         }
-        // A closed session reports zero rather than throwing. A datagram is
-        // allowed not to arrive, and racing the peer's close is exactly the
-        // case where an exception would be noise.
+        // Zero rather than a throw: a datagram is allowed not to arrive, and
+        // racing the peer's close is where an exception would be noise.
         let Some(mut session) = self.session.get() else {
             return Ok(JSValue::js_number(0.0));
         };
@@ -349,10 +325,9 @@ impl WebTransportSession {
             return Ok(JSValue::UNDEFINED);
         };
         let [code_value, reason_value] = callframe.arguments_as_array::<2>();
-        // Coerce before touching the session, and refuse anything that is not
-        // a number rather than running a `valueOf` whose exception the
-        // non-propagating `to_u32` would swallow — leaving it pending for the
-        // reason's `toString` to trip over while the session closed as 0.
+        // Refuse a non-number rather than run a `valueOf` whose exception the
+        // non-propagating `to_u32` would swallow, leaving it pending for the
+        // reason's `toString` while the session closed as 0.
         let code = if code_value.is_empty_or_undefined_or_null() {
             0u32
         } else if code_value.is_number() {
@@ -382,9 +357,8 @@ impl WebTransportSession {
         _global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // A closed session has nobody to ask, and the request is advisory, so
-        // this is a no-op rather than a throw -- the same answer sendDatagram
-        // gives for the same race.
+        // Advisory, and a closed session has nobody to ask: a no-op, as
+        // sendDatagram is for the same race.
         if let Some(mut session) = self.session.get() {
             // SAFETY: as in send_datagram.
             unsafe { session.as_mut() }.drain();
@@ -430,12 +404,8 @@ impl WebTransportSession {
     }
 }
 
-/// `sendDatagram` reports the bytes queued, `0` for a datagram the
-/// connection's queue had no room for, and `-1` for one the peer will not
-/// accept — the same three-way answer `ws.send()` gives, so a caller can
-/// branch on it the same way. The count includes the session's frame prefix,
-/// which is what lets an empty payload report success rather than colliding
-/// with the `0` that means dropped.
+/// The same three-way answer `ws.send()` gives. The count includes the frame
+/// prefix, so an empty payload does not report the `0` that means dropped.
 fn datagram_result_to_js(result: DatagramResult) -> JSValue {
     match result {
         DatagramResult::Sent(n) => JSValue::js_number(n as f64),
@@ -450,9 +420,8 @@ fn report(global: &JSGlobalObject, error_value: JSValue) {
         .uncaught_exception(global, error_value, false);
 }
 
-/// Registered once per HTTP/3 app. The native session carries the pointer to
-/// its `WebTransportSession`, so neither callback needs to know which server
-/// it belongs to.
+/// Registered once per HTTP/3 app; the native session carries the pointer back
+/// to its `WebTransportSession`.
 pub(crate) extern "C" fn on_datagram(wt: *mut WebTransport, data: *const u8, len: c_uint) {
     // SAFETY: uWS callback contract — `wt` is live for the call, and its user
     // data is the `*mut WebTransportSession` set in `accept`.

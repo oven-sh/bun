@@ -16,12 +16,9 @@ struct Http3ContextData {
     };
     HttpRouter<RouterData> router;
 
-    /* WebTransport session callbacks, set once when the app declares a
-     * handler. Plain function pointers rather than the router's
-     * MoveOnlyFunction because the only caller is Rust, which has no closure
-     * to carry and would otherwise pay an allocation per app. `open` is not
-     * here: a session is opened by the CONNECT route, which already runs
-     * through the router like any other request. */
+    /* Plain function pointers rather than the router's MoveOnlyFunction: the
+     * only caller is Rust, which has no closure to carry. `open` is not here —
+     * the CONNECT route opens a session through the router. */
     void (*onWebTransportDatagram)(Http3WebTransportSession *, const char *, unsigned) = nullptr;
     void (*onWebTransportClose)(Http3WebTransportSession *, uint32_t, const char *, size_t) = nullptr;
 };

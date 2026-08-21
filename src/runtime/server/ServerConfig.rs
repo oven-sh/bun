@@ -64,9 +64,8 @@ pub struct ServerConfig {
     pub(crate) ipv6_only: bool,
     pub(crate) http3: bool,
     pub(crate) http1: bool,
-    /// A `webtransport` handler was given. Decides the SETTINGS the HTTP/3
-    /// listener advertises, which lsquic reads once when the engine is built —
-    /// so it cannot be turned on later by adding a route.
+    /// Decides the SETTINGS the HTTP/3 listener advertises, which lsquic reads
+    /// once at engine creation — so it cannot be turned on later.
     pub(crate) webtransport: bool,
 
     pub(crate) had_routes_object: bool,
@@ -1504,12 +1503,10 @@ impl ServerConfig {
                 );
             }
         } else if args.webtransport && !opts.is_reload {
-            // A session arrives over HTTP/3 or not at all, so handlers on a
-            // server without it could never fire. Refusing is the only way the
-            // caller finds out; the listener would otherwise come up looking
-            // healthy and never call them. Not on a reload: `http3` is a
-            // property of the listener that is already bound, and a reload
-            // config does not restate it.
+            // A session arrives over HTTP/3 or not at all, so these handlers
+            // could never fire and the listener would look healthy. Not on a
+            // reload: `http3` belongs to the bound listener and is not
+            // restated.
             return Err(global.throw_invalid_arguments(format_args!(
                 "'webtransport' requires 'http3' to be set"
             )));
@@ -1706,9 +1703,8 @@ pub struct FromJSOptions {
     /// reload, so they count for nothing here. Both are false for `Bun.serve()`.
     pub(crate) previous_fetch: bool,
     pub(crate) previous_routes: bool,
-    /// A `reload()` rather than a `Bun.serve()`. The listener is already bound
-    /// by then, so options that decide how it was bound cannot be validated
-    /// against a config that never carried them.
+    /// A `reload()` rather than a `Bun.serve()`: the listener is already bound,
+    /// so options that decided how it was bound are not restated.
     pub(crate) is_reload: bool,
 }
 

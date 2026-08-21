@@ -54,19 +54,15 @@ struct Http3Context {
         us_quic_socket_context_on_stream_data(ctx, [](us_quic_stream_t *s, const char *data, unsigned len, int fin) {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
-            /* On an upgraded session the CONNECT stream carries capsules, not
-             * a request body, so it never reaches inStream. A FIN without a
-             * close capsule is still the end of the session — the draft allows
-             * a peer to just stop — so it is closed here rather than left for
-             * the connection to time out: lsquic only schedules on_close once
-             * both halves are done, and until that runs the session's JS
-             * wrapper is held by its own strong reference. */
+            /* An upgraded CONNECT stream carries capsules, not a body. A FIN
+             * without a close capsule still ends the session, so it is closed
+             * here rather than left to time out — lsquic schedules on_close
+             * only once both halves are done. */
             if (us_quic_stream_is_webtransport(s)) {
                 Http3WebTransportSession *wt = (Http3WebTransportSession *) s;
-                /* A close capsule only records why; the report itself happens
-                 * in on_stream_close, so that a session that ends by capsule
-                 * and one that ends by the connection going away arrive at the
-                 * handler through the same single path. */
+                /* The capsule records why; on_stream_close reports it, so a
+                 * capsule close and a connection going away reach the handler
+                 * the same way. */
                 bool alive = wt->feedCapsules(data, len, [&](uint32_t code, std::string_view reason) {
                     rd->wtCloseCode = code;
                     rd->wtCloseReason.shrink(0);
@@ -86,9 +82,8 @@ struct Http3Context {
         us_quic_socket_context_on_stream_close(ctx, [](us_quic_stream_t *s) {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
-            /* An upgraded session never had onAborted armed — the CONNECT
-             * response ended the HTTP exchange the moment it was accepted —
-             * so it reports here and returns rather than falling through. */
+            /* An upgraded session never armed onAborted: the CONNECT response
+             * ended the HTTP exchange when it was accepted. */
             if (us_quic_stream_is_webtransport(s)) {
                 if (rd->wtOnClose) {
                     rd->wtOnClose((Http3WebTransportSession *) s, rd->wtCloseCode,

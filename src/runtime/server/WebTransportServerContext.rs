@@ -1,20 +1,14 @@
-//! The `webtransport` handler block on `Bun.serve`, and how a session gets
-//! from an extended CONNECT to those handlers.
+//! The `webtransport` handler block on `Bun.serve`.
 //!
-//! A session does not go through `fetch`. WebTransport's CONNECT is not a
-//! request an application would ever want to answer with a `Response` — there
-//! is no body and no status to choose beyond accept or refuse — so routing it
-//! through the request path would mean building a `Request`, a
-//! `RequestContext` and a promise per session in order to throw all three
-//! away. The handlers below are registered straight onto the HTTP/3 app as a
-//! CONNECT route instead, and ordinary HTTP/3 on the same server is untouched.
+//! A session does not go through `fetch`: routing it there would build a
+//! `RequestContext` and a promise per session to throw both away. The handlers
+//! are registered straight onto the HTTP/3 app as a CONNECT route, and ordinary
+//! HTTP/3 on the same server is untouched.
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 
-/// The three callbacks, held as raw `JSValue` shadows. The GC roots are the
-/// server wrapper's `wtOn*` WriteBarrier slots, written by
-/// `NewServer::write_wt_handler_slots`; these are the hot-path reads, exactly
-/// as the websocket handler does it.
+/// Raw `JSValue` shadows for the hot-path reads; the GC roots are the server
+/// wrapper's `wtOn*` WriteBarrier slots, as the websocket handler does it.
 pub struct WebTransportHandler {
     pub(crate) on_upgrade: JSValue,
     pub(crate) on_open: JSValue,
@@ -52,9 +46,8 @@ impl WebTransportHandler {
         if handler.on_datagram.is_empty_or_undefined_or_null()
             && handler.on_open.is_empty_or_undefined_or_null()
         {
-            // `upgrade` alone is a server that accepts sessions and then does
-            // nothing with them, which is a configuration mistake rather than
-            // a use case.
+            // `upgrade` alone accepts sessions and then does nothing with
+            // them.
             return Err(global.throw_invalid_arguments(format_args!(
                 "webtransport expects at least an 'open' or 'datagram' handler"
             )));

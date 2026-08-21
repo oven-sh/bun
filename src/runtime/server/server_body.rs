@@ -2293,11 +2293,9 @@ where
             self.write_ws_handler_slots(server_js, global);
         }
 
-        // Only when the listener already advertises the extension. A hot
-        // reload reaches this without going through `reload()`'s check, and
-        // adopting handlers a session can never reach would be worse than
-        // ignoring them: every extended CONNECT would 501 and no browser would
-        // attempt one, with three live handlers to suggest otherwise.
+        // Only when the listener already advertises the extension: a hot
+        // reload skips `reload()`'s check, and handlers no session can reach
+        // would 501 every CONNECT while looking live.
         if let Some(wt) = new_config.webtransport_handler.take() {
             if self.config.webtransport {
                 self.config.webtransport_handler = Some(wt);
@@ -2390,11 +2388,9 @@ where
             return Err(JsError::Thrown);
         }
 
-        // A reload cannot introduce WebTransport. What makes a session
-        // possible is the SETTINGS the HTTP/3 listener advertised when its
-        // lsquic engine was built, and that listener is already bound — so
-        // handlers arriving now would sit there and never be called. Replacing
-        // the handlers on a server that started with them is fine.
+        // A reload cannot introduce WebTransport: the SETTINGS were fixed when
+        // the listener's lsquic engine was built. Replacing handlers on a
+        // server that started with them is fine.
         if new_config.webtransport_handler.is_some() && !self.config.webtransport {
             drop(new_config);
             return Err(global.throw_invalid_arguments(format_args!(

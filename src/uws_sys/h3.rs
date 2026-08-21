@@ -605,11 +605,6 @@ impl WebTransport {
         // SAFETY: self is a live FFI handle; reason ptr/len valid for read
         unsafe { c::uws_h3_wt_close(self, code, reason.as_ptr(), reason.len()) }
     }
-    /// Drop the session without a capsule, for a peer that is not going to
-    /// read one.
-    pub fn abort(&mut self) {
-        c::uws_h3_wt_abort(self)
-    }
     /// Ask the peer to wind the session up. Advisory: the session stays open
     /// and usable, and nothing here waits for an answer.
     pub fn drain(&mut self) {
@@ -847,7 +842,6 @@ mod c {
             reason: *const u8,
             reason_len: usize,
         );
-        pub(super) safe fn uws_h3_wt_abort(wt: &mut WebTransport);
         pub(super) safe fn uws_h3_wt_drain(wt: &mut WebTransport);
     }
 

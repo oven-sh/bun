@@ -543,10 +543,10 @@ async function spawnAndCollect(...args: string[]): Promise<[stdout: string, stde
 }
 
 // The root package has one dependency entry per workspace member plus one per
-// declaration: ws-once has two entries, ws-twice three, ws-undeclared one. All
-// entries of a workspace resolve to the same package, and `bun pm ls` must print
-// one line per node_modules entry. bar-alias is its own node_modules entry even
-// though it resolves to the same package as bar, so it stays listed.
+// declaration: ws-once has two entries, ws-twice three, ws-undeclared one, and
+// the registry package bar two. `bun pm ls` must print one line per node_modules
+// entry. bar-alias is its own node_modules entry even though it resolves to the
+// same package as bar, so it stays listed.
 async function installWorkspacesTheRootDependsOn(saveTextLockfile: boolean) {
   await writeFile(
     join(package_dir, "bunfig.toml"),
@@ -570,6 +570,7 @@ async function installWorkspacesTheRootDependsOn(saveTextLockfile: boolean) {
         "ws-twice": "workspace:*",
       },
       devDependencies: {
+        bar: "latest",
         "ws-once": "workspace:*",
         "ws-twice": "workspace:*",
       },

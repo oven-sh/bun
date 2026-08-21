@@ -472,7 +472,9 @@ fn parse_until_before<T, C>(
     result
 }
 
-// FIXME: have a special-purpose tokenizer method for this that does less work.
+/// Tokenizes past whatever a delimited parse left unread, stopping before the
+/// first byte in `delimiters` or at the end of input. A block opened on the
+/// way is skipped whole, so a delimiter inside it does not end the skip.
 #[inline(never)]
 fn skip_until_delimiter(parser: &mut Parser, delimiters: Delimiters) {
     loop {

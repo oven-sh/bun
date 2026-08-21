@@ -60,7 +60,6 @@ const hasCrypto = Boolean(process.versions.openssl) &&
 const hasSQLite = Boolean(process.versions.sqlite);
 
 const usesSharedLibrary = process.config.variables.node_shared;
-const hasInspector = Boolean(process.features.inspector);
 // Bun has `bun:ffi` but not Node's `node:ffi`, which is what this gates.
 const hasFFI = Boolean(process.config.variables.node_use_ffi);
 
@@ -1337,7 +1336,6 @@ const common = {
   hasCrypto,
   hasFFI,
   hasFullICU,
-  hasInspector,
   hasOpenSSL,
   hasQuic,
   hasSQLite,

@@ -2427,6 +2427,183 @@ impl<'a> Installer<'a> {
             }
         }
 
+        self.link_resolved_peer_bins(
+            parent_entry_id,
+            &mut node_modules_path,
+            &mut seen,
+            &mut *link_target_buf,
+            &mut *link_dest_buf,
+            &mut *link_rel_buf,
+        )?;
+
+        Ok(())
+    }
+
+    /// A peer dependency resolved for a package inside a project's subtree is
+    /// only wired inside the store (`node_modules/.bun/<entry>/node_modules`),
+    /// so its bin never reaches the project's `node_modules/.bin` and tools
+    /// that spawn it by path cannot find it (#39857). pnpm links the bins of
+    /// every peer it resolves inside an importer's subtree into that
+    /// importer's bin directory; do the same for the root and for workspaces.
+    /// Direct dependencies were linked first, so their bin names win.
+    fn link_resolved_peer_bins(
+        &self,
+        parent_entry_id: StoreEntryId,
+        node_modules_path: &mut DefaultAbsPath,
+        seen: &mut StringHashMap<()>,
+        link_target_buf: &mut [u8],
+        link_dest_buf: &mut [u8],
+        link_rel_buf: &mut [u8],
+    ) -> crate::Result<()> {
+        let lockfile = self.lockfile();
+        let store = self.store;
+
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let extern_string_buf = lockfile.buffers.extern_strings.as_slice();
+
+        let entries = &store.entries;
+        let entry_node_ids: &[StoreNodeId] = entries.items_node_id();
+        let entry_deps = entries.items_dependencies();
+
+        let nodes = &store.nodes;
+        let node_pkg_ids = nodes.items_pkg_id();
+
+        let pkgs = lockfile.packages.slice();
+        let pkg_names = pkgs.items_name();
+        let pkg_name_hashes = pkgs.items_name_hash();
+        let pkg_metas = pkgs.items_meta();
+        let pkg_resolutions = pkgs.items_resolution();
+        let pkg_resolutions_lists = pkgs.items_resolutions();
+        let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
+        let pkg_bins = pkgs.items_bin();
+
+        let parent_node_id = entry_node_ids[parent_entry_id.get() as usize];
+        let parent_pkg_id = node_pkg_ids[parent_node_id.get() as usize];
+        let is_importer = parent_entry_id == StoreEntryId::ROOT
+            || pkg_resolutions[parent_pkg_id as usize].tag == ResolutionTag::Workspace;
+        if !is_importer {
+            return Ok(());
+        }
+
+        let mut visited = Bitset::init_empty(entries.len())?;
+        visited.set(parent_entry_id.get() as usize);
+        let mut queue: Vec<StoreEntryId> = vec![parent_entry_id];
+
+        while let Some(current_entry_id) = queue.pop() {
+            for dep in entry_deps[current_entry_id.get() as usize].slice() {
+                let dep_node_id = entry_node_ids[dep.entry_id.get() as usize];
+                let dep_pkg_id = node_pkg_ids[dep_node_id.get() as usize];
+
+                if !visited.is_set(dep.entry_id.get() as usize) {
+                    visited.set(dep.entry_id.get() as usize);
+                    // Workspaces and the root are their own importers; peers
+                    // wired inside their subtrees are linked when their own
+                    // entry runs this step.
+                    if !matches!(
+                        pkg_resolutions[dep_pkg_id as usize].tag,
+                        ResolutionTag::Root | ResolutionTag::Workspace
+                    ) {
+                        queue.push(dep.entry_id);
+                    }
+                }
+
+                if current_entry_id == parent_entry_id {
+                    // direct dependencies were linked by `link_dependency_bins`
+                    continue;
+                }
+
+                if !lockfile.buffers.dependencies[dep.dep_id as usize]
+                    .behavior
+                    .is_peer()
+                {
+                    continue;
+                }
+
+                let bin = pkg_bins[dep_pkg_id as usize];
+                if bin.tag == bin::Tag::None {
+                    continue;
+                }
+
+                let package_name = strings::StringOrTinyString::init(
+                    lockfile.str(&pkg_names[dep_pkg_id as usize]),
+                );
+
+                let replacement_entry_id = self.maybe_replace_node_modules_path(
+                    entry_node_ids,
+                    node_pkg_ids,
+                    pkg_name_hashes,
+                    pkg_resolutions_lists,
+                    pkg_resolutions_buffer,
+                    pkg_metas,
+                    dep_pkg_id,
+                );
+                let target_entry_id = replacement_entry_id.unwrap_or(dep.entry_id);
+                let target_package_name = match replacement_entry_id {
+                    Some(replacement_entry_id) => {
+                        let replacement_node_id =
+                            entry_node_ids[replacement_entry_id.get() as usize];
+                        let replacement_pkg_id =
+                            node_pkg_ids[replacement_node_id.get() as usize];
+                        strings::StringOrTinyString::init(
+                            lockfile.str(&pkg_names[replacement_pkg_id as usize]),
+                        )
+                    }
+                    None => package_name,
+                };
+
+                // The peer has no symlink in this entry's node_modules, so the
+                // link target is its store location.
+                let mut target_node_modules_path = DefaultAbsPath::init_top_level_dir();
+                self.append_real_store_node_modules_path(
+                    &mut target_node_modules_path,
+                    target_entry_id,
+                    Which::Final,
+                );
+
+                let mut bin_linker = bin_real::Linker {
+                    bin,
+                    global_bin_path: self.manager().options.bin_path,
+                    package_name,
+                    string_buf,
+                    extern_string_buf,
+                    seen: Some(&mut *seen),
+                    node_modules_path: &mut *node_modules_path,
+                    target_node_modules_path: &raw const target_node_modules_path,
+                    target_package_name,
+                    abs_target_buf: &mut *link_target_buf,
+                    abs_dest_buf: &mut *link_dest_buf,
+                    rel_buf: &mut *link_rel_buf,
+                    err: None,
+                    skipped_due_to_missing_bin: false,
+                };
+
+                bin_linker.link(false);
+
+                // see the matching retry in `link_dependency_bins`: fall back
+                // to the package's own store entry when the native-binlink
+                // redirect has no usable bin.
+                let own_store_node_modules_path: DefaultAbsPath;
+                if replacement_entry_id.is_some()
+                    && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
+                {
+                    let mut p = DefaultAbsPath::init_top_level_dir();
+                    self.append_real_store_node_modules_path(
+                        &mut p,
+                        dep.entry_id,
+                        Which::Final,
+                    );
+                    own_store_node_modules_path = p;
+                    bin_linker.target_node_modules_path = &raw const own_store_node_modules_path;
+                    bin_linker.target_package_name = package_name;
+                    bin_linker.link(false);
+                }
+
+                if let Some(err) = bin_linker.err {
+                    return Err(err);
+                }
+            }
+        }
+
         Ok(())
     }
 

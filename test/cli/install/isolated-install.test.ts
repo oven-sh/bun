@@ -638,6 +638,143 @@ describe("optional peers", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/39857
+describe("resolved peer bins", () => {
+  // A peer resolved for a package in the project's subtree is wired only
+  // inside the store, so its bin must still be linked into the project root
+  // `node_modules/.bin` (pnpm links bins of resolved peers the same way).
+  const whatBin = process.platform === "win32" ? "what-bin.bunx" : "what-bin";
+
+  async function runWhatBin(packageDir: string) {
+    const { exited, stderr } = spawn({
+      cmd: [bunExe(), "run", "what-bin"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return await file(join(packageDir, "what-bin.txt")).text();
+  }
+
+  test.concurrent("auto-installed peer of a direct dependency", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-bin-auto-installed",
+        dependencies: { "peer-what-bin": "1.0.0" },
+      }),
+    );
+
+    async function checkInstall(savesLockfile: boolean) {
+      await runBunInstall(bunEnv, packageDir, { savesLockfile });
+
+      // the peer is wired only inside the store, not the project root
+      expect(existsSync(join(packageDir, "node_modules", "what-bin"))).toBe(false);
+      expect(existsSync(join(packageDir, "node_modules", ".bin", whatBin))).toBe(true);
+      if (process.platform !== "win32") {
+        expect(readlinkSync(join(packageDir, "node_modules", ".bin", "what-bin"))).toBe(
+          join("..", ".bun", "what-bin@1.0.0", "node_modules", "what-bin", "what-bin.js"),
+        );
+      }
+      expect(await runWhatBin(packageDir)).toBe("what-bin@1.0.0");
+    }
+
+    await checkInstall(true);
+    await checkInstall(false);
+  });
+
+  test.concurrent("optional peer provided by a transitive dependency", async () => {
+    // the shape from issue #39857: the project depends on a package with an
+    // optional peer (oxlint) and on a package that provides that peer
+    // (the parent providing oxlint-tsgolint).
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-bin-provided",
+        dependencies: { "provides-optional-peer-what-bin": "1.0.0" },
+        devDependencies: { "optional-peer-what-bin": "1.0.0" },
+      }),
+    );
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", "what-bin"))).toBe(false);
+    expect(existsSync(join(packageDir, "node_modules", ".bin", whatBin))).toBe(true);
+    expect(await runWhatBin(packageDir)).toBe("what-bin@1.0.0");
+  });
+
+  test.concurrent("peer wired deeper in the tree", async () => {
+    // pnpm links the bin even when the peer's consumer is itself transitive.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-bin-deep",
+        dependencies: { "provides-optional-peer-what-bin": "1.0.0" },
+      }),
+    );
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bin", whatBin))).toBe(true);
+    expect(await runWhatBin(packageDir)).toBe("what-bin@1.0.0");
+  });
+
+  test.concurrent("a direct dependency's bin wins over a resolved peer's bin", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-bin-direct-wins",
+        dependencies: { "what-bin": "1.5.0", "peer-what-bin": "1.0.0" },
+      }),
+    );
+    // `what-bin@1.5.0` does not satisfy the `"what-bin": "1.0.0"` peer range,
+    // which warns; the direct dependency still owns the bin name.
+    await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+
+    if (process.platform !== "win32") {
+      expect(readlinkSync(join(packageDir, "node_modules", ".bin", "what-bin"))).toBe(
+        join("..", "what-bin", "what-bin.js"),
+      );
+    }
+    expect(await runWhatBin(packageDir)).toBe("what-bin@1.5.0");
+  });
+
+  test.concurrent("peer of a workspace dependency links into the workspace bin dir", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-bin-workspace",
+        workspaces: ["packages/*"],
+      }),
+    );
+    await write(
+      join(packageDir, "packages", "ws-a", "package.json"),
+      JSON.stringify({
+        name: "ws-a",
+        version: "1.0.0",
+        dependencies: { "peer-what-bin": "1.0.0" },
+      }),
+    );
+    await runBunInstall(bunEnv, packageDir);
+
+    // the workspace is its own importer: the bin belongs to the workspace's
+    // bin dir, not the root's
+    expect(existsSync(join(packageDir, "packages", "ws-a", "node_modules", ".bin", whatBin))).toBe(true);
+    expect(existsSync(join(packageDir, "node_modules", ".bin", whatBin))).toBe(false);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/28147
 test("patched package shared by multiple peer variants is materialized into the cache once", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

@@ -1,0 +1,22 @@
+{
+  "_id": "peer-what-bin",
+  "name": "peer-what-bin",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "peer-what-bin",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "what-bin": "1.0.0"
+      },
+      "_id": "peer-what-bin@1.0.0",
+      "dist": {
+        "integrity": "sha512-z4Bgd/TPRoBN3KG6SCTNSK8OpzAHOZ0WkeioproRWA9kCGBJjif7FOg/OR2yoz6/VHOQQOCIni7ZM9fi1hHCpQ==",
+        "shasum": "f4bc4da398df2c242736fbb5d00b972806da1a0f",
+        "tarball": "http://localhost:4873/peer-what-bin/-/peer-what-bin-1.0.0.tgz"
+      }
+    }
+  }
+}

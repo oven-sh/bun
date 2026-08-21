@@ -1,0 +1,27 @@
+{
+  "_id": "optional-peer-what-bin",
+  "name": "optional-peer-what-bin",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "optional-peer-what-bin",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "what-bin": "1.0.0"
+      },
+      "peerDependenciesMeta": {
+        "what-bin": {
+          "optional": true
+        }
+      },
+      "_id": "optional-peer-what-bin@1.0.0",
+      "dist": {
+        "integrity": "sha512-2Fm6LIvzA2Tvf48nl/j5HgC9/vhWrOiTU75ItOyyz991ccAN9vlf5qBf7xH/BShclMzrtQUeb/eDa1KtA5ug5Q==",
+        "shasum": "3b4f15920f5b5c2349ea5179220246a9581400bf",
+        "tarball": "http://localhost:4873/optional-peer-what-bin/-/optional-peer-what-bin-1.0.0.tgz"
+      }
+    }
+  }
+}

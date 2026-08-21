@@ -1,0 +1,23 @@
+{
+  "_id": "provides-optional-peer-what-bin",
+  "name": "provides-optional-peer-what-bin",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "provides-optional-peer-what-bin",
+      "version": "1.0.0",
+      "dependencies": {
+        "optional-peer-what-bin": "1.0.0",
+        "what-bin": "1.0.0"
+      },
+      "_id": "provides-optional-peer-what-bin@1.0.0",
+      "dist": {
+        "integrity": "sha512-68Gw9h0vOGcvSSQgVz55gkSIv9PQLmt1oTVBP0EhRXnYSDPevwUmCofs/IEhs53O3P0bzCotTJnzNMseY5jOVw==",
+        "shasum": "6cfd5f3215b37d85cc3207f729dd7a7a6ec202cf",
+        "tarball": "http://localhost:4873/provides-optional-peer-what-bin/-/provides-optional-peer-what-bin-1.0.0.tgz"
+      }
+    }
+  }
+}

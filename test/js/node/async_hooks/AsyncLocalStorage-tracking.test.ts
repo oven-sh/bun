@@ -6,11 +6,7 @@ import { basename, join } from "path";
 describe.concurrent("AsyncLocalStorage passes context to callbacks", () => {
   let files = [...new Glob(join(import.meta.dir, "async-context", "async-context-*.js")).scanSync()];
 
-  let todos = [
-    "async-context-worker_threads-message.js",
-    // Needs oven-sh/WebKit#268; un-skip once WEBKIT_VERSION picks it up.
-    "async-context-unhandled-rejection-finally-thenable.js",
-  ];
+  let todos = ["async-context-worker_threads-message.js"];
   if (isASAN && isBroken && isLinux) {
     todos.push("async-context-dns-resolveTxt.js");
   }

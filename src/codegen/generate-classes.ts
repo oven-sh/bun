@@ -537,10 +537,14 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+${
+  obj.call
+    ? `    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::VM &vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
+`
+    : ""
+}
 ${
   obj.call
     ? !obj.constructNeedsThis
@@ -567,8 +571,7 @@ ${
     instance->m_ctx = ptr;
 `
     : `
-    Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "${typeName} constructor cannot be invoked without 'new'"_s);
-    return JSValue::encode(JSC::jsUndefined());
+    return Bun::throwConstructorCalledWithoutNewError(lexicalGlobalObject, "${typeName}"_s);
 `
 }
 

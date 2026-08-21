@@ -89,10 +89,6 @@ void us_socket_set_ssl_raw_tap(struct us_socket_t *s, int enabled) {
     s->ssl_raw_tap = !!enabled;
 }
 
-__attribute__((always_inline)) int us_socket_is_tls(struct us_socket_t *s) {
-    return s->ssl != NULL;
-}
-
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) {
     return c->group;
 }
@@ -852,10 +848,6 @@ void us_socket_unref(struct us_socket_t *s) {
     uv_unref((uv_handle_t *) s->p.uv_p);
 #endif
     // do nothing if not using libuv
-}
-
-struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) {
-    return c->loop;
 }
 
 void us_socket_pause(struct us_socket_t *s) {

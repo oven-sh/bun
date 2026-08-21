@@ -416,6 +416,8 @@ pub mod bv2_impl {
             pub(crate) const SSR: u8 = 1 << 2;
             /// When set, `.CLIENT` is also set.
             pub(crate) const CSS: u8 = 1 << 3;
+            /// The html file of a route. When set, `.CLIENT` is also set.
+            pub(crate) const HTML: u8 = 1 << 4;
             #[inline]
             pub(crate) fn client(self) -> bool {
                 self.0 & Self::CLIENT != 0
@@ -431,6 +433,10 @@ pub mod bv2_impl {
             #[inline]
             pub(crate) fn css(self) -> bool {
                 self.0 & Self::CSS != 0
+            }
+            #[inline]
+            pub(crate) fn html(self) -> bool {
+                self.0 & Self::HTML != 0
             }
         }
 
@@ -1062,6 +1068,8 @@ pub mod bv2_impl {
                 pub(crate) import_record_index: u32,
                 pub(crate) range: bun_ast::Range,
                 pub(crate) original_target: Target,
+                /// Set for the html file of a dev server route, see `BundleV2::requested_file_loader`.
+                pub(crate) loader: Option<Loader>,
             }
 
             /// Mirrors `JSBundler.Resolve.Value.success` payload.
@@ -2560,10 +2568,12 @@ pub mod bv2_impl {
             }
         }
 
+        /// `loader`: see `requested_file_loader`.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
             target: options::Target,
+            loader: Option<Loader>,
         ) -> Result<(), Error> {
             // TODO: plugins with non-file namespaces
             // borrowck: get-then-put (instead of a single get-or-put) so the map
@@ -2585,9 +2595,7 @@ pub mod bv2_impl {
             let mut path = result.path_pair.primary;
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+            let loader = self.requested_file_loader(&path, loader);
 
             path = self.path_with_pretty_initialized(&path, target)?;
             path.assert_pretty_is_valid();
@@ -2642,11 +2650,21 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
+        fn requested_file_loader(&self, path: &Fs::Path<'_>, loader: Option<Loader>) -> Loader {
+            loader.unwrap_or_else(|| {
+                path.loader(&self.transpiler.options.loaders)
+                    .unwrap_or(Loader::File)
+            })
+        }
+
+        /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
             is_entry_point: bool,
             target: options::Target,
+            loader: Option<Loader>,
         ) -> Result<Option<IndexInt>, Error> {
             let result = &mut *resolve;
             // borrowck: clone the active path out so we don't hold a `&mut`
@@ -2667,9 +2685,7 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+            let loader = self.requested_file_loader(&path, loader);
 
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
@@ -3011,6 +3027,7 @@ pub mod bv2_impl {
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
                     entry_point,
                     self.transpiler.options.target,
+                    None,
                 ) {
                     continue;
                 }
@@ -3023,6 +3040,7 @@ pub mod bv2_impl {
                             &mut { file_map_result },
                             true,
                             self.transpiler.options.target,
+                            None,
                         )?;
                         continue;
                     }
@@ -3048,7 +3066,7 @@ pub mod bv2_impl {
                     }
                     break 'brk main_target;
                 };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target)?;
+                let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
             }
             Ok(())
         }
@@ -3080,23 +3098,28 @@ pub mod bv2_impl {
                         &raw mut *self.transpiler
                     };
                 let server_target = self.transpiler.options.target;
+                let client_loader = flags.html().then_some(Loader::Html);
 
                 struct TargetCheck {
                     should_dispatch: bool,
                     target: options::Target,
+                    loader: Option<Loader>,
                 }
                 let targets_to_check = [
                     TargetCheck {
                         should_dispatch: flags.client(),
                         target: Target::Browser,
+                        loader: client_loader,
                     },
                     TargetCheck {
                         should_dispatch: flags.server(),
                         target: server_target,
+                        loader: None,
                     },
                     TargetCheck {
                         should_dispatch: flags.ssr(),
                         target: Target::ServerComponentsSsr,
+                        loader: None,
                     },
                 ];
 
@@ -3106,6 +3129,7 @@ pub mod bv2_impl {
                         if self.enqueue_entry_point_on_resolve_plugin_if_needed(
                             abs_path,
                             target_info.target,
+                            target_info.loader,
                         ) {
                             any_plugin_matched = true;
                         }
@@ -3143,8 +3167,12 @@ pub mod bv2_impl {
 
                 if flags.client() {
                     'brk: {
-                        let Some(source_index) =
-                            self.enqueue_entry_item(&mut resolved, true, Target::Browser)?
+                        let Some(source_index) = self.enqueue_entry_item(
+                            &mut resolved,
+                            true,
+                            Target::Browser,
+                            client_loader,
+                        )?
                         else {
                             break 'brk;
                         };
@@ -3163,11 +3191,16 @@ pub mod bv2_impl {
                         &mut resolved,
                         true,
                         self.transpiler.options.target,
+                        None,
                     )?;
                 }
                 if flags.ssr() {
-                    let _ =
-                        self.enqueue_entry_item(&mut resolved, true, Target::ServerComponentsSsr)?;
+                    let _ = self.enqueue_entry_item(
+                        &mut resolved,
+                        true,
+                        Target::ServerComponentsSsr,
+                        None,
+                    )?;
                 }
             }
             Ok(())
@@ -3193,7 +3226,7 @@ pub mod bv2_impl {
                     bake::Side::Server => self.transpiler.options.target,
                 };
 
-                if self.enqueue_entry_point_on_resolve_plugin_if_needed(abs_path, target) {
+                if self.enqueue_entry_point_on_resolve_plugin_if_needed(abs_path, target, None) {
                     continue;
                 }
 
@@ -3204,7 +3237,7 @@ pub mod bv2_impl {
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target)? else {
+                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target, None)? else {
                     continue;
                 };
             }
@@ -4461,8 +4494,6 @@ pub mod bv2_impl {
                         this.free_list.push(code.source_code);
                         std::borrow::Cow::Borrowed(source_code)
                     };
-                    this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
-                        .insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
                     let parse_task = load.parse_task_mut();
                     parse_task.loader = Some(code.loader);
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
@@ -4609,9 +4640,12 @@ pub mod bv2_impl {
                                 return;
                             };
                             let mut resolved = resolved;
-                            let Ok(source_index) =
-                                this.enqueue_entry_item(&mut resolved, true, target)
-                            else {
+                            let Ok(source_index) = this.enqueue_entry_item(
+                                &mut resolved,
+                                true,
+                                target,
+                                resolve.import_record.loader,
+                            ) else {
                                 return;
                             };
 
@@ -4730,9 +4764,14 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            let loader = path
-                                .loader(&this.transpiler.options.loaders)
-                                .unwrap_or(Loader::File);
+                            // A file that a plugin resolved the record to instead keeps its own loader.
+                            let loader = this.requested_file_loader(
+                                &path,
+                                resolve
+                                    .import_record
+                                    .loader
+                                    .filter(|_| path.text == &*resolve.import_record.specifier),
+                            );
 
                             this.graph
                                 .input_files
@@ -5604,6 +5643,7 @@ pub mod bv2_impl {
                             import_record_index,
                             range: import_record.range,
                             original_target,
+                            loader: None,
                         },
                     );
 
@@ -5615,10 +5655,12 @@ pub mod bv2_impl {
             false
         }
 
+        /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_point_on_resolve_plugin_if_needed(
             &mut self,
             entry_point: &[u8],
             target: options::Target,
+            loader: Option<Loader>,
         ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
                 let mut temp_path = Fs::Path::init(entry_point);
@@ -5647,6 +5689,7 @@ pub mod bv2_impl {
                             import_record_index: 0,
                             range: bun_ast::Range::NONE,
                             original_target: target,
+                            loader,
                         },
                     );
 
@@ -7284,7 +7327,6 @@ pub mod bv2_impl {
                         } else {
                             let step_name = match err.step {
                                 crate::parse_task::Step::Pending => "pending",
-                                crate::parse_task::Step::ReadFile => "read_file",
                                 crate::parse_task::Step::Parse => "parse",
                                 crate::parse_task::Step::Resolve => "resolve",
                             };

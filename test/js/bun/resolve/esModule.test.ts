@@ -88,3 +88,38 @@ console.log("ok");
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 });
+
+test("require(esm) still defines __esModule when import() materialized the namespace first", async () => {
+  using dir = tempDir("require-esm-esmodule-order", {
+    "e.mjs": "export default { d: 1 };\n",
+    "entry.mjs": `
+import assert from "node:assert";
+import { createRequire } from "node:module";
+
+const ns = await import("./e.mjs");
+assert.deepStrictEqual(Object.keys(ns), ["default"]);
+
+const n = createRequire(import.meta.url)("./e.mjs");
+assert.strictEqual(n.__esModule, true);
+assert.strictEqual(Object.hasOwn(n, "__esModule"), true);
+assert.deepStrictEqual(Object.keys(n), ["__esModule", "default"]);
+assert.strictEqual(({ ...n }).__esModule, true);
+
+console.log("ok");
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});

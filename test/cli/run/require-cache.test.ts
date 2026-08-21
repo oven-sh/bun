@@ -281,6 +281,127 @@ describe.concurrent("require.cache", () => {
     ); // takes 4s on an M1 in release build
   });
 
+  // A module's source text is native memory that is only released by the GC (the
+  // SourceProvider dies with the executables that reference it). The loader reports
+  // that memory to JSC, so loading modules counts as GC pressure like any other string
+  // allocation. The fixtures below check that on a fresh VM, where the only thing
+  // that can trigger a collection is the loads themselves.
+  describe("module source text is reported to the GC", () => {
+    // Every fixture module is one big string literal, so the transpiled output is at
+    // least LITERAL_LENGTH bytes while evaluating it allocates a few hundred bytes on
+    // the JS heap: without the report, nothing about these loads is visible to the GC.
+    const LITERAL_LENGTH = 1024 * 1024;
+    const literal = Buffer.alloc(LITERAL_LENGTH, "a").toString();
+    const modules = {
+      "cjs.js": `const big = "${literal}";\nmodule.exports = big.length;\n`,
+      "esm.mjs": `const big = "${literal}";\nexport default big.length;\n`,
+      // The same modules as `bun build --target=bun` emits them: the "// @bun" pragma
+      // makes the loader hand the file to JSC as-is, which is much cheaper than
+      // transpiling 1 MB per iteration of the loop below, and covers that loader path.
+      "prebuilt-cjs.js": `// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {const big = "${literal}";\nmodule.exports = big.length;\n})`,
+      "prebuilt-esm.mjs": `// @bun\nconst big = "${literal}";\nexport default big.length;\n`,
+    };
+
+    async function runFixture(name: string, fixture: string) {
+      await using dir = tempDir(name, { ...modules, "report-source-fixture.js": fixture });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", join(String(dir), "report-source-fixture.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    // process.memoryUsage().external is JSC's extra memory counter, which is what the
+    // loader reports into. It only goes down on a full collection, and one load is far
+    // below the budget that would request one, so the growth is what the load reported.
+    // The fixtures print the growth per module; this turns it into a per-module verdict.
+    function reportedBytes(growthByModule: Record<string, number>) {
+      return Object.fromEntries(
+        Object.entries(growthByModule).map(([file, growth]) => [
+          file,
+          growth >= LITERAL_LENGTH ? "reported" : `reported only ${growth} bytes for a ${LITERAL_LENGTH} byte literal`,
+        ]),
+      );
+    }
+
+    test("require() reports the size of the module's source", async () => {
+      const growth = await runFixture(
+        "require-cache-report-source-cjs",
+        `
+          const growth = {};
+          for (const file of ["./cjs.js", "./prebuilt-cjs.js"]) {
+            Bun.gc(true);
+            const before = process.memoryUsage().external;
+            require(file);
+            growth[file] = process.memoryUsage().external - before;
+          }
+          console.log(JSON.stringify(growth));
+        `,
+      );
+      expect(reportedBytes(growth)).toEqual({ "./cjs.js": "reported", "./prebuilt-cjs.js": "reported" });
+    });
+
+    test("import() reports the size of the module's source", async () => {
+      const growth = await runFixture(
+        "require-cache-report-source-esm",
+        `
+          (async () => {
+            const growth = {};
+            for (const file of ["./esm.mjs", "./prebuilt-esm.mjs"]) {
+              Bun.gc(true);
+              const before = process.memoryUsage().external;
+              await import(file);
+              growth[file] = process.memoryUsage().external - before;
+            }
+            console.log(JSON.stringify(growth));
+          })();
+        `,
+      );
+      expect(reportedBytes(growth)).toEqual({ "./esm.mjs": "reported", "./prebuilt-esm.mjs": "reported" });
+    });
+
+    // The scenario the report exists for: a synchronous loop that loads a module and drops
+    // it again. Nothing runs between iterations (no event loop turn, so no GC timer), so a
+    // collection during the loop can only be requested by the loads themselves. Without
+    // the report none is, and every iteration's Module object (and the source copy behind
+    // it) is still alive at the end. With it, JSC collects every few MB of loaded source,
+    // so at most the last few iterations are.
+    test("a synchronous require() + delete require.cache loop triggers collections", async () => {
+      const LOADS = 32;
+      const result = await runFixture(
+        "require-cache-report-source-loop",
+        `
+          const { heapStats } = require("bun:jsc");
+          const file = require.resolve("./prebuilt-cjs.js");
+          const liveModules = () => heapStats().objectTypeCounts.Module;
+          function load() {
+            require(file);
+            delete require.cache[file];
+            module.children.length = 0;
+          }
+
+          Bun.gc(true);
+          const baseline = liveModules();
+          load();
+          // A single load stays below the GC budget, so the counter must see exactly that module.
+          const afterOneLoad = liveModules() - baseline;
+          for (let i = 1; i < ${LOADS}; i++) load();
+          const afterLoop = liveModules() - baseline;
+          console.log(JSON.stringify({ afterOneLoad, afterLoop }));
+        `,
+      );
+      expect(result).toEqual({ afterOneLoad: 1, afterLoop: expect.any(Number) });
+      // Collections are requested every ~8 MB of loaded source (the eden budget), so this
+      // is around 6 on any build; without the report it is exactly LOADS.
+      expect(result.afterLoop).toBeLessThanOrEqual(LOADS / 2);
+    });
+  });
+
   describe("files transpiled and loaded don't leak the AST", () => {
     test("via require()", async () => {
       await using proc = Bun.spawn({

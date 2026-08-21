@@ -5,7 +5,7 @@ use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
-use bun_sys::{self, Fd, File, O};
+use bun_sys::{self, Fd, File};
 
 use crate::bun_json::Expr;
 use crate::dependency::{self};
@@ -319,7 +319,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
         let source = {
-            let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
+            let (file, _) = File::open_regular_at(Fd::cwd(), abs.as_bytes())?;
             body.reset();
             let read_result = file
                 .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)

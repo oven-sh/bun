@@ -330,10 +330,8 @@ canonical example of this bug class and its fix.
 ## Common Patterns
 
 ```rust
-// Read a file, return JS error on failure
-let contents = match bun_sys::File::openat(Fd::cwd(), path, O::RDONLY, 0)
-    .and_then(|f| f.read_to_end())
-{
+// Read a file (regular files only, see bun_sys above), return JS error on failure
+let contents = match bun_sys::File::read_from(Fd::cwd(), path) {
     Ok(bytes) => bytes,
     Err(err) => return Ok(err.to_js(global)?),
 };

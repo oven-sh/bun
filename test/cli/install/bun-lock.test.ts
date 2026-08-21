@@ -1355,6 +1355,54 @@ describe.skipIf(isWindows).concurrent("a file bun install reads is not a regular
     expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
     expect(exitCode).toBe(1);
   });
+
+  it("the package.json of a file: directory dependency is a FIFO: the dependency fails to resolve", async () => {
+    using dir = tempDir("bun-lock-folder-dep-fifo", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:./dep" } }),
+      "dep/.keep": "",
+    });
+    mkfifo(join(String(dir), "dep", "package.json"));
+
+    const { out, err, exitCode } = await install(String(dir));
+    expect(err).toMatchInlineSnapshot(`
+      "error: ENODEV
+
+      note: error occurred while resolving dep
+      error: dep@file:./dep failed to resolve"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  // A second install checks each installed package through the package.json
+  // in node_modules. One that is not a regular file means the package needs
+  // to be installed again.
+  it("an installed package's package.json is a FIFO: the package is installed again", async () => {
+    using dir = tempDir("bun-lock-installed-fifo", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:./dep.tgz" } }),
+    });
+    const archive = new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+      { compress: "gzip" },
+    );
+    await write(join(String(dir), "dep.tgz"), await archive.bytes());
+    expect((await install(String(dir), "--linker=hoisted")).exitCode).toBe(0);
+
+    const installedPackageJson = join(String(dir), "node_modules", "dep", "package.json");
+    await rm(installedPackageJson);
+    mkfifo(installedPackageJson);
+
+    const { out, exitCode } = await install(String(dir), "--linker=hoisted");
+    expect(out).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + dep@./dep.tgz
+
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
+    expect(await file(installedPackageJson).json()).toEqual({ name: "dep", version: "1.0.0" });
+  });
 });
 
 const makeInstallRunner = (cwd: string) => async (args: string[]) => {

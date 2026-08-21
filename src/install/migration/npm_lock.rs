@@ -7,7 +7,7 @@ use bun_install_types::DependencyGroup;
 use bun_paths::resolve_path;
 use bun_semver::query::token::Wildcard;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
-use bun_sys::{Fd, File, O};
+use bun_sys::{Fd, File};
 
 use super::{package_name_from_path, pkg_flag_is_true, string_hash};
 use crate::Error;
@@ -1017,13 +1017,9 @@ pub(super) fn apply_root_overrides(
     workspace_map: Option<&WorkspaceMap>,
     abs_lockfile_path: &[u8],
 ) -> Result<(), Error> {
-    let Ok(file) = File::openat(dir, b"package.json", O::RDONLY, 0) else {
+    let Ok(contents) = File::read_from(dir, b"package.json") else {
         return Ok(());
     };
-    let Ok(contents) = file.read_to_end() else {
-        return Ok(());
-    };
-    drop(file);
 
     let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
     let package_json_path = resolve_path::join_string_buf::<bun_paths::platform::Auto>(

@@ -13,6 +13,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { parseEnv } from "node:util";
 import path from "path";
 
@@ -49,6 +50,19 @@ describe.concurrent(".env file is loaded", () => {
     });
     const { stdout } = await bunRun(`${dir}/index.ts`);
     expect(stdout).toBe("bar baz");
+  });
+  // A FIFO at a .env path used to block the process in open() before it ran
+  // anything. (A FIFO listed in the directory itself is never tried; a symlink
+  // to one is.)
+  test.skipIf(isWindows)(".env that is not a regular file is skipped", async () => {
+    using dir = tempDir("dotenv", {
+      ".env.local": "FOO=bar\n",
+      "index.ts": "console.log(process.env.FOO);",
+    });
+    mkfifo(`${dir}/fifo`);
+    fs.symlinkSync("fifo", `${dir}/.env`);
+    const { stdout, stderr, exitCode } = await bunRun(`${dir}/index.ts`);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "bar", stderr: "", exitCode: 0 });
   });
   test(".env.development (NODE_ENV=undefined)", async () => {
     using dir = tempDir("dotenv", {

@@ -40,8 +40,8 @@ pub fn install() {
 
 #[cfg(unix)]
 extern "C" fn handler(sig: core::ffi::c_int) {
-    if CHILDREN.load(Ordering::Relaxed) > 0 {
-        RECEIVED.store(true, Ordering::Relaxed);
+    if CHILDREN.load(Ordering::SeqCst) > 0 {
+        RECEIVED.store(true, Ordering::SeqCst);
         return;
     }
     // SAFETY: SIG_DFL is a valid disposition; SIGINT is blocked while we run,
@@ -56,8 +56,8 @@ extern "C" fn handler(sig: core::ffi::c_int) {
 
 #[cfg(windows)]
 extern "system" fn handler(ctrl_type: bun_sys::windows::DWORD) -> bun_sys::windows::BOOL {
-    if ctrl_type == bun_sys::windows::CTRL_C_EVENT && CHILDREN.load(Ordering::Relaxed) > 0 {
-        RECEIVED.store(true, Ordering::Relaxed);
+    if ctrl_type == bun_sys::windows::CTRL_C_EVENT && CHILDREN.load(Ordering::SeqCst) > 0 {
+        RECEIVED.store(true, Ordering::SeqCst);
         return bun_sys::windows::TRUE;
     }
     bun_sys::windows::FALSE
@@ -68,30 +68,30 @@ extern "system" fn handler(ctrl_type: bun_sys::windows::DWORD) -> bun_sys::windo
 pub struct Child(());
 impl Child {
     pub fn enter() -> Self {
-        CHILDREN.fetch_add(1, Ordering::Relaxed);
+        CHILDREN.fetch_add(1, Ordering::SeqCst);
         Self(())
     }
 
     pub fn alive() -> u32 {
-        CHILDREN.load(Ordering::Relaxed)
+        CHILDREN.load(Ordering::SeqCst)
     }
 }
 impl Drop for Child {
     fn drop(&mut self) {
-        CHILDREN.fetch_sub(1, Ordering::Relaxed);
+        CHILDREN.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
 /// Whether a Ctrl+C was left to the children since the last call.
 pub fn take_received() -> bool {
-    RECEIVED.swap(false, Ordering::Relaxed)
+    RECEIVED.swap(false, Ordering::SeqCst)
 }
 
 /// `status` is that of a `Child` that just exited: did a Ctrl+C we left to it
 /// kill it? (A child that raised SIGINT at itself with no Ctrl+C seen here is
 /// just an exit status.)
 pub fn child_died_of_it(status: &Status) -> bool {
-    if !RECEIVED.load(Ordering::Relaxed) {
+    if !RECEIVED.load(Ordering::SeqCst) {
         return false;
     }
     #[cfg(unix)]

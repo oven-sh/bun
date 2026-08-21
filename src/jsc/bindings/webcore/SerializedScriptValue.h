@@ -102,8 +102,7 @@ using WasmModuleArray = Vector<RefPtr<JSC::Wasm::Module>>;
 using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
 #endif
 
-// node's markAsUncloneable() / markAsUntransferable(): a private name user JS cannot see or remove.
-// Serialization rejects a tagged object, found in the value or in the transfer list respectively.
+// worker_threads.markAsUncloneable() / markAsUntransferable(): create() rejects a tagged object.
 void markAsUncloneable(JSC::VM&, JSC::JSObject&);
 void markAsUntransferable(JSC::VM&, JSC::JSObject&);
 

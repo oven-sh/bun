@@ -2362,10 +2362,8 @@ extern "C" napi_status napi_create_buffer_copy(napi_env env, size_t length,
 // if the env is torn down first (a Worker exiting while the addon still holds the buffer) —
 // from NapiEnv::cleanup() together with the other bound finalizers, as Node's env teardown
 // finalizes every remaining reference (test_worker_buffer_callback/test-free-called).
-// Both need the contents on the env's thread (NapiEnv is not thread safe, and cleanup() frees
-// the bytes), so the ArrayBuffer wrapper is marked untransferable, as Node marks every buffer
-// with a free callback: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L484-L490
-// ArrayBuffer.prototype.transfer() still yields an unmarked wrapper; Node has the same gap.
+// Neither works once the contents have been transferred to another thread, so the wrapper is
+// marked untransferable, as in Node: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L484-L490
 class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
     NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)
@@ -2415,8 +2413,7 @@ private:
     bool m_finalized { false };
 };
 
-// The `.buffer` wrapper, which JSC would otherwise create lazily, carries the mark (see
-// NapiExternalBufferDestructor). The caller checks for an exception.
+// Creates the `.buffer` wrapper (JSC would do so lazily) and marks it. The caller checks for an exception.
 static void markExternalBufferUntransferable(Zig::GlobalObject* globalObject, JSC::JSUint8Array* buffer)
 {
     auto& vm = JSC::getVM(globalObject);

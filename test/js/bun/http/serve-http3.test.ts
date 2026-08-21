@@ -1515,3 +1515,197 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
     });
   });
 });
+
+// ─── WebTransport ───────────────────────────────────────────────────────────
+
+/** RFC 9000 §16 varint, for the quarter stream id a datagram is prefixed with. */
+function quicVarint(v: number): Uint8Array {
+  if (v < 64) return new Uint8Array([v]);
+  if (v < 16384) return new Uint8Array([0x40 | (v >> 8), v & 0xff]);
+  return new Uint8Array([0x80 | (v >> 24), (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff]);
+}
+
+/**
+ * A WebTransport client on node:quic. The session is an extended CONNECT, and
+ * datagrams on it are prefixed with the CONNECT stream's quarter stream id —
+ * the first client bidi stream is id 0, so the prefix is a single zero byte.
+ */
+async function webTransportSession(port: number) {
+  const endpoint = new QuicEndpoint();
+  const datagrams: Uint8Array[] = [];
+  const client = await connect(`127.0.0.1:${port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5, maxDatagramFrameSize: 1500 },
+    onerror() {},
+    ondatagram(bytes: Uint8Array) {
+      datagrams.push(bytes.subarray(1));
+    },
+  });
+  await client.opened;
+
+  let status = "";
+  const stream = await client.createBidirectionalStream({
+    headers: {
+      ":method": "CONNECT",
+      ":protocol": "webtransport",
+      ":scheme": "https",
+      ":authority": "localhost",
+      ":path": "/echo",
+    },
+    onheaders(headers: Record<string, string>) {
+      status = headers[":status"];
+    },
+  });
+  stream.closed.catch(() => {});
+
+  const until = async (predicate: () => boolean, ms = 5000) => {
+    const deadline = Date.now() + ms;
+    while (!predicate() && Date.now() < deadline) await Bun.sleep(5);
+    return predicate();
+  };
+  // A datagram naming a session the server has not opened yet is dropped by
+  // design, so nothing may be sent before the 200 lands.
+  await until(() => status !== "");
+
+  const qsid = quicVarint(0);
+  return {
+    get status() {
+      return status;
+    },
+    datagrams,
+    send(payload: string) {
+      const body = Buffer.from(payload);
+      const dg = new Uint8Array(qsid.length + body.length);
+      dg.set(qsid, 0);
+      dg.set(body, qsid.length);
+      client.sendDatagram(dg);
+    },
+    until,
+    text: () => datagrams.map(d => Buffer.from(d).toString()),
+    async close() {
+      // destroy(), not close(): a graceful close waits for open streams to
+      // finish, and a session's CONNECT stream is open on purpose — it took
+      // eleven seconds to time out instead of the millisecond this needs.
+      if (!client.destroyed) client.destroy();
+      await endpoint[Symbol.asyncDispose]?.();
+    },
+  };
+}
+
+describe("Bun.serve WebTransport", () => {
+  test("opens a session and carries datagrams both ways", async () => {
+    const opened: number[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        open(session) {
+          session.data = { id: opened.length };
+          opened.push(session.maxDatagramSize);
+        },
+        datagram(session, bytes) {
+          session.sendDatagram(Buffer.from(`echo:${Buffer.from(bytes).toString()}`));
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      expect(wt.status).toBe("200");
+      for (const message of ["one", "two", "three"]) wt.send(message);
+      expect(await wt.until(() => wt.datagrams.length >= 3)).toBe(true);
+      expect(wt.text()).toEqual(["echo:one", "echo:two", "echo:three"]);
+      expect(opened.length).toBe(1);
+      expect(opened[0]).toBeGreaterThan(0);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("ordinary HTTP/3 requests still work on a server that accepts sessions", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: { datagram() {} },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    expect(await h3Exchange(server.port, requestHeaders("/"))).toBe("200 plain http/3");
+  });
+
+  test("a CONNECT without :protocol is refused rather than upgraded", async () => {
+    let sessions = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        open() {
+          sessions++;
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const result = await h3Exchange(server.port, {
+      ":method": "CONNECT",
+      ":path": "/echo",
+      ":scheme": "https",
+      ":authority": "localhost",
+    });
+    expect(result).toBe("501 ");
+    expect(sessions).toBe(0);
+  });
+
+  test("close() ends the session and runs the close handler", async () => {
+    const closes: Array<{ code: number; reason: string; closedFlag: boolean; sendAfter: number }> = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          if (Buffer.from(bytes).toString() === "bye") {
+            session.close(7, "done here");
+            return;
+          }
+          session.sendDatagram(bytes);
+        },
+        close(session, code, reason) {
+          closes.push({
+            code,
+            reason,
+            closedFlag: session.closed,
+            // A handler that reaches for the session must get the closed
+            // answer rather than a pointer into a stream on its way out.
+            sendAfter: session.sendDatagram("late"),
+          });
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("bye");
+      expect(await wt.until(() => closes.length > 0, 3000)).toBe(true);
+      expect(closes).toEqual([{ code: 0, reason: "", closedFlag: true, sendAfter: 0 }]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("rejects a webtransport option that is not a handler object", () => {
+    expect(() =>
+      Bun.serve({ port: 0, tls, http3: true, webtransport: { datagram: "nope" } as never, fetch: () => new Response() }),
+    ).toThrow();
+    expect(() =>
+      Bun.serve({ port: 0, tls, http3: true, webtransport: {} as never, fetch: () => new Response() }),
+    ).toThrow();
+  });
+});

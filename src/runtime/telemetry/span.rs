@@ -388,18 +388,13 @@ impl TelemetrySpan {
     pub fn non_recording(global: &JSGlobalObject, ctx: SpanContext) -> JSValue {
         let stub = SpanStub {
             ctx: SpanContext {
-                flags: Flags(ctx.flags.0 & !Flags::SAMPLED),
+                flags: Flags(ctx.flags.0 | Flags::NON_RECORDING),
                 ..ctx
             },
             parent: SpanId::INVALID,
             start_ns: 1,
         };
-        let span = Span::new(
-            stub,
-            ScopeId::from(bun_telemetry::Instrument::User),
-            b"",
-            SpanKind::Internal,
-        );
+        let span = Span::new(stub, ScopeId::from(bun_telemetry::Instrument::User), b"", SpanKind::Internal);
         Self::create(global, span)
     }
 

@@ -89,31 +89,8 @@ impl JSMySQLQuery {
 
     fn otel_end_js_error(&self, err: JSValue) {
         let Some(span) = self.otel.take() else { return };
-        let global = self.global_object();
-        let mut code = None;
-        let mut message = None;
-        if err.is_object() {
-            if let Ok(Some(c)) = err.get(global, "code") {
-                if c.is_string() {
-                    code = c.to_slice(global).ok();
-                }
-            }
-            if let Ok(Some(m)) = err.get(global, "message") {
-                if m.is_string() {
-                    message = m.to_slice(global).ok();
-                }
-            }
-        }
         let q = self.query.get().query_text();
-        bun_telemetry::db::end(
-            span,
-            q.slice(),
-            None,
-            Some((
-                code.as_ref().map(|c| c.slice()).unwrap_or(b"_OTHER"),
-                message.as_ref().map(|m| m.slice()).unwrap_or(b""),
-            )),
-        );
+        crate::shared::otel::end_with_js_error(span, q.slice(), self.global_object(), err);
     }
 
     fn deinit(this: *mut Self) {

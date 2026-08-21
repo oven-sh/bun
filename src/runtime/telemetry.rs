@@ -6,7 +6,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use bun_core::{OwnedString, String as BunString};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -43,7 +43,10 @@ pub struct State {
     pub capture_response_headers: Vec<Box<[u8]>>,
 }
 
-static STATE: OnceLock<State> = OnceLock::new();
+/// Replaced wholesale by `configure()`; the previous value is intentionally
+/// leaked (a few hundred bytes per `Bun.otel.start()` call) so `state()` can
+/// hand out `&'static` without locking on hot paths.
+static STATE: core::sync::atomic::AtomicPtr<State> = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 static DEFAULT_STATE: State = State {
     sampler: Sampler::ParentBasedAlwaysOn,
     limits: bun_telemetry::data::DEFAULT_LIMITS,
@@ -56,7 +59,14 @@ static DEFAULT_STATE: State = State {
 
 #[inline]
 pub fn state() -> &'static State {
-    STATE.get().unwrap_or(&DEFAULT_STATE)
+    let p = STATE.load(core::sync::atomic::Ordering::Acquire);
+    // SAFETY: non-null values come from `Box::into_raw` in `configure` and are never freed.
+    if p.is_null() { &DEFAULT_STATE } else { unsafe { &*p } }
+}
+
+#[inline]
+fn configured() -> bool {
+    !STATE.load(core::sync::atomic::Ordering::Acquire).is_null()
 }
 
 #[inline]
@@ -122,6 +132,9 @@ impl VmState {
     }
 
     fn arm_timer(&self) {
+        if self.timer_armed.get() {
+            return;
+        }
         let delay = processor()
             .config
             .read()
@@ -194,7 +207,7 @@ fn read_env_config(vm: &VirtualMachine) -> config::EnvConfig {
 /// telemetry is not enabled: one env lookup.
 pub fn init_for_vm(global: &JSGlobalObject) {
     let vm = global.bun_vm();
-    if STATE.get().is_some() {
+    if configured() {
         // Already configured by another thread (worker inherits): just attach.
         if bun_telemetry::any_enabled() {
             let s = vm_state_or_init(global);
@@ -204,7 +217,10 @@ pub fn init_for_vm(global: &JSGlobalObject) {
         return;
     }
     let loader = vm.env_loader();
-    if loader.get(b"BUN_OTEL").is_none() && loader.get(b"OTEL_BUN").is_none() {
+    if loader.get(b"BUN_OTEL").is_none()
+        && loader.get(b"OTEL_BUN").is_none()
+        && !bun_telemetry::config::bunfig().is_some_and(|b| b.enabled == Some(true))
+    {
         return;
     }
     let env = read_env_config(vm);
@@ -219,47 +235,40 @@ pub fn init_for_vm(global: &JSGlobalObject) {
     }
 }
 
-/// Apply `cfg`: build resource, exporters, enable mask. First call wins for
-/// the immutable `State`; exporters and the enable mask can be extended by
-/// later calls (`Bun.otel.start()` after env init adds exporters).
+/// Apply `cfg`: state, resource, exporters, enable mask. Exporters are
+/// additive; `start()` clears them first when it is given an explicit list.
+/// The enable mask replaces the previous one.
 pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<(), Vec<u8>> {
     let vm = global.bun_vm();
     let p = processor();
-    let first = STATE
-        .set(State {
-            sampler: cfg.sampler,
-            limits: cfg.limits.clone(),
-            propagate_trace_context: cfg.propagate_trace_context,
-            propagate_baggage: cfg.propagate_baggage,
-            capture_db_statement: cfg.capture_db_statement,
-            capture_request_headers: cfg
-                .capture_request_headers
-                .iter()
-                .map(|s| s.as_bytes().into())
-                .collect(),
-            capture_response_headers: cfg
-                .capture_response_headers
-                .iter()
-                .map(|s| s.as_bytes().into())
-                .collect(),
-        })
-        .is_ok();
-    if first {
-        *p.config.write().unwrap() = cfg.batch;
-        let script = vm
-            .main()
-            .rsplit(|&c| c == b'/' || c == b'\\')
-            .next()
-            .and_then(|s| core::str::from_utf8(s).ok());
-        let resource = bun_telemetry::resource::encode(&bun_telemetry::resource::ResourceInfo {
-            service_name: cfg.service_name.as_deref(),
-            extra: &cfg.resource_attributes,
-            runtime_version: bun_core::Environment::VERSION_STRING,
-            pid: std::process::id(),
-            script,
-        });
-        p.set_resource(resource);
-    }
+    let new_state = Box::into_raw(Box::new(State {
+        sampler: cfg.sampler,
+        limits: cfg.limits.clone(),
+        propagate_trace_context: cfg.propagate_trace_context,
+        propagate_baggage: cfg.propagate_baggage,
+        capture_db_statement: cfg.capture_db_statement,
+        capture_request_headers: cfg
+            .capture_request_headers
+            .iter()
+            .map(|s| s.as_bytes().into())
+            .collect(),
+        capture_response_headers: cfg
+            .capture_response_headers
+            .iter()
+            .map(|s| s.as_bytes().into())
+            .collect(),
+    }));
+    STATE.swap(new_state, core::sync::atomic::Ordering::AcqRel);
+    *p.config.write().unwrap() = cfg.batch;
+    let script = bun_paths::basename(vm.main());
+    let resource = bun_telemetry::resource::encode(&bun_telemetry::resource::ResourceInfo {
+        service_name: cfg.service_name.as_deref(),
+        extra: &cfg.resource_attributes,
+        runtime_version: bun_core::Environment::VERSION_STRING,
+        pid: std::process::id(),
+        script: core::str::from_utf8(script).ok(),
+    });
+    p.set_resource(resource);
     for x in &cfg.otlp_exporters {
         match exporter::OtlpHttpExporter::new(x) {
             Ok(e) => p.add_exporter(Arc::new(e)),
@@ -275,7 +284,7 @@ pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<
         sampler: || state().sampler,
         capture_db_statement: || state().capture_db_statement,
     });
-    bun_telemetry::set_enabled_mask(cfg.instruments | bun_telemetry::enabled_mask(), cfg.roots);
+    bun_telemetry::set_enabled_mask(cfg.instruments, cfg.roots);
     let s = vm_state_or_init(global);
     s.arm_timer();
     install_api_global(global);
@@ -343,6 +352,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let env = read_env_config(vm);
     let mut cfg = env.config;
     let mut js_exporters: Vec<Arc<exporter::JsExporter>> = Vec::new();
+    let mut replaces_exporters = false;
 
     if opts.is_object() {
         if let Some(v) = opts.get(global, "serviceName")? {
@@ -378,6 +388,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if endpoint.is_some() || explicit_exporters.is_some() {
             cfg.otlp_exporters.clear();
             cfg.console_exporter = false;
+            replaces_exporters = true;
         }
         if let Some(url) = endpoint {
             let mut x = OtlpExporterConfig {
@@ -414,23 +425,28 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     continue;
                 }
                 if !item.is_object() {
-                    return Err(global.throw_invalid_arguments(format_args!("each exporter must be a URL string, {{ url, headers }} or {{ export(batch) }}")));
+                    return Err(global.throw_invalid_arguments(format_args!("each exporter must be a URL string, {{ url, headers }} or {{ export(spans) }}")));
                 }
-                if let Some(f) = item.get(global, "export")? {
-                    if !f.is_callable() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "exporter.export must be a function"
-                        )));
+                // Function exporters: { export(spans) } | { exportProtobuf(bytes) } | { exportJSON(string) }.
+                let mut js_fn = None;
+                for (key, format) in [
+                    ("export", exporter::JsFormat::Objects),
+                    ("exportProtobuf", exporter::JsFormat::Protobuf),
+                    ("exportJSON", exporter::JsFormat::Json),
+                ] {
+                    if let Some(f) = item.get(global, key)? {
+                        if !f.is_callable() {
+                            return Err(global.throw_invalid_arguments(format_args!("exporter.{key} must be a function")));
+                        }
+                        if js_fn.is_some() {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "exporter must have only one of export(), exportProtobuf() or exportJSON()"
+                            )));
+                        }
+                        js_fn = Some((f, format));
                     }
-                    let format = match item.get(global, "format")? {
-                        Some(v) => match arg_string(global, v)?.as_deref() {
-                            None | Some("objects") | Some("spans") => exporter::JsFormat::Objects,
-                            Some("protobuf") | Some("proto") | Some("binary") => exporter::JsFormat::Protobuf,
-                            Some("json") => exporter::JsFormat::Json,
-                            Some(other) => return Err(global.throw_invalid_arguments(format_args!("unknown exporter format \"{other}\" (expected \"objects\", \"protobuf\" or \"json\")"))),
-                        },
-                        None => exporter::JsFormat::Objects,
-                    };
+                }
+                if let Some((f, format)) = js_fn {
                     js_exporters.push(exporter::JsExporter::new(global, f, item, format));
                     continue;
                 }
@@ -525,6 +541,15 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
     }
 
+    // An explicit exporter list replaces whatever was configured before
+    // (env or an earlier start()), so repeated start() calls don't fan out
+    // to duplicate destinations.
+    if replaces_exporters {
+        processor().clear_exporters();
+        if let Some(s) = vm_state() {
+            exporter::JsExporter::detach_all_for_vm(s);
+        }
+    }
     if let Err(e) = configure(global, cfg) {
         return Err(global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&e))));
     }
@@ -927,4 +952,57 @@ pub fn set_enabled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         }
     }
     Ok(JSValue::UNDEFINED)
+}
+
+/// `httpClientEnabled()` — node:http client fast check: is a CLIENT span
+/// wanted right now (instrumentation on, and a parent is active or roots are
+/// allowed)?
+#[bun_jsc::host_fn]
+pub fn http_client_enabled(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    if !bun_telemetry::enabled(Instrument::HttpClient) {
+        return Ok(JSValue::FALSE);
+    }
+    Ok(JSValue::from(
+        bun_telemetry::allows_root(Instrument::HttpClient) || active_context(global).is_some(),
+    ))
+}
+
+/// `startLeafSpan(instrument, name, kind)` — start a span for a built-in
+/// instrumentation implemented in JS (node:http client). Honors the
+/// instrumentation's enable/root policy; returns `undefined` when it should
+/// not record. Inherits `tracestate`/`baggage` from the active span.
+#[bun_jsc::host_fn]
+pub fn start_leaf_span(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let idx = frame.argument(0);
+    let Some(instrument) = (if idx.is_number() {
+        Instrument::ALL.get(idx.as_number() as usize).copied()
+    } else {
+        None
+    }) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let stub = start_leaf(global, instrument);
+    if !stub.is_some() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let name_v = frame.argument(1);
+    let name = if name_v.is_string() { Some(name_v.to_slice(global)?) } else { None };
+    let kind = span::kind_from_js(frame.argument(2));
+    let span = bun_telemetry::Span::new(
+        stub,
+        ScopeId::from(instrument),
+        name.as_ref().map(|s| s.slice()).unwrap_or(b""),
+        kind,
+    );
+    if let Some(parent) = active(global) {
+        parent.with_propagation(|ts, bg| {
+            if !ts.is_empty() {
+                span.set_trace_state(ts);
+            }
+            if !bg.is_empty() {
+                span.set_baggage(bg);
+            }
+        });
+    }
+    Ok(TelemetrySpan::create(global, span))
 }

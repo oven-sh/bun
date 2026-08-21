@@ -2090,6 +2090,9 @@ pub struct RuntimeHooks {
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
+    /// Runs on the JS thread right before the entry point (main, worker or
+    /// `-e`) is loaded; used to initialise env-configured telemetry.
+    pub before_entry_point: unsafe fn(vm: *mut VirtualMachine),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
     /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
@@ -2715,6 +2718,10 @@ impl VirtualMachine {
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
+        if let Some(h) = hooks {
+            // SAFETY: hook contract — `self` is the live per-thread VM.
+            unsafe { (h.before_entry_point)(self) };
+        }
 
         // Node.js `--trace-*` and `--stack-trace-limit` flags need
         // `internal/process/pre_execution` to run before any user code.

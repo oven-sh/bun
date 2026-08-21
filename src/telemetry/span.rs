@@ -139,6 +139,9 @@ impl Flags {
     pub const REMOTE: u8 = 0x10;
     /// This (local) span's parent was remote. Feeds OTLP `Span.flags` bit 9.
     pub const PARENT_REMOTE: u8 = 0x20;
+    /// A propagation-only wrapper around a (usually remote) context: never
+    /// exported, but keeps the sampled bit so children inherit the decision.
+    pub const NON_RECORDING: u8 = 0x40;
     #[inline]
     pub fn sampled(self) -> bool {
         self.0 & Self::SAMPLED != 0
@@ -150,6 +153,10 @@ impl Flags {
     #[inline]
     pub fn parent_remote(self) -> bool {
         self.0 & Self::PARENT_REMOTE != 0
+    }
+    #[inline]
+    pub fn non_recording(self) -> bool {
+        self.0 & Self::NON_RECORDING != 0
     }
     /// OTLP `SpanFlags`: low byte = W3C flags, 0x100 = has-is-remote, 0x200 = is-remote.
     #[inline]
@@ -231,7 +238,7 @@ impl SpanStub {
 
     #[inline]
     pub fn is_recording(&self) -> bool {
-        self.start_ns != 0 && self.ctx.flags.sampled()
+        self.start_ns != 0 && (self.ctx.flags.0 & (Flags::SAMPLED | Flags::NON_RECORDING)) == Flags::SAMPLED
     }
 
     /// Start a child of `parent` (or a new root when `parent` is None/invalid).

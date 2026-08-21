@@ -62,6 +62,7 @@
 #include "JavaScriptCore/VM.h"
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
+#include "BunTelemetry.h"
 #include "BunClientData.h"
 #include "BunIDLConvert.h"
 #include "BunObject.h"
@@ -2035,6 +2036,7 @@ void GlobalObject::finishCreation(VM& vm)
     setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
 
     Base::finishCreation(vm);
+    vm.asyncContextLeaveAsyncFrameHook = Bun::telemetryLeaveAsyncFrame;
     ASSERT(inherits(info()));
 
     m_commonStrings.initialize();

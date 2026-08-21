@@ -91,9 +91,7 @@ impl RegularExpression {
 
 #[unsafe(no_mangle)]
 fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
-    // Can be the process's first JSC initialization: bunfig's `[install]
-    // hoistPattern` is compiled during config load, before the run command
-    // initializes JSC, so this has to make the same one-shot decision it would.
+    // bunfig's hoistPattern is compiled during config load, before the CLI initializes JSC itself.
     crate::initialize(crate::InitializeOptions {
         one_shot: crate::is_one_shot_eval_invocation(),
         ..Default::default()

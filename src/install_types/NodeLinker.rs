@@ -172,9 +172,6 @@ impl PnpmMatcher {
         // `create_matcher` before then.
         let arena = Arena::new();
 
-        // `jsc::initialize` is performed lazily inside `__bun_regex_compile`
-        // (tier-6 owns it).
-
         let mut matchers: Vec<Matcher> = Vec::new();
         let mut has_include = false;
         let mut has_exclude = false;

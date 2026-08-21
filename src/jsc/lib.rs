@@ -483,17 +483,12 @@ pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
 
-/// The JSC option overrides that [`initialize`] applies; see `JSCInitialize` in
-/// ZigGlobalObject.cpp for what each one changes. The process is initialized
-/// once, so only the first [`initialize`] call's options take effect.
+/// Flags for `JSCInitialize` in ZigGlobalObject.cpp. JSC is set up once per process: the first call's flags win.
 #[derive(Clone, Copy, Default)]
 pub struct InitializeOptions {
-    /// `bun --print` and the REPL: JSC's `evalMode`, which keeps completion
-    /// values so the last expression's value can be printed.
+    /// JSC `evalMode`: keeps completion values, for `bun --print` and the REPL.
     pub eval_mode: bool,
-    /// The process runs one small script and exits (`bun -e` / `bun -p`, see
-    /// [`is_one_shot_eval_invocation`]), so JSC skips the concurrent JIT and
-    /// parallel GC marker threads it would otherwise start with the VM.
+    /// `bun -e` / `bun -p` ([`is_one_shot_eval_invocation`]): no concurrent JIT or parallel GC marker threads.
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
@@ -526,11 +521,7 @@ pub fn initialize(options: InitializeOptions) {
 ///
 /// Kept conservative on purpose: only the explicit eval flags qualify. `bun
 /// <file>` is *not* treated as one-shot (it may start a server), so server
-/// workloads keep the default multi-threaded JIT/GC configuration.
-///
-/// Reads the process argv, so it only has meaning when that argv is the `bun`
-/// CLI's own. A `bun build --compile` executable's argv belongs to the compiled
-/// program and must not be scanned.
+/// workloads keep the default multi-threaded JIT/GC configuration. Only valid for the `bun` CLI's own argv.
 pub fn is_one_shot_eval_invocation() -> bool {
     for arg in bun_core::argv().iter().skip(1) {
         if arg == b"-e" || arg == b"--eval" || arg == b"-p" || arg == b"--print" {

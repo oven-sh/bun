@@ -1110,8 +1110,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
-        // argv belongs to the compiled program, so there is no `bun -e` to
-        // detect here: a `-e` or `-p` in it is the program's own flag.
+        // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions::default());
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_ast::initialize_store();

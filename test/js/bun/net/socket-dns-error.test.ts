@@ -121,12 +121,16 @@ test("Bun.connect does not dial the IPv4 prefix of a hostname with trailing text
     },
   });
 
+  // One hostname per byte C's isspace() accepts: space, \t, \n, \v, \f, \r.
   const hostnames = [
     "127.0.0.1 db.allowed.example",
     "127.1 .allowed.example",
     "0x7f.1 junk",
     "127.0.0.1\tx",
     "127.0.0.1\n",
+    "127.0.0.1\vx",
+    "127.0.0.1\fx",
+    "127.0.0.1\rx",
     "12\t7.0.0.1",
   ];
   const results: unknown[] = [];

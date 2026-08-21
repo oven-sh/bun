@@ -2737,10 +2737,26 @@ impl ThreadSafeFunction {
         }
     }
 
-    /// Dequeues one item under the lock, running the empty-queue finalize
-    /// check and scheduling the backup dispatch as needed. Never enters JS.
+    /// Dequeues one item under the lock, running the closing hand-back, the
+    /// empty-queue finalize check, and the backup dispatch as needed. Never
+    /// enters JS.
     fn take_one_locked(&mut self, queue_finalizer_after_call: &mut bool) -> Option<*mut c_void> {
         let _g = self.lock.lock_guard();
+        if self.is_closing() {
+            // Closing (napi_tsfn_abort, or the last call already ran):
+            // nothing still queued runs any more, as in Node's DispatchOne.
+            // An abort's leftovers go back to the addon, with no lock held
+            // since that re-enters it; the function finalizes once the last
+            // thread reference is gone.
+            let leftovers = self.take_queue();
+            drop(_g);
+            self.hand_back(leftovers);
+            let _g = self.lock.lock_guard();
+            if self.thread_count.load(Ordering::SeqCst) == 0 {
+                self.maybe_queue_finalizer();
+            }
+            return None;
+        }
         let was_blocked = self.queue.is_blocked();
         let Some(t) = self.queue.data.read_item() else {
             // When there are no tasks and the number of threads that have
@@ -2863,7 +2879,8 @@ impl ThreadSafeFunction {
         };
 
         // SAFETY: env is valid while the TSF is live.
-        let global_object = unsafe { &*env }.to_js();
+        let env = unsafe { &*env };
+        let global_object = env.to_js();
 
         // SAFETY: scoped reborrow; `tracker` is `Copy`, the guard borrows only
         // `global_object`.
@@ -2878,21 +2895,83 @@ impl ThreadSafeFunction {
                 js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
             }
             Target::C(call_js, cb_js, ctx) => {
-                // SAFETY: `env` is held alive by `(*this).env` (`NapiEnvRef`) for the TSF's lifetime.
-                let env_ref = unsafe { &*env };
-                let _hs = NapiHandleScope::open_scoped(env_ref);
+                let _hs = NapiHandleScope::open_scoped(env);
                 // No func at creation => null js_callback (Node), not encoded undefined.
                 let js = match cb_js {
-                    Some(v) => napi_value::create(env_ref, v),
+                    Some(v) => napi_value::create(env, v),
                     None => napi_value(0),
                 };
-                call_js(env, js, ctx, task);
-                env_ref.surface_exception(global_object)
+                call_js(env.as_mut_ptr(), js, ctx, task);
+                env.surface_exception(global_object)
             }
         };
         match called {
             Ok(()) => Ok(()),
             Err(err) => bun_jsc::task::report_error_or_terminate(global_object, err),
+        }
+    }
+
+    /// One queued call: a JS entry of its own, so what it leaves pending is
+    /// the `Err`, for the caller's landing frame to fold. `env` is this
+    /// function's own, which `self.env` still holds. Used by `env_teardown`'s
+    /// live-env drain, where no nested dispatch can re-enter; the re-entrant
+    /// dispatch path uses `call`.
+    fn deliver(&mut self, env: &NapiEnv, task: *mut c_void) -> JsResult<()> {
+        let global_object = env.to_js();
+        let _dispatch = self.tracker.dispatch(global_object);
+
+        match &self.callback {
+            TsfnCallback::Js(strong) => {
+                let js: JSValue = strong.get().unwrap_or(JSValue::UNDEFINED);
+                if js.is_empty_or_undefined_or_null() {
+                    return Ok(());
+                }
+
+                js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
+            }
+            TsfnCallback::C {
+                js: cb_js,
+                napi_threadsafe_function_call_js,
+            } => {
+                let _hs = NapiHandleScope::open_scoped(env);
+                // No func at creation => null js_callback (Node), not encoded undefined.
+                let js = match cb_js.get() {
+                    Some(v) => napi_value::create(env, v),
+                    None => napi_value(0),
+                };
+                napi_threadsafe_function_call_js(env.as_mut_ptr(), js, self.ctx, task);
+                env.surface_exception(global_object)
+            }
+        }
+    }
+
+    /// Caller holds `lock`. Empties the queue; the items are the caller's to
+    /// give back to the addon once the lock is dropped.
+    fn take_queue(&mut self) -> Vec<*mut c_void> {
+        let mut items = Vec::new();
+        while let Some(item) = self.queue.data.read_item() {
+            items.push(item);
+        }
+        self.queue.count.store(0, Ordering::SeqCst);
+        items
+    }
+
+    /// What a closing function does with items it will never run: each goes
+    /// back to the addon's call_js_cb with a null env and js_callback, which is
+    /// the signal napi_threadsafe_function_call_js documents for "free this,
+    /// JS is no longer reachable" (Node's ThreadSafeFunction::EmptyQueue). A
+    /// function created without a call_js_cb has nothing to give back.
+    fn hand_back(&self, items: Vec<*mut c_void>) {
+        let TsfnCallback::C {
+            napi_threadsafe_function_call_js,
+            ..
+        } = &self.callback
+        else {
+            return;
+        };
+        let call_js = *napi_threadsafe_function_call_js;
+        for item in items {
+            call_js(ptr::null_mut(), napi_value(0), self.ctx, item);
         }
     }
 
@@ -3036,10 +3115,11 @@ impl ThreadSafeFunction {
         // Phase 1: publish "the loop is going away". From here no other thread
         // schedules onto it, but none may free us either -- the JS resources
         // below are still live and only this thread may touch them.
-        let drained: Vec<*mut c_void> = {
+        let (was_closing, queued) = {
             let _g = self.lock.lock_guard();
             self.env_dead.store(true, Ordering::SeqCst);
-            if self.closing.load(Ordering::SeqCst) == ClosingState::NotClosing as u8 {
+            let was_closing = self.is_closing();
+            if !was_closing {
                 self.closing
                     .store(ClosingState::Closing as u8, Ordering::SeqCst);
             }
@@ -3048,25 +3128,35 @@ impl ThreadSafeFunction {
                 // is_closing and release.
                 self.blocking_condvar.broadcast();
             }
-            let mut drained = Vec::new();
-            while let Some(item) = self.queue.data.read_item() {
-                drained.push(item);
-            }
-            self.queue.count.store(0, Ordering::SeqCst);
-            drained
+            (was_closing, self.take_queue())
         };
 
-        // Phase 2: addon callbacks, so no lock is held. Node hands queued items
-        // back with a null env (ThreadSafeFunction::EmptyQueue) so the addon can
-        // free them, then runs the finalizer.
-        if let TsfnCallback::C {
-            napi_threadsafe_function_call_js,
-            ..
-        } = &self.callback
+        // Phase 2: addon callbacks, so no lock is held.
+        //
+        // What is still queued goes back to the addon only when a worker's env
+        // dies under it. On the main thread this is process exit, where Node
+        // runs nothing of a threadsafe function; most call_js_cbs cannot take
+        // the null env a hand-back would give them (they abort), and a
+        // process.exit() from inside one of them would re-enter it. The queue
+        // dies with the process. In a worker the items arrive as Node's last
+        // turn of the loop (CleanupHandles) delivers them: the normal call,
+        // live env and js_callback, with script refused if the worker was
+        // stopped. A function already closing (napi_tsfn_abort) keeps the
+        // abort contract. The finalizer runs either way.
+        //
+        // SAFETY: `env` is live; phase 3 below is what drops our reference.
+        let env = self.env.as_ref().map(|env| unsafe { &*env.get() });
+        if let Some(env) = env
+            && env.to_js().bun_vm().worker_ref().is_some()
         {
-            let call_js = *napi_threadsafe_function_call_js;
-            for item in drained {
-                call_js(ptr::null_mut(), napi_value(0), self.ctx, item);
+            if was_closing {
+                self.hand_back(queued);
+            } else if matches!(self.callback, TsfnCallback::C { .. }) {
+                for item in queued {
+                    // The env's cleanup hook is each delivery's landing frame,
+                    // as it is the finalizer's below.
+                    crate::dispatch::fold(self.deliver(env, item));
+                }
             }
         }
         let finalizer = self
@@ -3605,7 +3695,12 @@ mod v8_api {
         pub(super) fn _ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj()
         -> *mut c_void;
         pub(super) fn _ZN2v811CpuProfiler4StopEj() -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEEb() -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13StopProfilingENS_5LocalINS_6StringEEE() -> *mut c_void;
         pub(super) fn _ZN2v810CpuProfile6DeleteEv() -> *mut c_void;
+        pub(super) fn _ZNK2v810CpuProfile8GetTitleEv() -> *mut c_void;
         pub(super) fn _ZNK2v810CpuProfile10GetEndTimeEv() -> *mut c_void;
         pub(super) fn _ZNK2v810CpuProfile12GetStartTimeEv() -> *mut c_void;
         pub(super) fn _ZNK2v810CpuProfile14GetTopDownRootEv() -> *mut c_void;
@@ -3960,10 +4055,18 @@ mod v8_api {
         pub(super) fn v8_CpuProfiler_Start() -> *mut c_void;
         #[link_name = "?Stop@CpuProfiler@v8@@QEAAPEAVCpuProfile@2@I@Z"]
         pub(super) fn v8_CpuProfiler_Stop() -> *mut c_void;
+        #[link_name = "?StartProfiling@CpuProfiler@v8@@QEAA?AW4CpuProfilingStatus@2@V?$Local@VString@v8@@@2@W4CpuProfilingMode@2@_NI@Z"]
+        pub(super) fn v8_CpuProfiler_StartProfiling_mode() -> *mut c_void;
+        #[link_name = "?StartProfiling@CpuProfiler@v8@@QEAA?AW4CpuProfilingStatus@2@V?$Local@VString@v8@@@2@_N@Z"]
+        pub(super) fn v8_CpuProfiler_StartProfiling() -> *mut c_void;
+        #[link_name = "?StopProfiling@CpuProfiler@v8@@QEAAPEAVCpuProfile@2@V?$Local@VString@v8@@@2@@Z"]
+        pub(super) fn v8_CpuProfiler_StopProfiling() -> *mut c_void;
         #[link_name = "?CollectSample@CpuProfiler@v8@@SAXPEAVIsolate@2@V?$optional@_K@std@@@Z"]
         pub(super) fn v8_CpuProfiler_CollectSample() -> *mut c_void;
         #[link_name = "?Delete@CpuProfile@v8@@QEAAXXZ"]
         pub(super) fn v8_CpuProfile_Delete() -> *mut c_void;
+        #[link_name = "?GetTitle@CpuProfile@v8@@QEBA?AV?$Local@VString@v8@@@2@XZ"]
+        pub(super) fn v8_CpuProfile_GetTitle() -> *mut c_void;
         #[link_name = "?GetEndTime@CpuProfile@v8@@QEBA_JXZ"]
         pub(super) fn v8_CpuProfile_GetEndTime() -> *mut c_void;
         #[link_name = "?GetStartTime@CpuProfile@v8@@QEBA_JXZ"]
@@ -5020,7 +5123,11 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZN2v811CpuProfiler19SetSamplingIntervalEi,
             _ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj,
             _ZN2v811CpuProfiler4StopEj,
+            _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj,
+            _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEEb,
+            _ZN2v811CpuProfiler13StopProfilingENS_5LocalINS_6StringEEE,
             _ZN2v810CpuProfile6DeleteEv,
+            _ZNK2v810CpuProfile8GetTitleEv,
             _ZNK2v810CpuProfile10GetEndTimeEv,
             _ZNK2v810CpuProfile12GetStartTimeEv,
             _ZNK2v810CpuProfile14GetTopDownRootEv,
@@ -5203,8 +5310,12 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_CpuProfiler_SetSamplingInterval,
             v8_CpuProfiler_Start,
             v8_CpuProfiler_Stop,
+            v8_CpuProfiler_StartProfiling_mode,
+            v8_CpuProfiler_StartProfiling,
+            v8_CpuProfiler_StopProfiling,
             v8_CpuProfiler_CollectSample,
             v8_CpuProfile_Delete,
+            v8_CpuProfile_GetTitle,
             v8_CpuProfile_GetEndTime,
             v8_CpuProfile_GetStartTime,
             v8_CpuProfile_GetTopDownRoot,

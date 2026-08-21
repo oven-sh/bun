@@ -349,6 +349,7 @@ dependencies = [
  "bun_url",
  "bun_watcher",
  "bun_wyhash",
+ "bun_zstd",
  "bytemuck",
  "const_format",
  "enum-map",

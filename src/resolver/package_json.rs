@@ -54,17 +54,6 @@ pub struct DependencyMap {
     pub source_buf: &'static [u8],
 }
 
-impl Clone for DependencyMap {
-    /// Deep-clones the small key/value vecs; `SemverString`/`Dependency` are
-    /// POD over `source_buf`.
-    fn clone(&self) -> Self {
-        Self {
-            map: self.map.clone().expect("OOM"),
-            source_buf: self.source_buf,
-        }
-    }
-}
-
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
 type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
@@ -1338,16 +1327,6 @@ pub struct Package<'a> {
     pub(crate) version: &'a [u8],
     /// Borrows from the `subpath_buf` argument to `Package::parse`.
     pub(crate) subpath: &'a [u8],
-}
-
-impl Default for Package<'_> {
-    fn default() -> Self {
-        Package {
-            name: b"",
-            version: b"",
-            subpath: b"",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Default)]

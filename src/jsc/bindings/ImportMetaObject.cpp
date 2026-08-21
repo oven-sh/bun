@@ -583,10 +583,10 @@ public:
         return Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    static ImportMetaObjectPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, bool isBake = false)
+    static ImportMetaObjectPrototype* create(JSC::VM& vm, JSC::Structure* structure, bool isBake = false)
     {
         ImportMetaObjectPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(ImportMetaObjectPrototype))) ImportMetaObjectPrototype(vm, structure);
-        prototype->finishCreation(vm, globalObject, isBake);
+        prototype->finishCreation(vm, isBake);
         return prototype;
     }
 
@@ -597,7 +597,7 @@ public:
         return &vm.plainObjectSpace();
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake)
+    void finishCreation(JSC::VM& vm, bool isBake)
     {
         Base::finishCreation(vm);
 
@@ -625,7 +625,6 @@ const ClassInfo ImportMetaObjectPrototype::s_info = {
 JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake)
 {
     ImportMetaObjectPrototype* prototype = ImportMetaObjectPrototype::create(vm,
-        globalObject,
         ImportMetaObjectPrototype::createStructure(vm, globalObject),
         isBake);
 

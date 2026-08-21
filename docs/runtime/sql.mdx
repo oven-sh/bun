@@ -1383,6 +1383,10 @@ We haven't implemented `LOAD DATA INFILE` support yet.
 
 ### PostgreSQL-Specific Features
 
+#### `timestamp` without time zone
+
+`timestamp without time zone` (OID 1114) values are decoded as **UTC** so the text and binary paths agree and a bound `Date` round-trips exactly regardless of host timezone. This differs from `node-postgres` and `postgres.js` (and PGlite), which decode `timestamp` as local time — code migrating from those drivers on a non-UTC host will see values shifted by the local offset. `timestamptz` carries an explicit offset and is unaffected.
+
 We haven't implemented these yet:
 
 - `COPY` support

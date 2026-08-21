@@ -635,23 +635,26 @@ describe("fs.watch", () => {
         using dir = tempDir("fs-watch-rmdir-self-win", { "watched-dir": {} });
         const target = path.join(String(dir), "watched-dir");
         const events: [string, string | null][] = [];
+        // The first watcher must not report an error at any point: it stays
+        // open, silent, until it is closed. Both waits race against this.
+        const failure = Promise.withResolvers<never>();
         const removed = Promise.withResolvers<void>();
         const watcher = fs.watch(target, { recursive }, (eventType, filename) => {
           events.push([eventType, filename]);
           removed.resolve();
         });
-        watcher.once("error", removed.reject);
+        watcher.once("error", failure.reject);
         let again: FSWatcher | undefined;
         try {
           fs.rmdirSync(target);
-          await removed.promise;
+          await Promise.race([removed.promise, failure.promise]);
 
           fs.mkdirSync(target);
           const seen = Promise.withResolvers<[string, string | null]>();
           again = fs.watch(target, { recursive }, (eventType, filename) => seen.resolve([eventType, filename]));
-          again.once("error", seen.reject);
+          again.once("error", failure.reject);
           fs.writeFileSync(path.join(target, "created-after.txt"), "x");
-          const [, filename] = await seen.promise;
+          const [, filename] = await Promise.race([seen.promise, failure.promise]);
           expect(filename).toBe("created-after.txt");
 
           expect(events).toEqual([["rename", "watched-dir"]]);

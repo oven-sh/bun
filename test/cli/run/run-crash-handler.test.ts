@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
+import { inflateSync } from "node:zlib";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -608,6 +609,91 @@ describe("automatic crash reporter", () => {
       expect(sent).toBe(true);
     });
   }
+});
+
+// The panic message of an uploaded trace string `{base}/{version}/{payload}`,
+// decoded the way bun.report does: after the platform, command and format
+// characters, 7 characters of commit and two VLQs of feature bits come the
+// frames (one VLQ each, `_` or `=` for a frame without an offset, a leading 1
+// introducing a name of the following length) up to a VLQ of 0, then the
+// reason: `0` and the zlib-compressed message in base64.
+function decodeUploadedPanicMessage(payload: string): string {
+  const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let i = 3 + 7;
+  function vlq(): number {
+    let value = 0;
+    for (let shift = 0; ; shift += 5) {
+      const digit = digits.indexOf(payload[i++]);
+      if (digit < 0) throw new Error(`bad VLQ digit at ${i - 1} of ${payload}`);
+      value += (digit & 31) * 2 ** shift;
+      if (!(digit & 32)) return value % 2 ? -Math.floor(value / 2) : value / 2;
+    }
+  }
+  vlq();
+  vlq();
+  for (;;) {
+    if (payload[i] === "_" || payload[i] === "=") {
+      i++;
+      continue;
+    }
+    const frame = vlq();
+    if (frame === 0) break;
+    if (frame === 1) {
+      i += vlq();
+      vlq();
+    }
+  }
+  expect(payload[i]).toBe("0");
+  return inflateSync(Buffer.from(payload.slice(i + 1), "base64")).toString();
+}
+
+// A panic (a Rust panic!, a napi_fatal_error) raised while bun is inside a
+// native module's code has bun frames only, so the report has to say which
+// module it was: a line under the panic locally, and a suffix on the uploaded
+// message. bun.report's fingerprint for a panic includes the message, so Sentry
+// groups these per module. The suffix carries the path from the last
+// node_modules on, never the user's directories. The hook stands in for a
+// callback of a module at the given path.
+test("a panic inside a native module names the module locally and in the uploaded message", async () => {
+  const uploaded = Promise.withResolvers<string>();
+  using server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      uploaded.resolve(new URL(request.url).pathname);
+      return new Response("OK");
+    },
+  });
+  const modulePath = "/home/someone/app/node_modules/@scope/pkg/build/Release/pkg.node";
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("bun:internal-for-testing").crash_handler.panicInsideNativeModule(${JSON.stringify(modulePath)})`,
+    ],
+    env: mergeWindowEnvs([
+      bunEnv,
+      {
+        BUN_CRASH_REPORT_URL: server.url.origin,
+        BUN_ENABLE_CRASH_REPORTING: "1",
+        GITHUB_ACTIONS: undefined,
+        CI: undefined,
+      },
+    ]),
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`Crashed while running native module: ${modulePath}\n`);
+  expect(exitCode).not.toBe(0);
+
+  const pathname = await uploaded.promise;
+  // `/` is also a VLQ and base64 digit, so the payload cannot be split out on it.
+  const payload = pathname.match(/^\/[^/]+\/(.*)\/ack$/)?.[1];
+  expect(payload, pathname).toBeDefined();
+  expect(decodeUploadedPanicMessage(payload!)).toBe(
+    "invoked crashByPanic() handler (running native module @scope/pkg/build/Release/pkg.node)",
+  );
 });
 
 test.if(isWindows)(

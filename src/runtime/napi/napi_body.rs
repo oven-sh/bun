@@ -96,6 +96,8 @@ unsafe extern "C" {
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
     fn NapiEnv__vmHandle(env: *mut NapiEnv) -> *const bun_jsc::vm_handle::Shared;
+    /// Lives as long as the env does.
+    fn NapiEnv__moduleNameForCrashReport(env: *mut NapiEnv) -> *const c_char;
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
     fn NapiUngatedScope__construct(storage: *mut c_void, env: *mut NapiEnv);
     fn NapiUngatedScope__destruct(storage: *mut c_void);
@@ -111,6 +113,16 @@ impl NapiEnv {
     pub(crate) fn vm_handle(&self) -> bun_jsc::vm_handle::BorrowedRef {
         // SAFETY: the env holds a reference for its whole lifetime.
         unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }
+    }
+
+    /// Names this env's module in a crash report on the current thread while the guard lives (any thread).
+    #[must_use]
+    pub(crate) fn enter_for_crash_report(&self) -> bun_crash_handler::NativeModuleGuard {
+        bun_crash_handler::enter_native_module(
+            bun_crash_handler::NativeModuleKind::Running,
+            // SAFETY: env is non-null; the name it returns lives as long as the env, which outlives every guard.
+            unsafe { NapiEnv__moduleNameForCrashReport(self.as_mut_ptr()) },
+        )
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
@@ -1916,7 +1928,11 @@ impl napi_async_work {
                 Err(state) => state != AsyncWorkStatus::Cancelled as u32,
             };
         if started {
-            (self.execute)(self.env.get(), self.data);
+            {
+                // SAFETY: the work holds a NapiEnvRef, so the env is alive for this call.
+                let _in_module = unsafe { &*self.env.get() }.enter_for_crash_report();
+                (self.execute)(self.env.get(), self.data);
+            }
             self.status
                 .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
         } else {
@@ -1975,7 +1991,10 @@ impl napi_async_work {
                 NapiStatus::ok
             };
 
-        complete(env, status as napi_status, self.data);
+        {
+            let _in_module = env_ref.enter_for_crash_report();
+            complete(env, status as napi_status, self.data);
+        }
 
         // SAFETY: env is valid for the duration of this call.
         unsafe { &*env }.surface_exception(global)
@@ -2400,7 +2419,10 @@ impl Finalizer {
         let env_ref = unsafe { &*env };
         let _hs = NapiHandleScope::open_scoped(env_ref);
 
-        (self.fun)(env, self.data, self.hint);
+        {
+            let _in_module = env_ref.enter_for_crash_report();
+            (self.fun)(env, self.data, self.hint);
+        }
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
         unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
@@ -2820,7 +2842,10 @@ impl ThreadSafeFunction {
                     Some(v) => napi_value::create(env, v),
                     None => napi_value(0),
                 };
-                napi_threadsafe_function_call_js(env.as_mut_ptr(), js, self.ctx, task);
+                {
+                    let _in_module = env.enter_for_crash_report();
+                    napi_threadsafe_function_call_js(env.as_mut_ptr(), js, self.ctx, task);
+                }
                 env.surface_exception(global_object)
             }
         }

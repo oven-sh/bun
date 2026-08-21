@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rename, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -6755,6 +6755,29 @@ describe("pm trust", async () => {
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
     });
+  });
+
+  // After the scripts ran, `pm trust` records the packages in package.json,
+  // which it reads through the descriptor opened while the project was
+  // located. A device there used to be read like a file.
+  test.skipIf(isWindows)("package.json that is not a regular file", async () => {
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies: { "uses-what-bin": "1.0.0" } }));
+    await runBunInstall(env, packageDir);
+
+    await rm(packageJson);
+    await symlink("/dev/null", packageJson);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "trust", "uses-what-bin"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).toContain("ENODEV");
+    expect(exitCode).toBe(1);
+    expect((await lstat(packageJson)).isSymbolicLink()).toBeTrue();
   });
 });
 

@@ -912,7 +912,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `on_timeout`, `on_end`, `on_data`): keeps `handlers` alive across the
     /// user callback so the error handler can still be reached, routes a
     /// thrown exception there, and releases `self.handlers` via `exit_scope`.
-    /// `extra_args` (at most one) follow the implicit `this` argument. An
+    /// `extra_arg`, when present, follows the implicit `this` argument. An
     /// error from the error handler itself (a pending exception or
     /// termination) is returned after the scope has been exited, for the
     /// dispatcher to fold upward, as in `handle_error`.
@@ -921,14 +921,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         &self,
         handlers: &Rc<Handlers>,
         callback: JSValue,
-        extra_args: &[JSValue],
+        extra_arg: Option<JSValue>,
     ) -> JsResult<()> {
         let scope = handlers.enter();
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
-        let mut args = [this_value; 2];
-        args[1..1 + extra_args.len()].copy_from_slice(extra_args);
-        let result = match callback.call(&global, this_value, &args[..1 + extra_args.len()]) {
+        let with_extra;
+        let args: &[JSValue] = match extra_arg {
+            Some(extra) => {
+                with_extra = [this_value, extra];
+                &with_extra
+            }
+            None => core::slice::from_ref(&this_value),
+        };
+        let result = match callback.call(&global, this_value, args) {
             Ok(_) => Ok(()),
             Err(err) => {
                 handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])
@@ -1022,7 +1028,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        this.call_socket_handler(&handlers, callback, &[])
+        this.call_socket_handler(&handlers, callback, None)
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
@@ -1055,7 +1061,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        this.call_socket_handler(&handlers, callback, &[])
+        this.call_socket_handler(&handlers, callback, None)
     }
 
     /// This socket's callbacks. Panics if it has none — every dispatch entry
@@ -1719,7 +1725,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        this.call_socket_handler(&handlers, callback, &[])
+        this.call_socket_handler(&handlers, callback, None)
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
@@ -2224,7 +2230,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         };
 
-        this.call_socket_handler(&handlers, callback, &[output_value])
+        this.call_socket_handler(&handlers, callback, Some(output_value))
     }
 
     #[bun_jsc::host_fn(getter)]

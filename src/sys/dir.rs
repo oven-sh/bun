@@ -44,8 +44,7 @@ impl Dir {
     pub fn fd(&self) -> Fd {
         self.fd
     }
-    /// The process's current directory. Wraps the `Fd::cwd()` sentinel
-    /// (`AT_FDCWD`, or its Windows counterpart), which `Drop` never closes.
+    /// Wraps the `Fd::cwd()` sentinel, which `Drop` skips.
     #[inline]
     pub fn cwd() -> Self {
         Self { fd: Fd::cwd() }

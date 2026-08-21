@@ -1042,12 +1042,9 @@ impl Fd {
             .copied()
             .unwrap_or(Fd::INVALID)
     }
-    /// The Windows counterpart of `AT_FDCWD`. Kernel handles are multiples of
-    /// 4, so no real handle has this value. [`Fd::decode_windows`] resolves it
-    /// to the handle ntdll currently keeps in the PEB, which `chdir` closes
-    /// and replaces. Handing out that handle itself would make the `Fd` a
-    /// snapshot: after a `chdir` it no longer compares equal to `Fd::cwd()`,
-    /// and closing it closes whatever object was given the old value since.
+    /// The Windows `AT_FDCWD`. Kernel handles are multiples of 4, so no real
+    /// handle has this value; [`Fd::decode_windows`] maps it to the PEB's
+    /// current directory handle, which `chdir` closes and replaces.
     #[cfg(windows)]
     const WINDOWS_CWD: u64 = 1;
 

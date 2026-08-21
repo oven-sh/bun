@@ -147,9 +147,7 @@ impl FdExt for Fd {
             {
                 use sys::windows::{NTSTATUS, Win32Error, Win32ErrorExt as _, libuv as uv};
                 match self.decode_windows() {
-                    // `Fd::cwd()` decodes to the handle ntdll owns. POSIX
-                    // reports EBADF for `close(AT_FDCWD)`; do the same instead
-                    // of closing the process's current directory.
+                    // It decodes to ntdll's handle; `close(AT_FDCWD)` is EBADF too.
                     _ if self == Fd::cwd() => Some(sys::Error {
                         errno: sys::E::EBADF as _,
                         syscall: sys::Tag::CloseHandle,

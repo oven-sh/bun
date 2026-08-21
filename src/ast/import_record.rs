@@ -72,8 +72,7 @@ bitflags::bitflags! {
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
 
-        /// Resolved as external. `path` may have been rewritten, so a second
-        /// resolution pass over the same records skips it.
+        /// Resolution is done and `path` is the specifier to print.
         const IS_EXTERNAL = 1 << 10;
 
         /// If true, this import can be removed if it's unused

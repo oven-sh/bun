@@ -27,11 +27,11 @@ pub mod spawn;
 pub mod sqlite;
 pub mod websocket;
 
+pub use bun_telemetry::pool::{self, NativeSpan};
 pub use span::{
     ContextScope, Entered, active, active_context, active_js, active_native, create_native_cell,
     discard_native, end_native, native_context_value, with_active_propagation,
 };
-pub use bun_telemetry::pool::{self, NativeSpan};
 
 /// Process-wide, immutable after `configure()`. Read on hot paths without
 /// locking via `state()`.
@@ -48,7 +48,8 @@ pub struct State {
 /// Replaced wholesale by `configure()`; the previous value is intentionally
 /// leaked (a few hundred bytes per `Bun.otel.start()` call) so `state()` can
 /// hand out `&'static` without locking on hot paths.
-static STATE: core::sync::atomic::AtomicPtr<State> = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+static STATE: core::sync::atomic::AtomicPtr<State> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 static RETIRED_STATES: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 static DEFAULT_STATE: State = State {
     sampler: Sampler::ParentBasedAlwaysOn,
@@ -64,7 +65,11 @@ static DEFAULT_STATE: State = State {
 pub fn state() -> &'static State {
     let p = STATE.load(core::sync::atomic::Ordering::Acquire);
     // SAFETY: non-null values come from `Box::into_raw` in `configure` and are never freed.
-    if p.is_null() { &DEFAULT_STATE } else { unsafe { &*p } }
+    if p.is_null() {
+        &DEFAULT_STATE
+    } else {
+        unsafe { &*p }
+    }
 }
 
 #[inline]
@@ -453,7 +458,9 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 ] {
                     if let Some(f) = item.get(global, key)? {
                         if !f.is_callable() {
-                            return Err(global.throw_invalid_arguments(format_args!("exporter.{key} must be a function")));
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "exporter.{key} must be a function"
+                            )));
                         }
                         if js_fn.is_some() {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -485,7 +492,9 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     };
                     let loader = vm.env_loader();
                     let mut x = match bun_telemetry::presets::resolve(&input, &|k| {
-                        loader.get(k.as_bytes()).map(|v| String::from_utf8_lossy(v).into_owned())
+                        loader
+                            .get(k.as_bytes())
+                            .map(|v| String::from_utf8_lossy(v).into_owned())
                     }) {
                         Ok(x) => x,
                         Err(e) => return Err(global.throw_invalid_arguments(format_args!("{e}"))),
@@ -548,7 +557,10 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 if let Some(v) = b.get(global, "maxExportBatchSize")? {
                     cfg.batch.max_export_batch_size = (v.to_number(global)?.max(1.0)) as u32;
                 }
-                cfg.batch.max_export_batch_size = cfg.batch.max_export_batch_size.min(cfg.batch.max_queue_size);
+                cfg.batch.max_export_batch_size = cfg
+                    .batch
+                    .max_export_batch_size
+                    .min(cfg.batch.max_queue_size);
             }
         }
         if let Some(v) = opts.get(global, "captureDbStatement")? {

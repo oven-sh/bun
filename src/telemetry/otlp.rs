@@ -512,46 +512,48 @@ pub struct ScopeChunk<'a> {
 
 /// Build an `ExportTraceServiceRequest` around pre-encoded pieces. All sizes
 /// are known so this is a single allocation and straight-line writes.
-pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>], limits: &crate::data::Limits) -> Vec<u8> {
-    // Expand request-path records (see http_record.rs) into Span entries.
-    let expanded: Vec<Option<Vec<u8>>> = scopes
-        .iter()
-        .map(|s| {
-            if crate::http_record::has_records(s.spans) {
-                let mut v = Vec::with_capacity(s.spans.len() * 2);
-                crate::http_record::expand_into(&mut v, s.spans, limits);
-                Some(v)
-            } else {
-                None
-            }
-        })
-        .collect();
-    let scopes: Vec<ScopeChunk<'_>> = scopes
-        .iter()
-        .zip(expanded.iter())
-        .map(|(s, e)| ScopeChunk { scope: s.scope, spans: e.as_deref().unwrap_or(s.spans) })
-        .collect();
-    let scopes = &scopes[..];
-    let mut scope_spans_total = 0;
-    for s in scopes {
-        let ss_body = len_field_len(f::SS_SCOPE, s.scope.len()) + s.spans.len();
-        scope_spans_total += len_field_len(f::RS_SCOPE_SPANS, ss_body);
-    }
-    let rs_body = len_field_len(f::RS_RESOURCE, resource.len()) + scope_spans_total;
-    let total = len_field_len(f::RESOURCE_SPANS, rs_body);
+pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>]) -> Vec<u8> {
+    let total: usize = 16
+        + resource.len()
+        + scopes
+            .iter()
+            .map(|s| 12 + s.scope.len() + s.spans.len())
+            .sum::<usize>();
     let mut out = Vec::with_capacity(total);
-    write_len_prefix(&mut out, f::RESOURCE_SPANS, rs_body);
+    let rs = Padded::begin(&mut out, f::RESOURCE_SPANS);
     write_len_prefix(&mut out, f::RS_RESOURCE, resource.len());
     out.extend_from_slice(resource);
     for s in scopes {
-        let ss_body = len_field_len(f::SS_SCOPE, s.scope.len()) + s.spans.len();
-        write_len_prefix(&mut out, f::RS_SCOPE_SPANS, ss_body);
+        let ss = Padded::begin(&mut out, f::RS_SCOPE_SPANS);
         write_len_prefix(&mut out, f::SS_SCOPE, s.scope.len());
         out.extend_from_slice(s.scope);
         out.extend_from_slice(s.spans);
+        ss.finish(&mut out);
     }
-    debug_assert_eq!(out.len(), total);
+    rs.finish(&mut out);
     out
+}
+
+/// A nested message with a 4-byte padded varint length (bodies up to 256 MiB).
+struct Padded {
+    len_at: usize,
+}
+
+impl Padded {
+    fn begin(out: &mut Vec<u8>, field: u32) -> Padded {
+        proto::write_tag(out, field, proto::WireType::Len);
+        let len_at = out.len();
+        out.extend_from_slice(&[0x80, 0x80, 0x80, 0x00]);
+        Padded { len_at }
+    }
+    fn finish(self, out: &mut Vec<u8>) {
+        let n = out.len() - self.len_at - 4;
+        debug_assert!(n < (1 << 28));
+        out[self.len_at] = (n as u8 & 0x7f) | 0x80;
+        out[self.len_at + 1] = ((n >> 7) as u8 & 0x7f) | 0x80;
+        out[self.len_at + 2] = ((n >> 14) as u8 & 0x7f) | 0x80;
+        out[self.len_at + 3] = (n >> 21) as u8;
+    }
 }
 
 /// Number of `spans` entries in a concatenated buffer (walks tags only).
@@ -559,10 +561,9 @@ pub fn count_spans(spans: &[u8]) -> usize {
     let mut n = 0;
     let mut r = proto::Reader::new(spans);
     while let Ok(Some((field, _))) = r.next() {
-        if field == f::SS_SPANS || field == crate::http_record::FIELD {
+        if field == f::SS_SPANS {
             n += 1;
         }
     }
     n
 }
-

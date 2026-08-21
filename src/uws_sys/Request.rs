@@ -25,8 +25,21 @@ impl AnyRequest {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).telemetry_headers(),
             Self::H3(r) => {
                 let r = bun_opaque::opaque_deref_mut(*r);
-                let mut out = TelemetryHeaders { ptr: [core::ptr::null(); 5], len: [0; 5] };
-                for (i, name) in [&b"host"[..], b"user-agent", b"traceparent", b"tracestate", b"baggage"].iter().enumerate() {
+                let mut out = TelemetryHeaders {
+                    ptr: [core::ptr::null(); 5],
+                    len: [0; 5],
+                    path_len: u32::MAX,
+                };
+                for (i, name) in [
+                    &b"host"[..],
+                    b"user-agent",
+                    b"traceparent",
+                    b"tracestate",
+                    b"baggage",
+                ]
+                .iter()
+                .enumerate()
+                {
                     if let Some(v) = r.header(name) {
                         out.ptr[i] = v.as_ptr();
                         out.len[i] = v.len() as u32;
@@ -67,6 +80,8 @@ bun_opaque::opaque_ffi! {
 pub struct TelemetryHeaders {
     ptr: [*const u8; 5],
     len: [u32; 5],
+    /// Length of the path part of `url()` (up to `?`); `u32::MAX` if unknown.
+    pub path_len: u32,
 }
 
 impl TelemetryHeaders {
@@ -78,11 +93,21 @@ impl TelemetryHeaders {
         // SAFETY: ptr/len describe a slice owned by the request for its lifetime.
         Some(unsafe { bun_core::ffi::slice(self.ptr[i], self.len[i] as usize) })
     }
-    pub fn host(&self) -> Option<&[u8]> { self.get(0) }
-    pub fn user_agent(&self) -> Option<&[u8]> { self.get(1) }
-    pub fn traceparent(&self) -> Option<&[u8]> { self.get(2) }
-    pub fn tracestate(&self) -> Option<&[u8]> { self.get(3) }
-    pub fn baggage(&self) -> Option<&[u8]> { self.get(4) }
+    pub fn host(&self) -> Option<&[u8]> {
+        self.get(0)
+    }
+    pub fn user_agent(&self) -> Option<&[u8]> {
+        self.get(1)
+    }
+    pub fn traceparent(&self) -> Option<&[u8]> {
+        self.get(2)
+    }
+    pub fn tracestate(&self) -> Option<&[u8]> {
+        self.get(3)
+    }
+    pub fn baggage(&self) -> Option<&[u8]> {
+        self.get(4)
+    }
 }
 
 impl Request {
@@ -104,7 +129,11 @@ impl Request {
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
     pub fn telemetry_headers(&self) -> TelemetryHeaders {
-        let mut out = TelemetryHeaders { ptr: [core::ptr::null(); 5], len: [0; 5] };
+        let mut out = TelemetryHeaders {
+            ptr: [core::ptr::null(); 5],
+            len: [0; 5],
+            path_len: u32::MAX,
+        };
         c::uws_req_telemetry_headers(self, &mut out);
         out
     }

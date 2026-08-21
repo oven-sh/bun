@@ -244,7 +244,10 @@ impl Promise {
                 l,
             );
             // Never record arguments of credential-bearing commands.
-            let sensitive = matches!(&name[..n], b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG");
+            let sensitive = matches!(
+                &name[..n],
+                b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG"
+            );
             if bun_telemetry::rt::capture_db_statement() && !sensitive {
                 let first: &[u8] = match &command.args {
                     Args::Slices(a) => a.first().map(|s| s.slice()).unwrap_or(b""),

@@ -2,7 +2,9 @@
 
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_telemetry::pool::{self, NativeSpan};
-use bun_telemetry::{DEFAULT_LIMITS, Instrument, ScopeId, SpanContext, SpanKind, SpanStub, StatusCode, Value, clock};
+use bun_telemetry::{
+    DEFAULT_LIMITS, Instrument, ScopeId, SpanContext, SpanKind, SpanStub, StatusCode, Value, clock,
+};
 
 use super::{Entered, state};
 
@@ -23,23 +25,43 @@ pub fn begin_message(
         return None;
     }
     let stub = SpanStub::start(parent.as_ref(), &state().sampler, clock::now_unix_nanos());
-    let kind = if server { SpanKind::Server } else { SpanKind::Client };
-    let span = pool::begin(stub, ScopeId::from(Instrument::WebSocket), b"websocket.message", kind);
+    let kind = if server {
+        SpanKind::Server
+    } else {
+        SpanKind::Client
+    };
+    let span = pool::begin(
+        stub,
+        ScopeId::from(Instrument::WebSocket),
+        b"websocket.message",
+        kind,
+    );
     if stub.is_recording() {
         let l = &DEFAULT_LIMITS;
         pool::with(span, |s| {
-            s.push_attribute(b"websocket.opcode", &Value::Str(if binary { b"binary" } else { b"text" }), l);
+            s.push_attribute(
+                b"websocket.opcode",
+                &Value::Str(if binary { b"binary" } else { b"text" }),
+                l,
+            );
             s.push_attribute(b"messaging.message.body.size", &Value::Int(size as i64), l);
             if link.is_valid() {
                 bun_telemetry::otlp::encode_link(&mut s.extra, link, b"", &[]);
             }
         });
     }
-    Some((span, Entered::new(global, super::native_context_value(span))))
+    Some((
+        span,
+        Entered::new(global, super::native_context_value(span)),
+    ))
 }
 
 /// End a message span after the handler returned `result`.
-pub fn end_message(span: NativeSpan, global: &JSGlobalObject, result: JSValue) -> bun_jsc::JsResult<()> {
+pub fn end_message(
+    span: NativeSpan,
+    global: &JSGlobalObject,
+    result: JSValue,
+) -> bun_jsc::JsResult<()> {
     let r = if result.to_error().is_some() {
         record_exception_value(span, global, result)
     } else {
@@ -55,12 +77,20 @@ pub fn end_message(span: NativeSpan, global: &JSGlobalObject, result: JSValue) -
 }
 
 /// Record a thrown JS value as an `exception` event and set Error status.
-pub fn record_exception_value(span: NativeSpan, global: &JSGlobalObject, err: JSValue) -> bun_jsc::JsResult<()> {
+pub fn record_exception_value(
+    span: NativeSpan,
+    global: &JSGlobalObject,
+    err: JSValue,
+) -> bun_jsc::JsResult<()> {
     let mut ty_s = None;
     let mut msg_s = None;
     let mut stack_s = None;
     if err.is_object() {
-        for (key, out) in [("name", &mut ty_s), ("message", &mut msg_s), ("stack", &mut stack_s)] {
+        for (key, out) in [
+            ("name", &mut ty_s),
+            ("message", &mut msg_s),
+            ("stack", &mut stack_s),
+        ] {
             if let Some(v) = err.get(global, key)? {
                 if v.is_string() {
                     *out = Some(v.to_slice(global)?);

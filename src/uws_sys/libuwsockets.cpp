@@ -1724,11 +1724,14 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   struct uws_telemetry_headers_t {
     const char *ptr[5];
     uint32_t len[5];
+    /* Length of the path part of the URL (up to '?'). */
+    uint32_t path_len;
   };
   void uws_req_telemetry_headers(uws_req_t *res, struct uws_telemetry_headers_t *out)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
     memset(out, 0, sizeof(*out));
+    out->path_len = (uint32_t)uwsReq->getUrl().length();
     for (auto header : *uwsReq)
     {
       std::string_view k = header.first;

@@ -2,31 +2,35 @@
 //! Reading CLOCK_REALTIME per span would expose spans to NTP slew mid-trace;
 //! anchoring matches what the reference SDKs do with `performance.timeOrigin`.
 
-use std::sync::OnceLock;
+use core::sync::atomic::{AtomicU64, Ordering};
 
-struct Anchor {
-    epoch_ns: i128,
-    mono_ns: u64,
-}
-
-static ANCHOR: OnceLock<Anchor> = OnceLock::new();
+/// `epoch_ns - mono_ns` at the anchor (wrapping); 0 = not yet anchored.
+static OFFSET: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
 fn mono_now() -> u64 {
-    bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns()
+    let t = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+    (t.sec as u64)
+        .wrapping_mul(1_000_000_000)
+        .wrapping_add(t.nsec as u64)
 }
 
-fn anchor() -> &'static Anchor {
-    ANCHOR.get_or_init(|| Anchor {
-        epoch_ns: bun_core::time::nano_timestamp(),
-        mono_ns: mono_now(),
-    })
+#[cold]
+fn anchor() -> u64 {
+    let epoch_ns = bun_core::time::nano_timestamp() as u64;
+    let off = epoch_ns.wrapping_sub(mono_now()).max(1);
+    match OFFSET.compare_exchange(0, off, Ordering::Relaxed, Ordering::Relaxed) {
+        Ok(_) => off,
+        Err(existing) => existing,
+    }
 }
 
 /// Nanoseconds since the Unix epoch. Monotonic within the process.
 #[inline]
 pub fn now_unix_nanos() -> u64 {
-    let a = anchor();
-    let elapsed = mono_now().wrapping_sub(a.mono_ns);
-    (a.epoch_ns + elapsed as i128).max(1) as u64
+    let mut off = OFFSET.load(Ordering::Relaxed);
+    if off == 0 {
+        off = anchor();
+    }
+    mono_now().wrapping_add(off).max(1)
 }

@@ -1653,7 +1653,6 @@ name = "bun_telemetry"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_wyhash",
 ]
 
 [[package]]

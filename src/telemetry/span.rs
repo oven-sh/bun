@@ -283,7 +283,8 @@ impl SpanStub {
 
     #[inline]
     pub fn is_recording(&self) -> bool {
-        self.start_ns != 0 && (self.ctx.flags.0 & (Flags::SAMPLED | Flags::NON_RECORDING)) == Flags::SAMPLED
+        self.start_ns != 0
+            && (self.ctx.flags.0 & (Flags::SAMPLED | Flags::NON_RECORDING)) == Flags::SAMPLED
     }
 
     /// Start a child of `parent` (or a new root when `parent` is None/invalid).

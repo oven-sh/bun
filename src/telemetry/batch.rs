@@ -44,27 +44,14 @@ impl LocalBatch {
         self.count == 0
     }
 
-    pub(crate) fn take(&mut self) -> LocalBatch {
-        let out = LocalBatch {
-            scopes: core::mem::take(&mut self.scopes),
-            count: self.count,
-            bytes: self.bytes,
-        };
-        // Keep capacity vectors around for the common scopes.
-        self.scopes = out
-            .scopes
-            .iter()
-            .map(|v| {
-                Vec::with_capacity(if v.is_empty() {
-                    0
-                } else {
-                    v.len().next_power_of_two().min(64 * 1024)
-                })
-            })
-            .collect();
+    /// Reset after the processor copied the buffers out; capacity is kept.
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        for v in &mut self.scopes {
+            v.clear();
+        }
         self.count = 0;
         self.bytes = 0;
-        out
     }
 }
 
@@ -100,10 +87,17 @@ pub fn record(scope: ScopeId, write: impl FnOnce(&mut Vec<u8>)) {
 
 /// Move this thread's buffered spans to the global processor.
 pub fn flush_local() {
-    let taken = with_local(|l| if l.is_empty() { None } else { Some(l.take()) });
-    if let Some(b) = taken {
-        if let Some(p) = crate::processor::global() {
-            p.accept(b);
+    // The processor copies the buffers under its lock and we keep ours
+    // (and their capacity); it must not call back into the batch.
+    let export = with_local(|l| {
+        if l.is_empty() {
+            return None;
         }
+        let r = crate::processor::global().map(|p| (p, p.accept(l)));
+        l.clear();
+        r
+    });
+    if let Some((p, true)) = export {
+        p.export();
     }
 }

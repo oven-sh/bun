@@ -115,7 +115,10 @@ pub struct EnvConfig {
 
 fn truthy(v: &[u8]) -> bool {
     let v = v.trim_ascii();
-    v == b"1" || v.eq_ignore_ascii_case(b"true") || v.eq_ignore_ascii_case(b"yes") || v.eq_ignore_ascii_case(b"on")
+    v == b"1"
+        || v.eq_ignore_ascii_case(b"true")
+        || v.eq_ignore_ascii_case(b"yes")
+        || v.eq_ignore_ascii_case(b"on")
 }
 
 fn s(v: &[u8]) -> String {
@@ -279,7 +282,11 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
 
     // Exporter selection.
     let mut want_otlp = true;
-    let preset = get("BUN_OTEL_EXPORTER").or_else(|| bunfig.and_then(|b| b.exporter.clone()).map(|s| s.into_bytes()));
+    let preset = get("BUN_OTEL_EXPORTER").or_else(|| {
+        bunfig
+            .and_then(|b| b.exporter.clone())
+            .map(|s| s.into_bytes())
+    });
     if let Some(v) = preset {
         for name in bun_core::strings::split(&v, b",") {
             let name = name.trim_ascii();

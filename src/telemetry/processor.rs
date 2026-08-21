@@ -66,8 +66,14 @@ impl Default for BatchConfig {
     }
 }
 
+/// Spans that can arrive between crossing the batch threshold and the
+/// export taking the buffers (one local flush per thread).
+const LOCAL_FLUSH_HEADROOM: usize = 64;
+
 struct Pending {
     scopes: Vec<Vec<u8>>,
+    /// Buffers from the previous payload, kept for their capacity.
+    spare: Vec<Vec<u8>>,
     count: u32,
     /// `clock::now_unix_nanos()` when the oldest pending span arrived; 0 if empty.
     oldest_ns: u64,
@@ -125,6 +131,7 @@ impl Processor {
         Processor {
             pending: Mutex::new(Pending {
                 scopes: Vec::new(),
+                spare: Vec::new(),
                 count: 0,
                 oldest_ns: 0,
             }),
@@ -164,7 +171,12 @@ impl Processor {
     /// Called from any thread once nothing is in flight.
     /// Payloads parked for retry across all exporters.
     pub fn pending_retries(&self) -> usize {
-        self.exporters.read().unwrap().iter().map(|e| e.pending_retries()).sum()
+        self.exporters
+            .read()
+            .unwrap()
+            .iter()
+            .map(|e| e.pending_retries())
+            .sum()
     }
 
     /// Kick parked retries immediately.
@@ -206,44 +218,43 @@ impl Processor {
             .unwrap_or_default()
     }
 
-    /// Take a thread's batch. Triggers an export if the batch-size threshold
-    /// is crossed; otherwise the next `tick` past the schedule delay will.
-    pub fn accept(&'static self, batch: LocalBatch) {
+    /// Copy a thread's batch into the pending buffers. Returns true when the
+    /// batch-size threshold was crossed and the caller should [`export`]
+    /// (after releasing its own borrow); otherwise the next `tick` past the
+    /// schedule delay exports.
+    pub fn accept(&'static self, batch: &LocalBatch) -> bool {
         let cfg = *self.config.read().unwrap();
-        let export_now;
-        {
-            let mut p = self.pending.lock().unwrap();
-            if p.count >= cfg.max_queue_size {
-                self.stats
-                    .spans_dropped
-                    .fetch_add(batch.count as u64, Ordering::Relaxed);
-                return;
-            }
-            if p.scopes.len() < batch.scopes.len() {
-                p.scopes.resize_with(batch.scopes.len(), Vec::new);
-            }
-            for (i, buf) in batch.scopes.into_iter().enumerate() {
-                if buf.is_empty() {
-                    continue;
-                }
-                if p.scopes[i].is_empty() {
-                    p.scopes[i] = buf;
-                } else {
-                    p.scopes[i].extend_from_slice(&buf);
-                }
-            }
-            if p.count == 0 {
-                p.oldest_ns = clock::now_unix_nanos();
-            }
-            p.count += batch.count;
-            // One export in flight at a time (like the SDK's BatchSpanProcessor):
-            // while the exporter is busy the queue fills up to `max_queue_size`
-            // and then drops, instead of buffering unboundedly in the exporter.
-            export_now = p.count >= cfg.max_export_batch_size && self.inflight() == 0;
+        let mut p = self.pending.lock().unwrap();
+        if p.count >= cfg.max_queue_size {
+            self.stats
+                .spans_dropped
+                .fetch_add(batch.count as u64, Ordering::Relaxed);
+            return false;
         }
-        if export_now {
-            self.export();
+        if p.scopes.len() < batch.scopes.len() {
+            p.scopes.resize_with(batch.scopes.len(), Vec::new);
         }
+        for (i, buf) in batch.scopes.iter().enumerate() {
+            if buf.is_empty() {
+                continue;
+            }
+            let dst = &mut p.scopes[i];
+            if dst.capacity() == 0 {
+                // First batch for this scope since the last export: size for a
+                // full export batch so appends don't regrow.
+                let per_span = buf.len() / (batch.count.max(1) as usize) + 1;
+                dst.reserve(per_span * (cfg.max_export_batch_size as usize + LOCAL_FLUSH_HEADROOM));
+            }
+            dst.extend_from_slice(buf);
+        }
+        if p.count == 0 {
+            p.oldest_ns = clock::now_unix_nanos();
+        }
+        p.count += batch.count;
+        // One export in flight at a time (like the SDK's BatchSpanProcessor):
+        // while the exporter is busy the queue fills up to `max_queue_size`
+        // and then drops, instead of buffering unboundedly in the exporter.
+        p.count >= cfg.max_export_batch_size && self.inflight() == 0
     }
 
     /// Periodic driver; call from each event loop every ~`scheduled_delay`.
@@ -269,27 +280,39 @@ impl Processor {
     fn take_payload(&self) -> Option<Arc<ExportPayload>> {
         let (scopes, count) = {
             let mut p = self.pending.lock().unwrap();
+            let p = &mut *p;
             if p.count == 0 {
                 return None;
             }
             let count = p.count;
             p.count = 0;
             p.oldest_ns = 0;
-            (core::mem::take(&mut p.scopes), count)
+            let mut spare = core::mem::take(&mut p.spare);
+            for v in &mut spare {
+                v.clear();
+            }
+            (core::mem::replace(&mut p.scopes, spare), count)
         };
-        let resource = self.resource();
-        let scope_defs = self.scopes.read().unwrap();
-        let chunks: Vec<otlp::ScopeChunk<'_>> = scopes
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| !b.is_empty())
-            .map(|(i, b)| otlp::ScopeChunk {
-                scope: scope_defs.get(i).map(|s| &**s).unwrap_or(&[]),
-                spans: b,
-            })
-            .collect();
-        let limits = crate::rt::hooks().map(|h| (h.limits)()).unwrap_or(crate::data::DEFAULT_LIMITS);
-        let body = otlp::encode_request(&resource, &chunks, &limits);
+        let body = {
+            let resource = self.resource();
+            let scope_defs = self.scopes.read().unwrap();
+            let chunks: Vec<otlp::ScopeChunk<'_>> = scopes
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| !b.is_empty())
+                .map(|(i, b)| otlp::ScopeChunk {
+                    scope: scope_defs.get(i).map(|s| &**s).unwrap_or(&[]),
+                    spans: b,
+                })
+                .collect();
+            otlp::encode_request(&resource, &chunks)
+        };
+        {
+            let mut p = self.pending.lock().unwrap();
+            if p.spare.is_empty() {
+                p.spare = scopes;
+            }
+        }
         Some(Arc::new(ExportPayload {
             body,
             span_count: count,

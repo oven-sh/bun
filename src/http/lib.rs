@@ -306,12 +306,17 @@ pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
         return 0;
     }
     /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h).
-    const SWEEP_SECONDS: u64 = 4;
-    let raw = raw.min(238 * 60);
-    (if raw + SWEEP_SECONDS > 240 {
-        (raw.div_ceil(60) + 1) * 60
+    const SHORT_WHEEL_PERIOD_SECONDS: u64 = 4;
+    const LONG_WHEEL_PERIOD_SECONDS: u64 = 60;
+    /// `SocketTimeout::set_timeout` routes values above this to the long wheel.
+    const SHORT_WHEEL_MAX_SECONDS: u64 = 240;
+    /// The long counter wraps `% 240` minutes; one minute of pad stays below.
+    const MAX_RAW_SECONDS: u64 = 238 * LONG_WHEEL_PERIOD_SECONDS;
+    let raw = raw.min(MAX_RAW_SECONDS);
+    (if raw + SHORT_WHEEL_PERIOD_SECONDS > SHORT_WHEEL_MAX_SECONDS {
+        (raw.div_ceil(LONG_WHEEL_PERIOD_SECONDS) + 1) * LONG_WHEEL_PERIOD_SECONDS
     } else {
-        raw + SWEEP_SECONDS
+        raw + SHORT_WHEEL_PERIOD_SECONDS
     }) as c_uint
 }
 

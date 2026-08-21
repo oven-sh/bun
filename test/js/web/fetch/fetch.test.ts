@@ -3534,7 +3534,11 @@ it("a numeric `timeout` does not abort in-flight requests on the 4s sweep tick",
   });
   const errors: string[] = [];
   const start = Date.now();
-  const worker = async () => {
+  const worker = async (offsetMs: number) => {
+    // Stagger the start so the workers' request waves interleave: workers
+    // launched together stay phase-locked, and their inter-request gaps
+    // could all line up with the sweep tick.
+    await Bun.sleep(offsetMs);
     while (Date.now() - start < WINDOW_MS && errors.length === 0) {
       const t0 = Date.now();
       try {
@@ -3547,7 +3551,7 @@ it("a numeric `timeout` does not abort in-flight requests on the 4s sweep tick",
   };
   // Three staggered workers so a sweep tick always lands on an in-flight
   // request in the unfixed build.
-  await Promise.all([worker(), worker(), worker()]);
+  await Promise.all([worker(0), worker(SLEEP_MS / 3), worker((2 * SLEEP_MS) / 3)]);
   expect(errors).toEqual([]);
 }, 20_000);
 

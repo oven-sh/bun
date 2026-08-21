@@ -2098,6 +2098,39 @@ describe("Bun.serve WebTransport", () => {
     }
   });
 
+  test("stop(true) with a live session on an http3-only server", async () => {
+    const closes: number[] = [];
+    const server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      // No TCP listener, so taking the HTTP/3 one leaves `has_listener()`
+      // false while the abrupt close is still draining. The session's close
+      // then reports the server drained from inside that drain, and the idle
+      // pass it triggers would run under the frame's own `&mut self`.
+      http1: false,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+        close() {
+          closes.push(1);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("alive");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      await server.stop(true);
+      expect(closes).toEqual([1]);
+    } finally {
+      await wt.close();
+    }
+  });
+
   test("an unknown capsule larger than the buffer is ignored, not fatal", async () => {
     const closes: number[] = [];
     await using server = Bun.serve({

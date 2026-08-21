@@ -147,10 +147,15 @@ struct Http3WebTransportSession {
     void reportClose(uint32_t code, std::string_view reason) {
         Http3ResponseData *rd = getData();
         auto cb = rd->wtOnClose;
+        /* Nothing is written to `rd` after the callback: a caller that reset
+         * the stream has already queued its on_close, and the callback's own
+         * event-loop exit can drain the engine and free this ext block.
+         * `wtUserData` stays set because it is how the callback finds its
+         * session, and nothing reads it once `wtOnClose` is null and the
+         * session is detached. */
         rd->wtOnClose = nullptr;
         us_quic_wt_detach(stream());
         if (cb) cb(this, code, reason.data(), reason.size());
-        rd->wtUserData = nullptr;
     }
 
     /* Bytes a capsule header needs given the `have` already in hand. Each

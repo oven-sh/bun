@@ -1717,6 +1717,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Graceful: GOAWAY + drain via the still-open UDP socket; the
                 // engine rejects new conns and the timer keeps in-flight streams
                 // progressing until deinit. Abrupt: close the fd now.
+                //
+                // Bracketed like the TCP `app.close()` below: both drain
+                // synchronously, and a WebTransport session's close defers
+                // calls `on_webtransport_closed`, which would dispatch
+                // `deinit_if_we_can` through a fresh `&mut NewServer` while
+                // this frame still holds `&mut self`. `h3_listener` is already
+                // taken, so on an HTTP/3-only server `has_listener()` is
+                // false by now and the nested pass would run in full.
+                self.deinit_running.set(true);
                 if !abrupt {
                     if let Some(h3a) = self.h3_app {
                         // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -1726,6 +1735,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     bun_opaque::opaque_deref_mut(h3l).close();
                 }
+                self.deinit_running.set(false);
             }
         }
 
@@ -4050,17 +4060,8 @@ impl AnyServer {
         any_server_dispatch!(self, |s| s.note_websocket_opened());
     }
 
-    /// Decrement the live-socket count and, when the last socket drained on
-    /// an already-stopped server, run the idle pass so the `JsRef` downgrade
-    /// (and deferred deinit) that was held back by the open sockets fires.
-    ///
-    /// Skipped while still listening (the idle pass would no-op). Re-entrance
-    /// during the abrupt-stop synchronous drain is handled by the
-    /// `deinit_running` guard inside `deinit_if_we_can` itself — gating on
-    /// `TERMINATED` here also blocked the post-`stop(true)` close defer that
-    /// must fire the downgrade when `stop` was called from inside a close
-    /// handler (the socket whose handler ran decrements only after `stop`
-    /// returns, so `stop`'s own idle pass still sees it live).
+    /// The [`Self::on_webtransport_closed`] counterpart. Increment only; the
+    /// idle pass has nothing to do while a session is being added.
     pub(crate) fn note_webtransport_opened_any(&self) {
         any_server_dispatch!(self, |s| s.note_webtransport_opened())
     }
@@ -4076,6 +4077,17 @@ impl AnyServer {
         }
     }
 
+    /// Decrement the live-socket count and, when the last socket drained on
+    /// an already-stopped server, run the idle pass so the `JsRef` downgrade
+    /// (and deferred deinit) that was held back by the open sockets fires.
+    ///
+    /// Skipped while still listening (the idle pass would no-op). Re-entrance
+    /// during the abrupt-stop synchronous drain is handled by the
+    /// `deinit_running` guard inside `deinit_if_we_can` itself — gating on
+    /// `TERMINATED` here also blocked the post-`stop(true)` close defer that
+    /// must fire the downgrade when `stop` was called from inside a close
+    /// handler (the socket whose handler ran decrements only after `stop`
+    /// returns, so `stop`'s own idle pass still sees it live).
     fn on_websocket_closed(&self) {
         let drained =
             any_server_dispatch!(self, |s| s.note_websocket_closed() && !s.has_listener());

@@ -4910,8 +4910,7 @@ impl<'a> HTTPClient<'a> {
             print_response(response);
         }
 
-        // RFC 9112 §6.3: 1xx/204/304 responses end at the header block regardless of
-        // any Content-Length or Transfer-Encoding header, so neither may select a body reader.
+        // RFC 9112 §6.3: 1xx/204/304 have no body regardless of framing headers.
         if (response.status_code >= 100 && response.status_code < 200)
             || response.status_code == 204
             || response.status_code == 304

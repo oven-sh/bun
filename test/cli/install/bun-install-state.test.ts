@@ -26,7 +26,15 @@ afterAll(dummyAfterAll);
 let urls: string[];
 
 async function install(cwd: string, args: string[] = []) {
-  await using proc = spawn({ cmd: [bunExe(), "install", ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+  // the CI runner exports BUN_INSTALL_CACHE_DIR, which would override the bunfig cache
+  // dir these tests inspect; pin it to the project's own cache
+  await using proc = spawn({
+    cmd: [bunExe(), "install", ...args],
+    cwd,
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(package_dir, ".cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { out, err, code };
 }

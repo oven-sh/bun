@@ -84,8 +84,13 @@ extern "C" fn ConcurrentCppTask__createAndRun(
 ) {
     crate::mark_binding!();
     let vm = global.bun_vm();
-    vm.event_loop_shared().ref_keep_alive();
-    let ticket = vm.ticket();
+    // The result comes back through `postTaskTo` → `post_cpp_task`, a weak
+    // post that lands on the regular loop even while a macro runs, so the
+    // keep-alive and the ticket that releases it live there too: a macro-loop
+    // delta posted from the pool thread would sit unfolded once the macro
+    // returned (that loop only ticks inside a macro wait).
+    vm.regular_event_loop.ref_keep_alive();
+    let ticket = vm.regular_ticket();
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,
         ticket,

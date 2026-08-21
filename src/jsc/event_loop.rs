@@ -586,15 +586,29 @@ impl EventLoop {
 
         self.run_imminent_gc_timer();
 
-        let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
-        if count == 0 {
-            return 0;
+        let start_count = self.tasks.readable_length();
+        let posted = self.concurrent_tasks.pop_batch();
+        self.take_concurrent_batch(posted);
+        if let Some(regular) = self.regular_loop_during_macro() {
+            regular.apply_concurrent_ref_delta();
+            let posted = regular.concurrent_tasks.pop_batch();
+            self.take_concurrent_batch(posted);
+        }
+        self.tasks.readable_length() - start_count
+    }
+
+    /// Move a popped batch into `self.tasks`, freeing the heap
+    /// `ConcurrentTask` carriers that asked for it.
+    fn take_concurrent_batch(
+        &mut self,
+        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
+    ) {
+        if batch.count == 0 {
+            return;
         }
 
-        let mut iter = concurrent.iterator();
-        let start_count = self.tasks.readable_length();
-        let _ = self.tasks.ensure_unused_capacity(count);
+        let mut iter = batch.iterator();
+        let _ = self.tasks.ensure_unused_capacity(batch.count);
 
         // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
         let mut to_destroy: Option<*mut ConcurrentTaskItem> = None;
@@ -625,8 +639,23 @@ impl EventLoop {
             // SAFETY: see above
             let _ = unsafe { bun_core::heap::take(dest) };
         }
+    }
 
-        self.tasks.readable_length() - start_count
+    /// The regular loop, when this is the macro loop a macro wait is ticking.
+    /// A cross-thread post that carries no ticket (`VmHandle::post_cpp_task` —
+    /// a WebCrypto result delivered through `postTaskTo`) always lands on the
+    /// regular loop, which does not tick while a macro is being waited on, so
+    /// the wait services that queue too or a macro could never await such work.
+    fn regular_loop_during_macro(&self) -> Option<&EventLoop> {
+        let vm = self.vm();
+        // SAFETY: `vm` is the live owning VM (set in `init()`). `addr_of!`
+        // projects to sibling fields without materializing a
+        // `&VirtualMachine` that would alias the `&mut self` callers hold.
+        unsafe {
+            (core::ptr::addr_of!((*vm).macro_mode).read()
+                && core::ptr::eq(self, core::ptr::addr_of!((*vm).macro_event_loop)))
+            .then(|| &*core::ptr::addr_of!((*vm).regular_event_loop))
+        }
     }
 
     /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`

@@ -140,7 +140,25 @@ impl AnyEventLoop {
         context: *mut core::ffi::c_void,
         is_done: fn(*mut core::ffi::c_void) -> bool,
     ) {
+        // SAFETY: forwarded contract.
+        unsafe { Self::tick_raw_with_deadline(this, context, is_done, |_| None) }
+    }
+
+    /// `tick_raw` with an optional per-iteration upper bound on how long the loop may
+    /// block waiting for I/O: `max_block_ms(context)` is consulted before each tick and,
+    /// when it returns `Some(ms)`, the Mini loop wakes after at most `ms` even if no
+    /// socket is ready (the JS loop already has its own timers).
+    ///
+    /// # Safety
+    /// Same as `tick_raw`.
+    pub unsafe fn tick_raw_with_deadline(
+        this: *mut Self,
+        context: *mut core::ffi::c_void,
+        is_done: fn(*mut core::ffi::c_void) -> bool,
+        max_block_ms: fn(*mut core::ffi::c_void) -> Option<u64>,
+    ) {
         while !is_done(context) {
+            let bound = max_block_ms(context);
             // SAFETY: per fn contract — reborrow strictly after `is_done`
             // returns; the borrow ends at the bottom of this loop body before
             // the next `is_done` call.
@@ -155,7 +173,10 @@ impl AnyEventLoop {
                     // `&mut mini` across `is_done`. A single `tick_once`
                     // borrow ends at the bottom of this match arm before the
                     // next `is_done` reborrow.
-                    mini.tick_once(context);
+                    match bound {
+                        Some(ms) => mini.tick_once_with_timeout(context, ms),
+                        None => mini.tick_once(context),
+                    }
                 }
             }
         }

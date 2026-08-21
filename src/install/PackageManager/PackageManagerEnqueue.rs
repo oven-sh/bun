@@ -570,6 +570,57 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
+/// Backoff before retry `attempt` (1-based): 250ms, 500ms, 1s, 2s, 4s… capped at 10s,
+/// with ±20% jitter so a fleet of installs doesn't retry in lockstep. A `Retry-After`
+/// hint (seconds) from the server wins when larger.
+pub fn retry_backoff_ms(attempt: u16, retry_after_secs: Option<u32>) -> u64 {
+    let base: u64 = 250u64.saturating_mul(1u64 << (attempt.saturating_sub(1).min(6) as u64));
+    let base = base.min(10_000);
+    let jitter = (bun_core::fast_random() % (base / 5 + 1)) as i64 - (base / 10) as i64;
+    let ms = (base as i64 + jitter).max(50) as u64;
+    match retry_after_secs {
+        Some(s) => ms.max(u64::from(s).saturating_mul(1000).min(60_000)),
+        None => ms,
+    }
+}
+
+/// Re-enqueue `task` after a backoff instead of immediately: registries answer 429/5xx
+/// under load and an instant retry storm only makes it worse.
+pub fn enqueue_network_task_for_retry(
+    this: &mut PackageManager,
+    task: *mut NetworkTask,
+    attempt: u16,
+    retry_after_secs: Option<u32>,
+) {
+    let delay = retry_backoff_ms(attempt, retry_after_secs);
+    let not_before = (bun_core::time::milli_timestamp().max(0) as u64).saturating_add(delay);
+    this.retry_queue.push((not_before, task));
+}
+
+/// Move retries whose backoff elapsed into the network fifo. Returns how many are
+/// still waiting (callers use it to keep the loop alive).
+pub fn flush_due_retries(this: &mut PackageManager) -> usize {
+    if this.retry_queue.is_empty() {
+        return 0;
+    }
+    let now = bun_core::time::milli_timestamp().max(0) as u64;
+    let mut i = 0;
+    while i < this.retry_queue.len() {
+        if this.retry_queue[i].0 <= now {
+            let (_, task) = this.retry_queue.swap_remove(i);
+            if this.network_task_fifo.writable_length() == 0 {
+                // fifo full: put it back and let the caller's flush drain first
+                this.retry_queue.push((0, task));
+                break;
+            }
+            this.network_task_fifo.write_item_assume_capacity(task);
+        } else {
+            i += 1;
+        }
+    }
+    this.retry_queue.len()
+}
+
 /// Hands the task to the patch-task fifo as a raw pointer; it is reclaimed once
 /// in `run_tasks` after the thread pool pushes it onto `patch_task_queue`.
 pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {

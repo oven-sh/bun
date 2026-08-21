@@ -439,3 +439,41 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
     }
   });
 });
+
+// Retries are spaced out (exponential backoff) instead of fired back-to-back, and a
+// `Retry-After` header on a 429/503 is honoured.
+it("backs off between retries and honours Retry-After", async () => {
+  const tarballHits: number[] = [];
+  setHandler(async request => {
+    const { pathname } = new URL(request.url);
+    if (pathname.endsWith(".tgz")) {
+      tarballHits.push(performance.now());
+      if (tarballHits.length === 1) return new Response("busy", { status: 503, headers: { "Retry-After": "1" } });
+      if (tarballHits.length === 2) return new Response("oops", { status: 500 });
+      return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+    }
+    return Response.json({
+      name: "BaR",
+      versions: { "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } } },
+      "dist-tags": { latest: "0.0.2" },
+    });
+  });
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "BaR", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(await exited).toBe(0);
+  expect(tarballHits.length).toBe(3);
+  // Retry-After: 1 → at least ~1s before the second attempt
+  expect(tarballHits[1] - tarballHits[0]).toBeGreaterThanOrEqual(900);
+  // second retry waits ~500ms ± jitter (never immediate)
+  expect(tarballHits[2] - tarballHits[1]).toBeGreaterThanOrEqual(150);
+});

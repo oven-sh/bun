@@ -320,6 +320,31 @@ impl MiniEventLoop {
         }
     }
 
+    /// Like `tick_once` but never blocks longer than `timeout_ms` waiting for I/O.
+    /// Used by callers that keep their own deadlines (e.g. install retry backoff)
+    /// and must run again even if no socket becomes ready.
+    #[inline]
+    pub fn tick_once_with_timeout(&mut self, context: *mut c_void, timeout_ms: u64) {
+        if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
+            let ts = bun_core::Timespec {
+                sec: i64::try_from(timeout_ms / 1000).unwrap_or(i64::MAX),
+                nsec: i64::try_from((timeout_ms % 1000) * 1_000_000).unwrap_or(0),
+            };
+            // SAFETY: see `loop_ptr()` invariant.
+            unsafe {
+                (*self.loop_ptr()).inc();
+                (*self.loop_ptr()).tick_with_timeout(Some(&ts), 0 /* NOW_NS_UNKNOWN */);
+                (*self.loop_ptr()).dec();
+            }
+            self.on_after_event_loop();
+        }
+
+        while let Some(task) = self.tasks.read_item() {
+            // SAFETY: see tick_once.
+            unsafe { (*task).run(context) };
+        }
+    }
+
     pub(crate) fn tick_without_idle(&mut self, context: *mut c_void) {
         loop {
             let _ = self.tick_concurrent_with_count();

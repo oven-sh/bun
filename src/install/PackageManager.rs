@@ -359,6 +359,9 @@ pub struct PackageManager {
     pub(crate) network_tarball_batch: thread_pool::Batch,
     pub(crate) network_resolve_batch: thread_pool::Batch,
     pub(crate) network_task_fifo: NetworkQueue,
+    /// Network tasks waiting out a retry backoff: (not-before ms timestamp, task).
+    /// Drained into `network_task_fifo` by `flush_due_retries` (see runTasks).
+    pub(crate) retry_queue: Vec<(u64, *mut NetworkTask)>,
     pub(crate) patch_apply_batch: thread_pool::Batch,
     pub(crate) patch_calc_hash_batch: thread_pool::Batch,
     pub(crate) patch_task_fifo: PatchTaskFifo,
@@ -990,11 +993,22 @@ impl PackageManager {
         // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
         // calls (never across them), so the callback's `&mut PackageManager`
         // never overlaps a live `&mut AnyEventLoop`.
+        fn retry_deadline<C>(_p: *mut c_void) -> Option<u64> {
+            // Retry backoff deadlines are the only timer the install loop keeps: when any
+            // are pending, never block in the socket loop past the earliest one.
+            let pm = PackageManager::get();
+            let now = bun_core::time::milli_timestamp().max(0) as u64;
+            pm.retry_queue
+                .iter()
+                .map(|(t, _)| t.saturating_sub(now).max(1))
+                .min()
+        }
         unsafe {
-            AnyEventLoop::tick_raw(
+            AnyEventLoop::tick_raw_with_deadline(
                 event_loop,
                 (&raw mut erased).cast::<c_void>(),
                 trampoline::<C>,
+                retry_deadline::<C>,
             )
         };
     }
@@ -2040,6 +2054,7 @@ pub fn init(
             }
         );
         wr!(network_task_fifo, NetworkQueue::init());
+        wr!(retry_queue, Vec::new());
         wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(log, ctx.log);
         wr!(root_dir, entries_option);
@@ -2483,6 +2498,7 @@ fn init_with_runtime_once(
             }
         );
         wr!(network_task_fifo, NetworkQueue::init());
+        wr!(retry_queue, Vec::new());
         wr!(log, std::ptr::from_mut(log));
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());

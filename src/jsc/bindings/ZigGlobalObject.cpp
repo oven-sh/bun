@@ -3697,6 +3697,43 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginStringHolder = sourceURL.path().toString();
     }
 
+    if (referrerAsyncOrder == -1 && vm.topCallFrame) {
+        // The lexical referrer of this import() has no asyncEvaluationOrder,
+        // but the call can still run synchronously inside the body of a module
+        // that is mid top-level-await (a helper module's function invoked from
+        // that body). Waiting on that module at innerModuleEvaluation 12.b.v
+        // is the same guaranteed deadlock the referrerAsyncOrder skip exists
+        // for, so take the order from the nearest caller frame whose module
+        // has one. #39831.
+        auto* moduleLoader = globalObject->moduleLoader();
+        JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            // Only module body frames matter: a module's asyncEvaluationOrder
+            // is live exactly while its body runs (pre-first-await) on this
+            // stack. This also keeps the walk cheap for the common case of an
+            // import() with no module body on the stack at all.
+            if (visitor->codeType() != JSC::StackVisitor::Frame::Module)
+                return WTF::IterationStatus::Continue;
+            auto* codeBlock = visitor->codeBlock();
+            if (!codeBlock)
+                return WTF::IterationStatus::Continue;
+            const auto& frameURL = codeBlock->ownerExecutable()->sourceOrigin().url();
+            if (!frameURL.protocolIsFile())
+                return WTF::IterationStatus::Continue;
+            if (frameURL == sourceURL)
+                return WTF::IterationStatus::Continue;
+            auto path = frameURL.fileSystemPath();
+            auto query = frameURL.queryWithLeadingQuestionMark();
+            auto frameKey = query.isEmpty()
+                ? JSC::Identifier::fromString(vm, path)
+                : JSC::Identifier::fromString(vm, makeString(path, query));
+            int64_t order = moduleLoader->asyncEvaluationOrderForKey(frameKey);
+            if (order == -1)
+                return WTF::IterationStatus::Continue;
+            referrerAsyncOrder = order;
+            return WTF::IterationStatus::Done;
+        });
+    }
+
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());

@@ -200,6 +200,46 @@ test("static sibling import waits for an indirectly-shared TLA dep in the same E
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/39831
+// Same self-deadlock as the first test, but the import() call site lives in a
+// sync helper module, invoked from the entry's TLA body. The lexical referrer
+// (utils.mjs) has no asyncEvaluationOrder, so the skip must fall back to the
+// caller frames on the stack to find the mid-TLA module (the entry).
+test("dynamic import through a helper module whose target imports the TLA awaiter back does not deadlock", async () => {
+  using dir = tempDir("dyn-tla-cycle-helper", {
+    "index.mjs": `
+      import { load } from "./utils.mjs";
+      export const x = 1;
+      const mod = await load();
+      console.log("mod:", mod.value);
+      console.log("done");
+    `,
+    "utils.mjs": `
+      export function load() {
+        return import("./mod.mjs");
+      }
+    `,
+    "mod.mjs": `
+      import { x } from "./index.mjs";
+      export const value = x + 1;
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("mod: 2\ndone");
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/30634
 test("sibling dynamic imports sharing a TLA wrapper wait for its post-await exports", async () => {
   using dir = tempDir("dyn-tla-shared-wrapper", {

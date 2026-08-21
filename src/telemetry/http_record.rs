@@ -188,6 +188,7 @@ pub fn has_records(spans: &[u8]) -> bool {
 
 /// Copy `spans` into `out`, expanding records into `Span` entries.
 pub fn expand_into(out: &mut Vec<u8>, spans: &[u8], limits: &Limits) {
+    let mut x = Expander::new(limits);
     let mut r = proto::Reader::new(spans);
     let mut last = 0;
     loop {
@@ -198,33 +199,65 @@ pub fn expand_into(out: &mut Vec<u8>, spans: &[u8], limits: &Limits) {
         }
         out.extend_from_slice(&spans[last..start]);
         last = r.pos;
-        expand_one(out, body.as_bytes(), limits);
+        x.expand_one(out, body.as_bytes());
     }
     out.extend_from_slice(&spans[last..]);
 }
 
-fn expand_one(out: &mut Vec<u8>, body: &[u8], limits: &Limits) -> Option<()> {
+/// Consecutive server spans usually differ only in ids, times, path and
+/// client port. The encoding of everything else is cached as a template
+/// keyed by the remaining record bytes; a hit is one copy plus fixed-offset
+/// patches and the per-request attributes appended at the end.
+struct Template {
+    hash: u64,
+    key: Vec<u8>,
+    /// Encoded span up to (not including) the per-request tail.
+    bytes: Vec<u8>,
+    has_parent: bool,
+}
+
+const TEMPLATES: usize = 8;
+
+pub struct Expander<'l> {
+    limits: &'l Limits,
+    templates: Vec<Template>,
+    next_evict: usize,
+    key: Vec<u8>,
+}
+
+struct Parsed<'a> {
+    flags: u8,
+    method: &'a [u8],
+    ip: &'a [u8],
+    client_port: u16,
+    status: u16,
+    start_ns: u64,
+    end_ns: u64,
+    trace_id: [u8; 16],
+    span_id: [u8; 8],
+    parent: [u8; 8],
+    trace_flags: u8,
+    dropped_attrs: u16,
+    url: &'a [u8],
+    host: &'a [u8],
+    ua: &'a [u8],
+    route: &'a [u8],
+    attrs: &'a [u8],
+    extra: &'a [u8],
+    trace_state: &'a [u8],
+    name_override: &'a [u8],
+    status_code: u8,
+    status_message: &'a [u8],
+    /// `raw` minus the leading url entry (template key material).
+    raw_rest: &'a [u8],
+}
+
+fn parse(body: &[u8]) -> Option<Parsed<'_>> {
     let mut c = Cursor { b: body };
     let h = c.take(HEADER_LEN)?;
     if h[0] != 1 {
         return None;
     }
-    let flags = h[1];
-    let method = &h[3..3 + (h[2].min(7) as usize)];
-    let ip_len = h[10] as usize;
-    let ip = &h[11..11 + ip_len.min(16)];
-    let client_port = u16::from_le_bytes([h[27], h[28]]);
-    let status = u16::from_le_bytes([h[29], h[30]]);
-    let start_ns = u64::from_le_bytes(h[31..39].try_into().ok()?);
-    let end_ns = u64::from_le_bytes(h[39..47].try_into().ok()?);
-    let mut trace_id = [0u8; 16];
-    trace_id.copy_from_slice(&h[47..63]);
-    let mut span_id = [0u8; 8];
-    span_id.copy_from_slice(&h[63..71]);
-    let mut parent = [0u8; 8];
-    parent.copy_from_slice(&h[71..79]);
-    let trace_flags = h[79];
-    let dropped_attrs = u16::from_le_bytes([h[80], h[81]]);
     let raw = c.str32()?;
     let attrs = c.str32()?;
     let extra = c.str32()?;
@@ -232,26 +265,177 @@ fn expand_one(out: &mut Vec<u8>, body: &[u8], limits: &Limits) -> Option<()> {
     let name_override = c.str16()?;
     let status_code = c.take(1)?[0];
     let status_message = c.str16()?;
-
     let (mut url, mut host, mut ua, mut route): (&[u8], &[u8], &[u8], &[u8]) = (b"", b"", b"", b"");
+    let mut raw_rest = raw;
     let mut s = Cursor { b: raw };
+    let mut first = true;
     while let Some(t) = s.take(3) {
         let n = u16::from_le_bytes([t[1], t[2]]) as usize;
         let Some(v) = s.take(n) else { break };
         match t[0] {
-            S_URL => url = v,
+            S_URL => {
+                url = v;
+                if first {
+                    raw_rest = s.b;
+                }
+            }
             S_HOST => host = v,
             S_UA => ua = v,
             S_ROUTE => route = v,
             _ => {}
         }
+        first = false;
+    }
+    Some(Parsed {
+        flags: h[1],
+        method: &h[3..3 + (h[2].min(7) as usize)],
+        ip: &h[11..11 + (h[10] as usize).min(16)],
+        client_port: u16::from_le_bytes([h[27], h[28]]),
+        status: u16::from_le_bytes([h[29], h[30]]),
+        start_ns: u64::from_le_bytes(h[31..39].try_into().ok()?),
+        end_ns: u64::from_le_bytes(h[39..47].try_into().ok()?),
+        trace_id: h[47..63].try_into().ok()?,
+        span_id: h[63..71].try_into().ok()?,
+        parent: h[71..79].try_into().ok()?,
+        trace_flags: h[79],
+        dropped_attrs: u16::from_le_bytes([h[80], h[81]]),
+        url,
+        host,
+        ua,
+        route,
+        attrs,
+        extra,
+        trace_state,
+        name_override,
+        status_code,
+        status_message,
+        raw_rest,
+    })
+}
+
+// Byte offsets inside an encoded span (see SpanWriter::begin): tag, two
+// length bytes, then the fixed-shape prefix.
+const OFF_TRACE_ID: usize = 3 + 2;
+const OFF_SPAN_ID: usize = OFF_TRACE_ID + 16 + 2;
+const OFF_PARENT: usize = OFF_SPAN_ID + 8 + 2;
+#[inline]
+fn off_start(has_parent: bool) -> usize {
+    (if has_parent { OFF_PARENT + 8 } else { OFF_SPAN_ID + 8 }) + 2 + 1
+}
+
+impl<'l> Expander<'l> {
+    pub fn new(limits: &'l Limits) -> Self {
+        Expander { limits, templates: Vec::with_capacity(TEMPLATES), next_evict: 0, key: Vec::with_capacity(256) }
     }
 
-    let stub = SpanStub {
-        ctx: SpanContext { trace_id: TraceId(trace_id), span_id: SpanId(span_id), flags: Flags(trace_flags) },
-        parent: SpanId(parent),
-        start_ns,
+    pub fn expand_one(&mut self, out: &mut Vec<u8>, body: &[u8]) -> Option<()> {
+        let p = parse(body)?;
+        // Tiny attribute budgets make the appended tail interact with the
+        // dropped count; not worth templating.
+        if self.limits.attributes < 16 {
+            return expand_slow(out, &p, self.limits, true).map(|_| ());
+        }
+        let has_parent = p.parent != [0u8; 8];
+        let key = &mut self.key;
+        key.clear();
+        key.extend_from_slice(&[p.flags, has_parent as u8, p.status_code, p.method.len() as u8, p.ip.len() as u8]);
+        key.extend_from_slice(p.method);
+        key.extend_from_slice(p.ip);
+        key.extend_from_slice(&p.status.to_le_bytes());
+        key.extend_from_slice(&p.dropped_attrs.to_le_bytes());
+        for part in [p.raw_rest, p.attrs, p.extra, p.trace_state, p.name_override, p.status_message] {
+            key.extend_from_slice(&(part.len() as u32).to_le_bytes());
+            key.extend_from_slice(part);
+        }
+        let hash = bun_wyhash::hash(key);
+        let idx = self.templates.iter().position(|t| t.hash == hash && t.key == *key);
+        let idx = match idx {
+            Some(i) => i,
+            None => {
+                let start = out.len();
+                let tail_at = expand_slow(out, &p, self.limits, false)?;
+                let t = Template { hash, key: key.clone(), bytes: out[start..tail_at].to_vec(), has_parent };
+                debug_assert_eq!(&t.bytes[OFF_TRACE_ID..OFF_TRACE_ID + 16], &p.trace_id);
+                debug_assert_eq!(&t.bytes[OFF_SPAN_ID..OFF_SPAN_ID + 8], &p.span_id);
+                debug_assert_eq!(&t.bytes[off_start(has_parent)..off_start(has_parent) + 8], &p.start_ns.to_le_bytes());
+                debug_assert_eq!(&t.bytes[off_start(has_parent) + 9..off_start(has_parent) + 17], &p.end_ns.to_le_bytes());
+                // Finish this span: append the per-request tail and patch the length.
+                append_tail(out, start, &p, self.limits);
+                if self.templates.len() < TEMPLATES {
+                    self.templates.push(t);
+                } else {
+                    let i = self.next_evict;
+                    self.templates[i] = t;
+                    self.next_evict = (i + 1) % TEMPLATES;
+                }
+                return Some(());
+            }
+        };
+        let t = &self.templates[idx];
+        let s = out.len();
+        out.extend_from_slice(&t.bytes);
+        out[s + OFF_TRACE_ID..s + OFF_TRACE_ID + 16].copy_from_slice(&p.trace_id);
+        out[s + OFF_SPAN_ID..s + OFF_SPAN_ID + 8].copy_from_slice(&p.span_id);
+        if t.has_parent {
+            out[s + OFF_PARENT..s + OFF_PARENT + 8].copy_from_slice(&p.parent);
+        }
+        let st = s + off_start(t.has_parent);
+        out[st..st + 8].copy_from_slice(&p.start_ns.to_le_bytes());
+        out[st + 9..st + 17].copy_from_slice(&p.end_ns.to_le_bytes());
+        // flags: 2-byte tag then fixed32
+        out[st + 19..st + 23].copy_from_slice(&Flags(p.trace_flags).otlp().to_le_bytes());
+        append_tail(out, s, &p, self.limits);
+        Some(())
+    }
+}
+
+/// Per-request attributes after the templated part, then the span length.
+fn append_tail(out: &mut Vec<u8>, span_start: usize, p: &Parsed<'_>, limits: &Limits) {
+    let max = limits.attribute_value_length as usize;
+    let (path, query) = match otlp_memchr(p.url, b'?') {
+        Some(i) => (&p.url[..i], &p.url[i + 1..]),
+        None => (p.url, &b""[..]),
     };
+    otlp::write_key_value(out, f::ATTRIBUTES, b"url.path", &Value::Str(otlp::truncate_utf8(path, max)));
+    if !query.is_empty() {
+        otlp::write_key_value(out, f::ATTRIBUTES, b"url.query", &Value::Str(otlp::truncate_utf8(query, max)));
+    }
+    if (p.ip.len() == 4 || p.ip.len() == 16) && p.client_port > 0 {
+        otlp::write_key_value(out, f::ATTRIBUTES, b"client.port", &Value::Int(p.client_port as i64));
+    }
+    let body_len = out.len() - span_start - 3;
+    if body_len < (1 << 14) {
+        out[span_start + 1] = (body_len as u8 & 0x7f) | 0x80;
+        out[span_start + 2] = (body_len >> 7) as u8;
+    } else {
+        let need = proto::varint_len(body_len as u64);
+        let extra = need - 2;
+        let old_len = out.len();
+        out.resize(old_len + extra, 0);
+        out.copy_within(span_start + 3..old_len, span_start + 3 + extra);
+        proto::write_varint_into(&mut out[span_start + 1..span_start + 1 + need], body_len as u64);
+    }
+}
+
+/// Encode everything except the per-request tail; returns the offset where
+/// the tail starts (== out.len()). With `with_tail`, also appends the tail
+/// and finishes the span (used when templating is off).
+fn expand_slow(out: &mut Vec<u8>, p: &Parsed<'_>, limits: &Limits, with_tail: bool) -> Option<usize> {
+    let flags = p.flags;
+    let method = p.method;
+    let ip = p.ip;
+    let status = p.status;
+    let (host, ua, route) = (p.host, p.ua, p.route);
+    let (attrs, extra, trace_state, name_override, status_code, status_message) =
+        (p.attrs, p.extra, p.trace_state, p.name_override, p.status_code, p.status_message);
+    let dropped_attrs = p.dropped_attrs;
+    let stub = SpanStub {
+        ctx: SpanContext { trace_id: TraceId(p.trace_id), span_id: SpanId(p.span_id), flags: Flags(p.trace_flags) },
+        parent: SpanId(p.parent),
+        start_ns: p.start_ns,
+    };
+    let end_ns = p.end_ns;
+    let span_start = out.len();
     let mut name_buf = [0u8; 8 + 256];
     let name: &[u8] = if !name_override.is_empty() {
         name_override
@@ -284,14 +468,8 @@ fn expand_one(out: &mut Vec<u8>, body: &[u8], limits: &Limits) -> Option<()> {
     }
     let mut a = Attrs { w: &mut w, n: 0, budget };
     a.put("http.request.method", Value::Str(method));
-    let (path, query) = match otlp_memchr(url, b'?') {
-        Some(i) => (&url[..i], &url[i + 1..]),
-        None => (url, &b""[..]),
-    };
-    a.put("url.path", Value::Str(lim(path)));
-    if !query.is_empty() {
-        a.put("url.query", Value::Str(lim(query)));
-    }
+    // url.path / url.query / client.port are appended per request (tail).
+    a.n += 3;
     a.put("url.scheme", Value::Str(if flags & FLAG_HTTPS != 0 { b"https" } else { b"http" }));
     if !host.is_empty() {
         let (hname, port) = split_host_port(host);
@@ -303,13 +481,10 @@ fn expand_one(out: &mut Vec<u8>, body: &[u8], limits: &Limits) -> Option<()> {
     if !ua.is_empty() {
         a.put("user_agent.original", Value::Str(lim(ua)));
     }
-    if ip_len == 4 || ip_len == 16 {
+    if ip.len() == 4 || ip.len() == 16 {
         let mut buf = [0u8; 46];
         let s = format_ip(ip, &mut buf);
         a.put("client.address", Value::Str(s));
-        if client_port > 0 {
-            a.put("client.port", Value::Int(client_port as i64));
-        }
     }
     if !route.is_empty() {
         a.put("http.route", Value::Str(lim(route)));
@@ -355,8 +530,12 @@ fn expand_one(out: &mut Vec<u8>, body: &[u8], limits: &Limits) -> Option<()> {
         w.dropped_attributes(dropped);
     }
     w.status(span_status, msg);
-    w.finish();
-    Some(())
+    w.leak();
+    let tail_at = out.len();
+    if with_tail {
+        append_tail(out, span_start, p, limits);
+    }
+    Some(tail_at)
 }
 
 #[inline]

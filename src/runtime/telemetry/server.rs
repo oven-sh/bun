@@ -22,6 +22,10 @@ pub fn begin(
     if !bun_telemetry::enabled(Instrument::HttpServer) {
         return None;
     }
+    let exp = exp_knobs();
+    if exp & 1 != 0 {
+        return None; // EXP=1: enabled but do nothing
+    }
     let st = state();
     let h = req.telemetry_headers();
     let mut parent = None;
@@ -59,8 +63,8 @@ pub fn begin(
         let f = &mut s.http;
         f.active = true;
         f.set_method(method_name);
-        if !stub.ctx.flags.sampled() {
-            return;
+        if !stub.ctx.flags.sampled() || exp & 2 != 0 {
+            return; // EXP=2: no facts
         }
         f.flags = if is_https { R::FLAG_HTTPS } else { 0 };
         if let Some((ip, port)) = resp.get_remote_address_raw() {
@@ -92,7 +96,16 @@ pub fn begin(
             }
         }
     });
+    if exp & 4 != 0 {
+        // EXP=4: don't enter the async context
+        return Some((span, Entered::new_noop(global)));
+    }
     Some((span, Entered::new(global, super::native_context_value(span))))
+}
+
+pub fn exp_knobs() -> u32 {
+    static K: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *K.get_or_init(|| std::env::var("BUN_OTEL_EXP").ok().and_then(|v| v.parse().ok()).unwrap_or(0))
 }
 
 /// Refine the span name to `METHOD /route` once the matched route is known.
@@ -116,6 +129,11 @@ pub fn end(span: NativeSpan, status: u16, aborted: bool) {
 /// `handler_error`: the JS handler threw or rejected (node:http), which is an
 /// error even when the status line that went out was not 5xx.
 pub fn end_with(span: NativeSpan, status: u16, aborted: bool, handler_error: bool) {
+    if exp_knobs() & 8 != 0 {
+        // EXP=8: discard instead of recording
+        super::discard_native(span);
+        return;
+    }
     pool::with(span, |s| {
         s.http.status = status;
         if aborted {

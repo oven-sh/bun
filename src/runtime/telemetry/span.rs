@@ -140,6 +140,7 @@ pub fn stub_of(value: JSValue) -> Option<SpanStub> {
 pub struct Entered {
     global: *const JSGlobalObject,
     prev: JSValue,
+    noop: bool,
 }
 
 impl Entered {
@@ -148,13 +149,20 @@ impl Entered {
         Entered {
             global: global as *const JSGlobalObject,
             prev: Bun__Telemetry__enter(global, span_js),
+            noop: false,
         }
+    }
+    pub fn new_noop(global: &JSGlobalObject) -> Entered {
+        Entered { global: global as *const JSGlobalObject, prev: JSValue::UNDEFINED, noop: true }
     }
 }
 
 impl Drop for Entered {
     #[inline]
     fn drop(&mut self) {
+        if self.noop {
+            return;
+        }
         // SAFETY: created from a live `&JSGlobalObject` on this thread; the
         // global outlives any request/callback frame.
         Bun__Telemetry__exit(unsafe { &*self.global }, self.prev);

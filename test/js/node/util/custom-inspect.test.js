@@ -220,6 +220,18 @@ for (const [name, inspect] of process.versions.bun
       expect(inspect([text])).toBe("[\n  a\r\n  b\n  \n]");
     });
 
+    test("compact: the indentation does not depend on the values printed before the hook", () => {
+      const compact = { compact: true };
+      // Node's compact layout indents an object property by 3, Bun's by 2.
+      const inObject = isBunInspect ? "X {\n    y: 1\n  }" : "X {\n     y: 1\n   }";
+      expect(inspect({ d: multiLine }, compact)).toBe(`{ d: ${inObject} }`);
+      expect(inspect({ a: { x: 1 }, b: { x: 1 }, d: multiLine }, compact)).toBe(
+        `{ a: { x: 1 }, b: { x: 1 }, d: ${inObject} }`,
+      );
+      expect(inspect({ a: { p: { q: 1 } }, d: multiLine }, compact)).toBe(`{ a: { p: { q: 1 } }, d: ${inObject} }`);
+      expect(inspect([{ x: 1 }, multiLine], compact)).toBe("[ { x: 1 }, X {\n    y: 1\n  } ]");
+    });
+
     test("built-in hook (URL)", () => {
       const url = new URL("http://example.com/path");
       const nested = inspect(url).replaceAll("\n", "\n  ");

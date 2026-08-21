@@ -5515,10 +5515,12 @@ pub mod formatter {
                     let _ = writer_.write_all(b"{}");
                 }
             } else {
+                // `handle_first_property` incremented both, in single-line
+                // mode too.
                 self.depth -= 1;
+                self.indent = self.indent.saturating_sub(1);
 
                 if iter_always_newline {
-                    self.indent = self.indent.saturating_sub(1);
                     self.print_comma::<C>(writer_).expect("unreachable");
                     let _ = writer_.write_all(b"\n");
                     let _ = self.write_indent(writer_);

@@ -1068,9 +1068,8 @@ pub mod bv2_impl {
                 pub(crate) import_record_index: u32,
                 pub(crate) range: bun_ast::Range,
                 pub(crate) original_target: Target,
-                /// The loader the request asks for: an import's `with { type }` attribute, or
-                /// `Loader::Html` for the html file of a dev server route. See
-                /// `BundleV2::requested_file_loader`.
+                /// An import's `with { type }` loader, or `Loader::Html` for a dev server
+                /// route's html file. See `BundleV2::requested_file_loader`.
                 pub(crate) loader: Option<Loader>,
             }
 
@@ -4715,9 +4714,8 @@ pub mod bv2_impl {
                         } else {
                             path.namespace = result_ns_static;
                         }
-                        // An import attribute applies to whatever the import resolves to. The
-                        // dev server's loader is for the route file itself, not for a file a
-                        // plugin resolves the entry point to instead.
+                        // A route's html loader is for the route file itself, not for a file a
+                        // plugin swaps in for it.
                         let requested = resolve.import_record.loader.filter(|_| {
                             resolve.import_record.kind != ImportKind::EntryPointBuild
                                 || path.text == &*resolve.import_record.specifier

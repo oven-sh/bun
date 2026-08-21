@@ -444,14 +444,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         match spawn_result.status {
             SpawnStatus::Exited(exit_code) => {
-                // `.signal` is a raw `u8` here; `signal_code()` range-checks
-                // 1..=31 (i.e. valid).
                 if let Some(sig) = spawn_result.status.signal_code() {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
                             bstr::BStr::new(name),
-                            bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
+                            bun_sys::SignalCode(exit_code.signal)
+                                .fmt(Output::enable_ansi_colors_stderr()),
                         );
                         Output::flush();
 
@@ -488,7 +487,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             }
 
-            SpawnStatus::Signaled(_) => {
+            SpawnStatus::Signaled(raw_signal) => {
                 // Only the *print* is gated on a valid signal code;
                 // `suppress_reporting` + `raise_ignoring_panic_handler`
                 // run unconditionally.
@@ -498,7 +497,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
                             bstr::BStr::new(name),
-                            bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
+                            bun_sys::SignalCode(raw_signal)
+                                .fmt(Output::enable_ansi_colors_stderr()),
                         );
                         Output::flush();
                     }

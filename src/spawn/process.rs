@@ -739,11 +739,12 @@ pub enum Status {
     #[default]
     Running,
     Exited(Exited),
-    /// Raw signal byte — any `u8` (incl. Linux RT signals 32..=64) is a valid
-    /// payload. `bun_core::SignalCode` is exhaustive 1..=31,
+    /// Raw signal byte in the platform's numbering (`WTERMSIG`), i.e. a
+    /// `bun_sys::SignalCode` — any `u8` (incl. Linux RT signals 32..=64) is a
+    /// valid payload. `bun_core::SignalCode` is exhaustive and Linux-numbered,
     /// so storing it here would force lossy `Signaled→Exited` rewrites for RT
     /// signals — observable as `{exitCode:0, signal:null}` in JS. Carry the raw
-    /// byte and range-check in `signal_code()` instead.
+    /// byte and convert in `signal_code()` instead.
     Signaled(u8),
     Err(bun_sys::Error),
 }
@@ -751,9 +752,8 @@ pub enum Status {
 #[derive(Clone, Copy, Default)]
 pub struct Exited {
     pub code: u8,
-    /// Raw signal number. `0` means "no signal".
-    /// `SignalCode` discriminants are 1..=31; storing it as the
-    /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
+    /// Raw signal number in the platform's numbering (see `Status::Signaled`).
+    /// `0` means "no signal". Convert via `Status::signal_code`.
     pub signal: u8,
     /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte.
     /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
@@ -815,30 +815,28 @@ impl Status {
         None
     }
 
+    /// The platform-independent name of the signal that terminated (or
+    /// stopped) the process. `None` when it exited normally or the platform
+    /// number has no name in the table (see `Status::Signaled`).
     pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
         let raw = match self {
             Status::Signaled(sig) => *sig,
             Status::Exited(exit) => exit.signal,
             _ => return None,
         };
-        bun_core::SignalCode::from_raw(raw)
+        bun_sys::SignalCode(raw).canonical()
     }
 }
 
 /// Local shim — `bun_core::SignalCode` does not yet expose this.
-/// Shell-convention: 128 + signal number for signals 1..=31, else `None`.
+/// Shell-convention: 128 + the platform's signal number, else `None`.
 pub trait SignalCodeExt {
     fn to_exit_code(self) -> Option<u8>;
 }
 impl SignalCodeExt for bun_core::SignalCode {
     #[inline]
     fn to_exit_code(self) -> Option<u8> {
-        let n = self as u8;
-        if (1..=31).contains(&n) {
-            Some(128u8.wrapping_add(n))
-        } else {
-            None
-        }
+        bun_sys::SignalCode::from_canonical(self)?.to_exit_code()
     }
 }
 

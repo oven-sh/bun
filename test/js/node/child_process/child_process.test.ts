@@ -15,6 +15,7 @@ import {
 } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import { constants as osConstants } from "node:os";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -819,6 +820,31 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
   });
 
   expect(signal).toBe("SIGTRAP");
+});
+
+// Signal numbers differ between Linux and macOS (SIGUSR1 is 10 on Linux and 30
+// on macOS), and SIGSTKFLT exists only on Linux. The reported name must be the
+// OS's name for the number the child died from, as in node.
+const platformSignals = (["SIGUSR1", "SIGUSR2", "SIGSTKFLT"] as const).filter(name => name in osConstants.signals);
+
+describe.skipIf(!isPosix)("exit signals are named with the OS's own numbering", () => {
+  it.concurrent.each(platformSignals)("child.kill(%s) exits with that signal", async name => {
+    const child = spawn("sleep", ["1000"], { stdio: "ignore" });
+    try {
+      await once(child, "spawn");
+      const exit = once(child, "exit");
+      expect(child.kill(name)).toBe(true);
+      expect(await exit).toEqual([null, name]);
+      expect(child.signalCode).toBe(name);
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  it.concurrent.each(platformSignals)("spawnSync({ killSignal: %s }) reports that signal", name => {
+    const { status, signal } = spawnSync("sleep", ["1000"], { stdio: "ignore", timeout: 1, killSignal: name });
+    expect({ status, signal }).toEqual({ status: null, signal: name });
+  });
 });
 
 it("spawnSync(does-not-exist)", () => {

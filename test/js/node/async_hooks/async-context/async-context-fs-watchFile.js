@@ -25,17 +25,9 @@ asyncLocalStorage.run({ test: "fs.watchFile" }, () => {
     process.exit(0);
   });
 
-  // Trigger the watch event
-  setTimeout(() => {
-    fs.writeFileSync(testFile, "modified");
-  }, 100);
-
-  // Timeout safety
-  setTimeout(() => {
-    fs.unwatchFile(testFile);
-    try {
-      fs.unlinkSync(testFile);
-    } catch {}
-    process.exit(0);
-  }, 5000);
+  // The watcher takes its baseline stat asynchronously, so a single write could
+  // land before it and never be reported. Keep growing the file until the
+  // listener fires (it exits the process).
+  let content = "initial";
+  setInterval(() => fs.writeFileSync(testFile, (content += "+")), 20);
 });

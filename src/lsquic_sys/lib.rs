@@ -158,7 +158,6 @@ unsafe extern "C" {
     pub fn lsquic_conn_status(c: *mut lsquic_conn, errbuf: *mut c_char, bufsz: usize) -> c_int;
     pub fn lsquic_conn_make_stream(c: *mut lsquic_conn);
     pub fn lsquic_conn_make_uni_stream(c: *mut lsquic_conn);
-    pub fn lsquic_conn_n_pending_streams(c: *const lsquic_conn) -> c_uint;
     pub fn lsquic_conn_get_sockaddr(
         c: *mut lsquic_conn,
         local: *mut *const sockaddr,

@@ -61,6 +61,7 @@ const {
   validateMsecs,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
+const { monotonicNowMs } = require("internal/timers");
 const NumberIsNaN = Number.isNaN;
 
 const { format } = require("internal/util/inspect");
@@ -111,7 +112,6 @@ const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
 const MathFloor = Math.floor;
-const DateNow = Date.now;
 
 let cluster;
 
@@ -1351,7 +1351,8 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // When the keep-alive idle period on a connection started (the last response
 // finish). onResponseFinishHandleSocket records this instead of rescheduling
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
-// grant the remaining idle budget when the timer actually fires.
+// grant the remaining idle budget when the timer actually fires. Read from
+// monotonicNowMs(), which setSystemTime() / fake timers cannot move.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
 // - on the socket: array of queued ServerResponses, in arrival order
@@ -1450,7 +1451,7 @@ function onSocketTimeoutTimerExpired(socket) {
   const idleStart = socket[kKeepAliveIdleStart];
   if (idleStart !== undefined && socket[kKeepAliveTimeoutSet]) {
     socket[kKeepAliveIdleStart] = undefined;
-    const remaining = socket.timeout - (DateNow() - idleStart);
+    const remaining = socket.timeout - (monotonicNowMs() - idleStart);
     if (remaining > 0) {
       const existingTimer = socket[kSocketTimeoutTimer];
       if (existingTimer !== undefined) clearTimeout(existingTimer);
@@ -2436,14 +2437,17 @@ function onResponseFinishHandleSocket(server, socket, res) {
     // kept-alive connection), leave it in place and only record when this
     // idle period started; onSocketTimeoutTimerExpired grants the remaining
     // budget if the timer fires early, so the socket still closes after
-    // exactly `total` ms of idle.
+    // exactly `total` ms of idle. The mark is taken before the timer is armed:
+    // both are whole milliseconds, so a timer armed after the mark measures at
+    // least `total` when it fires and closes instead of re-arming for a
+    // rounding millisecond.
+    socket[kKeepAliveIdleStart] = monotonicNowMs();
     const timer = socket[kSocketTimeoutTimer];
     if (timer !== undefined && timer._idleTimeout === total) {
       socket.timeout = total;
     } else {
       socket.setTimeout(total);
     }
-    socket[kKeepAliveIdleStart] = DateNow();
     socket[kKeepAliveTimeoutSet] = true;
   }
 }

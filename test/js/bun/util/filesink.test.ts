@@ -210,6 +210,8 @@ it("write result is not cumulative", async () => {
 it("the FileSink constructor has a prototype property, so instanceof works", async () => {
   using dir = tempDir("filesink-prototype", {});
   const writer = Bun.file(path.join(String(dir), "out.txt")).writer();
+  // Close the file first: the checks below only look at the prototype chain.
+  await writer.end();
   const proto = Object.getPrototypeOf(writer);
   const FileSink = proto.constructor;
 
@@ -226,8 +228,6 @@ it("the FileSink constructor has a prototype property, so instanceof works", asy
   // Each sink class gets its own prototype object.
   expect(writer).not.toBeInstanceOf(Bun.ArrayBufferSink);
   expect(new Bun.ArrayBufferSink()).not.toBeInstanceOf(FileSink);
-
-  await writer.end();
 });
 
 // A backpressured write buffers everything `write(2)` would not take, so the

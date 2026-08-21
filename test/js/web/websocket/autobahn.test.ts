@@ -31,8 +31,10 @@ async function load() {
 // crossbario/autobahn-testsuite is published for amd64 only. The Linux arm64
 // agents run a docker coordinator, so without the todoIf the suite would be
 // defined there and fail with "exec format error". The darwin arm64 agents run
-// the image under emulation.
-describe.skipIf(!isDockerServiceEnabled("autobahn")).todoIf(isLinux && isArm64)("autobahn", () => {
+// the image under emulation. The skipIf is only evaluated when the todoIf did
+// not apply: a describe cannot be both, the runner throws on the second one.
+const linuxArm64 = isLinux && isArm64;
+describe.todoIf(linuxArm64).skipIf(!linuxArm64 && !isDockerServiceEnabled("autobahn"))("autobahn", () => {
   let wsOptions: any;
 
   beforeAll(async () => {

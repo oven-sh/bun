@@ -165,6 +165,38 @@ declare module "bun" {
     }
 
     /**
+     * A hosted backend that takes OTLP/HTTP with a static credential. The
+     * endpoint and auth header are derived from `type`; every field falls
+     * back to the vendor's usual environment variable.
+     *
+     * | `type`      | credential (`apiKey`)                         | `site` / `id`                                        |
+     * | ----------- | --------------------------------------------- | ---------------------------------------------------- |
+     * | `datadog`   | `DD_API_KEY` (omit to use a local Agent on :4318) | `site`: `DD_SITE` (`datadoghq.com`, `datadoghq.eu`, …) |
+     * | `honeycomb` | `HONEYCOMB_API_KEY`                           | `site`: `"us"` \| `"eu"`; `id`: classic dataset       |
+     * | `grafana`   | Cloud Access Policy token                      | `site`: OTLP gateway zone (`prod-us-east-0`); `id`: instance id |
+     * | `newrelic`  | `NEW_RELIC_LICENSE_KEY`                       | `site`: `"us"` \| `"eu"` \| `"fedramp"`               |
+     * | `axiom`     | `AXIOM_TOKEN`                                 | `id`: `AXIOM_DATASET`; `site`: edge domain             |
+     * | `dynatrace` | `DT_API_TOKEN`                                | `id`: environment id, or `endpoint`: `…/api/v2/otlp`   |
+     * | `sentry`    | DSN public key                                | `endpoint`: the project's OTLP traces URL (required)   |
+     * | `otlp`      | —                                             | `endpoint` (default `http://localhost:4318`)           |
+     */
+    interface PresetExporterOptions {
+      type: "datadog" | "honeycomb" | "grafana" | "newrelic" | "axiom" | "dynatrace" | "sentry" | "otlp";
+      apiKey?: string | undefined;
+      /** Vendor region / site / zone. */
+      site?: string | undefined;
+      /** Second identifier where the vendor needs one (dataset, instance id, environment id). */
+      id?: string | undefined;
+      /** Override the derived endpoint (base URL; `/v1/traces` is appended). */
+      endpoint?: string | undefined;
+      /** Extra request headers merged over the preset's. */
+      headers?: Record<string, string> | undefined;
+      /** @default "gzip" */
+      compression?: "gzip" | "none" | undefined;
+      timeoutMs?: number | undefined;
+    }
+
+    /**
      * A decoded span as handed to a function exporter (and returned by
      * {@link otel.decode}). Times are Unix epoch milliseconds with
      * sub-millisecond precision.
@@ -236,7 +268,7 @@ declare module "bun" {
        * the environment or an earlier `start()` call; when omitted,
        * `OTEL_EXPORTER_OTLP_*` / `OTEL_TRACES_EXPORTER` decide.
        */
-      exporters?: Array<string | OtlpExporterOptions | FunctionExporterOptions> | undefined;
+      exporters?: Array<string | OtlpExporterOptions | PresetExporterOptions | FunctionExporterOptions> | undefined;
       /**
        * Sampler. A number is a parent-based trace-id ratio (`0.1` keeps 10%
        * of new traces and follows the caller's decision for propagated ones).

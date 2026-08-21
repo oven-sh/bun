@@ -229,6 +229,55 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("vendor presets: endpoint path and auth headers", async () => {
+    using c = collector();
+    const script = `
+      Bun.otel.start({
+        serviceName: "presets",
+        exporters: [
+          { type: "datadog", apiKey: "ddkey", endpoint: process.env.C },
+          { type: "honeycomb", apiKey: "hckey", id: "classic-ds", endpoint: process.env.C },
+          { type: "grafana", apiKey: "tok", id: "12345", endpoint: process.env.C + "/otlp" },
+          { type: "newrelic", apiKey: "nrkey", endpoint: process.env.C },
+          { type: "axiom", apiKey: "axtok", id: "ds", endpoint: process.env.C },
+          { type: "dynatrace", apiKey: "dttok", endpoint: process.env.C + "/api/v2/otlp" },
+          { type: "sentry", apiKey: "pub", endpoint: process.env.C + "/api/7/integration/otlp/v1/traces" },
+          { type: "otlp", endpoint: process.env.C },
+        ],
+      });
+      Bun.otel.tracer("t").startSpan("s").end();
+      await Bun.otel.forceFlush();
+    `;
+    const { exitCode, stderr } = await run(script, { C: c.url });
+    expect(stderr).toBe("");
+    const got = c.received.map(r => [new URL(r.url).pathname, r.headers]);
+    const by = (path: string, h: string) => got.find(([p, hs]) => p === path && (h === "" || h in (hs as any)))?.[1] as any;
+    expect(by("/v1/traces", "dd-api-key")["dd-api-key"]).toBe("ddkey");
+    expect(by("/v1/traces", "x-honeycomb-team")).toMatchObject({ "x-honeycomb-team": "hckey", "x-honeycomb-dataset": "classic-ds" });
+    expect(by("/otlp/v1/traces", "authorization").authorization).toBe("Basic " + btoa("12345:tok"));
+    expect(by("/v1/traces", "api-key")["api-key"]).toBe("nrkey");
+    expect(by("/v1/traces", "x-axiom-dataset")).toMatchObject({ authorization: "Bearer axtok", "x-axiom-dataset": "ds" });
+    expect(by("/api/v2/otlp/v1/traces", "authorization").authorization).toBe("Api-Token dttok");
+    expect(by("/api/7/integration/otlp/v1/traces", "x-sentry-auth")["x-sentry-auth"]).toBe("sentry sentry_key=pub");
+    expect(got.filter(([p]) => p === "/v1/traces").length).toBe(5);
+    expect(c.received.every(r => r.headers["content-encoding"] === "gzip")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("BUN_OTEL_EXPORTER preset from env (datadog via local Agent address, honeycomb needs a key)", async () => {
+    using c = collector();
+    const { exitCode, stderr } = await run(`Bun.otel.tracer("t").startSpan("s").end();`, {
+      BUN_OTEL: "1",
+      BUN_OTEL_EXPORTER: "datadog,honeycomb",
+      DD_OTLP_ENDPOINT: c.url,
+    });
+    expect(stderr).toContain('exporter preset "honeycomb" needs apiKey');
+    expect(c.received.length).toBe(1);
+    expect(new URL(c.received[0].url).pathname).toBe("/v1/traces");
+    expect(c.received[0].headers["dd-api-key"]).toBeUndefined();
+    expect(exitCode).toBe(0);
+  });
+
   test("non-retryable failure is reported once on stderr and counted", async () => {
     using c = collector(() => new Response("nope", { status: 400 }));
     const { stdout, stderr, exitCode } = await run(

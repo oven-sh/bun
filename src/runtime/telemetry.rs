@@ -466,6 +466,33 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     js_exporters.push(exporter::JsExporter::new(global, f, item, format));
                     continue;
                 }
+                // Vendor preset: { type: "datadog" | "honeycomb" | …, apiKey?, site?, id?, endpoint? }
+                if let Some(t) = item.get(global, "type")? {
+                    let name = arg_string(global, t)?.unwrap_or_default();
+                    let field = |k: &str| -> JsResult<Option<String>> {
+                        match item.get(global, k)? {
+                            Some(v) if !v.is_undefined_or_null() => arg_string(global, v),
+                            _ => Ok(None),
+                        }
+                    };
+                    let input = bun_telemetry::presets::PresetInput {
+                        name: &name,
+                        api_key: field("apiKey")?,
+                        site: field("site")?.or(field("region")?),
+                        id: field("id")?.or(field("dataset")?).or(field("instanceId")?),
+                        endpoint: field("endpoint")?.or(field("url")?),
+                    };
+                    let loader = vm.env_loader();
+                    let mut x = match bun_telemetry::presets::resolve(&input, &|k| {
+                        loader.get(k.as_bytes()).map(|v| String::from_utf8_lossy(v).into_owned())
+                    }) {
+                        Ok(x) => x,
+                        Err(e) => return Err(global.throw_invalid_arguments(format_args!("{e}"))),
+                    };
+                    read_exporter_extras(global, item, &mut x)?;
+                    cfg.otlp_exporters.push(x);
+                    continue;
+                }
                 let url = match item.get(global, "url")? {
                     Some(v) => arg_string(global, v)?,
                     None => match item.get(global, "endpoint")? {
@@ -475,7 +502,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 };
                 let Some(url) = url else {
                     return Err(global.throw_invalid_arguments(format_args!(
-                        "exporter needs a url or an export() function"
+                        "exporter needs a url, a type, or an export() function"
                     )));
                 };
                 let mut x = OtlpExporterConfig {

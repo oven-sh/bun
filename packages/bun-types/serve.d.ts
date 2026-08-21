@@ -520,12 +520,11 @@ declare module "bun" {
   }
 
   /**
-   * One WebTransport session over HTTP/3, as
-   * {@link WebTransportHandler} sees it.
+   * One WebTransport session over HTTP/3, as {@link WebTransportHandler} sees
+   * it.
    *
-   * Only datagrams. WebTransport streams are a second, reliable channel with
-   * their own backpressure story; the reason to reach for WebTransport over a
-   * WebSocket in the first place is the unreliable half.
+   * Datagrams only. WebTransport streams are not implemented. A stream the
+   * peer opens on a session is refused rather than left waiting.
    *
    * @experimental
    */
@@ -533,50 +532,53 @@ declare module "bun" {
     /**
      * Send one datagram.
      *
-     * Returns the bytes queued — the payload plus the session's frame prefix,
-     * so an empty payload still reports a positive number — or `0` when the
-     * connection's queue had no room for it (drop it; this path has no
-     * retransmission and the next datagram is worth more than a late one), or
-     * `-1` when the payload is larger than {@link maxDatagramSize} or than the
-     * peer will accept.
+     * Returns the bytes queued. That count includes the session's frame
+     * prefix, so an empty payload still reports a positive number.
      *
-     * A send on a session that has already ended reports `0` rather than
-     * throwing: a datagram is allowed not to arrive, and racing the peer's
-     * close is exactly the case where an exception would be noise.
+     * Returns `0` when the connection's queue had no room. Drop the datagram:
+     * this path has no retransmission, and the next one is worth more than a
+     * late one. A send on a session that has already ended also returns `0`,
+     * rather than throwing, since racing the peer's close is normal.
+     *
+     * Returns `-1` when the payload is larger than {@link maxDatagramSize}.
      */
     sendDatagram(data: string | BufferSource): number;
 
     /**
-     * Close the session with a `CLOSE_WEBTRANSPORT_SESSION` capsule, then end
-     * the session's stream. The `close` handler runs before this returns,
-     * with the `code` and `reason` given here.
+     * Close the session. Sends a `WT_CLOSE_SESSION` capsule, then ends the
+     * session's stream.
+     *
+     * The `close` handler runs before this returns. It receives the `code` and
+     * `reason` given here.
      */
     close(code?: number, reason?: string): void;
 
     /**
      * Ask the peer to wind the session up, without ending it.
      *
-     * The draft lets both sides keep using a drained session, so this only
-     * sends the signal: datagrams still flow and the `close` handler does not
-     * run until something actually closes the session. A browser surfaces it
-     * as `WebTransport.draining` resolving. Use it to let sessions finish
-     * before a redeploy, and {@link close} when they should stop now.
+     * This sends the signal and nothing more. Datagrams still flow, and the
+     * `close` handler does not run until something actually closes the
+     * session. A browser surfaces the signal as `WebTransport.draining`.
+     *
+     * Use this to let sessions finish before a redeploy. Use {@link close}
+     * when they should stop now.
      */
     drain(): void;
 
     /**
      * Arbitrary data attached to this session. Set from whatever
-     * {@link WebTransportHandler.upgrade} returned, and writable afterwards.
+     * {@link WebTransportHandler.upgrade} returned. Writable afterwards.
      */
     data: T;
 
     /**
-     * The largest payload {@link sendDatagram} will queue: this server's own
-     * limit, capped by the `max_datagram_frame_size` the peer advertised and
-     * less the session's frame prefix.
+     * The largest payload {@link sendDatagram} will queue.
      *
-     * `0` means the peer offered no datagram support at all, so this session
-     * can carry none and every {@link sendDatagram} will return `-1`.
+     * This is the server's own limit, capped by the `max_datagram_frame_size`
+     * the peer advertised, less the session's frame prefix.
+     *
+     * `0` means the peer offered no datagram support. That session carries no
+     * datagrams, and every {@link sendDatagram} returns `-1`.
      */
     readonly maxDatagramSize: number;
 
@@ -594,19 +596,20 @@ declare module "bun" {
     /**
      * Decide whether to accept a session, before the `CONNECT` is answered.
      *
-     * Return a {@link Response} to refuse — that response is sent and no
-     * session is opened. Return anything else, or nothing, to accept; whatever
-     * is returned becomes the session's {@link WebTransportSession.data}, so
-     * this is also where per-session state is created from the request.
+     * Return a {@link Response} to refuse. Bun sends that response and opens
+     * no session.
      *
-     * Without this handler every WebTransport `CONNECT` on the server is
-     * accepted, which is why anything that authenticates or routes by path
-     * belongs here — it is the only point at which the request is still
-     * visible and refusing is still possible.
+     * Return anything else, or nothing, to accept. What you return becomes the
+     * session's {@link WebTransportSession.data}, so build per-session state
+     * from the request here.
      *
-     * Synchronous. A returned promise is not awaited: the `CONNECT` has to be
-     * answered while the request is still in hand, so it would be treated as
-     * an ordinary truthy value and accepted.
+     * Without this handler Bun accepts every WebTransport `CONNECT` on the
+     * server. Authentication and routing by path belong here. This is the only
+     * point where the request is still visible and refusing is still possible.
+     *
+     * This handler is synchronous. Bun does not await a returned promise, and
+     * treats it as an ordinary truthy value. The `CONNECT` has to be answered
+     * while the request is still in hand.
      *
      * ```ts
      * upgrade(req) {
@@ -624,20 +627,24 @@ declare module "bun" {
     open?(session: WebTransportSession<T>): void | Promise<void>;
 
     /**
-     * A datagram arrived. `data` is a fresh `Uint8Array` per datagram — the
-     * receive buffer underneath it is reused before the next turn of the event
-     * loop, so it is copied rather than viewed.
+     * A datagram arrived.
+     *
+     * `data` is a fresh `Uint8Array` per datagram. Bun copies rather than
+     * views, because the receive buffer underneath is reused before the next
+     * turn of the event loop.
      */
     datagram?(session: WebTransportSession<T>, data: Uint8Array): void | Promise<void>;
 
     /**
-     * The session ended. `code` and `reason` are the peer's, from its close
-     * capsule — or this server's, when {@link WebTransportSession.close} was
-     * what ended it. Both are `0` and `""` when the session went away without
-     * a capsule at all, which is what a connection dropping looks like.
+     * The session ended.
      *
-     * The session is already closed by the time this runs: `sendDatagram`
-     * reports `0` and `closed` is `true`.
+     * `code` and `reason` come from the peer's close capsule. When
+     * {@link WebTransportSession.close} ended the session, they are the values
+     * passed to it instead. They are `0` and `""` when the session went away
+     * without a capsule, which is what a dropped connection looks like.
+     *
+     * The session is already closed when this runs. `sendDatagram` returns `0`
+     * and `closed` is `true`.
      */
     close?(session: WebTransportSession<T>, code: number, reason: string): void | Promise<void>;
   }
@@ -972,17 +979,16 @@ declare module "bun" {
       /**
        * Accept WebTransport sessions on this server. Requires {@link http3}.
        *
-       * A session arrives as an extended `CONNECT` rather than through
-       * {@link fetch}, so these handlers are the whole of the API — there is
-       * no request to answer and no `Response` to return. Ordinary HTTP/3 on
-       * the same server is unaffected.
+       * A session arrives as an extended `CONNECT`, not through {@link fetch}.
+       * These handlers are the whole of the API. Ordinary HTTP/3 on the same
+       * server is unaffected.
        *
-       * Setting this changes the `SETTINGS` the HTTP/3 listener advertises, so
-       * it has to be given up front; it cannot be added by a later `reload()`
-       * that had none.
+       * Give this up front. It changes the `SETTINGS` the HTTP/3 listener
+       * advertises, and a later `reload()` cannot add it to a server that
+       * started without it.
        *
-       * For a typed {@link WebTransportSession.data}, declare the handler
-       * separately — there is no server-level type parameter for it, since a
+       * To give {@link WebTransportSession.data} a type, declare the handler
+       * separately. There is no server-level type parameter for it, because a
        * session is not an upgraded request and shares nothing with
        * {@link websocket}:
        *

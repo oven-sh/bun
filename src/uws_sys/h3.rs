@@ -61,8 +61,8 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
-    /// An extended CONNECT carrying `:protocol: webtransport`. Anything else
-    /// reaching a CONNECT route is an ordinary tunnel request.
+    /// Extended CONNECT with `:protocol: webtransport`. Anything else on a
+    /// CONNECT route is an ordinary tunnel request.
     pub fn is_webtransport(&mut self) -> bool {
         c::uws_h3_req_is_webtransport(self)
     }
@@ -87,9 +87,8 @@ bun_opaque::opaque_ffi! { pub struct Response; }
 
 impl Response {
     /// Answer an extended CONNECT with 200 and keep the stream open as a
-    /// WebTransport session. `None` when the response has already been written
-    /// to, or when the connection never negotiated the extension — the caller
-    /// still owns the response either way.
+    /// session. `None` when the response was already written to, or the
+    /// connection never negotiated the extension; the caller still owns it.
     pub fn upgrade_webtransport(
         &mut self,
         req: &mut Request,
@@ -375,9 +374,8 @@ bun_core::impl_tag_error!(AddServerNameError);
 
 /// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
 /// each forwarding to [`App::route`] with the matching [`RouteKind`].
-/// `trace` is intentionally omitted — h3 exposes it only via [`App::method`].
-/// `connect` is here because the WebTransport route needs it: a session
-/// arrives as an extended CONNECT, registered by `NewServer::listen`.
+/// `trace` is omitted; h3 exposes it only via [`App::method`]. `connect` is
+/// here for the WebTransport route, which `NewServer::listen` registers.
 macro_rules! h3_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
@@ -423,8 +421,7 @@ impl App {
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
     }
-    /// Session-lifetime callbacks. Opening one is the CONNECT route's job, so
-    /// there is no `open` here.
+    /// Session-lifetime callbacks; the CONNECT route opens a session.
     pub fn on_webtransport(
         &mut self,
         on_datagram: unsafe extern "C" fn(*mut WebTransport, *const u8, c_uint),
@@ -566,12 +563,10 @@ bun_opaque::opaque_ffi! { pub struct WebTransport; }
 /// What `send_datagram` did with the payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatagramResult {
-    /// Queued, carrying the bytes that will go on the wire — the payload plus
-    /// the session's quarter-stream-id prefix. Counting the prefix is what
-    /// keeps an empty payload's success apart from `Dropped`.
+    /// Bytes queued, prefix included so an empty payload is not `Dropped`.
     Sent(usize),
-    /// The connection's queue is full. Nothing is retained — the caller drops
-    /// it, which is the right answer on a path with no retransmission.
+    /// The connection's queue is full. Nothing is retained; this path has no
+    /// retransmission.
     Dropped,
     /// Larger than the peer will accept, or the session is already gone.
     TooLarge,
@@ -599,14 +594,14 @@ impl WebTransport {
     pub fn max_datagram_size(&mut self) -> usize {
         c::uws_h3_wt_max_datagram_size(self) as usize
     }
-    /// CLOSE_WEBTRANSPORT_SESSION followed by FIN. The close handler still
-    /// fires afterwards, when the stream actually goes.
+    /// WT_CLOSE_SESSION then FIN. The close handler runs before this returns,
+    /// with the code and reason given here.
     pub fn close(&mut self, code: u32, reason: &[u8]) {
         // SAFETY: self is a live FFI handle; reason ptr/len valid for read
         unsafe { c::uws_h3_wt_close(self, code, reason.as_ptr(), reason.len()) }
     }
-    /// Ask the peer to wind the session up. Advisory: the session stays open
-    /// and usable, and nothing here waits for an answer.
+    /// Ask the peer to wind up. Advisory: the session stays usable and nothing
+    /// waits for an answer.
     pub fn drain(&mut self) {
         c::uws_h3_wt_drain(self)
     }

@@ -1551,10 +1551,9 @@ async function webTransportSession(
   await client.opened;
 
   let status = "";
-  // Headers are sent separately, and deliberately not through the
-  // `headers` option: that path FINs the stream when there is no body, which
-  // is right for a request and wrong for a session — the CONNECT stream stays
-  // open for as long as the session does, and a FIN on it ends the session.
+  // Sent separately rather than through the `headers` option, which FINs the
+  // stream when there is no body. A FIN on the CONNECT stream ends the
+  // session.
   const stream = await client.createBidirectionalStream({
     onheaders(headers: Record<string, string>) {
       status = headers[":status"];
@@ -1574,11 +1573,9 @@ async function webTransportSession(
     { terminal: false },
   );
 
-  // Everything the server writes on the CONNECT stream, which for a session is
-  // capsules and nothing else. Read rather than ignored so that a test can
-  // assert the bytes of a close rather than only its local effect: the close
-  // handler firing says the server thinks the session ended, not that it told
-  // the peer so in a form the peer can read.
+  // Capsules the server writes on the CONNECT stream. Read rather than
+  // ignored so a test can assert their bytes: the close handler firing says
+  // the server believes the session ended, not that the peer can read why.
   const inbound: number[] = [];
   const pump = (async () => {
     for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
@@ -1591,8 +1588,8 @@ async function webTransportSession(
     while (!predicate() && Date.now() < deadline) await Bun.sleep(5);
     return predicate();
   };
-  // A datagram naming a session the server has not opened yet is dropped by
-  // design, so nothing may be sent before the 200 lands.
+  // A datagram naming a session the server has not opened is dropped, so
+  // nothing may be sent before the 200 lands.
   await until(() => status !== "");
 
   const qsid = quicVarint(0);
@@ -1616,9 +1613,8 @@ async function webTransportSession(
     until,
     text: () => datagrams.map(d => Buffer.from(d).toString()),
     async close() {
-      // destroy(), not close(): a graceful close waits for open streams to
-      // finish, and a session's CONNECT stream is open on purpose — it took
-      // eleven seconds to time out instead of the millisecond this needs.
+      // destroy(), not close(): a graceful close waits out the CONNECT
+      // stream, which is open on purpose — eleven seconds, not one.
       if (!client.destroyed) client.destroy();
       await pump;
       await endpoint[Symbol.asyncDispose]?.();
@@ -1651,8 +1647,7 @@ describe("Bun.serve WebTransport", () => {
       expect(wt.status).toBe("200");
       for (const message of ["one", "two", "three"]) wt.send(message);
       expect(await wt.until(() => wt.datagrams.length >= 3)).toBe(true);
-      // The `0:` is `session.data` read back through the cached slot it was
-      // written to in `open`.
+      // The `0:` is `session.data` read back through its cached slot.
       expect(wt.text()).toEqual(["echo:0:one", "echo:0:two", "echo:0:three"]);
       expect(opened.length).toBe(1);
       expect(opened[0]).toBeGreaterThan(0);
@@ -1693,8 +1688,8 @@ describe("Bun.serve WebTransport", () => {
       ":scheme": "https",
       ":authority": "localhost",
     });
-    // Adding a webtransport handler must not take plain CONNECT away from the
-    // application: the session route yields when :protocol is not ours.
+    // The session route yields when :protocol is not ours, so a webtransport
+    // handler does not take plain CONNECT from the application.
     expect(result).toBe("200 fetch saw CONNECT");
     expect(sessions).toBe(0);
   });
@@ -1763,8 +1758,7 @@ describe("Bun.serve WebTransport", () => {
             code,
             reason,
             closedFlag: session.closed,
-            // A handler that reaches for the session must get the closed
-            // answer rather than a pointer into a stream on its way out.
+            // Must get the closed answer, not a dying stream.
             sendAfter: session.sendDatagram("late"),
           });
         },
@@ -1776,9 +1770,8 @@ describe("Bun.serve WebTransport", () => {
     try {
       wt.send("bye");
       expect(await wt.until(() => closes.length > 0, 3000)).toBe(true);
-      // The server's own code and reason, reported without waiting for the
-      // peer's answering FIN: a peer that never sends one would otherwise hold
-      // the handler back until the idle timeout.
+      // The server's own code and reason, without waiting for the peer's
+      // answering FIN — a peer need never send one.
       expect(closes).toEqual([{ code: 7, reason: "done here", closedFlag: true, sendAfter: 0 }]);
     } finally {
       await wt.close();
@@ -1796,17 +1789,15 @@ describe("Bun.serve WebTransport", () => {
       webtransport: {
         datagram(session) {
           max = session.maxDatagramSize;
-          // An empty payload still reports the frame prefix, which is what
-          // keeps its success apart from the 0 that means dropped.
+          // Reports the frame prefix, so success is not the 0 that means
+          // dropped.
           results.push(session.sendDatagram(new Uint8Array(0)));
           // Larger than this server will queue.
           results.push(session.sendDatagram(new Uint8Array(max + 1)));
           // The largest it will.
           results.push(session.sendDatagram(new Uint8Array(max)));
-          // And then past what the connection's queue holds. Nothing drains it
-          // until the next turn of the event loop, so a handler that keeps
-          // sending reaches the drop -- which is the third answer, and the one
-          // a caller is most likely to meet in anger.
+          // Past what the queue holds. Nothing drains it until the next turn
+          // of the loop, so a handler that keeps sending reaches the drop.
           for (let i = 0; i < 200; i++) {
             if (session.sendDatagram(new Uint8Array(max)) === 0) {
               dropped = i;
@@ -1824,9 +1815,8 @@ describe("Bun.serve WebTransport", () => {
       expect(await wt.until(() => results.length >= 3, 3000)).toBe(true);
       expect(max).toBeGreaterThan(0);
       expect(results).toEqual([1, -1, max + 1]);
-      // The ring is 64 KB of [uint16 length][payload] records, so a queue of
-      // largest-sized datagrams runs out in the fifties rather than at some
-      // round number worth asserting exactly.
+      // 64 KB of [uint16 length][payload] records, so largest-sized datagrams
+      // run out in the fifties — no round number worth pinning.
       expect(dropped).toBeGreaterThan(0);
       expect(dropped).toBeLessThan(200);
     } finally {
@@ -1852,14 +1842,12 @@ describe("Bun.serve WebTransport", () => {
       wt.send("close me");
       expect(await wt.until(() => wt.inbound.length >= 10, 3000)).toBe(true);
       // varint(0x2843), varint(4 + 3), the code big-endian, then the reason.
-      // Asserted as bytes because the close handler firing on the server only
-      // says the server believes the session ended -- the peer's view of it is
-      // this, and the two came apart once already.
+      // Asserted as bytes because the handler firing only says the server
+      // believes the session ended; these two came apart once already.
       expect(wt.inbound).toEqual([0x68, 0x43, 0x07, 0x00, 0x00, 0x10, 0x92, 0x62, 0x79, 0x65]);
-      // An orderly close is the capsule and a FIN. Anything else on the
-      // CONNECT stream -- a STOP_SENDING, a reset -- is an abrupt termination
-      // to the peer, which then reports the connection as lost instead of the
-      // code and reason just written.
+      // An orderly close is the capsule and a FIN. A STOP_SENDING or reset
+      // reads as abrupt termination, and the peer reports the connection lost
+      // instead of the code just written.
       expect(wt.streamError).toBe("");
     } finally {
       await wt.close();
@@ -1890,8 +1878,8 @@ describe("Bun.serve WebTransport", () => {
       wt.send("hi");
       expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
       expect(wt.text()).toEqual(["tok-1:hi"]);
-      // :authority reaches the handler as `host`, and the path keeps its query,
-      // so the URL is the one the peer actually asked for.
+      // :authority reaches the handler as `host` and the path keeps its
+      // query, so this is the URL the peer asked for.
       expect(seen).toEqual([
         { url: "https://localhost/game?level=3", method: "CONNECT", auth: "tok-1" },
       ]);
@@ -1930,8 +1918,8 @@ describe("Bun.serve WebTransport", () => {
       await refused.close();
     }
 
-    // And the same server still accepts the path it was asked for, so the
-    // refusal is a decision rather than the route having been taken away.
+    // The same server still accepts /game, so the refusal is a decision and
+    // not the route being taken away.
     const accepted = await webTransportSession(server.port, "/game");
     try {
       expect(accepted.status).toBe("200");
@@ -1964,8 +1952,8 @@ describe("Bun.serve WebTransport", () => {
 
     const wt = await webTransportSession(server.port);
     try {
-      // The throw is reported and the session refused; there is no `Response`
-      // for the handler to have returned, so 500 is the whole answer.
+      // Reported and refused; with no `Response` returned, 500 is the whole
+      // answer.
       expect(wt.status).toBe("500");
       expect(opened).toBe(0);
     } finally {
@@ -1997,13 +1985,11 @@ describe("Bun.serve WebTransport", () => {
     const wt = await webTransportSession(server.port);
     try {
       wt.send("wind up");
-      // varint(0x78ae) is four bytes, then a zero length. Asserted as bytes for
-      // the same reason the close capsule is: the draft calls it advisory, so
-      // there is no local effect to observe instead.
+      // varint(0x78ae) then a zero length. Bytes again: the draft calls drain
+      // advisory, so there is no local effect to observe.
       expect(await wt.until(() => wt.inbound.length >= 5, 3000)).toBe(true);
       expect(wt.inbound).toEqual([0x80, 0x00, 0x78, 0xae, 0x00]);
-      // Advisory means the session keeps working and the close handler does
-      // not run -- a drain that ended anything would be a close.
+      // Advisory: the session keeps working and no close handler runs.
       wt.send("still here");
       expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
       expect(wt.text()).toEqual(["still here"]);
@@ -2023,22 +2009,20 @@ describe("Bun.serve WebTransport", () => {
       webtransport: {
         datagram(session) {
           max = session.maxDatagramSize;
-          // One past the cap is refused, so the number is the real limit and
-          // not just something to report.
+          // One past the cap is refused, so this is the real limit.
           refused = session.sendDatagram(new Uint8Array(max + 1));
         },
       },
       fetch: () => new Response("plain http/3"),
     });
 
-    // Far below this server's own 1200-byte limit, so the peer's figure is
-    // what has to be showing through.
+    // Far below this server's 1200-byte limit, so the peer's figure shows
+    // through.
     const wt = await webTransportSession(server.port, "/echo", {}, { maxDatagramFrameSize: 300 });
     try {
       wt.send("go");
       expect(await wt.until(() => max >= 0, 3000)).toBe(true);
-      // 300 less the one-byte quarter-stream-id prefix that rides in front of
-      // the payload.
+      // 300 less the one-byte quarter-stream-id prefix.
       expect(max).toBe(299);
       expect(refused).toBe(-1);
     } finally {
@@ -2065,20 +2049,16 @@ describe("Bun.serve WebTransport", () => {
 
     const wt = await webTransportSession(server.port);
     try {
-      // A capsule of an unregistered type with a 64 KB body. The draft requires
-      // an unknown capsule be ignored rather than treated as an error, and
-      // this one is far larger than anything the parser is willing to buffer,
-      // so the only way to honour it is to skip the body against the arriving
-      // bytes. (It does not reproduce the bounds bug an earlier parser had:
-      // reads on this path arrive packet-shaped, always under that parser's
-      // limit. It asserts the requirement, not the old failure.)
+      // An unregistered capsule type with a 64 KB body. The draft requires it
+      // be ignored, and it is far larger than the parser will buffer, so the
+      // body has to be skipped against the arriving bytes. This asserts that
+      // requirement, not any past failure — reads here arrive packet-shaped.
       const bodyLen = 65536;
-      // Type 0x1234 as a two-byte varint, then 65536 as a four-byte one; the
-      // top bits of each say how long it is.
+      // Type 0x1234 as a two-byte varint, then 65536 as a four-byte one.
       const header = Buffer.from([0x52, 0x34, 0x80, 0x01, 0x00, 0x00]);
       const capsule = Buffer.concat([header, Buffer.alloc(bodyLen, 0x5a)]);
-      // A stream that enqueues and never closes: closing it would FIN the
-      // CONNECT stream, which ends the session and is the other test.
+      // Enqueues and never closes: a FIN would end the session, which is the
+      // next test.
       wt.stream.setBody(
         new ReadableStream({
           start(controller) {
@@ -2117,9 +2097,8 @@ describe("Bun.serve WebTransport", () => {
     try {
       wt.send("still here");
       expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
-      // An empty body is a FIN and nothing else. The draft lets a peer end a
-      // session by ending its CONNECT stream, and this is the only way to say
-      // that through node:quic.
+      // An empty body is a FIN and nothing else — the draft lets a peer end a
+      // session that way, and it is all node:quic can say.
       wt.stream.setBody(new Response("").body);
       expect(await wt.until(() => closes.length > 0, 3000)).toBe(true);
     } finally {

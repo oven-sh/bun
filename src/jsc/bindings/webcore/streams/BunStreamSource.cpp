@@ -1332,6 +1332,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkReadManyFulfill
     auto& vm = getVM(globalObject);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(1));
     JSValue many = callFrame->argument(0);
+    // A read queued before the pump failed can still be delivered afterwards; the op is torn down.
+    if (op->m_didThrow)
+        return JSValue::encode(jsUndefined());
     return enterStreams(globalObject, [&] { Bun::WebStreams::rsisContinueWithMany(vm, globalObject, op, many); }, [&](JSValue error) { Bun::WebStreams::rsisAbrupt(vm, globalObject, op, error); });
 }
 
@@ -1340,6 +1343,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkChunk, (JSGloba
     auto& vm = getVM(globalObject);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(1));
     JSValue chunk = callFrame->argument(0);
+    // A read queued before the pump failed can still be delivered afterwards; the op is torn down.
+    if (op->m_didThrow)
+        return JSValue::encode(jsUndefined());
     return enterStreams(globalObject, [&] { Bun::WebStreams::rsisHandleChunk(vm, globalObject, op, chunk); }, [&](JSValue error) { Bun::WebStreams::rsisAbrupt(vm, globalObject, op, error); });
 }
 
@@ -1347,6 +1353,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkClose, (JSGloba
 {
     auto& vm = getVM(globalObject);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(1));
+    // A read queued before the pump failed can still be delivered afterwards; the op is torn down.
+    if (op->m_didThrow)
+        return JSValue::encode(jsUndefined());
     return enterStreams(globalObject, [&] { Bun::WebStreams::rsisFinish(globalObject, op); }, [&](JSValue error) { Bun::WebStreams::rsisAbrupt(vm, globalObject, op, error); });
 }
 
@@ -1355,6 +1364,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkRejected, (JSGl
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(1));
+    if (op->m_didThrow)
+        return JSValue::encode(jsUndefined());
     Bun::WebStreams::rsisAbrupt(vm, globalObject, op, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());

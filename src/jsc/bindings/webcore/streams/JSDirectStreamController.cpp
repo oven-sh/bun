@@ -447,7 +447,7 @@ static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject,
 // Errors the stream with `error`: rejects the pending read, errors the stream, tears the sink down,
 // then runs the user's close(error) hook. The stream is fully errored before anything that can throw
 // (the sink teardown, the hook) runs, so a throw from those propagates with the stream consistent.
-void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue error)
+bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -457,24 +457,40 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
     JSObject* underlyingSource = m_underlyingSource.get();
     directStreamControllerClearSource(this);
 
+    bool delivered = false;
     if (auto* pendingRead = m_pendingRead.get()) {
         m_pendingRead.clear();
         rejectPromise(globalObject, pendingRead, error);
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, false);
+        delivered = true;
     }
     auto* stream = m_stream.get();
     if (stream && stream->m_state == ReadableStreamState::Readable) {
         readableStreamError(globalObject, stream, error);
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, false);
+        delivered = true;
     }
 
     // onClose() already closed the sink and ran the user's close() if the controller was closed
     // (end() arming the final chunk leaves the stream Readable), so doing it again would double it.
     if (wasClosed)
-        return;
+        return delivered;
     closeDirectSinkForError(vm, globalObject, this, error);
+    RETURN_IF_EXCEPTION(scope, false);
+    callUnderlyingSourceClose(vm, globalObject, underlyingSource, error);
+    RETURN_IF_EXCEPTION(scope, false);
+    return delivered;
+}
+
+// The reactions' deliver: error the stream; an error nothing was left to receive (the stream had
+// already closed) is thrown on for the runner to report rather than dropped.
+static void deliverDirectError(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue error)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    bool delivered = controller->handleError(globalObject, error);
     RETURN_IF_EXCEPTION(scope, );
-    RELEASE_AND_RETURN(scope, callUnderlyingSourceClose(vm, globalObject, underlyingSource, error));
+    if (!delivered)
+        throwException(globalObject, scope, error);
 }
 
 // Invokes the user's pull() once, bracketed by m_pullInFlight (the spec sets [[pulling]]
@@ -793,8 +809,10 @@ static void directPullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSDir
         controller->m_deferClose = 0;
         controller->m_deferFlush = 0;
         RETURN_IF_EXCEPTION(scope, );
-        if (!abrupt.isEmpty())
-            RELEASE_AND_RETURN(scope, controller->handleError(globalObject, abrupt));
+        if (!abrupt.isEmpty()) {
+            controller->handleError(globalObject, abrupt);
+            RELEASE_AND_RETURN(scope, );
+        }
         if (deferredClose == 1) {
             JSValue reason = controller->m_deferCloseReason.get();
             controller->m_deferCloseReason.clear();
@@ -826,7 +844,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(1));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    return enterStreams(globalObject, [&] { directPullFulfilled(vm, globalObject, controller); }, [&](JSValue error) { controller->handleError(globalObject, error); });
+    return enterStreams(globalObject, [&] { directPullFulfilled(vm, globalObject, controller); }, [&](JSValue error) { deliverDirectError(globalObject, controller, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -853,7 +871,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalOb
     controller->m_endOfTickFlushArmed = false;
     if (controller->m_closed || !controller->m_stream)
         return JSValue::encode(jsUndefined());
-    return enterStreams(globalObject, [&] { controller->onFlush(globalObject); }, [&](JSValue error) { controller->handleError(globalObject, error); });
+    return enterStreams(globalObject, [&] { controller->onFlush(globalObject); }, [&](JSValue error) { deliverDirectError(globalObject, controller, error); });
 }
 
 // The FIVE public own methods are JSBoundFunctions over these [bound-convention] targets.

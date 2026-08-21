@@ -624,14 +624,16 @@ class Dispatcher extends EventEmitter {
           }
         },
         onHeaders: (statusCode, rawHeaders, resume, _statusText) => {
+          // onHeaders after a terminal callback violates the contract; a late 1xx must not fire onInfo either.
+          if (completed) return true;
           // 1xx informational responses precede the final onHeaders, like undici.
           if (statusCode < 200) {
             if (typeof opts.onInfo === "function")
               opts.onInfo({ statusCode, headers: headersFromRawHeaders(rawHeaders) });
             return true;
           }
-          // onHeaders after a terminal callback or a second final onHeaders violates the contract; ignore it.
-          if (completed || body !== null) return true;
+          // A second final onHeaders violates the contract; keep the first body.
+          if (body !== null) return true;
           resumeBody = resume;
           const headers = headersFromRawHeaders(rawHeaders);
           body = new DispatchBodyReadable(

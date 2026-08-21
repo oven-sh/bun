@@ -1013,6 +1013,23 @@ describe("undici", () => {
       expect(calls).toEqual([boom]);
     });
 
+    it("request() does not fire onInfo for a 1xx after a terminal callback", async () => {
+      class InfoAfterError extends Dispatcher {
+        dispatch(_opts: any, handler: any) {
+          handler.onConnect(() => {});
+          handler.onError(new Error("boom"));
+          // A late 1xx violates the contract and must not reach opts.onInfo.
+          handler.onHeaders(100, [], () => {}, "Continue");
+          return true;
+        }
+      }
+      const infos: number[] = [];
+      await expect(
+        new InfoAfterError().request({ path: "/", method: "GET", onInfo: (i: any) => infos.push(i.statusCode) }),
+      ).rejects.toThrow("boom");
+      expect(infos).toEqual([]);
+    });
+
     it("fetch with dispatcher rejects invalid URLs instead of throwing", async () => {
       const dispatcher = { dispatch: () => true };
       await expect(undiciFetch("not a url", { dispatcher } as any)).rejects.toBeInstanceOf(TypeError);

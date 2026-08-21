@@ -266,9 +266,11 @@ pub(crate) fn do_send(
             }
             Ok(None) => zig_handle = None,
             Err(err) => {
-                // The handle's socket was already detached for transfer; don't leak it.
+                // The handle's socket was already detached for transfer; don't leak it. Closing
+                // runs JS, so hold the exception across it and rethrow.
+                let exception = global_object.take_exception(err);
                 close_detached(global_object, pause_target)?;
-                return Err(err);
+                return Err(global_object.throw_value(exception));
             }
         }
     }

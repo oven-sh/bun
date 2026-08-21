@@ -2914,12 +2914,7 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     args.append(JSC::jsNumber(fd));
     args.append(ports);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStream, JSC::getCallData(getStream), globalObject->globalThis(), args);
-    if (auto* exception = scope.exception()) {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, jsUndefined());
-        return jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 

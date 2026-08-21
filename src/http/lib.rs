@@ -4843,8 +4843,8 @@ impl<'a> HTTPClient<'a> {
         //   1. Any response to a HEAD request and any response with a 1xx (Informational),
         //      204 (No Content), or 304 (Not Modified) status code
         //      [...] cannot contain a message body or trailer section.
-        // Therefore in these cases set content-length to 0, so the response body is always ignored
-        // and is not waited for (which could cause a timeout).
+        // Therefore in these cases set content-length to 0 and drop any Transfer-Encoding,
+        // so the response body is always ignored and is not waited for (which could cause a timeout).
         // This applies regardless of whether we're using a proxy tunnel or not,
         // since these status codes NEVER have a body per the HTTP spec.
         if (response.status_code >= 100 && response.status_code < 200)
@@ -4852,10 +4852,6 @@ impl<'a> HTTPClient<'a> {
             || response.status_code == 304
         {
             self.state.content_length = Some(0);
-            // RFC 9112 §6.3: these responses terminate at the header block
-            // "regardless of the header fields present in the message", so a
-            // Transfer-Encoding: chunked header must not switch us into the
-            // chunked decoder below.
             self.state.transfer_encoding = Encoding::Identity;
         }
 

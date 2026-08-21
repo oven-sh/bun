@@ -208,8 +208,8 @@ function replExceptionCaptureCallback(err) {
 // `hasUncaughtExceptionCaptureCallback()`; Bun lacks that native API, so the
 // shim occupies the exclusive slot for the process lifetime once the first
 // REPL starts (uninstalling on 'exit' would drop async errors that fire after
-// input close — see test-repl-uncaught-exception-after-input-ended). The
-// shim's fallthrough re-emits `uncaughtException` with the origin arg so user
+// input close — see test-repl-uncaught-exception-after-input-ended). An error
+// the shim doesn't claim goes on to the `uncaughtException` listeners, so user
 // listeners still see it.
 function setupExceptionCapture() {
   if (exceptionCaptureInstalled) return;

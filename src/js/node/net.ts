@@ -1935,6 +1935,7 @@ Socket.prototype.connect = function connect(...args) {
         // attached stays buffered instead of being emitted to nobody.
         if (!this.isPaused()) this.read(0);
       });
+      // An adopted fd was already connected synchronously by doConnect() above.
       if (fd == null) this.connecting = true;
     }
     if (fd != null) {

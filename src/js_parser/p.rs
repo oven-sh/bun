@@ -8807,7 +8807,6 @@ impl LowerUsingDeclarationsContext {
                     ));
                 }
             }
-            // "var" at the top level of a wrapped module, "const" everywhere else.
             local.kind = p.select_local_kind(js_ast::s::Kind::KConst);
         }
     }

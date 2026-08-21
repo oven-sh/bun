@@ -1122,7 +1122,7 @@ function maybeCompleteSuite(suite: TestNode): boolean {
   const isTodo = suite.todoFlag || hasTodoAncestor(suite);
   // childrenFailed holds only the suite's own body/hook failures plus
   // non-advisory children: todo children never propagate, so a todo suite
-  // still fails on its own error (node reports `not ok ... # TODO`).
+  // still fails on its own error (node reports it as a failing todo).
   const cancelledByHookFailure = hasHookFailedAncestorSuite(suite);
   if (cancelledByHookFailure && suite.childrenFailed === 0) suite.childrenFailed = 1;
   let suiteFailed = suite.childrenFailed > 0;

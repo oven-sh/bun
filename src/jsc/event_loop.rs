@@ -642,10 +642,9 @@ impl EventLoop {
     }
 
     /// The regular loop, when this is the macro loop a macro wait is ticking.
-    /// A cross-thread post that carries no ticket (`VmHandle::post_cpp_task` —
-    /// a WebCrypto result delivered through `postTaskTo`) always lands on the
-    /// regular loop, which does not tick while a macro is being waited on, so
-    /// the wait services that queue too or a macro could never await such work.
+    /// Weak posts (`VmHandle::post_cpp_task` — a WebCrypto result through
+    /// `postTaskTo`) always land on the regular loop, which does not tick
+    /// during the wait, so the wait services that queue too.
     fn regular_loop_during_macro(&self) -> Option<&EventLoop> {
         let vm = self.vm();
         // SAFETY: `vm` is the live owning VM (set in `init()`). `addr_of!`

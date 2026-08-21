@@ -517,10 +517,9 @@ impl VirtualMachine {
         Ticket::issue(&h.0, self.current_loop_kind())
     }
 
-    /// Like [`ticket`](Self::ticket), but pinned to the regular loop whatever
-    /// loop is current — for work whose completion comes back through a weak
-    /// post ([`VmHandle::post_cpp_task`]), which always lands on the regular
-    /// loop.
+    /// Like [`ticket`](Self::ticket), but pinned to the regular loop: for
+    /// work whose completion comes back through a weak post
+    /// ([`VmHandle::post_cpp_task`]), which always lands there.
     #[track_caller]
     #[inline]
     pub fn regular_ticket(&self) -> Ticket {

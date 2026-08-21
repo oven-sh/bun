@@ -2,10 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/39900
-// A macro that awaits crypto.subtle.digest() hung forever: the digest result
-// is posted to the regular event loop, which does not tick while the macro's
-// promise is being waited on. The process exiting afterwards also covers the
-// keep-alive the WebCrypto work queue releases from the pool thread.
+// A macro that awaits crypto.subtle.digest() hung forever.
 
 const expected = Buffer.from(await crypto.subtle.digest("SHA-256", new Uint8Array(4096))).toString("base64url");
 

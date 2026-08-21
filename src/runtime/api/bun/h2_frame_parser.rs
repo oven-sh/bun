@@ -840,11 +840,33 @@ struct SendDataOptions {
     defer_write_callback: bool,
 }
 
-struct DispatchGuard<'a>(&'a Cell<u32>);
+struct DepthGuard<'a>(&'a Cell<u32>);
 
-impl Drop for DispatchGuard<'_> {
+impl<'a> DepthGuard<'a> {
+    fn enter(depth: &'a Cell<u32>) -> Self {
+        depth.set(depth.get() + 1);
+        DepthGuard(depth)
+    }
+}
+
+impl Drop for DepthGuard<'_> {
     fn drop(&mut self) {
         self.0.set(self.0.get() - 1);
+    }
+}
+
+struct FlagGuard<'a>(&'a Cell<bool>);
+
+impl<'a> FlagGuard<'a> {
+    fn set(flag: &'a Cell<bool>) -> Self {
+        flag.set(true);
+        FlagGuard(flag)
+    }
+}
+
+impl Drop for FlagGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
     }
 }
 
@@ -968,7 +990,7 @@ enum Target {
 /// (option getters, header-value `toString`) cannot free the stream out from under the borrow.
 struct GuardedStream<'a> {
     stream: &'a mut Stream,
-    _dispatch: DispatchGuard<'a>,
+    _dispatch: DepthGuard<'a>,
 }
 
 impl core::ops::Deref for GuardedStream<'_> {
@@ -2352,9 +2374,8 @@ impl H2FrameParser {
     /// Armed across every JS dispatch wrapper AND every section that holds a `&mut Stream`
     /// while user JS can run (property getters, iteration, string coercion), so
     /// rewrite_read's deferred stream free (pending_engine_stream_closes) only runs at depth 0.
-    fn enter_dispatch(&self) -> DispatchGuard<'_> {
-        self.dispatch_depth.set(self.dispatch_depth.get() + 1);
-        DispatchGuard(&self.dispatch_depth)
+    fn enter_dispatch(&self) -> DepthGuard<'_> {
+        DepthGuard::enter(&self.dispatch_depth)
     }
 
     /// Reborrows a host fn's `*mut Stream` with the dispatch guard armed for the borrow's whole
@@ -3707,7 +3728,7 @@ impl H2FrameParser {
         } else {
             owned.extend_from_slice(bytes);
         }
-        self.batch_depth.set(self.batch_depth.get() + 1);
+        let batch = DepthGuard::enter(&self.batch_depth);
         loop {
             let feed = {
                 let input: &[u8] = if direct { &bytes[pos..] } else { &owned[pos..] };
@@ -3716,12 +3737,9 @@ impl H2FrameParser {
                 // transport's onWrite) from being the outermost scope.
                 let vm = self.global_this.bun_vm();
                 let _no_checkpoint = vm.enter_event_loop_scope_without_checkpoint();
-                self.receiving.set(true);
+                let _receiving = FlagGuard::set(&self.receiving);
                 let mut guard = self.engine.borrow_mut();
-                let feed = guard.as_mut().unwrap().receive(self, input);
-                drop(guard);
-                self.receiving.set(false);
-                feed
+                guard.as_mut().unwrap().receive(self, input)
             };
             pos += feed.consumed;
             // Bytes a JS transport pushed back while the engine ran follow the current input.
@@ -3782,7 +3800,7 @@ impl H2FrameParser {
             owned = self.rewrite_tail.with_mut(std::mem::take);
             pos = self.rewrite_tail_pos.replace(0).min(owned.len());
         }
-        self.batch_depth.set(self.batch_depth.get() - 1);
+        drop(batch);
         // Uncork: flush the engine's queued control/response frames to the socket.
         let _ = self.flush();
     }

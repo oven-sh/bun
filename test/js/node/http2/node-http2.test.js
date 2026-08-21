@@ -5167,8 +5167,7 @@ it("client keeps parsing inbound frames when the event loop is spun from an awai
   server.on("stream", stream => {
     const n = ++streams;
     stream.respond({ ":status": 200 });
-    // Answer on a later turn so the response is never in the same read as the request's echo.
-    setImmediate(() => stream.end(`response ${n}`));
+    stream.end(`response ${n}`);
   });
   await new Promise(r => server.listen(0, r));
   const client = http2.connect(`http://127.0.0.1:${server.address().port}`);

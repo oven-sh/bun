@@ -437,7 +437,9 @@ describe("--check / -c (syntax check)", () => {
       env: bunEnv,
     });
     const errorOutput = stderr.toString("utf8");
-    expect(errorOutput.startsWith(`${file}:3\n`)).toBe(true);
+    // The error printer ends lines with CRLF on Windows.
+    const [firstLine] = errorOutput.split(/\r?\n/, 1);
+    expect(firstLine).toBe(`${file}:3`);
     expect(errorOutput).toMatch(/^SyntaxError: Unexpected identifier\b/m);
     expect(stdout.toString("utf8")).toBe("");
     expect(exitCode).toBe(1);

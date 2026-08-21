@@ -24,44 +24,91 @@ using namespace JSC;
 
 namespace Bun {
 
+// A "span header" in the slot is either a JSTelemetrySpan cell or a pool
+// handle carried as a number (request spans: no cell until JS asks for one).
+static ALWAYS_INLINE bool isSpanHeader(JSValue value)
+{
+    return value.isNumber() || toTelemetrySpan(value);
+}
+
 static ALWAYS_INLINE JSTelemetrySpan* asSpan(JSValue value)
 {
     return toTelemetrySpan(value);
 }
 
-static ALWAYS_INLINE JSTelemetrySpan* activeSpanFromSlot(JSValue slot)
+static ALWAYS_INLINE uint64_t handleFromNumber(JSValue v)
 {
+    return v.isInt32() ? static_cast<uint64_t>(v.asInt32()) : static_cast<uint64_t>(v.asDouble());
+}
+
+/// The header value of the slot (cell or number), or empty.
+static ALWAYS_INLINE JSValue activeHeaderFromSlot(JSValue slot)
+{
+    if (slot.isNumber())
+        return slot;
     if (!slot.isCell())
-        return nullptr;
+        return JSValue();
     JSCell* cell = slot.asCell();
     if (cell->type() == JSTelemetrySpan::Type)
-        return uncheckedDowncast<JSTelemetrySpan>(cell);
+        return slot;
     if (auto* array = dynamicDowncast<JSArray>(cell)) {
-        if (array->length() >= 2)
-            return asSpan(array->getIndexQuickly(0));
+        if (array->length() >= 2) {
+            JSValue h = array->getIndexQuickly(0);
+            if (isSpanHeader(h))
+                return h;
+        }
     }
-    return nullptr;
+    return JSValue();
 }
 
 } // namespace Bun
 
+extern "C" const Bun::SpanStub* Bun__Telemetry__poolStub(uint64_t handle);
+extern "C" JSC::EncodedJSValue Bun__Telemetry__poolMaterialize(Zig::GlobalObject*, uint64_t handle);
 
+/// The active span as a JS cell (materializing one for a pooled span), or undefined.
 extern "C" JSC::EncodedJSValue Bun__Telemetry__activeSpanCell(Zig::GlobalObject* globalObject)
 {
-    JSValue slot = globalObject->m_asyncContextData.get()->getInternalField(0);
-    if (auto* span = Bun::activeSpanFromSlot(slot))
-        return JSValue::encode(span);
-    return JSValue::encode(jsUndefined());
+    auto* data = globalObject->m_asyncContextData.get();
+    JSValue slot = data->getInternalField(0);
+    JSValue h = Bun::activeHeaderFromSlot(slot);
+    if (!h)
+        return JSValue::encode(jsUndefined());
+    if (h.isCell())
+        return JSValue::encode(h);
+    JSValue cell = JSValue::decode(Bun__Telemetry__poolMaterialize(globalObject, Bun::handleFromNumber(h)));
+    if (!cell.isCell())
+        return JSValue::encode(jsUndefined());
+    // Swap the cell into the slot so this continuation keeps seeing the same object.
+    auto& vm = JSC::getVM(globalObject);
+    if (slot.isNumber())
+        data->putInternalField(vm, 0, cell);
+    else if (auto* array = dynamicDowncast<JSArray>(slot.asCell()))
+        array->putDirectIndex(globalObject, 0, cell);
+    return JSValue::encode(cell);
+}
+
+/// Pool handle of the active span if it is native-owned, else 0.
+extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject* globalObject)
+{
+    JSValue h = Bun::activeHeaderFromSlot(globalObject->m_asyncContextData.get()->getInternalField(0));
+    if (!h)
+        return 0;
+    if (h.isNumber())
+        return Bun::handleFromNumber(h);
+    return Bun::asSpan(h)->m_native;
 }
 
 /// Identity of the active span (points into the cell), or null. This is what
 /// fetch/sql/etc. call to find their parent.
 extern "C" const Bun::SpanStub* Bun__Telemetry__activeSpanStub(Zig::GlobalObject* globalObject)
 {
-    JSValue slot = globalObject->m_asyncContextData.get()->getInternalField(0);
-    if (auto* span = Bun::activeSpanFromSlot(slot))
-        return &span->m_stub;
-    return nullptr;
+    JSValue h = Bun::activeHeaderFromSlot(globalObject->m_asyncContextData.get()->getInternalField(0));
+    if (!h)
+        return nullptr;
+    if (h.isNumber())
+        return Bun__Telemetry__poolStub(Bun::handleFromNumber(h));
+    return &Bun::asSpan(h)->m_stub;
 }
 
 /// Make `spanValue` the active span (with optional api-Context extras).
@@ -79,7 +126,7 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__enterWithExtras(Zig::GlobalObject
     JSArray* array = prev.isCell() ? dynamicDowncast<JSArray>(prev.asCell()) : nullptr;
     if (array || hasExtras) {
         unsigned length = array ? array->length() : 0;
-        bool hasSpan = length >= 2 && Bun::asSpan(array->getIndexQuickly(0));
+        bool hasSpan = length >= 2 && Bun::isSpanHeader(array->getIndexQuickly(0));
         unsigned first = hasSpan ? 2 : 0;
         if (length > first || hasExtras) {
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -110,7 +157,7 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject* g
 {
     JSValue slot = globalObject->m_asyncContextData.get()->getInternalField(0);
     if (auto* array = slot.isCell() ? dynamicDowncast<JSArray>(slot.asCell()) : nullptr) {
-        if (array->length() >= 2 && Bun::asSpan(array->getIndexQuickly(0))) {
+        if (array->length() >= 2 && Bun::isSpanHeader(array->getIndexQuickly(0))) {
             JSValue extras = array->getIndexQuickly(1);
             if (extras.isCell())
                 return JSValue::encode(extras);
@@ -187,7 +234,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEnterWithExtras, (JSC::JSGlobalObject * globalObject,
         JSValue next = jsUndefined();
         if (auto* array = prev.isCell() ? dynamicDowncast<JSArray>(prev.asCell()) : nullptr) {
             unsigned length = array->length();
-            if (length >= 2 && asSpan(array->getIndexQuickly(0))) {
+            if (length >= 2 && isSpanHeader(array->getIndexQuickly(0))) {
                 if (length > 2) {
                     auto scope = DECLARE_THROW_SCOPE(vm);
                     MarkedArgumentBuffer args;
@@ -203,7 +250,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEnterWithExtras, (JSC::JSGlobalObject * globalObject,
         data->putInternalField(vm, 0, next);
         return JSValue::encode(prev);
     }
-    if (!asSpan(span)) {
+    if (!isSpanHeader(span)) {
         // Extras but no span: use undefined in the header slot 0 is not
         // representable; callers pass a placeholder span (see telemetry.ts).
         span = jsNull();
@@ -244,15 +291,19 @@ JSC::JSValue telemetryLeaveAsyncFrame(JSC::JSGlobalObject* globalObject, JSC::JS
         extras = jsNull();
         array = nullptr;
         pairsStart = 0;
+        if (v.isNumber()) {
+            span = v;
+            return;
+        }
         if (!v.isCell())
             return;
-        if (Bun::asSpan(v)) {
+        if (Bun::isSpanHeader(v)) {
             span = v;
             return;
         }
         if (auto* a = dynamicDowncast<JSArray>(v.asCell())) {
             array = a;
-            if (a->length() >= 2 && Bun::asSpan(a->getIndexQuickly(0))) {
+            if (a->length() >= 2 && Bun::isSpanHeader(a->getIndexQuickly(0))) {
                 span = a->getIndexQuickly(0);
                 extras = a->getIndexQuickly(1);
                 pairsStart = 2;

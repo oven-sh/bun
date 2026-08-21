@@ -29,7 +29,7 @@ pub mod websocket;
 
 pub use span::{
     ContextScope, Entered, active, active_context, active_js, active_native, create_native_cell,
-    end_native, with_active_propagation,
+    discard_native, end_native, native_context_value, with_active_propagation,
 };
 pub use bun_telemetry::pool::{self, NativeSpan};
 
@@ -296,6 +296,7 @@ pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<
     bun_telemetry::rt::install(bun_telemetry::rt::Hooks {
         active_span: |g| span::active_ptr(g),
         after_record,
+        release_cell: span::release_cell,
         sampler: || state().sampler,
         capture_db_statement: || state().capture_db_statement,
     });

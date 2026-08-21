@@ -161,7 +161,7 @@ pub fn end(span: NativeSpan, statement: &[u8], operation: Option<&[u8]>, error: 
         pool::with(span, |s| s.set_name(o));
     }
     let capture = rt::capture_db_statement();
-    pool::end(span, 0, |w| {
+    let ended = pool::end(span, 0, |w| {
         if let Some(o) = op {
             w.attr("db.operation.name", o);
         }
@@ -178,6 +178,11 @@ pub fn end(span: NativeSpan, statement: &[u8], operation: Option<&[u8]>, error: 
         }
     });
     if let Some(h) = rt::hooks() {
+        if let Some(e) = &ended {
+            if e.js_cell != 0 {
+                (h.release_cell)(e.js_cell);
+            }
+        }
         (h.after_record)();
     }
 }

@@ -102,6 +102,8 @@ extern "C" void Bun__Telemetry__nativeAddEvent(uint64_t, const BunEventRef*);
 extern "C" void Bun__Telemetry__nativeAddLink(uint64_t, const BunLinkRef*);
 extern "C" size_t Bun__Telemetry__nativeName(uint64_t, uint8_t* out, size_t cap);
 extern "C" size_t Bun__Telemetry__nativePropagation(uint64_t, uint8_t which, uint8_t* out, size_t cap);
+extern "C" const Bun::SpanStub* Bun__Telemetry__activeSpanStub(Zig::GlobalObject*);
+extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Telemetry__startInstrumentSpan(Zig::GlobalObject*, uint32_t instrument, const BunStrRef* name, uint8_t kind);
 
 namespace Bun {
@@ -594,6 +596,13 @@ extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObjec
     return JSValue::encode(JSTelemetrySpan::create(globalObject->vm(), globalObject, *stub, scope, kind, jsNull(), native));
 }
 
+/// A pooled span with a materialized cell ended natively.
+extern "C" void Bun__TelemetrySpan__nativeEnded(JSC::EncodedJSValue v)
+{
+    if (auto* span = toTelemetrySpan(JSValue::decode(v)))
+        span->setState(span->vm(), (span->state() | JSTelemetrySpan::StateEnded) & ~JSTelemetrySpan::StateRecording);
+}
+
 extern "C" void* Bun__TelemetrySpan__fromJS(JSC::EncodedJSValue v)
 {
     return toTelemetrySpan(JSValue::decode(v));
@@ -669,6 +678,27 @@ static const SpanStub* resolveParent(Zig::GlobalObject* globalObject, JSValue pa
     return nullptr;
 }
 
+static void setPropagationExtra(VM&, Zig::GlobalObject*, JSTelemetrySpan* child, const String& ts, const String& bg);
+
+// tracestate/baggage of a pooled parent → child's extra (rare: only when the
+// incoming request carried them).
+static void inheritNativePropagation(VM& vm, Zig::GlobalObject* globalObject, JSTelemetrySpan* child, uint64_t native)
+{
+    String ts, bg;
+    Vector<uint8_t, 256> buf;
+    for (uint8_t which : { 't', 'b' }) {
+        buf.grow(512);
+        size_t n = Bun__Telemetry__nativePropagation(native, which, buf.begin(), buf.size());
+        if (n > buf.size()) {
+            buf.grow(n);
+            n = Bun__Telemetry__nativePropagation(native, which, buf.begin(), buf.size());
+        }
+        if (n)
+            (which == 't' ? ts : bg) = String::fromUTF8(std::span(buf.begin(), n));
+    }
+    setPropagationExtra(vm, globalObject, child, ts, bg);
+}
+
 // If `parentCell` carries tracestate/baggage, copy them into the child's extra.
 static void inheritPropagation(VM& vm, Zig::GlobalObject* globalObject, JSTelemetrySpan* child, JSTelemetrySpan* parentCell)
 {
@@ -677,24 +707,17 @@ static void inheritPropagation(VM& vm, Zig::GlobalObject* globalObject, JSTeleme
     JSValue t = JSValue::decode(Bun__TelemetrySpan__extraString(globalObject, JSValue::encode(parentCell), 't'));
     JSValue b = JSValue::decode(Bun__TelemetrySpan__extraString(globalObject, JSValue::encode(parentCell), 'b'));
     String ts, bg;
-    if (parentCell->m_native) {
-        Vector<uint8_t, 256> buf;
-        for (uint8_t which : { 't', 'b' }) {
-            buf.grow(512);
-            size_t n = Bun__Telemetry__nativePropagation(parentCell->m_native, which, buf.begin(), buf.size());
-            if (n > buf.size()) {
-                buf.grow(n);
-                n = Bun__Telemetry__nativePropagation(parentCell->m_native, which, buf.begin(), buf.size());
-            }
-            if (n)
-                (which == 't' ? ts : bg) = String::fromUTF8(std::span(buf.begin(), n));
-        }
-    } else {
-        if (t.isString())
-            ts = asString(t)->value(globalObject);
-        if (b.isString())
-            bg = asString(b)->value(globalObject);
-    }
+    if (parentCell->m_native)
+        return inheritNativePropagation(vm, globalObject, child, parentCell->m_native);
+    if (t.isString())
+        ts = asString(t)->value(globalObject);
+    if (b.isString())
+        bg = asString(b)->value(globalObject);
+    setPropagationExtra(vm, globalObject, child, ts, bg);
+}
+
+static void setPropagationExtra(VM& vm, Zig::GlobalObject* globalObject, JSTelemetrySpan* child, const String& ts, const String& bg)
+{
     if (ts.isEmpty() && bg.isEmpty())
         return;
     JSObject* extra = constructEmptyObject(globalObject, globalObject->objectPrototype(), 6);
@@ -714,14 +737,17 @@ static void inheritPropagation(VM& vm, Zig::GlobalObject* globalObject, JSTeleme
 static ALWAYS_INLINE JSTelemetrySpan* createSpanFast(Zig::GlobalObject* globalObject, int32_t scopeKind, JSString* name)
 {
     auto& vm = globalObject->vm();
-    JSValue active = JSValue::decode(Bun__Telemetry__activeSpanCell(globalObject));
-    JSTelemetrySpan* parentCell = toTelemetrySpan(active);
+    const SpanStub* parent = Bun__Telemetry__activeSpanStub(globalObject);
     SpanStub stub;
-    Bun__Telemetry__stubStart(&stub, parentCell ? &parentCell->m_stub : nullptr, 0);
+    Bun__Telemetry__stubStart(&stub, parent, 0);
     auto* span = JSTelemetrySpan::create(vm, globalObject, stub, static_cast<uint16_t>(scopeKind >> 3), static_cast<uint8_t>(scopeKind & 7), name, 0);
-    if (parentCell) [[unlikely]] {
-        if (parentCell->m_native || parentCell->get(JSTelemetrySpan::Field::Extra).isObject())
-            inheritPropagation(vm, globalObject, span, parentCell);
+    if (parent) {
+        if (uint64_t native = Bun__Telemetry__activeNativeHandle(globalObject))
+            inheritNativePropagation(vm, globalObject, span, native);
+        else if (JSTelemetrySpan* parentCell = toTelemetrySpan(JSValue::decode(Bun__Telemetry__activeSpanCell(globalObject)))) {
+            if (parentCell->get(JSTelemetrySpan::Field::Extra).isObject())
+                inheritPropagation(vm, globalObject, span, parentCell);
+        }
     }
     return span;
 }

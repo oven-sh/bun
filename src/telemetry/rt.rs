@@ -12,6 +12,9 @@ pub struct Hooks {
     pub active_span: fn(global: *mut c_void) -> *const SpanStub,
     /// Called after a span is recorded on this thread (arms the flush timer).
     pub after_record: fn(),
+    /// A pooled span that had a JS cell materialized for it ended: release it
+    /// (`Slot::js_cell`).
+    pub release_cell: fn(js_cell: usize),
     pub sampler: fn() -> crate::Sampler,
     pub capture_db_statement: fn() -> bool,
 }

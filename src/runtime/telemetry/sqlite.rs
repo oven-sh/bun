@@ -35,7 +35,7 @@ pub extern "C" fn Bun__Telemetry__sqliteBegin(
         },
     );
     if bun_telemetry::pool::with_ref(span, |s| s.is_recording()) != Some(true) {
-        bun_telemetry::pool::discard(span);
+        crate::telemetry::discard_native(span);
         return 0;
     }
     span.0

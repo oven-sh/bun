@@ -671,18 +671,9 @@ private:
             /* This path is only for upgraded websockets */
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) httpContextData->upgradedWebSocket;
 
-            /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?) */
+            /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?).
+             * An end() in the open handler has already uncorked and dealt with the FIN itself. */
             asyncSocket->uncork();
-
-            /* An end() in the open handler left the TCP FIN to us. Gate on the buffer like onData / onWritable in
-             * WebSocketContext, not on uncork() succeeding: uncork() also succeeds when a large send in the open
-             * handler already released the cork and left a full buffer behind. onWritable FINs after the drain. */
-            if (!us_socket_is_closed((us_socket_t *) asyncSocket) && asyncSocket->getBufferedAmount() == 0) {
-                WebSocketData *webSocketData = (WebSocketData *) asyncSocket->getAsyncSocketData();
-                if (webSocketData->isShuttingDown) {
-                    asyncSocket->shutdown();
-                }
-            }
 
             /* Reset upgradedWebSocket before we return */
             httpContextData->upgradedWebSocket = nullptr;

@@ -234,7 +234,7 @@ private:
     }
 
 public:
-    /* Send websocket close frame, emit close event, send FIN if successful.
+    /* Send websocket close frame, emit close event, send FIN once everything before it is written.
      * Will not append a close reason if code is 0 or 1005. */
     void end(int code = 0, std::string_view message = {}) {
         /* Check if we already called this one */
@@ -243,7 +243,7 @@ public:
             return;
         }
 
-        /* We postpone any FIN sending to either drainage or uncorking */
+        /* Makes onWritable send the FIN if we cannot do it below */
         webSocketData->isShuttingDown = true;
 
         /* Format and send the close frame */
@@ -251,17 +251,14 @@ public:
         size_t length = std::min<size_t>(MAX_CLOSE_PAYLOAD, message.length());
         char closePayload[MAX_CLOSE_PAYLOAD + 2];
         size_t closePayloadLength = protocol::formatClosePayload(closePayload, (uint16_t) code, message.data(), length);
-        SendStatus status = sendFrame(std::string_view(closePayload, closePayloadLength), OpCode::CLOSE, false, true);
+        sendFrame(std::string_view(closePayload, closePayloadLength), OpCode::CLOSE, false, true);
 
-        /* FIN if we are ok and not corked */
-        if (!this->isCorked()) {
-            if (status == SUCCESS) {
-                /* If we are not corked, and we just sent off everything, we need to FIN right here.
-                 * In all other cases whoever uncorks us (onData, the upgrade path in HttpContext) sends the FIN
-                 * if the buffer is empty by then, else onWritable does once it has drained. shutdown() with data
-                 * still buffered would discard it, close frame included. */
-                this->shutdown();
-            }
+        /* The close frame is the last thing we send, so there is nothing left to batch: flush whatever the
+         * handler we may be running in has corked, then FIN right here unless some of it is still buffered.
+         * In that case onWritable FINs once the buffer has drained; shutdown() now would discard it. */
+        Super::uncork();
+        if (getBufferedAmount() == 0) {
+            this->shutdown();
         }
 
         WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();

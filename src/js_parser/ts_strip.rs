@@ -116,7 +116,6 @@ pub struct StripError {
     pub hi: u32,
 }
 
-
 struct Strip<'s> {
     tokens: &'s [CapturedToken],
     /// (span_lo, span_hi) pairs to blank, in recording order.
@@ -153,7 +152,11 @@ impl Strip<'_> {
             return hi;
         }
         let t = &self.tokens[idx - 1];
-        if t.start >= lo { t.end.min(hi).max(lo) } else { hi }
+        if t.start >= lo {
+            t.end.min(hi).max(lo)
+        } else {
+            hi
+        }
     }
 
     /// Port of swc `TsStrip::fix_asi`: after erasing a whole statement,
@@ -219,9 +222,7 @@ impl Strip<'_> {
             self.overwrites.push((lo, b';'));
         }
     }
-
 }
-
 
 fn span_has_newline(src: &[u8], lo: u32, hi: u32) -> bool {
     let bytes = &src[lo as usize..hi as usize];
@@ -410,8 +411,13 @@ pub fn apply(
                 // https://262.ecma-international.org/#sec-white-space
                 '\u{0009}' | '\u{000B}' | '\u{000C}' | '\u{FEFF}' => continue,
                 // Space_Separator
-                '\u{0020}' | '\u{00A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{202F}'
-                | '\u{205F}' | '\u{3000}' => continue,
+                '\u{0020}'
+                | '\u{00A0}'
+                | '\u{1680}'
+                | '\u{2000}'..='\u{200A}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}' => continue,
                 // https://262.ecma-international.org/#sec-line-terminators
                 '\u{000A}' | '\u{000D}' | '\u{2028}' | '\u{2029}' => continue,
                 _ => match c.len_utf8() {
@@ -505,15 +511,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let recorder = self.ts_strip.take()?;
         let tokens = core::mem::take(&mut self.lexer.captured_tokens);
         let source = self.source.contents.as_ref();
-        Some(Box::new(
-            match apply(source, &tokens, &recorder.entries) {
-                Ok(code) => bun_ast::TsStripOutput::Code(code),
-                Err(err) => bun_ast::TsStripOutput::Unsupported {
-                    message: err.kind.message(),
-                    lo: err.lo,
-                    hi: err.hi,
-                },
+        Some(Box::new(match apply(source, &tokens, &recorder.entries) {
+            Ok(code) => bun_ast::TsStripOutput::Code(code),
+            Err(err) => bun_ast::TsStripOutput::Unsupported {
+                message: err.kind.message(),
+                lo: err.lo,
+                hi: err.hi,
             },
-        ))
+        }))
     }
 }

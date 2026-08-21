@@ -183,7 +183,11 @@ enum CacheKind {
 
 impl CacheKind {
     fn from_is_cjs(is_cjs: bool) -> Self {
-        if is_cjs { CacheKind::CommonJs } else { CacheKind::Esm }
+        if is_cjs {
+            CacheKind::CommonJs
+        } else {
+            CacheKind::Esm
+        }
     }
 }
 
@@ -665,8 +669,7 @@ pub fn note_transpiled(filename: &[u8], raw: &[u8], transpiled: &[u8]) {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return;
     }
-    let (Ok(code_size), Ok(_)) = (u32::try_from(raw.len()), u32::try_from(transpiled.len()))
-    else {
+    let (Ok(code_size), Ok(_)) = (u32::try_from(raw.len()), u32::try_from(transpiled.len())) else {
         return;
     };
     let code_hash = sha256(raw);

@@ -18,9 +18,7 @@ describe("stripTypeScriptTypes", () => {
   });
 
   test("erased statements", () => {
-    expect(stripTypeScriptTypes("interface A { x: string }\nlet y = 1;")).toBe(
-      "                         \nlet y = 1;",
-    );
+    expect(stripTypeScriptTypes("interface A { x: string }\nlet y = 1;")).toBe("                         \nlet y = 1;");
     expect(stripTypeScriptTypes("type A = string;\nlet y = 1;")).toBe("                \nlet y = 1;");
     expect(stripTypeScriptTypes("declare function f(): void;\nlet y = 1;")).toBe(
       "                           \nlet y = 1;",
@@ -33,9 +31,7 @@ describe("stripTypeScriptTypes", () => {
     expect(stripTypeScriptTypes('declare module "m" { const x: number }')).toBe(
       "                                      ",
     );
-    expect(stripTypeScriptTypes("function f(): void;\nfunction f() {}")).toBe(
-      "                   \nfunction f() {}",
-    );
+    expect(stripTypeScriptTypes("function f(): void;\nfunction f() {}")).toBe("                   \nfunction f() {}");
   });
 
   test("import/export type specifiers", () => {
@@ -55,13 +51,9 @@ describe("stripTypeScriptTypes", () => {
     expect(stripTypeScriptTypes("function f<T>(a: T, b?: number): T { return a; }")).toBe(
       "function f   (a   , b         )    { return a; }",
     );
-    expect(stripTypeScriptTypes("function f(this: void, a: number) {}")).toBe(
-      "function f(            a        ) {}",
-    );
+    expect(stripTypeScriptTypes("function f(this: void, a: number) {}")).toBe("function f(            a        ) {}");
     expect(stripTypeScriptTypes("class C<T> extends B<T> {}")).toBe("class C    extends B    {}");
-    expect(stripTypeScriptTypes("class C extends B implements I, J {}")).toBe(
-      "class C extends B                 {}",
-    );
+    expect(stripTypeScriptTypes("class C extends B implements I, J {}")).toBe("class C extends B                 {}");
     expect(stripTypeScriptTypes("abstract class C { abstract foo(): void }")).toBe(
       "         class C {                      }",
     );
@@ -93,9 +85,7 @@ describe("stripTypeScriptTypes", () => {
     expect(stripTypeScriptTypes("let a = b as any\n[c];")).toBe("let a = b ;     \n[c];");
     expect(stripTypeScriptTypes("let a = b as any\nc;")).toBe("let a = b       \nc;");
     expect(stripTypeScriptTypes("let x = 1\ntype A = string\n(f)()")).toBe("let x = 1\n;              \n(f)()");
-    expect(stripTypeScriptTypes("let x = 1\ntype A = string\nlet y = 2")).toBe(
-      "let x = 1\n               \nlet y = 2",
-    );
+    expect(stripTypeScriptTypes("let x = 1\ntype A = string\nlet y = 2")).toBe("let x = 1\n               \nlet y = 2");
     expect(stripTypeScriptTypes("type A=1;type B=2;let c=3;")).toBe("                  let c=3;");
   });
 
@@ -128,9 +118,7 @@ describe("stripTypeScriptTypes", () => {
 
   test("argument validation", () => {
     // @ts-expect-error invalid input
-    expect(() => stripTypeScriptTypes({})).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+    expect(() => stripTypeScriptTypes({})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     expect(() => stripTypeScriptTypes("const x: number = 1;", { mode: "invalid" as any })).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     );
@@ -157,7 +145,10 @@ describe("stripTypeScriptTypes", () => {
       ["module N { }", "`module` keyword is not supported. Use `namespace` instead."],
       ['import x = require("x");', "TypeScript import equals declaration is not supported in strip-only mode"],
       ["export = 1;", "TypeScript export assignment is not supported in strip-only mode"],
-      ["class C { constructor(private a: number) {} }", "TypeScript parameter property is not supported in strip-only mode"],
+      [
+        "class C { constructor(private a: number) {} }",
+        "TypeScript parameter property is not supported in strip-only mode",
+      ],
       ["class C { constructor(readonly a) {} }", "TypeScript parameter property is not supported in strip-only mode"],
       [
         "let b = <string>y;",
@@ -174,9 +165,7 @@ describe("stripTypeScriptTypes", () => {
       );
     }
     // Ambient contexts suppress the error (the whole construct is erased).
-    expect(stripTypeScriptTypes("declare namespace O { enum E {} }")).toBe(
-      "                                 ",
-    );
+    expect(stripTypeScriptTypes("declare namespace O { enum E {} }")).toBe("                                 ");
     // Casts inside binary expressions blank like any other (Node v26.3.0's
     // amaro predates swc's grouping-change rejection).
     expect(stripTypeScriptTypes("let x = 1 + 2 as any * 3;")).toBe("let x = 1 + 2        * 3;");

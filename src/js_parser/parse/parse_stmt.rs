@@ -2011,10 +2011,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                p.ts_strip_record_to_here(
-                    crate::ts_strip::EntryKind::BlankStmt,
-                    loc.start as u32,
-                );
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::BlankStmt, loc.start as u32);
                 return Ok(Some(p.s(S::TypeScript {}, loc)));
             }
         }

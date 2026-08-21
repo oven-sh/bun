@@ -493,11 +493,9 @@ function stripTypeScriptTypes(code, options = kEmptyObject) {
   // Node: strip mode cannot produce a source map (positions are unchanged).
   validateOneOf(sourceMap, "options.sourceMap", [false, undefined]);
 
-  stripTypeScriptTypesNative ??= $newRustFunction(
-    "node_module_binding.rs",
-    "stripTypeScriptTypesNative",
-    1,
-  ) as (code: string) => any;
+  stripTypeScriptTypesNative ??= $newRustFunction("node_module_binding.rs", "stripTypeScriptTypesNative", 1) as (
+    code: string,
+  ) => any;
   const result = stripTypeScriptTypesNative(code);
   if (typeof result !== "string") {
     // amaro-shaped error report: distinguish invalid syntax from

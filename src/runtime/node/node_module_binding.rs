@@ -196,7 +196,13 @@ pub fn strip_type_script_types_native(
         }
         Some(&bun_ast::TsStripOutput::Unsupported { message, lo, hi }) => {
             let (line, snippet) = line_and_snippet(code_utf8, lo, hi);
-            error_object(global, "UnsupportedSyntax", message.as_bytes(), line, &snippet)
+            error_object(
+                global,
+                "UnsupportedSyntax",
+                message.as_bytes(),
+                line,
+                &snippet,
+            )
         }
         None => {
             // Empty input parses through a fast path that skips `to_ast`;

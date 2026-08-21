@@ -582,9 +582,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // A live `import foo = …` has runtime semantics strip mode cannot
         // express.
         p.ts_strip_record_to_here(
-            crate::ts_strip::EntryKind::Unsupported(
-                crate::ts_strip::UnsupportedKind::ImportEquals,
-            ),
+            crate::ts_strip::EntryKind::Unsupported(crate::ts_strip::UnsupportedKind::ImportEquals),
             loc.start as u32,
         );
 

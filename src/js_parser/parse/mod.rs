@@ -749,10 +749,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
-                p.ts_strip_record_to_here(
-                    crate::ts_strip::EntryKind::BlankStmt,
-                    loc.start as u32,
-                );
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::BlankStmt, loc.start as u32);
                 return Ok(p.s(S::TypeScript {}, loc));
             }
         }
@@ -1703,9 +1700,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.ts_strip_record_to_here(
-                                    crate::ts_strip::EntryKind::ArrowTypeParams {
-                                        is_async: true,
-                                    },
+                                    crate::ts_strip::EntryKind::ArrowTypeParams { is_async: true },
                                     type_params_lo,
                                 );
                                 p.lexer.next()?;

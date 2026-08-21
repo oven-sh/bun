@@ -28,19 +28,6 @@ pub struct CPUProfilerConfig {
     pub thread_id: u32,
 }
 
-impl Default for CPUProfilerConfig {
-    fn default() -> Self {
-        Self {
-            name: Box::default(),
-            dir: Box::default(),
-            md_format: false,
-            json_format: false,
-            interval: 1000,
-            thread_id: 0,
-        }
-    }
-}
-
 // C++ function declarations
 unsafe extern "C" {
     /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is

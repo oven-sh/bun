@@ -839,13 +839,14 @@ impl WebWorker {
             // or the parent's profiling options when the worker has no execArgv of its own, as node's
             // per-Environment options work. The profile is written by the VM's exit path.
             let profile = if exec_argv.cpu_prof || exec_argv.cpu_prof_md {
-                let defaults = crate::bun_cpu_profiler::CPUProfilerConfig::default();
                 Some(crate::bun_cpu_profiler::CPUProfilerConfig {
                     name: exec_argv.cpu_prof_name.take().unwrap_or_default(),
                     dir: exec_argv.cpu_prof_dir.take().unwrap_or_default(),
                     md_format: exec_argv.cpu_prof_md,
                     json_format: exec_argv.cpu_prof,
-                    interval: exec_argv.cpu_prof_interval.unwrap_or(defaults.interval),
+                    interval: exec_argv
+                        .cpu_prof_interval
+                        .unwrap_or(bun_options_types::context::CpuProf::DEFAULT_INTERVAL),
                     thread_id: self.thread_id(),
                 })
             } else if !has_own_exec_argv {
@@ -1575,11 +1576,10 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
     // copy the slice out and let `resolved_entry_point` drop on the stack.
-    match resolved_entry_point.path_const() {
-        Some(entry_path) => Some(entry_path.text),
-        None => {
-            *error_message = BunString::static_(b"Worker entry point is missing");
-            None
-        }
-    }
+    Some(
+        resolved_entry_point
+            .path_const()
+            .expect("resolve_entry_point rejects disabled results")
+            .text,
+    )
 }

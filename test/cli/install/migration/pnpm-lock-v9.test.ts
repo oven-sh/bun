@@ -2652,6 +2652,73 @@ importers:
       expect(exitCode).toBe(1);
       expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
     });
+
+    // #39785: quoted, block, and escaped scalars from pnpm-workspace.yaml were
+    // backed by a parse arena that dropped before package.json was printed.
+    // MIMALLOC_PURGE_DELAY=0 makes the freed pages unreadable right away, so
+    // the use-after-free is deterministic even in a tiny repo.
+    test.concurrent("pnpm-workspace.yaml overrides, catalogs, and patches migrate verbatim", async () => {
+      using dir = tempDir("pnpm-v9-workspace-overrides-uaf", {
+        "package.json": JSON.stringify({ name: "workspace-overrides-uaf", private: true }),
+        "packages/a/package.json": JSON.stringify({ name: "a", private: true }),
+        "patches/pkg-g.patch": "",
+        "pnpm-workspace.yaml": `packages:
+  - 'packages/*'
+overrides:
+  pkg-a: >-
+    7.28.6
+  pkg-b: "\\u003e=5.5.9"
+  pkg-c: '>=1.19.10'
+  pkg-d: |-
+    7.15.1
+  "pkg\\u002dk": 9.9.9
+catalog:
+  pkg-e: "\\u003e=1.0.0"
+catalogs:
+  group-a:
+    pkg-f: '2.3.4'
+patchedDependencies:
+  pkg-g: "patches/pkg\\u002dg.patch"
+`,
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+  packages/a: {}
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "migrate"],
+        cwd: String(dir),
+        env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "0" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "workspace-overrides-uaf",
+        private: true,
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: { "pkg-e": ">=1.0.0" },
+          catalogs: { "group-a": { "pkg-f": "2.3.4" } },
+        },
+        overrides: {
+          "pkg-a": "7.28.6",
+          "pkg-b": ">=5.5.9",
+          "pkg-c": ">=1.19.10",
+          "pkg-d": "7.15.1",
+          "pkg-k": "9.9.9",
+        },
+        patchedDependencies: { "pkg-g": "patches/pkg-g.patch" },
+      });
+      expect(exitCode).toBe(0);
+    });
   });
 
   test.concurrent("link: version with a semver specifier resolves to the workspace (pnpm/pnpm#7712)", async () => {

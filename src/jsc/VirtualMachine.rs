@@ -994,6 +994,17 @@ impl VirtualMachine {
         unsafe { EventLoop::enter_scope(self.event_loop) }
     }
 
+    /// `event_loop().enter()` now, `.exit_without_checkpoint()` on drop, for a
+    /// dispatcher that drains microtasks itself: see
+    /// [`EventLoop::enter_scope_without_checkpoint`].
+    #[inline]
+    pub fn enter_event_loop_scope_without_checkpoint(
+        &self,
+    ) -> crate::event_loop::EventLoopEnterNoCheckpointGuard {
+        // SAFETY: as `enter_event_loop_scope`.
+        unsafe { EventLoop::enter_scope_without_checkpoint(self.event_loop) }
+    }
+
     /// Safe shared-reference accessor for the process-lifetime dotenv loader
     /// (`vm.transpiler.env`). The loader is allocated once during VM init and
     /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
@@ -3644,9 +3655,9 @@ impl VirtualMachine {
         L::None
     }
 
-    /// Resolves a MIME type string via the VM's cached MIME-type table.
+    /// Interns a MIME type string against the static common-type set.
     pub fn mime_type(&mut self, str_: &[u8]) -> Option<bun_http::MimeType::MimeType> {
-        self.rare_data().mime_type_from_string(str_)
+        bun_http::MimeType::by_name_static(str_)
     }
 
     /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
@@ -5237,6 +5248,10 @@ impl VirtualMachine {
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
         self.unhandled_error_counter = 0;
+        // The finished file's plugins are dropped with its global; the next
+        // `Bun.plugin()` call reinstalls the runner against the new global.
+        self.transpiler.linker.plugin_runner = None;
+        self.plugin_runner = None;
 
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
@@ -5282,7 +5297,7 @@ impl VirtualMachine {
         &mut self,
         value: JSValue,
         exception: Option<&Exception>,
-        exception_list: Option<&mut ExceptionList>,
+        mut exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
@@ -5293,7 +5308,18 @@ impl VirtualMachine {
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
-        if value.is_aggregate_error(global_ref) {
+        let errors = if value.is_aggregate_error(global_ref) {
+            match value.fast_get(global_ref, jsc::BuiltinName::errors) {
+                Ok(errors) => errors,
+                Err(_) => {
+                    global_ref.clear_exception();
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(errors) = errors {
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip
@@ -5305,6 +5331,7 @@ impl VirtualMachine {
                 exception_list: *mut ExceptionList,
                 allow_ansi_color: bool,
                 allow_side_effects: bool,
+                printed_member: bool,
             }
             extern "C" fn agg_iter(
                 _vm: *mut crate::VM,
@@ -5329,6 +5356,7 @@ impl VirtualMachine {
                 // SAFETY: `ctx.writer` borrows the caller's stack local,
                 // live across the synchronous `for_each` call.
                 let writer = unsafe { &mut *ctx.writer };
+                ctx.printed_member = true;
                 vm.print_errorlike_object(
                     next_value,
                     None,
@@ -5340,25 +5368,27 @@ impl VirtualMachine {
                 );
             }
             let mut ctx = AggCtx {
-                formatter: std::ptr::from_mut(formatter),
-                writer: std::ptr::from_mut(writer),
+                formatter: std::ptr::from_mut(&mut *formatter),
+                writer: std::ptr::from_mut(&mut *writer),
                 exception_list: exception_list
-                    .map(std::ptr::from_mut::<ExceptionList>)
-                    .unwrap_or(core::ptr::null_mut()),
+                    .as_deref_mut()
+                    .map_or(core::ptr::null_mut(), std::ptr::from_mut::<ExceptionList>),
                 allow_ansi_color,
                 allow_side_effects,
+                printed_member: false,
             };
-            // `getErrorsProperty` is
-            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
-            // which case the error is swallowed.
-            let errors = value.get_errors_property(global_ref);
-            let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
-            return;
+            if errors
+                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
+                .is_err()
+            {
+                global_ref.clear_exception();
+            }
+            if ctx.printed_member {
+                return;
+            }
+            // `errors` is empty or not iterable: print the AggregateError itself.
         }
 
-        // Note: reborrow so the add-to-error-list tail can still see it after
-        // `print_error_from_maybe_private_data`.
-        let mut exception_list = exception_list;
         let was_internal = self.print_error_from_maybe_private_data(
             value,
             exception_list.as_deref_mut(),
@@ -6736,7 +6766,7 @@ impl VirtualMachine {
         if let Some(frame) = top_frame {
             if !frame.position.is_invalid() {
                 let source_url = frame.source_url.to_utf8();
-                let file = bun_paths::resolve_path::relative(dir, source_url.slice());
+                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
                 let _ = write!(
                     writer,
                     "\n::error file={},line={},col={},title=",
@@ -6798,7 +6828,7 @@ impl VirtualMachine {
             };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();
-                let file = bun_paths::resolve_path::relative(dir, source_url.slice());
+                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
                 let func = frame.function_name.to_utf8();
                 if file.is_empty() && func.slice().is_empty() {
                     continue;

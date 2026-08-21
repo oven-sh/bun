@@ -32,6 +32,14 @@ pub mod windows_named_pipe;
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
+/// True when a unix socket path would be silently truncated by the kernel: a
+/// filesystem `sun_path` is read as a NUL-terminated string, so an interior
+/// NUL would bind/connect a different path. Abstract names (leading NUL,
+/// Linux) are length-delimited and may contain NUL bytes, so they are exempt.
+pub fn unix_path_has_interior_nul(path: &[u8]) -> bool {
+    path.first().is_some_and(|&b| b != 0) && path.contains(&0)
+}
+
 /// Re-export of the canonical `bun_uws::ssl_wrapper` plus the runtime-tier
 /// `init(&SSLConfig, ..)` constructor that the lower tier can't see (it would
 /// need to name `crate::server::server_config::SSLConfig`). The body is the

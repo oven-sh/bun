@@ -50,7 +50,7 @@ const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
 
-const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
+const { UV_ECANCELED, UV_EINVAL, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
@@ -3147,6 +3147,8 @@ function internalConnect(self, options, address, port, addressType, localAddress
         detail: { host: address, port },
       });
     }
+  } else if (pipePathHasInteriorNul(address)) {
+    err = UV_EINVAL;
   } else {
     const req: any = {};
     req.address = address;
@@ -3883,6 +3885,13 @@ Server.prototype[kRealListen] = function (
     exclusive = false;
   }
   if (path) {
+    if (pipePathHasInteriorNul(path)) {
+      // formatListenError rewrites this into Node's listen error message.
+      const err: any = new Error();
+      err.code = "EINVAL";
+      err.errno = UV_EINVAL;
+      throw err;
+    }
     this._handle = Bun.listen({
       unix: path,
       tls,
@@ -4354,6 +4363,11 @@ function checkBindError(err, port, handle) {
 
 function isPipeName(s) {
   return typeof s === "string" && toNumber(s) === false;
+}
+
+// libuv rejects these with EINVAL; abstract names (leading NUL, Linux) are exempt.
+function pipePathHasInteriorNul(path: string): boolean {
+  return path.charCodeAt(0) !== 0 && path.includes("\0");
 }
 
 function toNumber(x) {

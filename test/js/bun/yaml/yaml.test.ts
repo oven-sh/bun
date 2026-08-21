@@ -3655,7 +3655,51 @@ config:
           str: new String("world"),
           bool: new Boolean(false),
         };
-        expect(YAML.stringify(obj, null, 2)).toBe("num: \n  3.14\nstr: world\nbool: \n  false");
+        expect(YAML.stringify(obj, null, 2)).toBe("num: 3.14\nstr: world\nbool: false");
+      });
+
+      test("boxed Number and Boolean property values stay on the key line in block style", () => {
+        expect(YAML.stringify({ a: new Number(1), b: new Boolean(true), c: new String("s"), d: 1 }, null, 2)).toBe(
+          "a: 1\nb: true\nc: s\nd: 1",
+        );
+        expect(YAML.stringify({ a: new Number(1), b: new Boolean(true), c: new String("s"), d: 1 })).toBe(
+          "{a: 1,b: true,c: s,d: 1}",
+        );
+      });
+
+      test("a boxed property value is written exactly like the primitive it wraps", () => {
+        class Port extends Number {}
+        class Flag extends Boolean {}
+        const boxed = {
+          numbers: { int: new Number(1), float: Object(2.5), nan: new Number(NaN), negativeZero: new Number(-0) },
+          flags: { enabled: new Boolean(true), disabled: Object(false), port: new Port(8080), flag: new Flag(false) },
+          list: [new Number(1), new Boolean(false), { count: new Number(2) }],
+        };
+        const plain = {
+          numbers: { int: 1, float: 2.5, nan: NaN, negativeZero: -0 },
+          flags: { enabled: true, disabled: false, port: 8080, flag: false },
+          list: [1, false, { count: 2 }],
+        };
+        for (const space of [2, 4, "\t", undefined]) {
+          expect(YAML.stringify(boxed, null, space)).toBe(YAML.stringify(plain, null, space));
+        }
+        expect(YAML.parse(YAML.stringify(boxed, null, 2))).toEqual(plain);
+      });
+
+      test("block style unwraps a boxed property value as many times as flow style", () => {
+        let calls = 0;
+        const port = new Number(7);
+        port.valueOf = () => {
+          calls++;
+          return 7;
+        };
+
+        expect(YAML.stringify({ port }, null, 2)).toBe("port: 7");
+        const blockStyleCalls = calls;
+
+        calls = 0;
+        expect(YAML.stringify({ port })).toBe("{port: 7}");
+        expect(blockStyleCalls).toBe(calls);
       });
 
       test("handles Date objects", () => {

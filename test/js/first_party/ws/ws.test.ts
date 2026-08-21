@@ -383,29 +383,60 @@ describe("WebSocketServer", () => {
       ]);
     });
 
-    it("defaults to nodebuffer and applies a new value to the next message", async () => {
+    it("defaults to nodebuffer and applies a new value to the next frame", async () => {
       const binaryTypesSeen: string[] = [];
       const received = await receiveOnServer(
         ws => {
           binaryTypesSeen.push(ws.binaryType);
           ws.binaryType = "arraybuffer";
           binaryTypesSeen.push(ws.binaryType);
-          ws.once("message", () => {
-            ws.binaryType = "nodebuffer";
+          const next = ["blob", "nodebuffer"];
+          ws.on("message", () => {
+            if (next.length) ws.binaryType = next.shift() as WebSocket["binaryType"];
           });
         },
         client => {
           client.send(Buffer.from([1]));
-          client.send(Buffer.from([2]));
+          client.ping(Buffer.from([2]));
+          client.send(Buffer.from([3]));
+          client.send(Buffer.from([4]));
         },
-        2,
+        3,
       );
 
       expect(binaryTypesSeen).toEqual(["nodebuffer", "arraybuffer"]);
       expect(received).toEqual([
         { event: "message", shape: "ArrayBuffer", bytes: [1], isBinary: true },
-        { event: "message", shape: "Buffer", bytes: [2], isBinary: true },
+        // the ping arrives after the change to "blob"
+        { event: "ping", shape: "Buffer", bytes: [2] },
+        { event: "message", shape: "Blob", bytes: [3], isBinary: true },
+        { event: "message", shape: "Buffer", bytes: [4], isBinary: true },
       ]);
+    });
+
+    it("can be set after the socket closed", async () => {
+      const wss = new WebSocketServer({ port: 0 });
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      wss.on("connection", ws => {
+        ws.on("error", reject);
+        ws.on("close", () => {
+          try {
+            ws.binaryType = "arraybuffer";
+            resolve(ws.binaryType);
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+
+      const client = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+      client.on("error", reject);
+      client.on("open", () => client.close());
+      try {
+        expect(await promise).toBe("arraybuffer");
+      } finally {
+        wss.close();
+      }
     });
   });
 });

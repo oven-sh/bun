@@ -1007,14 +1007,19 @@ class BunWebSocketMocked extends EventEmitter {
     };
   }
 
+  // ServerWebSocket applies binaryType to ping and pong payloads too. npm ws always emits a Buffer for them.
+  #controlPayload(data) {
+    return this.#binaryType === "arraybuffer" ? Buffer.from(data) : data;
+  }
+
   #ping(ws, data) {
     this.#ws = ws;
-    this.emit("ping", data);
+    this.emit("ping", this.#controlPayload(data));
   }
 
   #pong(ws, data) {
     this.#ws = ws;
-    this.emit("pong", data);
+    this.emit("pong", this.#controlPayload(data));
   }
 
   #message(ws, message) {
@@ -1031,15 +1036,10 @@ class BunWebSocketMocked extends EventEmitter {
         message = Buffer.from(message);
       }
     } else {
-      //Buffer
+      // Buffer, or ArrayBuffer when binaryType is "arraybuffer" (the setter forwards it to the ServerWebSocket)
       isBinary = true;
-      if (this.#binaryType !== "nodebuffer") {
-        if (this.#binaryType === "arraybuffer") {
-          // ServerWebSocket creates this Buffer over its own ArrayBuffer, so .buffer holds exactly the message.
-          message = message.buffer;
-        } else if (this.#binaryType === "blob") {
-          message = new Blob([message]);
-        }
+      if (this.#binaryType === "blob") {
+        message = new Blob([message]);
       }
     }
 
@@ -1196,6 +1196,9 @@ class BunWebSocketMocked extends EventEmitter {
       throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
     }
     this.#binaryType = type;
+    // The ServerWebSocket builds the ArrayBuffer itself. "blob" is wrapped in #message from a Buffer.
+    const ws = this.#ws;
+    if (ws) ws.binaryType = type === "arraybuffer" ? "arraybuffer" : "nodebuffer";
   }
 
   get readyState() {

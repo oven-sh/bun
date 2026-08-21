@@ -1420,9 +1420,7 @@ impl CanonicalRequest {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Returns true if the given slice contains a byte that is never valid in an
-/// HTTP header value (NUL, CR, LF). Same byte set `fetch()` rejects through
-/// `Headers`, see https://fetch.spec.whatwg.org/#concept-header-value.
+/// The byte set `Headers` rejects in a value: https://fetch.spec.whatwg.org/#concept-header-value
 pub fn contains_invalid_header_value_byte(value: &[u8]) -> bool {
     strings::contains_any(value, b"\0\r\n")
 }

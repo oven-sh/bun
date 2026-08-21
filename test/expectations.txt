@@ -35,3 +35,10 @@
 # only hold on the distributing model. Passes on macOS and Windows.
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
+
+# --- js/bun/spawn: getMaxFD leak detection false positive on OHOS ---
+# OHOS kernel close() leaves a stale /proc/self/fd entry (fd number is actually
+# reusable — verified: socketpair reuses the closed fd number immediately).
+# getMaxFD() reads /proc/self/fd and is fooled by the stale entry, so the
+# "didn't leak any fds" assertion fails 100% deterministically. Not a real bun fd leak.
+[ OPENHARMONY ] test/js/bun/spawn/spawn-streaming-stdin.test.ts [ Skip ] # getMaxFD leak check is a false positive (OHOS kernel stale /proc/self/fd entry after close)

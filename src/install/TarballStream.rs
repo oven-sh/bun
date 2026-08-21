@@ -1143,7 +1143,11 @@ impl TarballStream {
                             "{} extracting tarball for \"{}\"{}{}",
                             err.name(),
                             bstr::BStr::new(tarball.name.slice()),
-                            if self.fail_detail.is_empty() { "" } else { ": " },
+                            if self.fail_detail.is_empty() {
+                                ""
+                            } else {
+                                ": "
+                            },
                             bstr::BStr::new(&self.fail_detail),
                         ),
                     );

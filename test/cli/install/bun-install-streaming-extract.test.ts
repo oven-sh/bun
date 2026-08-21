@@ -455,7 +455,10 @@ describe("streaming tarball extraction", () => {
   test("retries a failed streaming extraction through the buffered path", async () => {
     // Valid gzip prefix, then garbage: libarchive fails partway through
     // the first (streamed) attempt with a fatal error.
-    const corrupt = Buffer.concat([tgz.subarray(0, tgz.length >> 1), Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff)]);
+    const corrupt = Buffer.concat([
+      tgz.subarray(0, tgz.length >> 1),
+      Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff),
+    ]);
     await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes, hit => (hit === 1 ? corrupt : tgz));
     const registry = reg.url;
 
@@ -484,7 +487,10 @@ describe("streaming tarball extraction", () => {
   });
 
   test("reports the libarchive error when a streaming extraction fails for good", async () => {
-    const corrupt = Buffer.concat([tgz.subarray(0, tgz.length >> 1), Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff)]);
+    const corrupt = Buffer.concat([
+      tgz.subarray(0, tgz.length >> 1),
+      Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff),
+    ]);
     await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes, () => corrupt);
     const registry = reg.url;
 

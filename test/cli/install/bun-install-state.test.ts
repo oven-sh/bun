@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, statSync, utimesSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";
@@ -22,7 +22,6 @@ import {
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-setDefaultTimeout(1000 * 60 * 5);
 
 let urls: string[];
 

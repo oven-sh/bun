@@ -20,18 +20,11 @@ pub(crate) type Platform = WindowsWatcher;
 pub struct WindowsWatcher {
     pub(crate) iocp: HANDLE,
     pub(crate) watcher: DirWatcher,
-    /// The root as given plus a trailing separator (`base_idx` bytes); each
-    /// event's root-relative name is appended after it to form the event path.
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
-    /// `realpath(root)` plus a trailing separator, when it spells the root
-    /// differently than `buf` does. `GetCurrentDirectoryW` returns the cwd in
-    /// whatever spelling the process was started with (8.3 short names, a
-    /// junction), while the entry point and every module resolved from it carry
-    /// the `GetFinalPathNameByHandle` spelling. Paths built from the cwd
-    /// (`bun build --watch` entries, the dev server) keep the given spelling, so
-    /// both spellings count as inside the root and both are matched against
-    /// events.
+    /// `realpath(root)` plus a separator, if it differs from the root in `buf`.
+    /// The cwd keeps the spelling it was started with (8.3 names, junctions) and
+    /// watched paths come in both spellings, so both are roots.
     pub(crate) real_root: Option<Box<[u8]>>,
 }
 
@@ -410,10 +403,7 @@ impl WindowsWatcher {
     }
 }
 
-/// See [`WindowsWatcher::real_root`]. `given_prefix` is `root` plus its
-/// trailing separator; `None` when `realpath` fails or spells the root the same
-/// way (differences in case only are already covered by the case-insensitive
-/// path comparisons).
+/// See [`WindowsWatcher::real_root`]. `given_prefix` is `root` plus a separator.
 fn real_root_prefix(root: &[u8], given_prefix: &[u8]) -> Option<Box<[u8]>> {
     let mut root_buf = bun_paths::path_buffer_pool::get();
     let mut real_buf = bun_paths::path_buffer_pool::get();
@@ -427,6 +417,7 @@ fn real_root_prefix(root: &[u8], given_prefix: &[u8]) -> Option<Box<[u8]>> {
     {
         prefix.push(b'\\');
     }
+    // Case-insensitive like the path matching, so a case difference needs no second root.
     if strings::eql_case_insensitive_ascii(&prefix, given_prefix, true) {
         return None;
     }

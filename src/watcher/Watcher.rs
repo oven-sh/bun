@@ -774,9 +774,6 @@ impl Watcher {
         self.is_in_top_level_dir(dir) && !strings::contains(dir, b"node_modules")
     }
 
-    /// Windows watches one directory tree, so this is also the eligibility
-    /// check for every path added; see `WindowsWatcher::real_root` for why the
-    /// root has two spellings there.
     #[cfg(windows)]
     fn is_in_top_level_dir(&self, path: &[u8]) -> bool {
         use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};

@@ -370,6 +370,9 @@ pub struct VirtualMachine {
 #[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
+    /// Cleared on every full swap so the next file re-captures its baseline.
+    pub baseline_captured: bool,
+    pub global_reuse: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4940,6 +4943,11 @@ impl VirtualMachine {
             }
         }
 
+        if self.test_isolation_state.global_reuse && !self.test_isolation_state.baseline_captured {
+            JSGlobalObject::capture_test_isolation_baseline(self.global());
+            self.test_isolation_state.baseline_captured = true;
+        }
+
         // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
@@ -5185,13 +5193,24 @@ impl VirtualMachine {
         self.plugin_runner = None;
 
         let old_global = self.global;
+        let old_global_ref = JSGlobalObject::opaque_ref(old_global);
+
+        // Scrub and reuse the global if the file left it in its post-preload
+        // shape; node_modules CodeBlocks and JIT'd code then survive. Preload
+        // re-evaluates on the reused global, so re-capture the baseline after.
+        if self.test_isolation_state.global_reuse
+            && JSGlobalObject::try_reset_for_test_isolation(old_global_ref)
+        {
+            self.test_isolation_state.baseline_captured = false;
+            return;
+        }
+
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
         // `console` is the live per-VM ConsoleObject.
-        let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
-            JSGlobalObject::opaque_ref(old_global),
-            self.console.cast(),
-        );
+        let new_global: *mut JSGlobalObject =
+            JSGlobalObject::create_for_test_isolation(old_global_ref, self.console.cast());
         self.global = new_global;
+        self.test_isolation_state.baseline_captured = false;
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);

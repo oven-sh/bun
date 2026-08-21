@@ -720,6 +720,267 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     return globalObject;
 }
 
+extern "C" void JSMock__resetSpies(Zig::GlobalObject*);
+
+namespace Bun {
+
+// Snapshot of a fresh global (post --preload) for tryResetForTestIsolation.
+struct TestIsolationBaseline {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(TestIsolationBaseline);
+
+public:
+    struct Entry {
+        JSC::Strong<JSC::Unknown> value;
+        uint8_t attributes;
+    };
+    WTF::UncheckedKeyHashMap<WTF::RefPtr<WTF::UniquedStringImpl>, Entry> ownProperties;
+    // Module keys present at capture time (i.e. loaded by --preload). Evicted
+    // on reset so preload re-evaluates and re-registers its hooks; the
+    // node_modules-keeping only applies to what the test file loaded on top.
+    WTF::UncheckedKeyHashSet<WTF::RefPtr<WTF::UniquedStringImpl>> preloadModuleKeys;
+    WTF::UncheckedKeyHashSet<WTF::String> preloadRequireKeys;
+    JSC::Strong<JSC::Unknown> prepareStackTraceValue;
+    unsigned lexicalSymbolTableSize { 0 };
+    unsigned varSymbolTableSize { 0 };
+    bool hasOverriddenModuleWrapper { false };
+    bool hasOverriddenModuleResolveFilename { false };
+    bool hasOverriddenModuleRunMain { false };
+    Zig::GlobalObject* capturedGlobal { nullptr };
+    unsigned reuseCount { 0 };
+    unsigned swapCount { 0 };
+};
+
+} // namespace Bun
+
+// Records the post-preload own-property set of `globalObject` so the next
+// file's swap can compare against it. Called from Rust between preload and the
+// file's own module load, and only on the first file after a fresh global.
+extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* clientData = WebCore::clientData(vm);
+    if (!clientData->testIsolationBaseline)
+        clientData->testIsolationBaseline.reset(new Bun::TestIsolationBaseline);
+    auto& baseline = *clientData->testIsolationBaseline;
+    const bool isRecapture = baseline.capturedGlobal == globalObject;
+    baseline.ownProperties.clear();
+    baseline.capturedGlobal = globalObject;
+    baseline.lexicalSymbolTableSize = globalObject->globalLexicalEnvironment()->symbolTable()->size();
+
+    // Reify static hash-table entries (setTimeout, fetch, process, …) into
+    // own-property storage so the baseline holds their canonical values and the
+    // scrub never mistakes a lazy reification for a user leak.
+    if (!globalObject->staticPropertiesReified())
+        globalObject->reifyAllStaticProperties(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        baseline.capturedGlobal = nullptr;
+        return;
+    }
+
+    baseline.varSymbolTableSize = globalObject->symbolTable()->size();
+    baseline.hasOverriddenModuleWrapper = globalObject->hasOverriddenModuleWrapper;
+    baseline.hasOverriddenModuleResolveFilename = globalObject->hasOverriddenModuleResolveFilenameFunction;
+    baseline.hasOverriddenModuleRunMain = globalObject->hasOverriddenModuleRunMain;
+    baseline.prepareStackTraceValue.set(vm, globalObject->m_errorConstructorPrepareStackTraceValue.get());
+
+    globalObject->structure()->forEachProperty(vm, [&](const auto& entry) -> bool {
+        baseline.ownProperties.add(entry.key(),
+            Bun::TestIsolationBaseline::Entry {
+                JSC::Strong<JSC::Unknown>(vm, globalObject->getDirect(entry.offset())),
+                entry.attributes() });
+        return true;
+    });
+
+    // On a re-capture (same global reused) the module maps also hold
+    // node_modules the previous file loaded on top; re-snapshotting would tag
+    // them as preload keys and evict them next reset. The preload graph is
+    // stable across reuses, so the first capture's snapshot stays correct.
+    if (isRecapture)
+        return;
+
+    baseline.preloadModuleKeys.clear();
+    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
+        UNUSED_VARIABLE(entry);
+        baseline.preloadModuleKeys.add(key.first);
+    }
+    baseline.preloadRequireKeys.clear();
+    {
+        auto* iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), globalObject->requireMap(), JSC::IterationKind::Keys);
+        scope.assertNoException();
+        JSC::JSValue value;
+        while (iter->next(globalObject, value)) {
+            if (auto* str = value.toStringOrNull(globalObject))
+                baseline.preloadRequireKeys.add(str->value(globalObject));
+            scope.assertNoException();
+        }
+    }
+}
+
+// Returns true if `globalObject` was scrubbed in place and can be reused for
+// the next file; false if a full swap (createForTestIsolation) is required.
+// Callers have already run the runtime-side cleanup (sockets, timers, handles).
+extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* clientData = WebCore::clientData(vm);
+    auto* baseline = clientData->testIsolationBaseline.get();
+    if (!baseline || baseline->capturedGlobal != globalObject)
+        return false;
+
+    auto swap = [&] {
+        baseline->ownProperties.clear();
+        baseline->prepareStackTraceValue.clear();
+        baseline->swapCount++;
+        return false;
+    };
+
+    // These watchpoints are one-shot; a fresh global re-arms them.
+    if (globalObject->isHavingABadTime()
+        || !globalObject->objectPrototypeChainIsSane()
+        || !globalObject->arrayPrototypeChainIsSane()
+        || !globalObject->stringPrototypeChainIsSane()
+        || !globalObject->arrayIteratorProtocolWatchpointSet().isStillValid()
+        || !globalObject->mapIteratorProtocolWatchpointSet().isStillValid()
+        || !globalObject->setIteratorProtocolWatchpointSet().isStillValid())
+        return swap();
+
+    // Top-level `let`/`const`/`class` in a sloppy-mode script land here and
+    // can't be deleted.
+    if (globalObject->globalLexicalEnvironment()->symbolTable()->size() != baseline->lexicalSymbolTableSize)
+        return swap();
+    if (globalObject->symbolTable()->size() != baseline->varSymbolTableSize)
+        return swap();
+
+    if (globalObject->hasOverriddenModuleWrapper != baseline->hasOverriddenModuleWrapper
+        || globalObject->hasOverriddenModuleResolveFilenameFunction != baseline->hasOverriddenModuleResolveFilename
+        || globalObject->hasOverriddenModuleRunMain != baseline->hasOverriddenModuleRunMain
+        || globalObject->m_errorConstructorPrepareStackTraceValue.get() != baseline->prepareStackTraceValue.get())
+        return swap();
+
+    // Restore spies before the own-property compare so a spyOn(globalThis, ...)
+    // is reverted (baseline then matches) and the scrub can't be undone by
+    // clearSpy putDirect'ing a deleted key back.
+    JSMock__resetSpies(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return swap();
+    }
+
+    // A changed baseline slot value/attributes = user overwrote a built-in;
+    // an extra own property = leak to scrub.
+    WTF::Vector<JSC::Identifier, 16> toDelete;
+    unsigned seen = 0;
+    bool dirty = false;
+    globalObject->structure()->forEachProperty(vm, [&](const auto& entry) -> bool {
+        auto it = baseline->ownProperties.find(entry.key());
+        if (it == baseline->ownProperties.end()) {
+            toDelete.append(JSC::Identifier::fromUid(vm, entry.key()));
+            return true;
+        }
+        seen++;
+        if (entry.attributes() != it->value.attributes
+            || globalObject->getDirect(entry.offset()) != it->value.value.get()) {
+            dirty = true;
+            return false;
+        }
+        return true;
+    });
+    if (dirty || seen != baseline->ownProperties.size())
+        return swap();
+
+    for (auto& id : toDelete) {
+        JSC::DeletePropertySlot slot;
+        bool deleted = JSC::JSCell::deleteProperty(globalObject, globalObject, id, slot);
+        if (scope.exception() || !deleted) [[unlikely]] {
+            scope.clearException();
+            return swap();
+        }
+    }
+
+    // Drop project modules and everything preload loaded (so the preload chain
+    // re-evaluates and re-registers its hooks); keep node_modules the test file
+    // loaded on top so their CodeBlocks survive.
+    auto isProjectPath = [](WTF::StringView key) {
+        if (key.isEmpty())
+            return false;
+#if OS(WINDOWS)
+        if (key.contains("\\node_modules\\"_s) || key.contains("/node_modules/"_s))
+            return false;
+        return key.length() >= 2 && (key[1] == ':' || (key[0] == '\\' && key[1] == '\\'));
+#else
+        return key[0] == '/' && !key.contains("/node_modules/"_s);
+#endif
+    };
+    auto shouldEvict = [&](WTF::UniquedStringImpl* key) {
+        return baseline->preloadModuleKeys.contains(key) || isProjectPath(WTF::StringView(key));
+    };
+    {
+        auto* moduleLoader = globalObject->moduleLoader();
+        WTF::Vector<JSC::Identifier, 32> evict;
+        for (auto& [key, entry] : moduleLoader->moduleMap()) {
+            UNUSED_VARIABLE(entry);
+            if (shouldEvict(key.first))
+                evict.append(JSC::Identifier::fromUid(vm, key.first));
+        }
+        WTF::Locker locker { moduleLoader->cellLock() };
+        for (auto& id : evict)
+            moduleLoader->removeEntry(id);
+    }
+    {
+        auto* requireMap = globalObject->requireMap();
+        WTF::Vector<JSC::JSValue, 32> evict;
+        auto* iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Keys);
+        scope.assertNoException();
+        JSC::JSValue value;
+        while (iter->next(globalObject, value)) {
+            if (auto* str = value.toStringOrNull(globalObject)) {
+                auto view = str->view(globalObject);
+                if (isProjectPath(view) || baseline->preloadRequireKeys.contains<WTF::StringViewHashTranslator>(view))
+                    evict.append(value);
+            }
+            scope.assertNoException();
+        }
+        for (auto& key : evict) {
+            requireMap->remove(globalObject, key);
+            scope.assertNoException();
+        }
+    }
+
+    globalObject->mockModule.activeMocks.clear();
+    globalObject->globalEventScope->removeAllEventListeners();
+    globalObject->overridenDateNow = JSC::PNaN;
+    delete std::exchange(globalObject->onLoadPlugins.virtualModules, nullptr);
+    globalObject->onLoadPlugins = {};
+    globalObject->onResolvePlugins = {};
+    if (globalObject->hasProcessObject()) {
+        auto* process = globalObject->processObject();
+        process->wrapped().removeAllListeners();
+        process->clearCachedCwd();
+        process->setUncaughtExceptionCaptureCallback(JSC::jsNull());
+        process->m_reportOnUncaughtException = false;
+    }
+
+    baseline->reuseCount++;
+    return true;
+}
+
+extern "C" void Zig__GlobalObject__testIsolationResetStats(Zig::GlobalObject* globalObject, uint32_t* reuse, uint32_t* swap)
+{
+    auto* baseline = WebCore::clientData(globalObject->vm())->testIsolationBaseline.get();
+    *reuse = baseline ? baseline->reuseCount : 0;
+    *swap = baseline ? baseline->swapCount : 0;
+}
+
+void WebCore::JSVMClientData::TestIsolationBaselineDeleter::operator()(Bun::TestIsolationBaseline* p) const
+{
+    delete p;
+}
+
 static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
 {
     if (!record)

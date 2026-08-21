@@ -642,6 +642,9 @@ pub(crate) fn run_as_worker(
     let vm_ref = unsafe { &mut *vm };
     vm_ref.test_isolation_enabled = ctx.test_options.isolate;
     vm_ref.auto_killer.enabled = ctx.test_options.isolate;
+    vm_ref.test_isolation_state.global_reuse = ctx.test_options.isolate
+        && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_ISOLATION_GLOBAL_REUSE::get()
+            .unwrap_or(false);
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its

@@ -763,6 +763,12 @@ export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal
   addresses: string[],
 ) => number[];
 
+export const testIsolationResetStats = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_testIsolationResetStats",
+  0,
+) as () => { reuse: number; swap: number };
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { tls } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
@@ -9,7 +11,7 @@ import net from "node:net";
 // the probe window. Every probe awaits the 'close' event rather than a fixed
 // delay, so on a build that does not enforce the knob the test times out.
 
-async function listen(server: http.Server) {
+async function listen(server: net.Server) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return (server.address() as net.AddressInfo).port;
@@ -117,6 +119,63 @@ describe("node:http server timeout enforcement", () => {
         timeoutFired: true,
         closedPromptly: true,
       });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("destroying a connection cancels its pending inactivity timer", async () => {
+    let timeoutFired = false;
+    const server = http.createServer(req => {
+      req.socket.setTimeout(1, () => {
+        timeoutFired = true;
+      });
+      req.socket.destroy();
+      // Let the timer come due before this turn of the loop ends: the native
+      // close is only delivered on the next turn, after due timers have run.
+      const spinUntil = performance.now() + 20;
+      while (performance.now() < spinUntil) {}
+    });
+    const port = await listen(server);
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.resume();
+      socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
+      await once(socket, "close");
+      expect(timeoutFired).toBe(false);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("https: server.setTimeout() does not run during the TLS handshake", async () => {
+    // Like Node, where connectionListener arms server.timeout on
+    // 'secureConnection', a client that never handshakes is handshakeTimeout's
+    // business: it gets ERR_TLS_HANDSHAKE_TIMEOUT, never a 'timeout' event.
+    const server = https.createServer({ ...tls, handshakeTimeout: 100 }, (_req, res) => res.end("ok"));
+    let timeoutFired = false;
+    server.setTimeout(20, () => {
+      timeoutFired = true;
+    });
+    const { promise: clientError, resolve: onClientError } = Promise.withResolvers<string | undefined>();
+    server.on("clientError", (err: any, socket) => {
+      onClientError(err.code);
+      socket.destroy();
+    });
+    const port = await listen(server);
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.resume();
+      // The first byte of a TLS record header and nothing more: enough for the
+      // listener's TCP_DEFER_ACCEPT to hand the connection over right away,
+      // while the handshake itself never gets going.
+      socket.on("connect", () => socket.write(Buffer.from([0x16])));
+      const [code] = await Promise.all([clientError, once(socket, "close")]);
+      expect({ code, timeoutFired }).toEqual({ code: "ERR_TLS_HANDSHAKE_TIMEOUT", timeoutFired: false });
     } finally {
       server.closeAllConnections();
       server.close();

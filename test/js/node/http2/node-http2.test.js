@@ -3904,10 +3904,12 @@ it("http2 client write payload cannot be transferred out from a socket write dis
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const result = JSON.parse(stdout.trim().split("\n").at(-1));
-  expect(result).toEqual({ transferResult: "threw", dataBytes: 200 * 1024, corrupt: 0 });
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout.trim().split("\n").at(-1) || "null");
+  expect({ result, stderr, exitCode }).toMatchObject({
+    result: { transferResult: "threw", dataBytes: 200 * 1024, corrupt: 0 },
+    exitCode: 0,
+  });
 });
 
 it("http2 client survives a synchronous parser read from a closing stream's write callback", async () => {

@@ -85,6 +85,7 @@ H3_ROUTE(patch, patch)
 H3_ROUTE(put, put)
 H3_ROUTE(head, head)
 H3_ROUTE(connect, connect)
+H3_ROUTE(webtransport_connect, webtransportConnect)
 H3_ROUTE(trace, trace)
 H3_ROUTE(any, any)
 #undef H3_ROUTE

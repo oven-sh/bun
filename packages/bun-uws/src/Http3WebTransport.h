@@ -80,9 +80,19 @@ struct Http3WebTransportSession {
         unsigned char buf[WT_CAPSULE_HEADER_MAX];
         unsigned n = writeVarint(buf, WT_DRAIN_SESSION);
         n += writeVarint(buf + n, 0);
-        /* Advisory, so a peer that cannot be told is simply not told —
-         * resetting a live session over it would be worse. */
-        if (us_quic_stream_write(stream(), (const char *) buf, n) < (int) n) return;
+        /* A short write has already flushed part of the capsule, which leaves
+         * the capsule stream desynchronised: a later close would append after
+         * an orphaned header and the peer would read a bogus type and length.
+         * So the session ends here rather than silently corrupting, even
+         * though a drain that could not be sent is otherwise ignorable. */
+        int w = us_quic_stream_write(stream(), (const char *) buf, n);
+        if (w < (int) n) {
+            if (w > 0) {
+                us_quic_stream_reset(stream());
+                reportClose(0, std::string_view{});
+            }
+            return;
+        }
         us_quic_stream_flush(stream());
     }
 

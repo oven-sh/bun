@@ -2030,6 +2030,74 @@ describe("Bun.serve WebTransport", () => {
     }
   });
 
+  test("a user '/*' route does not take CONNECT away from webtransport", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          session.sendDatagram(bytes);
+        },
+      },
+      // A "/*" route covering only some methods makes Bun register the rest
+      // per-method, CONNECT included. That fallback shares (connect, "/*")
+      // with the session route, and HttpRouter::add removes any handler at the
+      // same method, pattern and priority before inserting.
+      routes: { "/*": { GET: () => new Response("routed") } },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    expect(await h3Exchange(server.port, requestHeaders("/"))).toBe("200 routed");
+
+    const wt = await webTransportSession(server.port);
+    try {
+      expect(wt.status).toBe("200");
+      wt.send("still mine");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+      expect(wt.text()).toEqual(["still mine"]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("a session keeps dispatching after the server is stopped and collected", async () => {
+    const seen: string[] = [];
+    let server: Bun.Server | null = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session, bytes) {
+          seen.push(Buffer.from(bytes).toString());
+          session.sendDatagram(bytes);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("before");
+      expect(await wt.until(() => wt.datagrams.length >= 1)).toBe(true);
+
+      // A stopped server with no JS references left still owns the `wtOn*`
+      // slots this session dispatches off, and the native server the session
+      // holds an `AnyServer` to. `is_drained` counts live sessions so neither
+      // is released here.
+      server.stop();
+      server = null;
+      Bun.gc(true);
+      Bun.gc(true);
+
+      wt.send("after");
+      expect(await wt.until(() => wt.datagrams.length >= 2)).toBe(true);
+      expect(seen).toEqual(["before", "after"]);
+    } finally {
+      await wt.close();
+    }
+  });
+
   test("an unknown capsule larger than the buffer is ignored, not fatal", async () => {
     const closes: number[] = [];
     await using server = Bun.serve({

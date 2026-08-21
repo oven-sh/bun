@@ -2300,6 +2300,13 @@ where
             if self.config.webtransport {
                 self.config.webtransport_handler = Some(wt);
                 self.write_wt_handler_slots(server_js, global);
+            } else {
+                // `reload()` throws for this; a hot reload has no call to throw
+                // from, and dropping it in silence looks like a working server
+                // whose handlers never fire.
+                bun_core::warn!(
+                    "Ignoring 'webtransport': this server started without it, and an HTTP/3 listener advertises WebTransport only from the SETTINGS it was bound with"
+                );
             }
         }
 

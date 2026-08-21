@@ -114,18 +114,28 @@ struct Http3Context {
         return (Http3ContextData *) us_quic_socket_context_ext((us_quic_socket_context_t *) this);
     }
 
+    /* `highPriority` is for the WebTransport session route, which shares its
+     * method and wildcard pattern with the per-method fallback Bun registers
+     * when a user route covers only some methods. HttpRouter::add removes any
+     * handler at the same method, pattern and priority, so at MEDIUM the
+     * fallback would cull it; HIGH is a separate node, sorted first, and
+     * yielding from it still falls through to the fallback. */
     void onHttp(std::string_view method, std::string_view pattern,
-                MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+                MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler,
+                bool highPriority = false) {
         Http3ContextData *cd = getContextData();
         std::vector<std::string_view> methods =
             method == "*" ? std::vector<std::string_view>{"*"} : std::vector<std::string_view>{method};
+        uint32_t priority = highPriority ? cd->router.HIGH_PRIORITY
+            : method == "*" ? cd->router.LOW_PRIORITY
+                            : cd->router.MEDIUM_PRIORITY;
         cd->router.add(methods, pattern, [handler = std::move(handler)](auto *router) mutable {
             auto &ud = router->getUserData();
             ud.httpRequest->setYield(false);
             ud.httpRequest->setParameters(router->getParameters());
             handler(ud.httpResponse, ud.httpRequest);
             return !ud.httpRequest->getYield();
-        }, method == "*" ? cd->router.LOW_PRIORITY : cd->router.MEDIUM_PRIORITY);
+        }, priority);
     }
 
     us_quic_listen_socket_t *listen(const char *host, int port, int flags) {

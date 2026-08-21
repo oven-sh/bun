@@ -29,6 +29,9 @@ pub struct WebTransportSession {
     /// session on the server it configures.
     handler: bun_ptr::BackRef<WebTransportHandler>,
     global: bun_ptr::BackRef<JSGlobalObject>,
+    /// Kept live by the session count this took out in `accept`: the server
+    /// cannot deinit while that count is non-zero.
+    server: crate::server::AnyServer,
 }
 
 #[allow(non_snake_case)]
@@ -108,12 +111,14 @@ impl WebTransportSession {
         handler: &WebTransportHandler,
         session: NonNull<WebTransport>,
         data_value: JSValue,
+        server: crate::server::AnyServer,
     ) -> *mut WebTransportSession {
         let this = bun_core::heap::into_raw(Box::new(WebTransportSession {
             session: Cell::new(Some(session)),
             this_value: JsCell::new(JsRef::empty()),
             handler: bun_ptr::BackRef::new(handler),
             global: bun_ptr::BackRef::new(global),
+            server,
         }));
         // SAFETY: just allocated; ownership transfers to the JS wrapper, which
         // frees it through the generated finalizer.
@@ -189,6 +194,7 @@ impl WebTransportSession {
         req: &mut Request,
         res: &mut Response,
         data_value: JSValue,
+        server: crate::server::AnyServer,
     ) {
         let Some(session) = res.upgrade_webtransport(req, core::ptr::null_mut()) else {
             res.write_status(b"501 Not Implemented");
@@ -198,7 +204,10 @@ impl WebTransportSession {
         // SAFETY: a non-null session from `upgrade_webtransport`.
         let session = unsafe { NonNull::new_unchecked(session) };
 
-        let this = Self::init(global, handler, session, data_value);
+        // Before any handler runs: the count is what keeps the server wrapper
+        // from being downgraded while this session can still dispatch.
+        server.note_webtransport_opened_any();
+        let this = Self::init(global, handler, session, data_value, server);
         // The native session is what every later callback arrives holding, so
         // it carries the pointer back to this object.
         // SAFETY: `session` is live, and `this` outlives it — the wrapper is
@@ -282,6 +291,9 @@ impl WebTransportSession {
         // Only now: until the handler returns this is the wrapper's only root,
         // and a GC inside it would collect the box `self` points at.
         self.this_value.with_mut(|r| r.downgrade());
+        // And only after that, since this can run the idle pass that downgrades
+        // the server wrapper.
+        self.server.on_webtransport_closed();
     }
 
     #[bun_jsc::host_fn(method)]

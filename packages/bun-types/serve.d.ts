@@ -578,7 +578,9 @@ declare module "bun" {
      * the peer advertised, less the session's frame prefix.
      *
      * `0` means the peer offered no datagram support. That session carries no
-     * datagrams, and every {@link sendDatagram} returns `-1`.
+     * datagrams, and every {@link sendDatagram} returns `-1`. A session that
+     * has already closed also reports `0`; {@link closed} tells the two
+     * apart.
      */
     readonly maxDatagramSize: number;
 
@@ -597,7 +599,9 @@ declare module "bun" {
      * Decide whether to accept a session, before the `CONNECT` is answered.
      *
      * Return a {@link Response} to refuse. Bun sends that response and opens
-     * no session.
+     * no session. That response needs a buffered body and a real status. Bun
+     * cannot send a streaming body, an already-read body, or `Response.error()`
+     * on a `CONNECT`, and answers `500` instead.
      *
      * Return anything else, or nothing, to accept. What you return becomes the
      * session's {@link WebTransportSession.data}, so build per-session state

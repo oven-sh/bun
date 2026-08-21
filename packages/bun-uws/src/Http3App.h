@@ -58,6 +58,14 @@ struct H3App {
         return listen({}, port, 0, std::move(cb));
     }
 
+    /* The WebTransport session route. High priority so the per-method
+     * wildcard fallback cannot cull it; see Http3Context::onHttp. */
+    H3App &&webtransportConnect(std::string_view pattern,
+                                MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        http3Context->onHttp("connect", pattern, std::move(handler), true);
+        return std::move(*this);
+    }
+
     /* Session-lifetime callbacks. Opening one is the CONNECT route's job, so
      * there is no `open` here. */
     void onWebTransport(

@@ -362,6 +362,9 @@ enum RouteKind {
     Head,
     Options,
     Connect,
+    /// The WebTransport session route, registered high-priority so the
+    /// per-method `/*` fallback cannot cull it.
+    WebTransportConnect,
     Trace,
     Any,
 }
@@ -460,6 +463,7 @@ impl App {
             RouteKind::Head => c::uws_h3_app_head,
             RouteKind::Options => c::uws_h3_app_options,
             RouteKind::Connect => c::uws_h3_app_connect,
+            RouteKind::WebTransportConnect => c::uws_h3_app_webtransport_connect,
             RouteKind::Trace => c::uws_h3_app_trace,
             RouteKind::Any => c::uws_h3_app_any,
         };
@@ -484,6 +488,7 @@ impl App {
         head    => Head,
         options => Options,
         connect => Connect,
+        webtransport_connect => WebTransportConnect,
         any     => Any,
     }
 
@@ -676,6 +681,13 @@ mod c {
             ud: *mut c_void,
         );
         pub(super) fn uws_h3_app_options(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) fn uws_h3_app_webtransport_connect(
             app: *mut App,
             p: *const u8,
             n: usize,

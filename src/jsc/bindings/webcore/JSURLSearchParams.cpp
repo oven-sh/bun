@@ -659,7 +659,6 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toJSON, (JSGlobalObj
 }
 
 struct URLSearchParamsIteratorTraits {
-    static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLUSVString;
     using ValueType = IDLUSVString;
 };

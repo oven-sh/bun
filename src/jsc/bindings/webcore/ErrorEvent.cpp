@@ -33,9 +33,7 @@
 #include "ErrorEvent.h"
 
 #include "DOMWrapperWorld.h"
-#include "EventNames.h"
 #include <JavaScriptCore/HeapInlines.h>
-#include <JavaScriptCore/StrongInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {

@@ -515,7 +515,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_toJSON, (JSGlobalObject 
 }
 
 struct DOMFormDataIteratorTraits {
-    static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLUSVString;
     using ValueType = IDLUnion<IDLUSVString, IDLInterface<Blob>>;
 };

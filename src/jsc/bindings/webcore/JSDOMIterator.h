@@ -29,21 +29,15 @@
 #include "JSDOMConvert.h"
 #include <JavaScriptCore/JSIteratorPrototype.h>
 #include <JavaScriptCore/PropertySlot.h>
-#include <type_traits>
 #include "ErrorCode.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Interpreter.h"
 namespace WebCore {
 
-enum class JSDOMIteratorType { Map };
-
 // struct IteratorTraits {
-//     static constexpr JSDOMIteratorType type = Map;
 //     using KeyType = [IDLType];
 //     using ValueType = [IDLType];
 // };
-
-template<typename T, typename U = void> using EnableIfMap = typename std::enable_if<T::type == JSDOMIteratorType::Map, U>::type;
 
 template<typename JSWrapper, typename IteratorTraits> class JSDOMIteratorPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -116,7 +110,7 @@ protected:
     {
     }
 
-    template<typename IteratorValue, typename T = Traits> EnableIfMap<T, JSC::JSValue> asJS(JSC::JSGlobalObject&, IteratorValue&);
+    template<typename IteratorValue> JSC::JSValue asJS(JSC::JSGlobalObject&, IteratorValue&);
 
     static void destroy(JSC::JSCell*);
 
@@ -150,7 +144,7 @@ template<typename JSIterator> JSC::JSValue iteratorCreate(typename JSIterator::W
 }
 
 template<typename JSWrapper, typename IteratorTraits>
-template<typename IteratorValue, typename T> inline EnableIfMap<T, JSC::JSValue> JSDOMIteratorBase<JSWrapper, IteratorTraits>::asJS(JSC::JSGlobalObject& lexicalGlobalObject, IteratorValue& value)
+template<typename IteratorValue> inline JSC::JSValue JSDOMIteratorBase<JSWrapper, IteratorTraits>::asJS(JSC::JSGlobalObject& lexicalGlobalObject, IteratorValue& value)
 {
     ASSERT(value);
 
@@ -167,7 +161,7 @@ template<typename IteratorValue, typename T> inline EnableIfMap<T, JSC::JSValue>
     return {};
 }
 
-template<typename JSIterator, typename IteratorValue> EnableIfMap<typename JSIterator::Traits> appendForEachArguments(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSC::MarkedArgumentBuffer& arguments, IteratorValue& value)
+template<typename JSIterator, typename IteratorValue> void appendForEachArguments(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSC::MarkedArgumentBuffer& arguments, IteratorValue& value)
 {
     ASSERT(value);
     arguments.append(toJS<typename JSIterator::Traits::ValueType>(lexicalGlobalObject, globalObject, value->value));

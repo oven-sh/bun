@@ -519,7 +519,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toJSON, (JSGlobalObject * 
 
 // Iterator implementation for CookieMap
 struct CookieMapIteratorTraits {
-    static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLUSVString;
     using ValueType = IDLUSVString;
 };

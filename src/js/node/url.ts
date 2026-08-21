@@ -641,6 +641,10 @@ function formatWhatwgURL(url: URL, fragment: boolean, unicode: boolean, search: 
     ret += unicode ? domainToUnicode(url.hostname) || url.hostname : url.hostname;
     const { port } = url;
     if (port !== "") ret += ":" + port;
+  } else if (url.pathname.startsWith("//")) {
+    // URL Standard section 4.5 step 3: null host + empty first path segment
+    // gets a /. guard so the output does not re-parse as an authority.
+    ret += "/.";
   }
   ret += url.pathname;
   // .search/.hash return "" for both null and empty-string components, but the href serializer

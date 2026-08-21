@@ -179,7 +179,7 @@ fn make_client<'a>(
         custom_ssl_ctx: None,
         result_callback: noop_callback(),
         if_modified_since: b"",
-        request_content_len_buf: [0u8; b"-4294967295".len()],
+        request_content_len_buf: [0u8; b"18446744073709551615".len()],
         http_proxy,
         proxy_settings: None,
         proxy_headers,
@@ -280,7 +280,8 @@ impl<'a> AsyncHTTP<'a> {
         &MAX_SIMULTANEOUS_REQUESTS
     }
 
-    pub fn enable_response_body_streaming(&mut self) {
+    /// A store into the shared signal `Store`, not into `self`.
+    pub fn enable_response_body_streaming(&self) {
         self.signals.store(
             crate::signals::Field::ResponseBodyStreaming,
             true,

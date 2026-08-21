@@ -1,0 +1,7 @@
+{
+  "name": "ws",
+  "version": "1.0.0",
+  "dependencies": {
+    "arg": "4.1.2"
+  }
+}

@@ -395,11 +395,7 @@ fn evaluate_instruction(
                 loc: prev_loc,
             }) = previous
             {
-                let prev_val = n.value();
-                let next_val = match operation {
-                    UpdateOperator::Increment => prev_val + 1.0,
-                    UpdateOperator::Decrement => prev_val - 1.0,
-                };
+                let next_val = apply_update(*operation, n.value());
                 // Store the updated value for the lvalue
                 let lvalue_id = lvalue.identifier;
                 constants.insert(
@@ -429,11 +425,7 @@ fn evaluate_instruction(
                 ..
             }) = previous
             {
-                let prev_val = n.value();
-                let next_val = match operation {
-                    UpdateOperator::Increment => prev_val + 1.0,
-                    UpdateOperator::Decrement => prev_val - 1.0,
-                };
+                let next_val = apply_update(*operation, n.value());
                 let result = Constant::Primitive {
                     value: PrimitiveValue::Number(FloatValue::new(next_val)),
                     loc: *loc,
@@ -736,6 +728,13 @@ fn process_inner_function(func_id: FunctionId, env: &mut Environment, constants:
 // =============================================================================
 // Helper: read constant for a place
 // =============================================================================
+
+fn apply_update(operation: UpdateOperator, value: f64) -> f64 {
+    match operation {
+        UpdateOperator::Increment => value + 1.0,
+        UpdateOperator::Decrement => value - 1.0,
+    }
+}
 
 fn read(constants: &Constants, place: &Place) -> Option<Constant> {
     constants.get(place.identifier).cloned()

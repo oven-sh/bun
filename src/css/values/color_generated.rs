@@ -12,10 +12,11 @@ pub mod generated_color_conversions {}
 
 // Helper: every generated conversion routes through exactly one intermediate
 // colorspace (`const xyz: Via = this.into(.Via); return xyz.into(.Dst);`).
+// Deliberately not `#[inline]`: with the hint, every use site inlines the
+// whole chain of matrix conversions down to the base impls.
 macro_rules! convert_via {
     ($src:ty => $via:ty => $dst:ty) => {
         impl From<$src> for $dst {
-            #[inline]
             fn from(c: $src) -> $dst {
                 let via: $via = <$via>::from(c);
                 <$dst>::from(via)

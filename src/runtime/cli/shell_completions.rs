@@ -7,20 +7,26 @@ pub use bun_install::ShellCompletions::Shell;
 // The embedded script bodies must stay above the install tier (asset dependency),
 // so `completions()` is an extension trait on the re-exported enum rather than an
 // inherent method.
-const BASH_COMPLETIONS: &[u8] = include_bytes!("../../../completions/bun.bash");
-const ZSH_COMPLETIONS: &[u8] = include_bytes!("../../../completions/bun.zsh");
-const FISH_COMPLETIONS: &[u8] = include_bytes!("../../../completions/bun.fish");
-
 pub(crate) trait ShellCompletionsExt {
     fn completions(self) -> &'static [u8];
 }
 
 impl ShellCompletionsExt for Shell {
     fn completions(self) -> &'static [u8] {
+        // Release builds carry these compressed and inflate on first use.
         match self {
-            Shell::Bash => BASH_COMPLETIONS,
-            Shell::Zsh => ZSH_COMPLETIONS,
-            Shell::Fish => FISH_COMPLETIONS,
+            Shell::Bash => bun_zstd::embed_compressed!(
+                "completions/bun.bash",
+                include_bytes!("../../../completions/bun.bash")
+            ),
+            Shell::Zsh => bun_zstd::embed_compressed!(
+                "completions/bun.zsh",
+                include_bytes!("../../../completions/bun.zsh")
+            ),
+            Shell::Fish => bun_zstd::embed_compressed!(
+                "completions/bun.fish",
+                include_bytes!("../../../completions/bun.fish")
+            ),
             _ => b"",
         }
     }

@@ -44,8 +44,8 @@ const ClassInfo JSNodePerformanceHooksHistogramPrototype::s_info = { "Recordable
 void JSNodePerformanceHooksHistogramPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSNodePerformanceHooksHistogram::info(), JSNodePerformanceHooksHistogramPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSNodePerformanceHooksHistogram::info(), JSNodePerformanceHooksHistogramPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -149,7 +149,7 @@ static double toPercentile(JSC::ThrowScope& scope, JSGlobalObject* globalObject,
 
     // TODO: rewrite validateNumber to return the validated value.
     double percentile = value.toNumber(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     if (percentile <= 0 || percentile > 100 || std::isnan(percentile)) {
         Bun::ERR::OUT_OF_RANGE(scope, globalObject, "percentile"_s, "> 0 && <= 100"_s, value);
         return {};

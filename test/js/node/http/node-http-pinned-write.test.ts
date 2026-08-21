@@ -18,6 +18,12 @@ function makePayload(size: number): Buffer {
   return Buffer.alloc(size, PATTERN_256);
 }
 
+// A Buffer that already has an ArrayBuffer behind it: the pending write pins
+// that ArrayBuffer, so transfer() copies rather than detaches while it is held.
+function makeArrayBufferBackedPayload(size: number): Buffer {
+  return Buffer.from(new ArrayBuffer(size)).fill(PATTERN_256);
+}
+
 function sha1(buf: Uint8Array): string {
   return createHash("sha1").update(buf).digest("hex");
 }
@@ -28,9 +34,9 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   // reached on Windows (the bytes go straight to the kernel instead). The
   // correctness tests below still cover the write path there.
   test.skipIf(isWindows)(
-    "the buffer backing store is pinned while the write is pending, then released on drain",
+    "an ArrayBuffer-backed buffer is pinned while the write is pending, then released on drain",
     async () => {
-      const payload = makePayload(CHUNK_SIZE);
+      const payload = makeArrayBufferBackedPayload(CHUNK_SIZE);
       const expectedHash = sha1(payload);
 
       let detachedWhilePending: boolean | undefined;
@@ -101,6 +107,56 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       expect(detachedAfterDrain).toBe(true);
     },
   );
+
+  // A plain Buffer has no ArrayBuffer until `.buffer` is touched, and the
+  // pending write holds it without materializing one (doing so registers the
+  // bytes with the GC a second time). transfer() mid-write therefore detaches,
+  // as in Node, but it moves the storage rather than freeing it, so the bytes
+  // still to be written reach the client intact.
+  test.skipIf(isWindows)("a plain Buffer transferred while its write is pending still arrives intact", async () => {
+    const payload = makePayload(CHUNK_SIZE);
+    const expectedHash = sha1(payload);
+    let detachedWhilePending: boolean | undefined;
+    let moved: ArrayBuffer | undefined;
+    let handlerError: unknown;
+    const serverReady = Promise.withResolvers<void>();
+
+    await using server = http.createServer(async (req, res) => {
+      try {
+        res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": String(CHUNK_SIZE) });
+        res.write(payload);
+        moved = payload.buffer.transfer();
+        detachedWhilePending = payload.buffer.detached;
+        serverReady.resolve();
+        await once(res, "drain");
+        res.end();
+      } catch (e) {
+        handlerError = e;
+        serverReady.resolve();
+        res.destroy();
+      }
+    });
+    await once(server.listen(0), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const socket = net.connect(port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.pause();
+    socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    await serverReady.promise;
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    const closed = once(socket, "close");
+    socket.resume();
+    await closed;
+    const received = Buffer.concat(chunks);
+
+    expect(handlerError).toBeUndefined();
+    const body = received.subarray(received.indexOf("\r\n\r\n") + 4);
+    expect(body.length).toBe(CHUNK_SIZE);
+    expect(sha1(body)).toBe(expectedHash);
+    expect(detachedWhilePending).toBe(true);
+    expect(moved?.byteLength).toBe(CHUNK_SIZE);
+  });
 
   test("Content-Length (non-chunked) path delivers the exact bytes", async () => {
     const payload = makePayload(CHUNK_SIZE);

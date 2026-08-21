@@ -1,14 +1,13 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::node::types::FdJsc as _;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
-use crate::webcore::blob::SizeType as BlobSizeType;
 use bun_io::max_buf::MaxBuf;
 use bun_ptr::IntrusiveRc;
 use bun_ptr::cow_slice::CowSlice;
@@ -177,12 +176,6 @@ impl Readable {
         }
     }
 
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        *self = Readable::Closed;
-    }
-
-    pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
-
     pub fn close(&mut self) {
         match self {
             Readable::Memfd(fd) => {
@@ -287,7 +280,7 @@ impl Readable {
                 {
                     let fd = *fd;
                     *self = Readable::Closed;
-                    jsc::ArrayBuffer::to_js_buffer_from_memfd(fd, global)
+                    bun_jsc::ArrayBuffer::to_js_buffer_from_memfd(fd, global)
                 }
             }
             Readable::Pipe(_) => {
@@ -296,7 +289,7 @@ impl Readable {
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
                 Self::pipe_detach(&pipe);
-                Ok(result)
+                result
             }
             Readable::Buffer(_) => {
                 let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {
@@ -307,14 +300,7 @@ impl Readable {
                     Err(_) => return Err(global.throw_out_of_memory()),
                 };
 
-                // Ownership of the mimalloc-backed buffer transfers to JSC
-                // (freed via `MarkedArrayBuffer_deallocator`).
-                Ok(jsc::MarkedArrayBuffer {
-                    buffer: jsc::ArrayBuffer::from_owned_bytes(own, jsc::JSType::Uint8Array),
-                    owns_buffer: true,
-                    pinned: false,
-                }
-                .to_node_buffer(global))
+                JSValue::create_buffer_from_box(global, own)
             }
             _ => Ok(JSValue::UNDEFINED),
         }

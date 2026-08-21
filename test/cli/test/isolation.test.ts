@@ -853,8 +853,19 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
 // full GC, and counts live GlobalObject cells. Pinned globals accumulate
 // (the last file sees 8); collectable ones plateau (current + a lagging one
 // or two).
+//
+// The child must run at BUN_GARBAGE_COLLECTOR_LEVEL=0 (the CI runner sets 1,
+// and bunEnv forwards it) so that the fixture's Bun.gc(true) calls are the
+// only collections in the run. At level 1 every expect() matcher requests one
+// more collection, which JSC runs on the JS thread from whatever stack depth
+// the next allocation happens at. Processing its conservative roots there
+// leaves pointers to the finishing file's global in stack slots that the next
+// file's Bun.gc(true) frames do not overwrite, so that scan keeps the global
+// alive, and each later extra collection carries the retained globals forward:
+// the count snowballed to 6-7 on alpine x64 with nothing pinning the globals.
 describe.concurrent("--isolate: collects globals pinned by leaked handles", () => {
   const LEAK_FILE_COUNT = 8;
+  const MAX_LIVE_GLOBALS = 4;
 
   function makeLeakFixture(dirt: string): Record<string, string> {
     const files: Record<string, string> = {};
@@ -875,10 +886,10 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     return files;
   }
 
-  async function maxLiveGlobals(dir: string): Promise<number> {
+  async function expectGlobalsCollectable(dir: string): Promise<void> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--isolate"],
-      env: bunEnv,
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
       cwd: dir,
       stdout: "pipe",
       stderr: "pipe",
@@ -888,7 +899,9 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(exitCode).toBe(0);
     const counts = [...stdout.matchAll(/GLOBALS=(\d+)/g)].map(m => Number(m[1]));
     expect(counts).toHaveLength(LEAK_FILE_COUNT);
-    return Math.max(...counts);
+    expect(Math.max(...counts), `live globals seen by each file: ${counts.join(" ")}`).toBeLessThanOrEqual(
+      MAX_LIVE_GLOBALS,
+    );
   }
 
   test("fs.watch left open", async () => {
@@ -899,7 +912,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         const watcher = fs.watch(import.meta.dir, () => {});
       `),
     );
-    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    await expectGlobalsCollectable(String(dir));
   });
 
   test("Bun.serve left running", async () => {
@@ -909,7 +922,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         const server = Bun.serve({ port: 0, fetch: () => new Response("x") });
       `),
     );
-    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    await expectGlobalsCollectable(String(dir));
   });
 
   test("long setTimeout/setInterval left pending", async () => {
@@ -920,7 +933,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         setInterval(() => {}, 3_600_000);
       `),
     );
-    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    await expectGlobalsCollectable(String(dir));
   });
 
   test("AbortSignal.timeout with an abort listener left pending", async () => {
@@ -930,7 +943,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
       `),
     );
-    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    await expectGlobalsCollectable(String(dir));
   });
 
   test("AbortSignal.timeout with an abort listener left pending in a fake-timer heap", async () => {
@@ -942,7 +955,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
       `),
     );
-    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    await expectGlobalsCollectable(String(dir));
   });
 
   test("mock(), spyOn() and mock.module() left registered", async () => {
@@ -956,7 +969,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         mock.module("./mocked-dep", () => ({ default: 1 }));
       `),
     );
-    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    await expectGlobalsCollectable(String(dir));
   });
 
   test("Bun.plugin left registered", async () => {
@@ -973,7 +986,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         });
       `),
     );
-    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    await expectGlobalsCollectable(String(dir));
   });
 });
 

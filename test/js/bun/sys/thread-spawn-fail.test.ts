@@ -121,13 +121,24 @@ print(await whileRefused(() => Bun.stdin.text()));
 // The schedule of bun_threading::spawn_with_retry.
 const ATTEMPTS_PER_START = 20;
 
-async function runFixture(dir: string, options: { stdin?: "pipe"; exitsMidway?: boolean } = {}) {
+// bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE, which the HTTP client
+// thread asks for. `bun install` runs no JS that could arm the marker at the
+// right moment, so the marker exists from the start, and the stack size singles
+// the HTTP thread out: the allocators start their scavenger threads before it
+// (with the default stack) and abort when one of those is refused.
+const HTTP_THREAD_STACK_SIZE = 4 * 1024 * 1024;
+
+async function runFixture(
+  dir: string,
+  options: { args?: string[]; env?: Record<string, string>; stdin?: "pipe"; exitsMidway?: boolean } = {},
+) {
   const env: Record<string, string | undefined> = {
     ...bunEnv,
     LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath,
     REFUSE_THREADS_WHILE_EXISTS: join(dir, "refuse-threads"),
     // Without the fix the child crashes. Never upload that.
     BUN_ENABLE_CRASH_REPORTING: "0",
+    ...options.env,
   };
   if (options.exitsMidway) {
     // The child exits from inside a read, so the natives that its JS objects
@@ -136,7 +147,7 @@ async function runFixture(dir: string, options: { stdin?: "pipe"; exitsMidway?: 
     env.ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
   }
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.js"],
+    cmd: [bunExe(), ...(options.args ?? ["fixture.js"])],
     cwd: dir,
     env,
     stdin: options.stdin,
@@ -219,6 +230,33 @@ test.concurrent.skipIf(!canRun)("auto-install reports a refused HTTP thread as a
     exitCode: 0,
   });
 });
+
+test.concurrent.skipIf(!canRun)(
+  "bun install prints an error and exits 1 when the HTTP thread cannot be started",
+  async () => {
+    using dir = tempDir("refuse-threads-install", {
+      "package.json": JSON.stringify({ name: "refuse-threads", dependencies: {} }),
+      "refuse-threads": "",
+    });
+    const { stdout, stderr, refused, exitCode, signalCode } = await runFixture(String(dir), {
+      args: ["install"],
+      env: {
+        REFUSE_THREADS_WITH_STACK_SIZE: String(HTTP_THREAD_STACK_SIZE),
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+      },
+    });
+
+    expect({ stdout, stderr, refused, exitCode, signalCode }).toEqual({
+      stdout: "",
+      stderr:
+        `error: ${HTTP_THREAD_REFUSED}\n` +
+        "note: The process is out of memory, or it reached a thread limit (ulimit -u, or the pids limit of its cgroup).\n",
+      refused: ATTEMPTS_PER_START,
+      exitCode: 1,
+      signalCode: null,
+    });
+  },
+);
 
 test.concurrent.skipIf(!canRun)("S3 requests fail when the HTTP thread cannot be started", async () => {
   using dir = tempDir("refuse-threads-s3", { "fixture.js": S3_FIXTURE });

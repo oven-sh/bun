@@ -1,5 +1,5 @@
 use bun_install::integrity::Integrity;
-use bun_install::npm::{Architecture, OperatingSystem};
+use bun_install::npm::{Architecture, Libc, OperatingSystem};
 use bun_install::{INVALID_PACKAGE_ID, Origin, PackageID};
 use bun_semver::String;
 
@@ -14,7 +14,9 @@ use crate::lockfile_real::StringBuilder as LockfileStringBuilder;
 #[derive(Clone, Copy)]
 pub struct Meta {
     pub(crate) origin: Origin,
-    pub(crate) _padding_origin: u8,
+    /// npm `libc` field (glibc/musl). Occupies what used to be a padding byte, so
+    /// binary lockfiles written before it read back as `Libc::NONE` (unspecified).
+    pub(crate) libc: Libc,
 
     pub(crate) arch: Architecture,
     pub(crate) os: OperatingSystem,
@@ -49,7 +51,7 @@ impl Default for Meta {
     fn default() -> Self {
         Self {
             origin: Origin::Npm,
-            _padding_origin: 0,
+            libc: Libc::NONE,
             arch: Architecture::ALL,
             os: OperatingSystem::ALL,
             _padding_os: 0,
@@ -66,7 +68,20 @@ impl Meta {
     /// Does the `cpu` arch and `os` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
     pub fn is_disabled(&self, cpu: Architecture, os: OperatingSystem) -> bool {
-        !self.arch.is_match(cpu) || !self.os.is_match(os)
+        !self.arch.is_match(cpu) || !self.os.is_match(os) || !self.libc_matches_host()
+    }
+
+    /// npm's `libc` constraint: only consulted for packages that target Linux, against
+    /// the host libc (or the `--libc` override).
+    #[inline]
+    fn libc_matches_host(&self) -> bool {
+        if self.libc == Libc::NONE {
+            return true;
+        }
+        let target = crate::package_manager_real::PackageManager::try_get()
+            .map(|pm| pm.options.libc)
+            .unwrap_or(Libc::CURRENT);
+        self.libc.is_match(target)
     }
 
     pub(crate) fn has_install_script(&self) -> bool {
@@ -110,6 +125,7 @@ impl Meta {
             integrity: self.integrity,
             arch: self.arch,
             os: self.os,
+            libc: self.libc,
             origin: self.origin,
             has_install_script: self.has_install_script,
             ..Meta::default()

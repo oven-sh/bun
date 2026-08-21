@@ -730,6 +730,18 @@ impl PackageManager {
         unsafe { &*get() }
     }
 
+    /// `get()` for code that may also run before the manager exists (unit paths,
+    /// `bun pm` helpers that build a `Meta` without an install).
+    #[inline]
+    pub fn try_get() -> Option<&'static PackageManager> {
+        let p = get();
+        if p.is_null() {
+            None
+        } else {
+            Some(unsafe { &*p })
+        }
+    }
+
     /// Associated-fn spelling that forwards to the free [`init`] so callers
     /// can write `PackageManager::init(ctx, cli, subcommand)`.
     #[inline]

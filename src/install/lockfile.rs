@@ -1507,6 +1507,9 @@ impl Lockfile {
                         if pkg_meta.arch == Npm::Architecture::ALL {
                             pkg_meta.arch = pkg.package.cpu;
                         }
+                        if pkg_meta.libc == Npm::Libc::NONE {
+                            pkg_meta.libc = pkg.package.libc;
+                        }
                     }
                 }
                 _ => {}

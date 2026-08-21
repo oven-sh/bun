@@ -852,6 +852,7 @@ impl Package<u64> {
             );
 
             package.meta.arch = package_version.cpu;
+            package.meta.libc = package_version.libc;
             package.meta.os = package_version.os;
             package.meta.integrity = package_version.integrity;
             package

@@ -420,14 +420,14 @@ jobs:
 
 ## Platform-specific dependencies?
 
-Bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change.
+Bun stores normalized `cpu`, `os` and `libc` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change. `libc` (`glibc` or `musl`) is only consulted on Linux, so that only the matching variant of a native package's prebuilt binaries is downloaded.
 
-### `--cpu` and `--os` flags
+### `--cpu`, `--os` and `--libc` flags
 
 You can override the target platform for package selection:
 
 ```bash
-bun install --cpu=x64 --os=linux
+bun install --cpu=x64 --os=linux --libc=musl
 ```
 
 These flags install packages for the specified platform instead of the current system. Use them for cross-platform builds or when preparing deployments for different environments.
@@ -435,6 +435,8 @@ These flags install packages for the specified platform instead of the current s
 **Accepted values for `--cpu`**: `arm`, `arm64`, `ia32`, `mips`, `mipsel`, `ppc`, `ppc64`, `s390`, `s390x`, `x32`, `x64`
 
 **Accepted values for `--os`**: `aix`, `darwin`, `freebsd`, `linux`, `openbsd`, `sunos`, `win32`, `android`
+
+**Accepted values for `--libc`**: `glibc`, `musl` (`*` for both)
 
 ## Peer dependencies?
 

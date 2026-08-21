@@ -92,6 +92,9 @@ pub struct Options {
 
     /// Override CPU architecture for optional dependencies filtering
     pub cpu: Npm::Architecture,
+    /// Host libc family used to filter optional native packages that declare npm's
+    /// `libc` field (glibc vs musl). `--libc` overrides; NONE = don't filter.
+    pub libc: Npm::Libc,
     /// Override OS for optional dependencies filtering
     pub os: Npm::OperatingSystem,
 
@@ -160,6 +163,7 @@ impl Default for Options {
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
             cpu: Npm::Architecture::CURRENT,
+            libc: Npm::Libc::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
             config_version: None,
         }
@@ -820,6 +824,7 @@ impl Options {
             // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
             self.cpu = cli.cpu;
             self.os = cli.os;
+            self.libc = cli.libc;
 
             self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
             self.do_.set(Do::RECURSIVE, cli.recursive);

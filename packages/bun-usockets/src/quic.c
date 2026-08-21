@@ -723,15 +723,22 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
  * makes a session identifiable without a handshake of its own.
  */
 
-/* Datagrams held per connection, across every session on it.
+/* Datagrams held per connection, across every session on it — in bytes rather
+ * than records, because the datagrams this path carries are mostly small and
+ * rationing them by a count sized for the largest one gives a 120-byte payload
+ * the same sixteen slots as an MTU-sized one.
  *
- * Sixteen, because what this queue bridges is one turn of the event loop: the
- * caller writes, and the bytes leave at the next lsquic_engine_process_conns.
- * Making it deeper would not buy throughput — the engine drains it in one
- * tick either way — it would buy queueing delay on the one path whose entire
- * reason for existing is not having any. */
-#define US_QUIC_WT_DGRAM_DEPTH 16
-#define US_QUIC_WT_DGRAM_RING (US_QUIC_WT_DGRAM_DEPTH * (US_QUIC_WT_MAX_DATAGRAM + 2))
+ * What the queue has to bridge is one turn of the event loop: the caller
+ * writes, and the bytes leave at the next lsquic_engine_process_conns. That
+ * turn is not one datagram long. loop.c drains the UDP socket in a do/while,
+ * so a single poll callback delivers many recvmmsg batches, and a handler that
+ * answers each packet queues an answer for every packet in all of them before
+ * the engine gets to run.
+ *
+ * Past this it drops, and that stays the right answer rather than a failure:
+ * nothing on this path retransmits, and a datagram delayed behind 64 KB of its
+ * successors was worth less than the drop. */
+#define US_QUIC_WT_DGRAM_RING (64 * 1024)
 
 /* RFC 9000 §16 variable-length integer. lsquic's own vint.h is internal, and
  * these two are small enough that reaching for it would cost more than it

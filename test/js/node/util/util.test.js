@@ -384,51 +384,71 @@ describe("util", () => {
   it("format", () => {
     expect(util.format("%s:%s", "foo")).toBe("foo:%s");
   });
+  // Messages verified against the node v26.3.0 binary.
+  const invalidArgType = message =>
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError", message });
   it("formatWithOptions and inspect.defaultOptions validate their options like Node", () => {
-    const err = { code: "ERR_INVALID_ARG_TYPE", name: "TypeError" };
+    function opts() {}
     // Arrays are allowed for formatWithOptions (kValidateObjectAllowArray), functions and null are not.
     expect(util.formatWithOptions([], "%s", 1)).toBe("1");
-    expect(() => util.formatWithOptions(() => {}, "x")).toThrow(expect.objectContaining(err));
-    expect(() => util.formatWithOptions(null, "x")).toThrow(expect.objectContaining(err));
+    expect(() => util.formatWithOptions(opts, "x")).toThrow(
+      invalidArgType('The "inspectOptions" argument must be of type object. Received function opts'),
+    );
+    expect(() => util.formatWithOptions(null, "x")).toThrow(
+      invalidArgType('The "inspectOptions" argument must be of type object. Received null'),
+    );
     const saved = { ...util.inspect.defaultOptions };
     try {
-      expect(() => (util.inspect.defaultOptions = () => {})).toThrow(expect.objectContaining(err));
-      expect(() => (util.inspect.defaultOptions = [])).toThrow(expect.objectContaining(err));
+      expect(() => (util.inspect.defaultOptions = opts)).toThrow(
+        invalidArgType('The "options" argument must be of type object. Received function opts'),
+      );
+      expect(() => (util.inspect.defaultOptions = [])).toThrow(
+        invalidArgType('The "options" argument must be of type object. Received an instance of Array'),
+      );
       expect(() => (util.inspect.defaultOptions = { depth: 3 })).not.toThrow();
     } finally {
       util.inspect.defaultOptions = saved;
     }
     expect(() => util.stripVTControlCharacters(1)).toThrow(
-      expect.objectContaining({
-        ...err,
-        message: 'The "str" argument must be of type string. Received type number (1)',
-      }),
+      invalidArgType('The "str" argument must be of type string. Received type number (1)'),
     );
   });
-  // The validateObject block of node's test/parallel/test-validators.js (v26.3.0).
+  // Ported from the validateObject block of node's test/parallel/test-validators.js (v26.3.0).
   it("validateObject honors the kValidateObject* flags like Node", () => {
     const { validateObject, kValidateObjectAllowNullable, kValidateObjectAllowArray, kValidateObjectAllowFunction } =
       exposedInternals["internal/validators"];
-    const err = { code: "ERR_INVALID_ARG_TYPE", name: "TypeError" };
-    const fn = () => {};
+    const err = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" });
+    function fn() {}
+    const allFlags = kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction;
 
     validateObject({}, "foo");
     validateObject({ a: 42, b: "foo" }, "foo");
     for (const val of [undefined, null, true, false, 0, 0.0, 42, "", "string", [], fn]) {
-      expect(() => validateObject(val, "foo")).toThrow(expect.objectContaining(err));
+      expect(() => validateObject(val, "foo")).toThrow(err);
     }
 
     validateObject(null, "foo", kValidateObjectAllowNullable);
     validateObject([], "foo", kValidateObjectAllowArray);
     validateObject(fn, "foo", kValidateObjectAllowFunction);
-    validateObject({}, "foo", kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction);
+    for (const val of [{}, null, [], fn]) {
+      expect(() => validateObject(val, "foo", allFlags)).not.toThrow();
+    }
 
     // Each flag only admits its own kind of value.
-    expect(() => validateObject(null, "foo", kValidateObjectAllowArray)).toThrow(expect.objectContaining(err));
-    expect(() => validateObject([], "foo", kValidateObjectAllowNullable)).toThrow(expect.objectContaining(err));
-    expect(() => validateObject(fn, "foo", kValidateObjectAllowNullable)).toThrow(expect.objectContaining(err));
-    expect(() => validateObject(undefined, "foo", kValidateObjectAllowNullable)).toThrow(
-      expect.objectContaining({ ...err, message: 'The "foo" argument must be of type object. Received undefined' }),
+    expect(() => validateObject(null, "foo", kValidateObjectAllowArray | kValidateObjectAllowFunction)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received null'),
+    );
+    expect(() => validateObject([], "foo", kValidateObjectAllowNullable | kValidateObjectAllowFunction)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received an instance of Array'),
+    );
+    expect(() => validateObject(fn, "foo", kValidateObjectAllowNullable | kValidateObjectAllowArray)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received function fn'),
+    );
+    expect(() => validateObject(undefined, "foo", allFlags)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received undefined'),
+    );
+    expect(() => validateObject("string", "foo", allFlags)).toThrow(
+      invalidArgType("The \"foo\" argument must be of type object. Received type string ('string')"),
     );
   });
 

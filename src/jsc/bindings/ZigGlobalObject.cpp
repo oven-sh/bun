@@ -959,7 +959,7 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     }
     {
         auto* requireMap = globalObject->requireMap();
-        WTF::Vector<JSC::JSValue, 32> evict;
+        JSC::MarkedArgumentBuffer evict;
         auto* iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Keys);
         scope.assertNoException();
         JSC::JSValue value;
@@ -971,8 +971,9 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
             }
             scope.assertNoException();
         }
-        for (auto& key : evict) {
-            requireMap->remove(globalObject, key);
+        RELEASE_ASSERT(!evict.hasOverflowed());
+        for (size_t i = 0, size = evict.size(); i < size; ++i) {
+            requireMap->remove(globalObject, evict.at(i));
             scope.assertNoException();
         }
     }

@@ -2362,16 +2362,10 @@ extern "C" napi_status napi_create_buffer_copy(napi_env env, size_t length,
 // if the env is torn down first (a Worker exiting while the addon still holds the buffer) —
 // from NapiEnv::cleanup() together with the other bound finalizers, as Node's env teardown
 // finalizes every remaining reference (test_worker_buffer_callback/test-free-called).
-//
-// Both of those assume the contents stay on the env's thread: run() mutates the env (whose
-// refcount is not atomic) and calls the addon with it, and cleanup() frees the bytes out from
-// under whoever else holds them. postMessage would move the contents to another thread, so
-// the ArrayBuffer wrapper is marked untransferable, as Node does for every buffer with a free
-// callback (both napi_create_external_* functions end up in this Buffer::New overload):
-// https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L484-L490
-// Transferring it is a DataCloneError (test_worker_buffer_callback/test.js). The mark is on
-// the wrapper, so ArrayBuffer.prototype.transfer() still yields an unmarked one over the same
-// contents; Node's mark has the same gap.
+// Both need the contents on the env's thread (NapiEnv is not thread safe, and cleanup() frees
+// the bytes), so the ArrayBuffer wrapper is marked untransferable, as Node marks every buffer
+// with a free callback: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L484-L490
+// ArrayBuffer.prototype.transfer() still yields an unmarked wrapper; Node has the same gap.
 class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
     NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)
@@ -2421,9 +2415,8 @@ private:
     bool m_finalized { false };
 };
 
-// JSC creates a view's ArrayBuffer wrapper lazily on the first `.buffer` access; create it now
-// (the getter returns this same object for as long as the view or the wrapper is alive) so it
-// can carry the mark. See NapiExternalBufferDestructor. The caller checks for an exception.
+// The `.buffer` wrapper, which JSC would otherwise create lazily, carries the mark (see
+// NapiExternalBufferDestructor). The caller checks for an exception.
 static void markExternalBufferUntransferable(Zig::GlobalObject* globalObject, JSC::JSUint8Array* buffer)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2452,8 +2445,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
         auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
         auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, 0);
         NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
-        // Nothing here can cross a thread (the finalizer below hangs off the cell, and the buffer is
-        // detached), but Node marks this buffer too, and isMarkedAsUntransferable() reports it.
+        // Nothing here can cross a thread, but Node marks this buffer too (isMarkedAsUntransferable).
         markExternalBufferUntransferable(globalObject, buffer);
         NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
         buffer->existingBuffer()->detach(vm);

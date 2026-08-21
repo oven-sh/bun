@@ -102,10 +102,8 @@ using WasmModuleArray = Vector<RefPtr<JSC::Wasm::Module>>;
 using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
 #endif
 
-// node's markAsUncloneable() / markAsUntransferable(): the tag is a DontEnum JSC private name
-// (node uses a v8 Private), invisible to and unforgeable from user JS, and not removable.
-// Serialization rejects a tagged object with a DataCloneError: anywhere in the value for
-// uncloneable, in the transfer list for untransferable.
+// node's markAsUncloneable() / markAsUntransferable(): a private name user JS cannot see or remove.
+// Serialization rejects a tagged object, found in the value or in the transfer list respectively.
 void markAsUncloneable(JSC::VM&, JSC::JSObject&);
 void markAsUntransferable(JSC::VM&, JSC::JSObject&);
 

@@ -1384,9 +1384,9 @@ pub fn bun_resolve_sync_with_strings(
     })
 }
 
-/// Like `Bun__resolveSyncWithSource`, but a specifier the resolver cannot resolve (the
-/// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing.
-/// Everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
+/// Resolves `specifier` relative to `source`. A specifier the resolver cannot resolve (the
+/// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
+/// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
 /// that is not a string — is thrown.
 // HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
 pub fn bun_resolve_sync_with_source_if_exists(
@@ -1410,37 +1410,6 @@ pub fn bun_resolve_sync_with_source_if_exists(
             Resolved::Found(value) => value,
             Resolved::NotFound(_) => JSValue::UNDEFINED,
         })
-    })
-}
-
-// HOST_EXPORT(Bun__resolveSyncWithSource, c)
-pub fn bun_resolve_sync_with_source(
-    global: &JSGlobalObject,
-    specifier: JSValue,
-    source: &BunString,
-    is_esm: bool,
-    is_user_require_resolve: bool,
-) -> JSValue {
-    let Ok(specifier_str) = specifier.to_bun_string(global) else {
-        return JSValue::ZERO;
-    };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
-    if specifier_str.length() == 0 {
-        let _ = global
-            .err(
-                jsc::ErrCode::INVALID_ARG_VALUE,
-                format_args!("The argument 'id' must be a non-empty string. Received ''"),
-            )
-            .throw();
-        return JSValue::ZERO;
-    }
-    jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(
-            global,
-            *specifier_str,
-            *source,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
-        )
     })
 }
 

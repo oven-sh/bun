@@ -8807,14 +8807,10 @@ impl LowerUsingDeclarationsContext {
                     ));
                 }
             }
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            if p.will_wrap_module_in_try_catch_for_using
-                && p.current_scope().kind == js_ast::scope::Kind::Entry
-            {
-                local.kind = js_ast::s::Kind::KVar;
-            } else {
-                local.kind = js_ast::s::Kind::KConst;
-            }
+            // The binding stays immutable. select_local_kind() turns it into
+            // "var" at the top level of a module that is wrapped in try/catch,
+            // where the declaration must be visible outside the try block.
+            local.kind = p.select_local_kind(js_ast::s::Kind::KConst);
         }
     }
 

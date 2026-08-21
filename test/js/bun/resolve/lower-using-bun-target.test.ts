@@ -347,3 +347,22 @@ console.log(JSON.stringify({
     expect(exitCode).toBe(0);
   });
 });
+
+describe("lowered using declarations", () => {
+  test("a using inside a namespace stays const when the module also has a top-level using", () => {
+    // Lowering a top-level `using` wraps the whole module in try/catch, so the
+    // top-level declarations become `var` to stay visible outside the try
+    // block. A namespace body is not the module top level: its `using` has to
+    // stay immutable.
+    const t = new Bun.Transpiler({ target: "node", loader: "ts" });
+    const out = t.transformSync(`using top = r();
+namespace N {
+  using x = s();
+  export const y = x.v;
+}
+`);
+    expect(out).toMatch(/\bvar top = __using\w*\(/);
+    expect(out).toMatch(/\bconst x = __using\w*\(/);
+    expect(out).not.toMatch(/\bvar x\b/);
+  });
+});

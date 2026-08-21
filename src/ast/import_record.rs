@@ -72,10 +72,8 @@ bitflags::bitflags! {
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
 
-        /// Resolution finished and left the import external. `path` may no
-        /// longer be the source specifier, so a later pass over the same
-        /// records (a barrel whose deferred records are resolved on demand)
-        /// must not resolve it again.
+        /// Resolved as external. `path` may have been rewritten, so a second
+        /// resolution pass over the same records skips it.
         const IS_EXTERNAL = 1 << 10;
 
         /// If true, this import can be removed if it's unused

@@ -814,6 +814,66 @@ impl Lockfile {
 
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
+    /// Workspace packages whose node_modules must be self-contained: listed in
+    /// `install.selfContainedWorkspaces` (by path or name) or declaring yarn's
+    /// `"installConfig": { "hoistingLimits": "workspaces" | "dependencies" }`.
+    pub(crate) fn self_contained_workspace_ids(&self) -> Vec<PackageID> {
+        let mut out = Vec::new();
+        let configured: &[&[u8]] = crate::PackageManager::try_get()
+            .map(|pm| pm.options.self_contained_workspaces)
+            .unwrap_or(&[]);
+        let buf = self.buffers.string_bytes.as_slice();
+        let pkgs = self.packages.slice();
+        for (i, res) in pkgs.items_resolution().iter().enumerate() {
+            if res.tag != crate::resolution::Tag::Workspace {
+                continue;
+            }
+            let path = res.workspace().slice(buf);
+            let name = pkgs.items_name()[i].slice(buf);
+            let mut yes = configured.iter().any(|c| {
+                let c = bun_core::strings::without_trailing_slash(c);
+                c == path || c == name
+            });
+            if !yes {
+                // yarn compat: installConfig.hoistingLimits in the workspace's own manifest
+                let mut p = bun_paths::AutoAbsPath::init_top_level_dir();
+                let _ = p.append(path);
+                let _ = p.append(b"package.json");
+                if let Ok(bytes) = std::fs::read(std::path::Path::new(unsafe {
+                    std::str::from_utf8_unchecked(p.slice())
+                })) {
+                    if let Some(i) = bun_core::strings::index_of(&bytes, b"\"hoistingLimits\"") {
+                        let rest = &bytes[i + 16..bytes.len().min(i + 64)];
+                        yes = bun_core::strings::index_of(rest, b"\"workspaces\"").is_some()
+                            || bun_core::strings::index_of(rest, b"\"dependencies\"").is_some();
+                    }
+                }
+            }
+            if yes {
+                out.push(i as PackageID);
+            }
+        }
+        out
+    }
+
+    /// The workspace (or root, 0) package that owns tree `id`: walk up until a
+    /// workspace/root tree is reached and return the package it stands for.
+    pub(crate) fn owning_workspace_of_tree(&self, mut id: tree::Id) -> PackageID {
+        while id != 0 && (id as usize) < self.buffers.trees.len() {
+            let t = &self.buffers.trees[id as usize];
+            let dep_id = t.dependency_id;
+            if (dep_id as usize) < self.buffers.dependencies.len()
+                && self.buffers.dependencies[dep_id as usize]
+                    .behavior
+                    .is_workspace()
+            {
+                return self.buffers.resolutions[dep_id as usize];
+            }
+            id = t.parent;
+        }
+        0
+    }
+
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
         id == 0
             || self.buffers.dependencies[self.buffers.trees[id as usize].dependency_id as usize]
@@ -1322,8 +1382,10 @@ impl Lockfile {
         // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
         // which is exactly what `Builder` needs (it only ever `Deref`s); the
         // `Builder` does not outlive this `&mut self` borrow.
+        let self_contained = self.self_contained_workspace_ids();
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
+            self_contained,
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
             resolutions: self.buffers.resolutions.as_mut_slice(),

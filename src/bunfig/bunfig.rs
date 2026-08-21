@@ -1565,6 +1565,32 @@ impl<'a> Parser<'a> {
             install.hoist = Some(v);
         }
 
+        if let Some(list) = install_obj.get(b"selfContainedWorkspaces") {
+            match &list.data {
+                ExprData::EArray(arr) => {
+                    let raw = arr.items.slice();
+                    let mut out: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
+                    for p in raw {
+                        self.expect_string(p)?;
+                        out.push(estring_to_owned(
+                            p.data
+                                .e_string()
+                                .expect("infallible: variant checked")
+                                .get(),
+                            self.bump,
+                        ));
+                    }
+                    install.self_contained_workspaces = Some(out);
+                }
+                _ => {
+                    self.add_error(
+                        list.loc,
+                        b"Expected an array of workspace paths or names for selfContainedWorkspaces",
+                    )?;
+                }
+            }
+        }
+
         Ok(())
     }
 

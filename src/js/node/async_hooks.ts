@@ -34,19 +34,20 @@ function sameValue(a, b) {
 }
 
 // Only run during debug
+//
+// The assertion messages below pass the array itself, never Bun.inspect(array):
+// $assert evaluates its message arguments on every call and only formats them
+// on failure. Inspecting the array eagerly would run user code (a store's
+// custom inspect hook) on every set(), and that code may re-enter run().
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
   if (array === undefined) return true;
   // Otherwise, it must be an array
-  $assert(
-    Array.isArray(array),
-    "AsyncContextData must be an array or undefined, got",
-    Bun.inspect(array, { depth: 1 }),
-  );
+  $assert(Array.isArray(array), "AsyncContextData must be an array or undefined, got", array);
   // the array has to be even
-  $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", Bun.inspect(array, { depth: 1 }));
+  $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", array);
   // if it is zero-length, use undefined instead
-  $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
+  $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", array);
   for (var i = 0; i < array.length; i += 2) {
     $assert(
       array[i] instanceof AsyncLocalStorage,
@@ -282,10 +283,13 @@ class AsyncLocalStorage {
           }
         }
         const expectedStore = hasPrevious ? previous_value : this.#defaultValue;
+        // Pass the store itself, not Bun.inspect(store): the message arguments
+        // are evaluated on every exit from run(), and inspecting a user store
+        // can run user code that re-enters run() (see assertValidAsyncContextArray).
         $assert(
           sameValue(this.getStore(), expectedStore),
           "run: previous_value",
-          Bun.inspect(expectedStore),
+          expectedStore,
           "was not restored, i see",
           this.getStore(),
         );

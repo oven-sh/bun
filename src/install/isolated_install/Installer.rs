@@ -2418,6 +2418,10 @@ impl<'a> Installer<'a> {
             {
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
+                // a stale error from the redirect attempt would make the
+                // retry delete its own link and fail the install
+                bin_linker.err = None;
+                bin_linker.skipped_due_to_missing_bin = false;
 
                 if self.manager().options.log_level.is_verbose() {
                     bun_core::pretty_errorln!(
@@ -2584,9 +2588,17 @@ impl<'a> Installer<'a> {
                                         bun_errno::SystemErrno::ENAMETOOLONG,
                                     ));
                                 }
-                                strings::StringOrTinyString::init(paths::basename(
-                                    pkg_res.symlink().slice(string_buf),
-                                ))
+                                // keep the `@scope/` segment of a scoped link
+                                // name in the directory part
+                                let link_name = pkg_res.symlink().slice(string_buf);
+                                if let Some(dir) = paths::dirname(link_name) {
+                                    if target_node_modules_path.append(dir).is_err() {
+                                        return Err(crate::Error::Sys(
+                                            bun_errno::SystemErrno::ENAMETOOLONG,
+                                        ));
+                                    }
+                                }
+                                strings::StringOrTinyString::init(paths::basename(link_name))
                             }
                             _ => {
                                 self.append_real_store_node_modules_path(
@@ -2630,6 +2642,10 @@ impl<'a> Installer<'a> {
                     own_store_node_modules_path = p;
                     bin_linker.target_node_modules_path = &raw const own_store_node_modules_path;
                     bin_linker.target_package_name = package_name;
+                    // a stale error from the redirect attempt would make the
+                    // retry delete its own link and fail the install
+                    bin_linker.err = None;
+                    bin_linker.skipped_due_to_missing_bin = false;
                     bin_linker.link(false);
                 }
 

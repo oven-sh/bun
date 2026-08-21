@@ -1512,6 +1512,13 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
+  if (exitCode !== (options?.expectedExitCode ?? 0)) {
+    // some install failures pass every substring check above (for example
+    // "Failed to install N packages" goes to stdout); surface both streams
+    // so the exit-code mismatch is diagnosable in CI
+    console.error("bun install stdout:", out);
+    console.error("bun install stderr:", err);
+  }
   expect(exitCode).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }

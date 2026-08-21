@@ -378,6 +378,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->on_server_name = NULL;
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
+    ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;
@@ -537,7 +538,8 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
-    s->flags.is_paused = 0;
+    /* Honored by us_internal_socket_after_open; until then the poll only waits for the connect. */
+    s->flags.is_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) != 0;
     s->flags.is_ipc = 0;
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
@@ -823,7 +825,10 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             // It's expected that close is called by the caller
         }
     } else {
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
+        if (s->ssl || (c && c->ssl_ctx)) {
+            s->flags.is_paused = 0;
+        }
+        us_poll_change(&s->p, s->group->loop, s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE);
         bsd_socket_nodelay(us_poll_fd(&s->p), 1);
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET);
         us_socket_timeout(s, 0);

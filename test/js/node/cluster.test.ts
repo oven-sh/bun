@@ -1085,16 +1085,22 @@ if (cluster.isPrimary) {
   const worker = cluster.fork();
   worker.on("message", m => { console.log(JSON.stringify(m)); worker.kill(); process.exit(0); });
   cluster.on("listening", (_w, addr) => {
-    const c = net.connect(addr.port, "127.0.0.1", () => c.write("early"));
+    // "early" is in the worker's receive buffer before the write callback runs, so a
+    // report taken after this message proves the paused socket did not read it.
+    const c = net.connect(addr.port, "127.0.0.1", () => c.write("early", () => worker.send("written")));
     c.on("error", () => {});
   });
 } else {
-  const server = net.createServer({ pauseOnConnect: true }, sock => {
-    let earlyData = false;
-    sock.once("data", () => { earlyData = true; });
-    setImmediate(() => {
-      process.send({ paused: sock.isPaused(), earlyData, _server: sock._server === server });
-    });
+  let sock, written = false, earlyData = false;
+  const report = () => {
+    if (!sock || !written) return;
+    process.send({ paused: sock.isPaused(), bytesRead: sock.bytesRead, earlyData, _server: sock._server === server });
+  };
+  process.on("message", () => { written = true; report(); });
+  const server = net.createServer({ pauseOnConnect: true }, s => {
+    sock = s;
+    s.once("data", () => { earlyData = true; });
+    report();
   });
   server.listen(0, "127.0.0.1");
 }
@@ -1109,7 +1115,7 @@ if (cluster.isPrimary) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-    out: { paused: true, earlyData: false, _server: true },
+    out: { paused: true, bytesRead: 0, earlyData: false, _server: true },
     stderr: expect.any(String),
   });
   expect(exitCode).toBe(0);

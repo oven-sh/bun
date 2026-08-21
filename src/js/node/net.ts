@@ -570,15 +570,20 @@ const SocketHandlers: SocketHandler = {
 // Node's readStop: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
 function readStop(self, handle) {
   handle?.pause?.();
+  releaseReadHold(self, handle);
+}
+
+// A handle that is not reading does not hold the loop; a pending write still does (see unrefAfterDrain).
+function releaseReadHold(self, handle) {
   // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
   if (!self[kwriteCallback]) handle?.unref?.();
 }
 
-// pauseOnConnect: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
+// The handle opened paused (pauseOnConnect in its native config): https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
 function pauseOnCreate(self, handle) {
-  readStop(self, handle);
+  releaseReadHold(self, handle);
   Duplex.prototype.pause.$call(self);
 }
 
@@ -1508,6 +1513,7 @@ function kConnectTcp(self, addressType, req, address, port) {
     // where libuv sockets are half-open and the stream layer decides.
     allowHalfOpen: true,
     tls: req.tls,
+    pauseOnConnect: req.pauseOnConnect,
     data: { self, req },
     socket: self[khandlers],
   });
@@ -1521,6 +1527,7 @@ function kConnectPipe(self, req, address) {
     // Always half-open natively; see kConnect.
     allowHalfOpen: true,
     tls: req.tls,
+    pauseOnConnect: req.pauseOnConnect,
     data: { self, req },
     socket: self[khandlers],
   });
@@ -1920,6 +1927,7 @@ Socket.prototype.connect = function connect(...args) {
         socket: SocketHandlers,
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,
+        pauseOnConnect,
       }).catch(error => {
         if (!this.destroyed) {
           this.emit("error", error);
@@ -1928,7 +1936,7 @@ Socket.prototype.connect = function connect(...args) {
       });
     }
     if (pauseOnConnect) {
-      // An fd is open already (doConnect ran SocketHandlers.open); afterConnect stops a dial.
+      // An fd is open already; a dial opens paused through its req, and afterConnect releases its hold.
       if (fd != null) pauseOnCreate(this, this._handle);
       else Duplex.prototype.pause.$call(this);
     } else {
@@ -3129,6 +3137,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.localPort = localPort;
     req.addressType = addressType;
     req.tls = tls;
+    req.pauseOnConnect = options.pauseOnConnect;
 
     traceConnectStart(req);
     err = kConnectTcp(self, addressType, req, address, port);
@@ -3149,6 +3158,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.address = address;
     req.oncomplete = afterConnect;
     req.tls = tls;
+    req.pauseOnConnect = options.pauseOnConnect;
 
     traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
@@ -3273,6 +3283,7 @@ function internalConnectMultiple(context, canceled?) {
   req.localPort = localPort;
   req.addressType = addressType;
   req.tls = tls;
+  req.pauseOnConnect = context.options.pauseOnConnect;
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 
@@ -3900,6 +3911,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: serverHandlersFor(this),
       data: this,
+      pauseOnConnect: this.pauseOnConnect,
     });
     // Mirror libuv uv_pipe_chmod: readableAll/writableAll relax the unix socket
     // file's group/other permission bits. Skipped on Windows and abstract
@@ -3932,6 +3944,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: serverHandlersFor(this),
       data: this,
+      pauseOnConnect: this.pauseOnConnect,
     });
   } else {
     this._handle = Bun.listen({
@@ -3944,6 +3957,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: serverHandlersFor(this),
       data: this,
+      pauseOnConnect: this.pauseOnConnect,
     });
   }
 

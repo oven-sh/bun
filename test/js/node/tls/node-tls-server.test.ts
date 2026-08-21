@@ -2626,3 +2626,46 @@ describe.each(["tls", "net"])("%s server socket that unpipe() paused after it en
     await Promise.all([frontClosed.promise, upstreamClosed.promise]);
   });
 });
+
+describe("pauseOnConnect", () => {
+  it("hands out the accepted socket paused after the handshake and reads nothing until resume()", async () => {
+    const server = createServer({ ...COMMON_CERT, pauseOnConnect: true });
+    const accepted = Promise.withResolvers<TLSSocket>();
+    server.on("secureConnection", accepted.resolve);
+    server.on("tlsClientError", accepted.reject);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    // A second connection is the barrier: its bytes reach this process after the
+    // client's "hello" reached the paused socket's receive buffer.
+    const probe = net.createServer();
+    const probed = Promise.withResolvers<void>();
+    probe.on("connection", socket => socket.once("data", () => probed.resolve()));
+    await once(probe.listen(0, "127.0.0.1"), "listening");
+    const client = connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    const clientSecure = once(client, "secureConnect");
+    try {
+      const socket = await accepted.promise;
+      expect(socket.isPaused()).toBe(true);
+      await clientSecure;
+      await new Promise<void>((resolve, reject) => client.write("hello", err => (err ? reject(err) : resolve())));
+      const probeClient = net.connect((probe.address() as AddressInfo).port, "127.0.0.1", () => probeClient.end("x"));
+      await probed.promise;
+      // Node's TLSWrap reads ahead here (bytesRead would be 5); ours leaves the bytes in the kernel.
+      expect({ paused: socket.isPaused(), bytesRead: socket.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
+      const received = once(socket, "data");
+      socket.resume();
+      const [chunk] = await received;
+      expect(String(chunk)).toBe("hello");
+      const clientClosed = once(client, "close");
+      socket.end();
+      client.end();
+      await clientClosed;
+    } finally {
+      server.close();
+      probe.close();
+    }
+  });
+});

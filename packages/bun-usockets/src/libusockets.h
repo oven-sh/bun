@@ -160,6 +160,11 @@ enum {
      * unconnected socket it also makes the next send fail for a datagram
      * bound to a different, live peer. */
     LIBUS_UDP_LINUX_RECVERR = 128,
+    /* The socket opens with reads paused (no read interest until us_socket_resume), whether it
+     * is connected, adopted by us_socket_from_fd, or accepted by a listener that was created
+     * with the option. Ignored for TLS sockets: they have to read to complete the handshake, the
+     * owner pauses them once it is done. node:net's pauseOnConnect. */
+    LIBUS_SOCKET_OPEN_PAUSED = 256,
 };
 
 /* Library types publicly available */

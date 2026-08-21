@@ -97,7 +97,7 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
-use bun_core::{declare_scope, scoped_log};
+use bun_core::{declare_scope, scoped_log, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -230,6 +230,18 @@ pub struct UploadPart {
 pub struct UploadPartResult {
     pub(crate) number: u16,
     pub(crate) etag: Box<[u8]>,
+}
+
+/// Appends `text` as XML character data. Only `&`, `<` and `>` need an entity
+/// reference there, so a quoted ETag (the shape every S3 implementation sends)
+/// is copied unchanged.
+fn append_xml_text(out: &mut Vec<u8>, mut text: &[u8]) {
+    while let Some(i) = strings::index_of_any(text, b"&<>") {
+        out.extend_from_slice(&text[..i]);
+        out.extend_from_slice(strings::xml_escape_entity(text[i]).expect("byte is in the set"));
+        text = &text[i + 1..];
+    }
+    out.extend_from_slice(text);
 }
 
 impl UploadPart {
@@ -602,13 +614,10 @@ impl MultiPartUpload {
                     // sort the etags
                     index_sort::sort_slice_by(etags, |a, b| a.number.cmp(&b.number));
                     for tag in etags.drain(..) {
-                        write!(
-                            list,
-                            "<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>",
-                            tag.number,
-                            BStr::new(&tag.etag),
-                        )
-                        .expect("oom");
+                        write!(list, "<Part><PartNumber>{}</PartNumber><ETag>", tag.number)
+                            .expect("oom");
+                        append_xml_text(list, &tag.etag);
+                        list.extend_from_slice(b"</ETag></Part>");
                         // tag.etag (Box<[u8]>) freed at end of iteration
                     }
                 });

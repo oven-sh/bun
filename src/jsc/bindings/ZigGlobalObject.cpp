@@ -999,6 +999,8 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     if (globalObject->hasProcessObject()) {
         auto* process = globalObject->processObject();
         process->wrapped().removeAllListeners();
+        // A fresh EventEmitter starts at the default threshold; the surviving one keeps whatever the file set.
+        process->wrapped().setMaxListeners(10);
         // removeAllListeners() also stripped the bootstrap 'warning' printer that finishCreation installs; a reused Process never re-runs finishCreation.
         process->installDefaultWarningListener(vm);
         process->clearCachedCwd();

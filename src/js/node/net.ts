@@ -2356,14 +2356,16 @@ Socket.prototype.resume = function resume() {
   return ret;
 };
 
-// Like node, only onread mode stops the handle here. Otherwise it keeps reading
-// into the stream's buffer until push() says stop (the data handlers), so a paused
-// socket still observes the peer's FIN and emits 'end'/'close' - an unpipe()d
-// socket is paused and never resumed.
+// Like node, only onread mode stops the handle here, and only once connected
+// (afterConnect handles a stream paused before that). Otherwise the handle keeps
+// reading into the stream's buffer until push() says stop (the data handlers), so
+// a paused socket still observes the peer's FIN and emits 'end'/'close' - an
+// unpipe()d socket is paused and never resumed.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
 Socket.prototype.pause = function pause() {
-  if (this[kOnreadBuffer] !== undefined && !this.destroyed) {
-    readStop(this, this._handle);
+  const handle = this._handle;
+  if (handle && this[kOnreadBuffer] !== undefined && !this.connecting && !this.destroyed) {
+    readStop(this, handle);
   }
   return Duplex.prototype.pause.$call(this);
 };

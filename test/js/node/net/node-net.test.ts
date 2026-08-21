@@ -1374,7 +1374,9 @@ describe("paused socket whose peer sends RST", () => {
   // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
   // close code, which the JS error path read as errno 8 and surfaced as a
   // bogus `Error: read ENOEXEC` when the socket was not actively reading.
-  // kqueue already normalized the flag to 0/1.
+  // kqueue already normalized the flag to 0/1. Like node, only an onread
+  // socket's pause() stops the handle (a plain pause() keeps it reading), so
+  // onread mode is what puts the socket into the not-reading state here.
   it("does not surface a bogus errno error", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     const errors: NodeJS.ErrnoException[] = [];
@@ -1386,12 +1388,14 @@ describe("paused socket whose peer sends RST", () => {
     try {
       await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
       const port = (server.address() as import("node:net").AddressInfo).port;
-      const c = connect(port, "127.0.0.1", () => {
-        c.pause();
-        c.write("x");
-      });
+      const c = connect({ port, host: "127.0.0.1", onread: { buffer: Buffer.alloc(16), callback: () => {} } });
       c.on("error", e => errors.push(e));
       c.on("close", () => resolve());
+      await once(c, "connect");
+      // Every 'connect' listener has run by now, including the _read() that
+      // connect() queued, so nothing starts the handle again after this pause.
+      c.pause();
+      c.write("x");
       await promise;
     } finally {
       server.close();

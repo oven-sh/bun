@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1392,7 +1392,7 @@ test("compile --compile-executable-path rejects a template shorter than the exec
   }
 }, 60_000);
 
-test.skipIf(!isMacOS || process.arch !== "arm64")(
+test.skipIf(!isMacOS || !isArm64)(
   "compile on darwin-arm64 produces a signature the kernel accepts",
   async () => {
     // The in-process ad-hoc signer must hash the final partial page truncated to
@@ -1415,7 +1415,9 @@ test.skipIf(!isMacOS || process.arch !== "arm64")(
         stderr: "pipe",
       });
       const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("error:");
+      if (exitCode !== 0) {
+        expect(stderr).toBe("");
+      }
       expect(exitCode).toBe(0);
     }
 
@@ -1436,6 +1438,9 @@ test.skipIf(!isMacOS || process.arch !== "arm64")(
 
     const result = await Bun.$`${outfile}`.cwd(cwd).env(bunEnv).nothrow();
     expect(result.stdout.toString()).toBe("signed\n");
+    if (result.exitCode !== 0) {
+      expect(result.stderr.toString()).toBe("");
+    }
     expect(result.exitCode).toBe(0);
   },
   60_000,

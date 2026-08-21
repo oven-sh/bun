@@ -4653,10 +4653,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
 extern "C" bool CrashHandler__isCrashSignal(int signalNumber);
 
 // kill(2) delivers to the calling process for its own pid, for 0 (its process group) and for the
-// negated id of its process group. -1 skips the caller on Linux and on the BSDs.
+// negated id of its process group. -1 (broadcast) skips the caller on Linux and on the BSDs, also
+// when the caller's process group is 1, e.g. bun as PID 1 of a container.
 static bool killReachesThisProcess(int pid, int ownPid)
 {
-    return pid == ownPid || pid == 0 || pid == -getpgrp();
+    return pid == ownPid || pid == 0 || (pid < -1 && pid == -getpgrp());
 }
 
 // A crash-handler signal the process sends to itself asks for that signal's default action.

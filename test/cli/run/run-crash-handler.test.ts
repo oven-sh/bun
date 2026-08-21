@@ -541,10 +541,11 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
   // (Outside ASAN builds the abort hook raises the real signal.)
   test.concurrent("sending the signal to another process keeps the crash handler installed", async () => {
     const { stderr, signalCode } = await run(
-      `const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1 << 30)"], stdio: ["ignore", "ignore", "ignore"] });
+      `import { crash_handler } from "bun:internal-for-testing";
+       const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1 << 30)"], stdio: ["ignore", "ignore", "ignore"] });
        process.kill(child.pid, "SIGABRT");
        await child.exited;
-       require("bun:internal-for-testing").crash_handler.abort();`,
+       crash_handler.abort();`,
     );
     expect(stderr).toContain("abort() called");
     expect(stderr).toContain("oh no: Bun has crashed");

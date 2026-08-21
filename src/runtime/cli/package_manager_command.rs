@@ -439,12 +439,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     || strings::eql_comptime(pm.options.positionals[1], b"unpack"))
             {
                 let is_pack = strings::eql_comptime(pm.options.positionals[1], b"pack");
-                let Some(file) = pm.options.positionals.get(2).copied() else {
-                    Output::err_generic(
-                        "usage: bun pm cache {} <file>",
-                        (if is_pack { "pack" } else { "unpack" },),
-                    );
-                    Global::exit(1);
+                // exactly one non-empty <file>
+                let file = match pm.options.positionals.get(2..).unwrap_or(&[]) {
+                    [file] if !file.is_empty() => *file,
+                    rest => {
+                        Output::err_generic(
+                            "expected exactly one \\<file\\> argument, got {}\n  usage: bun pm cache {} \\<file\\>",
+                            (rest.len(), if is_pack { "pack" } else { "unpack" }),
+                        );
+                        Global::exit(1);
+                    }
                 };
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;

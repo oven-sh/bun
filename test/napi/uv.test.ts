@@ -184,12 +184,13 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The loop-backed functions (uv_default_loop, uv_async_t, uv_queue_work) and
-  // the header-only ones around them run in a child process: the child's exit
-  // is part of what is tested (a ref'd handle or a queued request must keep it
-  // alive, an unref'd handle must not), and on a bun where these are still
-  // stubs the first call aborts the process. `script` sees `addon` and
-  // `report`, which prints one line per event the addon reports.
+  // The loop-backed functions (uv_default_loop, the async, idle, prepare, check
+  // and timer handles, uv_queue_work) and the header-only ones around them run
+  // in a child process: the child's exit is part of what is tested (a ref'd
+  // handle or a queued request must keep it alive, an unref'd handle must
+  // not), and on a bun where these are still stubs the first call aborts the
+  // process. `script` sees `addon` and `report`, which prints one line per
+  // event the addon reports.
   async function runInChild(script: string) {
     await using proc = Bun.spawn({
       cmd: [
@@ -264,11 +265,26 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("UV_EINVAL for a missing loop, a missing work_cb and a non-work request", async () => {
+  test.concurrent("UV_EINVAL for a missing loop or callback and for a handle of another type", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testErrors()));`);
     expect(stderr).toBe("");
     const EINVAL = -constants.errno.EINVAL;
-    expect(JSON.parse(stdout)).toEqual([EINVAL, EINVAL, EINVAL]);
+    expect(JSON.parse(stdout)).toEqual([
+      EINVAL, // uv_async_init without a loop
+      EINVAL, // uv_check_init without a loop
+      EINVAL, // uv_timer_init without a loop
+      EINVAL, // uv_queue_work without a work_cb
+      EINVAL, // uv_cancel of a request that is not a work request
+      EINVAL, // uv_idle_start without a callback
+      EINVAL, // uv_timer_start without a callback
+      EINVAL, // uv_timer_again of a timer that was never started
+      EINVAL, // uv_prepare_start of an idle handle
+      EINVAL, // uv_prepare_stop of an idle handle
+      EINVAL, // uv_idle_start of a timer
+      EINVAL, // uv_timer_start of an idle handle
+      EINVAL, // uv_timer_stop of an idle handle
+      EINVAL, // uv_timer_again of an idle handle
+    ]);
     expect(exitCode).toBe(0);
   });
 
@@ -380,6 +396,264 @@ describe.if(!isWindows)("uv stubs", () => {
     const cancelled = `cancel 0\nafter ${-constants.errno.ECANCELED} 124\n`;
     const tooLate = `cancel ${-constants.errno.EBUSY}\nafter 0 127\n`;
     expect([cancelled, tooLate]).toContain(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  // The handle tests below print the state the addon returns as one JSON line,
+  // then one line per event.
+  function stateAndEvents(stdout: string) {
+    const [state, ...events] = stdout.split("\n");
+    return { state: JSON.parse(state), events: events.join("\n") };
+  }
+
+  const loopWatcherEvents = [
+    "idle 1 1",
+    "prepare 1 1",
+    "check 1 1",
+    "idle 2 1",
+    "prepare 2 1",
+    "check 2 1",
+    "closing 1 0",
+    "close idle 1 0",
+    "close prepare 1 0",
+    "close check 1 0",
+    "",
+  ].join("\n");
+
+  test.concurrent("idle, prepare and check handles run once per loop iteration, in that order", async () => {
+    // Nothing but the idle handle keeps the loop turning: if it let the poll
+    // block, the child would hang here. See test_loop_watchers in uv_impl.c.
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testLoopWatchers(report);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(loopWatcherEvents);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("the watchers of a Worker run on the Worker's loop", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        \`
+          const { parentPort } = require("node:worker_threads");
+          require(${JSON.stringify(addonPath)}).testLoopWatchers((event, a, b) => parentPort.postMessage([event, a, b].join(" ")));
+        \`,
+        { eval: true },
+      );
+      worker.on("message", message => console.log(message));
+      worker.on("exit", code => console.log("worker exited", code));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(loopWatcherEvents + "worker exited 0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("prepare runs before the poll and check after it", async () => {
+    // The server's data callback runs inside the poll. The addon closes both
+    // handles from the check callback of the iteration it was called in. How
+    // many iterations the connection takes to get there varies.
+    const { stdout, stderr, exitCode } = await runInChild(`
+      addon.testPrepareAndCheckAroundIo(report);
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket) {
+            console.log("io");
+            addon.requestClose();
+            socket.end();
+            server.stop(true);
+          },
+        },
+      });
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(socket) {
+            socket.write("x");
+          },
+          data() {},
+        },
+      });
+    `);
+    expect(stderr).toBe("");
+    const lines = stdout.split("\n");
+    const io = lines.indexOf("io");
+    expect(io).toBeGreaterThan(0);
+    const iteration = (io + 1) / 2;
+    const expected: string[] = [];
+    for (let i = 1; i < iteration; i++) {
+      expected.push(`prepare ${i} 1`, `check ${i} 1`);
+    }
+    expected.push(
+      `prepare ${iteration} 1`,
+      "io",
+      `check ${iteration} 1`,
+      "closing 1 0",
+      "close prepare 1 0",
+      "close check 1 0",
+      "",
+    );
+    expect(lines).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("the start and stop state machine of a watcher", async () => {
+    // The handles are closed before the script returns; the child exiting is
+    // part of the test, since the started idle handle would otherwise spin.
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testWatcherStates()));`);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      init: 0,
+      activeAfterInit: 0,
+      refAfterInit: 1,
+      typeIsIdle: 1,
+      typeIsCheck: 1,
+      loopIsSet: 1,
+      start: 0,
+      activeAfterStart: 1,
+      startAgain: 0,
+      stop: 0,
+      activeAfterStop: 0,
+      stopAgain: 0,
+      restart: 0,
+      activeAfterRestart: 1,
+      refAfterUnref: 0,
+      activeAfterUnref: 1,
+      refAfterRef: 1,
+      checkStart: 0,
+      activeAfterClose: 0,
+      closingAfterClose: 1,
+      // The ref flag is independent of closing, as in libuv.
+      refAfterClose: 1,
+      // Starting a closing handle is a no-op that reports success, as in libuv.
+      startAfterClose: 0,
+      activeAfterStartAfterClose: 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an exception thrown by JS called from a watcher callback is uncaught", async () => {
+    // Every one of the six callbacks throws; the loop must go on to the check
+    // callback that closes the handles, so that the child exits.
+    const { stdout, stderr, exitCode } = await runInChild(`
+      addon.testLoopWatchers(() => { throw new Error("thrown from inside a watcher callback"); });
+    `);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("thrown from inside a watcher callback");
+    expect(exitCode).toBe(1);
+  });
+
+  const oneShotTimerEvents = "timer 0 0\nclose timer 1 0\n";
+  // See timer_repeat_cb in uv_impl.c: the third callback stops and closes it.
+  const repeatingTimerEvents = "repeat 1 1\nrepeat 2 1\nrepeat 3 1\nstopped 0 1\nclose timer 1 0\n";
+  const HOUR = 60 * 60 * 1000;
+
+  test.concurrent("a one-shot uv_timer_t keeps the process alive and fires once", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testTimer(report)));`);
+    expect(stderr).toBe("");
+    const { state, events } = stateAndEvents(stdout);
+    expect(state).toEqual({ typeIsTimer: 1, isActive: 1, hasRef: 1, dueIn: expect.any(Number), repeat: 0 });
+    expect(state.dueIn).toBeGreaterThanOrEqual(0);
+    expect(state.dueIn).toBeLessThanOrEqual(10);
+    expect(events).toBe(oneShotTimerEvents);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a uv_timer_t in a Worker fires on the Worker's loop", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        \`
+          const { parentPort } = require("node:worker_threads");
+          const state = require(${JSON.stringify(addonPath)}).testTimer((event, a, b) => parentPort.postMessage([event, a, b].join(" ")));
+          parentPort.postMessage("started " + state.isActive);
+        \`,
+        { eval: true },
+      );
+      worker.on("message", message => console.log(message));
+      worker.on("exit", code => console.log("worker exited", code));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("started 1\n" + oneShotTimerEvents + "worker exited 0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a repeating uv_timer_t fires until it is stopped", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `console.log(JSON.stringify(addon.testTimerRepeat(report)));`,
+    );
+    expect(stderr).toBe("");
+    const { state, events } = stateAndEvents(stdout);
+    expect(state).toEqual({ typeIsTimer: 1, isActive: 1, hasRef: 1, dueIn: expect.any(Number), repeat: 1 });
+    expect(state.dueIn).toBeLessThanOrEqual(1);
+    expect(events).toBe(repeatingTimerEvents);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_timer_set_repeat and uv_timer_again restart a timer with its repeat", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testTimerAgain(report)));`);
+    expect(stderr).toBe("");
+    const { state, events } = stateAndEvents(stdout);
+    expect(state).toEqual({ dueInBefore: expect.any(Number), again: 0, dueInAfter: expect.any(Number), repeat: 1 });
+    expect(state.dueInBefore).toBeGreaterThan(HOUR / 2);
+    expect(state.dueInBefore).toBeLessThanOrEqual(HOUR);
+    expect(state.dueInAfter).toBeLessThanOrEqual(1);
+    expect(events).toBe(repeatingTimerEvents);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_timer_start on a started timer reschedules it", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `console.log(JSON.stringify(addon.testTimerRestart(report)));`,
+    );
+    expect(stderr).toBe("");
+    const { state, events } = stateAndEvents(stdout);
+    expect(state).toEqual({ typeIsTimer: 1, isActive: 1, hasRef: 1, dueIn: expect.any(Number), repeat: 0 });
+    expect(state.dueIn).toBeLessThanOrEqual(10);
+    expect(events).toBe(oneShotTimerEvents);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_close on a started timer: close_cb only, and the process exits", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `console.log(JSON.stringify(addon.testTimerClosedBeforeItFires(report)));`,
+    );
+    expect(stderr).toBe("");
+    expect(stateAndEvents(stdout)).toEqual({
+      state: { typeIsTimer: 1, isActive: 0, hasRef: 1, dueIn: 0, repeat: 0 },
+      events: "close timer 1 0\n",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an unref'd timer lets the process exit", async () => {
+    // The timer is left started; the child hanging for an hour is the failure.
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testTimerUnref(report)));`);
+    expect(stderr).toBe("");
+    const { state, events } = stateAndEvents(stdout);
+    expect(state).toEqual({ typeIsTimer: 1, isActive: 1, hasRef: 0, dueIn: expect.any(Number), repeat: 0 });
+    expect(state.dueIn).toBeGreaterThan(HOUR / 2);
+    expect(events).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an exception thrown by JS called from timer_cb is uncaught", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      addon.testTimer(() => { throw new Error("thrown from inside timer_cb"); });
+    `);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("thrown from inside timer_cb");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("uv_now advances", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testNow()));`);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout);
+    expect(result).toEqual({ nowIsPositive: 1, advancedMs: expect.any(Number) });
+    // The addon spins for 5ms between the two readings.
+    expect(result.advancedMs).toBeGreaterThanOrEqual(4);
     expect(exitCode).toBe(0);
   });
 });

@@ -92,3 +92,41 @@ describe("assert.partialDeepStrictEqual", () => {
     assert.partialDeepStrictEqual([arr], arr);
   });
 });
+
+describe("AssertionError diff rendering", () => {
+  // Expected messages captured from node v24 (ANSI stripped).
+  const messageOf = fn => {
+    try {
+      fn();
+    } catch (e) {
+      return Bun.stripANSI(e.message);
+    }
+    throw new Error("did not throw");
+  };
+
+  test("line diff keeps Latin-1 text and trailing spaces intact", () => {
+    expect(messageOf(() => assert.deepStrictEqual({ s: "línea\nütf" }, { s: "linea\nutf" }))).toBe(
+      "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   s: 'línea\\nütf'\n-   s: 'linea\\nutf'\n  }\n",
+    );
+    expect(messageOf(() => assert.deepStrictEqual({ k: "v    " }, { k: "w" }))).toBe(
+      "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   k: 'v    '\n-   k: 'w'\n  }\n",
+    );
+  });
+
+  test("mixed Latin-1 / UTF-16 sides diff by code unit", () => {
+    expect(messageOf(() => assert.deepStrictEqual({ s: "café\nx" }, { s: "😀\nx" }))).toBe(
+      "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   s: 'café\\nx'\n-   s: '😀\\nx'\n  }\n",
+    );
+    expect(messageOf(() => assert.strictEqual("café", "caf😀"))).toBe(
+      "Expected values to be strictly equal:\n\n'café' !== 'caf😀'\n",
+    );
+  });
+
+  test("long unchanged runs collapse with ... and report skipped lines", () => {
+    const a = Array.from({ length: 30 }, (_, i) => i);
+    const b = a.map((v, i) => (i === 3 || i === 25 ? -1 : v));
+    expect(messageOf(() => assert.deepStrictEqual(a, b))).toBe(
+      "Expected values to be strictly deep-equal:\n+ actual - expected\n... Skipped lines\n\n  [\n    0,\n    1,\n    2,\n+   3,\n-   -1,\n    4,\n    5,\n    6,\n    7,\n    8,\n...\n    24,\n+   25,\n-   -1,\n    26,\n    27,\n    28,\n    29\n  ]\n",
+    );
+  });
+});

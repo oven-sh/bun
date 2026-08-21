@@ -104,6 +104,7 @@ function generate(name) {
       "wsOnError",
       "wsOnPing",
       "wsOnPong",
+      "wtOnUpgrade",
       "wtOnOpen",
       "wtOnDatagram",
       "wtOnClose",
@@ -392,6 +393,10 @@ export default [
       close: {
         fn: "close",
         length: 2,
+      },
+      drain: {
+        fn: "drain",
+        length: 0,
       },
       data: {
         getter: "getData",

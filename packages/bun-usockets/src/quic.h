@@ -203,6 +203,7 @@ void us_quic_wt_detach(us_quic_stream_t *s);
  * one), or -1 when `s` is not a session, `len` exceeds
  * US_QUIC_WT_MAX_DATAGRAM, or the peer will not accept a datagram that big. */
 int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int len);
+unsigned int us_quic_wt_max_datagram_size(us_quic_stream_t *s);
 
 /* Datagrams the peer sent on a session. Not called for datagrams naming a
  * session this connection does not have. */

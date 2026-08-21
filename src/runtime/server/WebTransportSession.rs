@@ -44,6 +44,75 @@ pub mod js {
     ::bun_jsc::codegen_cached_accessors!("WebTransportSession"; data);
 }
 
+/// What the CONNECT route should do with a request, decided before anything is
+/// written back.
+pub(crate) enum Decision {
+    /// Not ours. Back to the router, which falls through to whatever the
+    /// application registered — answering every CONNECT here would take them
+    /// all away from `fetch` the moment a `webtransport` handler was added.
+    Yield,
+    /// Accept, with the value the `upgrade` handler returned as the session's
+    /// `data`.
+    Accept(JSValue),
+    /// The `upgrade` handler returned a `Response`; send it instead of opening
+    /// a session.
+    Refuse(JSValue),
+    /// The `upgrade` handler threw. The exception has already been reported.
+    Failed,
+}
+
+/// The CONNECT as a `Request`, for the `upgrade` handler to inspect.
+///
+/// `:authority` reaches Rust as `host` and `url()` is the path with its query,
+/// which is everything needed to rebuild the URL a browser asked for. HTTP/3 is
+/// always TLS, so the scheme is not in question.
+fn build_request(global: &JSGlobalObject, req: &mut Request) -> Option<JSValue> {
+    use crate::webcore::Request as WebRequest;
+    use crate::webcore::response::HeadersRef;
+    use bun_core::fmt as bun_fmt;
+    use bun_jsc::FetchHeaders;
+
+    // SAFETY: `req` is the live uWS request for this callback; the headers are
+    // copied out, not borrowed. `create_from_h3` returns +1, which `adopt`
+    // takes over.
+    let headers = unsafe {
+        HeadersRef::adopt(FetchHeaders::create_from_h3(
+            core::ptr::from_mut(req).cast::<c_void>(),
+        ))
+    };
+    // The prefix is built while `host` is borrowed and owned before `url()`
+    // takes the second borrow — both alias the same uWS buffer.
+    let prefix: Option<Vec<u8>> = req
+        .header(b"host")
+        .filter(|host| WebRequest::is_valid_host_header(host))
+        .map(|host| {
+            let mut s = Vec::new();
+            let fmt = bun_fmt::HostFormatter { is_https: true, host, port: None };
+            let _ = core::fmt::Write::write_fmt(
+                &mut bun_fmt::VecWriter(&mut s),
+                format_args!("https://{fmt}"),
+            );
+            s
+        });
+    let path = req.url();
+    let mut url = prefix.unwrap_or_default();
+    if url.is_empty() || !path.starts_with(b"/") {
+        url = path.to_vec();
+    } else {
+        url.extend_from_slice(path);
+    }
+
+    let request = bun_core::heap::into_raw(Box::new(WebRequest::init2(
+        bun_core::String::clone_utf8(&url),
+        Some(headers),
+        crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null),
+        bun_http_types::Method::Method::CONNECT,
+    )));
+    // SAFETY: just allocated; `to_js` hands the allocation to the JS wrapper,
+    // whose finalizer frees it.
+    Some(unsafe { (*request).to_js(global) })
+}
+
 impl WebTransportSession {
     fn init(
         global: &JSGlobalObject,
@@ -75,24 +144,69 @@ impl WebTransportSession {
         self.this_value.get().try_get()
     }
 
+    /// Ask the `upgrade` handler, if there is one, whether to open a session.
+    ///
+    /// Split from [`Self::accept`] because refusing means writing a `Response`,
+    /// and the machinery for that needs the server this route belongs to.
+    /// Nothing is written to `res` here, so the caller still owns it.
+    pub(crate) fn decide(
+        global: &JSGlobalObject,
+        on_upgrade: JSValue,
+        req: &mut Request,
+    ) -> Decision {
+        if !req.is_webtransport() {
+            return Decision::Yield;
+        }
+        if on_upgrade.is_empty_or_undefined_or_null() {
+            return Decision::Accept(JSValue::UNDEFINED);
+        }
+        // A `Request` built the cheap way: `init2` copies the URL and headers
+        // and holds no request context, so it carries nothing that dies with
+        // the uWS request under it, and a handler that keeps it keeps
+        // something valid. The fetch path's `Request` would drag a
+        // RequestContext, an abort signal and a body slot along for a CONNECT
+        // that has no body — which is the cost this route exists to avoid.
+        let request_value = match build_request(global, req) {
+            Some(v) => v,
+            None => return Decision::Failed,
+        };
+        let vm = VirtualMachine::get();
+        let _loop_guard = vm.enter_event_loop_scope();
+        let returned = match on_upgrade.call(global, JSValue::UNDEFINED, &[request_value]) {
+            Ok(v) => v,
+            Err(e) => {
+                let err = global.take_exception(e);
+                // Reported, not routed to the server's `error` handler: that
+                // one answers requests with a `Response`, and this throw has
+                // already decided its answer — the session is refused with a
+                // 500. Same treatment a throwing websocket handler gets.
+                VirtualMachine::get()
+                    .as_mut()
+                    .run_error_handler(err, None);
+                return Decision::Failed;
+            }
+        };
+        request_value.ensure_still_alive();
+        // A `Response` is the refusal; anything else becomes `session.data`.
+        // The two cannot be confused — nobody wants a `Response` as their
+        // session data — and it keeps one return value doing one job each way
+        // rather than a boolean plus an out-parameter.
+        if crate::webcore::response::from_js(returned).is_some() {
+            return Decision::Refuse(returned);
+        }
+        Decision::Accept(returned)
+    }
+
     /// Answer an extended CONNECT by opening a session, and run the `open`
-    /// handler. Anything else on the route — a plain CONNECT, or a session the
-    /// connection cannot support because it never negotiated the extension —
-    /// gets a 501 and no session.
+    /// handler. A connection that never negotiated the extension gets a 501
+    /// and no session.
     pub(crate) fn accept(
         global: &JSGlobalObject,
         handler: &WebTransportHandler,
         req: &mut Request,
         res: &mut Response,
+        data_value: JSValue,
     ) {
-        // A plain CONNECT is somebody else's: yielding puts it back to the
-        // router, which falls through to whatever the application registered.
-        // Answering it here would take every CONNECT away from `fetch` the
-        // moment a `webtransport` handler was added.
-        if !req.is_webtransport() {
-            req.set_yield(true);
-            return;
-        }
         let Some(session) = res.upgrade_webtransport(req, core::ptr::null_mut()) else {
             res.write_status(b"501 Not Implemented");
             res.end(b"", false);
@@ -101,7 +215,7 @@ impl WebTransportSession {
         // SAFETY: a non-null session from `upgrade_webtransport`.
         let session = unsafe { NonNull::new_unchecked(session) };
 
-        let this = Self::init(global, handler, session, JSValue::UNDEFINED);
+        let this = Self::init(global, handler, session, data_value);
         // The native session is what every later callback arrives holding, so
         // it carries the pointer back to this object.
         // SAFETY: `session` is live, and `this` outlives it — the wrapper is
@@ -258,6 +372,22 @@ impl WebTransportSession {
             let slice = view.to_slice();
             session.close(code, slice.slice());
             js_string.ensure_still_alive();
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn drain(
+        &self,
+        _global: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // A closed session has nobody to ask, and the request is advisory, so
+        // this is a no-op rather than a throw -- the same answer sendDatagram
+        // gives for the same race.
+        if let Some(mut session) = self.session.get() {
+            // SAFETY: as in send_datagram.
+            unsafe { session.as_mut() }.drain();
         }
         Ok(JSValue::UNDEFINED)
     }

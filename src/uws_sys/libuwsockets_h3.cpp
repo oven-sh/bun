@@ -389,6 +389,8 @@ void uws_h3_wt_close(uws_h3_wt_t* wt, uint32_t code, const char* reason, size_t 
 
 void uws_h3_wt_abort(uws_h3_wt_t* wt) { ((Http3WebTransportSession*)wt)->abort(); }
 
+void uws_h3_wt_drain(uws_h3_wt_t* wt) { ((Http3WebTransportSession*)wt)->drain(); }
+
 #pragma clang attribute pop
 
 } // extern "C"

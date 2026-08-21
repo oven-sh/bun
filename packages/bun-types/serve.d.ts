@@ -553,15 +553,30 @@ declare module "bun" {
      */
     close(code?: number, reason?: string): void;
 
-    /** Arbitrary data attached to this session. */
+    /**
+     * Ask the peer to wind the session up, without ending it.
+     *
+     * The draft lets both sides keep using a drained session, so this only
+     * sends the signal: datagrams still flow and the `close` handler does not
+     * run until something actually closes the session. A browser surfaces it
+     * as `WebTransport.draining` resolving. Use it to let sessions finish
+     * before a redeploy, and {@link close} when they should stop now.
+     */
+    drain(): void;
+
+    /**
+     * Arbitrary data attached to this session. Set from whatever
+     * {@link WebTransportHandler.upgrade} returned, and writable afterwards.
+     */
     data: T;
 
     /**
-     * The largest payload {@link sendDatagram} will queue.
+     * The largest payload {@link sendDatagram} will queue: this server's own
+     * limit, capped by the `max_datagram_frame_size` the peer advertised and
+     * less the session's frame prefix.
      *
-     * A send can still be refused if the peer negotiated a smaller datagram
-     * size than this, which returns `-1`; no implementation that offers
-     * datagrams at all advertises less.
+     * `0` means the peer offered no datagram support at all, so this session
+     * can carry none and every {@link sendDatagram} will return `-1`.
      */
     readonly maxDatagramSize: number;
 
@@ -576,6 +591,35 @@ declare module "bun" {
    * @experimental
    */
   interface WebTransportHandler<T = unknown> {
+    /**
+     * Decide whether to accept a session, before the `CONNECT` is answered.
+     *
+     * Return a {@link Response} to refuse — that response is sent and no
+     * session is opened. Return anything else, or nothing, to accept; whatever
+     * is returned becomes the session's {@link WebTransportSession.data}, so
+     * this is also where per-session state is created from the request.
+     *
+     * Without this handler every WebTransport `CONNECT` on the server is
+     * accepted, which is why anything that authenticates or routes by path
+     * belongs here — it is the only point at which the request is still
+     * visible and refusing is still possible.
+     *
+     * Synchronous. A returned promise is not awaited: the `CONNECT` has to be
+     * answered while the request is still in hand, so it would be treated as
+     * an ordinary truthy value and accepted.
+     *
+     * ```ts
+     * upgrade(req) {
+     *   const url = new URL(req.url);
+     *   if (url.pathname !== "/game") return new Response(null, { status: 404 });
+     *   const user = verify(req.headers.get("authorization"));
+     *   if (!user) return new Response(null, { status: 401 });
+     *   return { user };
+     * }
+     * ```
+     */
+    upgrade?(request: Request): Response | T | void;
+
     /** A session was accepted. */
     open?(session: WebTransportSession<T>): void | Promise<void>;
 

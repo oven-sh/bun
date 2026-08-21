@@ -29,6 +29,12 @@ namespace uWS {
  * stream is skipped by its length -- an unknown capsule is explicitly not an
  * error, which is what lets the draft add them. */
 static constexpr uint64_t WT_CLOSE_SESSION = 0x2843;
+/* Advisory, and empty: "wind this up when you can". The draft is explicit that
+ * both sides MAY keep using the session afterwards, so it neither closes
+ * anything here nor is treated as a close when the peer sends one -- an
+ * incoming one is skipped with every other capsule this server does not act
+ * on. */
+static constexpr uint64_t WT_DRAIN_SESSION = 0x78ae;
 
 /* The draft caps a close reason at 1024 bytes; the four in front of it are the
  * error code. Anything claiming more than this is refused rather than
@@ -81,12 +87,27 @@ struct Http3WebTransportSession {
         return us_quic_wt_send_datagram(stream(), data, len);
     }
 
-    /* What this server will queue, which is the limit that actually binds:
-     * lsquic exposes the peer's max_datagram_frame_size only as a setter that
-     * accepts or refuses a size, and every implementation that offers
-     * datagrams at all advertises far more than this. A peer that somehow
-     * advertised less would refuse the send rather than be surprised by it. */
-    unsigned maxDatagramSize() { return US_QUIC_WT_MAX_DATAGRAM; }
+    /* The largest payload this session will carry: what this server queues,
+     * capped by what the peer said it would accept. 0 when the peer offered no
+     * datagrams at all, which is a session that can carry none -- the one
+     * answer worth checking before the first send. */
+    unsigned maxDatagramSize() { return us_quic_wt_max_datagram_size(stream()); }
+
+    /* Ask the peer to wind the session up, without ending it. The draft lets
+     * both sides keep using a drained session, so this writes the capsule and
+     * stops: no FIN, no detach, no close report. A browser surfaces it as
+     * `WebTransport.draining` resolving. */
+    void drain() {
+        unsigned char buf[WT_CAPSULE_HEADER_MAX];
+        unsigned n = writeVarint(buf, WT_DRAIN_SESSION);
+        n += writeVarint(buf + n, 0);
+        if (us_quic_stream_write(stream(), (const char *) buf, n) < (int) n) {
+            /* Advisory, so a peer that cannot be told simply is not told.
+             * Resetting the session over it would be worse than the silence. */
+            return;
+        }
+        us_quic_stream_flush(stream());
+    }
 
     /* CLOSE_WEBTRANSPORT_SESSION followed by FIN, which is what the draft
      * defines an orderly close as. The peer's own close arrives the same way

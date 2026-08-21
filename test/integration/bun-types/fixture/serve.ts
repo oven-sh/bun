@@ -96,7 +96,14 @@ Bun.serve({
   http3: true,
   fetch: () => new Response("hello"),
   webtransport: {
+    upgrade(req) {
+      expectType(req).is<Request>();
+      expectType(req.url).is<string>();
+      if (req.url.endsWith("/nope")) return new Response(null, { status: 404 });
+      return { seen: 0 };
+    },
     open(session) {
+      session.drain();
       expectType(session.data).is<unknown>();
       expectType(session.closed).is<boolean>();
       expectType(session.maxDatagramSize).is<number>();
@@ -116,6 +123,12 @@ Bun.serve({
 });
 
 const typedWebTransport: Bun.WebTransportHandler<{ seen: number }> = {
+  // Refuse with a Response, or return the session's `data`; the two are told
+  // apart by type, so both forms typecheck against the one return.
+  upgrade(req) {
+    if (!req.headers.get("authorization")) return new Response(null, { status: 401 });
+    return { seen: 0 };
+  },
   open(session) {
     session.data = { seen: 0 };
   },

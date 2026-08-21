@@ -127,6 +127,11 @@ struct us_quic_socket_s {
      * saves every reader from having to handle a split record. */
     char *wt_dgram_ring;
     unsigned int wt_dgram_head, wt_dgram_tail;
+    /* The peer's max_datagram_frame_size, read once when the first session is
+     * accepted -- transport parameters are fixed by then and do not change for
+     * the life of the connection. 0 means the peer offered no datagrams at
+     * all, which is a session that can carry none. */
+    uint64_t wt_peer_max_dgram;
     /* ext follows */
 };
 
@@ -640,6 +645,9 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
 /* From lsquic_stream.h (not in the public header). */
 void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
 
+/* From node_quic_shim.c, which owns the transport-params struct it reads. */
+uint64_t us_nq_peer_max_datagram_frame_size(const lsquic_conn_t *);
+
 /* A WebTransport stream the peer opened on one of its sessions.
  *
  * Only datagrams are implemented, and a stream nobody is ever going to read is
@@ -884,6 +892,7 @@ int us_quic_stream_accept_webtransport(us_quic_stream_t *s) {
     if (!qs->wt_dgram_ring) {
         qs->wt_dgram_ring = (char *) us_malloc(US_QUIC_WT_DGRAM_RING);
         if (!qs->wt_dgram_ring) return -1;
+        qs->wt_peer_max_dgram = us_nq_peer_max_datagram_frame_size(qs->conn);
     }
 
     /* Marks the stream as a session for lsquic_stream_is_webtransport_session,
@@ -898,9 +907,23 @@ int us_quic_stream_accept_webtransport(us_quic_stream_t *s) {
     return 0;
 }
 
+/* The largest payload this session will carry: what this server queues, capped
+ * by what the peer said it would accept, less the frame prefix that rides in
+ * front of the payload. 0 when the peer advertised no datagram support, which
+ * is the one answer a caller can act on before its first send fails. */
+unsigned int us_quic_wt_max_datagram_size(us_quic_stream_t *s) {
+    us_quic_socket_t *qs = s->wt_conn;
+    if (!qs) return 0;
+    unsigned int plen = us_quic_varint_len(s->wt_qsid);
+    uint64_t peer = qs->wt_peer_max_dgram;
+    if (!peer) return 0;
+    uint64_t room = peer > plen ? peer - plen : 0;
+    return room < US_QUIC_WT_MAX_DATAGRAM ? (unsigned int) room : US_QUIC_WT_MAX_DATAGRAM;
+}
+
 int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int len) {
     us_quic_socket_t *qs = s->wt_conn;
-    if (!qs || len > US_QUIC_WT_MAX_DATAGRAM) return -1;
+    if (!qs || len > us_quic_wt_max_datagram_size(s)) return -1;
 
     unsigned char prefix[8];
     unsigned int plen = us_quic_varint_write(prefix, s->wt_qsid);

@@ -419,6 +419,16 @@ int us_nq_conn_transport_params(const lsquic_conn_t *c, int peer,
 
 size_t us_nq_tp_size(void) { return sizeof(struct us_nq_tp); }
 
+/* bun: the peer's max_datagram_frame_size, or 0 when it advertised none.
+ * WebTransport in quic.c needs it to answer maxDatagramSize honestly, and it
+ * lives here because `struct us_nq_tp` does -- a second copy of that layout is
+ * how an ABI split starts. */
+uint64_t us_nq_peer_max_datagram_frame_size(const lsquic_conn_t *c) {
+    struct us_nq_tp tp;
+    if (!lsquic_conn_transport_params(c, 1, &tp)) return 0;
+    return tp.max_datagram_frame_size;
+}
+
 size_t us_nq_settings_size(void) { return sizeof(struct lsquic_engine_settings); }
 
 void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,

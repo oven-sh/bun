@@ -16,6 +16,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 /// `NewServer::write_wt_handler_slots`; these are the hot-path reads, exactly
 /// as the websocket handler does it.
 pub struct WebTransportHandler {
+    pub(crate) on_upgrade: JSValue,
     pub(crate) on_open: JSValue,
     pub(crate) on_datagram: JSValue,
     pub(crate) on_close: JSValue,
@@ -24,12 +25,14 @@ pub struct WebTransportHandler {
 impl WebTransportHandler {
     pub fn from_js(global: &JSGlobalObject, object: JSValue) -> JsResult<WebTransportHandler> {
         let mut handler = WebTransportHandler {
+            on_upgrade: JSValue::ZERO,
             on_open: JSValue::ZERO,
             on_datagram: JSValue::ZERO,
             on_close: JSValue::ZERO,
         };
 
-        let pairs: [(&'static str, &mut JSValue); 3] = [
+        let pairs: [(&'static str, &mut JSValue); 4] = [
+            ("upgrade", &mut handler.on_upgrade),
             ("open", &mut handler.on_open),
             ("datagram", &mut handler.on_datagram),
             ("close", &mut handler.on_close),
@@ -49,6 +52,9 @@ impl WebTransportHandler {
         if handler.on_datagram.is_empty_or_undefined_or_null()
             && handler.on_open.is_empty_or_undefined_or_null()
         {
+            // `upgrade` alone is a server that accepts sessions and then does
+            // nothing with them, which is a configuration mistake rather than
+            // a use case.
             return Err(global.throw_invalid_arguments(format_args!(
                 "webtransport expects at least an 'open' or 'datagram' handler"
             )));

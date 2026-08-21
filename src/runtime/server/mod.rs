@@ -621,7 +621,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 /// `JSValue::ZERO` slots are cheap no-ops on both sides (the C++
 /// `gcProtect`/`gcUnprotect` early-return on non-cells), so there is no need
 /// to branch on `is_empty()`.
-pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_value::Protected; 13] {
+pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_value::Protected; 14] {
     let ws = config.websocket.as_ref().map(|w| &w.handler);
     let wt = config.webtransport_handler.as_ref();
     let z = JSValue::ZERO;
@@ -636,6 +636,7 @@ pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_val
         ws.map_or(z, |h| h.on_error),
         ws.map_or(z, |h| h.on_ping),
         ws.map_or(z, |h| h.on_pong),
+        wt.map_or(z, |h| h.on_upgrade),
         wt.map_or(z, |h| h.on_open),
         wt.map_or(z, |h| h.on_datagram),
         wt.map_or(z, |h| h.on_close),
@@ -2336,12 +2337,37 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let h3_app = bun_opaque::opaque_deref_mut(h3_app);
                 h3_app.connect(b"/*", self_ptr, |server: &mut Self, req, res| {
                     let global = server.global_this();
-                    let Some(handler) = server.config.webtransport_handler.as_ref() else {
+                    let Some(on_upgrade) = server
+                        .config
+                        .webtransport_handler
+                        .as_ref()
+                        .map(|h| h.on_upgrade)
+                    else {
                         res.write_status(b"501 Not Implemented");
                         res.end(b"", false);
                         return;
                     };
-                    WebTransportSession::accept(global, handler, req, res);
+                    // The handler borrow ends here: refusing needs `server`
+                    // again, to account the response it writes.
+                    match WebTransportSession::decide(global, on_upgrade, req) {
+                        web_transport_session::Decision::Yield => req.set_yield(true),
+                        web_transport_session::Decision::Failed => {
+                            res.write_status(b"500 Internal Server Error");
+                            res.end(b"", false);
+                        }
+                        web_transport_session::Decision::Refuse(response_value) => {
+                            Self::write_wt_refusal(server, global, response_value, res);
+                        }
+                        web_transport_session::Decision::Accept(data_value) => {
+                            let Some(handler) = server.config.webtransport_handler.as_ref()
+                            else {
+                                return;
+                            };
+                            WebTransportSession::accept(
+                                global, handler, req, res, data_value,
+                            );
+                        }
+                    }
                 });
                 h3_app.on_webtransport(
                     web_transport_session::on_datagram,
@@ -3232,7 +3258,7 @@ mod cached_values {
             bun_jsc::codegen_cached_accessors!(
                 $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
                 wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong,
-                wtOnOpen, wtOnDatagram, wtOnClose
+                wtOnUpgrade, wtOnOpen, wtOnDatagram, wtOnClose
             );
         };
     }
@@ -3292,6 +3318,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     slot_setter!(js_gc_ws_on_error_set, ws_on_error_set_cached);
     slot_setter!(js_gc_ws_on_ping_set, ws_on_ping_set_cached);
     slot_setter!(js_gc_ws_on_pong_set, ws_on_pong_set_cached);
+    slot_setter!(js_gc_wt_on_upgrade_set, wt_on_upgrade_set_cached);
     slot_setter!(js_gc_wt_on_open_set, wt_on_open_set_cached);
     slot_setter!(js_gc_wt_on_datagram_set, wt_on_datagram_set_cached);
     slot_setter!(js_gc_wt_on_close_set, wt_on_close_set_cached);
@@ -3336,16 +3363,68 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         wrap_handler_slot(pong, server_js, global, Self::js_gc_ws_on_pong_set);
     }
 
+    /// Send the `Response` an `upgrade` handler returned in place of opening a
+    /// session.
+    ///
+    /// Through `StaticRoute` rather than by hand: it is what strips the
+    /// headers HTTP/3 forbids (RFC 9114 §4.2) and what already knows how to
+    /// write a buffered body to an `AnyResponse::H3`. A streaming or already-
+    /// used body throws in `from_js`, which is reported and answered 500 —
+    /// a refusal is a status and a short body, and anything needing a stream
+    /// belongs in `fetch`.
+    fn write_wt_refusal(
+        server: &Self,
+        global: &JSGlobalObject,
+        response_value: JSValue,
+        res: &mut uws_sys::h3::Response,
+    ) {
+        let route = match crate::server::StaticRoute::from_js(global, response_value) {
+            Ok(Some(route)) => route,
+            Ok(None) => {
+                res.write_status(b"500 Internal Server Error");
+                res.end(b"", false);
+                return;
+            }
+            Err(e) => {
+                let err = global.take_exception(e);
+                let _ = bun_jsc::virtual_machine::VirtualMachine::get()
+                    .as_mut()
+                    .uncaught_exception(global, err, false);
+                res.write_status(b"500 Internal Server Error");
+                res.end(b"", false);
+                return;
+            }
+        };
+        // SAFETY: `from_js` returned a live route with one reference, which
+        // `deref_` gives back; `server` outlives this call.
+        unsafe {
+            (*route)
+                .server
+                .set(Some(AnyServer::from(core::ptr::from_ref::<Self>(server))));
+            crate::server::StaticRoute::on(
+                route,
+                uws_sys::AnyResponse::H3(core::ptr::from_mut(res)),
+            );
+            crate::server::StaticRoute::deref_(route);
+        }
+    }
+
     /// The `wtOn*` counterpart of [`Self::write_ws_handler_slots`]. Same
     /// contract: every slot is written, so a reload whose handler block leaves
     /// one out drops the previous root rather than keeping it live under a
     /// handler that no longer mentions it.
     pub(crate) fn write_wt_handler_slots(&mut self, server_js: JSValue, global: &JSGlobalObject) {
-        let mut zeros = [JSValue::ZERO; 3];
-        let [open, datagram, close] = match self.config.webtransport_handler.as_mut() {
-            Some(h) => [&mut h.on_open, &mut h.on_datagram, &mut h.on_close],
+        let mut zeros = [JSValue::ZERO; 4];
+        let [upgrade, open, datagram, close] = match self.config.webtransport_handler.as_mut() {
+            Some(h) => [
+                &mut h.on_upgrade,
+                &mut h.on_open,
+                &mut h.on_datagram,
+                &mut h.on_close,
+            ],
             None => zeros.each_mut(),
         };
+        wrap_handler_slot(upgrade, server_js, global, Self::js_gc_wt_on_upgrade_set);
         wrap_handler_slot(open, server_js, global, Self::js_gc_wt_on_open_set);
         wrap_handler_slot(datagram, server_js, global, Self::js_gc_wt_on_datagram_set);
         wrap_handler_slot(close, server_js, global, Self::js_gc_wt_on_close_set);

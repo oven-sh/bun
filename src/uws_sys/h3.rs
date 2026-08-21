@@ -610,6 +610,11 @@ impl WebTransport {
     pub fn abort(&mut self) {
         c::uws_h3_wt_abort(self)
     }
+    /// Ask the peer to wind the session up. Advisory: the session stays open
+    /// and usable, and nothing here waits for an answer.
+    pub fn drain(&mut self) {
+        c::uws_h3_wt_drain(self)
+    }
 }
 
 mod c {
@@ -843,6 +848,7 @@ mod c {
             reason_len: usize,
         );
         pub(super) safe fn uws_h3_wt_abort(wt: &mut WebTransport);
+        pub(super) safe fn uws_h3_wt_drain(wt: &mut WebTransport);
     }
 
     pub(super) type WtDatagramHandler =

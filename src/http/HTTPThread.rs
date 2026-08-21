@@ -1186,10 +1186,7 @@ mod _event_loop_draft {
     // root, keeping detach semantics without the false positive.
     static HTTP_THREAD_HANDLE: std::sync::OnceLock<std::thread::JoinHandle<()>> =
         std::sync::OnceLock::new();
-    // Set once by `init_once` if `Builder::spawn` fails, so every subsequent
-    // `init()` caller observes the same failure. The stored message is the
-    // `Display` of the `io::Error`, which on Windows/POSIX includes the OS
-    // error code and text (e.g. "Not enough memory resources ... (os error 8)").
+    // Latched spawn failure; every subsequent `init()` caller observes it.
     static SPAWN_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
     pub(super) fn init(opts: &InitOpts) -> Result<(), &'static str> {
@@ -1217,12 +1214,8 @@ mod _event_loop_draft {
             && bun_core::env_var::feature_flag::BUN_INTERNAL_FAIL_HTTP_THREAD_SPAWN.get()
                 == Some(true)
         {
-            // Debug-build test hook: simulate CreateThread/pthread_create
-            // failure so the fetch()/S3 rejection path can be exercised
-            // without exhausting real OS thread limits (which is not reliably
-            // reproducible in CI). Gated on `cfg!(debug_assertions)` so
-            // release binaries compile it out entirely and never read the env
-            // var; tests that set it are `skipIf(!isDebug)`.
+            // Debug-only test hook: a real spawn failure is not reproducible
+            // in CI. Release builds compile this branch out.
             Err(std::io::Error::from_raw_os_error(
                 #[cfg(windows)]
                 8, // ERROR_NOT_ENOUGH_MEMORY
@@ -1240,13 +1233,9 @@ mod _event_loop_draft {
                 let _ = HTTP_THREAD_HANDLE.set(t);
             }
             Err(err) => {
-                // Record instead of panicking so JS-side callers (fetch, S3)
-                // can reject with a catchable error rather than aborting the
-                // whole process. On Windows the `io::Error` Display includes
-                // `GetLastError()` so crash reports distinguish commit-limit
-                // exhaustion (ERROR_NOT_ENOUGH_MEMORY) from sandbox/AV denial
-                // (ERROR_ACCESS_DENIED). CLI callers still crash via
-                // `init_or_crash`.
+                // `io::Error` Display carries the OS error code (GetLastError
+                // on Windows), so reports can tell ERROR_NOT_ENOUGH_MEMORY
+                // from ERROR_ACCESS_DENIED.
                 let _ = SPAWN_ERROR.set(format!("Failed to start HTTP Client thread: {}", err));
             }
         }
@@ -1455,17 +1444,14 @@ pub fn shutdown_for_exit() -> bool {
 /// which is outside this crate's dep set). Call sites in AsyncHTTP.rs hit
 /// this until that tier boundary is resolved.
 ///
-/// Returns `Err` with a formatted message (including the OS error) if the
-/// HTTP client thread could not be spawned. The error is latched on the
-/// `Once`, so every subsequent call observes the same failure.
+/// `Err` means the thread could not be spawned; the failure is latched, so
+/// every subsequent call observes it.
 #[must_use = "HTTP requests will hang forever if the thread failed to start"]
 pub fn init(opts: &InitOpts) -> Result<(), &'static str> {
     _event_loop_draft::init(opts)
 }
 
-/// Variant of [`init`] for CLI entrypoints that cannot usefully recover from
-/// thread-spawn failure. Keeps the pre-existing abort-the-process behaviour
-/// but with the OS error surfaced in the panic message.
+/// [`init`] for CLI entrypoints that cannot recover from spawn failure.
 pub fn init_or_crash(opts: &InitOpts) {
     if let Err(msg) = _event_loop_draft::init(opts) {
         Output::panic(format_args!("{}", msg));

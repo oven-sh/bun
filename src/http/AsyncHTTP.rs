@@ -372,9 +372,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     // `init` is idempotent (`Once`) and every other JS-side entry point
     // (`send_sync`, `FetchTasklet::start`, S3) passes default opts too.
     if crate::http_thread::init(&Default::default()).is_err() {
-        // Preconnect is a best-effort hint; drop it silently if the HTTP
-        // client thread could not be started. The first real fetch() will
-        // surface the error to JS.
+        // Best-effort hint; the first real fetch() surfaces the error.
         if is_url_owned {
             // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
             // global-allocator `Box<[u8]>` we now own.

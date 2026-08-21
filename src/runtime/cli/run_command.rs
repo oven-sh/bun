@@ -832,8 +832,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             return;
         }
         if bun_http::http_thread::init(&Default::default()).is_err() {
-            // Preconnect is a best-effort hint; the first real fetch() will
-            // surface the spawn failure to JS.
+            // Best-effort hint; the first real fetch() surfaces the error.
             return;
         }
 

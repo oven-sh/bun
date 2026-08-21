@@ -2478,10 +2478,8 @@ impl FetchTasklet {
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
-        // The sole caller (`fetch_impl`) calls `http_thread::init()` and
-        // rejects the promise on failure before reaching here, so the HTTP
-        // thread is known to be running. Any future caller must do the same;
-        // `init()` is `#[must_use]`.
+        // The caller checks `http_thread::init()` and rejects the promise on
+        // failure before reaching here.
         let node = Self::get(global, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);

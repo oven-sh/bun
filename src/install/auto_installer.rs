@@ -459,8 +459,7 @@ unsafe fn __bun_resolver_init_package_manager(
     // real errno name so resolve.test.ts sees `EACCES` not `Unexpected`). Keep
     // both sides byte-identical or the `Result` layout diverges.
     //
-    // Idempotent. EAGAIN mirrors the errno pthread_create/CreateThread report
-    // under resource exhaustion, the only way init() fails.
+    // Idempotent. EAGAIN is what pthread_create reports for the spawn failure.
     if bun_http::http_thread::init(&Default::default()).is_err() {
         return Err(bun_errno::SystemErrno::EAGAIN);
     }

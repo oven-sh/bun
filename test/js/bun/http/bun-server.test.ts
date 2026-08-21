@@ -3208,9 +3208,12 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
 
         // server out of scope. Wrapper is rooted only via:
         //   ServerWebSocket(this_value strong) → JSServerWebSocket → m_server → JSServer
-        // GC must NOT collect while the ws is open.
-        Bun.gc(true); fullGC();
-        const whileConnected = liveServer();
+        // GC must NOT collect while the ws is open. Collect through the same
+        // helper (so from the same stack depth) as the measurement after close:
+        // a GC run from a different depth can leave pointers to the handlers in
+        // stack memory that the later GCs still scan conservatively, and that
+        // pins the server in a way that depends on the code layout of the binary.
+        const whileConnected = await gcUntilCountAtMost(baseline);
 
         // Dispatch through the cycle-captured handler (proves it's alive).
         client.send("hi");

@@ -32,6 +32,8 @@
 #include "CryptoKeyPair.h"
 #include "CryptoKeyRSAComponents.h"
 #include "OpenSSLUtilities.h"
+#include "PhonyWorkQueue.h"
+#include "ScriptExecutionContext.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <openssl/x509.h>
 #include <openssl/evp.h>
@@ -189,7 +191,35 @@ static std::optional<uint32_t> exponentVectorToUInt32(const Vector<uint8_t>& exp
     return result;
 }
 
-void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgorithmIdentifier hash, bool hasHash, unsigned modulusLength, const Vector<uint8_t>& publicExponent, bool extractable, CryptoKeyUsageBitmap usages, KeyPairCallback&& callback, VoidCallback&& failureCallback, ScriptExecutionContext*)
+struct PlatformRSAKeyPair {
+    EvpPKeyPtr publicKey;
+    EvpPKeyPtr privateKey;
+};
+
+// Returns null keys on failure.
+static PlatformRSAKeyPair generatePlatformKeyPair(unsigned modulusLength, const Vector<uint8_t>& publicExponent)
+{
+    auto exponent = convertToBigNumber(publicExponent);
+    auto privateRSA = RSAPtr(RSA_new());
+    if (!exponent || !privateRSA || RSA_generate_key_ex(privateRSA.get(), modulusLength, exponent.get(), nullptr) <= 0)
+        return {};
+
+    auto publicRSA = RSAPtr(RSAPublicKey_dup(privateRSA.get()));
+    if (!publicRSA)
+        return {};
+
+    auto privatePKey = EvpPKeyPtr(EVP_PKEY_new());
+    if (!privatePKey || EVP_PKEY_set1_RSA(privatePKey.get(), privateRSA.get()) <= 0)
+        return {};
+
+    auto publicPKey = EvpPKeyPtr(EVP_PKEY_new());
+    if (!publicPKey || EVP_PKEY_set1_RSA(publicPKey.get(), publicRSA.get()) <= 0)
+        return {};
+
+    return { WTF::move(publicPKey), WTF::move(privatePKey) };
+}
+
+void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgorithmIdentifier hash, bool hasHash, unsigned modulusLength, const Vector<uint8_t>& publicExponent, bool extractable, CryptoKeyUsageBitmap usages, KeyPairCallback&& callback, VoidCallback&& failureCallback, ScriptExecutionContext* context)
 {
     // OpenSSL doesn't report an error if the exponent is smaller than three or even.
     auto e = exponentVectorToUInt32(publicExponent);
@@ -198,34 +228,20 @@ void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgor
         return;
     }
 
-    auto exponent = convertToBigNumber(publicExponent);
-    auto privateRSA = RSAPtr(RSA_new());
-    if (!exponent || RSA_generate_key_ex(privateRSA.get(), modulusLength, exponent.get(), nullptr) <= 0) {
-        failureCallback();
-        return;
-    }
-
-    auto publicRSA = RSAPtr(RSAPublicKey_dup(privateRSA.get()));
-    if (!publicRSA) {
-        failureCallback();
-        return;
-    }
-
-    auto privatePKey = EvpPKeyPtr(EVP_PKEY_new());
-    if (EVP_PKEY_set1_RSA(privatePKey.get(), privateRSA.get()) <= 0) {
-        failureCallback();
-        return;
-    }
-
-    auto publicPKey = EvpPKeyPtr(EVP_PKEY_new());
-    if (EVP_PKEY_set1_RSA(publicPKey.get(), publicRSA.get()) <= 0) {
-        failureCallback();
-        return;
-    }
-
-    auto publicKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Public, WTF::move(publicPKey), true, usages);
-    auto privateKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Private, WTF::move(privatePKey), extractable, usages);
-    callback(CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) });
+    // The CryptoKey wrappers must be created on the context's thread.
+    auto workQueue = Bun::PhonyWorkQueue::create("RSA key generation"_s);
+    workQueue->dispatch(context->globalObject(), [algorithm, hash, hasHash, modulusLength, publicExponent = publicExponent, extractable, usages, callback = WTF::move(callback), failureCallback = WTF::move(failureCallback), contextIdentifier = context->identifier()]() mutable {
+        auto platformKeys = generatePlatformKeyPair(modulusLength, publicExponent);
+        ScriptExecutionContext::postTaskTo(contextIdentifier, [algorithm, hash, hasHash, extractable, usages, publicPKey = WTF::move(platformKeys.publicKey), privatePKey = WTF::move(platformKeys.privateKey), callback = WTF::move(callback), failureCallback = WTF::move(failureCallback)](auto&) mutable {
+            if (!publicPKey || !privatePKey) {
+                failureCallback();
+                return;
+            }
+            auto publicKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Public, WTF::move(publicPKey), true, usages);
+            auto privateKey = CryptoKeyRSA::create(algorithm, hash, hasHash, CryptoKeyType::Private, WTF::move(privatePKey), extractable, usages);
+            callback(CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) });
+        });
+    });
 }
 
 RefPtr<CryptoKeyRSA> CryptoKeyRSA::importSpki(CryptoAlgorithmIdentifier identifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)

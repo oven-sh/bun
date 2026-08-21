@@ -2192,6 +2192,10 @@ where
         resp.clear_on_writable();
         resp.clear_timeout();
 
+        // The upgrade detaches the response and disarms onAborted, so neither
+        // on_abort nor an end path can reclaim a parked handler promise's
+        // claim later. Reclaim it here.
+        upgrader.reclaim_promise_cell();
         upgrader.deref();
 
         resp.upgrade(

@@ -992,19 +992,6 @@ pub(crate) extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::f
     })
 }
 
-/// Small "fire and forget" wrapper around unlink for C usage that handles
-/// EINTR, Windows path conversion, etc.
-///
-/// # Safety
-/// `ptr[0..=len]` must be a valid NUL-terminated path slice for the call.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
-    // SAFETY: caller (C++) guarantees `ptr[0..=len]` is a valid NUL-terminated
-    // path slice for the duration of the call.
-    let path = unsafe { ZStr::from_raw(ptr, len) };
-    let _ = unlink(path);
-}
-
 // libuv-style error constants (negated errno on posix, UV_* on Windows). The
 // per-platform `bun_errno` module defines this as `mod uv_e`; re-export under
 // the canonical name so callers can write `bun_sys::UV_E::NOENT`.
@@ -8292,15 +8279,6 @@ pub mod net {
             }
         }
     }
-    impl Default for Address {
-        // SAFETY: POD, zero-valid — sockaddr union of integer fields.
-        fn default() -> Self {
-            Self {
-                // SAFETY: `sockaddr_storage` is POD; all-zeros is a valid value.
-                any: unsafe { bun_core::ffi::zeroed_unchecked() },
-            }
-        }
-    }
     impl fmt::Debug for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             fmt::Display::fmt(self, f)
@@ -9284,9 +9262,27 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
         ypixel: ws.ws_ypixel,
     })
 }
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
+    // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
+    let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+    // SAFETY: `info` is a valid out-pointer for the duration of the call; a
+    // handle that is not a console makes the call fail rather than misbehave.
+    let rc = unsafe { windows::kernel32::GetConsoleScreenBufferInfo(fd.native(), &raw mut info) };
+    if rc == windows::FALSE {
+        return None;
+    }
+    // `srWindow` is the visible part of the (possibly much taller) screen buffer.
+    let window = info.srWindow;
+    Some(bun_core::Winsize {
+        row: u16::try_from(i32::from(window.Bottom) - i32::from(window.Top) + 1).ok()?,
+        col: u16::try_from(i32::from(window.Right) - i32::from(window.Left) + 1).ok()?,
+        xpixel: 0,
+        ypixel: 0,
+    })
+}
+#[cfg(not(any(unix, windows)))]
 fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
-    // TODO(windows): GetConsoleScreenBufferInfo.
     None
 }
 

@@ -531,15 +531,6 @@ pub struct IntoArray {
     pub(crate) len: BlobSizeType,
 }
 
-impl Default for IntoArray {
-    fn default() -> Self {
-        Self {
-            value: JSValue::default(),
-            len: BlobSizeType::MAX,
-        }
-    }
-}
-
 // ─── Result.Pending ──────────────────────────────────────────────────────
 
 pub struct Pending {
@@ -991,6 +982,25 @@ impl SourceHandle {
             SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
             | SourceHandle::S3DownloadBody(_) => {}
+        }
+    }
+
+    /// The source's JS wrapper was collected while this producer still held the
+    /// source: nothing can read what it delivers from now on. Called from a GC
+    /// sweep: arms must not run JS.
+    pub fn consumer_collected(self) {
+        match self {
+            SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 
@@ -2133,9 +2143,6 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
-    fn done(&self) -> bool {
-        self.is_done()
-    }
 }
 
 pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
@@ -2546,9 +2553,6 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
-    }
-    fn done(&self) -> bool {
-        self.done
     }
 }
 

@@ -124,16 +124,6 @@ pub struct HTTPResponseMetadata {
     pub response: bun_picohttp::Response<'static>,
 }
 
-impl Default for HTTPResponseMetadata {
-    fn default() -> Self {
-        Self {
-            url: bun_ptr::RawSlice::EMPTY,
-            owned_buf: Box::default(),
-            response: bun_picohttp::Response::default(),
-        }
-    }
-}
-
 impl HTTPResponseMetadata {
     /// Accessors tied to `&self`: `response` is typed `'static` but its slices
     /// borrow the sibling `owned_buf` / header slice that `Drop` frees, so
@@ -157,10 +147,7 @@ impl HTTPResponseMetadata {
 }
 
 impl Drop for HTTPResponseMetadata {
-    // `owned_buf` is freed by
-    // `Box`'s own Drop; `response.headers.list` was `Box::leak`'d in
-    // `clone_metadata` and must be reclaimed here. `Default` / zero-header
-    // responses have an empty static slice, guarded by the len check.
+    // `response.headers.list` is `Box::leak`'d by `clone_metadata`; reclaim it here.
     fn drop(&mut self) {
         let list = self.response.headers.list;
         if !list.is_empty() {
@@ -1781,6 +1768,8 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Runs once per request: for a new connection via [`Self::on_connect`],
+    /// and for a socket reused from the pool via `HTTPContext::connect`.
     pub(crate) fn on_open<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -1803,28 +1792,6 @@ impl<'a> HTTPClient<'a> {
         // was inside `on_writable`, which only runs *after* the handshake
         // completes. See https://github.com/oven-sh/bun/issues/30325.
         self.set_timeout(&socket);
-
-        // Enable TCP keepalive so a half-open connection (peer closed but the
-        // FIN/RST never reached us — NAT timeout, wifi/cellular handoff,
-        // middlebox state eviction, VPN disconnect) is detected in ~70s instead
-        // of hanging until an application-level timeout. Without this, a
-        // streaming `reader.read()` on a half-open socket blocks indefinitely.
-        // Matches Node/undici, which calls `socket.setKeepAlive(true, 60e3)` in
-        // buildConnector:
-        // https://github.com/nodejs/undici/blob/f33a6cb615e1/lib/core/connect.js#L121-L124
-        // TCP_KEEPIDLE=60, KEEPINTVL=1, KEEPCNT=10 — the latter two are hardcoded
-        // in bsd_socket_keepalive. The kernel default TCP_KEEPIDLE is 7200s, so
-        // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
-        // TCP_KEEPIDLE=60s.
-        //
-        // `disable_keepalive` is set when fetch is called with `keepalive: false`,
-        // which is what `node:http`/`node:https` pass through from
-        // `agent.keepAlive` (see _http_client.ts) — so requests through
-        // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
-        // through a non-keepalive Agent or `agent: false` skip it, matching Node.
-        if !self.flags.disable_keepalive {
-            let _ = socket.set_keep_alive(true, 60);
-        }
 
         if self.signals.get(signals::Field::Aborted) {
             self.close_and_abort::<IS_SSL>(socket);
@@ -1902,6 +1869,40 @@ impl<'a> HTTPClient<'a> {
             self.first_call::<IS_SSL>(socket);
         }
         Ok(())
+    }
+
+    /// Runs once per connection, from the uSockets open callback. A socket
+    /// reused from the pool skips this and goes straight to [`Self::on_open`],
+    /// so socket options belong here, not there.
+    pub(crate) fn on_connect<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+    ) -> crate::Result<()> {
+        // Enable TCP keepalive so a half-open connection (peer closed but the
+        // FIN/RST never reached us — NAT timeout, wifi/cellular handoff,
+        // middlebox state eviction, VPN disconnect) is detected in ~70s instead
+        // of hanging until an application-level timeout. Without this, a
+        // streaming `reader.read()` on a half-open socket blocks indefinitely.
+        // Matches Node/undici, which calls `socket.setKeepAlive(true, 60e3)` in
+        // buildConnector:
+        // https://github.com/nodejs/undici/blob/f33a6cb615e1/lib/core/connect.js#L121-L124
+        // TCP_KEEPIDLE=60, KEEPINTVL=1, KEEPCNT=10 — the latter two are hardcoded
+        // in bsd_socket_keepalive. The kernel default TCP_KEEPIDLE is 7200s, so
+        // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
+        // TCP_KEEPIDLE=60s.
+        //
+        // `disable_keepalive` is set when fetch is called with `keepalive: false`,
+        // which is what `node:http`/`node:https` pass through from
+        // `agent.keepAlive` (see _http_client.ts) — so requests through
+        // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
+        // through a non-keepalive Agent or `agent: false` skip it, matching Node.
+        //
+        // TCP options do not apply to a unix socket.
+        if !self.flags.disable_keepalive && self.unix_socket_path.slice().is_empty() {
+            let _ = socket.set_keep_alive(true, 60);
+        }
+
+        self.on_open::<IS_SSL>(socket)
     }
 
     /// Whether to advertise "h2" in the TLS ALPN list. Restricted to request

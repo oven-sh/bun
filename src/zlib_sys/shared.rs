@@ -64,11 +64,7 @@ pub enum FlushValue {
 //
 // zlib (and zlib-ng compat) typedef `uLong` as `unsigned long`, so one
 // `c_ulong`-based definition is ABI-correct on LP64 (8-byte) *and* LLP64
-// (4-byte) targets. The two per-platform copies in posix.rs / win32.rs were
-// already field-for-field identical; win32.rs had even normalized its
-// `struct_internal_state` to match posix so rustc's
-// `clashing_extern_declarations` lint saw the extern fns as compatible. This
-// hoist makes that the actual single definition.
+// (4-byte) targets.
 // ---------------------------------------------------------------------------
 use core::ffi::{c_char, c_uint, c_ulong, c_void};
 
@@ -80,7 +76,6 @@ pub type free_func = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
 // ---------------------------------------------------------------------------
 // zconf.h scalar typedefs — single source of truth.
 //
-// Previously duplicated in win32.rs and bun_zlib::lib.rs.
 // All resolve to ABI-identical primitives on every
 // target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
 // Unix) for the same reason zStream_struct above uses `c_ulong` directly.
@@ -89,7 +84,6 @@ pub type Bytef = u8;
 pub type uInt = c_uint;
 pub type uLong = c_ulong;
 pub type uLongf = uLong;
-pub type voidpf = *mut c_void;
 
 /// zlib's opaque `struct internal_state { int dummy; }` stub — applications
 /// never look inside, only carry the pointer.

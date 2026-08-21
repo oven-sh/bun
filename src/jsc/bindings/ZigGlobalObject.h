@@ -545,6 +545,9 @@ public:
     /* setupMainThreadPort's drain callback; run once by WebWorker__entrySettled */                          \
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
+    /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
+    /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -766,6 +769,7 @@ public:
     size_t reloadCount = 0;
 
     void reload();
+    void clearModuleRegistry();
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
@@ -782,6 +786,8 @@ public:
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
+    JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }
+    void setNodeWorkerStdioPorts(JSObject* ports);
     void setNodeWorkerEnvironmentData(JSMap* data);
     // node:worker_threads parentPort — the transferred MessagePort entangled with the parent
     // Worker's public port. Messages it dispatches are mirrored onto globalEventScope so the
@@ -877,6 +883,8 @@ public:
 } // namespace Zig
 
 namespace Bun {
+
+void putDirectNamed(JSC::VM&, JSC::JSObject*, ASCIILiteral name, JSC::JSValue);
 
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
 {

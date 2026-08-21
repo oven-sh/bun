@@ -802,3 +802,16 @@ describe("Blob from ArrayBuffer-like values", () => {
     expect(await blob.text()).toBe("abcdefgh");
   });
 });
+
+// A `type` that is a registered MIME string is interned; `slice()` without a
+// contentType keeps an interned parent type. Guards the interned set's membership.
+test.each([
+  ["text/plain;charset=utf-8", "text/plain;charset=utf-8"],
+  ["image/tiff", "image/tiff"],
+  ["application/vnd.api+json", "application/vnd.api+json"],
+  ["application/x-www-form-urlencoded", "application/x-www-form-urlencoded;charset=UTF-8"],
+  ["application/x-not-a-registered-type", ""],
+])("new Blob([], { type: %j }).slice().type", (type, expected) => {
+  const blob = new Blob(["abc"], { type });
+  expect(blob.slice(0, 1).type).toBe(expected);
+});

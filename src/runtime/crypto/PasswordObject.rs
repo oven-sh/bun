@@ -23,16 +23,12 @@ use bun_sha_hmac::SHA512;
 
 pub(crate) struct PasswordObject;
 
-#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Copy, Clone)]
 #[repr(u8)]
 pub enum Algorithm {
-    #[strum(serialize = "argon2i")]
     Argon2i,
-    #[strum(serialize = "argon2d")]
     Argon2d,
-    #[strum(serialize = "argon2id")]
     Argon2id,
-    #[strum(serialize = "bcrypt")]
     Bcrypt,
 }
 

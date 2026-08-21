@@ -30,11 +30,11 @@ impl DevErrorPage<'_> {
                 (b"error_json", &escape_for_script_element(&json)),
                 (
                     b"bun_error_css",
-                    bun_core::runtime_embed_file!(Codegen, "bun-error/bun-error.css").as_bytes(),
+                    bun_zstd::embed_compressed!(codegen "bun-error/bun-error.css"),
                 ),
                 (
                     b"bun_error_js",
-                    bun_core::runtime_embed_file!(Codegen, "bun-error/index.js").as_bytes(),
+                    bun_zstd::embed_compressed!(codegen "bun-error/index.js"),
                 ),
             ],
         )

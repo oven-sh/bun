@@ -129,17 +129,6 @@ pub struct EntryCache {
     pub(crate) is_symlink: bool,
 }
 
-impl Default for EntryCache {
-    fn default() -> Self {
-        Self {
-            symlink: Interned::EMPTY,
-            fd: Fd::INVALID,
-            kind: EntryKind::File,
-            is_symlink: false,
-        }
-    }
-}
-
 // `cache` / `need_stat` / `need_realpath` are lazily populated by
 // `Entry::kind` / `Entry::symlink` while callers hold a shared `&Entry`.
 // `EntryCache` is `Copy`, so `Cell` gives us safe `.get()/.set()` through

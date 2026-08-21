@@ -140,23 +140,30 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            await using tmpdir = tempDir("should-be-empty-except", {});
-            const result = spawnSync({
-              cmd: [exe, "self"],
-              env: { ...bunEnv, BUN_TMPDIR: tmpdir },
-              stdin: "inherit",
-              stderr: "inherit",
-              stdout: "pipe",
-            });
+            // Since #29587 each extracted `.node` persists at a content-hashed
+            // path shared across runs (pre-#29587 it was unlinked per load,
+            // see #19550), so a second run must not extract new copies.
+            await using tmpdir = tempDir("napi-compile-extract-" + format, {});
+            const runEnv = { ...bunEnv, BUN_TMPDIR: String(tmpdir), TMPDIR: String(tmpdir) };
+            const runSelf = () =>
+              spawnSync({
+                cmd: [exe, "self"],
+                env: runEnv,
+                stdin: "inherit",
+                stderr: "inherit",
+                stdout: "pipe",
+              });
+            const result = runSelf();
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            if (process.platform !== "win32") {
-              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
-            } else {
-              // On Windows, we have to mark it for deletion on reboot.
-              // Not clear how to test for that.
-            }
+            const extractedCount = () => readdirSync(String(tmpdir)).filter(f => f.endsWith(".node")).length;
+            const count = extractedCount();
+            expect(count).toBeGreaterThan(0);
+            const again = runSelf();
+            expect(again.stdout.toString().trim()).toBe("hello world!");
+            expect(again.success).toBeTrue();
+            expect(extractedCount()).toBe(count);
           },
           // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
           // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
@@ -335,6 +342,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("prevents underflow when unref called on zero refcount", async () => {
       // This tests the fix for napi_reference_unref underflow protection
       await checkSameOutput("test_ref_unref_underflow", []);
+    });
+    it("napi_create_reference accepts primitives when the module declares NAPI_VERSION >= 10", async () => {
+      // Node.js keys the primitive-reference gate on the module's declared
+      // Node-API version: >= 10 may reference any napi_valuetype, < 10 only
+      // object/function/symbol. A value that cannot be held weakly is released
+      // once the count reaches zero (heldAtZero=0) and a later ref stays at 0;
+      // weakly held values survive (the test still holds them) and ref again to
+      // 1. checkSameOutput asserts parity with Node for both addon builds.
+      const result = await checkSameOutput("test_create_reference_primitive_by_version", []);
+      const notWeakable = ["undefined", "null", "boolean", "number", "string", "bigint"];
+      const weakable = ["symbol", "registered symbol", "object", "function"];
+      // napi_ok = 0, napi_invalid_arg = 1
+      expect(result.split(/\r?\n/)).toEqual([
+        ...notWeakable.map(name => `declared=10 header=10 ${name}: status=0 roundTrip=1 heldAtZero=0 reref=0`),
+        ...weakable.map(name => `declared=10 header=10 ${name}: status=0 roundTrip=1 heldAtZero=1 reref=1`),
+        ...notWeakable.map(name => `declared=8 header=8 ${name}: status=1`),
+        ...weakable.map(name => `declared=8 header=8 ${name}: status=0 roundTrip=1 heldAtZero=1 reref=1`),
+      ]);
     });
   });
 
@@ -651,6 +676,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_threadsafe_function_call_js_throws", []);
       expect(result).toContain("uncaughtException 3 call_js error 3");
       expect(result).toContain("done 3");
+    });
+
+    // Items still queued when the function stops being dispatched. Node's
+    // process.exit() leaves them alone; an addon's call_js is usually written
+    // for a live env and aborts when handed a null one at exit (the finalizer
+    // is not printed: bun runs it at exit, node does not).
+    it("drops the queued items at process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_queued_items_at_process_exit", []);
+      expect(result).toBe("exiting with 3 items queued");
+    });
+
+    it("does not re-enter call_js when its callback calls process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_process_exit_inside_callback", []);
+      expect(result).toBe("call_js: item 1, env live, js_callback set");
+    });
+
+    // A worker's env really goes away while the addon's threads live on, so
+    // each item goes back to call_js the normal way, with the live env (calling
+    // into JS is refused: napi_cannot_run_js, 23, as this addon is built with
+    // NAPI_EXPERIMENTAL), and then the finalizer runs. Node does the same when
+    // its env cleanup turns the loop a last time.
+    it.each([
+      ["exit", 0],
+      ["terminate", 1],
+    ])("delivers the queued items with the live env when the creating worker is gone (%s)", async (how, code) => {
+      const result = await checkSameOutput(`test_threadsafe_function_queued_items_at_worker_${how}`, []);
+      // printf ends its lines with \r\n on Windows.
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          ...[1, 2, 3].flatMap(item => [
+            `call_js: item ${item}, env live, js_callback set`,
+            `call_js: item ${item}, call_function 23`,
+          ]),
+          "finalize: env live",
+          `worker exited with ${code}`,
+          "resolved to undefined",
+        ].join("\n"),
+      );
+    });
+
+    // After napi_tsfn_abort nothing queued runs any more: each item goes back
+    // to call_js with a null env and js_callback (the documented "free this"
+    // signal), then the function finalizes.
+    it("hands the queued items back with a null env after abort instead of running them", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_hands_queued_items_back", []);
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          "abort: 0",
+          ...[1, 2, 3].map(item => `call_js: item ${item}, env null, js_callback null`),
+          "finalize: env live",
+          "finalized: true",
+          "resolved to undefined",
+        ].join("\n"),
+      );
     });
 
     // An addon's own threads outlive the worker that created the threadsafe
@@ -1130,6 +1209,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
     it("does not crash with Reflect.construct when newTarget has no prototype", async () => {
       await checkSameOutput("test_reflect_construct_no_prototype_crash", []);
+    });
+  });
+
+  describe("napi_get_cb_info this_arg", () => {
+    it("is globalThis for a bare call resolved through a closure scope", async () => {
+      const output = await checkSameOutput("test_this_value_of_bare_call_through_closure", []);
+      expect(output).toContain("bare call through closure returned globalThis: true");
     });
   });
 

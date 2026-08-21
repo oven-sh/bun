@@ -399,7 +399,7 @@ NodeVMModulePrototype* NodeVMModulePrototype::create(VM& vm, Structure* structur
 
 Structure* NodeVMModulePrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 NodeVMModulePrototype::NodeVMModulePrototype(VM& vm, Structure* structure)
@@ -411,7 +411,7 @@ void NodeVMModulePrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    reifyStaticProperties(vm, info(), NodeVMModulePrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), NodeVMModulePrototypeTableValues, *this);
     this->structure()->setMayBePrototype(true);
 }
 
@@ -788,7 +788,7 @@ NodeVMModuleConstructor::NodeVMModuleConstructor(VM& vm, Structure* structure)
 
 JSC::Structure* NodeVMModuleConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, Base::StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, Base::StructureFlags), info());
 }
 
 void NodeVMModuleConstructor::finishCreation(VM& vm, JSObject* prototype)

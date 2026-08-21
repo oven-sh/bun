@@ -1660,7 +1660,7 @@ impl<'a> Printer<'a> {
         match Self::print_with_lockfile(&lockfile, format, writer) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-            Err(crate::Error::BrokenPipe) | Err(crate::Error::WriteFailed) => return Ok(()),
+            Err(crate::Error::WriteFailed) => return Ok(()),
             Err(e) => return Err(e),
         }
         Output::flush();
@@ -2381,12 +2381,6 @@ impl Scratch {
             dependency_list_queue: DependencyQueue::init(),
             duplicate_checker_map: DuplicateCheckerMap::default(),
         }
-    }
-}
-
-impl Default for Scratch {
-    fn default() -> Self {
-        Self::init()
     }
 }
 

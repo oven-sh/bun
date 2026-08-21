@@ -405,7 +405,6 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
         let term = match result.term {
             bun_spawn::Term::Exited(code) => format!("exit code {code}"),
             bun_spawn::Term::Signal(sig) => format!("signal {sig}"),
-            bun_spawn::Term::Stopped(sig) => format!("stopped (signal {sig})"),
             bun_spawn::Term::Unknown(_) => "unknown status".to_string(),
         };
         Output::err_generic("{} failed with {}", (BStr::new(argv[0]), term.as_str()));

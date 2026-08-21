@@ -1428,6 +1428,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
 }
 
 extern "C" bool Debugger__isWaitingForDebugger(uint32_t scriptId);
+extern "C" bool Debugger__willBreakOnStart(uint32_t scriptId);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsWaitingForDebugger, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -1435,6 +1436,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsWaitingForDebugger, (JSGlobalObject * globa
     uint32_t scriptId = callFrame->argument(0).toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(Debugger__isWaitingForDebugger(scriptId)));
+}
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionWillBreakOnStart);
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWillBreakOnStart, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    uint32_t scriptId = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(Debugger__willBreakOnStart(scriptId)));
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsAcceptingInspectorConnections);
@@ -1475,6 +1485,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(jsBoolean(enableNodeCDP));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("isWaitingForDebugger"_s), jsFunctionIsWaitingForDebugger, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("isAcceptingConnections"_s), jsFunctionIsAcceptingInspectorConnections, ImplementationVisibility::Public));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("willBreakOnStart"_s), jsFunctionWillBreakOnStart, ImplementationVisibility::Public));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();

@@ -130,9 +130,11 @@ export default function (
   enableNodeCDP: boolean,
   isWaitingForDebuggerFor: (executionContextId: number) => boolean,
   isAcceptingConnectionsFor: (executionContextId: number) => boolean,
+  willBreakOnStartFor: (executionContextId: number) => boolean,
 ): void {
   const isWaitingForDebugger = isWaitingForDebuggerFor.bind(undefined, executionContextId);
   const isAcceptingConnections = isAcceptingConnectionsFor.bind(undefined, executionContextId);
+  const willBreakOnStart = willBreakOnStartFor.bind(undefined, executionContextId);
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
@@ -199,6 +201,7 @@ export default function (
               false,
               isWaitingForDebugger,
               isAcceptingConnections,
+              willBreakOnStart,
             );
             reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
           } catch (error) {
@@ -256,6 +259,7 @@ export default function (
         false,
         isWaitingForDebugger,
         isAcceptingConnections,
+        willBreakOnStart,
       );
     } catch (error) {
       // Register the control callback even though the server failed to start
@@ -285,6 +289,7 @@ export default function (
       enableNodeCDP,
       isWaitingForDebugger,
       isAcceptingConnections,
+      willBreakOnStart,
     );
   } catch (error) {
     exit("Failed to start inspector:\n", error);
@@ -300,19 +305,18 @@ export default function (
     if (debugUrl) {
       const { protocol, href, host, pathname } = debugUrl;
       if (!protocol.includes("unix")) {
-        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
-        Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
+        const rule = dim("--------------------- Bun Inspector ---------------------") + reset() + "\n";
+        let banner = rule + `Listening:\n  ${dim(href)}\n`;
         if (protocol.includes("ws")) {
-          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
+          banner += `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`;
         }
-        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
-        const cdpUrl = debug.cdpUrl;
+        banner += rule;
+        // One write: Node's test-inspector-port-zero reads the first stderr chunk that holds a
+        // newline and expects the "Debugger listening on" line to be in it.
         if (cdpUrl) {
-          Bun.write(
-            Bun.stderr,
-            `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`,
-          );
+          banner += `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`;
         }
+        Bun.write(Bun.stderr, banner);
       }
     } else {
       Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
@@ -411,6 +415,7 @@ class Debugger {
   #enableNodeCDP = false;
   #isWaitingForDebugger: () => boolean;
   #isAcceptingConnections: () => boolean;
+  #willBreakOnStart: () => boolean;
   #disconnectNotify: { handshakeStarted: boolean; retaining: number; adapters: Set<InspectorCDPAdapter> | undefined } =
     {
       handshakeStarted: false,
@@ -430,11 +435,13 @@ class Debugger {
     enableNodeCDP: boolean = false,
     isWaitingForDebugger: () => boolean = () => false,
     isAcceptingConnections: () => boolean = () => true,
+    willBreakOnStart: () => boolean = () => false,
   ) {
     this.#nodeInspector = isNodeInspector;
     this.#enableNodeCDP = enableNodeCDP;
     this.#isWaitingForDebugger = isWaitingForDebugger;
     this.#isAcceptingConnections = isAcceptingConnections;
+    this.#willBreakOnStart = willBreakOnStart;
     this.#backendFactory = createBackend;
     this.#backendSend = send;
     this.#backendClose = close;
@@ -745,6 +752,7 @@ class Debugger {
         allocateRemoteBackendId,
         this.#isWaitingForDebugger,
         this.#disconnectNotify,
+        this.#willBreakOnStart,
       );
 
       data.client = client;

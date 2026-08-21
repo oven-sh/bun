@@ -58,6 +58,20 @@ function breakpointUrlRegex(url: string): string {
   return Array.from(candidates, candidate => `^${escapeRegex(candidate)}$`).join("|");
 }
 
+function regexMatches(pattern: string, text: string): boolean {
+  try {
+    return new RegExp(pattern).test(text);
+  } catch {
+    return false;
+  }
+}
+
+// JSC identifies a by-URL breakpoint by its pattern text and position, so the
+// sentinel's pattern must differ from any the client could set at line 0.
+function sentinelUrlRegex(urlRegex: string): string {
+  return `(?:${urlRegex})`;
+}
+
 // ── Source maps ────────────────────────────────────────────────────────────
 
 interface OriginalPosition {
@@ -77,12 +91,38 @@ interface ScriptSourceMap {
 }
 
 interface ScriptRecord {
+  // The URL JSC knows the script by (usually a plain path); breakpoint regexes
+  // sent to the backend are matched against this, not against cdpUrl.
+  url: string;
   cdpUrl: string;
   endLine: number;
   endColumn: number;
   source: string | undefined;
   mappings: string | undefined;
   map: ScriptSourceMap | undefined;
+}
+
+interface PreParseBreakpoint {
+  jscId: string;
+  url: string | undefined;
+  urlRegex: string | undefined;
+  // The pattern the backend was given; also keys the sentinel covering it.
+  regex: string;
+  lineNumber: number;
+  columnNumber: number | undefined;
+  condition: string | undefined;
+  resolved: boolean;
+  // Backend coordinates the breakpoint is (being) bound at, once a script matched it.
+  resolvedAt?: { scriptId: string; lineNumber: number; columnNumber: number | undefined };
+  resetPending?: boolean;
+  clientRemoved?: boolean;
+}
+
+// Backend-coordinate re-set of a PreParseBreakpoint against a parsed script.
+interface PreParseTarget {
+  lineNumber: number;
+  columnNumber: number | undefined;
+  urlRegex: string;
 }
 
 const VLQ_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -423,10 +463,16 @@ class InspectorCDPAdapter {
   // V8 reports the pause that ends a step command with reason "step"; JSC does
   // not distinguish it from any other pause, so track the step here.
   #steppingToNextPause = false;
-  // V8 labels the --inspect-brk pause "Break on start"; Bun's injected
-  // `debugger;` is indistinguishable to JSC, so latch the release of a waiting
-  // target and relabel the pause it triggers.
+  // V8 labels the --inspect-brk pause "Break on start". Latched when this client releases a
+  // waiting target; the pause that follows is relabelled if it is --inspect-brk's injected
+  // `debugger;` (#injectedBreakPending: JSC cannot tell it from a user's) or the Debugger.pause
+  // `bun inspect` arms on a --inspect-wait child in place of --inspect-brk. A release that
+  // merely ends a wait (--inspect-wait, inspector.open(…, true)) keeps the next pause's reason.
   #breakOnStartPending = false;
+  #injectedBreakPending = false;
+  // A client Debugger.pause not yet answered by a pause. JSC consumes it at whatever pauses
+  // next, so a sentinel (below) that fires there must be reported in its place, not resumed.
+  #pauseRequested = false;
   #pending = new Map<
     number,
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
@@ -436,20 +482,13 @@ class InspectorCDPAdapter {
   // By-URL breakpoints set before their script parsed, keyed by the id given to the client. Re-set
   // through the map at scriptParsed (as V8 does); events and removeBreakpoint map through jscId.
   // https://source.chromium.org/chromium/chromium/src/+/main:v8/src/inspector/v8-debugger-agent-impl.cc
-  #preParseBreakpoints: Map<
-    string,
-    {
-      jscId: string;
-      url: string | undefined;
-      urlRegex: string | undefined;
-      lineNumber: number;
-      columnNumber: number | undefined;
-      condition: string | undefined;
-      resolved: boolean;
-      resetPending?: boolean;
-      clientRemoved?: boolean;
-    }
-  > = new SafeMap();
+  #preParseBreakpoints: Map<string, PreParseBreakpoint> = new SafeMap();
+  // The re-set above is posted from this thread while the inspected thread may already be running
+  // the freshly parsed script, so it would land too late for code that runs on load. Per pattern
+  // with unresolved breakpoints, a hidden breakpoint on line 0 pauses each matching script at its
+  // first statement; the pause loop drains the re-set, then the pause is resumed unseen.
+  #sentinels: Map<string, { jscId: string | undefined; retired: boolean }> = new SafeMap();
+  #sentinelIds = new Set<string>();
   #breakpointIdAliases = new Map<string, string>();
   // Set when the stale-breakpoint auto-resume below sends Debugger.resume: the
   // client never saw the pause, so it must not see the matching resumed either.
@@ -476,6 +515,7 @@ class InspectorCDPAdapter {
   // executionContextDestroyed for all. https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
   #disconnectNotify: DisconnectNotifyState;
   #isWaitingForDebugger: () => boolean;
+  #willBreakOnStart: () => boolean;
   #allocateBackendId: () => number;
 
   constructor(
@@ -488,10 +528,12 @@ class InspectorCDPAdapter {
       retaining: 0,
       adapters: undefined,
     },
+    willBreakOnStart: () => boolean = () => false,
   ) {
     this.#writeToBackend = writeToBackend;
     this.#writeToClient = writeToClient;
     this.#isWaitingForDebugger = isWaitingForDebugger;
+    this.#willBreakOnStart = willBreakOnStart;
     this.#disconnectNotify = disconnectNotify;
     (disconnectNotify.adapters ??= new SafeSet()).add(this);
     this.#allocateBackendId = allocateBackendId;
@@ -524,6 +566,8 @@ class InspectorCDPAdapter {
     this.#scripts.$clear();
     this.#scriptIdsByUrl.clear();
     this.#preParseBreakpoints.clear();
+    this.#sentinels.clear();
+    this.#sentinelIds.$clear();
     this.#breakpointIdAliases.$clear();
     this.#pending.$clear();
     this.#profilerStopClientIds.length = 0;
@@ -562,7 +606,7 @@ class InspectorCDPAdapter {
     return this.#toOriginalLocation(location) as AnyObject;
   }
 
-  #onBreakpointReset(bp: AnyObject, clientBreakpointId: string, result: AnyObject, error: AnyObject) {
+  #onBreakpointReset(bp: PreParseBreakpoint, clientBreakpointId: string, result: AnyObject, error: AnyObject) {
     bp.resetPending = false;
     if (error || typeof result.breakpointId !== "string") return;
     const { breakpointId } = result;
@@ -629,10 +673,11 @@ class InspectorCDPAdapter {
     // An error VALUE with a preview: JSC caps preview properties at five, and
     // an error's five JSC location properties crowd `stack` out entirely, so
     // recover it from the object itself (V8 lists it first).
-    if (remote?.subtype === "error" && remote.preview && remote.objectId) {
+    const errorObjectId = remote?.subtype === "error" && remote.preview ? remote.objectId : undefined;
+    if (errorObjectId) {
       this.#sendToBackend(
         "Runtime.getProperties",
-        { objectId: remote.objectId, ownProperties: true },
+        { objectId: errorObjectId, ownProperties: true },
         null,
         method,
         (props, error) => {
@@ -804,8 +849,7 @@ class InspectorCDPAdapter {
     id: number,
     method: string,
     params: AnyObject,
-    url: string | undefined,
-    urlRegex: string | undefined,
+    regex: string,
     condition: string | undefined,
     result: AnyObject,
     error: AnyObject,
@@ -816,30 +860,77 @@ class InspectorCDPAdapter {
     }
     const breakpointId = result.breakpointId;
     if (typeof breakpointId === "string") {
-      const bp = {
+      const { url, urlRegex } = params;
+      const bp: PreParseBreakpoint = {
         jscId: breakpointId,
-        url,
-        urlRegex,
+        url: url || undefined,
+        urlRegex: url ? undefined : urlRegex,
+        regex,
         lineNumber: params.lineNumber ?? 0,
         columnNumber: params.columnNumber,
         condition,
         resolved: false,
       };
       this.#preParseBreakpoints.set(breakpointId, bp);
-      const scriptId =
-        url !== undefined
-          ? this.#scriptIdsByUrl.get(url)
-          : urlRegex !== undefined
-            ? this.#scriptIdMatching(urlRegex)
-            : undefined;
+      // The script may have parsed while the request was in flight.
+      const scriptId = url ? this.#scriptIdsByUrl.get(url) : this.#scriptIdMatching(urlRegex);
       if (scriptId !== undefined) {
         const script = this.#scripts.$get(scriptId);
-        if (script && (script.mappings !== undefined || script.map !== undefined)) {
-          this.#resetPreParseBreakpoint(breakpointId, bp, scriptId);
-        }
+        const target = script && this.#retirePreParseBinding(bp, scriptId, script);
+        if (target) this.#reAddPreParseBreakpoint(breakpointId, bp, target);
       }
+      // Queued ahead of the reply so the client cannot release a waiting
+      // target before the sentinel is armed.
+      this.#reconcileSentinels();
     }
     this.#replyToClient(id, this.#translateResult(method, result));
+  }
+
+  #reconcileSentinels(): void {
+    const needed: Map<string, boolean> = new SafeMap();
+    for (const bp of this.#preParseBreakpoints.values()) {
+      if (bp.resolved) continue;
+      // A client breakpoint on line 0 already pauses the script at its first
+      // statement; a sentinel there would be reported instead of it.
+      needed.set(bp.regex, bp.lineNumber !== 0 && needed.get(bp.regex) !== false);
+    }
+    for (const [regex, sentinel] of this.#sentinels) {
+      if (needed.get(regex)) {
+        sentinel.retired = false;
+        continue;
+      }
+      if (sentinel.jscId === undefined) {
+        sentinel.retired = true;
+        continue;
+      }
+      this.#sentinels.delete(regex);
+      this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: sentinel.jscId });
+    }
+    for (const [regex, isNeeded] of needed) {
+      if (!isNeeded || this.#sentinels.has(regex)) continue;
+      const sentinel = { jscId: undefined as string | undefined, retired: false };
+      this.#sentinels.set(regex, sentinel);
+      this.#sendToBackend(
+        "Debugger.setBreakpointByUrl",
+        { urlRegex: sentinelUrlRegex(regex), lineNumber: 0, columnNumber: 0 },
+        null,
+        "Debugger.setBreakpointByUrl",
+        (result, error) => {
+          const { breakpointId } = result;
+          if (error || typeof breakpointId !== "string") {
+            this.#sentinels.delete(regex);
+            return;
+          }
+          this.#sentinelIds.$add(breakpointId);
+          if (!sentinel.retired) {
+            sentinel.jscId = breakpointId;
+            return;
+          }
+          this.#sentinels.delete(regex);
+          this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId });
+        },
+      );
+    }
   }
 
   #toOriginalLocation(location: AnyObject | undefined): AnyObject | undefined {
@@ -871,6 +962,19 @@ class InspectorCDPAdapter {
     return false;
   }
 
+  // Client ids of the pre-parse breakpoints bound (or being re-set) at a backend location.
+  #preParseBreakpointsBoundAt(location: AnyObject | undefined): string[] {
+    const ids: string[] = [];
+    if (!location) return ids;
+    for (const [clientBreakpointId, { resolvedAt }] of this.#preParseBreakpoints) {
+      if (!resolvedAt) continue;
+      if (resolvedAt.scriptId !== location.scriptId || resolvedAt.lineNumber !== location.lineNumber) continue;
+      if (resolvedAt.columnNumber !== undefined && resolvedAt.columnNumber !== location.columnNumber) continue;
+      ids.push(clientBreakpointId);
+    }
+    return ids;
+  }
+
   #toClientBreakpointId(breakpointId: string): string {
     return this.#breakpointIdAliases.$get(breakpointId) ?? breakpointId;
   }
@@ -878,68 +982,61 @@ class InspectorCDPAdapter {
   #retranslatePreParseBreakpoints(url: string, cdpUrl: string, scriptId: string): void {
     if (this.#preParseBreakpoints.size === 0) return;
     const script = this.#scripts.$get(scriptId);
-    if (!script || (script.mappings === undefined && script.map === undefined)) return;
-    const resets: { clientBreakpointId: string; bp: AnyObject; generated: AnyObject }[] = [];
+    if (!script) return;
+    const resets: { clientBreakpointId: string; bp: PreParseBreakpoint; target: PreParseTarget }[] = [];
     for (const [clientBreakpointId, bp] of this.#preParseBreakpoints) {
       if (bp.resolved) continue;
       const { url: bpUrl, urlRegex: bpUrlRegex } = bp;
-      let matches = false;
-      if (bpUrl !== undefined) {
-        matches = bpUrl === url || bpUrl === cdpUrl;
-      } else if (bpUrlRegex !== undefined) {
-        try {
-          const pattern = new RegExp(bpUrlRegex);
-          matches = pattern.test(url) || pattern.test(cdpUrl);
-        } catch {
-          matches = false;
-        }
-      }
+      const matches =
+        bpUrl !== undefined
+          ? bpUrl === url || bpUrl === cdpUrl
+          : bpUrlRegex !== undefined && (regexMatches(bpUrlRegex, url) || regexMatches(bpUrlRegex, cdpUrl));
       if (!matches) continue;
-      const generated = this.#removeStalePreParseBreakpoint(bp, scriptId);
-      if (generated) resets.push({ clientBreakpointId, bp, generated });
+      const target = this.#retirePreParseBinding(bp, scriptId, script);
+      if (target) resets.push({ clientBreakpointId, bp, target });
     }
     // Remove all before re-adding any: JSC merges pre-parse requests on an
     // unmapped line to one pause location, so removing one after a re-add
     // resolved to the same spot cleared the re-added one too.
-    for (const { clientBreakpointId, bp, generated } of resets) {
-      this.#reAddPreParseBreakpoint(clientBreakpointId, bp, generated);
+    for (const { clientBreakpointId, bp, target } of resets) {
+      this.#reAddPreParseBreakpoint(clientBreakpointId, bp, target);
     }
+    this.#reconcileSentinels();
   }
 
-  #resetPreParseBreakpoint(clientBreakpointId: string, bp: AnyObject, scriptId: string): void {
-    const generated = this.#removeStalePreParseBreakpoint(bp, scriptId);
-    if (generated) this.#reAddPreParseBreakpoint(clientBreakpointId, bp, generated);
-  }
-
-  // Returns the generated location to re-add at, or undefined when the map is
-  // an identity for this position (nothing removed).
-  #removeStalePreParseBreakpoint(bp: AnyObject, scriptId: string): AnyObject | undefined {
+  // Marks the breakpoint resolved against this script. Returns where to re-set it when the
+  // backend's binding is unusable (the removal is sent here): the pattern came from a client
+  // that addresses scripts by file:// URL, which never matches the path JSC knows the script
+  // by, or the map moves the position. Undefined when the existing binding is already right.
+  #retirePreParseBinding(bp: PreParseBreakpoint, scriptId: string, script: ScriptRecord): PreParseTarget | undefined {
     bp.resolved = true;
-    const generated = this.#toGeneratedLocation({
+    const bound = regexMatches(bp.regex, script.url);
+    const columnNumber = bp.columnNumber ?? 0;
+    const generated = this.#toGeneratedLocation({ scriptId, lineNumber: bp.lineNumber, columnNumber }) as AnyObject;
+    const moved = generated.lineNumber !== bp.lineNumber || (generated.columnNumber ?? 0) !== columnNumber;
+    // Column 0 binds like no column at all (JSC pauses anywhere on the line for it).
+    bp.resolvedAt = {
       scriptId,
-      lineNumber: bp.lineNumber,
-      columnNumber: bp.columnNumber ?? 0,
-    }) as AnyObject;
-    if (generated.lineNumber === bp.lineNumber && (generated.columnNumber ?? 0) === (bp.columnNumber ?? 0)) {
-      return undefined;
-    }
+      lineNumber: generated.lineNumber,
+      columnNumber: columnNumber === 0 ? undefined : (generated.columnNumber ?? columnNumber),
+    };
+    if (bound && !moved) return undefined;
     bp.resetPending = true;
     this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
-    return generated;
+    return {
+      lineNumber: generated.lineNumber,
+      columnNumber: generated.columnNumber,
+      urlRegex: bound ? bp.regex : breakpointUrlRegex(script.url),
+    };
   }
 
-  #reAddPreParseBreakpoint(clientBreakpointId: string, bp: AnyObject, generated: AnyObject): void {
+  #reAddPreParseBreakpoint(clientBreakpointId: string, bp: PreParseBreakpoint, target: PreParseTarget): void {
     const options: AnyObject = {};
     const { condition } = bp;
     if (condition) options.condition = condition;
     this.#sendToBackend(
       "Debugger.setBreakpointByUrl",
-      {
-        lineNumber: generated.lineNumber,
-        columnNumber: generated.columnNumber,
-        options,
-        urlRegex: bp.urlRegex ?? breakpointUrlRegex(bp.url!),
-      },
+      { ...target, options },
       null,
       "Debugger.setBreakpointByUrl",
       this.#onBreakpointReset.bind(this, bp, clientBreakpointId),
@@ -998,7 +1095,7 @@ class InspectorCDPAdapter {
       const pending = this.#pending.$get(id);
       if (!pending) return;
       this.#pending.$delete(id);
-      const { clientId, onResult } = pending;
+      const { clientId, onResult, method: clientMethod } = pending;
       if (onResult) {
         onResult(parsed.result || {}, error);
         return;
@@ -1008,11 +1105,11 @@ class InspectorCDPAdapter {
         this.#replyErrorToClient(clientId, error.code ?? -32000, toCdpErrorMessage(error.message));
         return;
       }
-      if (EVALUATE_LIKE_METHODS.$has(pending.method)) {
-        this.#replyEvaluateLike(clientId, pending.method, parsed.result || {});
+      if (EVALUATE_LIKE_METHODS.$has(clientMethod)) {
+        this.#replyEvaluateLike(clientId, clientMethod, parsed.result || {});
         return;
       }
-      this.#replyToClient(clientId, this.#translateResult(pending.method, parsed.result || {}));
+      this.#replyToClient(clientId, this.#translateResult(clientMethod, parsed.result || {}));
       return;
     }
     if (typeof method === "string") {
@@ -1084,7 +1181,10 @@ class InspectorCDPAdapter {
       case "Runtime.runIfWaitingForDebugger":
         // Only a target parked in wait-for-debugger state can produce the
         // "Break on start" pause; --inspect (no -brk/-wait) never waits.
-        if (this.#isWaitingForDebugger()) this.#breakOnStartPending = true;
+        if (this.#isWaitingForDebugger()) {
+          this.#breakOnStartPending = true;
+          this.#injectedBreakPending = this.#willBreakOnStart();
+        }
         // Inspector.initialized resolves Bun's wait-for-debugger state, which
         // unblocks inspector.open(port, host, true) on the inspected thread.
         this.#sendToBackend("Inspector.initialized");
@@ -1209,6 +1309,11 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.pause":
+        this.#pauseRequested = true;
+        this.#steppingToNextPause = false;
+        this.#sendToBackend(method, params, id, method);
+        return;
+
       case "Debugger.resume":
       case "Debugger.setBreakpointsActive":
         this.#steppingToNextPause = false;
@@ -1220,6 +1325,7 @@ class InspectorCDPAdapter {
         if (tracked) {
           this.#preParseBreakpoints.delete(params.breakpointId);
           this.#breakpointIdAliases.$delete(tracked.jscId);
+          this.#reconcileSentinels();
           if (tracked.resetPending) {
             tracked.clientRemoved = true;
             this.#replyToClient(id, {});
@@ -1274,15 +1380,15 @@ class InspectorCDPAdapter {
           lineNumber: params.lineNumber ?? 0,
           columnNumber: params.columnNumber ?? 0,
         }) as AnyObject;
-        const jscParams: AnyObject = {
-          lineNumber: generated.lineNumber,
-          columnNumber: generated.columnNumber,
-          options,
-        };
-        if (urlRegex) {
-          jscParams.urlRegex = urlRegex;
-        } else if (url) {
-          jscParams.urlRegex = breakpointUrlRegex(url);
+        let regex: string;
+        if (url) {
+          regex = breakpointUrlRegex(url);
+        } else if (urlRegex) {
+          // The client's pattern is written against the file:// URLs it was shown; JSC matches
+          // it against the path it knows the script by, so a pattern that only matches the
+          // former is re-anchored to the script it was found to mean.
+          const knownUrl = known === undefined ? undefined : this.#scripts.$get(known)?.url;
+          regex = knownUrl !== undefined && !regexMatches(urlRegex, knownUrl) ? breakpointUrlRegex(knownUrl) : urlRegex;
         } else if (params.scriptHash) {
           // CDP also accepts scriptHash; JSC has no content-hash addressing
           // (Debugger.scriptParsed carries no hash to match against).
@@ -1292,13 +1398,19 @@ class InspectorCDPAdapter {
           this.#replyErrorToClient(id, -32602, "Either url or urlRegex must be specified.");
           return;
         }
+        const jscParams: AnyObject = {
+          lineNumber: generated.lineNumber,
+          columnNumber: generated.columnNumber,
+          options,
+          urlRegex: regex,
+        };
         if (known === undefined) {
           this.#sendToBackend(
             "Debugger.setBreakpointByUrl",
             jscParams,
             null,
             method,
-            this.#onPreParseBreakpointSet.bind(this, id, method, params, url, urlRegex, condition),
+            this.#onPreParseBreakpointSet.bind(this, id, method, params, regex, condition),
           );
           return;
         }
@@ -1489,23 +1601,6 @@ class InspectorCDPAdapter {
       case "Debugger.enable":
         return { debuggerId: "(bun)", ...result };
 
-      // Breakpoint replies carry resolved positions in generated coordinates;
-      // clients print them (the debugger REPL's `breakpoints` list), so they
-      // need the same original-position translation as pause locations.
-      case "Debugger.setBreakpoint": {
-        const out: AnyObject = { ...result };
-        if (out.actualLocation) out.actualLocation = this.#toOriginalLocation(out.actualLocation);
-        return out;
-      }
-
-      case "Debugger.setBreakpointByUrl": {
-        const out: AnyObject = { ...result };
-        if ($isJSArray(out.locations)) {
-          out.locations = out.locations.map((location: AnyObject) => this.#toOriginalLocation(location));
-        }
-        return out;
-      }
-
       case "Runtime.evaluate":
       case "Runtime.callFunctionOn":
       case "Debugger.evaluateOnCallFrame": {
@@ -1568,6 +1663,7 @@ class InspectorCDPAdapter {
           sourceMapURL = ownSourceMappingURL(source);
         }
         this.#scripts.$set(params.scriptId, {
+          url,
           cdpUrl,
           endLine: params.endLine ?? 0,
           endColumn: params.endColumn ?? 0,
@@ -1599,14 +1695,34 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.paused": {
-        if (
-          params.reason === "Breakpoint" &&
-          typeof params.data?.breakpointId === "string" &&
-          this.#isStaleResetBreakpoint(params.data.breakpointId)
-        ) {
-          this.#suppressNextResumed = true;
-          this.#sendToBackend("Debugger.resume");
-          return;
+        const pauseRequested = this.#pauseRequested;
+        this.#pauseRequested = false;
+        const hitBreakpointId = params.reason === "Breakpoint" ? params.data?.breakpointId : undefined;
+        const sentinelHit = typeof hitBreakpointId === "string" && this.#sentinelIds.$has(hitBreakpointId);
+        let hitBreakpoints: string[] = [];
+        if (typeof hitBreakpointId === "string") {
+          let resumeUnseen: boolean;
+          if (sentinelHit) {
+            // JSC reports one breakpoint per pause, so whatever else was due at this statement
+            // is hidden behind the sentinel: a client breakpoint bound here, --inspect-brk's
+            // injected `debugger;` (a pause position too), a requested pause or the end of a
+            // step. Report that instead of resuming through it.
+            hitBreakpoints = this.#preParseBreakpointsBoundAt(params.callFrames?.[0]?.location);
+            resumeUnseen =
+              !this.#debuggerEnabled ||
+              (hitBreakpoints.length === 0 &&
+                !this.#injectedBreakPending &&
+                !pauseRequested &&
+                !this.#steppingToNextPause);
+          } else {
+            hitBreakpoints = [this.#toClientBreakpointId(hitBreakpointId)];
+            resumeUnseen = this.#isStaleResetBreakpoint(hitBreakpointId);
+          }
+          if (resumeUnseen) {
+            this.#suppressNextResumed = true;
+            this.#sendToBackend("Debugger.resume");
+            return;
+          }
         }
         if (!this.#debuggerEnabled) return;
         const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
@@ -1625,7 +1741,11 @@ class InspectorCDPAdapter {
         const { data, asyncStackTrace } = params;
         const stepped = this.#steppingToNextPause;
         this.#steppingToNextPause = false;
-        const cdpParams: AnyObject = { callFrames, reason: stepped ? "step" : "other", data };
+        const cdpParams: AnyObject = {
+          callFrames,
+          reason: stepped ? "step" : "other",
+          data: sentinelHit ? undefined : data,
+        };
         switch (params.reason) {
           case "exception":
             cdpParams.reason = "exception";
@@ -1635,16 +1755,22 @@ class InspectorCDPAdapter {
             break;
           case "Breakpoint":
             // A breakpoint reached mid-step is a breakpoint hit to V8, not a
-            // completed step.
-            cdpParams.reason = "other";
-            if (data?.breakpointId) cdpParams.hitBreakpoints = [this.#toClientBreakpointId(data.breakpointId)];
+            // completed step. (A bare sentinel pause is the step's own end.)
+            if (hitBreakpoints.length !== 0) {
+              cdpParams.reason = "other";
+              cdpParams.hitBreakpoints = hitBreakpoints;
+            } else if (!sentinelHit) {
+              cdpParams.reason = "other";
+            }
             break;
         }
-        // The first pause after releasing a parked target is "Break on start";
-        // it wins over a breakpoint (V8 does too) but not over an exception,
-        // which means user code already ran.
-        const breakOnStart = this.#breakOnStartPending;
+        // "Break on start" wins over a breakpoint at the same statement (as in V8) but not over
+        // an exception, which means user code already ran.
+        const breakOnStart =
+          this.#breakOnStartPending &&
+          (this.#injectedBreakPending || pauseRequested || params.reason === "PauseOnNextStatement");
         this.#breakOnStartPending = false;
+        this.#injectedBreakPending = false;
         if (breakOnStart && cdpParams.reason !== "exception" && cdpParams.reason !== "assert") {
           cdpParams.reason = "Break on start";
         }
@@ -1662,7 +1788,13 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.breakpointResolved":
-        if (!this.#debuggerEnabled || this.#isStaleResetBreakpoint(params.breakpointId)) return;
+        if (
+          !this.#debuggerEnabled ||
+          this.#sentinelIds.$has(params.breakpointId) ||
+          this.#isStaleResetBreakpoint(params.breakpointId)
+        ) {
+          return;
+        }
         this.#emitToClient("Debugger.breakpointResolved", {
           breakpointId: this.#toClientBreakpointId(params.breakpointId),
           location: this.#toOriginalLocation(params.location),

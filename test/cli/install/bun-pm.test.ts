@@ -530,6 +530,18 @@ it("should list nothing with --trusted when no dependencies are trusted", async 
   expect(await exited).toBe(0);
 });
 
+async function spawnAndCollect(...args: string[]): Promise<[stdout: string, stderr: string, exitCode: number]> {
+  await using proc = spawn({
+    cmd: [bunExe(), ...args],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+}
+
 // The root package has one dependency entry per workspace member plus one per
 // declaration: ws-once has two entries, ws-twice three, ws-undeclared one. All
 // entries of a workspace resolve to the same package, and `bun pm ls` must print
@@ -568,18 +580,10 @@ async function installWorkspacesTheRootDependsOn(saveTextLockfile: boolean) {
     await mkdir(join(package_dir, "packages", name), { recursive: true });
     await writeFile(join(package_dir, "packages", name, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
   }
-  const { stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const err = await stderr.text();
+  const [, err, exitCode] = await spawnAndCollect("install");
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  expect(await exited).toBe(0);
+  expect(exitCode).toBe(0);
 }
 
 it.each([
@@ -592,16 +596,9 @@ it.each([
   expect(await exists(join(package_dir, lockfile))).toBeTrue();
   urls.length = 0;
 
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "pm", "ls"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(await stderr.text()).toBe("");
-  expect(normalizeBunSnapshot(await stdout.text(), package_dir)).toMatchInlineSnapshot(`
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
     "<dir> node_modules (5)
     ├── bar@0.0.2
     ├── bar-alias@0.0.2
@@ -609,7 +606,7 @@ it.each([
     ├── ws-twice@workspace:packages/ws-twice
     └── ws-undeclared@workspace:packages/ws-undeclared"
   `);
-  expect(await exited).toBe(0);
+  expect(exitCode).toBe(0);
   expect(urls).toEqual([]);
 });
 
@@ -621,20 +618,13 @@ it("should list a trusted workspace the root also depends on once with --trusted
   await installWorkspacesTheRootDependsOn(true);
   urls.length = 0;
 
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "pm", "ls", "--trusted"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(await stderr.text()).toBe("");
-  expect(normalizeBunSnapshot(await stdout.text(), package_dir)).toMatchInlineSnapshot(`
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--trusted");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
     "<dir> node_modules (5)
     └── ws-once@workspace:packages/ws-once"
   `);
-  expect(await exited).toBe(0);
+  expect(exitCode).toBe(0);
   expect(urls).toEqual([]);
 });
 

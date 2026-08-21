@@ -40,7 +40,6 @@
 
 #include "JSDOMURL.h"
 #include <JavaScriptCore/JSNativeStdFunction.h>
-#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -527,15 +526,16 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    auto& vm = JSC::getVM(lexicalGlobalObject);
+    // Only Zig::GlobalObject creates ImportMetaObject structures (see createStructure). Its Bun.main and thread
+    // are the ones that matter, no matter which realm reads the property.
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(thisObject->globalObject());
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
 
     JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
-    RETURN_IF_EXCEPTION(scope, {});
     JSValue bunMain = JSValue::decode(BunObject_getter_main(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    bool isMain = JSValue::strictEqual(lexicalGlobalObject, path, bunMain);
+    bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(isMain && globalObject->scriptExecutionContext()->isMainThread()));

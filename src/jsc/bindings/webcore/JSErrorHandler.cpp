@@ -68,7 +68,11 @@ void JSErrorHandler::handleEvent(ScriptExecutionContext& scriptExecutionContext,
     if (!jsFunction)
         return;
 
-    auto* globalObject = toJSDOMGlobalObject(scriptExecutionContext, isolatedWorld());
+    auto* isolatedWorld = this->isolatedWorld();
+    if (!isolatedWorld) [[unlikely]]
+        return;
+
+    auto* globalObject = toJSDOMGlobalObject(scriptExecutionContext, *isolatedWorld);
     if (!globalObject)
         return;
 

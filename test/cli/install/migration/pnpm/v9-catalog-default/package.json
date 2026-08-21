@@ -1,0 +1,7 @@
+{
+  "name": "v9-catalog-default",
+  "version": "1.0.0",
+  "dependencies": {
+    "no-deps": "catalog:default"
+  }
+}

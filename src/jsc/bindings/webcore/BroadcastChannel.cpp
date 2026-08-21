@@ -33,18 +33,16 @@
 #include "SerializedScriptValue.h"
 #include <wtf/TZoneMallocInlines.h>
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
 BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String& name)
-    : ContextDestructionObserver(&context)
+    : ActiveDOMObject(&context)
     , m_name(name.isolatedCopy())
     , m_contextId(context.identifier())
 {
-    initializeWeakPtrFactory();
+    EventTarget::initializeWeakPtrFactory();
     BunBroadcastChannelRegistry::singleton().subscribe(m_name, m_contextId, *this);
     jsRef(context.jsGlobalObject());
 }
@@ -114,7 +112,7 @@ void BroadcastChannel::eventListenersDidChange()
         m_state.fetch_and(~uint64_t(HasMessageListener), std::memory_order_acq_rel);
 }
 
-bool BroadcastChannel::hasPendingActivity() const
+bool BroadcastChannel::virtualHasPendingActivity() const
 {
     // Called from the GC thread; a single atomic load covers everything.
     // Queued-but-undelivered messages are NOT counted as pending activity:
@@ -131,7 +129,7 @@ void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
     if (!m_hasRef) {
         m_hasRef = true;
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
     }
 }
 
@@ -139,7 +137,7 @@ void BroadcastChannel::jsUnref(JSGlobalObject* lexicalGlobalObject)
 {
     if (m_hasRef) {
         m_hasRef = false;
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
     }
 }
 

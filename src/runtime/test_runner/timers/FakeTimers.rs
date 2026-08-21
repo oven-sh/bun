@@ -5,9 +5,11 @@ use bun_threading::RwLock;
 use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use crate::api::cron::CronJob;
+use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
-    ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
-    TimerObjectInternals, TimeoutObject, TimerHeap,
+    AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
+    InHeap, TimerObjectInternals, TimeoutObject, TimerHeap,
 };
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
@@ -114,6 +116,48 @@ fn from_el_timespec(t: &ElTimespec) -> Timespec {
     Timespec { sec: t.sec, nsec: t.nsec }
 }
 
+/// Owners of the nodes [`FakeTimers::clear`] popped, still to be told their
+/// timer is gone. Released only once the `FakeTimers` borrow has ended: these
+/// paths re-enter `timer::All` (`TimerObjectInternals::cancel` → `All::remove`,
+/// `Timeout` deinit → `timer_remove`).
+#[derive(Default)]
+#[must_use]
+struct ClearedTimers {
+    /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
+    /// refcount sticks at 2 (wrapper +1 from `init_with`, heap +1 from
+    /// `reschedule`) and `internals.this_value` still GC-roots the wrapper, so
+    /// neither side ever frees.
+    pinned: Vec<core::ptr::NonNull<TimerObjectInternals>>,
+    /// Likewise, an unlinked `AbortSignal.timeout()` timer is still its
+    /// signal's `m_timeout`, and `JSAbortSignalOwner::isReachableFromOpaqueRoots`
+    /// pins an observed signal's wrapper for as long as that is set. Only the
+    /// signal's `cancelTimer()` clears it (and frees the box).
+    signal_timeouts: Vec<*mut AbortSignalTimeout>,
+    /// A `Bun.cron()` job keeps the event loop alive until it is stopped.
+    cron_jobs: Vec<*mut CronJob>,
+}
+
+impl ClearedTimers {
+    fn release(self, vm: *mut VirtualMachine) {
+        for p in self.pinned {
+            TimerObjectInternals::release_heap_pin(p, vm);
+        }
+        for t in self.signal_timeouts {
+            // SAFETY: `clear` popped `t` from the fake heap, so its box is
+            // still owned by a live signal; JS thread; the `FakeTimers` borrow
+            // ended before this call. `t` is freed by the call.
+            unsafe { AbortSignalTimeout::discard(t) };
+        }
+        for job in self.cron_jobs {
+            // SAFETY: `clear` popped `job`'s node from the fake heap, so the
+            // job was scheduled and its JS wrapper (strong while scheduled)
+            // keeps it alive; no JS has run since; the `FakeTimers` borrow
+            // ended before this call.
+            unsafe { CronJob::stop_dropped_from_fake_heap(job) };
+        }
+    }
+}
+
 impl FakeTimers {
     pub(crate) fn is_active(&self) -> bool {
         self.active
@@ -124,64 +168,77 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
     }
 
-    fn deactivate(
-        &mut self,
-        global: &JSGlobalObject,
-    ) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
-        let pinned = self.clear();
+    fn deactivate(&mut self, global: &JSGlobalObject) -> ClearedTimers {
+        let cleared = self.clear();
         CURRENT_TIME.clear(global);
         self.active = false;
-        pinned
+        cleared
     }
 
     /// Restore real timers without draining the fake heap. Used by the
     /// `--isolate` file boundary so `swap_global_for_test_isolation`'s
     /// `cancel_all_timeout_objects` (which runs after the outgoing global's
     /// JS has stopped) can walk the still-populated fake heap and release
-    /// `TimeoutObject` pins and unlink `AbortSignalTimeout` timers.
+    /// `TimeoutObject` pins and discard `AbortSignalTimeout` timers.
     pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
         CURRENT_TIME.clear(global);
         self.active = false;
     }
 
-    /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
-    /// refcount sticks at 2 (wrapper +1 from `init_with`, heap +1 from
-    /// `reschedule`) and `internals.this_value` still GC-roots the wrapper, so
-    /// neither side ever frees.
-    #[must_use]
-    fn clear(&mut self) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
-        let mut pinned = Vec::new();
+    /// Pop every fake timer. Popping only unlinks the nodes; the owners that
+    /// need to hear about it are returned for the caller to release.
+    fn clear(&mut self) -> ClearedTimers {
+        let mut cleared = ClearedTimers::default();
         while let Some(timer) = self.timers.delete_min() {
-            // SAFETY: `delete_min` returned a live node; the `TimeoutObject`
-            // it belongs to stays live until the caller's release pass.
+            // SAFETY: `delete_min` returned a live node; the owner it belongs
+            // to stays live until the caller's release pass.
             unsafe {
                 (*timer).in_heap = InHeap::None;
                 (*timer).state = EventLoopTimerState::CANCELLED;
-                if (*timer).tag == EventLoopTimerTag::TimeoutObject {
-                    let parent = TimeoutObject::from_timer_ptr(timer);
-                    pinned.push(core::ptr::NonNull::new_unchecked(
-                        core::ptr::addr_of_mut!((*parent).internals),
-                    ));
+                match (*timer).tag {
+                    EventLoopTimerTag::TimeoutObject => {
+                        let parent = TimeoutObject::from_timer_ptr(timer);
+                        cleared.pinned.push(core::ptr::NonNull::new_unchecked(
+                            core::ptr::addr_of_mut!((*parent).internals),
+                        ));
+                    }
+                    EventLoopTimerTag::AbortSignalTimeout => {
+                        cleared
+                            .signal_timeouts
+                            .push(AbortSignalTimeout::from_timer_ptr(timer));
+                    }
+                    EventLoopTimerTag::CronJob => {
+                        cleared.cron_jobs.push(CronJob::from_timer_ptr(timer));
+                    }
+                    tag => debug_assert!(
+                        false,
+                        "{} timer in the fake heap has no release path",
+                        <&'static str>::from(tag),
+                    ),
                 }
             }
         }
 
-        pinned
+        cleared
     }
 
-    fn execute_next(global: &JSGlobalObject) -> bool {
+    fn execute_next(global: &JSGlobalObject) -> JsResult<bool> {
         // SAFETY: `timer_all()` is the live per-thread `All`; the borrow ends
         // at this statement, before `fire` re-enters `All::insert`.
         let next = match unsafe { (*timer_all()).fake_timers.timers.delete_min() } {
             Some(n) => n,
-            None => return false,
+            None => return Ok(false),
         };
 
-        Self::fire(global, next);
-        true
+        Self::fire(global, next)?;
+        Ok(true)
     }
 
-    fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) {
+    /// Fired from inside the `jest` timer-control host functions. The fake
+    /// clock is a timer drain of its own: like `All::drain_timers`, a
+    /// timer whose callback threw is reported and the drain goes on; only the
+    /// VM's termination stops it, thrown to the `jest` host function driving it.
+    fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) -> JsResult<()> {
         let _vm = global.bun_vm();
 
         // SAFETY: `next` was just popped from our heap; live until callback completes.
@@ -195,10 +252,15 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        let fired = unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        match fired {
+            Ok(()) => Ok(()),
+            Err(err) => bun_jsc::task::report_error_or_terminate(global, err)
+                .map_err(|stopped| stopped.throw(global)),
+        }
     }
 
-    fn execute_until(global: &JSGlobalObject, until: Timespec) {
+    fn execute_until(global: &JSGlobalObject, until: Timespec) -> JsResult<()> {
         let all = timer_all();
         'outer: loop {
             let next = 'blk: {
@@ -218,22 +280,24 @@ impl FakeTimers {
                 debug_assert!(core::ptr::eq(min, peek));
                 break 'blk min;
             };
-            Self::fire(global, next);
+            Self::fire(global, next)?;
         }
+        Ok(())
     }
 
-    fn execute_only_pending_timers(global: &JSGlobalObject) {
+    fn execute_only_pending_timers(global: &JSGlobalObject) -> JsResult<()> {
         // SAFETY: `timer_all()` is the live per-thread `All`.
         let until = match unsafe { (*timer_all()).fake_timers.timers.find_max() } {
             // SAFETY: `t` is reachable in the heap and live while linked.
             Some(t) => from_el_timespec(unsafe { &(*t).next }),
-            None => return,
+            None => return Ok(()),
         };
-        Self::execute_until(global, until);
+        Self::execute_until(global, until)
     }
 
-    fn execute_all_timers(global: &JSGlobalObject) {
-        while Self::execute_next(global) {}
+    fn execute_all_timers(global: &JSGlobalObject) -> JsResult<()> {
+        while Self::execute_next(global)? {}
+        Ok(())
     }
 }
 
@@ -314,12 +378,9 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
 #[bun_jsc::host_fn]
 fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: per-thread `timer::All`; the borrow ends before `release_heap_pin`.
-    let pinned = unsafe { (*timer_all()).fake_timers.deactivate(global) };
-    let vm = global.bun_vm_ptr();
-    for p in pinned {
-        TimerObjectInternals::release_heap_pin(p, vm);
-    }
+    // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
+    let cleared = unsafe { (*timer_all()).fake_timers.deactivate(global) };
+    cleared.release(global.bun_vm_ptr());
 
     // Remove the setTimeout.clock marker when switching back to real timers.
     set_fake_timer_marker(global, false);
@@ -331,7 +392,7 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    let _ = FakeTimers::execute_next(global);
+    FakeTimers::execute_next(global)?;
 
     Ok(frame.this())
 }
@@ -365,8 +426,9 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
     let target = current.add_ms_float(effective_advance);
 
-    FakeTimers::execute_until(global, target);
+    let advanced = FakeTimers::execute_until(global, target);
     CURRENT_TIME.set(global, &target, None);
+    advanced?;
 
     Ok(frame.this())
 }
@@ -375,7 +437,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    FakeTimers::execute_only_pending_timers(global);
+    FakeTimers::execute_only_pending_timers(global)?;
 
     Ok(frame.this())
 }
@@ -384,7 +446,7 @@ fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    FakeTimers::execute_all_timers(global);
+    FakeTimers::execute_all_timers(global)?;
 
     Ok(frame.this())
 }
@@ -403,12 +465,9 @@ fn get_timer_count(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    // SAFETY: per-thread `timer::All`; the borrow ends before `release_heap_pin`.
-    let pinned = unsafe { (*timer_all()).fake_timers.clear() };
-    let vm = global.bun_vm_ptr();
-    for p in pinned {
-        TimerObjectInternals::release_heap_pin(p, vm);
-    }
+    // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
+    let cleared = unsafe { (*timer_all()).fake_timers.clear() };
+    cleared.release(global.bun_vm_ptr());
 
     Ok(frame.this())
 }

@@ -116,9 +116,9 @@ Node allocation uses the thread-local store (`Expr::init`, `Stmt::alloc`) so
 nodes land in the parser's arena. `Binding` and slice/string copies need an
 explicit `&Arena` (the `Codegen` context carries one).
 
-New symbols (`$`, `t0`, `c`, `_c`) are minted via the `SymbolHost` trait
+New symbols (`$`, `t0`, `c`, `_c`) are minted via the `Host` trait
 implemented by the parser's `P`; the import of `react/compiler-runtime` is
-registered via `SymbolHost::add_import_record`.
+registered via `Host::add_import_record`.
 
 ### Bail-out semantics
 

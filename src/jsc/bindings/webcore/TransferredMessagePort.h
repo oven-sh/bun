@@ -58,7 +58,6 @@ struct TransferredMessagePort {
     ~TransferredMessagePort();
 
     TransferredMessagePort(TransferredMessagePort&&) = default;
-    TransferredMessagePort& operator=(TransferredMessagePort&&);
     TransferredMessagePort(const TransferredMessagePort&) = delete;
     TransferredMessagePort& operator=(const TransferredMessagePort&) = delete;
 };

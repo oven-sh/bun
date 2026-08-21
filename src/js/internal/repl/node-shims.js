@@ -1,6 +1,3 @@
-// Shims for Node internals consumed by the ported node:repl/readline stack.
-// Each export matches the upstream name/calling convention.
-// https://github.com/nodejs/node/tree/main/lib/internal
 const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
@@ -29,11 +26,7 @@ const {
 
 // ---- internal/util ----------------------------------------------------
 
-const { kEmptyObject } = require("internal/shared");
-
-// Node rebuilds the regex in an internal realm; Bun has none, so load-time
-// primordials close the [Symbol.*] override hole (RegExp.prototype.exec is
-// still observable per spec's @@replace/@@split Get(rx,"exec")).
+// https://github.com/nodejs/node/blob/main/lib/internal/util.js
 function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
   return RegExpPrototypeSymbolReplace(regexp, str, replacement);
 }
@@ -590,25 +583,11 @@ function has() {
   return true;
 }
 
-// ---- internal/streams/utils ----------------------------------------------
-
-function isWritable(stream) {
-  return typeof stream?.write === "function";
-}
-
-// ---- internal/events/abort_listener ----------------------------------------------
-
-const { addAbortListener } = require("internal/abort_listener");
-
 // ---- internal/bootstrap/realm ----------------------------------------------
 
 const BuiltinModule = {
   getSchemeOnlyModuleNames() {
-    // Bare names; completion.js prefixes them with "node:" itself. Derived
-    // from the `node:`-prefixed builtinModules entries (e.g. node:sqlite);
-    // `test` resolves as node:test but is missing from builtinModules.
-    const names = ["test"];
-    // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator].
+    const names = ["test", "quic"];
     const modules = Module.builtinModules;
     for (let i = 0; i < modules.length; i++) {
       const id = modules[i];
@@ -785,10 +764,6 @@ function makeContextifyScript(
   });
 }
 
-function runScriptInThisContext(script, displayErrors, _breakOnFirstLine) {
-  return script.runInThisContext({ displayErrors });
-}
-
 // ---- internal/modules/cjs/loader (constructible Module shim) ----------------
 
 class CJSModuleShim {
@@ -823,9 +798,6 @@ class CJSModuleShim {
 // ---- internalBinding('contextify') ----------------------------------------------
 
 function startSigintWatchdog() {
-  // breakOnSigint works via Bun's SigintWatcher (NodeVMScript.cpp). Only Node's
-  // `had_pending_signals` race (SIGINT between script exit and raw-mode restore)
-  // is unimplemented, so stopSigintWatchdog() always returns false.
   return true;
 }
 
@@ -836,9 +808,7 @@ function stopSigintWatchdog() {
 // ---- internalBinding('util') ----------------------------------------------
 
 const ALL_PROPERTIES = 0;
-const ONLY_WRITABLE = 1;
 const ONLY_ENUMERABLE = 2;
-const ONLY_CONFIGURABLE = 4;
 const SKIP_STRINGS = 8;
 const SKIP_SYMBOLS = 16;
 
@@ -885,9 +855,7 @@ export default {
   // internalBinding('util')
   constants: {
     ALL_PROPERTIES,
-    ONLY_WRITABLE,
     ONLY_ENUMERABLE,
-    ONLY_CONFIGURABLE,
     SKIP_STRINGS,
     SKIP_SYMBOLS,
   },
@@ -898,8 +866,6 @@ export default {
   decorateErrorStack,
   deprecate: util.deprecate,
   isError,
-  kEmptyObject,
-  promisify: util.promisify,
   // internal/util/colors
   shouldColorize,
   // internal/util/debuglog
@@ -913,10 +879,6 @@ export default {
   // internal/process/permission (consumed as a namespace: permission.isEnabled())
   isEnabled,
   has,
-  // internal/streams/utils
-  isWritable,
-  // internal/events/abort_listener
-  addAbortListener,
   // internal/bootstrap/realm
   BuiltinModule,
   // internal/modules/esm/get_format
@@ -927,9 +889,7 @@ export default {
   Module: CJSModuleShim,
   // internal/modules/helpers
   addBuiltinLibsToObject,
-  getBuiltinLibs,
   makeRequireFunction,
   // internal/vm
   makeContextifyScript,
-  runScriptInThisContext,
 };

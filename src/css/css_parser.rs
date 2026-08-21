@@ -625,12 +625,6 @@ pub trait QualifiedRuleParser {
 #[derive(Default, Clone, Copy, crate::DeepClone)]
 pub struct DefaultAtRule;
 
-impl DefaultAtRule {
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.new_error(PrinterErrorKind::fmt_error, None)
-    }
-}
-
 /// Same as `AtRuleParser` but modified to provide parser options.
 /// Also added: `on_import_rule` to handle `@import` rules.
 pub trait CustomAtRuleParser {
@@ -3735,9 +3729,6 @@ impl<'a> Parser<'a> {
         let token: &Token = if using_cached_token {
             let cached_token = self.input.cached_token.as_ref().unwrap();
             self.input.tokenizer.reset(&cached_token.end_state);
-            if let Token::Function(f) = &cached_token.token {
-                self.input.tokenizer.see_function(f);
-            }
             &self.input.cached_token.as_ref().unwrap().token
         } else {
             let new_token = match self.input.tokenizer.next() {
@@ -4085,13 +4076,6 @@ pub struct CachedToken {
 
 // ───────────────────────────── Tokenizer ─────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SeenStatus {
-    DontCare,
-    LookingForThem,
-    SeenAtLeastOne,
-}
-
 pub struct Tokenizer<'a> {
     pub(crate) src: &'a [u8],
     pub(crate) position: usize,
@@ -4099,7 +4083,6 @@ pub struct Tokenizer<'a> {
     pub(crate) current_line_start_position: usize,
     pub(crate) current_line_number: u32,
     pub(crate) arena: &'a Bump,
-    var_or_env_functions: SeenStatus,
 }
 
 const FORM_FEED_BYTE: u8 = 0x0C;
@@ -4142,7 +4125,6 @@ impl<'a> Tokenizer<'a> {
             current_line_start_position: 0,
             current_line_number: 0,
             arena,
-            var_or_env_functions: SeenStatus::DontCare,
         }
     }
 
@@ -4196,17 +4178,6 @@ impl<'a> Tokenizer<'a> {
     #[inline]
     pub(crate) fn is_eof(&self) -> bool {
         self.position >= self.src.len()
-    }
-
-    pub(crate) fn see_function(&mut self, name: &[u8]) {
-        if self.var_or_env_functions == SeenStatus::LookingForThem {
-            // Note: this `&&` is always false; kept as-is intentionally.
-            if strings::eql_case_insensitive_ascii_check_length(name, b"var")
-                && strings::eql_case_insensitive_ascii_check_length(name, b"env")
-            {
-                self.var_or_env_functions = SeenStatus::SeenAtLeastOne;
-            }
-        }
     }
 
     /// Return error if it is eof.
@@ -4590,9 +4561,7 @@ impl<'a> Tokenizer<'a> {
                 if let Some(tok) = self.consume_unquoted_url() {
                     return tok;
                 }
-                return Token::Function(value);
             }
-            self.see_function(value);
             return Token::Function(value);
         }
         Token::Ident(value)
@@ -5257,11 +5226,6 @@ pub enum TokenKind {
 pub use crate::Token;
 
 impl Token {
-    pub fn eql(lhs: &Token, rhs: &Token) -> bool {
-        // TODO: derive PartialEq once payload lifetimes settle.
-        generic::implement_eql(lhs, rhs)
-    }
-
     /// Return whether this token represents a parse error.
     pub(crate) fn is_parse_error(&self) -> bool {
         matches!(
@@ -5506,22 +5470,16 @@ pub use bun_io::Write as WriteAll;
 // Num/Dimension data layouts hoisted at crate root (lib.rs).
 pub use crate::{Dimension, Num};
 
-// Num/Dimension eql/hash gated until generics::CssEql/CssHash blanket impls
+// Num/Dimension hash gated until generics::CssHash blanket impls
 // cover the float/slice payloads.
 
 impl Num {
-    pub fn eql(lhs: &Num, rhs: &Num) -> bool {
-        generic::implement_eql(lhs, rhs)
-    }
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
 }
 
 impl Dimension {
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        generic::implement_eql(lhs, rhs)
-    }
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
@@ -5562,8 +5520,10 @@ impl<'a> CopyOnWriteStr<'a> {
 // ───────────────────────────── color ─────────────────────────────
 
 pub mod color {
-    /// The opaque alpha value of 1.0.
-    pub(crate) const OPAQUE: f32 = 1.0;
+    use crate::values::color::RGBA;
+
+    /// The alpha channel of a fully opaque color.
+    pub(crate) const OPAQUE: u8 = 255;
 
     #[derive(Debug, strum::IntoStaticStr)]
     pub enum ColorError {
@@ -5752,29 +5712,39 @@ pub mod color {
     }
 
     /// Parse a color hash, without the leading '#' character.
-    pub(crate) fn parse_hash_color(value: &[u8]) -> Option<(u8, u8, u8, f32)> {
+    pub(crate) fn parse_hash_color(value: &[u8]) -> Option<RGBA> {
         parse_hash_color_impl(value).ok()
     }
 
-    pub(crate) fn parse_hash_color_impl(value: &[u8]) -> Result<(u8, u8, u8, f32), ColorError> {
+    pub(crate) fn parse_hash_color_impl(value: &[u8]) -> Result<RGBA, ColorError> {
         let pair = |i: usize| {
             bun_core::fmt::hex_pair_value(value[i], value[i + 1]).ok_or(ColorError::Parse)
         };
         match value.len() {
-            8 => Ok((pair(0)?, pair(2)?, pair(4)?, pair(6)? as f32 / 255.0)),
-            6 => Ok((pair(0)?, pair(2)?, pair(4)?, OPAQUE)),
-            4 => Ok((
-                from_hex(value[0])? * 17,
-                from_hex(value[1])? * 17,
-                from_hex(value[2])? * 17,
-                (from_hex(value[3])? * 17) as f32 / 255.0,
-            )),
-            3 => Ok((
-                from_hex(value[0])? * 17,
-                from_hex(value[1])? * 17,
-                from_hex(value[2])? * 17,
-                OPAQUE,
-            )),
+            8 => Ok(RGBA {
+                red: pair(0)?,
+                green: pair(2)?,
+                blue: pair(4)?,
+                alpha: pair(6)?,
+            }),
+            6 => Ok(RGBA {
+                red: pair(0)?,
+                green: pair(2)?,
+                blue: pair(4)?,
+                alpha: OPAQUE,
+            }),
+            4 => Ok(RGBA {
+                red: from_hex(value[0])? * 17,
+                green: from_hex(value[1])? * 17,
+                blue: from_hex(value[2])? * 17,
+                alpha: from_hex(value[3])? * 17,
+            }),
+            3 => Ok(RGBA {
+                red: from_hex(value[0])? * 17,
+                green: from_hex(value[1])? * 17,
+                blue: from_hex(value[2])? * 17,
+                alpha: OPAQUE,
+            }),
             _ => Err(ColorError::Parse),
         }
     }

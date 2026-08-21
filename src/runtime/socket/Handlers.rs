@@ -452,8 +452,7 @@ pub struct SocketConfig {
     pub(crate) allow_half_open: bool,
     pub(crate) reuse_port: bool,
     pub(crate) ipv6_only: bool,
-    /// node:net's `pauseOnConnect`, read off the options like `localAddress`:
-    /// the socket (or every socket this listener accepts) opens paused.
+    /// node:net's `pauseOnConnect` (read off the options like `localAddress`): the socket, or every accepted one, opens paused.
     pub(crate) pause_on_connect: bool,
 }
 

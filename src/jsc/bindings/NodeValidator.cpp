@@ -583,17 +583,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * global
 
 JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, std::span<const int32_t> oneOf, int32_t* out)
 {
-    if (!value.isInt32()) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
-    }
-
-    int32_t value_num = value.asInt32();
-    for (int32_t oneOfNum : oneOf) {
-        if (value_num == oneOfNum) {
-            if (out) {
-                *out = oneOfNum;
+    // Node compares with ArrayPrototypeIncludes(), so a number matches by value whether
+    // the JSValue holds it as an int32 or as a double.
+    if (value.isNumber()) {
+        double value_num = value.asNumber();
+        for (int32_t oneOfNum : oneOf) {
+            if (value_num == static_cast<double>(oneOfNum)) {
+                if (out) {
+                    *out = oneOfNum;
+                }
+                return JSValue::encode(jsUndefined());
             }
-            return JSValue::encode(jsUndefined());
         }
     }
 

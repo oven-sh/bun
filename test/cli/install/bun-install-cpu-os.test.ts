@@ -1,6 +1,6 @@
 import { spawn } from "bun";
-import { familySync, MUSL } from "detect-libc";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { familySync, MUSL } from "detect-libc";
 import { rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, readdirSorted, toMatchNodeModulesAt } from "harness";
 import { join } from "path";

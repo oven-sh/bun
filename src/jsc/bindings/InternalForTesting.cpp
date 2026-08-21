@@ -10,6 +10,7 @@
 #include <wtf/text/WTFString.h>
 
 extern "C" void BunString__toThreadSafe(BunString* str);
+extern "C" void Zig__GlobalObject__testIsolationResetStats(Zig::GlobalObject*, uint32_t*, uint32_t*);
 
 namespace Bun {
 
@@ -25,6 +26,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD, (JSC::JSGlobalObjec
     auto string = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsString(vm, WebCore::lowercaseHeaderName(string)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_testIsolationResetStats, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = globalObject->vm();
+    uint32_t reuse = 0, swap = 0;
+    Zig__GlobalObject__testIsolationResetStats(defaultGlobalObject(globalObject), &reuse, &swap);
+    auto* obj = JSC::constructEmptyObject(globalObject);
+    obj->putDirect(vm, Identifier::fromString(vm, "reuse"_s), jsNumber(reuse));
+    obj->putDirect(vm, Identifier::fromString(vm, "swap"_s), jsNumber(swap));
+    return JSValue::encode(obj);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

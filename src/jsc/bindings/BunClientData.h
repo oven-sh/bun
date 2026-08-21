@@ -75,6 +75,7 @@ class GlobalObject;
 
 namespace Bun {
 class StrongRootBlock;
+struct TestIsolationBaseline;
 
 // JSC measures the live size of the heap at the end of each collection, but only
 // publishes it per scope: an eden collection updates
@@ -269,6 +270,12 @@ public:
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+
+    // See Zig__GlobalObject__captureTestIsolationBaseline (ZigGlobalObject.cpp).
+    struct TestIsolationBaselineDeleter {
+        void operator()(Bun::TestIsolationBaseline*) const;
+    };
+    std::unique_ptr<Bun::TestIsolationBaseline, TestIsolationBaselineDeleter> testIsolationBaseline;
 
 private:
     bool isWebCoreJSClientData() const final { return true; }

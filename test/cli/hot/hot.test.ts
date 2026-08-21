@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +775,68 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+it(
+  "keeps the entry point promise protected from GC while --hot polls it",
+  async () => {
+    // --hot and --watch read the entry point's load promise on every event
+    // loop tick for the rest of the process. Nothing else references that
+    // promise once it settles, so it has to be gc-protected, and a reload has
+    // to release the previous one. `getProtectedObjects()` lists the cells
+    // native code has protected.
+    using dir = tempDir("hot-entry-promise", {
+      "entry.js": `
+        import { getProtectedObjects } from "bun:jsc";
+        import { readFileSync, writeFileSync } from "fs";
+
+        globalThis.run = (globalThis.run ?? 0) + 1;
+        clearInterval(globalThis.resave);
+        if (globalThis.run > 2) process.exit(0);
+
+        function protectedPromiseStatuses() {
+          return getProtectedObjects()
+            .filter(object => object instanceof Promise)
+            .map(promise => Bun.peek.status(promise));
+        }
+        function report(when, statuses) {
+          console.log("run " + globalThis.run + " " + when + ": " + JSON.stringify(statuses));
+        }
+
+        // The module body runs while its own load promise is still pending.
+        report("evaluating", protectedPromiseStatuses());
+        function afterSettled() {
+          const statuses = protectedPromiseStatuses();
+          if (statuses.includes("pending")) return setImmediate(afterSettled);
+          report("settled", statuses);
+          if (globalThis.run === 2) process.exit(0);
+          // Re-save the entry until the reload picks it up. Run 2 clears this.
+          globalThis.resave = setInterval(() => {
+            writeFileSync(import.meta.path, readFileSync(import.meta.path));
+          }, 50);
+        }
+        setImmediate(afterSettled);
+      `,
+    });
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([runner.stdout.text(), runner.exited]);
+
+    const reports = stdout.split("\n").filter(line => line.startsWith("run 1 ") || line.startsWith("run 2 "));
+    expect(reports).toEqual([
+      'run 1 evaluating: ["pending"]',
+      'run 1 settled: ["fulfilled"]',
+      'run 2 evaluating: ["pending"]',
+      'run 2 settled: ["fulfilled"]',
+    ]);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
 );

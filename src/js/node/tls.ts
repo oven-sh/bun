@@ -221,8 +221,7 @@ function validateSecureContextOptions(options) {
     validateString(sigalgs, "options.sigalgs");
     if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
   }
-  // BoringSSL has no ENGINE support; same checks and order as node's no-engine build:
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L221
+  // BoringSSL has no ENGINE support; same checks and order as node's no-engine build (lib/internal/tls/secure-context.js).
   if (privateKeyIdentifier !== undefined && privateKeyIdentifier !== null) {
     if (privateKeyEngine === undefined || privateKeyEngine === null) {
       // Engine is required when privateKeyIdentifier is present

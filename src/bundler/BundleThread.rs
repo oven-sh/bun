@@ -369,17 +369,13 @@ pub mod singleton {
     unsafe impl Sync for Instance {}
 
     static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
-    /// Serializes [`start`]. A lock rather than `OnceLock::get_or_init`,
-    /// because the spawn can fail (the OS refused the thread) and a later
-    /// `start` has to be able to try again.
+    /// Not `OnceLock::get_or_init`: a failed [`start`] is retried by the next call.
     static START_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 
-    /// Starts the bundle thread if it is not running yet, and blocks until it
-    /// is. `Bun.build()` calls this before it allocates anything for a build,
-    /// so a refused thread rejects that build and the next build tries again.
-    ///
-    /// All calls (across the process) must use the same `C`; the static is
-    /// type-erased. `get` and `enqueue` rely on a previous `Ok` from here.
+    /// Starts the bundle thread if it is not running yet and blocks until it
+    /// runs. `Err`: the OS refused the thread; the caller fails its build, and
+    /// the next call tries again. All calls must use the same `C` (the static
+    /// is type-erased), and `get`/`enqueue` require a previous `Ok`.
     pub fn start<C: CompletionStruct>() -> Result<(), SpawnError> {
         if INSTANCE.get().is_some() {
             return Ok(());
@@ -393,16 +389,15 @@ pub mod singleton {
 
         // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn` takes the
         // raw pointer directly so no `&mut` is materialized that would alias the
-        // bundle thread's own access. A failed attempt does not touch it, so the
-        // next attempt can pass it again.
+        // bundle thread's own access. A failed attempt leaves it untouched.
         let spawned = bun_threading::spawn_with_retry("bundler", || unsafe {
             BundleThread::spawn(bundle_thread)
         });
         let os_thread = match spawned {
             Ok(os_thread) => os_thread,
             Err(err) => {
-                // SAFETY: no thread started against it, so this is the only
-                // pointer to the allocation `into_raw` produced above.
+                // SAFETY: no thread runs against it; sole pointer to the
+                // allocation from `into_raw` above.
                 drop(unsafe { bun_core::heap::take(bundle_thread) });
                 return Err(err);
             }
@@ -412,8 +407,7 @@ pub mod singleton {
 
         // SAFETY: `into_raw` of a `Box` is never null.
         let instance = Instance(unsafe { NonNull::new_unchecked(bundle_thread.cast::<()>()) });
-        // `INSTANCE` was empty above and this thread holds `START_LOCK`, so
-        // `set` cannot fail.
+        // Cannot fail: `INSTANCE` was empty above, and this thread holds `START_LOCK`.
         let _ = INSTANCE.set(instance);
         Ok(())
     }

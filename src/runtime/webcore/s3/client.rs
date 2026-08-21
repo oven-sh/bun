@@ -182,8 +182,7 @@ pub(crate) fn list_objects(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
 ) -> JsResult<()> {
-    // See `execute_simple_s3_request`: a thread the OS refuses fails the
-    // request through its callback before anything is allocated for it.
+    // Before anything is allocated for the request, like a signing error.
     if let Err(err) = bun_http::http_thread::init(&Default::default()) {
         let message = err.to_string();
         callback(
@@ -1171,8 +1170,7 @@ fn download_stream(
     ),
     callback_context: *mut c_void,
 ) -> *mut S3HttpDownloadStreamingTask {
-    // See `execute_simple_s3_request`: a thread the OS refuses fails the
-    // request through its callback before anything is allocated for it.
+    // Before anything is allocated for the request, like a signing error.
     if let Err(err) = bun_http::http_thread::init(&Default::default()) {
         let message = err.to_string();
         callback(

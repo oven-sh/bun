@@ -2473,9 +2473,7 @@ impl FetchTasklet {
         }
     }
 
-    /// The caller (`fetch_impl`) has started the HTTP thread with
-    /// `http_thread::init` before it created `promise`, so that a thread the
-    /// OS refuses rejects the fetch instead of leaving a promise behind.
+    /// `fetch_impl` has called `http_thread::init` before it created `promise`.
     pub(crate) fn queue(
         global: &JSGlobalObject,
         fetch_options: FetchOptions,

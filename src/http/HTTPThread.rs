@@ -1173,11 +1173,9 @@ use core::cell::Cell;
 mod _event_loop_draft {
     use super::*;
 
-    /// Serializes [`start`]. It is a lock and not a `Once` because a start
-    /// can fail (the OS refused the thread) and the next `init` call has to
-    /// try again.
+    /// Not a `Once`: a failed [`start`] is retried by the next `init` call.
     static START_LOCK: Mutex = Mutex::new();
-    // Set once the thread runs; `init` is a no-op from then on.
+    // Set once the thread runs.
     //
     // Note: `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
     // shared between the `JoinHandle` and the new thread's TLS `current()`.
@@ -1205,12 +1203,9 @@ mod _event_loop_draft {
     /// Caller holds `START_LOCK`.
     fn start(opts: &InitOpts) -> Result<(), SpawnError> {
         if !crate::HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire) {
-            // Initialize the global (with timer started on the calling
-            // thread) BEFORE spawning, so `on_start`'s `crate::http_thread_mut()`
-            // finds it and can fill in `loop_`/`uws_loop`/contexts. Written
-            // once: a failed spawn leaves it in place (nothing else touches it
-            // until a thread runs `on_start`) and a later call only retries the
-            // spawn, so no reader can observe it being rewritten.
+            // Written before the spawn, because `on_start` fills it in, and
+            // written only once: a failed spawn leaves it in place for the
+            // next attempt, so no reader ever sees it rewritten.
             // SAFETY: the caller holds `START_LOCK`, and `HTTP_THREAD_INIT` is
             // still false, so nothing reads `HTTP_THREAD` yet.
             unsafe {
@@ -1428,14 +1423,10 @@ pub fn shutdown_for_exit() -> bool {
 // dispatch_deps bridge removed — real impls now live in
 // h3_client/ClientContext.rs (abort_by_http_id / stream_body_by_http_id).
 
-/// Starts the HTTP client thread if it is not running yet. Every path that
-/// schedules work on it calls this first. `opts` is used by the call that
-/// starts the thread; later calls return `Ok` at once.
-///
-/// `Err` means the OS refused the thread (see `bun_threading::spawn`). The
-/// caller reports it: `fetch()` rejects, `bun install` exits. The next call
-/// tries again, so a limit that goes away does not disable HTTP for the rest
-/// of the process.
+/// Starts the HTTP client thread if it is not running yet; every path that
+/// schedules work on it calls this first. `opts` only matters for the call
+/// that starts it. `Err`: the OS refused the thread. The caller reports that,
+/// and the next call tries again.
 pub fn init(opts: &InitOpts) -> Result<(), SpawnError> {
     _event_loop_draft::init(opts)
 }

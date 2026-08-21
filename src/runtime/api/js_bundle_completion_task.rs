@@ -138,10 +138,8 @@ unsafe impl Send for JSBundleCompletionTask {}
 /// `BundleV2.createAndScheduleCompletionTask` — construct, take a process-keepalive
 /// ref, and hand the task to the bundle-thread singleton.
 ///
-/// The caller has started the bundle thread (`singleton::start`) and handled
-/// a refused thread itself: it knows whether `plugins` is its own (a
-/// `Bun.build()` plugin object) or shared (the server's plugins), and so how
-/// to release it on that path. From here on the task owns the build.
+/// The caller has already called `singleton::start`: only it knows whether
+/// `plugins` is its own or the server's when that fails.
 pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,

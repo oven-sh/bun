@@ -2135,8 +2135,7 @@ impl TestCommand {
             short_lived_globals: ctx.test_options.isolate,
             ..Default::default()
         });
-        // Warm-up only: a test that fetches starts the thread itself and
-        // reports a refused thread on its own request.
+        // Warm-up only. A test's own fetch() reports a refused thread.
         let _ = bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;

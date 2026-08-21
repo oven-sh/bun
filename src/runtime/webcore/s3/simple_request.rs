@@ -566,9 +566,7 @@ pub(crate) fn execute_simple_s3_request(
         )?;
         return Ok(());
     }
-    // Start the HTTP thread before anything is allocated for the request, so
-    // a thread the OS refuses fails the request through its callback like a
-    // signing error does.
+    // Before anything is allocated for the request, like a signing error.
     if let Err(err) = bun_http::http_thread::init(&Default::default()) {
         let message = err.to_string();
         callback.fail(err.code().as_bytes(), message.as_bytes(), callback_context)?;

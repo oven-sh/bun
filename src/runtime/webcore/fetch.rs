@@ -2039,9 +2039,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // The request is about to be handed to the HTTP client thread. If the OS
-    // refuses to start it, that rejects this fetch the way a connect failure
-    // does (`FetchTasklet::on_reject`); a later fetch tries to start it again.
+    // A refused thread rejects like a connect failure does (`FetchTasklet::on_reject`).
     if let Err(err) = http::http_thread::init(&http::http_thread::InitOpts::default()) {
         let err = jsc::SystemError {
             code: BunString::static_(err.code()).into(),
@@ -2050,8 +2048,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             ..Default::default()
         }
         .to_type_error_instance(global_this);
-        // HTTPRequestBody has no Drop impl, so a bare `drop(body)` would leak
-        // the body's store ref or file descriptor.
+        // HTTPRequestBody has no Drop impl; a bare drop leaks its store ref or fd.
         body.detach();
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }

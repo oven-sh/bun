@@ -17,113 +17,85 @@ import { join } from "node:path";
 const canRun = isLinux && !isMusl && !!(Bun.which("cc") || Bun.which("clang") || Bun.which("gcc"));
 const shimPath = canRun ? compileFixture(join(import.meta.dir, "thread-spawn-fail-shim.c"), { flags: ["-ldl"] }) : "";
 
-// JSC starts its GC helper threads, and bmalloc its scavenger thread, when a
-// collection first needs them, and both abort when the OS refuses. A collection
-// while the marker exists (debug builds collect often) must therefore find them
-// running: a collection right before the marker starts them, and they stay up
-// for 10s of inactivity, far longer than the refused call takes.
-const REFUSE_THREADS = /* js */ `
+// The marker exists only while the call under test runs. JSC and bmalloc also
+// start threads on demand (GC helpers, the scavenger, and more at exit) and
+// abort when the OS refuses one, so the window has to be as short as possible,
+// and a collection right before it starts the threads a collection during it
+// would need (they stay up for 10s of inactivity).
+const WHILE_REFUSED = /* js */ `
 import { unlinkSync, writeFileSync } from "node:fs";
 const marker = process.env.REFUSE_THREADS_WHILE_EXISTS;
-function refuseThreads() {
+async function whileRefused(call) {
   Bun.gc(false);
   Bun.gc(true);
   writeFileSync(marker, "");
+  try {
+    return { resolved: await call() };
+  } catch (e) {
+    return { rejected: { name: e.name, code: e.code, message: e.message, path: e.path } };
+  } finally {
+    unlinkSync(marker);
+  }
 }
-function allowThreads() {
-  unlinkSync(marker);
+function print(value) {
+  console.log(JSON.stringify(value));
 }
 `;
 
 const FETCH_FIXTURE = /* js */ `
-${REFUSE_THREADS}
+${WHILE_REFUSED}
 using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
 const unhandled = new Promise(resolve => process.on("unhandledRejection", e => resolve(e.code)));
 
-refuseThreads();
-try {
-  await fetch(server.url);
-  console.log(JSON.stringify({ first: "resolved" }));
-} catch (e) {
-  console.log(JSON.stringify({ first: "rejected", name: e.name, code: e.code, message: e.message, path: e.path }));
-}
+print(await whileRefused(() => fetch(server.url)));
 // Nobody handles this one: it has to reach unhandledRejection like any other
 // failed fetch.
-fetch(server.url);
-console.log(JSON.stringify({ unhandled: await unhandled }));
-allowThreads();
-
-const res = await fetch(server.url);
-console.log(JSON.stringify({ second: await res.text() }));
+await whileRefused(() => void fetch(server.url));
+print({ unhandled: await unhandled });
+print({ afterwards: await (await fetch(server.url)).text() });
 `;
 
 // Built at runtime so the transpiler cannot resolve it. A bare specifier with
 // no node_modules anywhere above the file goes through auto-install, which
 // starts the HTTP thread before it creates the package manager.
 const AUTO_INSTALL_FIXTURE = /* js */ `
-${REFUSE_THREADS}
+${WHILE_REFUSED}
 const specifier = ["left", "pad"].join("-");
-refuseThreads();
-try {
-  console.log(JSON.stringify({ resolved: import.meta.resolveSync(specifier) }));
-} catch (e) {
-  console.log(JSON.stringify({ caught: e.message }));
-}
+print(await whileRefused(() => import.meta.resolveSync(specifier)));
 `;
 
 // One request per S3 code path that starts the thread: a simple request, a
 // listing and a streamed download. Each fails before it touches the network.
 const S3_FIXTURE = /* js */ `
-${REFUSE_THREADS}
+${WHILE_REFUSED}
 const client = new Bun.S3Client({
   accessKeyId: "key",
   secretAccessKey: "secret",
   bucket: "bucket",
   endpoint: "http://127.0.0.1:1",
 });
-const requests = {
-  text: () => client.file("a.txt").text(),
-  list: () => client.list(),
-  stream: () => new Response(client.file("a.txt").stream()).text(),
-};
-refuseThreads();
-for (const [name, request] of Object.entries(requests)) {
-  try {
-    await request();
-    console.log(JSON.stringify({ [name]: "resolved" }));
-  } catch (e) {
-    console.log(JSON.stringify({ [name]: "rejected", code: e.code, message: e.message }));
-  }
-}
+print(await whileRefused(() => client.file("a.txt").text()));
+print(await whileRefused(() => client.list()));
+print(await whileRefused(() => new Response(client.file("a.txt").stream()).text()));
 `;
 
 const BUILD_FIXTURE = /* js */ `
-${REFUSE_THREADS}
+${WHILE_REFUSED}
 const entrypoints = [import.meta.dir + "/entry.js"];
-
-refuseThreads();
-try {
-  await Bun.build({ entrypoints });
-  console.log(JSON.stringify({ first: "resolved" }));
-} catch (e) {
-  console.log(JSON.stringify({ first: "rejected", code: e.code, message: e.message }));
-}
-allowThreads();
-
+print(await whileRefused(() => Bun.build({ entrypoints })));
 const result = await Bun.build({ entrypoints });
-console.log(JSON.stringify({ second: result.success, text: await result.outputs[0].text() }));
+print({ afterwards: result.success, text: await result.outputs[0].text() });
 `;
 
 // The read runs on a work pool thread, so a regular file is read first, while
 // that thread can still be started. The pipe has no data, so the next read
-// parks on the IO thread, which is the one that is refused.
+// parks on the IO thread, which is the one that is refused. The process exits
+// inside the call.
 const STDIN_FIXTURE = /* js */ `
-${REFUSE_THREADS}
+${WHILE_REFUSED}
 await Bun.file(import.meta.path).text();
-refuseThreads();
 console.log("reading stdin");
-await Bun.stdin.text();
-console.log("unreachable");
+print(await whileRefused(() => Bun.stdin.text()));
 `;
 
 // The schedule of bun_threading::spawn_with_retry.
@@ -179,6 +151,8 @@ function jsonLines(stdout: string) {
     });
 }
 
+const HTTP_THREAD_REFUSED = "Failed to start the HTTP client thread: Resource temporarily unavailable (os error 11)";
+
 test.concurrent.skipIf(!canRun)(
   "fetch() rejects when the HTTP thread cannot be started; the next fetch starts it",
   async () => {
@@ -188,14 +162,15 @@ test.concurrent.skipIf(!canRun)(
     expect({ stdout: jsonLines(stdout), stderr, refused, exitCode }).toEqual({
       stdout: [
         {
-          first: "rejected",
-          name: "TypeError",
-          code: "EAGAIN",
-          message: "Failed to start the HTTP client thread: Resource temporarily unavailable (os error 11)",
-          path: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/),
+          rejected: {
+            name: "TypeError",
+            code: "EAGAIN",
+            message: HTTP_THREAD_REFUSED,
+            path: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/),
+          },
         },
         { unhandled: "EAGAIN" },
-        { second: "ok" },
+        { afterwards: "ok" },
       ],
       stderr: "",
       // Two fetches while refused, each one retried per the schedule.
@@ -210,7 +185,15 @@ test.concurrent.skipIf(!canRun)("auto-install reports a refused HTTP thread as a
   const { stdout, stderr, refused, exitCode } = await runFixture(String(dir));
 
   expect({ stdout: jsonLines(stdout), stderr, refused, exitCode }).toEqual({
-    stdout: [{ caught: 'Failed to start the HTTP client thread: EAGAIN while resolving "left-pad"' }],
+    stdout: [
+      {
+        rejected: {
+          name: "ResolveMessage",
+          code: "ERR_MODULE_NOT_FOUND",
+          message: 'Failed to start the HTTP client thread: EAGAIN while resolving "left-pad"',
+        },
+      },
+    ],
     stderr: "",
     refused: ATTEMPTS_PER_START,
     exitCode: 0,
@@ -221,16 +204,11 @@ test.concurrent.skipIf(!canRun)("S3 requests fail when the HTTP thread cannot be
   using dir = tempDir("refuse-threads-s3", { "fixture.js": S3_FIXTURE });
   const { stdout, stderr, refused, exitCode } = await runFixture(String(dir));
 
-  const rejected = {
-    code: "EAGAIN",
-    message: "Failed to start the HTTP client thread: Resource temporarily unavailable (os error 11)",
-  };
+  const rejected = (path: string) => ({
+    rejected: { name: "S3Error", code: "EAGAIN", message: HTTP_THREAD_REFUSED, path },
+  });
   expect({ stdout: jsonLines(stdout), stderr, refused, exitCode }).toEqual({
-    stdout: [
-      { text: "rejected", ...rejected },
-      { list: "rejected", ...rejected },
-      { stream: "rejected", ...rejected },
-    ],
+    stdout: [rejected("a.txt"), rejected(""), rejected("a.txt")],
     stderr: "",
     refused: 3 * ATTEMPTS_PER_START,
     exitCode: 0,
@@ -249,11 +227,13 @@ test.concurrent.skipIf(!canRun)(
     expect({ stdout: jsonLines(stdout), stderr, refused, exitCode }).toEqual({
       stdout: [
         {
-          first: "rejected",
-          code: "EAGAIN",
-          message: "Failed to start the bundler thread: Resource temporarily unavailable (os error 11)",
+          rejected: {
+            name: "Error",
+            code: "EAGAIN",
+            message: "Failed to start the bundler thread: Resource temporarily unavailable (os error 11)",
+          },
         },
-        { second: true, text: expect.stringContaining("42") },
+        { afterwards: true, text: expect.stringContaining("42") },
       ],
       stderr: "",
       refused: ATTEMPTS_PER_START,

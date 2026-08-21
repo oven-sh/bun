@@ -356,13 +356,9 @@ impl Preconnect {
 }
 
 pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
-    // Write-before-read: `Bun__fetchPreconnect` reaches here without going
-    // through any path that calls `HTTPThread::init`, so `schedule()` below
-    // would deref the uninitialized `HTTP_THREAD` static (UB on niche-bearing
-    // fields) if `fetch.preconnect()` is the process's first HTTP operation.
-    // Every other JS-side entry point (`send_sync`, `fetch()`, S3) passes
-    // default opts too. A preconnect is only a hint, so when the thread cannot
-    // start there is nothing to report here: the request that follows reports it.
+    // `schedule()` below needs the thread started (`fetch.preconnect()` may be
+    // the first HTTP operation of the process). A preconnect is only a hint:
+    // a refused thread is reported by the request that follows.
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED
         || crate::http_thread::init(&Default::default()).is_err()
     {

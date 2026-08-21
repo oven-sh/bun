@@ -1370,10 +1370,8 @@ pub mod js_bundler {
         let mut plugins: Option<*mut Plugin> = None;
         let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
 
-        // A thread the OS refuses rejects this build; the next build tries to
-        // start it again. The plugin object is released the way a finished
-        // build's task releases it (`JSBundleCompletionTask::deinit`); `config`
-        // drops with its fields.
+        // The plugin object is released as `JSBundleCompletionTask::deinit`
+        // would release it; `config` drops.
         if let Err(err) = bun_bundler::bundle_v2::singleton::start::<
             crate::api::js_bundle_completion_task::JSBundleCompletionTask,
         >() {

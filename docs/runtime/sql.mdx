@@ -1367,7 +1367,7 @@ Bun converts MySQL types to JavaScript types:
 | BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                  |
 | GEOMETRY                                | Buffer                   | Binary character set; the bytes are a 4-byte SRID followed by WKB                                |
 
-`DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC**. The `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. Reading as UTC matches how Bun writes values (a bound `Date` stores its UTC components). The same applies to PostgreSQL's `timestamp` (without time zone); `timestamptz` carries an explicit offset and is unaffected.
+`DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC**. The `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. Reading as UTC matches how Bun writes values (a bound `Date` stores its UTC components). PostgreSQL's `timestamp` (without time zone) behaves the same way, see [Timestamps and time zones](#timestamps-and-time-zones).
 
 #### Differences from PostgreSQL
 
@@ -1382,6 +1382,20 @@ The API is unified, but behavior differs:
 We haven't implemented `LOAD DATA INFILE` support yet.
 
 ### PostgreSQL-Specific Features
+
+#### Timestamps and time zones
+
+A `timestamp` (without time zone) value has no offset on the wire. Bun decodes it as **UTC**: the `Date` you get has the same UTC wall clock that was stored, regardless of the machine's time zone. This matches how Bun writes values (a bound `Date` stores its UTC components), so a `Date` round-trips exactly on any host.
+
+```ts
+// Column: created_at timestamp, stored value: 2024-01-15 12:00:00
+const [row] = await sql`SELECT created_at FROM events`;
+row.created_at.toISOString(); // "2024-01-15T12:00:00.000Z" on every host
+```
+
+This differs from `node-postgres` (`pg`) and `postgres.js`, which decode `timestamp` as **local time**. If you migrate from those drivers and the host is not UTC, the same stored value produces a `Date` for a different instant. `timestamptz` carries an explicit offset and decodes the same in every driver. Prefer `timestamptz` when a column stores a point in time.
+
+#### Not yet implemented
 
 We haven't implemented these yet:
 

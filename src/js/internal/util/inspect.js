@@ -2933,23 +2933,7 @@ function stripVTControlCharacters(str) {
 }
 
 // utils
-function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
-  const desc = ObjectGetOwnPropertyDescriptors(a);
-  const ret = [];
-  for (const [k, v] of ObjectEntries(desc)) {
-    if (!RegExpPrototypeTest(/^(0|[1-9][0-9]*)$/, k) || NumberParseInt(k, 10) >= 2 ** 32 - 1) {
-      // Arrays are limited in size
-      if (filter === ONLY_ENUMERABLE && !v.enumerable) continue;
-      else ArrayPrototypePush.$call(ret, k);
-    }
-  }
-  for (const s of ObjectGetOwnPropertySymbols(a)) {
-    const v = ObjectGetOwnPropertyDescriptor(a, s);
-    if (filter === ONLY_ENUMERABLE && !v.enumerable) continue;
-    ArrayPrototypePush.$call(ret, s);
-  }
-  return ret;
-}
+const getOwnNonIndexProperties = $newCppFunction("UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties", 2);
 function getPromiseDetails(promise) {
   const state = $peekPromiseStatus(promise);
   if (state !== 0) {

@@ -383,6 +383,25 @@ describe("util", () => {
   it("format", () => {
     expect(util.format("%s:%s", "foo")).toBe("foo:%s");
   });
+  it("formatWithOptions and inspect.defaultOptions validate their options like Node", () => {
+    const err = { code: "ERR_INVALID_ARG_TYPE", name: "TypeError" };
+    // Arrays are allowed for formatWithOptions (kValidateObjectAllowArray), functions and null are not.
+    expect(util.formatWithOptions([], "%s", 1)).toBe("1");
+    expect(() => util.formatWithOptions(() => {}, "x")).toThrow(expect.objectContaining(err));
+    expect(() => util.formatWithOptions(null, "x")).toThrow(expect.objectContaining(err));
+    const saved = { ...util.inspect.defaultOptions };
+    try {
+      expect(() => (util.inspect.defaultOptions = () => {})).toThrow(expect.objectContaining(err));
+      expect(() => (util.inspect.defaultOptions = [])).toThrow(expect.objectContaining(err));
+      expect(() => (util.inspect.defaultOptions = { depth: 3 })).not.toThrow();
+    } finally {
+      util.inspect.defaultOptions = saved;
+    }
+    expect(() => util.stripVTControlCharacters(1)).toThrow(
+      expect.objectContaining({ ...err, message: 'The "str" argument must be of type string. Received type number (1)' }),
+    );
+  });
+
   it("formatWithOptions", () => {
     expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");
     expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(

@@ -416,6 +416,8 @@ declare module "bun" {
      * - if `uint8array`, then the message is a `Uint8Array`.
      * - if `blob`, then the message is a `Blob`.
      *
+     * The declared type of `message` is the one of the default `binaryType`.
+     *
      * @param ws The websocket that sent the message
      * @param message The message received
      */
@@ -448,6 +450,9 @@ declare module "bun" {
     /**
      * Called when a ping is received.
      *
+     * Like a binary message, `data` has the type that `binaryType` selects.
+     * The declared type is the one of the default `binaryType`.
+     *
      * @param ws The websocket that received the ping
      * @param data The data sent with the ping
      */
@@ -455,6 +460,9 @@ declare module "bun" {
 
     /**
      * Called when a pong is received.
+     *
+     * Like a binary message, `data` has the type that `binaryType` selects.
+     * The declared type is the one of the default `binaryType`.
      *
      * @param ws The websocket that received the pong
      * @param data The data sent with the pong

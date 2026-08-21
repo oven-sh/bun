@@ -969,24 +969,20 @@ class BunWebSocketMocked extends EventEmitter {
   #protocol;
   #extensions;
   #bufferedAmount = 0;
-  #binaryType = "arraybuffer";
+  // The default of the ServerWebSocket. The setter keeps both sides in sync.
+  #binaryType = "nodebuffer";
 
   #onclose;
   #onerror;
   #onmessage;
   #onopen;
 
-  constructor(url, protocol, extensions, binaryType) {
+  constructor(url, protocol, extensions) {
     super();
     this.#ws = null;
     this.#state = ReadyState_CONNECTING;
     this.#url = url;
     this.#bufferedAmount = 0;
-    binaryType = binaryType || "arraybuffer";
-    if (binaryType !== "nodebuffer" && binaryType !== "blob" && binaryType !== "arraybuffer") {
-      throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
-    }
-    this.#binaryType = binaryType;
     this.#protocol = protocol;
     this.#extensions = extensions;
 
@@ -1532,7 +1528,7 @@ class WebSocketServer extends EventEmitter {
         ? this.options.handleProtocols(protocols, request)
         : protocols.values().next().value;
     }
-    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer");
+    const ws = new BunWebSocketMocked(request.url, protocol, extensions);
 
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);

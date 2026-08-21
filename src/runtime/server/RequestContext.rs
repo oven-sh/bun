@@ -1402,6 +1402,9 @@ where
         let server = this.server();
         let vm = server.vm();
         let global_this = server.global_this();
+        // Entered for the abort listeners below, and (dropped last) for the
+        // drains below and in the release of `_ref`.
+        let _entered = vm.enter_event_loop_scope_without_checkpoint();
         let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
@@ -2637,6 +2640,12 @@ where
     //
     // - If you return a Promise, we drain the microtask queue once
     // - If you return a streaming Response, we drain the microtask queue (possibly the 2nd time this task!)
+    //
+    // Like a task, the handler and these drains run with the event loop entered
+    // (the dispatchers hold `enter_event_loop_scope_without_checkpoint`), so a
+    // callback the handler dispatches synchronously through `enter()`/`exit()`
+    // (`server.upgrade()` -> `open()`, `ws.close()` -> `close()`) does not
+    // drain in the middle of the handler.
     pub(crate) fn on_response(
         &self,
         this: &ThisServer,

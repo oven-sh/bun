@@ -250,35 +250,39 @@ test.each(Object.entries(bundles))(
   },
 );
 
-test.skipIf(!isMacOS || !isArm64)("codesign verifies a natively compiled executable", async () => {
-  using dir = tempDir("compile-macho-codesign-native", {
-    "entry.ts": `console.log("hi");`,
-  });
-  const cwd = String(dir);
-  const out = join(cwd, "out-native");
+test.skipIf(!isMacOS || !isArm64)(
+  "codesign verifies a natively compiled executable",
+  async () => {
+    using dir = tempDir("compile-macho-codesign-native", {
+      "entry.ts": `console.log("hi");`,
+    });
+    const cwd = String(dir);
+    const out = join(cwd, "out-native");
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", join(cwd, "entry.ts"), "--outfile", out],
-    env: bunEnv,
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, buildStderr, buildExitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(buildStderr).not.toContain("error:");
-  expect(buildExitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(cwd, "entry.ts"), "--outfile", out],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExitCode).toBe(0);
 
-  await using codesign = Bun.spawn({
-    cmd: ["codesign", "--verify", out],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    codesign.stdout.text(),
-    codesign.stderr.text(),
-    codesign.exited,
-  ]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("");
-  expect(exitCode).toBe(0);
-}, 60_000);
+    await using codesign = Bun.spawn({
+      cmd: ["codesign", "--verify", out],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      codesign.stdout.text(),
+      codesign.stderr.text(),
+      codesign.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

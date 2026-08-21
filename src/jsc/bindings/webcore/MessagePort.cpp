@@ -104,8 +104,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     }
     RETURN_IF_EXCEPTION(warnScope, {});
 
-    // A port that has called close() discards posts, including the ones made while a
-    // dispatch loop still delivers its inbox (node: IsHandleClosing() after uv_close).
+    // m_isClosing: the close is pending under a DispatchScope. Node drops these posts too.
     if (!isEntangled() || m_isClosing)
         return {};
 
@@ -226,9 +225,7 @@ void MessagePort::close()
         return;
     m_isClosing = true;
 
-    // Under a DispatchScope the mark is all close() does; the scope finishes the close
-    // once its loop has delivered the rest of the inbox. Anywhere else the close is
-    // immediate and whatever is still queued is dropped. Node does the same in both cases.
+    // ~DispatchScope closes the port once the loop has delivered the rest of the inbox.
     if (m_isDispatching)
         return;
     closeNow();

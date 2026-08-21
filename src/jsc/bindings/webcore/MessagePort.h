@@ -96,12 +96,9 @@ public:
     // Called by the pipe on this port's context thread with one dequeued message.
     void dispatchOneMessage(ScriptExecutionContext&, MessageWithMessagePorts&&);
 
-    // Brackets a loop that delivers this port's inbox (the pipe's drainAndDispatch(), or
-    // flushQueuedMessagesBeforeClose()). A close() that arrives while one is on the stack,
-    // from a 'message' handler or from a microtask run between two deliveries, only marks
-    // the port closing: the loop keeps delivering what is queued, never nested, and the
-    // close completes when the scope ends. Node has the same shape: close() starts the uv
-    // close, OnMessage() finishes its batch, and the close callback runs after that.
+    // On the stack while a loop delivers this port's inbox. A close() made under it only
+    // marks the port: the loop delivers the rest at depth 1 and the scope closes the port
+    // when it ends, like node, whose close callback runs after OnMessage() returns.
     class DispatchScope {
         WTF_MAKE_NONCOPYABLE(DispatchScope);
 
@@ -142,14 +139,12 @@ private:
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
     bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
 
-    // ActiveDOMObject. Both run during teardown, where no dispatch loop resumes
-    // afterwards, so they close at once even if one is still on the stack.
+    // ActiveDOMObject. Teardown closes at once: a DispatchScope on the stack never resumes.
     void contextDestroyed() final;
     void stop() final { closeNow(); }
     bool virtualHasPendingActivity() const final;
 
-    // The second half of close(): detaches from the pipe, drops the loop refs and
-    // queues the 'close' event. Runs no script.
+    // close() without the DispatchScope deferral. Runs no script.
     void closeNow();
 
     // peerClosed(): deliver what the peer sent before it closed, ahead of its 'close'.
@@ -158,8 +153,7 @@ private:
     bool isEntangled() const { return !m_isDetached; }
 
 public:
-    // Checked by the transfer path so a closing-but-not-yet-detached port (close()
-    // called inside a dispatch loop) is rejected the same as a detached one.
+    // The transfer path rejects a port whose close() is pending under a DispatchScope.
     bool isClosing() const { return m_isClosing; }
 
 private:

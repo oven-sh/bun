@@ -126,7 +126,6 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     static constexpr size_t takeAtOnce = 64;
     ScriptExecutionContextIdentifier rescheduleCtx = 0;
-    // A close() made by a handler below takes effect when this scope ends, after the loop.
     MessagePort::DispatchScope dispatchScope { *port };
     while (true) {
         std::optional<MessageWithMessagePorts> message;
@@ -184,9 +183,8 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     }
 
     // Budget spent with messages left. We are on `context`'s thread: continue on
-    // its next loop iteration (after I/O and timers), not in this drain. Not for a
-    // port that closed meanwhile: the scope above drops what is left when it ends
-    // (node: TriggerAsync() is a no-op on a closing handle).
+    // its next loop iteration (after I/O and timers), not in this drain. A closing
+    // port is not continued. dispatchScope drops the rest (node: TriggerAsync() no-ops).
     if (rescheduleCtx && !port->isClosing()) {
         context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
             pipe->drainAndDispatch(side, rescheduleCtx);

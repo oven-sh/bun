@@ -67,7 +67,6 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 
-
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by
 // util.inspect and the REPL completer: own keys minus array indices, without materializing
 // a name (or descriptor) per element the way Object.getOwnPropertyNames() on an array would.

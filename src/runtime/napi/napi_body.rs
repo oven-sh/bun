@@ -2747,7 +2747,9 @@ impl ThreadSafeFunction {
                 // thread reference is gone.
                 let leftovers = self.take_queue();
                 drop(_g);
-                self.hand_back(leftovers);
+                // SAFETY: `self.env` holds the env alive for as long as the function exists.
+                let env = self.env.as_ref().map(|env| unsafe { &*env.get() });
+                self.hand_back(env, leftovers);
                 let _g = self.lock.lock_guard();
                 if self.thread_count.load(Ordering::SeqCst) == 0 {
                     self.maybe_queue_finalizer();
@@ -2866,8 +2868,9 @@ impl ThreadSafeFunction {
     /// back to the addon's call_js_cb with a null env and js_callback, which is
     /// the signal napi_threadsafe_function_call_js documents for "free this,
     /// JS is no longer reachable" (Node's ThreadSafeFunction::EmptyQueue). A
-    /// function created without a call_js_cb has nothing to give back.
-    fn hand_back(&self, items: Vec<*mut c_void>) {
+    /// function created without a call_js_cb has nothing to give back. `env` is
+    /// this function's own, for the crash report only; the addon gets null.
+    fn hand_back(&self, env: Option<&NapiEnv>, items: Vec<*mut c_void>) {
         let TsfnCallback::C {
             napi_threadsafe_function_call_js,
             ..
@@ -2876,6 +2879,7 @@ impl ThreadSafeFunction {
             return;
         };
         let call_js = *napi_threadsafe_function_call_js;
+        let _in_module = env.map(NapiEnv::enter_for_crash_report);
         for item in items {
             call_js(ptr::null_mut(), napi_value(0), self.ctx, item);
         }
@@ -3062,7 +3066,7 @@ impl ThreadSafeFunction {
             && env.to_js().bun_vm().worker_ref().is_some()
         {
             if was_closing {
-                self.hand_back(queued);
+                self.hand_back(Some(env), queued);
             } else if matches!(self.callback, TsfnCallback::C { .. }) {
                 for item in queued {
                     // The env's cleanup hook is each delivery's landing frame,

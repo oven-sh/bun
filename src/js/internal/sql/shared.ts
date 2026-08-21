@@ -762,12 +762,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   #finishClose(err: any) {
     const connectionInfo = this.connectionInfo;
-    // A pool-initiated close (onFinish set) of a slot that never fired
-    // onconnect skips the user's onclose, so the two callbacks stay paired.
-    const notifyUser = (this.flags & PooledConnectionFlags.onConnectFired) !== 0 || this.onFinish === null;
+    const poolClosedSlotBeforeOnconnect =
+      this.onFinish !== null && !(this.flags & PooledConnectionFlags.onConnectFired);
     try {
       // user code; a throw must not abort the pool bookkeeping below
-      if (notifyUser && connectionInfo?.onclose) {
+      if (!poolClosedSlotBeforeOnconnect && connectionInfo?.onclose) {
         AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onclose, connectionInfo, err);
       }
     } finally {

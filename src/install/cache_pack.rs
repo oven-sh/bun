@@ -95,6 +95,59 @@ fn path_exists(p: &Path) -> bool {
     bun_sys::lstat(&zpath(p)).is_ok()
 }
 
+fn pbytes(p: &Path) -> &[u8] {
+    p.as_os_str().as_encoded_bytes()
+}
+
+/// (name, kind) for every entry of `dir`, sorted by name. `Unknown` d_type is resolved
+/// with an lstat so callers can rely on the kind.
+fn list_dir(dir: &Path) -> std::io::Result<Vec<(Vec<u8>, bun_sys::FileKind)>> {
+    let fd = bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), pbytes(dir)).map_err(sys_err)?;
+    let mut out = Vec::new();
+    let mut iter = bun_sys::iterate_dir(fd);
+    loop {
+        match iter.next() {
+            Ok(Some(entry)) => {
+                let name = entry.name.slice_u8().to_vec();
+                let kind = match entry.kind {
+                    bun_sys::FileKind::Unknown => lstat_kind(&dir.join(to_path(&name)?))?
+                        .unwrap_or(bun_sys::FileKind::Unknown),
+                    k => k,
+                };
+                out.push((name, kind));
+            }
+            Ok(None) => break,
+            Err(e) => {
+                let _ = bun_sys::close(fd);
+                return Err(sys_err(e));
+            }
+        }
+    }
+    drop(iter);
+    let _ = bun_sys::close(fd);
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+/// Kind of `p` itself (not following symlinks); None if it does not exist.
+fn lstat_kind(p: &Path) -> std::io::Result<Option<bun_sys::FileKind>> {
+    match bun_sys::lstat(&zpath(p)) {
+        Ok(st) => Ok(Some(bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode))),
+        Err(e) if e.get_errno() == bun_sys::E::ENOENT => Ok(None),
+        Err(e) => Err(sys_err(e)),
+    }
+}
+
+fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    bun_sys::renameat(
+        bun_sys::Fd::cwd(),
+        &zpath(from),
+        bun_sys::Fd::cwd(),
+        &zpath(to),
+    )
+    .map_err(sys_err)
+}
+
 fn mkdir_p(p: &Path) -> std::io::Result<()> {
     bun_sys::mkdir_recursive(p.as_os_str().as_encoded_bytes()).map_err(sys_err)
 }
@@ -180,7 +233,7 @@ pub fn cache_folder_names(pm: &mut PackageManager) -> Vec<(Vec<u8>, bool)> {
             }
         }
     }
-    out.sort();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
 
@@ -206,37 +259,37 @@ fn pack_dir(
     files: &mut u64,
     bytes: &mut u64,
 ) -> std::io::Result<()> {
-    let mut entries: Vec<std::fs::DirEntry> =
-        std::fs::read_dir(root.join(rel))?.collect::<std::io::Result<_>>()?;
-    entries.sort_by_key(|e| e.file_name());
+    let here = root.join(rel);
+    let entries = list_dir(&here)?;
     if entries.is_empty() && !rel.as_os_str().is_empty() {
-        write_record(w, 4, rel.as_os_str().as_encoded_bytes(), 0o755, &[])?;
+        write_record(w, 4, pbytes(rel), 0o755, &[])?;
     }
-    for e in entries {
-        let ft = e.file_type()?;
-        let child_rel = rel.join(e.file_name());
-        let relb = child_rel.as_os_str().as_encoded_bytes();
-        if ft.is_dir() {
-            pack_dir(w, root, &child_rel, files, bytes)?;
-        } else if ft.is_symlink() {
-            let target = std::fs::read_link(root.join(&child_rel))?;
-            write_record(w, 3, relb, 0o777, target.as_os_str().as_encoded_bytes())?;
-        } else if ft.is_file() {
-            let data = bun_sys::File::read_from(
-                bun_sys::Fd::cwd(),
-                root.join(&child_rel).as_os_str().as_encoded_bytes(),
-            )
-            .map_err(sys_err)?;
-            #[cfg(unix)]
-            let mode = {
-                use std::os::unix::fs::PermissionsExt;
-                e.metadata()?.permissions().mode()
-            };
-            #[cfg(not(unix))]
-            let mode = 0o644u32;
-            *files += 1;
-            *bytes += data.len() as u64;
-            write_record(w, 2, relb, mode, &data)?;
+    for (name, kind) in entries {
+        let child_rel = rel.join(to_path(&name)?);
+        let relb = pbytes(&child_rel);
+        let abs = root.join(&child_rel);
+        match kind {
+            bun_sys::FileKind::Directory => pack_dir(w, root, &child_rel, files, bytes)?,
+            bun_sys::FileKind::SymLink => {
+                let mut buf = [0u8; 4096];
+                let n = bun_sys::readlink(&zpath(&abs), &mut buf).map_err(sys_err)?;
+                write_record(w, 3, relb, 0o777, &buf[..n])?;
+            }
+            bun_sys::FileKind::File => {
+                let f =
+                    bun_sys::File::openat(bun_sys::Fd::cwd(), pbytes(&abs), bun_sys::O::RDONLY, 0)
+                        .map_err(sys_err)?;
+                #[cfg(unix)]
+                let mode = bun_sys::fstat(f.handle()).map_err(sys_err)?.st_mode as u32;
+                #[cfg(not(unix))]
+                let mode = 0o644u32;
+                let data = f.read_to_end().map_err(sys_err)?;
+                *files += 1;
+                *bytes += data.len() as u64;
+                write_record(w, 2, relb, mode, &data)?;
+            }
+            // sockets, fifos, devices: not part of a package
+            _ => {}
         }
     }
     Ok(())
@@ -285,8 +338,8 @@ pub fn pack(
     write_record(&mut w, 0, b"", 0, &[])?;
     w.flush()?;
     drop(w);
-    if let Err(e) = std::fs::rename(&tmp_path, &out) {
-        rm_rf(&tmp_path);
+    if let Err(e) = rename(&tmp_path, &out) {
+        let _ = bun_sys::unlinkat(bun_sys::Fd::cwd(), &zpath(&tmp_path));
         return Err(e);
     }
     Ok(summary)
@@ -328,15 +381,14 @@ pub fn unpack(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumma
     if result.is_err() {
         // don't leave a half-written staging dir behind
         if let Ok(cache) = to_path(cache_dir)
-            && let Ok(rd) = std::fs::read_dir(&cache)
+            && let Ok(entries) = list_dir(&cache)
         {
             let mine = format!(".unpack-{}-", std::process::id());
-            for e in rd.flatten() {
-                if e.file_name()
-                    .as_encoded_bytes()
-                    .starts_with(mine.as_bytes())
+            for (name, _) in entries {
+                if name.starts_with(mine.as_bytes())
+                    && let Ok(n) = to_path(&name)
                 {
-                    rm_rf(&e.path());
+                    rm_rf(&cache.join(n));
                 }
             }
         }
@@ -381,7 +433,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                   summary: &mut UnpackSummary|
      -> std::io::Result<()> {
         if let Some((final_path, staging)) = cur.take() {
-            match std::fs::rename(&staging, &final_path) {
+            match rename(&staging, &final_path) {
                 Ok(()) => summary.created += 1,
                 Err(e) if is_dir(&final_path) => {
                     // lost a race with a concurrent unpack/install: theirs is as good as ours
@@ -463,10 +515,10 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                     let comps: Vec<_> = rel.components().collect();
                     for (i, c) in comps.iter().enumerate() {
                         p.push(c);
-                        if let Ok(m) = std::fs::symlink_metadata(&p) {
-                            if m.file_type().is_symlink() && (i + 1 < comps.len() || kind[0] != 3) {
-                                return Err(bad("pack entry traverses a symlink", record_no));
-                            }
+                        if lstat_kind(&p)? == Some(bun_sys::FileKind::SymLink)
+                            && (i + 1 < comps.len() || kind[0] != 3)
+                        {
+                            return Err(bad("pack entry traverses a symlink", record_no));
                         }
                     }
                 }
@@ -489,7 +541,12 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                             mkdir_p(parent)?;
                         }
                         #[cfg(unix)]
-                        std::os::unix::fs::symlink(to_path(&target)?, &dest)?;
+                        bun_sys::symlinkat(
+                            &zpath(&to_path(&target)?),
+                            bun_sys::Fd::cwd(),
+                            &zpath(&dest),
+                        )
+                        .map_err(sys_err)?;
                         #[cfg(not(unix))]
                         {
                             let _ = (target, dest);

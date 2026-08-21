@@ -1,6 +1,6 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
-const { Readable, Duplex } = StreamModule;
+const { Duplex } = StreamModule;
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
@@ -810,7 +810,7 @@ function _parseOrigin(originInput) {
   if (typeof originInput === "object" && originInput !== null) {
     let proto = originInput.protocol || "http:";
     // Normalize protocol: strip slashes and ensure trailing colon
-    proto = proto.replace(/[\/]+$/, "");
+    proto = proto.replace(/\/+$/, "");
     if (!proto.endsWith(":")) proto += ":";
     const host = originInput.hostname || "localhost";
     const port = originInput.port ? `:${originInput.port}` : "";
@@ -980,12 +980,10 @@ async function _doDispatch(origin, opts, handler) {
 }
 
 class Agent extends Dispatcher {
-  #options;
   #closed;
 
-  constructor(options = {}) {
+  constructor(_options = {}) {
     super();
-    this.#options = options;
     this.#closed = false;
   }
 
@@ -1016,13 +1014,11 @@ class Agent extends Dispatcher {
 
 class Pool extends Dispatcher {
   #origin;
-  #options;
   #closed;
 
-  constructor(origin, options = {}) {
+  constructor(origin, _options = {}) {
     super();
     this.#origin = _parseOrigin(origin);
-    this.#options = options;
     this.#closed = false;
   }
 
@@ -1087,13 +1083,11 @@ class BalancedPool extends Pool {}
 
 class Client extends Dispatcher {
   #origin;
-  #options;
   #closed;
 
-  constructor(origin, options = {}) {
+  constructor(origin, _options = {}) {
     super();
     this.#origin = _parseOrigin(origin);
-    this.#options = options;
     this.#closed = false;
   }
 

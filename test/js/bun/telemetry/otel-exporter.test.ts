@@ -135,7 +135,12 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("2 pass");
     expect(exitCode).toBe(0);
-    expect(c.spans().map((s: any) => s.name).sort()).toEqual(["a", "b"]);
+    expect(
+      c
+        .spans()
+        .map((s: any) => s.name)
+        .sort(),
+    ).toEqual(["a", "b"]);
   });
 
   test("not enabled without BUN_OTEL even if OTEL_* vars are present", async () => {

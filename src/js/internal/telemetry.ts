@@ -370,7 +370,6 @@ async function shutdown() {
   nativeSetEnabled(0, 0);
 }
 
-
 // W3C tracestate as an @opentelemetry/api `TraceState` (immutable; set/unset
 // return new instances). Parsed lazily; `serialize()` of an untouched instance
 // returns the header as received.

@@ -269,13 +269,9 @@ impl PathWatcher {
         let path = ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(filename) });
         let is_file = !me.handle.is_dir();
 
-        // libuv reports the removal of the watched directory itself as a rename
-        // whose filename is the directory's own path (src/win/fs-event.c, the
-        // DeletePending branch): the one report that is not relative to the
-        // watched directory. It then re-arms ReadDirectoryChangesW, which fails
-        // the same way on every loop iteration for as long as the handle is
-        // active (nodejs/node#61398). Report it once, named the way the inotify
-        // backend names a deleted watch root, and retire the handle.
+        // The watched directory itself was removed: libuv names that report with
+        // the directory's own path (its only absolute filename) and repeats it on
+        // every loop iteration until the handle is stopped (nodejs/node#61398).
         if !is_file
             && event_type == WatchEventKind::Rename
             && bun_paths::is_absolute(path.as_bytes())
@@ -340,14 +336,11 @@ impl PathWatcher {
         Self::maybe_deinit(this);
     }
 
-    /// Like [`emit`](Self::emit), but without per-handler duplicate suppression
-    /// (the posix backend's `emit_unsuppressed`). Used for the removal of the
-    /// watched directory, which is named after the directory: a child entry of
-    /// the same name removed in the same millisecond would otherwise swallow
-    /// it. The caller `maybe_deinit`s once it is done with `this`.
+    /// [`emit`](Self::emit) without the duplicate suppression: the watched
+    /// directory's removal is named after it, so a same-named child removed in
+    /// the same millisecond would otherwise swallow it.
     fn emit_unsuppressed(this: *mut PathWatcher, path: &[u8], event_type: WatchEventKind) {
-        // SAFETY: `this` is the live heap pointer from `init`; delivering only
-        // enqueues tasks, so nothing here can free it.
+        // SAFETY: `this` is the live heap pointer from `init`; nothing here frees it.
         let me = unsafe { &*this };
         me.emit_in_progress.set(true);
 
@@ -369,8 +362,7 @@ impl PathWatcher {
         me.emit_in_progress.set(false);
     }
 
-    /// Hands one event to one handler. The payload is built per handler because
-    /// its shape depends on the handler's encoding.
+    /// Hands one event to one handler, in the payload shape of its encoding.
     fn deliver(handler: *mut c_void, path: &[u8], is_file: bool, event_type: WatchEventKind) {
         let ctx: *mut FSWatcher = handler.cast::<FSWatcher>();
         // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
@@ -386,18 +378,13 @@ impl PathWatcher {
         on_update_end_fn(Some(ctx.cast()));
     }
 
-    /// Takes the watcher out of service once libuv has nothing more to report
-    /// for it: drops it out of the manager's map, so that a later `fs.watch()`
-    /// of the same path (the directory may be recreated) starts a new handle
-    /// instead of joining this one, and stops the handle, so that libuv does not
-    /// re-arm it. The attached `FSWatcher`s stay open until they are closed, as
-    /// they do on Linux once inotify has retired a deleted watch root; the last
-    /// `detach` then frees this. Idempotent: `deinit` runs it as well.
+    /// Stops the handle and leaves the manager's map, so a later `fs.watch()` of
+    /// the path gets a new handle. The handlers stay attached until their
+    /// `FSWatcher`s close, as on Linux; the last `detach` frees this. Idempotent.
     fn retire(this: *mut PathWatcher) {
         {
-            // SAFETY: `this` is the live heap pointer from `init`. Unregistering
-            // may free the manager, never `this`; the borrow ends before the stop
-            // below frees `handle.path`.
+            // SAFETY: `this` is the live heap pointer from `init`; unregistering may
+            // free the manager, never `this`. The borrow ends before the stop below.
             let me = unsafe { &*this };
             if let Some(manager) = me.manager.take() {
                 let path: &ZStr = if !me.handle.path.is_null() {

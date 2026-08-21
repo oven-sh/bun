@@ -2293,9 +2293,16 @@ where
             self.write_ws_handler_slots(server_js, global);
         }
 
+        // Only when the listener already advertises the extension. A hot
+        // reload reaches this without going through `reload()`'s check, and
+        // adopting handlers a session can never reach would be worse than
+        // ignoring them: every extended CONNECT would 501 and no browser would
+        // attempt one, with three live handlers to suggest otherwise.
         if let Some(wt) = new_config.webtransport_handler.take() {
-            self.config.webtransport_handler = Some(wt);
-            self.write_wt_handler_slots(server_js, global);
+            if self.config.webtransport {
+                self.config.webtransport_handler = Some(wt);
+                self.write_wt_handler_slots(server_js, global);
+            }
         }
 
         // These get re-applied when we set the static routes again.

@@ -90,10 +90,8 @@ struct Http3Context {
              * response ended the HTTP exchange the moment it was accepted —
              * so it reports here and returns rather than falling through. */
             if (us_quic_stream_is_webtransport(s)) {
-                Http3ContextData *cd =
-                    (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(s));
-                if (cd->onWebTransportClose) {
-                    cd->onWebTransportClose((Http3WebTransportSession *) s, rd->wtCloseCode,
+                if (rd->wtOnClose) {
+                    rd->wtOnClose((Http3WebTransportSession *) s, rd->wtCloseCode,
                         rd->wtCloseReason.span().data(), rd->wtCloseReason.size());
                 }
                 rd->~Http3ResponseData();

@@ -9,6 +9,7 @@
 
 #include <bun-uws/src/Http3App.h>
 #include <bun-uws/src/Http3Response.h>
+#include <bun-uws/src/Http3Context.h>
 #include <bun-uws/src/Http3Request.h>
 #include <bun-uws/src/Http3WebTransport.h>
 #include <string_view>
@@ -18,6 +19,7 @@
 extern "C" const char* ares_inet_ntop(int af, const char* src, char* dst, size_t size);
 
 using uWS::H3App;
+using uWS::Http3Context;
 using uWS::Http3Request;
 using uWS::Http3Response;
 using uWS::Http3ResponseData;
@@ -360,6 +362,11 @@ uws_h3_wt_t* uws_h3_res_upgrade_webtransport(uws_h3_res_t* res, uws_h3_req_t* re
      * waits out its handshake timeout on a session the server thinks is open. */
     us_quic_stream_flush((us_quic_stream_t*)r);
     d->wtUserData = user_data;
+    /* Taken now rather than read at teardown: the context data this comes from
+     * is destructed before the engine that dispatches on_close. */
+    d->wtOnClose = ((Http3Context*)us_quic_stream_context((us_quic_stream_t*)r))
+                       ->getContextData()
+                       ->onWebTransportClose;
     return (uws_h3_wt_t*)r;
 }
 

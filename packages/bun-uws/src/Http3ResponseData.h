@@ -11,6 +11,7 @@
 namespace uWS {
 
 struct Http3Response;
+struct Http3WebTransportSession;
 
 struct Http3ResponseData {
     /* Same callback signatures as HttpResponseData so the C ABI matches. */
@@ -66,6 +67,11 @@ struct Http3ResponseData {
      * a session has no body — reusing the buffer would only tangle the two
      * lifetimes together. */
     void *wtUserData = nullptr;
+    /* Copied off the context when the session is accepted, because it is read
+     * during teardown: Http3Context::free() destructs the context data before
+     * the engine, and the engine is what dispatches every stream's on_close.
+     * This one lives on the stream that the callback is about. */
+    void (*wtOnClose)(struct Http3WebTransportSession *, uint32_t, const char *, size_t) = nullptr;
     WTF::Vector<char, 32> wtCapsule;
     /* Bytes of a capsule body we are dropping unread still to come. */
     uint64_t wtSkip = 0;
@@ -104,6 +110,7 @@ struct Http3ResponseData {
         backpressure.clear();
         endAfterDrain = false;
         wtUserData = nullptr;
+        wtOnClose = nullptr;
         wtCapsule.shrink(0);
         wtSkip = 0;
         wtCloseReason.shrink(0);

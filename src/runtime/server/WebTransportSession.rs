@@ -226,10 +226,18 @@ impl WebTransportSession {
             return Ok(JSValue::UNDEFINED);
         };
         let [code_value, reason_value] = callframe.arguments_as_array::<2>();
+        // Coerce before touching the session, and refuse anything that is not
+        // a number rather than running a `valueOf` whose exception the
+        // non-propagating `to_u32` would swallow — leaving it pending for the
+        // reason's `toString` to trip over while the session closed as 0.
         let code = if code_value.is_empty_or_undefined_or_null() {
             0u32
+        } else if code_value.is_number() {
+            code_value.coerce_to_i32(global)? as u32
         } else {
-            code_value.to_u32()
+            return Err(global.throw_invalid_arguments(format_args!(
+                "close requires a numeric code or undefined"
+            )));
         };
         // SAFETY: as in send_datagram.
         let session = unsafe { session.as_mut() };

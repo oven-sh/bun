@@ -1042,11 +1042,12 @@ impl Fd {
             .copied()
             .unwrap_or(Fd::INVALID)
     }
-    /// The Windows `AT_FDCWD`. Kernel handles are multiples of 4, so no real
-    /// handle has this value; [`Fd::decode_windows`] maps it to the PEB's
-    /// current directory handle, which `chdir` closes and replaces.
+    /// The Windows `AT_FDCWD`; [`Fd::decode_windows`] maps it to the PEB's
+    /// current directory handle. Handles fit in 32 bits, bit 63 is the uv tag
+    /// and `INVALID_HANDLE_VALUE` masks to all of bits 0..63, so bit 62 alone
+    /// is out of band.
     #[cfg(windows)]
-    const WINDOWS_CWD: u64 = 1;
+    const WINDOWS_CWD: u64 = 1 << 62;
 
     #[cfg(windows)]
     #[inline]

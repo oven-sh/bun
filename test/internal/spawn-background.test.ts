@@ -102,19 +102,21 @@ function startFixture(exe: string, mode: string) {
   });
 }
 
-async function report(proc: ReturnType<typeof startFixture>) {
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(exitCode).toBe(0);
-  return JSON.parse(stdout.trim().split("\n").at(-1)!);
+/** The JSON line the fixture prints last, or undefined when it did not get that far. */
+function parseReport(stdout: string) {
+  try {
+    return JSON.parse(stdout.trim().split("\n").at(-1)!);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Resolves once the fixture has exited and every helper it started is gone. */
 async function runFixture(exe: string, mode: string) {
   await using proc = startFixture(exe, mode);
-  const stderr = proc.stderr.text();
-  const result = await report(proc);
-  expect(await stderr).toBe("");
-  return result;
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: "", exitCode: 0 });
+  return parseReport(stdout);
 }
 
 function isAlive(pid: number) {
@@ -159,15 +161,23 @@ for (const [runtime, exe] of [
 
     test.concurrent("control: a helper nothing kills outlives the fixture and holds its stderr open", async () => {
       await using proc = startFixture(exe!, "control");
+      // stderr is left pending on purpose: the helper holds it open until the test kills the helper.
       const stderr = proc.stderr.text();
-      const { pid } = await report(proc);
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const pid: number | undefined = parseReport(stdout)?.pid;
       try {
-        expect(isAlive(pid)).toBe(true);
+        expect({ stdout, exitCode }).toMatchObject({ exitCode: 0 });
+        expect(pid).toBeNumber();
+        expect(isAlive(pid!)).toBe(true);
         expect(
           await Promise.race([stderr.then(() => "eof"), new Promise(resolve => setImmediate(() => resolve("open")))]),
         ).toBe("open");
       } finally {
-        process.kill(pid, "SIGKILL");
+        if (pid !== undefined) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+        }
       }
       expect(await stderr).toBe("");
     });

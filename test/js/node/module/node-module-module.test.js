@@ -341,8 +341,7 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         path.join(String(dir), "package.json"),
       ]);
       expect(exitCode).toBe(0);
-    }, // Compiling copies the whole runtime, which takes a while in debug builds.
-    60_000);
+    }, 60_000); // Compiling copies the whole runtime, which takes a while in debug builds.
 
     test("oversized specifiers throw ERR_MODULE_NOT_FOUND", () => {
       const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });

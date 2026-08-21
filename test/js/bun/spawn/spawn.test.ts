@@ -1719,3 +1719,27 @@ it.if(parentThp() === "1")("spawned children keep the system THP policy", async 
   expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
   expect(exitCode).toBe(0);
 });
+
+describe("stdin ownership", () => {
+  it("mutating an ArrayBuffer/Uint8Array passed as stdin after spawn() returns does not corrupt what the child receives", async () => {
+    const original = "the quick brown fox jumps over the lazy dog\n".repeat(500);
+    const bytes = new TextEncoder().encode(original);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      stdin: bytes,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // The write to the child's stdin pipe happens asynchronously on the
+    // event loop, not inline in this call. Mutate the buffer right after
+    // handing it to spawn() — before anything is awaited — so that if
+    // spawn() kept a live view into it instead of copying it up front, the
+    // child observes this corruption instead of the original bytes.
+    bytes.fill(0);
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: original, stderr: "", exitCode: 0 });
+  });
+});

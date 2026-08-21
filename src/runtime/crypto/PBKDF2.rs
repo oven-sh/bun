@@ -326,15 +326,13 @@ impl JobContext for Pbkdf2Job {
                 &[JSValue::NULL, buffer_value],
             ),
             // The result could not be built (allocation failure): that is this
-            // derivation's error, so the callback still runs. A terminating VM
-            // runs no callbacks; its termination goes back to the event loop.
-            Err(err) => {
-                let error = global_this.take_error(err);
-                if error.is_termination_exception() {
-                    return Err(err);
-                }
-                event_loop.run_callback(callback, global_this, JSValue::UNDEFINED, &[error]);
-            }
+            // derivation's error.
+            Err(err) => event_loop.run_callback(
+                callback,
+                global_this,
+                JSValue::UNDEFINED,
+                &[global_this.take_error(err)],
+            ),
         }
         Ok(())
     }

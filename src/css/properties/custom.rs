@@ -281,7 +281,7 @@ impl<'bump> DeepClone<'bump> for Token {
     fn deep_clone(&self, _bump: &'bump Arena) -> Self {
         // All `&'static [u8]` payloads borrow the parser source/arena (`'static`
         // is a placeholder) — identity copy is correct. `Num`/`Dimension` are POD.
-        self.clone()
+        *self
     }
 }
 
@@ -497,7 +497,7 @@ impl TokenList {
             };
             match token {
                 Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
-                    let tok = token.clone();
+                    let tok = *token;
                     let closing_delimiter = match tok {
                         Token::OpenParen => Token::CloseParen,
                         Token::OpenSquare => Token::CloseSquare,
@@ -511,7 +511,7 @@ impl TokenList {
                     tokens.push(TokenOrValue::Token(closing_delimiter));
                 }
                 Token::Function(_) => {
-                    tokens.push(TokenOrValue::Token(token.clone()));
+                    tokens.push(TokenOrValue::Token(*token));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_raw(input2, tokens, options, depth + 1)
                     })?;
@@ -521,12 +521,12 @@ impl TokenList {
                     if token.is_parse_error() {
                         return Err(ParseError {
                             kind: ParserErrorKind::basic(BasicParseErrorKind::unexpected_token(
-                                token.clone(),
+                                *token,
                             )),
                             location: state.source_location(),
                         });
                     }
-                    tokens.push(TokenOrValue::Token(token.clone()));
+                    tokens.push(TokenOrValue::Token(*token));
                 }
             }
         }
@@ -567,7 +567,7 @@ impl TokenList {
                 break;
             };
             // Clone the token so we can call &mut methods on `input` below.
-            let tok = tok.clone();
+            let tok = *tok;
             match &tok {
                 Token::Whitespace(_) | Token::Comment(_) => {
                     // Skip whitespace if the last token was a delimiter.
@@ -680,7 +680,7 @@ impl TokenList {
                         Token::OpenCurly => Token::CloseCurly,
                         _ => unreachable!(),
                     };
-                    tokens.push(TokenOrValue::Token(tok.clone()));
+                    tokens.push(TokenOrValue::Token(tok));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_into(input2, tokens, options, depth + 1)
                     })?;
@@ -699,7 +699,7 @@ impl TokenList {
                     } else if let Ok(resolution) = Resolution::try_from_token(&tok) {
                         TokenOrValue::Resolution(resolution)
                     } else {
-                        TokenOrValue::Token(tok.clone())
+                        TokenOrValue::Token(tok)
                     };
 
                     tokens.push(value);
@@ -1373,7 +1373,7 @@ impl Clone for TokenList {
 impl Clone for TokenOrValue {
     fn clone(&self) -> Self {
         match self {
-            TokenOrValue::Token(t) => TokenOrValue::Token(t.clone()),
+            TokenOrValue::Token(t) => TokenOrValue::Token(*t),
             TokenOrValue::Color(c) => TokenOrValue::Color(c.clone()),
             TokenOrValue::UnresolvedColor(c) => TokenOrValue::UnresolvedColor(c.clone()),
             // `Url` has no `#[derive(Clone)]` but both fields are `Copy`.
@@ -1560,16 +1560,6 @@ pub enum CustomPropertyName {
     Custom(DashedIdent),
     /// An unknown CSS property.
     Unknown(Ident),
-}
-
-// `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
-// intentionally don't derive `PartialEq` (pointer-eq would be wrong).
-// `PropertyId` derives `PartialEq`, so compare the underlying bytes here.
-impl PartialEq for CustomPropertyName {
-    fn eq(&self, other: &Self) -> bool {
-        // SAFETY: arena-owned slices live for the parse session.
-        unsafe { (&*self.as_ptr()).eq(&*other.as_ptr()) }
-    }
 }
 
 impl CustomPropertyName {

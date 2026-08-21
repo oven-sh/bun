@@ -3580,11 +3580,11 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   if (handle && this[kPipelinedQueuedState] === undefined) {
     handle.abort();
   }
-  this?.socket?.destroy(err);
-  if (!this._closed) {
-    // res.closed must already be true inside the 'close' listeners.
-    this._closed = true;
-    this.emit("close");
+  const socket = this[kSocket];
+  if (socket) {
+    socket.destroy(err);
+  } else {
+    process.nextTick(emitCloseNT, this);
   }
   return this;
 };

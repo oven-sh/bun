@@ -854,6 +854,67 @@ test("Network.requestWillBeSent / webSocketCreated populate initiator.stack with
   }
 });
 
+test("a Network/DOMStorage listener that mutates its event does not affect the next session", () => {
+  // One validation pass fans out to every enabled session; like Node, which
+  // serializes per channel, each session must get its own copy of the payload.
+  const a = new inspector.Session();
+  const b = new inspector.Session();
+  a.connect();
+  b.connect();
+  try {
+    a.post("Network.enable");
+    b.post("Network.enable");
+    a.post("DOMStorage.enable");
+    b.post("DOMStorage.enable");
+    a.on("Network.requestWillBeSent", m => {
+      m.params.request.url = "mutated";
+      m.params.request.headers.x = "mutated";
+      m.params.initiator.type = "mutated";
+    });
+    a.on("Network.responseReceived", m => (m.params.response.status = -1));
+    a.on("DOMStorage.domStorageItemAdded", m => (m.params.storageId.securityOrigin = "mutated"));
+    const seenByB: any[] = [];
+    b.on("Network.requestWillBeSent", m => seenByB.push(m.params));
+    b.on("Network.responseReceived", m => seenByB.push(m.params));
+    b.on("DOMStorage.domStorageItemAdded", m => seenByB.push(m.params));
+
+    inspector.Network.requestWillBeSent({
+      requestId: "r1",
+      timestamp: 0,
+      wallTime: 0,
+      request: { url: "http://x/", method: "GET", headers: { x: "1" } },
+    });
+    inspector.Network.responseReceived({
+      requestId: "r1",
+      timestamp: 0,
+      type: "Fetch",
+      response: { url: "http://x/", status: 200, statusText: "OK", headers: {} },
+    });
+    inspector.DOMStorage.domStorageItemAdded({
+      storageId: { securityOrigin: "http://x", storageKey: "k", isLocalStorage: true },
+      key: "key",
+      newValue: "v",
+    });
+
+    expect(
+      seenByB.map(p => [
+        p.request?.url,
+        p.request?.headers?.x,
+        p.initiator?.type,
+        p.response?.status,
+        p.storageId?.securityOrigin,
+      ]),
+    ).toEqual([
+      ["http://x/", "1", "script", undefined, undefined],
+      [undefined, undefined, undefined, 200, undefined],
+      [undefined, undefined, undefined, undefined, "http://x"],
+    ]);
+  } finally {
+    a.disconnect();
+    b.disconnect();
+  }
+});
+
 // Activating breakpoints on a debugger that was attached at runtime (after the
 // entry module has already been linked) used to crash the inspected process:
 // JSC's clearCode discarded the module's UnlinkedModuleProgramCodeBlock, and

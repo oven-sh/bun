@@ -2530,6 +2530,34 @@ describe("HEAD requests #15355", () => {
       expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
     });
   });
+
+  test("a proxied upstream HEAD response keeps the upstream Content-Length", async () => {
+    using upstream = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("Hello World");
+      },
+    });
+    // The upstream's response to HEAD has a null body, so the handler-supplied
+    // Content-Length (the upstream's) is what gets sent, as for any bodiless
+    // Response above.
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return fetch(upstream.url, { method: req.method });
+      },
+    });
+    const head = await fetch(server.url, { method: "HEAD" });
+    expect({ status: head.status, contentLength: head.headers.get("content-length"), text: await head.text() }).toEqual(
+      { status: 200, contentLength: "11", text: "" },
+    );
+    const get = await fetch(server.url);
+    expect({ status: get.status, contentLength: get.headers.get("content-length"), text: await get.text() }).toEqual({
+      status: 200,
+      contentLength: "11",
+      text: "Hello World",
+    });
+  });
 });
 
 describe("websocket and routes test", () => {

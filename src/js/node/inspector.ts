@@ -581,8 +581,16 @@ function toWarning(e: unknown): Error {
   }
 }
 
+// Validation runs once per event and the handlers below fan the result out. Like
+// emitConsoleAPICalled, each session gets its own params and first-level objects,
+// so a listener that mutates its event cannot leak into the next session (or into
+// the bookkeeping, which reads ctx); the captured stack is shared, as there.
 function forEachNetworkSession<C>(fn: (session: Session, state: NetworkState, ctx: C) => void, ctx: C) {
   for (const { 0: session, 1: state } of networkEnabledSessions) fn(session, state, ctx);
+}
+
+function copyHeaders(headers: Record<string, string>) {
+  return { __proto__: null, ...headers } as Record<string, string>;
 }
 
 function captureNetworkInitiator() {
@@ -690,10 +698,10 @@ function sessionRequestWillBeSent(session, state, ctx) {
   );
   emitToSession(session, "Network.requestWillBeSent", {
     requestId,
-    request,
+    request: { ...request, headers: copyHeaders(request.headers) },
     timestamp: ctx.timestamp,
     wallTime: ctx.wallTime,
-    initiator: ctx.initiator,
+    initiator: { ...ctx.initiator },
   });
 }
 
@@ -706,7 +714,7 @@ function sessionResponseReceived(session, state, ctx) {
     requestId,
     timestamp: ctx.timestamp,
     type: ctx.type,
-    response,
+    response: { ...response, headers: copyHeaders(response.headers) },
   });
   const entry = state.requests.get(requestId);
   if (entry !== undefined) entry.responseIsUTF8 = response.charset === "utf-8";
@@ -764,7 +772,7 @@ function sessionWebSocketCreated(session, _state, ctx) {
   emitToSession(session, "Network.webSocketCreated", {
     requestId: ctx.requestId,
     url: ctx.url,
-    initiator: ctx.initiator,
+    initiator: { ...ctx.initiator },
   });
 }
 
@@ -773,10 +781,11 @@ function sessionWebSocketClosed(session, _state, ctx) {
 }
 
 function sessionWebSocketHandshakeResponseReceived(session, _state, ctx) {
+  const { response } = ctx;
   emitToSession(session, "Network.webSocketHandshakeResponseReceived", {
     requestId: ctx.requestId,
     timestamp: ctx.timestamp,
-    response: ctx.response,
+    response: { ...response, headers: copyHeaders(response.headers) },
   });
 }
 
@@ -798,8 +807,11 @@ guardEventParams(Network);
 // Mirrors https://github.com/nodejs/node/blob/main/src/inspector/dom_storage_agent.cc (event surface only).
 const domStorageEnabledSessions: Set<Session> = new SafeSet();
 
-function emitDOMStorageEvent(method: string, params: object) {
-  for (const session of domStorageEnabledSessions) emitToSession(session, method, params);
+// Same per-session copy discipline as the Network handlers; storageId is the only nested object.
+function emitDOMStorageEvent(method: string, params: { storageId: object }) {
+  for (const session of domStorageEnabledSessions) {
+    emitToSession(session, method, { ...params, storageId: { ...params.storageId } });
+  }
 }
 
 function storageIdFromObject(params: any) {
@@ -880,6 +892,8 @@ function buildScriptCoverageList(
 
   for (const script of rawScripts) {
     const { scriptId, sourceLength } = script;
+    // V8 does not report empty scripts (the whole-script range would be zero-width).
+    if (sourceLength === 0) continue;
     let { url } = script;
     // V8 reports file-backed scripts with file:// URLs even for plain paths: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/inspector/
     if (url && isAbsolute(url)) {
@@ -887,10 +901,12 @@ function buildScriptCoverageList(
     }
 
     // Outer functions before nested ones so the stack sweep sees enclosing ranges first.
+    // Zero-width entries are dropped: V8 never emits startOffset === endOffset, and
+    // @bcoe/v8-coverage recurses forever on one.
     const functions = script.functions
-      .filter(([start, end]) => start >= 0 && end >= start)
+      .filter(([start, end]) => start >= 0 && end > start)
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
+    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end > start).sort((a, b) => a[0] - b[0]);
 
     // Assign each basic block to the innermost function range containing it.
     const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
@@ -1378,8 +1394,9 @@ class Session extends EventEmitter {
           postNodeInspectorControl(JSON.stringify({ type: "session-connect" }));
         }
         postNodeInspectorControl(JSON.stringify({ type: "command", method, params }));
-        // The pause/scriptParsed events still reach this Session through its in-process
-        // adapter, which gates them on the domain being enabled; record the enable there.
+        // Forwarding alone delivers no events (the in-process channel only connects on a
+        // kInProcess post, e.g. Runtime.evaluate). Once it has, JSC broadcasts the pauses
+        // here too, and the adapter gates them on this flag, so record the enable for that case.
         if (method === "Debugger.enable" || method === "Debugger.disable") {
           this.#inProcessAdapter().noteDebuggerEnabled(method === "Debugger.enable");
         }

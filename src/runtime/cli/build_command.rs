@@ -807,11 +807,13 @@ impl BuildCommand {
                 root_path = bun_core::dirname(&ctx.args.entry_points[0]).unwrap_or(b".");
             }
 
-            let root_dir = if root_path.is_empty() || root_path == b"." {
-                bun_sys::Dir::cwd()
+            let cwd = bun_sys::Dir::cwd();
+            let output_is_cwd = root_path.is_empty() || root_path == b".";
+            let opened_root_dir: Option<bun_sys::Dir> = if output_is_cwd {
+                None
             } else {
-                match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
-                    Ok(d) => d,
+                match cwd.make_open_path(root_path, Default::default()) {
+                    Ok(d) => Some(d),
                     Err(err) => {
                         Output::err(
                             err,
@@ -822,6 +824,7 @@ impl BuildCommand {
                     }
                 }
             };
+            let root_dir: &bun_sys::Dir = opened_root_dir.as_ref().unwrap_or(&cwd);
 
             let mut all_paths: Vec<&[u8]> = vec![&[] as &[u8]; output_files.len()];
             let mut max_path_len: usize = 0;

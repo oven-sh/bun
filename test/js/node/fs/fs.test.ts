@@ -3195,6 +3195,63 @@ describe("rm", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
+
+  // A recursive rm holds a view of the cwd for the whole walk. On Windows the
+  // cwd is a real handle that process.chdir() closes and replaces, and the
+  // closed value is reissued to the next object created. That view used to be
+  // an owning Dir: when the walk ended after a chdir it no longer matched the
+  // current cwd handle and was closed, which closed the object that had the
+  // old value by then (here: events created right after the chdir, in the
+  // crash reports the handle of a worker thread).
+  it.if(isWindows)(
+    "recursive rm on the thread pool does not close the old cwd handle after process.chdir()",
+    async () => {
+      using dir = tempDir("rm-across-chdir", {
+        "fixture.js": /* js */ `
+        import { dlopen } from "bun:ffi";
+        import fs from "node:fs";
+        import path from "node:path";
+        const k32 = dlopen("kernel32.dll", {
+          CreateEventW: { args: ["ptr", "i32", "i32", "ptr"], returns: "ptr" },
+          WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
+          CloseHandle: { args: ["ptr"], returns: "i32" },
+        }).symbols;
+        const WAIT_OBJECT_0 = 0;
+
+        const tree = path.resolve("tree");
+        fs.mkdirSync(tree);
+        for (let i = 0; i < 1500; i++) fs.writeFileSync(path.join(tree, String(i).padStart(5, "0")), "");
+        const elsewhere = path.resolve("elsewhere");
+        fs.mkdirSync(elsewhere);
+
+        // The walk runs on a thread pool thread and takes its view of the cwd
+        // when it starts. Wait until it has started deleting.
+        const removal = fs.promises.rm(tree, { recursive: true });
+        const sentinels = ["00000", "00500", "01000", "01499"].map(name => path.join(tree, name));
+        while (sentinels.every(file => fs.existsSync(file))) await Bun.sleep(1);
+        // Retire the cwd handle the walk is holding a view of, then give its
+        // value to objects whose state we can check: signaled events.
+        process.chdir(elsewhere);
+        const events = [];
+        for (let i = 0; i < 1024; i++) events.push(Number(k32.CreateEventW(null, 1, 1, null)));
+        await removal;
+        const closed = events.filter(event => k32.WaitForSingleObject(event, 0) !== WAIT_OBJECT_0).length;
+        for (const event of events) k32.CloseHandle(event);
+        if (closed) throw new Error("rm closed " + closed + " handle(s) it did not own");
+        console.log("PASS");
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    },
+  );
 });
 
 describe("rmdir", () => {

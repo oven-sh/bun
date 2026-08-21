@@ -44,9 +44,18 @@ impl Dir {
     pub fn fd(&self) -> Fd {
         self.fd
     }
+    /// The process's current directory, as a `Dir` that is never closed.
+    ///
+    /// On POSIX `Fd::cwd()` is the `AT_FDCWD` sentinel. On Windows it is the
+    /// handle ntdll keeps in the PEB: `chdir` on any thread closes it and
+    /// installs a new one, and the closed value can belong to another object
+    /// right away. A snapshot taken here can therefore not be told apart
+    /// from a handle of our own once a `chdir` has happened (the check in
+    /// `Drop` compares against the current handle), so the snapshot must
+    /// never reach `Drop` as an owning `Dir`.
     #[inline]
-    pub fn cwd() -> Self {
-        Self { fd: Fd::cwd() }
+    pub fn cwd() -> core::mem::ManuallyDrop<Self> {
+        core::mem::ManuallyDrop::new(Self { fd: Fd::cwd() })
     }
     /// Open `path` relative to cwd. `O_DIRECTORY | O_RDONLY | O_CLOEXEC`.
     #[inline]

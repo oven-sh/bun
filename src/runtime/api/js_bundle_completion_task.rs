@@ -362,13 +362,13 @@ impl JSBundleCompletionTask {
             }
         }
 
+        let cwd = Dir::cwd();
+        // On POSIX the output directory is opened and the files are written
+        // into it by basename; on Windows it is only created and the files are
+        // written relative to the cwd by their full path.
         #[cfg(not(windows))]
-        let mut root_dir = Dir::cwd();
-        #[cfg(windows)]
-        let root_dir = Dir::cwd();
+        let mut output_dir: Option<Dir> = None;
 
-        // On Windows, don't change root_dir, just pass the full relative path
-        // On POSIX, change root_dir to the target directory and pass basename
         let outfile_for_executable: &[u8] = if cfg!(windows) {
             &full_outfile_path
         } else {
@@ -378,9 +378,8 @@ impl JSBundleCompletionTask {
         if !(dirname.is_empty() || dirname == b".") {
             #[cfg(not(windows))]
             {
-                // On POSIX, makeOpenPath and change root_dir
-                root_dir = match root_dir.make_open_path(dirname, OpenDirOptions::default()) {
-                    Ok(d) => d,
+                output_dir = match cwd.make_open_path(dirname, OpenDirOptions::default()) {
+                    Ok(d) => Some(d),
                     Err(err) => {
                         return CompileResult::fail_fmt(format_args!(
                             "Failed to open output directory {}: {}",
@@ -392,8 +391,7 @@ impl JSBundleCompletionTask {
             }
             #[cfg(windows)]
             {
-                // On Windows, ensure directories exist but don't change root_dir
-                if let Err(err) = root_dir.make_path(dirname) {
+                if let Err(err) = cwd.make_path(dirname) {
                     return CompileResult::fail_fmt(format_args!(
                         "Failed to create output directory {}: {}",
                         bstr::BStr::new(dirname),
@@ -402,6 +400,11 @@ impl JSBundleCompletionTask {
                 }
             }
         }
+
+        #[cfg(not(windows))]
+        let root_dir: &Dir = output_dir.as_ref().unwrap_or(&cwd);
+        #[cfg(windows)]
+        let root_dir: &Dir = &cwd;
 
         // Use the target-specific base path for compile mode, not the user-configured public_path
         let module_prefix = target_base_public_path(compile_options.compile_target.os, b"root/");

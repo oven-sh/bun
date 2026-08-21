@@ -5530,11 +5530,7 @@ impl VirtualMachine {
                     // module errors (`... {\n  code: 'ERR_...'\n}`).
                     if formatter.node_uncaught_style {
                         if let Some((code, ..)) = resolve_error.node_tag() {
-                            let _ = write!(
-                                writer,
-                                " {{\n  code: '{}'\n}}",
-                                bstr::BStr::new(code)
-                            );
+                            let _ = write!(writer, " {{\n  code: '{}'\n}}", bstr::BStr::new(code));
                         }
                     }
                     resolve_error.logged.set(true);

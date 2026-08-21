@@ -730,7 +730,10 @@ describe("package.json exports target percent-encoding", () => {
     expect(Bun.resolveSync("test-pkg/space", root)).toBe(join(root, "node_modules/test-pkg/lib/with space.js"));
     // Node: TypeError [ERR_INVALID_MODULE_SPECIFIER] "must not include encoded ..."
     for (const sub of ["sep-2f", "sep-2F", "sep-5c", "sep-5C"]) {
-      expect(resolveError(`test-pkg/${sub}`, root)).toEqual({ name: "TypeError", code: "ERR_INVALID_MODULE_SPECIFIER" });
+      expect(resolveError(`test-pkg/${sub}`, root)).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_MODULE_SPECIFIER",
+      });
     }
     // Node throws a code-less URIError for undecodable percent sequences; Bun
     // reports them like the encoded-separator case.

@@ -2212,11 +2212,6 @@ pub fn init(
     {
         // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
         let manager = unsafe { &mut *manager_ptr };
-        if !manager.options.enable.cache() {
-            manager.options.enable.set_manifest_cache(false);
-            manager.options.enable.set_manifest_cache_control(false);
-        }
-
         if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
             if manifest_cache == b"1" {
                 manager.options.enable.set_manifest_cache(true);
@@ -2239,6 +2234,11 @@ pub fn init(
             ctx.install.as_deref(),
             subcommand,
         )?;
+
+        if !manager.options.enable.cache() {
+            manager.options.enable.set_manifest_cache(false);
+            manager.options.enable.set_manifest_cache_control(false);
+        }
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {
@@ -2609,11 +2609,6 @@ fn init_with_runtime_once(
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }
 
-    if !manager.options.enable.cache() {
-        manager.options.enable.set_manifest_cache(false);
-        manager.options.enable.set_manifest_cache_control(false);
-    }
-
     if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
         if manifest_cache == b"1" {
             manager.options.enable.set_manifest_cache(true);
@@ -2637,6 +2632,11 @@ fn init_with_runtime_once(
             let _ = e;
             bun_core::out_of_memory();
         }
+    }
+
+    if !manager.options.enable.cache() {
+        manager.options.enable.set_manifest_cache(false);
+        manager.options.enable.set_manifest_cache_control(false);
     }
 
     manager.timestamp_for_manifest_cache_control =

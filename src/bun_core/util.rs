@@ -4463,7 +4463,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             }
         }
 
-        let name = crate::result::system_errno_name(errno).unwrap_or("EUNKNOWN");
+        let name = crate::ErrnoNames::SYS.name(errno).unwrap_or("EUNKNOWN");
         let detail = crate::result::coreutils_error_map::get(errno).unwrap_or("unknown error");
         if may_return {
             crate::output::err_generic(

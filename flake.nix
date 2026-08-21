@@ -12,7 +12,8 @@
   # };
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # nixpkgs-unstable, not nixos-unstable: the latter gates only on Linux tests, so darwin lags.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -37,8 +38,9 @@
         # Build tools and dependencies
         packages = [
           # Core build tools
-          pkgs.cmake # Expected: 3.30+ on nixos-unstable as of 2025-10
+          pkgs.cmake # Expected: 3.30+ on nixpkgs-unstable as of 2025-10
           pkgs.ninja
+          pkgs.nasm
           pkgs.pkg-config
           pkgs.ccache
 
@@ -47,8 +49,8 @@
           llvm
           lld
           pkgs.gcc
-          pkgs.rustc
-          pkgs.cargo
+          # Use rustup instead of rustc/cargo to honour rust-toolchain.toml
+          pkgs.rustup
           pkgs.go
 
           # Bun itself (for running build scripts via `bun bd`)
@@ -119,10 +121,9 @@
           pkgs.xorg.libxshmfence
           pkgs.gdk-pixbuf
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-          # macOS specific dependencies
-          pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-          pkgs.darwin.apple_sdk.frameworks.CoreServices
-          pkgs.darwin.apple_sdk.frameworks.Security
+          # nixpkgs' apple-sdk omits these; WebKit includes <unicode/*> and bun includes <sqlite3.h>.
+          pkgs.darwin.ICU
+          pkgs.sqlite
         ];
 
       in
@@ -147,6 +148,7 @@
             export TMPDIR="''${TMPDIR:-/tmp}"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD="${pkgs.lib.getExe' lld "ld.lld"}"
+            export BUN_LD="$LD" # bun's build pins the linker via BUN_LD, not LD
             export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath packages}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           '' + ''

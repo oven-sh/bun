@@ -47,16 +47,36 @@ const buffers = [
 
 const messages = [...strings, ...buffers] as const;
 
+// One rule for the client and the server socket of the shim. `type` is the shape of a binary
+// message. npm ws emits ping and pong payloads as a Buffer in every mode. The shim keeps that
+// where it can wrap the payload synchronously. A Blob cannot be wrapped, so "blob" applies to
+// ping and pong payloads too, as it does on the native sockets.
 const binaryTypes = [
   {
     label: "nodebuffer",
     type: Buffer,
+    controlType: Buffer,
   },
   {
     label: "arraybuffer",
     type: ArrayBuffer,
+    controlType: Buffer,
+  },
+  {
+    label: "blob",
+    type: Blob,
+    controlType: Blob,
   },
 ] as const;
+
+// Names match `type.name` and `controlType.name` above. A plain Uint8Array, which is what
+// the server socket used to emit in "arraybuffer" mode, shows up as "[object Uint8Array]".
+function shapeOf(data: unknown): string {
+  if (Buffer.isBuffer(data)) return "Buffer";
+  if (data instanceof ArrayBuffer) return "ArrayBuffer";
+  if (data instanceof Blob) return "Blob";
+  return Object.prototype.toString.call(data);
+}
 
 let servers: Subprocess[] = [];
 let clients: WebSocket[] = [];
@@ -103,26 +123,41 @@ describe("WebSocket", () => {
         done();
       }
     });
-    for (const { label, type } of binaryTypes) {
+    for (const { label, type, controlType } of binaryTypes) {
       test(label, (ws, done) => {
-        ws.binaryType = label;
+        // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
+        ws.binaryType = label as WebSocket["binaryType"];
+        const seen: Record<string, string> = {};
+        // The echo server answers the message, pings back when pinged and pongs back when
+        // ponged. The native client also pongs the echoed ping by itself, so the first pong
+        // is the one that gets recorded. Every one of them has the shape binaryType selects.
+        function record(event: string, data: unknown) {
+          seen[event] ??= shapeOf(data);
+          if (!(seen.message && seen.ping && seen.pong)) return;
+          try {
+            expect(seen).toEqual({
+              binaryType: label,
+              message: type.name,
+              ping: controlType.name,
+              pong: controlType.name,
+            });
+            done();
+          } catch (err) {
+            done(err);
+          }
+        }
         ws.on("open", () => {
-          expect(ws.binaryType).toBe(label);
+          seen.binaryType = ws.binaryType;
           ws.send(new Uint8Array(1));
-        });
-        ws.on("message", (data, isBinary) => {
-          expect(data).toBeInstanceOf(type);
-          expect(isBinary).toBeTrue();
           ws.ping();
-        });
-        ws.on("ping", data => {
-          expect(data).toBeInstanceOf(type);
           ws.pong();
         });
-        ws.on("pong", data => {
-          expect(data).toBeInstanceOf(type);
-          done();
+        ws.on("message", (data, isBinary) => {
+          if (isBinary) record("message", data);
+          else done(new Error(`expected a binary echo, got ${shapeOf(data)}`));
         });
+        ws.on("ping", data => record("ping", data));
+        ws.on("pong", data => record("pong", data));
       });
     }
   });
@@ -303,13 +338,6 @@ describe("WebSocketServer", () => {
   describe("binaryType", () => {
     type Received = { event: string; shape: string; bytes: number[]; isBinary?: boolean };
 
-    function shapeOf(data: unknown): string {
-      if (Buffer.isBuffer(data)) return "Buffer";
-      if (data instanceof ArrayBuffer) return "ArrayBuffer";
-      if (data instanceof Blob) return "Blob";
-      return Object.prototype.toString.call(data);
-    }
-
     async function describeReceived(event: string, data: unknown, isBinary?: boolean): Promise<Received> {
       const bytes = Array.from(new Uint8Array(data instanceof Blob ? await data.bytes() : (data as Uint8Array)));
       const received: Received = { event, shape: shapeOf(data), bytes };
@@ -352,22 +380,13 @@ describe("WebSocketServer", () => {
       }
     }
 
-    // npm ws emits ping and pong payloads as a Buffer in every mode. The shim keeps that
-    // where it can wrap the payload synchronously. A Blob cannot be wrapped, so "blob"
-    // applies to ping and pong payloads too, as it does on a Bun.serve socket.
-    const serverBinaryTypes = [
-      { binaryType: "nodebuffer", shape: "Buffer", controlShape: "Buffer" },
-      { binaryType: "arraybuffer", shape: "ArrayBuffer", controlShape: "Buffer" },
-      { binaryType: "blob", shape: "Blob", controlShape: "Blob" },
-    ] as const;
-
-    it.each(serverBinaryTypes)(
-      "$binaryType: binary frames arrive as $shape, ping and pong payloads as $controlShape",
-      async ({ binaryType, shape, controlShape }) => {
+    it.each(binaryTypes)(
+      "$label: binary frames arrive as $type.name, ping and pong payloads as $controlType.name",
+      async ({ label, type, controlType }) => {
         const received = await receiveOnServer(
           ws => {
             // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
-            ws.binaryType = binaryType as WebSocket["binaryType"];
+            ws.binaryType = label as WebSocket["binaryType"];
           },
           client => {
             client.ping(Buffer.from([4]));
@@ -379,10 +398,10 @@ describe("WebSocketServer", () => {
         );
 
         expect(received).toEqual([
-          { event: "ping", shape: controlShape, bytes: [4] },
-          { event: "pong", shape: controlShape, bytes: [5] },
-          { event: "message", shape, bytes: [1, 2, 3], isBinary: true },
-          { event: "message", shape, bytes: [], isBinary: true },
+          { event: "ping", shape: controlType.name, bytes: [4] },
+          { event: "pong", shape: controlType.name, bytes: [5] },
+          { event: "message", shape: type.name, bytes: [1, 2, 3], isBinary: true },
+          { event: "message", shape: type.name, bytes: [], isBinary: true },
         ]);
       },
     );

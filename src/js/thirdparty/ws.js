@@ -138,6 +138,12 @@ function normalizeData(data, opts) {
   return data;
 }
 
+// The native sockets apply binaryType to ping and pong payloads, npm ws emits them as a Buffer.
+// Only an ArrayBuffer can be wrapped synchronously, a Blob is emitted as is.
+function controlPayload(binaryType, data) {
+  return binaryType === "arraybuffer" ? Buffer.from(data) : data;
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 
@@ -441,7 +447,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "ping",
           ({ data }) => {
-            this.emit("ping", data);
+            this.emit("ping", controlPayload(this.#binaryType, data));
           },
           once,
         );
@@ -449,7 +455,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "pong",
           ({ data }) => {
-            this.emit("pong", data);
+            this.emit("pong", controlPayload(this.#binaryType, data));
           },
           once,
         );
@@ -538,7 +544,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   set binaryType(value) {
-    if (value === "nodebuffer" || value === "arraybuffer") {
+    if (value === "nodebuffer" || value === "arraybuffer" || value === "blob") {
       this.#ws.binaryType = this.#binaryType = value;
       this.#fragments = false;
     } else if (value === "fragments") {
@@ -1003,19 +1009,14 @@ class BunWebSocketMocked extends EventEmitter {
     };
   }
 
-  // npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
-  #controlPayload(data) {
-    return this.#binaryType === "arraybuffer" ? Buffer.from(data) : data;
-  }
-
   #ping(ws, data) {
     this.#ws = ws;
-    this.emit("ping", this.#controlPayload(data));
+    this.emit("ping", controlPayload(this.#binaryType, data));
   }
 
   #pong(ws, data) {
     this.#ws = ws;
-    this.emit("pong", this.#controlPayload(data));
+    this.emit("pong", controlPayload(this.#binaryType, data));
   }
 
   #message(ws, message) {

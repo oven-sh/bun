@@ -472,13 +472,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                                 start.elapsed().as_millis(),
                             );
                             if s.skipped_missing > 0 {
-                                bun_core::prettyln!(
-                                    "<yellow>warn<r>: {} package{} not in the local cache were left out (run bun install first)",
+                                bun_core::pretty_errorln!(
+                                    "<yellow>warn<r>: {} package{} not in the local cache and {} left out (run bun install first)",
                                     s.skipped_missing,
+                                    if s.skipped_missing == 1 { "" } else { "s" },
                                     if s.skipped_missing == 1 {
-                                        " was"
+                                        "was"
                                     } else {
-                                        "s were"
+                                        "were"
                                     },
                                 );
                             }

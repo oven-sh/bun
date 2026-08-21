@@ -427,18 +427,11 @@ impl DateHeaderTimer {
 }
 
 pub struct EventLoopDelayMonitor {
-    /// The histogram `monitorEventLoopDelay().enable()` registered. Its
-    /// realm's `perf_hooks` module holds the only strong reference, so the
-    /// cell (and the `hdr_histogram` it owns) dies with that realm, while this
-    /// monitor is per thread and outlives it (`bun test --isolate` retires a
-    /// realm per file). Observed weakly so [`Self::on_fire`] sees the cell go
-    /// away instead of recording into freed memory; a `Strong` would pin the
-    /// retired realm for as long as a leaked monitor stays enabled.
-    ///
-    /// Released by [`Self::disable`], which `jsc_hooks::stop_active_handles`
-    /// runs at every file swap and in the teardown stop phase, while the JSC
-    /// heap the handle lives in is still alive (`All` itself is dropped after
-    /// `~VM`).
+    /// Weak rather than Strong: the histogram belongs to one realm, and this
+    /// per-thread monitor outlives the realms `bun test --isolate` retires. A
+    /// Strong would pin every retired realm whose file left the monitor on.
+    /// `jsc_hooks::stop_active_handles` releases it (via [`Self::disable`])
+    /// before `~VM`, because `All` itself is dropped after the heap is gone.
     histogram: bun_jsc::Weak<()>,
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) resolution_ms: i32,
@@ -462,9 +455,6 @@ impl EventLoopDelayMonitor {
         crate::jsc_hooks::timer_all()
     }
 
-    /// Start recording into `histogram` every `resolution_ms`. A histogram
-    /// that is already registered (one a retired `--isolate` realm left
-    /// behind, for example) is dropped in favour of this one.
     fn enable(
         &mut self,
         vm: &mut bun_jsc::virtual_machine::VirtualMachine,
@@ -489,8 +479,6 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    /// Stop recording and release the histogram handle (see the field doc for
-    /// the sweep that also calls this).
     pub(crate) fn disable(&mut self) {
         if !self.enabled {
             return;
@@ -498,8 +486,7 @@ impl EventLoopDelayMonitor {
         self.enabled = false;
         self.histogram = bun_jsc::Weak::default();
         self.last_fire_ns = 0;
-        // Not ACTIVE while `on_fire` has the node popped and is deciding
-        // whether to re-arm it.
+        // FIRED (not linked) when called from `on_fire`.
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: see `enable` — disjoint-field access on `All`.
@@ -518,8 +505,6 @@ impl EventLoopDelayMonitor {
         if !self.enabled {
             return;
         }
-        // The histogram was collected (its realm is gone): nothing can read it
-        // any more, so stop instead of re-arming.
         let Some(histogram) = self.histogram.get() else {
             self.disable();
             return;

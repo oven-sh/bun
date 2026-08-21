@@ -72,6 +72,187 @@ describe("Bun.build compile", () => {
     },
   );
 
+  // These never copy the bun binary: the target download is answered with a 404 by a server
+  // in this test, or the template handed in via executablePath is rejected up front.
+  describe.concurrent("producing the executable", () => {
+    // Any OS other than the host's has to be downloaded; aarch64 never carries a "-baseline" suffix.
+    const target = `bun-${isMacOS ? "linux" : "darwin"}-aarch64`;
+    const [version] = Bun.version.match(/^\d+\.\d+\.\d+/)!;
+    const notAvailable =
+      JSON.stringify({
+        success: false,
+        logs: [
+          `Target platform '${target}-v${version}' is not available for download. Check if this version of Bun supports this target.`,
+        ],
+      }) + "\n";
+    // A fresh cache, so the target is never already on disk, and no inherited proxy
+    // configuration, so the download goes where the test points it.
+    const downloadEnv = (dir: string, tarballUrl: string) => ({
+      ...bunEnv,
+      BUN_COMPILE_TARGET_TARBALL_URL: tarballUrl,
+      BUN_INSTALL_CACHE_DIR: join(dir, "install-cache"),
+      HTTP_PROXY: undefined,
+      HTTPS_PROXY: undefined,
+      NO_PROXY: undefined,
+      http_proxy: undefined,
+      https_proxy: undefined,
+      no_proxy: undefined,
+    });
+    const notFound = () => new Response("no such tarball", { status: 404 });
+
+    test("the event loop keeps running meanwhile", async () => {
+      // Producing the executable (downloading the target binary for a cross target, then
+      // copying and rewriting it) used to happen on the JS thread between bundling and the
+      // promise settling, so nothing else in that process ran meanwhile. Withhold the
+      // download's response until the building process has answered an IPC ping, which a
+      // process whose JS thread is inside the compile step cannot do.
+      using dir = tempDir("build-compile-event-loop", {
+        "app.js": `console.log("hi");`,
+        "build.js": `
+          process.on("message", message => process.send(message));
+          const result = await Bun.build({
+            entrypoints: [import.meta.dir + "/app.js"],
+            compile: { target: process.argv[2], outfile: "app" },
+            throw: false,
+          });
+          console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message) }));
+          process.exit(0);
+        `,
+      });
+
+      type Outcome = "never requested the target" | "answered the ping" | "did not answer the ping";
+      let outcome: Outcome = "never requested the target";
+      const pong = Promise.withResolvers<Outcome>();
+      await using registry = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch() {
+          // A process stuck inside the compile step emits nothing, so that state can only be
+          // observed by giving up on the ping. The unblocked process answers within
+          // milliseconds (about 50ms under a debug build).
+          const gaveUp = Promise.withResolvers<Outcome>();
+          const giveUp = setTimeout(gaveUp.resolve, 4_000, "did not answer the ping");
+          try {
+            proc.send("ping");
+            outcome = await Promise.race([
+              pong.promise,
+              gaveUp.promise,
+              proc.exited.then((): Outcome => "did not answer the ping"),
+            ]);
+          } finally {
+            clearTimeout(giveUp);
+          }
+          return notFound();
+        },
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js", target],
+        cwd: String(dir),
+        env: downloadEnv(String(dir), `${registry.url}bun.tgz`),
+        stdout: "pipe",
+        stderr: "pipe",
+        ipc(message) {
+          if (message === "ping") pong.resolve("answered the ping");
+        },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // stderr is only diagnostic: the download reports progress there once the response
+      // has been outstanding for 500ms, so it is empty or not depending on the ping's speed.
+      expect({ outcome, stdout, exitCode }, `stderr: ${stderr}`).toEqual({
+        outcome: "answered the ping",
+        stdout: notAvailable,
+        exitCode: 0,
+      });
+    });
+
+    test.each(["before", "after"])(
+      "the download uses the proxy settings from when Bun.build() was called (HTTP_PROXY set %s the call)",
+      async when => {
+        // Like fetch(), the proxy decision is made on the calling thread when Bun.build() is
+        // called, not read from the environment later by the thread doing the download.
+        using dir = tempDir("build-compile-download-proxy", {
+          "app.js": `console.log("hi");`,
+          "build.js": `
+            const [when, target, proxy] = process.argv.slice(2);
+            if (when === "before") process.env.HTTP_PROXY = proxy;
+            const build = Bun.build({
+              entrypoints: [import.meta.dir + "/app.js"],
+              compile: { target, outfile: "app" },
+              throw: false,
+            });
+            if (when === "after") process.env.HTTP_PROXY = proxy;
+            const result = await build;
+            console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message) }));
+          `,
+        });
+        const requests: string[] = [];
+        const serve = (name: string) =>
+          Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch(req) {
+              requests.push(`${name} received ${req.url}`);
+              return notFound();
+            },
+          });
+        await using registry = serve("proxy-less registry");
+        await using proxy = serve("proxy");
+        const tarballUrl = `${registry.url}bun.tgz`;
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build.js", when, target, String(proxy.url)],
+          cwd: String(dir),
+          env: downloadEnv(String(dir), tarballUrl),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ requests, stdout, exitCode }, `stderr: ${stderr}`).toEqual({
+          requests: [`${when === "before" ? "proxy" : "proxy-less registry"} received ${tarballUrl}`],
+          stdout: notAvailable,
+          exitCode: 0,
+        });
+      },
+    );
+
+    test("a template that cannot be patched reports the cause on stderr", async () => {
+      // The specific failure is printed by the thread producing the executable, whose
+      // buffered stderr nothing else flushes; the build result only carries a generic error.
+      using dir = tempDir("build-compile-bad-template", {
+        "app.js": `console.log("hi");`,
+        "not-bun": "definitely not an executable\n",
+        "build.js": `
+          const result = await Bun.build({
+            entrypoints: [import.meta.dir + "/app.js"],
+            // A Linux target on every host, so it is always the ELF code that rejects the template.
+            compile: { target: "bun-linux-x64", executablePath: import.meta.dir + "/not-bun", outfile: "app" },
+            throw: false,
+          });
+          console.log(JSON.stringify({ success: result.success, errors: result.logs.length }));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode, wroteOutfile: existsSync(join(String(dir), "app")) }).toEqual({
+        stdout: '{"success":false,"errors":1}\n',
+        stderr: "Error initializing ELF file: InvalidElfFile\n",
+        exitCode: 0,
+        wroteOutfile: false,
+      });
+    });
+  });
+
   test("compile with embedded resources uses correct module prefix", async () => {
     using dir = tempDir("build-compile-embedded-resources", {
       "app.js": `

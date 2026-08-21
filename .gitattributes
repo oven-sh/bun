@@ -18,6 +18,15 @@
 *.mdx text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.mjs text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.mts text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
+*.cjs text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
+*.cts text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
+
+# CRLF shell scripts fail to run on Linux.
+*.sh text eol=lf
+
+# Snapshot tests compare exact bytes.
+*.snap text eol=lf
+*.snapshot text eol=lf
 
 # Patch files are line-ending-sensitive — `git apply` rejects CRLF as corrupt.
 *.patch text eol=lf

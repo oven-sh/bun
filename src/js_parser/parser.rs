@@ -373,9 +373,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // The eval/stdin entry point is printed without the CommonJS
-                // wrapper, so it must not share entries with a file that has the
-                // same contents.
+                // The eval entry point is printed without the CommonJS wrapper.
                 self.remove_cjs_module_wrapper,
                 // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];

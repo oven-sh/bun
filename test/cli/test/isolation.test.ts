@@ -1106,23 +1106,21 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 // The swap fails a multipart S3 upload the finished file left open, whether a
 // stream or a writer() feeds it. Two things about how it does so:
 // - The AbortMultipartUpload that failing it sends must reach S3. It is a new
-//   request started by the swap's own sweep, so it must not be caught and
-//   aborted by that sweep (retry: 0 makes the one attempt the only one). It is
-//   also the only sign, on a release build, that the swap reached the upload.
-// - Failing a stream-fed upload cancels the stream, and the pump's own
-//   completion then releases the upload's native wrapper, on the swap's
-//   microtask drain. On a debug build the wrapper's and the upload's own
-//   teardown log lines show both were freed exactly once: the wrapper at the
-//   swap, the upload once the rollback came back (or at the exit teardown, if
-//   it had not yet). File a keeps its stream reachable: an upload whose pump
-//   was already collected by the time of the swap keeps its wrapper (there is
-//   no safe point to release it without the pump, see pump_ref_is_stranded).
+//   request started by the swap's own sweep, so that sweep must let it through
+//   (retry: 0 makes the one attempt the only one). It is also the only sign, on
+//   a release build, that the swap reached the upload.
+// - Failing a stream-fed upload frees the upload's native wrapper, whatever
+//   state the stream's pump is in: file a drops its stream and collects, so by
+//   the swap the pump may be gone or still parked on its backpressure. On a
+//   debug build the wrapper's and the upload's own teardown log lines show both
+//   were freed exactly once: the wrapper at the swap (or earlier, if the
+//   collected pump gave it up first), the upload once the rollback came back
+//   (or at the exit teardown, if it had not yet).
 const ROLLBACK_FEEDERS = {
   stream: `
-    globalThis.source = new ReadableStream({
+    s3.file("key").write(new Response(new ReadableStream({
       pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return new Promise(() => {}); },
-    });
-    s3.file("key").write(new Response(globalThis.source)).catch(() => {});
+    }))).catch(() => {});
   `,
   writer: `
     s3.file("key").writer({ retry: 0 }).write(new Uint8Array(5 * 1024 * 1024));
@@ -1142,7 +1140,6 @@ test.concurrent.each(Object.keys(ROLLBACK_FEEDERS) as (keyof typeof ROLLBACK_FEE
       ${ROLLBACK_FEEDERS[feeder]}
       test("a: the upload gets its first part out, then waits for more", async () => {
         while (!(await seen("PUT"))) await Bun.sleep(10);
-        // The stream stays reachable, so its pump survives this; the writer object does not.
         Bun.gc(true);
       });
     `),
@@ -1209,6 +1206,57 @@ test.concurrent.each(Object.keys(ROLLBACK_FEEDERS) as (keyof typeof ROLLBACK_FEE
       output: "",
     });
     expect(exitCode).toBe(0);
+  },
+);
+
+// Failing the upload runs the finished file's own code: the stream's cancel()
+// right there, and whatever was chained on the write() promise when the swap
+// next drains microtasks. Anything that code opens has to be stopped by the
+// same swap too. Otherwise the swap closes the new server's socket blind (as it
+// does every socket of the finished file) and leaves the server registered, and
+// the next swap stops it on top of its closed socket (use after free, seen by
+// ASAN at the b -> c boundary). Hence the third file.
+const REOPENERS = {
+  "the stream's cancel()": `
+    s3.file("key").write(new Response(new ReadableStream({
+      pull(c) { c.enqueue(new Uint8Array(64)); return new Promise(() => {}); },
+      cancel() { openServer(); },
+    }))).catch(() => {});
+  `,
+  "the write() promise's catch": `
+    s3.file("key").write(new Response(new ReadableStream({
+      pull(c) { c.enqueue(new Uint8Array(64)); return new Promise(() => {}); },
+    }))).catch(openServer);
+  `,
+};
+test.concurrent.each(Object.keys(REOPENERS) as (keyof typeof REOPENERS)[])(
+  "--isolate: a server opened by %s of the upload the swap fails is stopped by that swap",
+  async reopener => {
+    using dir = tempDir("isolate-s3-reopen", {
+      "a.test.js": `
+        import { test } from "bun:test";
+        const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: "http://127.0.0.1:1" });
+        const openServer = () => { globalThis.reopened = Bun.serve({ port: 0, fetch: () => new Response("") }); };
+        ${REOPENERS[reopener]}
+        test("a leaves the upload waiting for bytes", () => {});
+      `,
+      "b.test.js": `import { test } from "bun:test"; test("b", () => {});`,
+      "c.test.js": `import { test } from "bun:test"; test("c", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.js", "./b.test.js", "./c.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stdout + stderr;
+    expect({
+      passed: /\b3 pass\b/.test(output),
+      sanitizer: output.includes("Sanitizer"),
+      exitCode,
+    }).toEqual({ passed: true, sanitizer: false, exitCode: 0 });
   },
 );
 

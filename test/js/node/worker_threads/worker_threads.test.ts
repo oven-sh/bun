@@ -2589,7 +2589,11 @@ describe("VM teardown ordering", () => {
   // shape where the wrapper is still claimed by the stream's pump, which ends
   // only when S3 answers: before the fix the wrapper and the upload both stayed
   // allocated. The writer() variant passes before the fix too, and pins down
-  // that the two stops do not free anything twice.
+  // that the two stops do not free anything twice. The Bun.file() row is the
+  // same claim-still-held shape for a file source (a file is pumped the same
+  // way as a JS stream). The "pump collected" row has the collector take the
+  // stream's pump first, which gives the claim up on its own (the debug build
+  // logs that too), so that the stop phase then finds nothing of it to free.
   //
   // Two oracles. On a debug build, each object's own teardown log line: exactly
   // one MultiPartUpload deinit per row, and one S3UploadStreamWrapper deinit per
@@ -2614,6 +2618,10 @@ describe("VM teardown ordering", () => {
       // upload sends its first part, or also every part, so the upload sends its commit.
       multipart?: "part" | "commit";
       wrappers: number;
+      // How many pumps the collector took before the VM went (debug builds log it). The
+      // other JS stream rows keep their pull promise's resolvers reachable, as a producer
+      // that could still deliver would, so their pumps stay for the stop phase to find.
+      collected?: number;
       mainThread?: boolean;
       leakCheck?: false;
     }[] = [
@@ -2624,8 +2632,19 @@ describe("VM teardown ordering", () => {
       },
       {
         name: "s3file.write(new Response(jsStream)) still waiting for bytes, worker terminated",
-        start: `file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(64)); return new Promise(() => {}); } }))).catch(() => {});`,
+        start: `globalThis.moreBytes = Promise.withResolvers();
+          file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(64)); return globalThis.moreBytes.promise; } }))).catch(() => {});`,
         wrappers: 1,
+      },
+      // Two collections: the first frees the Response, whose body holds a Strong on the stream,
+      // the second the stream and its pump. The turn of the loop after each runs what the
+      // collected pump's cell queued.
+      {
+        name: "s3file.write(new Response(jsStream)) whose pump was collected while waiting for bytes, worker terminated",
+        start: `file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(64)); return new Promise(() => {}); } }))).catch(() => {});
+          for (let i = 0; i < 2; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }`,
+        wrappers: 1,
+        collected: 1,
       },
       {
         name: "s3file.writer() with bytes written and no end(), worker terminated",
@@ -2641,6 +2660,12 @@ describe("VM teardown ordering", () => {
         wrappers: 1,
       },
       {
+        name: "s3file.write(new Response(Bun.file().stream())) whose file was read, PUT in flight, worker terminated",
+        start: `file.write(new Response(Bun.file("payload.bin").stream())).catch(() => {});`,
+        waitForRequest: true,
+        wrappers: 1,
+      },
+      {
         name: "s3file.writer() ended, PUT in flight, worker terminated",
         start: `const w = file.writer(); w.write(new Uint8Array(64)); w.end().catch(() => {});`,
         waitForRequest: true,
@@ -2649,7 +2674,8 @@ describe("VM teardown ordering", () => {
       },
       {
         name: "s3file.write(new Response(jsStream)) with its first part in flight, worker terminated",
-        start: `file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return new Promise(() => {}); } }))).catch(() => {});`,
+        start: `globalThis.moreBytes = Promise.withResolvers();
+          file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return globalThis.moreBytes.promise; } }))).catch(() => {});`,
         multipart: "part",
         waitForRequest: true,
         wrappers: 1,
@@ -2732,8 +2758,10 @@ describe("VM teardown ordering", () => {
 
     for (const row of ROWS) {
       test.concurrent(row.name, async () => {
+        using dir = tempDir("s3-upload-teardown", { "payload.bin": Buffer.alloc(64, "x").toString() });
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", host(row)],
+          cwd: String(dir),
           env: {
             ...bunEnv,
             // The S3 client does not honor NO_PROXY; an inherited proxy would
@@ -2759,6 +2787,7 @@ describe("VM teardown ordering", () => {
           started: row.mainThread ? "upload started" : "worker exit code: 1",
           uploads: isDebug ? 1 : "release build",
           wrappers: isDebug ? row.wrappers : "release build",
+          collected: isDebug ? (row.collected ?? 0) : "release build",
           sanitizer: false,
           exitCode: 0,
           detail: "",
@@ -2767,6 +2796,7 @@ describe("VM teardown ordering", () => {
           started: output.match(/^(upload started|worker exit code: \d+)$/m)?.[1],
           uploads: isDebug ? (output.match(/^\[s3multipartupload\] deinit$/gm)?.length ?? 0) : "release build",
           wrappers: isDebug ? (output.match(/^\[s3uploadstream\] deinit /gm)?.length ?? 0) : "release build",
+          collected: isDebug ? (output.match(/^\[s3uploadstream\] pump collected$/gm)?.length ?? 0) : "release build",
           sanitizer: output.includes("Sanitizer"),
           exitCode,
           detail: "",

@@ -1995,15 +1995,13 @@ describe("s3 upload stream body error", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The ref a JS-pumped upload holds for its pump is released by the pump
-  // promise's .then shim, and the S3 side must leave it to that shim for as long
-  // as script runs, even when the pump looks dead: a direct stream's pump
-  // promise is settled by the pull promise the user returned, which can happen
-  // long after the stream and its controller were collected. Here S3 fails the
-  // upload while the controller is already gone; when the pull promise settles
-  // afterwards, the shim runs against the wrapper, which therefore must still
-  // be alive (ASAN reports the use after free if it is not).
-  it("releases a direct stream's pump ref through the pump, not when S3 fails", async () => {
+  // A JS-pumped upload's native wrapper is freed as soon as S3 fails the upload.
+  // The pump promise's .then shim can still run after that: a direct stream's
+  // pump promise is settled by the pull promise the user returned, whenever
+  // that happens. Here it happens after the failure, so the shim must find
+  // nothing left to do (with the wrapper handed to it directly, ASAN reports a
+  // use after free here).
+  it("a pump that settles after S3 failed the upload and freed its wrapper touches nothing", async () => {
     const fixture = `
       const initiate = Promise.withResolvers();
       const initiateSeen = Promise.withResolvers();
@@ -2021,20 +2019,14 @@ describe("s3 upload stream body error", () => {
       });
       const client = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: standIn.url.href });
       const pull = Promise.withResolvers();
-      // In its own function so that nothing on this frame keeps the stream reachable.
-      const written = (() =>
-        client.write("key", new Response(new ReadableStream({
-          type: "direct",
-          pull(controller) {
-            controller.write(new Uint8Array(5 * 1024 * 1024));
-            return pull.promise;
-          },
-        }))))();
+      const written = client.write("key", new Response(new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write(new Uint8Array(5 * 1024 * 1024));
+          return pull.promise;
+        },
+      })));
       await initiateSeen.promise;
-      for (let i = 0; i < 4; i++) {
-        Bun.gc(true);
-        await new Promise(resolve => setImmediate(resolve));
-      }
       initiate.resolve();
       console.log("write:", await written.then(() => "resolved", e => e.code));
       pull.resolve();

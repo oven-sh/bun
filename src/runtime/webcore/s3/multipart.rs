@@ -217,15 +217,15 @@ impl MultiPartUpload {
     /// nothing feeds this upload any more, so fail it. A request still out drops
     /// its own ref when its response finds `state == Finished`. The rollback a
     /// multipart upload sends from here is refused during teardown; under
-    /// `--isolate` it goes out and completes on the next file's loop.
+    /// `--isolate` it goes out (`outlives_test_isolation`) and completes on the
+    /// next file's loop.
     ///
     /// # Safety
-    /// `this` is live and the caller holds a ref on it, which this consumes;
-    /// JS thread. May free it.
+    /// `this` is live; JS thread. May free it.
     pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract; released after `fail`, which releases the upload's
-        // own ref through `&self`, has returned.
-        let _callers_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        // SAFETY: fn contract; the guard's ref outlives `fail`, which may release
+        // every other one.
+        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(this) };
         // SAFETY: kept live by the guard.
         let failed = unsafe { &*this }.fail(s3_simple_request::VM_SHUTDOWN);
         crate::dispatch::fold(failed);
@@ -870,6 +870,7 @@ impl MultiPartUpload {
                 body: b"",
                 search_params: Some(search_params),
                 request_payer: self.request_payer,
+                outlives_test_isolation: true,
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),

@@ -137,6 +137,8 @@ pub struct S3HttpSimpleTask {
     /// The HTTP client's abort flag: set by the VM's stop phase so a request
     /// still queued or in flight fails promptly and comes back.
     pub(crate) signal_store: bun_http::signals::Store,
+    /// `S3SimpleRequestOptions::outlives_test_isolation`.
+    pub(crate) outlives_test_isolation: bool,
 }
 
 impl Taskable for S3HttpSimpleTask {
@@ -528,6 +530,11 @@ pub struct S3SimpleRequestOptions<'a> {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
+    /// The `bun test --isolate` swap stops every request of the finished file,
+    /// except one that is itself the cleanup of something the swap stopped (a
+    /// failed upload's rollback, which the swap itself sends): that one goes out
+    /// and completes, without script, on the next file's loop.
+    pub(crate) outlives_test_isolation: bool,
 }
 
 impl<'a> Default for S3SimpleRequestOptions<'a> {
@@ -545,6 +552,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             acl: None,
             storage_class: None,
             request_payer: false,
+            outlives_test_isolation: false,
         }
     }
 }
@@ -642,6 +650,7 @@ pub(crate) fn execute_simple_s3_request(
         body: Box::<[u8]>::from(options.body),
         poll_ref,
         signal_store: Default::default(),
+        outlives_test_isolation: options.outlives_test_isolation,
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
     // the scoped exclusive `http` writes below.

@@ -28,6 +28,7 @@ use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::api::html_rewriter;
 use crate::api::server;
+use crate::webcore::s3::client::S3UploadStreamWrapper;
 
 // Request contexts are a single generic
 // `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
@@ -60,10 +61,12 @@ pub enum Tag {
     /// Task-only tag (never a context cell): drops the last ref of a
     /// `RewriterPipe` on behalf of `RewriterPipe::deref_outside_caller`.
     HTMLRewriterPipeFree,
+    /// The stream pump's claim on an `S3UploadStreamWrapper` (`pump_cell`).
+    S3UploadStreamWrapper,
 }
 
 impl Tag {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 9;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -76,6 +79,7 @@ impl Tag {
             5 => Tag::DebugHTTPSServerH3RequestContext,
             6 => Tag::HTMLRewriterSuspension,
             7 => Tag::HTMLRewriterPipeFree,
+            8 => Tag::S3UploadStreamWrapper,
             _ => unreachable!(),
         }
     }
@@ -110,6 +114,9 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> NativePromise
 }
 impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
+}
+impl NativePromiseContextType for S3UploadStreamWrapper {
+    const TAG: Tag = Tag::S3UploadStreamWrapper;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -189,6 +196,9 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
             Tag::DebugHTTPSServerH3RequestContext => {
                 (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).promise_cell_collected()
             }
+            Tag::S3UploadStreamWrapper => {
+                (*ctx.cast::<S3UploadStreamWrapper>()).pump_cell_collected()
+            }
             Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree => {}
         }
     }
@@ -200,7 +210,8 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
 /// Zero-allocation: the ctx pointer and our Tag are packed into the task's
 /// `ptr` slot (pointer in high bits, tag in low 3 bits — the target types
 /// are all >= 8-byte aligned). See PosixSignalTask for the same trick with
-/// signal numbers.
+/// signal numbers. Three bits hold eight tags; the tags past those are queued
+/// as [`DeferredDerefTaskUpper`], whose dispatch adds the eight back.
 ///
 /// Layout of `Task.ptr` (read back as `usize` in dispatch):
 ///
@@ -224,6 +235,23 @@ impl Taskable for DeferredDerefTask {
     }
 }
 
+/// [`DeferredDerefTask`] for the tags numbered `TAG_MASK + 1` and up.
+pub(crate) struct DeferredDerefTaskUpper;
+
+impl Taskable for DeferredDerefTaskUpper {
+    const TAG: TaskTag = task_tag::NativePromiseContextDeferredDerefTaskUpper;
+    /// As [`DeferredDerefTask::release_unrun`].
+    unsafe fn release_unrun(this: *mut Self) {
+        Self::run_from_js_thread(this as usize);
+    }
+}
+
+impl DeferredDerefTaskUpper {
+    pub(crate) fn run_from_js_thread(packed_ptr: usize) {
+        DeferredDerefTask::run(packed_ptr, DeferredDerefTask::TAG_MASK + 1);
+    }
+}
+
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b111;
 
@@ -235,7 +263,8 @@ impl DeferredDerefTask {
             // Teardown has forbidden script and released the queue; from here on only GC destructors
             // (possibly mid-sweep in `~VM`) reach this, and theirs is the last use of `ctx` in that
             // frame. A worker's HTMLRewriter pipe would outlive it, so those refs are released now,
-            // sweep-safe; a RequestContext's deref is not sweep-safe and dies with the VM instead.
+            // sweep-safe; a RequestContext's or an S3 wrapper's release is not sweep-safe and dies
+            // with the VM instead (the stop phase reclaimed every S3 claim it found before this).
             match tag {
                 // SAFETY: the destroyed context held the suspension's ref on this live pipe.
                 Tag::HTMLRewriterSuspension => unsafe {
@@ -258,25 +287,36 @@ impl DeferredDerefTask {
         let addr = ctx as usize;
         debug_assert!(addr & Self::TAG_MASK == 0);
 
+        let tag = tag as usize;
+        let (task_tag, low_bits) = if tag <= Self::TAG_MASK {
+            (<DeferredDerefTask as Taskable>::TAG, tag)
+        } else {
+            (
+                <DeferredDerefTaskUpper as Taskable>::TAG,
+                tag - (Self::TAG_MASK + 1),
+            )
+        };
         // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so
         // build it directly — dispatch unpacks via `task.ptr as usize`.
-        let task = Task::new(
-            <DeferredDerefTask as Taskable>::TAG,
-            (addr | (tag as usize)) as *mut (),
-        );
+        let task = Task::new(task_tag, (addr | low_bits) as *mut ());
         // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
         // sole mutator on the JS thread here.
         vm.event_loop_ref().enqueue_task(task);
     }
 
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {
-        let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
+        Self::run(packed_ptr, 0);
+    }
+
+    fn run(packed_ptr: usize, tag_base: usize) {
+        let tag = Tag::from_raw((tag_base + (packed_ptr & Self::TAG_MASK)) as u8);
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
         // SAFETY: ctx was packed in `schedule` from a live, non-null pointer
         // of the type indicated by `tag`, and this task owns one ref on it,
         // released below (for the HTMLRewriter tags: the ref taken in
         // `begin_suspension`, or the last ref handed over by
-        // `deref_outside_caller`). We are on the JS thread.
+        // `deref_outside_caller`; for the S3 tag: the pump's claim from
+        // `upload_stream`). We are on the JS thread.
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),
@@ -306,14 +346,20 @@ impl DeferredDerefTask {
                         NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
                     );
                 }
+                Tag::S3UploadStreamWrapper => {
+                    S3UploadStreamWrapper::release_collected_pump_claim(
+                        ctx.cast::<S3UploadStreamWrapper>(),
+                    );
+                }
             }
         }
     }
 }
 
-// Low 3 bits hold the tag; verify both capacity and alignment slack so adding
-// a tag or a packed field can't silently break the packing.
-const _: () = assert!(Tag::COUNT <= DeferredDerefTask::TAG_MASK + 1);
+// Low 3 bits hold the tag (two task tags' worth of them); verify both capacity
+// and alignment slack so adding a tag or a packed field can't silently break the
+// packing.
+const _: () = assert!(Tag::COUNT <= 2 * (DeferredDerefTask::TAG_MASK + 1));
 const _: () =
     assert!(core::mem::align_of::<HTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () =
@@ -324,3 +370,4 @@ const _: () =
     assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(core::mem::align_of::<S3UploadStreamWrapper>() > DeferredDerefTask::TAG_MASK);

@@ -93,6 +93,7 @@ use crate::api::bun_subprocess::Subprocess;
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
+use crate::api::native_promise_context::DeferredDerefTaskUpper as NativePromiseContextDeferredDerefTaskUpper;
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
@@ -456,6 +457,10 @@ pub(crate) fn run_task(
             // `ptr` packs an int, not a pointer.
             NativePromiseContextDeferredDerefTask::run_from_js_thread(task.ptr as usize);
         }
+        task_tag::NativePromiseContextDeferredDerefTaskUpper => {
+            // As above.
+            NativePromiseContextDeferredDerefTaskUpper::run_from_js_thread(task.ptr as usize);
+        }
 
         // ── server / bundler / streams ───────────────────────────────────
         task_tag::ServerAllConnectionsClosedTask => {
@@ -589,7 +594,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 62,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1252,6 +1257,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::NapiFinalizerTask => release!(NapiFinalizerTask),
         task_tag::NativePromiseContextDeferredDerefTask => {
             release!(NativePromiseContextDeferredDerefTask)
+        }
+        task_tag::NativePromiseContextDeferredDerefTaskUpper => {
+            release!(NativePromiseContextDeferredDerefTaskUpper)
         }
         task_tag::NativeBrotli => release!(NativeBrotli),
         task_tag::NativeZlib => release!(NativeZlib),

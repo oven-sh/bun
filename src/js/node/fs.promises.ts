@@ -12,6 +12,7 @@ const {
 } = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
+const permission = require("internal/permission");
 
 var PromisePrototypeFinally = $Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
@@ -178,11 +179,12 @@ function watch(
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 async function cp(src, dest, options) {
-  const { validateCpOptions } = require("internal/fs/cp-sync");
+  const { checkCpPermissions, validateCpOptions } = require("internal/fs/cp-sync");
   const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
+  checkCpPermissions(src, dest);
   const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
   if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
     const { ok, checked } = await require("internal/fs/cp").tryNativeFastPath(src, dest, options);
@@ -265,8 +267,16 @@ const exports = {
   },
   chown: asyncWrap(fs.chown, "chown"),
   chmod: asyncWrap(fs.chmod, "chmod"),
-  fchmod: asyncWrap(fs.fchmod, "fchmod"),
-  fchown: asyncWrap(fs.fchown, "fchown"),
+  fchmod: permission.enabled
+    ? async function fchmod() {
+        throw permission.customAccessDeniedError("fchmod API is disabled when Permission Model is enabled.");
+      }
+    : asyncWrap(fs.fchmod, "fchmod"),
+  fchown: permission.enabled
+    ? async function fchown() {
+        throw permission.customAccessDeniedError("fchown API is disabled when Permission Model is enabled.");
+      }
+    : asyncWrap(fs.fchown, "fchown"),
   fstat: asyncWrap(fs.fstat, "fstat"),
   fsync: asyncWrap(fs.fsync, "fsync"),
   fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
@@ -327,7 +337,14 @@ const exports = {
   realpath: asyncWrap(fs.realpath, "realpath"),
   rename: asyncWrap(fs.rename, "rename"),
   stat: asyncWrap(fs.stat, "stat"),
-  symlink: asyncWrap(fs.symlink, "symlink"),
+  symlink: permission.enabled
+    ? async function symlink(target, path, type) {
+        if (!permission.has("fs")) {
+          throw permission.customAccessDeniedError("fs.symlink API requires full fs.read and fs.write permissions.");
+        }
+        return fs.symlink(target, path, type);
+      }
+    : asyncWrap(fs.symlink, "symlink"),
   truncate: asyncWrap(fs.truncate, "truncate"),
   unlink: asyncWrap(fs.unlink, "unlink"),
   utimes: asyncWrap(fs.utimes, "utimes"),

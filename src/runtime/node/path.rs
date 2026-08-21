@@ -3539,6 +3539,24 @@ fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     Ok(&buf[0..resolved_len])
 }
 
+/// `path.toNamespacedPath(path)` as an owned copy, for native code that
+/// reports a path back to JS the way node's C++ layer saw it (the permission
+/// model's `err.resource`). Identity off Windows, like the JS function.
+pub(crate) fn to_namespaced_path_owned(path: &[u8]) -> Vec<u8> {
+    if !cfg!(windows) || path.is_empty() {
+        return path.to_vec();
+    }
+    // Same sizing as `to_namespaced_path_js_t`: room for the cwd `resolve` may
+    // prepend, the `\\?\UNC\` prefix, and the NUL terminator.
+    let buf_len = (path.len() + max_path_size::<u8>() + 1).max(path_size::<u8>()) + 8 + 1;
+    let mut buf = vec![0u8; buf_len];
+    let mut buf2 = vec![0u8; buf_len];
+    match to_namespaced_path_windows_t::<u8>(path, &mut buf, &mut buf2) {
+        Ok(namespaced) => namespaced.to_vec(),
+        Err(_) => path.to_vec(),
+    }
+}
+
 fn to_namespaced_path_windows_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     path: &[T],

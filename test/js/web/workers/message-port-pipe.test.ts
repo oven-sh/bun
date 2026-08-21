@@ -73,6 +73,103 @@ describe("MessagePort pipe", () => {
     port1.close();
   });
 
+  // close() from inside a handler only marks the port. The drain that is already running
+  // delivers the rest of the inbox after the handler returns (depth 1, like node); close()
+  // itself dispatches nothing, and the closing port discards everything posted on it.
+  test("close() inside a handler does not re-enter the handler, and posts after it are discarded", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const seen: string[] = [];
+    const peerGot: string[] = [];
+    let depth = 0;
+    port2.onmessage = e => {
+      depth++;
+      seen.push(`${e.data}@${depth}`);
+      port2.close();
+      port2.postMessage(`after-close-${e.data}`);
+      depth--;
+    };
+    port1.onmessage = e => peerGot.push(e.data);
+    // port1's 'close' (fired because port2 closed) lands after anything port2 sent it.
+    const { promise: peerClosed, resolve } = Promise.withResolvers<void>();
+    port1.addEventListener("close", () => resolve());
+    port1.postMessage(1);
+    port1.postMessage(2);
+    port1.postMessage(3);
+    await peerClosed;
+    expect({ seen, peerGot }).toEqual({ seen: ["1@1", "2@1", "3@1"], peerGot: [] });
+    port1.close();
+  });
+
+  test("the batch a handler closed in keeps going, including what the peer posts meanwhile; 'close' follows it", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const seen: string[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    let depth = 0;
+    port2.onmessage = e => {
+      depth++;
+      seen.push(`${e.data}@${depth}`);
+      if (e.data === 1) {
+        port2.close();
+        port1.postMessage("from-peer");
+      }
+      depth--;
+    };
+    port2.addEventListener("close", () => {
+      seen.push("close");
+      resolve();
+    });
+    port1.postMessage(1);
+    port1.postMessage(2);
+    await closed;
+    expect(seen).toEqual(["1@1", "2@1", "from-peer@1", "close"]);
+    port1.close();
+  });
+
+  // Same thing on the other delivery loop: the peer closed first, so this side's
+  // messages are flushed ahead of its 'close' event, and a handler closes during that flush.
+  test("close() inside a handler while the peer's close is being delivered", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const seen: string[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    let depth = 0;
+    port1.postMessage("a");
+    port1.postMessage("b");
+    port1.close();
+    port2.addEventListener("close", () => {
+      seen.push("close");
+      resolve();
+    });
+    port2.onmessage = e => {
+      depth++;
+      seen.push(`${e.data}@${depth}`);
+      port2.close();
+      depth--;
+    };
+    await closed;
+    expect(seen).toEqual(["a@1", "b@1", "close"]);
+  });
+
+  // A microtask queued by a handler runs between two deliveries, still inside the drain.
+  test("close() from a microtask between two messages lets the batch finish", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const seen: (number | string)[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    port2.onmessage = e => {
+      seen.push(e.data);
+      if (e.data === 1) queueMicrotask(() => port2.close());
+    };
+    port2.addEventListener("close", () => {
+      seen.push("close");
+      resolve();
+    });
+    port1.postMessage(1);
+    port1.postMessage(2);
+    port1.postMessage(3);
+    await closed;
+    expect(seen).toEqual([1, 2, 3, "close"]);
+    port1.close();
+  });
+
   test("messages queued on a port follow it across transfer", async () => {
     const { port1: A, port2: B } = new MessageChannel();
     const { port1: C, port2: D } = new MessageChannel();

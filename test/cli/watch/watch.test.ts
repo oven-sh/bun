@@ -203,6 +203,137 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(exitCode).not.toBe(0);
 });
 
+// The watcher thread reloads with execve() while the other threads are still running. While a
+// thread is inside execve, the kernel fails every clone() made by the other threads of the process
+// with EAGAIN. JSC starts its GC marker threads at the first collection, so a reload that lands on
+// that collection makes WTF::Thread::create abort on the JS thread. reload_process has to keep such
+// a thread out of the way (it parks it) so that the execve still goes through; when it reset the
+// crash signals to SIG_DFL first, the abort took the whole process down instead of reloading it.
+//
+// The LD_PRELOAD shim stands in for the kernel so that the race is deterministic: from the moment
+// bun calls execve() it fails every pthread_create in the process, tells the script to run its
+// first collection, waits for the failed pthread_create and for the abort behind it to land, and
+// only then execs for real.
+it.skipIf(!isLinux || !cc)(
+  "--watch still reloads when a thread aborts while the watcher thread is in execve",
+  async () => {
+    const SHIM_C = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <sys/resource.h>
+#include <unistd.h>
+
+static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+static int (*real_execve)(const char *, char *const *, char *const *);
+static volatile int in_execve;
+static volatile int failed_create;
+
+/* Without the fix the abort takes the default action; keep its core file out of CI's crash scan. */
+__attribute__((constructor)) static void no_core(void) {
+  struct rlimit rl = {0, 0};
+  setrlimit(RLIMIT_CORE, &rl);
+}
+
+static void create_marker(const char *env) {
+  const char *path = getenv(env);
+  int fd = path ? open(path, O_WRONLY | O_CREAT, 0644) : -1;
+  if (fd >= 0) close(fd);
+}
+
+int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), void *arg) {
+  if (!real_pthread_create) real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
+  if (in_execve) {
+    failed_create = 1;
+    create_marker("RELOAD_TEST_FAILED_CREATE_MARKER");
+    return EAGAIN;
+  }
+  return real_pthread_create(t, a, f, arg);
+}
+
+int execve(const char *path, char *const argv[], char *const envp[]) {
+  if (!real_execve) real_execve = dlsym(RTLD_NEXT, "execve");
+  in_execve = 1;
+  create_marker("RELOAD_TEST_IN_EXECVE_MARKER");
+  for (int i = 0; i < 2000 && !failed_create; i++) usleep(5000);
+  /* The thread whose pthread_create failed aborts right away. Give that abort time to land:
+   * without the fix it has killed the process long before this returns. */
+  usleep(1000000);
+  return real_execve(path, argv, envp);
+}
+`;
+    using dir = tempDir("watch-reload-abort-in-execve", {
+      "shim.c": SHIM_C,
+      "app.js": `
+      const { existsSync, writeSync } = require("node:fs");
+      writeSync(1, "iter first\\n");
+      while (!existsSync(process.env.RELOAD_TEST_IN_EXECVE_MARKER)) Bun.sleepSync(2);
+      // The first collection of this process: JSC creates its marker threads right here, on this
+      // thread, and the shim fails the pthread_create.
+      Bun.gc(true);
+      setInterval(() => {}, 1000);
+    `,
+    });
+    // Kept outside the watched directory so that the markers do not show up as file events.
+    using markers = tempDir("watch-reload-abort-in-execve-markers", {});
+    const shimPath = join(String(dir), "shim.so");
+    await using ccProc = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+
+    const existing = bunEnv.LD_PRELOAD;
+    const proc = spawn({
+      cmd: [bunExe(), "--watch", "app.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+        RELOAD_TEST_IN_EXECVE_MARKER: join(String(markers), "in-execve"),
+        RELOAD_TEST_FAILED_CREATE_MARKER: join(String(markers), "failed-create"),
+        // Nothing may collect before the script does, or the marker threads already exist by the
+        // time the reload starts and the collection below creates none.
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        BUN_GC_TIMER_DISABLE: "1",
+        // The marker count is derived from the CPU count otherwise; one marker means no threads.
+        BUN_JSC_numberOfGCMarkers: "4",
+      },
+      stdout: "pipe",
+      // Drained below: WTF reports the failed pthread_create (and a debug build its assertion) on
+      // stderr before the abort, and a full pipe would block the aborting thread instead.
+      stderr: "pipe",
+    });
+    watchee = proc;
+    const stderr = proc.stderr.text();
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("iter first");
+    await Bun.write(
+      join(String(dir), "app.js"),
+      `require("node:fs").writeSync(1, "iter second\\n"); setInterval(() => {}, 1000);`,
+    );
+    // Without the fix this rejects with "stream closed": the abort on the JS thread killed the
+    // process before the watcher thread reached execve.
+    await waitFor("iter second");
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+    await stderr;
+
+    // The reload went through the failure, not around it.
+    expect(await Bun.file(join(String(markers), "failed-create")).exists()).toBe(true);
+  },
+  30000,
+);
+
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload
 // to the JS thread first (so listeners can run), but forces the reload itself

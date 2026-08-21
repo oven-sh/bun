@@ -6,6 +6,9 @@
 #include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <algorithm>
+#include <iterator>
 #include <sys/stat.h>
 #include <signal.h>
 #include <unistd.h>
@@ -298,6 +301,35 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
+// The thread that is about to execve. Set by on_before_reload_process_posix.
+static pthread_t reloading_thread;
+
+// Handler for the crash signals between on_before_reload_process_posix and execve.
+//
+// The other threads keep running until execve passes its point of no return, and while the
+// reloading thread is inside execve the kernel fails every clone() they make with EAGAIN
+// (kernel/fork.c copy_fs(), while fs->in_exec is set). A GC that starts its marker threads in
+// that window aborts in WTF::Thread::create. Park the thread instead: execve tears it down with
+// the rest of the old image and the reload goes through. The crash handler gets its threads out
+// of the way too (maybe_handle_panic_during_process_reload), but ASAN builds install no crash
+// handler, and SA_RESETHAND limits it to one thread. A crash on the reloading thread itself is
+// fatal as usual: parking it would hang the reload.
+static void park_thread_crashing_during_reload(int sig)
+{
+    if (pthread_equal(pthread_self(), reloading_thread)) {
+        struct sigaction dfl {};
+        dfl.sa_handler = SIG_DFL;
+        sigemptyset(&dfl.sa_mask);
+        sigaction(sig, &dfl, nullptr);
+        // The signal is blocked while its handler runs, so this is delivered, with the default
+        // action, as soon as the handler returns.
+        raise(sig);
+        return;
+    }
+    for (;;)
+        pause();
+}
+
 extern "C" void on_before_reload_process_posix()
 {
     unset_cloexec(STDIN_FILENO);
@@ -321,6 +353,17 @@ extern "C" void on_before_reload_process_posix()
             unset_cloexec(static_cast<int>(fd));
     }
 
+    // See park_thread_crashing_during_reload. SIGSEGV and SIGBUS are not parked: JSC's handlers
+    // for them stay installed (see below) and chain to the crash handler, which steps aside on
+    // its own during a reload.
+    static const int parked_crash_signals[] = { SIGABRT, SIGILL, SIGTRAP, SIGFPE };
+    reloading_thread = pthread_self();
+    struct sigaction park {};
+    park.sa_handler = park_thread_crashing_during_reload;
+    sigemptyset(&park.sa_mask);
+    for (int s : parked_crash_signals)
+        sigaction(s, &park, nullptr);
+
     // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
     // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume are left
     // for execve to reset atomically — resetting them here races JSC's sampler/GC threads fatally.
@@ -329,6 +372,8 @@ extern "C" void on_before_reload_process_posix()
     sigemptyset(&sa.sa_mask);
     for (int s = 1; s < NSIG; s++) {
         if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
+            continue;
+        if (std::find(std::begin(parked_crash_signals), std::end(parked_crash_signals), s) != std::end(parked_crash_signals))
             continue;
 #if OS(LINUX)
         if (s == g_wtfConfig.sigThreadSuspendResume)

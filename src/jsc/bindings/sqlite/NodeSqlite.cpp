@@ -907,16 +907,21 @@ JSDatabaseSync::~JSDatabaseSync()
     unregisterOpenDatabase(this);
 }
 
-void JSDatabaseSync::closeInternal()
+void JSDatabaseSync::closeInternal(FinalizeStatements finalizeStatements)
 {
-    // Statements are not tracked here: GC order between JSDatabaseSync and
-    // its JSStatementSyncs is undefined during VM teardown, so holding raw
-    // pointers back to them would dangle. sqlite3_close_v2 tolerates
-    // unfinalized statements by zombifying the connection until each
-    // statement is independently finalized (by ~JSStatementSync()). Every
-    // JSStatementSync holds a strong WriteBarrier to this object, so during
-    // normal GC the database is kept alive while any statement is reachable;
-    // statements observe closure via isFinalized().
+    // Statement cells are not tracked here: GC order between JSDatabaseSync
+    // and its JSStatementSyncs is undefined during VM teardown, so holding
+    // raw pointers back to them would dangle. The explicit close() paths
+    // finalize the native sqlite3_stmt handles through sqlite3_next_stmt
+    // instead (FinalizeStatements::Yes) and flag the shared connection
+    // record so ~JSStatementSync() does not double-finalize. On the
+    // GC-destructor and termination paths (FinalizeStatements::No)
+    // sqlite3_close_v2 tolerates unfinalized statements by zombifying the
+    // connection until each statement is independently finalized by
+    // ~JSStatementSync(). Every JSStatementSync holds a strong WriteBarrier
+    // to this object, so during normal GC the database is kept alive while
+    // any statement is reachable; statements observe closure via
+    // isFinalized().
     if (!m_db) return;
 
     // A BusyScope is on the stack (re-entrant close from an option getter /
@@ -936,12 +941,36 @@ void JSDatabaseSync::closeInternal()
     // keeps a back-pointer into the connection, and close_v2 does NOT
     // tear them down.
     deleteTrackedSessions();
-    sqlite3_close_v2(m_db);
+    // Detach the member state before the statement walk: finalizing a
+    // half-stepped statement can fire a user aggregate's xFinal, which
+    // re-enters JS. With m_db already null, re-entrant calls observe a
+    // closed database.
+    sqlite3* handle = m_db;
+    RefPtr<NodeSqliteConnectionRecord> record = WTF::move(m_connectionRecord);
     m_db = nullptr;
     unregisterOpenDatabase(this);
-    m_namedRegistrations.clear();
-    Locker locker { cellLock() };
-    m_registeredCallbacks.clear();
+    if (finalizeStatements == FinalizeStatements::Yes && record) {
+        // Finalize every outstanding statement so close_v2 really closes
+        // the file (a zombified connection keeps the OS handle open, which
+        // locks the database file on Windows). Set the flag BEFORE the
+        // walk: an xFinal re-entry can trigger GC, and a statement wrapper
+        // swept mid-walk must not sqlite3_finalize a handle the walk
+        // already released. A wrapper the flag makes skip its own finalize
+        // still has its handle in the connection's list, and the walk
+        // re-fetches the head each iteration, so nothing is leaked.
+        record->statementsFinalized = true;
+        while (sqlite3_stmt* stmt = sqlite3_next_stmt(handle, nullptr))
+            sqlite3_finalize(stmt);
+    }
+    sqlite3_close_v2(handle);
+    // An xFinal callback during the walk may have re-opened the database.
+    // The registered-callback roots then belong to the new connection, so
+    // leave them alone; they are cleared when that connection closes.
+    if (!m_db) {
+        m_namedRegistrations.clear();
+        Locker locker { cellLock() };
+        m_registeredCallbacks.clear();
+    }
 }
 
 void JSDatabaseSync::finishDeferredClose()
@@ -954,6 +983,13 @@ void JSDatabaseSync::finishDeferredClose()
     m_deferredClose = nullptr;
     if (!handle) return;
     deleteTrackedSessions();
+    // Unlike a direct close(), outstanding statements are NOT finalized
+    // here: this runs from ~BusyScope in an arbitrary entry point's
+    // epilogue, after its exception checks, and finalizing a half-stepped
+    // statement can fire a user aggregate's xFinal (JS). close_v2
+    // zombifies instead and each ~JSStatementSync() releases its handle,
+    // so the flag stays unset.
+    m_connectionRecord = nullptr;
     sqlite3_close_v2(handle);
     unregisterOpenDatabase(this);
     m_namedRegistrations.clear();
@@ -1073,6 +1109,7 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
 
     m_db = db;
     ++m_openGeneration;
+    m_connectionRecord = adoptRef(*new NodeSqliteConnectionRecord);
     // Register before the fallible configuration calls below: each of their
     // failure paths goes through closeInternal(), which unregisters.
     registerOpenDatabase(this, globalObject->vm());
@@ -1241,20 +1278,26 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncClose, (JSGlobalObject * globalObject, Ca
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
-    // Node allows re-entrant close(); sqlite3_close_v2 zombifies while any
-    // stmt is outstanding, and option-reading paths REQUIRE_DB_OPEN again
-    // before the sqlite call.
-    self->closeInternal();
+    // Node allows re-entrant close(); the busy path defers the teardown to
+    // the outermost BusyScope and option-reading paths REQUIRE_DB_OPEN
+    // again before the sqlite call.
+    self->closeInternal(JSDatabaseSync::FinalizeStatements::Yes);
+    // Finalizing a half-stepped statement can run a user aggregate's
+    // xFinal, which may leave an exception pending.
+    CHECK_UDF_EXCEPTION(scope);
     return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDispose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    (void)vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue());
     if (self && self->isOpen()) {
-        self->closeInternal();
+        self->closeInternal(JSDatabaseSync::FinalizeStatements::Yes);
+        // Symbol.dispose swallows "not open" state errors, not an exception
+        // a user aggregate's xFinal raised during statement finalization.
+        CHECK_UDF_EXCEPTION(scope);
     }
     return JSValue::encode(jsUndefined());
 }
@@ -2425,6 +2468,7 @@ void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* s
     putNodeInstanceGetter(vm, this, "expandedSQL"_s, jsStatementSyncExpandedSQL);
     m_stmt = stmt;
     m_originGeneration = db->openGeneration();
+    m_connectionRecord = db->connectionRecord();
     m_database.set(vm, this, db);
     m_extraMemorySize = stmt ? static_cast<size_t>(sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_MEMUSED, 0)) : 0;
     if (m_extraMemorySize)
@@ -2433,10 +2477,15 @@ void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* s
 
 void JSStatementSync::finalizeStatement()
 {
-    if (m_stmt) {
+    if (!m_stmt) return;
+    // An explicit db.close() finalizes every outstanding statement through
+    // sqlite3_next_stmt and flags the shared record; m_stmt then dangles
+    // and finalizing it again would be a use-after-free. The record (not
+    // the database cell) carries the flag because GC may sweep this cell
+    // after the JSDatabaseSync.
+    if (!m_connectionRecord || !m_connectionRecord->statementsFinalized)
         sqlite3_finalize(m_stmt);
-        m_stmt = nullptr;
-    }
+    m_stmt = nullptr;
 }
 
 JSStatementSync::~JSStatementSync()

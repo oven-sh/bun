@@ -72,6 +72,18 @@ struct NodeSqliteSessionRecord : public WTF::RefCounted<NodeSqliteSessionRecord>
     bool inUse { false };
 };
 
+// Shared bookkeeping between a DatabaseSync and every StatementSync prepared
+// on one open()ed connection. An explicit close() finalizes all outstanding
+// sqlite3_stmts (sqlite3_next_stmt walk) so sqlite3_close_v2 really closes
+// the file — an unfinalized statement zombifies the connection and keeps the
+// OS handle open, which locks the database file on Windows. Statement
+// wrappers are GC cells whose sweep order relative to the database is
+// undefined, so they learn "close() already finalized my handle" through
+// this refcounted record instead of reaching back into the database cell.
+struct NodeSqliteConnectionRecord : public WTF::RefCounted<NodeSqliteConnectionRecord> {
+    bool statementsFinalized { false };
+};
+
 struct DatabaseSyncOpenConfiguration {
     bool readOnly = false;
     bool enableForeignKeyConstraints = true;
@@ -125,10 +137,17 @@ public:
     // Open the underlying connection. Throws on the scope if it fails or the
     // database is already open.
     bool open(JSC::JSGlobalObject*, JSC::ThrowScope&);
-    void closeInternal();
+    // FinalizeStatements::Yes (the explicit close()/Symbol.dispose paths)
+    // finalizes every outstanding prepared statement so sqlite3_close_v2
+    // actually closes the file instead of zombifying the connection.
+    // Finalizing a half-stepped statement can fire a user aggregate's xFinal
+    // (JS), so the GC-destructor and VM-termination paths must pass No.
+    enum class FinalizeStatements : bool { No, Yes };
+    void closeInternal(FinalizeStatements = FinalizeStatements::No);
 
     sqlite3* connection() const { return m_db; }
     bool isOpen() const { return m_db != nullptr; }
+    NodeSqliteConnectionRecord* connectionRecord() const { return m_connectionRecord.get(); }
     // Bumped on every successful open(). Statements/sessions capture this
     // at creation and compare instead of the raw sqlite3* — after
     // close()+open() the allocator may recycle the exact same address for
@@ -238,6 +257,9 @@ private:
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};
     sqlite3* m_db = nullptr;
+    // One record per open()ed connection, shared with every StatementSync
+    // prepared on it; see NodeSqliteConnectionRecord.
+    RefPtr<NodeSqliteConnectionRecord> m_connectionRecord;
     // Handle whose sqlite3_close_v2 was deferred by a re-entrant close()
     // until the outermost BusyScope unwinds; see finishDeferredClose().
     sqlite3* m_deferredClose = nullptr;
@@ -429,6 +451,10 @@ private:
     void finishCreation(JSC::VM& vm, JSDatabaseSync* db, sqlite3_stmt* stmt);
 
     sqlite3_stmt* m_stmt = nullptr;
+    // Record of the connection this statement was prepared on. When the
+    // record says statementsFinalized, close() already sqlite3_finalize'd
+    // m_stmt (it then dangles) and the destructor must not touch it.
+    RefPtr<NodeSqliteConnectionRecord> m_connectionRecord;
     JSC::WriteBarrier<JSC::Structure> m_rowStructure;
     WTF::Vector<int8_t> m_columnOffsets;
     // sqlite3_stmt native heap footprint reported to JSC's GC so

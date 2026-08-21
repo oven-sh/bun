@@ -1146,7 +1146,13 @@ pub(crate) fn to_bytes(
         let lo = modules.iter().map(|m| m.contents.offset).min().unwrap();
         let hi = modules.iter().map(|m| range(m.contents).end).max().unwrap();
         let others = modules.iter().flat_map(|m| {
-            [m.bytecode, m.module_info, m.sourcemap, m.name, m.bytecode_origin_path]
+            [
+                m.bytecode,
+                m.module_info,
+                m.sourcemap,
+                m.name,
+                m.bytecode_origin_path,
+            ]
         });
         for p in others.chain([offsets.modules_ptr, offsets.compile_exec_argv_ptr]) {
             let r = range(p);

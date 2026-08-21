@@ -10,6 +10,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "utils.h"
 
@@ -4030,6 +4031,44 @@ static napi_value test_napi_status_codes_node26(const Napi::CallbackInfo &info) 
     print_status(
         "napi_create_bigint_words(INT_MAX+1)",
         napi_create_bigint_words(env, 0, (size_t)INT_MAX + 1, &one, &out),
+        true);
+  }
+
+  // napi_create_bigint_words: 20,000 words is 1.28 million bits, past JSC's
+  // old 1 << 20 bit cap but within the 1 << 30 bit cap both engines share
+  // now. It must round trip like Node.
+  {
+    napi_value out;
+    std::vector<uint64_t> words(20000, 0);
+    words.back() = 1;
+    napi_status s =
+        napi_create_bigint_words(env, 0, words.size(), words.data(), &out);
+    bool pending = false;
+    napi_is_exception_pending(env, &pending);
+    int sign = -1;
+    size_t count = 0;
+    uint64_t top = 0;
+    if (s == napi_ok) {
+      std::vector<uint64_t> readback(words.size() + 1);
+      count = readback.size();
+      napi_get_value_bigint_words(env, out, &sign, &count, readback.data());
+      top = count ? readback[count - 1] : 0;
+    }
+    printf("napi_create_bigint_words(20000 words): status=%d pending=%d "
+           "sign=%d count=%zu top=%llu\n",
+           (int)s, (int)pending, sign, count, (unsigned long long)top);
+  }
+
+  // napi_create_bigint_words: one word past the 1 << 30 bit cap. Both
+  // engines reject the count before reading the words, so a one-word buffer
+  // is safe.
+  {
+    napi_value out;
+    uint64_t one = 1;
+    print_status(
+        "napi_create_bigint_words(past cap)",
+        napi_create_bigint_words(env, 0, ((size_t)1 << 30) / 64 + 1, &one,
+                                 &out),
         true);
   }
 

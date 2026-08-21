@@ -2150,15 +2150,13 @@ describe("server.stop() with open WebSockets", () => {
       await srv.stop(false);
       const [s, c] = await Promise.all([serverClose, clientClose]);
       expect({
-        serverCode: s.code,
-        clientCode: c.code,
-        wasClean: c.wasClean,
+        server: s,
+        client: { code: c.code, reason: c.reason, wasClean: c.wasClean },
         readyState: ws.readyState,
         pendingWebSockets: srv.pendingWebSockets,
       }).toEqual({
-        serverCode: 1001,
-        clientCode: 1001,
-        wasClean: true,
+        server: { code: 1001, reason: "Server closed" },
+        client: { code: 1001, reason: "Server closed", wasClean: true },
         readyState: WebSocket.CLOSED,
         pendingWebSockets: 0,
       });
@@ -2174,14 +2172,12 @@ describe("server.stop() with open WebSockets", () => {
       await srv.stop(true);
       const [s, c] = await Promise.all([serverClose, clientClose]);
       expect({
-        serverCode: s.code,
-        clientCode: c.code,
-        wasClean: c.wasClean,
+        server: s,
+        client: { code: c.code, reason: c.reason, wasClean: c.wasClean },
         pendingWebSockets: srv.pendingWebSockets,
       }).toEqual({
-        serverCode: 1001,
-        clientCode: 1001,
-        wasClean: true,
+        server: { code: 1001, reason: "Server closed" },
+        client: { code: 1001, reason: "Server closed", wasClean: true },
         pendingWebSockets: 0,
       });
     } finally {

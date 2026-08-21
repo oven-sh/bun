@@ -189,6 +189,15 @@ test.concurrent("http.Server.close() does not close open WebSocket connections",
     expect(await echoed.promise).toBe("echo:hi");
     expect(client.readyState).toBe(WebSocket.OPEN);
 
+    // close() did take effect: the listener is gone for new connections.
+    const late = new WebSocket(`ws://127.0.0.1:${port}/`);
+    const lateResult = await new Promise<string>(resolve => {
+      late.onopen = () => resolve("open");
+      late.onerror = () => resolve("error");
+    });
+    expect(lateResult).toBe("error");
+    expect(client.readyState).toBe(WebSocket.OPEN);
+
     // User-chosen code reaches the peer.
     for (const c of wss.clients) c.close(4001, "draining");
     const ev = await closed.promise;

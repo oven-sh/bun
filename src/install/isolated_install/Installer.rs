@@ -2570,40 +2570,32 @@ impl<'a> Installer<'a> {
                             lockfile.str(&pkg_names[replacement_pkg_id as usize]),
                         )
                     }
-                    None => {
-                        let pkg_res = &pkg_resolutions[dep_pkg_id as usize];
-                        match pkg_res.tag {
-                            ResolutionTag::Workspace => {
-                                let workspace_path = pkg_res.workspace().slice(string_buf);
-                                if let Some(dir) = paths::dirname(workspace_path) {
-                                    target_node_modules_path.append(dir).assume_ok();
-                                }
-                                strings::StringOrTinyString::init(paths::basename(workspace_path))
-                            }
-                            ResolutionTag::Symlink => {
-                                let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
-                                paths::PathLike::clear(&mut target_node_modules_path);
-                                target_node_modules_path
-                                    .append(symlink_dir_path)
-                                    .assume_ok();
-                                // keep the `@scope/` segment of a scoped link
-                                // name in the directory part
-                                let link_name = pkg_res.symlink().slice(string_buf);
-                                if let Some(dir) = paths::dirname(link_name) {
-                                    target_node_modules_path.append(dir).assume_ok();
-                                }
-                                strings::StringOrTinyString::init(paths::basename(link_name))
-                            }
-                            _ => {
-                                self.append_real_store_node_modules_path(
-                                    &mut target_node_modules_path,
-                                    dep.entry_id,
-                                    Which::Final,
-                                );
-                                package_name
-                            }
+                    None => match pkg_resolutions[dep_pkg_id as usize].tag {
+                        // Workspace and link: packages are not laid out as
+                        // store `node_modules/<name>` entries. Resolve them
+                        // through the declaring entry's node_modules, where
+                        // the peer is symlinked under its dependency name.
+                        ResolutionTag::Workspace | ResolutionTag::Symlink => {
+                            self.append_real_store_node_modules_path(
+                                &mut target_node_modules_path,
+                                current_entry_id,
+                                Which::Final,
+                            );
+                            strings::StringOrTinyString::init(
+                                lockfile.buffers.dependencies[dep.dep_id as usize]
+                                    .name
+                                    .slice(string_buf),
+                            )
                         }
-                    }
+                        _ => {
+                            self.append_real_store_node_modules_path(
+                                &mut target_node_modules_path,
+                                dep.entry_id,
+                                Which::Final,
+                            );
+                            package_name
+                        }
+                    },
                 };
 
                 let mut bin_linker = bin_real::Linker {
@@ -2640,6 +2632,15 @@ impl<'a> Installer<'a> {
                     // retry delete its own link and fail the install
                     bin_linker.err = None;
                     bin_linker.skipped_due_to_missing_bin = false;
+
+                    if self.manager().options.log_level.is_verbose() {
+                        bun_core::pretty_errorln!(
+                            "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
+                            bstr::BStr::new(package_name.slice()),
+                            bstr::BStr::new(target_package_name.slice()),
+                        );
+                    }
+
                     bin_linker.link(false);
                 }
 

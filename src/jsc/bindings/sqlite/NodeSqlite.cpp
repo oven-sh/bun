@@ -1216,7 +1216,11 @@ void JSDatabaseSync::releaseSupersededRegistration(const WTF::String& name, int 
         // keep the superseded callback rooted until close().
         if (reg.argc != argc || !WTF::equalIgnoringASCIICase(reg.name, name))
             continue;
-        {
+        // While a close walk runs (a re-entrant open()+function()/aggregate()
+        // from the walk's xFinal lands here), keep the slots rooted: the walk
+        // can still invoke the superseded callbacks through SQLite's UDF
+        // contexts. The outermost walk's tail drops the whole vector.
+        if (!m_closeWalkDepth) {
             Locker locker { cellLock() };
             for (size_t slot : reg.slots) {
                 if (slot != kNoCallbackSlot && slot < m_registeredCallbacks.size())

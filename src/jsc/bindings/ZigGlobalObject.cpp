@@ -836,6 +836,9 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     baseline.preloadModuleKeys.clear();
     for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
         UNUSED_VARIABLE(entry);
+        // A symbol-keyed record has a null string key, which is the hash set's empty-bucket sentinel.
+        if (!key.first)
+            continue;
         baseline.preloadModuleKeys.add(key.first);
     }
     baseline.preloadRequireKeys.clear();
@@ -957,7 +960,7 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         WTF::Vector<JSC::Identifier, 32> evict;
         for (auto& [key, entry] : moduleLoader->moduleMap()) {
             UNUSED_VARIABLE(entry);
-            if (shouldEvict(key.first))
+            if (key.first && shouldEvict(key.first))
                 evict.append(JSC::Identifier::fromUid(vm, key.first));
         }
         WTF::Locker locker { moduleLoader->cellLock() };

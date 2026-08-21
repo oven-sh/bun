@@ -754,6 +754,8 @@ public:
     {
         ownProperties.clear();
         prepareStackTraceValue.clear();
+        // A later global can be allocated at the old address; a stale pointer would make its first capture look like a recapture.
+        capturedGlobal = nullptr;
         swapCount++;
         return false;
     }

@@ -259,7 +259,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
   // deleted file is watched. The eviction phase's extra growth is what the
   // evictions leak.
   test.skipIf(!isWindows)("evicting watchlist entries closes their handles", async () => {
-    const cycles = 20;
+    const cycles = 16;
     await using dir = tempDir("hot-evict-handles", {
       "entry.js": `
         import { existsSync } from "node:fs";
@@ -282,16 +282,16 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     });
     const handleCount = (pid: number) => {
       const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
-      const process = kernel32.symbols.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-      if (!process) throw new Error(`OpenProcess(${pid}) failed`);
+      const handle = kernel32.symbols.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+      if (!handle) throw new Error(`OpenProcess(${pid}) failed`);
       try {
         const count = new Uint32Array(1);
-        if (kernel32.symbols.GetProcessHandleCount(process, count) === 0) {
+        if (kernel32.symbols.GetProcessHandleCount(handle, count) === 0) {
           throw new Error("GetProcessHandleCount failed");
         }
         return count[0];
       } finally {
-        kernel32.symbols.CloseHandle(process);
+        kernel32.symbols.CloseHandle(handle);
       }
     };
 
@@ -317,12 +317,12 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
       writeFileSync(join(root, "trigger.js"), `export const seq = ${seq}; export const loadDep = ${loadDep};`);
       await waitForLine(`RELOAD ${seq} ${expectedDep}`);
     };
-    // Deletes and recreates `victim` between two reloads that do not load
-    // dep.js, then reloads once more with dep.js loaded. When the victim is
-    // dep.js, the deletion evicts its entry (that eviction is what enqueues the
-    // "deleted" reload) and the last reload watches the recreated file again.
-    // Deleting the never-imported other.js instead raises the same directory
-    // events and reloads without touching the watchlist.
+    // Deletes and recreates `victim` between reloads that do not load dep.js,
+    // then reloads once more with dep.js loaded. When the victim is dep.js, the
+    // delete event evicts its entry and enqueues the "deleted" reload, and the
+    // last reload watches the recreated file again. Deleting the never-imported
+    // other.js instead raises the same directory events and the same number of
+    // reloads without touching the watchlist.
     const cycle = async (victim: "dep.js" | "other.js", value: number) => {
       await reloadWith(false, "skipped");
       rmSync(join(root, victim));
@@ -346,12 +346,13 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     const baselineGrowth = afterBaseline - start;
     const evictionGrowth = afterEvictions - afterBaseline;
     // Unfixed, every eviction cycle leaks one more handle than a baseline
-    // cycle, so the difference is `cycles`. Fixed, it is about zero.
+    // cycle, so this is `cycles`. Fixed, it is within a couple of handles of
+    // zero (the process still creates the odd handle on its own over time).
     const leakedByEvictions = evictionGrowth - baselineGrowth;
-    expect({ baselineGrowth, evictionGrowth, leakedByEvictions: Math.min(leakedByEvictions, cycles / 2) }).toEqual({
+    expect({ baselineGrowth, evictionGrowth, leakedByEvictions }).toEqual({
       baselineGrowth,
       evictionGrowth,
-      leakedByEvictions,
+      leakedByEvictions: Math.min(leakedByEvictions, cycles / 2),
     });
   });
 });

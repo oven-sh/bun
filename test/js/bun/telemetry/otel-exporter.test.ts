@@ -326,7 +326,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(b.received[0].headers["x-b"]).toBe("yes");
   });
 
-  test("OTEL_TRACES_EXPORTER=console prints spans to stderr", async () => {
+  test("OTEL_TRACES_EXPORTER=console prints one OTLP/JSON document per batch to stderr", async () => {
     const { stderr, exitCode } = await run(
       `Bun.otel.tracer("t").startSpan("printed", { attributes: { k: "v" } }).end();`,
       {
@@ -334,9 +334,14 @@ describe.concurrent("OTLP/HTTP exporter", () => {
         OTEL_TRACES_EXPORTER: "console",
       },
     );
+    const line = stderr.split("\n").find(l => l.startsWith('{"resourceSpans"'));
+    expect(line).toBeDefined();
+    const doc = JSON.parse(line!);
+    const span = doc.resourceSpans[0].scopeSpans[0].spans[0];
+    expect(doc.resourceSpans[0].scopeSpans[0].scope.name).toBe("t");
+    expect(span.name).toBe("printed");
+    expect(span.attributes).toEqual([{ key: "k", value: { stringValue: "v" } }]);
     expect(exitCode).toBe(0);
-    expect(stderr).toContain("[otel] t printed trace=");
-    expect(stderr).toContain('k="v"');
   });
 
   test("worker spans are exported through the shared processor", async () => {

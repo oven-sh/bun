@@ -443,7 +443,7 @@ pub mod js_bundler {
         pub fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
-            plugins: &mut Option<*mut Plugin>,
+            plugins: &mut Option<OwnedPlugin>,
         ) -> JsResult<Config> {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
@@ -451,12 +451,6 @@ pub mod js_bundler {
             // `define` defaults to `StringMap::init(false)`; only the flag differs.
             this.define.dupe_keys = true;
             // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.
-            // errdefer if (plugins.*) |plugin| plugin.deinit() — scopeguard below.
-            let mut plugins = scopeguard::guard(plugins, |p| {
-                if let Some(pl) = p.take() {
-                    Plugin::destroy(pl);
-                }
-            });
 
             let mut did_set_target = false;
             if let Some(slice) = config.get_optional_slice(global_this, b"target")? {
@@ -516,33 +510,25 @@ pub mod js_bundler {
                         )));
                     };
 
-                    let bun_plugins: *mut Plugin = match **plugins {
-                        Some(p) => p,
-                        None => {
-                            let p = Plugin::create(
-                                global_this,
-                                match this.target {
-                                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
-                                    Target::Node => jsc::BunPluginTarget::Node,
-                                    _ => jsc::BunPluginTarget::Browser,
-                                },
-                            );
-                            **plugins = Some(p);
-                            p
-                        }
-                    };
+                    let bun_plugins: &mut OwnedPlugin = plugins.get_or_insert_with(|| {
+                        OwnedPlugin::create(
+                            global_this,
+                            match this.target {
+                                Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
+                                Target::Node => jsc::BunPluginTarget::Node,
+                                _ => jsc::BunPluginTarget::Browser,
+                            },
+                        )
+                    });
 
                     let is_last = i == (length as usize).saturating_sub(1);
-                    // SAFETY: bun_plugins is a valid pointer created/stored above
-                    let mut plugin_result = unsafe {
-                        (*bun_plugins).add_plugin(
-                            function,
-                            config,
-                            onstart_promise_array,
-                            is_last,
-                            false,
-                        )?
-                    };
+                    let mut plugin_result = bun_plugins.add_plugin(
+                        function,
+                        config,
+                        onstart_promise_array,
+                        is_last,
+                        false,
+                    )?;
 
                     if !plugin_result.is_empty_or_undefined_or_null() {
                         if let Some(promise) = plugin_result.as_any_promise() {
@@ -1309,7 +1295,6 @@ pub mod js_bundler {
                 }
             }
 
-            scopeguard::ScopeGuard::into_inner(plugins);
             Ok(this)
         }
     }
@@ -1367,7 +1352,7 @@ pub mod js_bundler {
                  const result = Bun.spawnSync([\"bun\", \"build\", entrypoint, \"--format=esm\"]);")));
         }
 
-        let mut plugins: Option<*mut Plugin> = None;
+        let mut plugins: Option<OwnedPlugin> = None;
         let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
 
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
@@ -1377,7 +1362,7 @@ pub mod js_bundler {
         let completion =
             crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
                 config,
-                plugins.and_then(core::ptr::NonNull::new),
+                plugins.map(crate::api::js_bundle_completion_task::BuildPlugins::Owned),
                 global_this,
             )
             .map_err(|_| JsError::OutOfMemory)?;
@@ -1802,6 +1787,45 @@ pub mod js_bundler {
         }
     }
 
+    /// A [`PluginJscExt::create`] cell; dropping it is its [`PluginJscExt::destroy`]. JS thread only.
+    pub struct OwnedPlugin(core::ptr::NonNull<Plugin>);
+
+    impl OwnedPlugin {
+        pub fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> Self {
+            Self(
+                core::ptr::NonNull::new(Plugin::create(global, target))
+                    .expect("JSBundlerPlugin__create returns a non-null cell"),
+            )
+        }
+
+        /// For holders that only borrow the cell; valid until `self` drops.
+        #[inline]
+        pub fn as_non_null(&self) -> core::ptr::NonNull<Plugin> {
+            self.0
+        }
+    }
+
+    impl core::ops::Deref for OwnedPlugin {
+        type Target = Plugin;
+        #[inline]
+        fn deref(&self) -> &Plugin {
+            Plugin::opaque_ref(self.0.as_ptr())
+        }
+    }
+
+    impl core::ops::DerefMut for OwnedPlugin {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut Plugin {
+            Plugin::opaque_mut(self.0.as_ptr())
+        }
+    }
+
+    impl Drop for OwnedPlugin {
+        fn drop(&mut self) {
+            Plugin::destroy(self.0.as_ptr());
+        }
+    }
+
     /// Convert a JS exception value into a `logger.Msg`. If the conversion itself
     /// throws (e.g. `Symbol.toPrimitive` on the thrown object throws), clear that
     /// secondary exception and return a generic fallback message so
@@ -1889,6 +1913,7 @@ pub mod js_bundler {
 
 pub use js_bundler as JSBundler;
 pub use js_bundler::Config;
+pub(crate) use js_bundler::OwnedPlugin;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;

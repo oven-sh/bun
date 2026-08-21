@@ -897,8 +897,8 @@ pub struct ServePlugins {
 pub enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
+        plugin: JSBundler::OwnedPlugin,
         /// Promise may be empty if the plugin load finishes synchronously.
-        plugin: Box<JSBundler::Plugin>,
         promise: jsc::JSPromiseStrong,
         html_bundle_routes: Vec<*mut html_bundle::Route>,
         // LIFETIMES.tsv classifies this BORROW_PARAM (`Option<&'a DevServer>`),
@@ -909,7 +909,8 @@ pub enum ServePluginsState {
         // comments at the deref sites in `on_plugins_resolved`/`_rejected`).
         dev_server: Option<NonNull<DevServer>>,
     },
-    Loaded(Box<JSBundler::Plugin>),
+    /// Shared by every build this server runs; released with the last `ServePlugins` ref.
+    Loaded(JSBundler::OwnedPlugin),
     /// Error information is not stored as it is already reported.
     Err,
 }
@@ -1021,8 +1022,8 @@ impl ServePlugins {
         }
         // NOTE: split out of the loop so the `Loaded` arm's borrow of
         // `self.state` doesn't conflict with the `Unqueued` arm's `&mut self`.
-        match &mut self.state {
-            ServePluginsState::Loaded(plugins) => Ok(GetOrStartLoadResult::Ready(Some(plugins))),
+        match &self.state {
+            ServePluginsState::Loaded(plugin) => Ok(GetOrStartLoadResult::Ready(Some(&**plugin))),
             _ => unreachable!(),
         }
     }
@@ -1045,9 +1046,7 @@ impl ServePlugins {
         // here would give it a tag that is invalidated by the writes to `self.state`
         // below (Stacked Borrows), making the eventual `heap::take` in `deref_` UB.
 
-        let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
-        // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
-        let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
+        let plugin = JSBundler::OwnedPlugin::create(global, bun_jsc::BunPluginTarget::Browser);
         let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
             bunstring_array.push(BunString::init(&***raw_plugin));
@@ -1065,7 +1064,7 @@ impl ServePlugins {
         global.bun_vm().event_loop_mut().enter();
         let result = jsc::host_fn::from_js_host_call(global, || {
             match &self.state {
-                ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
+                ServePluginsState::Pending { plugin, .. } => &**plugin,
                 _ => unreachable!(),
             }
             .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
@@ -1135,19 +1134,16 @@ impl ServePlugins {
         };
         drop(promise); // Drop on JscStrong releases the slot.
 
+        // Handed out raw: the server owning the routes/DevServer also holds a ref on `self`.
+        let plugin_ptr = plugin.as_non_null();
         self.state = ServePluginsState::Loaded(plugin);
-        let plugin_ref = match &self.state {
-            ServePluginsState::Loaded(p) => &**p,
-            _ => unreachable!(),
-        };
 
         for route in html_bundle_routes {
             // BACKREF: route was ref'd when stored (intrusive +1 keeps it alive
             // for this call). R-2: `on_plugins_resolved` takes `&self`.
             let route_nn = NonNull::new(route).expect("html_bundle::Route ref'd when stored");
             bun_core::handle_oom(
-                bun_ptr::BackRef::from(route_nn)
-                    .on_plugins_resolved(Some(NonNull::from(plugin_ref))),
+                bun_ptr::BackRef::from(route_nn).on_plugins_resolved(Some(plugin_ptr)),
             );
             // SAFETY: paired with the `ref_` taken when the route was pushed.
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
@@ -1156,9 +1152,9 @@ impl ServePlugins {
             // SAFETY: dev_server outlives plugin load (stored as a back-reference
             // by `get_or_start_load`; the owning Box<DevServer> is held by the
             // server instance, which itself holds a counted ref on `self`).
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(Some(
-                std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
-            )));
+            bun_core::handle_oom(
+                unsafe { server.as_mut() }.on_plugins_resolved(Some(plugin_ptr.as_ptr())),
+            );
         }
     }
 
@@ -1173,7 +1169,7 @@ impl ServePlugins {
         else {
             unreachable!()
         };
-        drop(plugin); // pending.plugin.deinit()
+        drop(plugin); // Drop on OwnedPlugin tombstones and unprotects the cell.
         drop(promise); // Drop on JscStrong releases the slot.
 
         for route in html_bundle_routes {
@@ -1228,7 +1224,7 @@ impl Drop for ServePlugins {
         match &self.state {
             ServePluginsState::Unqueued(_) => {}
             ServePluginsState::Pending { .. } => debug_assert!(false), // should have one ref while pending!
-            ServePluginsState::Loaded(_) => {}                         // Box<Plugin> drops
+            ServePluginsState::Loaded(_) => {}                         // OwnedPlugin drops
             ServePluginsState::Err => {}
         }
     }

@@ -18,7 +18,7 @@ use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{
-    JSBundleCompletionTask, create_and_schedule_completion_task,
+    BuildPlugins, JSBundleCompletionTask, create_and_schedule_completion_task,
 };
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
@@ -561,7 +561,11 @@ impl Route {
             bundler_options::SourceMapOption::None
         };
 
-        let completion_task = create_and_schedule_completion_task(config, plugins, global)?;
+        let completion_task = create_and_schedule_completion_task(
+            config,
+            plugins.map(BuildPlugins::Borrowed),
+            global,
+        )?;
         // SAFETY: `completion_task` is the freshly-boxed allocation (refcount==1); sole owner.
         unsafe {
             (*completion_task).started_at_ns =

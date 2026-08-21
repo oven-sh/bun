@@ -23,7 +23,7 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
 }
 
 /// The inverse of [`js_err`], for host functions returning a data-format
-/// parse (JSON/XML rows never produce the identifier / macro variants).
+/// parse (JSON/XML rows never produce the conversion variants).
 pub fn to_js_error(e: ToJSError, global: &JSGlobalObject) -> JsError {
     match e {
         ToJSError::OutOfMemory => JsError::OutOfMemory,

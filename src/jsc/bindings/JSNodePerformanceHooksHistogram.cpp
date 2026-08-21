@@ -107,7 +107,7 @@ void JSNodePerformanceHooksHistogram::analyzeHeap(JSCell* cell, HeapAnalyzer& an
 
 JSC::Structure* JSNodePerformanceHooksHistogram::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 bool JSNodePerformanceHooksHistogram::record(int64_t value)

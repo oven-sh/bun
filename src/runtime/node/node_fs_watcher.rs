@@ -11,7 +11,6 @@ use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-use bun_jsc::JsCell;
 use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
@@ -19,6 +18,7 @@ use bun_jsc::{
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
     VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
 };
+use bun_jsc::{JsCell, JsCellRefExt as _};
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
@@ -219,7 +219,6 @@ impl FSWatchTaskPosix {
                     self.ctx().emit_if_aborted();
                     Ok(())
                 }
-                Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
             };
             // A filename that could not be built (allocation failure, or the
             // VM is stopping): the rest of the batch is dropped with the task.
@@ -348,7 +347,6 @@ pub enum Event {
     /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
     NoFilename(WatchEventKind),
     Abort,
-    Close,
 }
 
 #[repr(u8)]
@@ -496,7 +494,6 @@ impl FSWatchTaskWindows {
                 ctx.emit_if_aborted();
                 Ok(())
             }
-            Event::Close => ctx.emit::<{ EventType::Close }>(b""),
         }
     }
 
@@ -991,15 +988,6 @@ impl FSWatcher {
             self.poll_ref.with_mut(|r| r.unref(vm_ctx));
         }
         Ok(JSValue::UNDEFINED)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn has_ref(
-        &self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::from(self.persistent.get()))
     }
 
     // this can be called from Watcher Thread or JS Context Thread

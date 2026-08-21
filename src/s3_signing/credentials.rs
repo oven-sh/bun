@@ -1061,12 +1061,6 @@ pub struct SignQueryOptions {
     pub expires: usize,
 }
 
-impl Default for SignQueryOptions {
-    fn default() -> Self {
-        Self { expires: 86400 }
-    }
-}
-
 // transient param-pack struct; lifetime added because every field is a caller-owned
 // borrow. PORTING.md discourages struct lifetimes, but raw pointers here would be strictly worse.
 #[derive(Clone, Copy)]

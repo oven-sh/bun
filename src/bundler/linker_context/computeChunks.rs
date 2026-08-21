@@ -88,6 +88,15 @@ pub(crate) fn compute_chunks(
     for (entry_id_, &source_index) in entry_source_indices.iter().enumerate() {
         let entry_bit = entry_id_ as chunk::EntryPointId;
 
+        // An `import()` target that no live code references gets no chunk.
+        if !this.graph.files_live.is_set(source_index as usize) {
+            debug_assert!(
+                this.graph.files.items_entry_point_kind()[source_index as usize]
+                    == crate::EntryPoint::Kind::DynamicImport
+            );
+            continue;
+        }
+
         // reshaped for borrowck — set the bit through a scoped &mut, then keep an
         // owned clone so the `this.graph.files` borrow does not span the helper calls below
         // that need `&LinkerContext` / `&mut LinkerContext`.
@@ -625,13 +634,7 @@ pub(crate) fn compute_chunks(
         if chunk.template.needs(PlaceholderField::Target) {
             // Determine the target from the AST of the entry point source
             let chunk_target = ast_targets[chunk.entry_point.source_index() as usize];
-            chunk.template.placeholder.target = match chunk_target {
-                Target::Browser => b"browser".to_vec().into_boxed_slice(),
-                Target::Bun => b"bun".to_vec().into_boxed_slice(),
-                Target::Node => b"node".to_vec().into_boxed_slice(),
-                Target::BunMacro => b"macro".to_vec().into_boxed_slice(),
-                Target::ServerComponentsSsr => b"ssr".to_vec().into_boxed_slice(),
-            };
+            chunk.template.placeholder.target = chunk_target.naming_placeholder().into();
         }
 
         if chunk.template.needs(PlaceholderField::Dir) {

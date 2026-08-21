@@ -8,6 +8,7 @@
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
 
 [bun_css]
+"derived_field:src/css/properties/margin_padding.rs" = 105
 
 [bun_install]
 "defaulted_failure:src/install/npm.rs" = 1

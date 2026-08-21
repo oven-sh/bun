@@ -882,18 +882,6 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
-        /// `SetFileTime` (`fileapi.h`). Any of the three `FILETIME` pointers
-        /// may be null to leave that timestamp unchanged.
-        pub fn SetFileTime(
-            hFile: HANDLE,
-            lpCreationTime: *const FILETIME,
-            lpLastAccessTime: *const FILETIME,
-            lpLastWriteTime: *const FILETIME,
-        ) -> BOOL;
-        /// `SetHandleInformation` (`handleapi.h`). No pointer preconditions:
-        /// `hObject` is an opaque kernel handle (validated kernel-side; bad
-        /// handle → `FALSE` + `GetLastError`), `dwMask`/`dwFlags` are by-value.
-        pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
         pub fn CreateProcessW(
             lpApplicationName: LPCWSTR,
@@ -1088,27 +1076,7 @@ pub mod ws2_32 {
             res: *mut *mut addrinfo,
         ) -> c_int;
         pub fn freeaddrinfo(ai: *mut addrinfo);
-        /// `WSAStartup` (`winsock2.h`). 0 on success; non-zero is a `WSAE*`.
-        pub fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
     }
-
-    /// `WSADATA` (`winsock2.h`, **`_WIN64` layout** — on 64-bit Windows
-    /// `iMaxSockets`/`iMaxUdpDg`/`lpVendorInfo` come *before* the
-    /// `szDescription`/`szSystemStatus` arrays; the 32-bit header swaps that
-    /// order). Only ever read back from `WSAStartup`; callers zero-initialise
-    /// and never project fields beyond `wVersion`.
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct WSADATA {
-        pub wVersion: u16,
-        pub wHighVersion: u16,
-        pub iMaxSockets: u16,
-        pub iMaxUdpDg: u16,
-        pub lpVendorInfo: *mut u8,
-        pub szDescription: [u8; 257],
-        pub szSystemStatus: [u8; 129],
-    }
-    const _: () = assert!(core::mem::size_of::<WSADATA>() == 408);
 
     /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.
     #[repr(C)]
@@ -1168,7 +1136,6 @@ pub mod ws2_32 {
         pub safe fn WSAGetLastError() -> c_int;
         /// No preconditions; writes the thread-local Winsock error slot.
         pub safe fn WSASetLastError(err: c_int);
-        pub fn closesocket(s: usize) -> c_int;
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
         /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
@@ -1347,11 +1314,6 @@ impl Win32Error {
 
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
-
-#[cfg_attr(windows, link(name = "shell32"))]
-unsafe extern "system" {
-    pub fn CommandLineToArgvW(lpCmdLine: LPCWSTR, pNumArgs: *mut c_int) -> *mut LPWSTR;
-}
 
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {

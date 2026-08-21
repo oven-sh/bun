@@ -271,6 +271,25 @@ impl Drop for EventLoopEnterGuard {
     }
 }
 
+/// RAII pairing for [`EventLoop::enter`] / [`EventLoop::exit_without_checkpoint`].
+///
+/// Holds the raw pointer for the same reason as [`EventLoopEnterGuard`].
+/// Construct via [`EventLoop::enter_scope_without_checkpoint`].
+#[must_use = "dropping immediately exits the event loop scope"]
+pub struct EventLoopEnterNoCheckpointGuard {
+    loop_: *mut EventLoop,
+}
+
+impl Drop for EventLoopEnterNoCheckpointGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: as `EventLoopEnterGuard`: `loop_` was live at
+        // `enter_scope_without_checkpoint` and the VM owns it for the process
+        // lifetime; short-lived `&mut` only.
+        unsafe { (*self.loop_).exit_without_checkpoint() };
+    }
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -313,6 +332,48 @@ impl EventLoop {
         // SAFETY: caller contract — `loop_` is live; short-lived `&mut` only.
         unsafe { (*loop_).enter() };
         EventLoopEnterGuard { loop_ }
+    }
+
+    /// Balance an [`enter`](Self::enter) without the checkpoint [`exit`](Self::exit)
+    /// runs at the outermost level. See [`Self::enter_scope_without_checkpoint`].
+    #[inline]
+    pub fn exit_without_checkpoint(&mut self) {
+        bun_core::scoped_log!(
+            EventLoop,
+            "exit_without_checkpoint() = {}",
+            self.entered_event_loop_count - 1
+        );
+        self.entered_event_loop_count -= 1;
+    }
+
+    /// `enter()` now, [`exit_without_checkpoint`](Self::exit_without_checkpoint)
+    /// on drop.
+    ///
+    /// For a dispatcher that runs the checkpoint itself once the callback has
+    /// returned, at points of its own choosing: the HTTP request paths drain
+    /// explicitly so that they can look at a returned promise that the drain
+    /// settled (`RequestContext::on_response`, the node:http dispatch), and a
+    /// checkpoint on exit would add an empty one per request.
+    ///
+    /// What the scope is for is the count. Only while it is above zero is the
+    /// callback's frame safe from a checkpoint in the middle of it: a native
+    /// call made from inside the callback that dispatches another callback
+    /// through `enter()`/`exit()` (`server.upgrade()` running `open()`,
+    /// `ws.close()` running `close()`) is then a nested pair, not the outermost
+    /// one, so its exit does not run the nextTicks and promise reactions the
+    /// callback queued before its next statement. The dispatcher's explicit
+    /// drains are unconditional, so the held count does not skip them, and the
+    /// continuations they run are covered by it as well.
+    ///
+    /// # Safety
+    /// As [`Self::enter_scope`].
+    #[inline]
+    pub unsafe fn enter_scope_without_checkpoint(
+        loop_: *mut EventLoop,
+    ) -> EventLoopEnterNoCheckpointGuard {
+        // SAFETY: caller contract — `loop_` is live; short-lived `&mut` only.
+        unsafe { (*loop_).enter() };
+        EventLoopEnterNoCheckpointGuard { loop_ }
     }
 
     pub fn exit_maybe_drain_microtasks(
@@ -1270,11 +1331,38 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 3);
+    let result = JSValue::create_empty_object(global_object, 8);
     result.put(
         global_object,
         b"activeTasks",
         JSValue::js_number(vm_ref.active_tasks as f64),
+    );
+    result.put(
+        global_object,
+        b"tasks",
+        JSValue::js_number(event_loop.tasks.readable_length() as f64),
+    );
+    result.put(
+        global_object,
+        b"immediateTasks",
+        JSValue::js_number(
+            (event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len()) as f64,
+        ),
+    );
+    result.put(
+        global_object,
+        b"concurrentTasksEmpty",
+        JSValue::from(event_loop.concurrent_tasks.is_empty()),
+    );
+    result.put(
+        global_object,
+        b"loopActive",
+        JSValue::from(vm_ref.platform_loop_opt().is_some_and(|h| h.is_active())),
+    );
+    result.put(
+        global_object,
+        b"eventLoopAlive",
+        JSValue::from(vm_ref.is_event_loop_alive()),
     );
     result.put(
         global_object,

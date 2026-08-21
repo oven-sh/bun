@@ -62,7 +62,6 @@ namespace ncrypto {
 
 #if NCRYPTO_DEVELOPMENT_CHECKS
 #define NCRYPTO_STR(x) #x
-#define NCRYPTO_REQUIRE(EXPR) ASSERT_WITH_MESSAGE(EXPR, "Assertion failed")
 #define NCRYPTO_FAIL(MESSAGE) ASSERT_WITH_MESSAGE(false, MESSAGE)
 #define NCRYPTO_ASSERT_EQUAL(LHS, RHS, MESSAGE) \
     ASSERT_WITH_MESSAGE(LHS == RHS, MESSAGE)
@@ -330,12 +329,6 @@ public:
     static const Cipher FromNid(int nid);
     static const Cipher FromCtx(const CipherCtxPointer& ctx);
 
-    using CipherNameCallback = WTF::Function<void(WTF::StringView name)>;
-
-    // Iterates the known ciphers if the underlying implementation
-    // is able to do so.
-    static void ForEach(CipherNameCallback&& callback);
-
     // Utilities to get various ciphers by type. If the underlying
     // implementation does not support the requested cipher, then
     // the result will be an empty Cipher object whose bool operator
@@ -449,13 +442,6 @@ public:
         BignumPointer&& qi);
 
     using CipherParams = Cipher::CipherParams;
-
-    static DataPointer encrypt(const EVPKeyPointer& key,
-        const CipherParams& params,
-        const Buffer<const void> in);
-    static DataPointer decrypt(const EVPKeyPointer& key,
-        const CipherParams& params,
-        const Buffer<const void> in);
 
 private:
     OSSL3_CONST RSA* rsa_;
@@ -577,7 +563,6 @@ public:
     static BIOPointer New(const void* data, size_t len);
     static BIOPointer New(const BIGNUM* bn);
     static BIOPointer NewFile(WTF::StringView filename, WTF::StringView mode);
-    static BIOPointer NewFp(FILE* fd, int flags);
 
     template<typename T>
     static BIOPointer New(const Buffer<T>& buf)
@@ -646,8 +631,6 @@ public:
     void reset(BIGNUM* bn = nullptr);
     void reset(const unsigned char* data, size_t len);
     BIGNUM* release();
-
-    bool isOne() const;
 
     bool setWord(unsigned long w); // NOLINT(runtime/int)
     // std::nullopt when the value does not fit in a single BN_ULONG, which
@@ -784,7 +767,6 @@ public:
     bool setEcParameters(int curve, int encoding);
 
     bool setRsaOaepMd(const Digest& md);
-    bool setRsaMgf1Md(const Digest& md);
     bool setRsaPadding(int padding);
     bool setRsaKeygenPubExp(BignumPointer&& e);
     bool setRsaKeygenBits(int bits);
@@ -1118,11 +1100,6 @@ public:
     using UsageCallback = WTF::Function<void(std::span<const char>)>;
     bool enumUsages(UsageCallback&& callback) const;
 
-    template<typename T>
-    using KeyCallback = WTF::Function<bool(const T& t)>;
-    bool ifRsa(KeyCallback<Rsa>&& callback) const;
-    bool ifEc(KeyCallback<Ec>&& callback) const;
-
 private:
     const X509* cert_ = nullptr;
 };
@@ -1412,31 +1389,5 @@ DataPointer hkdf(const Digest& md,
     const Buffer<const unsigned char>& info,
     const Buffer<const unsigned char>& salt,
     size_t length);
-
-bool checkScryptParams(uint64_t N, uint64_t r, uint64_t p, uint64_t maxmem);
-
-DataPointer scrypt(const Buffer<const char>& pass,
-    const Buffer<const unsigned char>& salt,
-    uint64_t N,
-    uint64_t r,
-    uint64_t p,
-    uint64_t maxmem,
-    size_t length);
-
-DataPointer pbkdf2(const Digest& md,
-    const Buffer<const char>& pass,
-    const Buffer<const unsigned char>& salt,
-    uint32_t iterations,
-    size_t length);
-
-// ============================================================================
-// Version metadata
-#define NCRYPTO_VERSION "0.0.1"
-
-enum {
-    NCRYPTO_VERSION_MAJOR = 0,
-    NCRYPTO_VERSION_MINOR = 0,
-    NCRYPTO_VERSION_REVISION = 1,
-};
 
 } // namespace ncrypto

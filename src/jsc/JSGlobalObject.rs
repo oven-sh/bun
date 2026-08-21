@@ -106,6 +106,8 @@ impl JSGlobalObject {
         JsError::Thrown
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_out_of_memory(&self) -> JsError {
         // See `throw_stack_overflow` for the validation-scope rationale.
         crate::validation_scope!(scope, self);
@@ -118,6 +120,8 @@ impl JSGlobalObject {
         JSGlobalObject__createOutOfMemoryError(self)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
         JSGlobalObject__throwOutOfMemoryError(self);
         JSValue::ZERO

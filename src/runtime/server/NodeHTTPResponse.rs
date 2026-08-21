@@ -219,10 +219,6 @@ unsafe extern "C" {
         length: usize,
         use_insecure_http_parser: bool,
     ) -> JSValue;
-    // Scope-free exception read: satisfies the exception-check verifier
-    // after a callee ThrowScope destructor simulated a throw for this
-    // (scope-less native) caller. A single traps check in release builds.
-    safe fn Bun__NodeHTTP__acknowledgeThrowScope(global_object: &JSGlobalObject);
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
     // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
     safe fn Bun__NodeHTTP__buildRawHeadersArray(
@@ -234,8 +230,6 @@ unsafe extern "C" {
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
     // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
     // from the matched `AnyResponse` arm. Module-private with one call site.
-    // Returns false when the C++ header writer left a JS exception pending
-    // (checked inside its own ThrowScope).
     safe fn NodeHTTPServer__writeHead_http(
         global_object: &JSGlobalObject,
         status_message: *const u8,
@@ -244,7 +238,7 @@ unsafe extern "C" {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    ) -> bool;
+    );
 
     safe fn NodeHTTPServer__writeHead_https(
         global_object: &JSGlobalObject,
@@ -254,7 +248,7 @@ unsafe extern "C" {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    ) -> bool;
+    );
 }
 
 /// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
@@ -996,20 +990,19 @@ impl NodeHTTPResponse {
             }
         }
 
-        let wrote_head_ok;
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
                     HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
                 {
-                    wrote_head_ok = write_head_internal(
+                    write_head_internal(
                         &raw_response,
                         global_object,
                         status_message,
                         headers_object_value,
                         auto_header_bits,
                         keep_alive_timeout_secs,
-                    );
+                    )?;
                     break 'do_it;
                 }
             }
@@ -1032,39 +1025,29 @@ impl NodeHTTPResponse {
                 stack_buf[..code.len()].copy_from_slice(code);
                 stack_buf[code.len()] = b' ';
                 stack_buf[code.len() + 1..n].copy_from_slice(message);
-                wrote_head_ok = write_head_internal(
+                write_head_internal(
                     &raw_response,
                     global_object,
                     &stack_buf[..n],
                     headers_object_value,
                     auto_header_bits,
                     keep_alive_timeout_secs,
-                );
+                )?;
             } else {
                 // Heap fallback for absurdly long status messages (> 252 bytes).
                 let mut heap = Vec::with_capacity(n);
                 heap.extend_from_slice(code);
                 heap.push(b' ');
                 heap.extend_from_slice(message);
-                wrote_head_ok = write_head_internal(
+                write_head_internal(
                     &raw_response,
                     global_object,
                     &heap,
                     headers_object_value,
                     auto_header_bits,
                     keep_alive_timeout_secs,
-                );
+                )?;
             }
-        }
-
-        // The writeHead ThrowScope's destructor simulates a throw so its
-        // caller must check; acknowledge it scope-free (we are that caller
-        // when running inside writeHeadAndEnd), then propagate the result
-        // that traveled through the return value - otherwise the end phase
-        // would run with an exception pending.
-        Bun__NodeHTTP__acknowledgeThrowScope(global_object);
-        if !wrote_head_ok {
-            return Err(jsc::JsError::Thrown);
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1161,35 +1144,32 @@ fn write_head_internal(
     headers: JSValue,
     auto_header_bits: u32,
     keep_alive_timeout_secs: u32,
-) -> bool {
+) -> JsResult<()> {
     scoped_log!(
         NodeHTTPResponse,
         "writeHeadInternal({})",
         BStr::new(status_message)
     );
-    match response {
-        uws::AnyResponse::TCP(tcp) => NodeHTTPServer__writeHead_http(
-            global_object,
-            status_message.as_ptr(),
-            status_message.len(),
-            headers,
-            auto_header_bits,
-            keep_alive_timeout_secs,
-            (*tcp).cast::<c_void>(),
-        ),
-        uws::AnyResponse::SSL(ssl) => NodeHTTPServer__writeHead_https(
-            global_object,
-            status_message.as_ptr(),
-            status_message.len(),
-            headers,
-            auto_header_bits,
-            keep_alive_timeout_secs,
-            (*ssl).cast::<c_void>(),
-        ),
+    type WriteHead =
+        extern "C" fn(&JSGlobalObject, *const u8, usize, JSValue, u32, u32, *mut c_void);
+    let (write_head, response): (WriteHead, *mut c_void) = match response {
+        uws::AnyResponse::TCP(tcp) => (NodeHTTPServer__writeHead_http, (*tcp).cast::<c_void>()),
+        uws::AnyResponse::SSL(ssl) => (NodeHTTPServer__writeHead_https, (*ssl).cast::<c_void>()),
         uws::AnyResponse::H3(_) => {
             bun_core::Output::panic(format_args!("node:http does not support HTTP/3 responses"));
         }
-    }
+    };
+    bun_jsc::from_js_host_call_generic(global_object, || {
+        write_head(
+            global_object,
+            status_message.as_ptr(),
+            status_message.len(),
+            headers,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+            response,
+        )
+    })
 }
 
 impl NodeHTTPResponse {
@@ -2492,22 +2472,6 @@ impl NodeHTTPResponse {
     }
 }
 
-fn handle_corked(
-    global_object: &JSGlobalObject,
-    function: JSValue,
-    result: &mut JSValue,
-    is_exception: &mut bool,
-) {
-    *result = match function.call(global_object, JSValue::UNDEFINED, &[]) {
-        Ok(v) => v,
-        Err(err) => {
-            *result = global_object.take_exception(err);
-            *is_exception = true;
-            return;
-        }
-    };
-}
-
 impl NodeHTTPResponse {
     pub(crate) fn set_timeout(&self, seconds: u8) {
         let flags = self.flags.get();
@@ -2557,8 +2521,7 @@ impl NodeHTTPResponse {
             );
         }
 
-        let mut result: JSValue = JSValue::ZERO;
-        let mut is_exception: bool = false;
+        let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
 
         // R-2: this method takes `&self`, so the `noalias` miscompile
         // (b818e70e1c57) is structurally impossible — `&T` is `readonly`, not
@@ -2580,29 +2543,17 @@ impl NodeHTTPResponse {
                 // Capture `this` so a `self`-derived pointer reaches the FFI
                 // closure-data slot (see the R-2 note above).
                 let _escape = this;
-                handle_corked(global_object, corked_fn, &mut result, &mut is_exception)
+                result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
             });
         } else {
-            handle_corked(global_object, corked_fn, &mut result, &mut is_exception);
+            result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
         }
-
-        let ret: JsResult<JSValue> = if is_exception {
-            if !result.is_empty() {
-                Err(global_object.throw_value(result))
-            } else {
-                Err(global_object.throw(format_args!("unknown error")))
-            }
-        } else if result.is_empty() {
-            Ok(JSValue::UNDEFINED)
-        } else {
-            Ok(result)
-        };
 
         // BACKREF: `this` held alive by the `ref_()` above; this is the
         // balancing release. Explicit `.get()` so the inherent refcount
         // `NodeHTTPResponse::deref(&self)` is selected, not `<BackRef as Deref>::deref`.
         this.get().deref();
-        ret
+        result
     }
 
     pub(crate) fn finalize(self: Box<Self>) {

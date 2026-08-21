@@ -15,6 +15,7 @@ use crate::_folder_resolver::{
     self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,
     PackageWorkspaceSearchPathFormatter,
 };
+use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
@@ -30,7 +31,6 @@ use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{
     NpmVersionInfo as ResolutionNpmValue, Tag as ResolutionTag, TaggedValue as ResolutionTagged,
 };
-use crate::{ManifestLoad, dependency};
 use bun_install::NetworkTask;
 use bun_install::{
     self as install, Behavior, Dependency, DependencyID, ExtractTarball, Features, Integrity, Npm,
@@ -1042,7 +1042,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             &name_str,
                                             name_hash,
                                             Some(&mut expired),
-                                            ManifestLoad::LoadFromMemoryFallbackToDisk,
                                             needs_extended_manifest,
                                         )
                                     } {
@@ -1903,31 +1902,18 @@ fn enqueue_local_tarball(
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
     let mut abs_buf = PathBuffer::uninit();
-    let (tarball_path, normalize): (&[u8], bool) = 'tarball_path: {
-        let workspace_pkg_id = this
-            .lockfile
-            .get_workspace_pkg_if_workspace_dep(dependency_id);
-        if workspace_pkg_id == invalid_package_id {
-            break 'tarball_path (path, true);
-        }
-
-        let workspace_res = this.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
-        if workspace_res.tag != ResolutionTag::Workspace {
-            break 'tarball_path (path, true);
-        }
-
-        // Construct an absolute path to the tarball.
-        // Normally tarball paths are always relative to the root directory, but if a
-        // workspace depends on a tarball path, it should be relative to the workspace.
-        let workspace_str = *workspace_res.workspace();
-        let workspace_path = workspace_str.slice(this.lockfile.buffers.string_bytes.as_slice());
-        let joined = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-            FileSystem::instance().top_level_dir(),
-            &mut abs_buf,
-            &[workspace_path, path],
-        );
-        break 'tarball_path (joined, false);
-    };
+    let (tarball_path, normalize): (&[u8], bool) =
+        match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
+            None => (path, true),
+            Some(base_dir) => (
+                Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                    FileSystem::instance().top_level_dir(),
+                    &mut abs_buf,
+                    &[base_dir, path],
+                ),
+                false,
+            ),
+        };
 
     // Build the `Task` value *before* claiming a hive slot — the `.expect()`s
     // below can unwind, and `Task` carries drop glue. See `enqueue_git_clone`.
@@ -1976,6 +1962,33 @@ fn enqueue_local_tarball(
     let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
     // SAFETY: `get_init` just fully initialized the slot.
     unsafe { &raw mut (*task).threadpool_task }
+}
+
+/// The workspace or `file:` folder directory that `path` is relative to; `None` is the top-level dir.
+fn local_tarball_base_dir<'a>(
+    lockfile: &'a Lockfile::Lockfile,
+    dependency_id: DependencyID,
+    path: &[u8],
+) -> Option<&'a [u8]> {
+    let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
+    let declared_by_parent = declared.tag == dependency::version::Tag::Tarball
+        && matches!(
+            &declared.tarball().uri,
+            dependency::tarball::Uri::Local(declared_path) if lockfile.str(declared_path) == path
+        );
+    if !declared_by_parent {
+        // Overrides, resolutions and catalogs are all written in the root package.json.
+        return None;
+    }
+
+    let declarer = lockfile.get_parent_pkg_of_dependency(dependency_id)?;
+    let declarer_res = &lockfile.packages.items_resolution()[declarer as usize];
+    let base_dir = match declarer_res.tag {
+        ResolutionTag::Workspace => declarer_res.workspace(),
+        ResolutionTag::Folder => declarer_res.folder(),
+        _ => return None,
+    };
+    Some(lockfile.str(base_dir))
 }
 
 fn update_name_and_name_hash_from_version_replacement(
@@ -2460,7 +2473,6 @@ fn get_or_put_resolved_package(
                 scope.get(),
                 name_str,
                 name_hash,
-                ManifestLoad::LoadFromMemoryFallbackToDisk,
                 needs_ext,
             ) else {
                 return Ok(None); // manifest might still be downloading. This feels unreliable.

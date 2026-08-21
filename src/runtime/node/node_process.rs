@@ -3,7 +3,6 @@
 use core::ffi::c_char;
 
 use bun_core::env_var;
-use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
@@ -132,16 +131,6 @@ pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
     disabled.len()
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
-    if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
-        .get()
-        .unwrap_or(false)
-    {
-        bun_crash_handler::suppress_reporting();
-    }
-}
-
 // Raw-pointer statics are `!Sync`; wrap in a
 // `#[repr(transparent)]` newtype so the C++ side still sees a single
 // `const char*`-sized symbol.
@@ -160,20 +149,6 @@ static Bun__version: CStrPtr = CStrPtr(
 #[unsafe(no_mangle)]
 static Bun__version_with_sha: CStrPtr = CStrPtr(
     const_format::concatcp!("v", Global::package_json_version_with_sha, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
-// Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
-// The C++ code in BunProcess.cpp uses the generated header directly
-#[unsafe(no_mangle)]
-static Bun__versions_uws: CStrPtr = CStrPtr(
-    const_format::concatcp!(Environment::GIT_SHA, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
-#[unsafe(no_mangle)]
-static Bun__versions_usockets: CStrPtr = CStrPtr(
-    const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );

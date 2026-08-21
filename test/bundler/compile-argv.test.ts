@@ -1,5 +1,11 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
+
+// `BUN_JSC_dumpOptions=2` prints every JSC option as `   name=value` on stderr
+// once JSCInitialize has applied Bun's overrides.
+function jscOption(stderr: string, name: string): string | undefined {
+  return stderr.match(new RegExp(`^\\s*${name}=(\\S+)`, "m"))?.[1];
+}
 
 describe("bundler", () => {
   // Test that the --compile-exec-argv flag works for both runtime processing and execArgv
@@ -385,6 +391,64 @@ describe("bundler", () => {
       env: { BUN_OPTIONS: "--smol" },
       args: ["user-arg1", "user-arg2"],
       stdout: /SUCCESS: BUN_OPTIONS separated from passthrough args/,
+    },
+  });
+
+  // `bun -e` / `bun -p` start JSC in one-shot mode (no concurrent JIT, one GC
+  // marker). That is decided by scanning argv, and a compiled executable's argv
+  // belongs to the program, so `./app -p 8080` must keep the full configuration.
+  const expectFullJSCConfiguration = ({ stderr }: { stderr: string }) => {
+    expect(jscOption(stderr, "useConcurrentJIT")).toBe("true");
+  };
+  itBundled("compile/EvalFlagsInUserArgsDoNotMeanOneShotStartup", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `console.log(JSON.stringify(process.argv.slice(2)));`,
+    },
+    run: [
+      {
+        args: ["-e"],
+        env: { BUN_JSC_dumpOptions: "2" },
+        stdout: '["-e"]',
+        validate: expectFullJSCConfiguration,
+      },
+      {
+        args: ["-p", "8080"],
+        env: { BUN_JSC_dumpOptions: "2" },
+        stdout: '["-p","8080"]',
+        validate: expectFullJSCConfiguration,
+      },
+      {
+        args: ["--verbose", "--eval=x"],
+        env: { BUN_JSC_dumpOptions: "2" },
+        stdout: '["--verbose","--eval=x"]',
+        validate: expectFullJSCConfiguration,
+      },
+      {
+        args: ["--print=x"],
+        env: { BUN_JSC_dumpOptions: "2" },
+        stdout: '["--print=x"]',
+        validate: expectFullJSCConfiguration,
+      },
+    ],
+  });
+
+  // Same thing when compile-exec-argv is present: that path rebuilds argv as
+  // `[exe, ...execArgv, ...userArgs]` before JSC starts.
+  itBundled("compile/EvalFlagsInUserArgsDoNotMeanOneShotStartupWithExecArgv", {
+    compile: {
+      execArgv: ["--smol"],
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `console.log(JSON.stringify([process.execArgv, process.argv.slice(2)]));`,
+    },
+    run: {
+      args: ["--print"],
+      env: { BUN_JSC_dumpOptions: "2" },
+      stdout: '[["--smol"],["--print"]]',
+      validate: expectFullJSCConfiguration,
     },
   });
 });

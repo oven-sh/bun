@@ -144,15 +144,6 @@ pub struct Raw {
     pub(crate) len: u64,
 }
 
-impl Default for Raw {
-    fn default() -> Self {
-        Self {
-            ptr: ptr::null(),
-            len: 0,
-        }
-    }
-}
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct TypedArray {

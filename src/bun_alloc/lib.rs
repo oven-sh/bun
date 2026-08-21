@@ -241,13 +241,17 @@ pub mod default_alloc {
         }
     }
 
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
-    pub fn calloc(count: usize, size: usize) -> *mut c_void {
+    pub unsafe fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
         if cfg!(bun_asan) {
-            // SAFETY: `libc::calloc` has no input preconditions; null on failure.
-            unsafe { libc::calloc(count, size) }
+            // SAFETY: caller guarantees `ptr` is null or a live libc allocation
+            // (the default allocator under ASAN).
+            unsafe { libc::realloc(ptr, new_size) }
         } else {
-            crate::mimalloc::mi_calloc(count, size)
+            // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation.
+            unsafe { crate::mimalloc::mi_realloc(ptr, new_size) }
         }
     }
 
@@ -580,11 +584,6 @@ impl Mutex {
 #[must_use = "if unused the Mutex will immediately unlock"]
 pub(crate) struct MutexGuard {
     _guard: std::sync::MutexGuard<'static, ()>,
-}
-impl Default for Mutex {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 // Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.

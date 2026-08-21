@@ -138,14 +138,16 @@ pub struct Nested {
     body_at: usize,
 }
 
-const RESERVED: usize = 4; // up to 2^28-1 bytes
+/// Two length bytes are reserved and, for bodies < 16 KiB, filled with a
+/// padded (non-minimal but valid) varint so the body never has to move.
+const RESERVED: usize = 2;
 
 impl Nested {
     #[inline]
     pub fn begin(out: &mut Vec<u8>, field: u32) -> Nested {
         write_tag(out, field, WireType::Len);
         let len_at = out.len();
-        out.extend_from_slice(&[0x80, 0x80, 0x80, 0x00]);
+        out.extend_from_slice(&[0x80, 0x00]);
         Nested {
             len_at,
             body_at: len_at + RESERVED,
@@ -155,13 +157,17 @@ impl Nested {
     #[inline]
     pub fn finish(self, out: &mut Vec<u8>) {
         let body_len = out.len() - self.body_at;
-        let need = varint_len(body_len as u64);
-        debug_assert!(need <= RESERVED, "nested message too large");
-        if need < RESERVED {
-            let shift = RESERVED - need;
-            out.copy_within(self.body_at.., self.body_at - shift);
-            out.truncate(out.len() - shift);
+        if body_len < (1 << 14) {
+            out[self.len_at] = (body_len as u8 & 0x7f) | 0x80;
+            out[self.len_at + 1] = (body_len >> 7) as u8;
+            return;
         }
+        // Rare: make room for the full varint.
+        let need = varint_len(body_len as u64);
+        let extra = need - RESERVED;
+        let old_len = out.len();
+        out.resize(old_len + extra, 0);
+        out.copy_within(self.body_at..old_len, self.body_at + extra);
         let mut v = body_len as u64;
         let mut i = self.len_at;
         loop {

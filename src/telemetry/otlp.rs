@@ -177,6 +177,48 @@ pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>)
     let av = any_value_body_len(v);
     let kv = len_field_len(f::KV_KEY, key.len()) + len_field_len(f::KV_VALUE, av);
     out.reserve(len_field_len(field, kv));
+    if kv < 128 && field < 16 {
+        // Everything is a one-byte varint: assemble the whole KeyValue on the
+        // stack and append it with a single copy.
+        let mut b = [0u8; 136];
+        b[0] = (field << 3 | 2) as u8;
+        b[1] = kv as u8;
+        b[2] = (f::KV_KEY << 3 | 2) as u8;
+        b[3] = key.len() as u8;
+        let mut n = 4;
+        b[n..n + key.len()].copy_from_slice(key);
+        n += key.len();
+        b[n] = (f::KV_VALUE << 3 | 2) as u8;
+        b[n + 1] = av as u8;
+        n += 2;
+        match *v {
+            Value::Str(s) => {
+                b[n] = (f::AV_STRING << 3 | 2) as u8;
+                b[n + 1] = s.len() as u8;
+                n += 2;
+                b[n..n + s.len()].copy_from_slice(s);
+                n += s.len();
+                out.extend_from_slice(&b[..n]);
+            }
+            Value::Bool(x) => {
+                b[n] = (f::AV_BOOL << 3) as u8;
+                b[n + 1] = x as u8;
+                n += 2;
+                out.extend_from_slice(&b[..n]);
+            }
+            Value::Int(i) if (0..128).contains(&i) => {
+                b[n] = (f::AV_INT << 3) as u8;
+                b[n + 1] = i as u8;
+                n += 2;
+                out.extend_from_slice(&b[..n]);
+            }
+            _ => {
+                out.extend_from_slice(&b[..n]);
+                write_any_value_body(out, v);
+            }
+        }
+        return;
+    }
     write_len_prefix(out, field, kv);
     proto::write_bytes(out, f::KV_KEY, key);
     write_len_prefix(out, f::KV_VALUE, av);
@@ -219,18 +261,41 @@ impl<'a> SpanWriter<'a> {
     ) -> SpanWriter<'a> {
         out.reserve(128 + name.len());
         let nested = Nested::begin(out, f::SS_SPANS);
-        proto::write_bytes(out, f::TRACE_ID, &stub.ctx.trace_id.0);
-        proto::write_bytes(out, f::SPAN_ID, &stub.ctx.span_id.0);
+        // Fixed-shape prefix assembled on the stack, appended once.
+        let mut b = [0u8; 64];
+        let mut n = 0;
+        b[n] = (f::TRACE_ID << 3 | 2) as u8;
+        b[n + 1] = 16;
+        b[n + 2..n + 18].copy_from_slice(&stub.ctx.trace_id.0);
+        n += 18;
+        b[n] = (f::SPAN_ID << 3 | 2) as u8;
+        b[n + 1] = 8;
+        b[n + 2..n + 10].copy_from_slice(&stub.ctx.span_id.0);
+        n += 10;
         if stub.parent.is_valid() {
-            proto::write_bytes(out, f::PARENT_SPAN_ID, &stub.parent.0);
+            b[n] = (f::PARENT_SPAN_ID << 3 | 2) as u8;
+            b[n + 1] = 8;
+            b[n + 2..n + 10].copy_from_slice(&stub.parent.0);
+            n += 10;
         }
-        proto::write_bytes(out, f::NAME, name);
-        proto::write_uint(out, f::KIND, kind as u64);
-        proto::write_fixed64(out, f::START_TIME, stub.start_ns);
+        b[n] = (f::KIND << 3) as u8;
+        b[n + 1] = kind as u8;
+        n += 2;
+        b[n] = (f::START_TIME << 3 | 1) as u8;
+        b[n + 1..n + 9].copy_from_slice(&stub.start_ns.to_le_bytes());
+        n += 9;
         if end_ns != 0 {
-            proto::write_fixed64(out, f::END_TIME, end_ns);
+            b[n] = (f::END_TIME << 3 | 1) as u8;
+            b[n + 1..n + 9].copy_from_slice(&end_ns.to_le_bytes());
+            n += 9;
         }
-        proto::write_fixed32(out, f::FLAGS, stub.ctx.flags.otlp());
+        // Field 16: two-byte tag.
+        b[n] = ((f::FLAGS << 3 | 5) & 0x7f) as u8 | 0x80;
+        b[n + 1] = ((f::FLAGS << 3 | 5) >> 7) as u8;
+        b[n + 2..n + 6].copy_from_slice(&stub.ctx.flags.otlp().to_le_bytes());
+        n += 6;
+        out.extend_from_slice(&b[..n]);
+        proto::write_bytes(out, f::NAME, name);
         SpanWriter { out, nested }
     }
 

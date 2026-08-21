@@ -89,6 +89,23 @@ private:
 
 JSTelemetrySpan* toTelemetrySpan(JSValue);
 
+// `Bun.otel.tracer(name)` / api `trace.getTracer(name)`.
+class JSTelemetryTracer final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+    static JSTelemetryTracer* create(VM&, Zig::GlobalObject*, uint16_t scope, JSValue name, JSValue version);
+
+    uint16_t m_scope { 0 };
+
+private:
+    JSTelemetryTracer(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
 // Holder for the `createSpan` fast path so DFG can emit it as CallDOM.
 class JSTelemetryBinding final : public JSC::JSNonFinalObject {
 public:

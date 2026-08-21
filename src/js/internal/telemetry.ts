@@ -10,10 +10,6 @@
 const nativeStart = $newRustFunction("telemetry.rs", "start", 1);
 const nativeIsEnabled = $newRustFunction("telemetry.rs", "isEnabled", 0);
 const createScope = $newRustFunction("telemetry.rs", "createScope", 2);
-const nativeStartSpan = $newCppFunction("BunTelemetry.cpp", "jsTelemetryStartSpan", 5);
-// `binding.createSpan(scope << 3 | kind, name)`: parent = active span. Kept as a
-// method on a native object so DFG/FTL emit it as a direct operation call.
-const binding = $newCppFunction("BunTelemetry.cpp", "jsTelemetryCreateBinding", 0)();
 const nativeActiveSpan = $newRustFunction("telemetry.rs", "activeSpan", 0);
 const wrapSpanContext = $newCppFunction("BunTelemetry.cpp", "jsTelemetryWrapSpanContext", 1);
 const withContext = $newRustFunction("telemetry.rs", "withContext", 3);
@@ -162,90 +158,11 @@ const contextManager = {
 };
 
 // ── Tracer ────────────────────────────────────────────────────────────────
-
-class Tracer {
-  #scope: number;
-  #scopeKind: number;
-  readonly name: string;
-  readonly version: string | undefined;
-
-  constructor(name: string, version?: string) {
-    this.name = name;
-    this.version = version;
-    this.#scope = createScope(name, version);
-    this.#scopeKind = this.#scope << 3;
-  }
-
-  /**
-   * @opentelemetry/api `Tracer.startSpan(name, options?, context?)`.
-   * Does not activate the span.
-   */
-  startSpan(name: string, options?: any, context?: any) {
-    if (options == null && context === undefined) {
-      return binding.createSpan(this.#scopeKind, name + "");
-    }
-    let parent: any = undefined; // undefined → active span
-    if (options?.root) {
-      parent = null;
-    } else if (context !== undefined) {
-      const [span] = unpackContext(context);
-      parent = span ?? null;
-    } else if (options?.parent !== undefined) {
-      parent = options.parent === null ? null : toNativeSpan(options.parent);
-    }
-    const kind = options?.kind | 0;
-    let span;
-    if (parent === undefined && options?.startTime === undefined) {
-      span = binding.createSpan(this.#scopeKind + kind, name + "");
-    } else {
-      span = nativeStartSpan(this.#scope, name + "", kind, parent, options?.startTime);
-    }
-    if (options) {
-      if (options.attributes) span.setAttributes(options.attributes);
-      if (options.links) span.addLinks(options.links);
-    }
-    return span;
-  }
-
-  /**
-   * @opentelemetry/api `startActiveSpan(name, [options], [context], fn)`:
-   * runs `fn(span)` with the span active and returns its result. As in the
-   * api, the span is not ended for you — call `span.end()`.
-   *
-   * Bun extension: with no callback, returns the span already activated for
-   * `using span = tracer.startActiveSpan("x")`; disposal ends and
-   * deactivates it.
-   */
-  startActiveSpan(name: string, a?: any, b?: any, c?: any) {
-    let options: any, context: any, fn: any;
-    if (typeof a === "function") {
-      fn = a;
-    } else if (typeof b === "function") {
-      options = a;
-      fn = b;
-    } else if (typeof c === "function") {
-      options = a;
-      context = b;
-      fn = c;
-    } else {
-      options = a;
-      context = b;
-    }
-    const span = this.startSpan(name, options, context);
-    if (fn === undefined) {
-      span.enter();
-      return span;
-    }
-    let extras: any;
-    if (context !== undefined) extras = unpackContext(context)[1];
-    const prev = enterWithExtras(span, extras);
-    try {
-      return fn(span);
-    } finally {
-      exitContext(prev);
-    }
-  }
-}
+//
+// Tracers are native (JSTelemetryTracer): startSpan/startActiveSpan never
+// touch JS except to run the user callback.
+const createTracer = $newCppFunction("BunTelemetry.cpp", "jsTelemetryCreateTracer", 3);
+type Tracer = { readonly name: string; readonly version: string | undefined; startSpan: Function; startActiveSpan: Function };
 
 const tracers = new Map<string, Tracer>();
 function getTracer(name?: string, version?: string): Tracer {
@@ -253,7 +170,7 @@ function getTracer(name?: string, version?: string): Tracer {
   const key = version ? name + "@" + version : name;
   let t = tracers.get(key);
   if (!t) {
-    t = new Tracer(name, version);
+    t = createTracer(createScope(name, version), name, version === undefined ? undefined : String(version));
     tracers.set(key, t);
   }
   return t;
@@ -475,9 +392,10 @@ export default {
   ROOT_CONTEXT,
   SpanKind,
   SpanStatusCode,
-  // internal, for node:http
+  // internal, for node:http and JSTelemetrySpan.cpp
   startClientSpan,
   contextWithSpan,
+  unpackContext,
   [Symbol.for("nodejs.util.inspect.custom")]() {
     return `Bun.otel { enabled: ${nativeIsEnabled()} }`;
   },

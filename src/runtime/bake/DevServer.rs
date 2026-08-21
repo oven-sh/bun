@@ -155,11 +155,9 @@ pub(super) use crate::bake::dev_server::serialized_failure::SerializedFailure;
 pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 bun_output::declare_scope!(DevServer, visible);
-bun_output::declare_scope!(IncrementalGraph, visible);
 bun_output::declare_scope!(SourceMapStore, visible);
 
 bun_output::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
-bun_output::define_scoped_log!(ig_log, crate::bake::dev_server_body::IncrementalGraph);
 bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
 pub(crate) use map_log;
 
@@ -5365,9 +5363,7 @@ impl DevServer {
         let post = "</script></body></html>";
 
         buf.extend_from_slice(pre.as_bytes());
-        buf.extend_from_slice(
-            bun_core::runtime_embed_file!(CodegenEager, "bake.error.js").as_bytes(),
-        );
+        buf.extend_from_slice(bun_zstd::embed_compressed!(codegen "bake.error.js"));
         buf.extend_from_slice(post.as_bytes());
 
         match resp {

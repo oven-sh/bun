@@ -45,14 +45,6 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     ) {
         ctx.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
     }
-
-    fn as_package_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut PackageInstaller<'x> {
-        // SAFETY: identity cast — narrows the invariant `'a` param to the
-        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut PackageInstaller<'a>`).
-        // The returned reference cannot outlive `'x`, so all inner `'a` borrows
-        // remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<PackageInstaller<'x>>() }
-    }
 }
 
 pub(crate) fn install_hoisted_packages(

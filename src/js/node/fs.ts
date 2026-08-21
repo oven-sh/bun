@@ -137,11 +137,8 @@ var access = function access(path, mode, callback) {
     }
     callback = ensureCallback(callback);
 
-    // node throws for any defined `recursive`, not just truthy ones
-    if (options?.recursive !== undefined) {
-      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is no longer supported");
-    }
-    fs.rmdir(path, options).then(nullcallback(callback), callback);
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
+    (options?.recursive ? promises.rm(path, options) : fs.rmdir(path, options)).then(nullcallback(callback), callback);
   },
   copyFile = function copyFile(src, dest, mode, callback) {
     if ($isCallable(mode)) {
@@ -617,10 +614,8 @@ var access = function access(path, mode, callback) {
     return fs.rmSync(path, options);
   },
   rmdirSync = function rmdirSync(path, options) {
-    // node throws for any defined `recursive`, not just truthy ones
-    if (options?.recursive !== undefined) {
-      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is no longer supported");
-    }
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
+    if (options?.recursive) return rmSync(path, options);
     return fs.rmdirSync(path, options);
   },
   writev = function writev(fd, buffers, position, callback) {

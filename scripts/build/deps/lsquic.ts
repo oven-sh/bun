@@ -132,12 +132,22 @@ export const lsquic: Dependency = {
     // which Chrome 141 ignores before failing the handshake, and wrote
     // SETTINGS_H3_DATAGRAM on top of node-quic-accessors.patch's -- a repeated
     // setting id is H3_SETTINGS_ERROR (RFC 9114 §7.2.4.1).
+    // No upstream issue: the duplicate id is an interaction with our own
+    // node-quic-accessors.patch rather than an upstream defect, and the draft
+    // lsquic targets is its choice to make, not a bug to file.
     "patches/lsquic/webtransport-settings.patch",
     // The WebTransport flags belong to `enum stream_b_flags` (the `sm_bflags`
     // field), but all five sites read and write `stream_flags`, whose bits 14
     // and 15 are STREAM_HEAD_IN_FIN and STREAM_FRAMES_ELIDED. Marking a session
     // corrupted lsquic's record of the request, and the WebTransport test
     // answered yes for any request whose frames had been elided.
+    // https://github.com/litespeedtech/lsquic/issues/674
+    //
+    // Upstream's draft PR #629 deletes these accessors and the two flags
+    // outright, replacing them with a session/switch-stream abstraction, and
+    // drops LSQUIC_WEBTRANSPORT_SERVER_SUPPORT with them. So this patch is
+    // dead the day we take #629 -- and taking it is a rewrite of our side,
+    // not a version bump.
     "patches/lsquic/webtransport-stream-flags.patch",
   ],
 

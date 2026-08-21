@@ -1,0 +1,29 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+  injectWorkspacePackages: true
+
+importers:
+
+  .:
+    dependencies:
+      foo:
+        specifier: workspace:*
+        version: file:packages/foo
+    dependenciesMeta:
+      foo:
+        injected: true
+
+  packages/foo: {}
+
+packages:
+
+  foo@file:packages/foo:
+    resolution: {directory: packages/foo, type: directory}
+    version: 1.0.0
+
+snapshots:
+
+  foo@file:packages/foo: {}

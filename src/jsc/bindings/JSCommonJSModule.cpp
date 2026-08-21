@@ -114,6 +114,7 @@ static bool canPerformFastEnumeration(Structure* s)
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
+extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
@@ -124,6 +125,16 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     if (code.isNull()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
         return false;
+    }
+
+    // Node reports a CJS entry's top-level throw as origin "uncaughtException", not
+    // "unhandledRejection"; record the entry mode for the run command. Only the root
+    // module (m_id == ".") can be the entry, so the FFI compare runs at most once.
+    if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
+        auto view = id->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (view == "."_s)
+            Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
     }
 
     JSFunction* resolveFunction = nullptr;
@@ -161,9 +172,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RETURN_IF_EXCEPTION(scope, {});
         globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), exports, 0);
         globalObject->putDirect(vm, builtinNames(vm).requirePublicName(), requireFunction, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
+        Bun::putDirectNamed(vm, globalObject, "module"_s, moduleObject);
+        Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);
+        Bun::putDirectNamed(vm, globalObject, "__dirname"_s, dirname);
 
         // 3-arg JSC::evaluate discards the exception (Completion.h); use the out-param overload and rethrow.
         WTF::NakedPtr<JSC::Exception> returnedException;
@@ -464,7 +475,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
     ASSERT(inherits(info()));
     auto* globalObject = this->globalObject();
 
-    reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), RequireFunctionPrototypeValues, *this);
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
         globalObject,
@@ -767,10 +778,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
             sourceString,
             zigGlobalObject->m_moduleWrapperEnd);
     } else {
-        wrappedString = makeString(
-            "(function(exports,require,module,__filename,__dirname){"_s,
-            sourceString,
-            "\n})"_s);
+        wrappedString = makeString(commonJSDefaultWrapperStart, sourceString, "\n"_s, commonJSDefaultWrapperEnd);
     }
 
     moduleObject->sourceCode = makeSource(
@@ -822,7 +830,7 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure)
     {
-        JSCommonJSModulePrototype* prototype = new (NotNull, JSC::allocateCell<JSCommonJSModulePrototype>(vm)) JSCommonJSModulePrototype(vm, structure);
+        JSCommonJSModulePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCommonJSModulePrototype))) JSCommonJSModulePrototype(vm, structure);
         prototype->finishCreation(vm, globalObject);
         return prototype;
     }
@@ -832,7 +840,7 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -857,7 +865,7 @@ public:
     {
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
-        reifyStaticProperties(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
+        Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
 
         this->putDirectNativeFunction(
             vm,
@@ -892,7 +900,7 @@ JSC::Structure* JSCommonJSModule::createStructure(
 
     // Do not set the number of inline properties on this structure
     // there may be an off-by-one error in the Structure which causes `require.id` to become the require
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
 }
 
 JSCommonJSModule* JSCommonJSModule::create(
@@ -1018,7 +1026,7 @@ void populateESMExports(
         if (!ignoreESModuleAnnotation) {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
             auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
-            scope.assertNoException();
+            RETURN_IF_EXCEPTION(scope, );
             if (has) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
                 CLEAR_IF_EXCEPTION(scope);
@@ -1389,8 +1397,8 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    reifyStaticProperties(vm, info(), RequireResolveFunctionPrototypeValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, info(), RequireResolveFunctionPrototypeValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void JSCommonJSModule::evaluate(

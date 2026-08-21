@@ -49,8 +49,8 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         global,
         frame,
         b"input.json5",
-        true,
-        true,
+        super::BlobOrBufferInput::Bytes,
+        super::NullishInput::Throw,
         |bump, log, source| {
             let root = match json5::JSON5Parser::parse(source, log, bump) {
                 Ok(r) => r,

@@ -94,7 +94,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSEventPrototype>(vm)) JSEventPrototype(vm, globalObject, structure);
+        JSEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSEventPrototype))) JSEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -108,7 +108,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -192,12 +192,8 @@ template<> JSValue JSEventDOMConstructor::prototypeForStructure(JSC::VM& vm, con
 
 template<> void JSEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "Event"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSEvent::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    reifyStaticProperties(vm, JSEvent::info(), JSEventConstructorTableValues, *this);
+    initializeBaseProperties(vm, 1, "Event"_s, JSEvent::prototype(vm, globalObject));
+    Bun::reifyStaticPropertyTable(vm, JSEvent::info(), JSEventConstructorTableValues, *this);
 }
 
 /* Hash table for prototype */
@@ -299,6 +295,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEventPrototype_inspectCustom, (JSC::JSGlobalObject * 
         jsNumber(context ? event->timeStampForBindings(*context) : 0.0), 0);
 
     JSFunction* utilInspect = globalObject->utilInspectFunction();
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto callData = JSC::getCallData(utilInspect);
     MarkedArgumentBuffer arguments;
     arguments.append(fields);
@@ -319,8 +316,8 @@ const ClassInfo JSEventPrototype::s_info = { "Event"_s, &Base::s_info, nullptr, 
 void JSEventPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSEvent::info(), JSEventPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSEvent::info(), JSEventPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
     putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).inspectCustomPublicName(), 2,
         jsEventPrototype_inspectCustom, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
@@ -671,12 +668,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEventPrototypeFunction_initEvent, (JSGlobalObject * l
 
 JSC::GCClient::IsoSubspace* JSEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSEvent, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForEvent = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForEvent, m_subspaceForEvent));
 }
 
 void JSEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

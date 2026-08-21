@@ -140,6 +140,8 @@ mod lib_c {
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
             let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
+            // SAFETY: just allocated; exclusively owned here.
+            unsafe { (*dns_lookup).otel_begin(global_this, &query_init.name) };
             // SAFETY: inflight points into resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
             // SAFETY: dns_lookup just heap-allocated; owned by the inflight list.
@@ -157,6 +159,8 @@ mod lib_c {
             global_this,
             PendingCacheField::PendingHostCacheNative,
         );
+        // SAFETY: `request` just heap-allocated; exclusively owned here.
+        unsafe { (*request).head.otel_begin(global_this, &query_init.name) };
         // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
         let promise_value = unsafe { (*request).head.promise.value() };
 
@@ -234,6 +238,8 @@ pub(crate) mod lib_uv_backend {
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
             let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
+            // SAFETY: just allocated; exclusively owned here.
+            unsafe { (*dns_lookup).otel_begin(global_this, &query.name) };
             unsafe { (*inflight).append(dns_lookup) };
             return Ok(unsafe { (*dns_lookup).promise.value() });
         }
@@ -245,6 +251,10 @@ pub(crate) mod lib_uv_backend {
             global_this,
             PendingCacheField::PendingHostCacheNative,
         );
+        // SAFETY: `request` just heap-allocated; exclusively owned here.
+        unsafe { (*request).head.otel_begin(global_this, &query.name) };
+        // SAFETY: `request` just heap-allocated; exclusively owned here.
+        unsafe { (*request).head.otel_begin(global_this, &query.name) };
 
         let hints = query.options.to_libc();
         let mut port_buf = [0u8; 128];
@@ -1161,6 +1171,8 @@ impl GetAddrInfoRequest {
                 poll_ref,
                 allocated: false,
                 next: None,
+                otel: bun_telemetry::SpanStub::NONE,
+                otel_name: None,
             },
             tail: ptr::null_mut(),
         }));
@@ -1704,6 +1716,9 @@ pub(crate) struct DNSLookup {
     pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
     pub poll_ref: KeepAlive,
+    /// Native OpenTelemetry `dns.lookup` span and the queried name.
+    pub otel: bun_telemetry::SpanStub,
+    pub otel_name: Option<Box<[u8]>>,
 }
 
 impl DNSLookup {
@@ -1734,7 +1749,40 @@ impl DNSLookup {
             promise: JSPromiseStrong::init(global_this),
             allocated: true,
             next: None,
+            otel: bun_telemetry::SpanStub::NONE,
+            otel_name: None,
         }))
+    }
+
+    /// Start the `dns.lookup` span for this waiter.
+    pub(crate) fn otel_begin(&mut self, global_this: &JSGlobalObject, name: &[u8]) {
+        self.otel = crate::telemetry::start_leaf(global_this, bun_telemetry::Instrument::Dns);
+        if self.otel.is_some() {
+            self.otel_name = Some(name.into());
+        }
+    }
+
+    fn otel_end(&mut self, error: bool) {
+        let stub = core::mem::replace(&mut self.otel, bun_telemetry::SpanStub::NONE);
+        if !stub.is_recording() {
+            return;
+        }
+        let name = self.otel_name.take();
+        crate::telemetry::end_leaf(
+            bun_telemetry::Instrument::Dns,
+            &stub,
+            b"dns.lookup",
+            bun_telemetry::SpanKind::Client,
+            |w| {
+                if let Some(n) = &name {
+                    w.attr_opt("dns.question.name", n);
+                }
+                if error {
+                    w.attr("error.type", "lookup_failed");
+                    w.status(bun_telemetry::StatusCode::Error, b"");
+                }
+            },
+        );
     }
 
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
@@ -1828,6 +1876,7 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
+            (*this).otel_end(matches!(result, Outcome::Error(_)));
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this);
@@ -5432,6 +5481,8 @@ impl Resolver {
             self.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheCares);
         if let CacheHit::Inflight(inflight) = cache {
             let dns_lookup = DNSLookup::init(self.as_ctx_ptr(), global_this);
+            // SAFETY: just allocated; exclusively owned here.
+            unsafe { (*dns_lookup).otel_begin(global_this, &query.name) };
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
             // SAFETY: `dns_lookup` was just heap-allocated; owned by the inflight list.

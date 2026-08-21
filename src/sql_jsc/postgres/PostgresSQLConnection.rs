@@ -144,6 +144,9 @@ pub struct PostgresSQLConnection {
     path: bun_ptr::RawSlice<u8>,
     options: bun_ptr::RawSlice<u8>,
     options_buf: Box<[u8]>,
+    /// For telemetry `server.address` / `server.port`.
+    pub(crate) host: Box<[u8]>,
+    pub(crate) port: u16,
 
     pub(crate) authentication_state: JsCell<AuthenticationState>,
 
@@ -260,6 +263,11 @@ impl PostgresSQLConnection {
     #[inline]
     pub(crate) fn user(&self) -> &[u8] {
         self.user.slice()
+    }
+
+    #[inline]
+    pub(crate) fn database_name(&self) -> &[u8] {
+        self.database.slice()
     }
 
     #[inline]
@@ -1195,6 +1203,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             path,
             options,
             options_buf,
+            host: args.hostname_str.to_utf8().slice().into(),
+            port: u16::try_from(args.port).unwrap_or(0),
             authentication_state: JsCell::new(AuthenticationState::Pending),
             secure,
             tls_config,

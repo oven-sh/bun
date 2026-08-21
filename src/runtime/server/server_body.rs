@@ -2205,6 +2205,11 @@ where
         // on_abort nor an end path can reclaim a parked handler promise's
         // claim later. Reclaim it here.
         upgrader.reclaim_promise_cell();
+        // The HTTP exchange is complete once the 101 is written; end the
+        // request span now rather than when the pooled context is recycled.
+        if let Some(span) = upgrader.otel_span.take() {
+            crate::telemetry::server::end(span, 101, false);
+        }
         upgrader.deref();
 
         resp.upgrade(

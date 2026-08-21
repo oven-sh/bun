@@ -198,6 +198,72 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return {};                                                                                                  \
     }
 
+
+// ── Native OpenTelemetry (see src/runtime/telemetry/sqlite.rs) ───────────────
+extern "C" uint32_t Bun__Telemetry__enabled;
+extern "C" void* Bun__Telemetry__sqliteBegin(JSC::JSGlobalObject*, const char* file, size_t fileLen);
+extern "C" void Bun__Telemetry__sqliteEnd(void* span, const char* sql, size_t sqlLen, int errcode, const char* errmsg);
+
+namespace Bun {
+
+// bun_telemetry::Instrument::Sqlite == 3
+static constexpr uint32_t kTelemetrySqliteBit = 1u << 3;
+
+/// One query span around a statement execution. Zero cost when telemetry is
+/// off: a single relaxed load in the constructor.
+class SQLiteQuerySpan {
+public:
+    ALWAYS_INLINE SQLiteQuerySpan(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, sqlite3* db)
+        : m_scope(scope)
+        , m_db(db)
+    {
+        if (__atomic_load_n(&Bun__Telemetry__enabled, __ATOMIC_RELAXED) & kTelemetrySqliteBit) [[unlikely]]
+            begin(globalObject);
+    }
+
+    ALWAYS_INLINE ~SQLiteQuerySpan()
+    {
+        if (m_span) [[unlikely]]
+            end();
+    }
+
+    void setStatement(sqlite3_stmt* stmt) { m_stmt = stmt; }
+    void setSQL(const char* sql, size_t len)
+    {
+        m_sql = sql;
+        m_sqlLen = len;
+    }
+
+private:
+    NEVER_INLINE void begin(JSC::JSGlobalObject* globalObject)
+    {
+        const char* file = m_db ? sqlite3_db_filename(m_db, "main") : nullptr;
+        m_span = Bun__Telemetry__sqliteBegin(globalObject, file, file ? strlen(file) : 0);
+    }
+
+    NEVER_INLINE void end()
+    {
+        const char* sql = m_sql;
+        size_t len = m_sqlLen;
+        if (!sql && m_stmt) {
+            sql = sqlite3_sql(m_stmt);
+            len = sql ? strlen(sql) : 0;
+        }
+        bool failed = !!m_scope.exception();
+        Bun__Telemetry__sqliteEnd(m_span, sql, len, failed ? (m_db ? sqlite3_extended_errcode(m_db) : SQLITE_ERROR) : 0, failed && m_db ? sqlite3_errmsg(m_db) : nullptr);
+        m_span = nullptr;
+    }
+
+    JSC::ThrowScope& m_scope;
+    sqlite3* m_db;
+    sqlite3_stmt* m_stmt { nullptr };
+    const char* m_sql { nullptr };
+    size_t m_sqlLen { 0 };
+    void* m_span { nullptr };
+};
+
+} // namespace Bun
+
 namespace WebCore {
 class JSSQLStatement;
 static ASCIILiteral finalizedMessage(const JSSQLStatement* statement);
@@ -1489,6 +1555,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     const char* sqlStringHead = utf8.span().data();
     const char* end = utf8.span().data() + utf8.span().size();
+    Bun::SQLiteQuerySpan telemetry(lexicalGlobalObject, scope, db);
+    telemetry.setSQL(sqlStringHead, utf8.span().size());
 
     bool didSetBindings = false;
     bool didExecuteAny = false;
@@ -1698,6 +1766,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(utf8.span().data()), utf8.span().size(), flags, &statement, nullptr);
 
     if (rc != SQLITE_OK) {
+        // A query that fails to compile never reaches an execute path; give it
+        // a span here so failed queries show up in traces.
+        Bun::SQLiteQuerySpan telemetry(lexicalGlobalObject, scope, db);
+        telemetry.setSQL(reinterpret_cast<const char*>(utf8.span().data()), utf8.span().size());
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
         return {};
     }
@@ -2241,6 +2313,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    Bun::SQLiteQuerySpan telemetry(lexicalGlobalObject, scope, castedThis->version_db->db);
+    telemetry.setStatement(stmt);
     int statusCode = sqlite3_reset(stmt);
 
     if (statusCode != SQLITE_OK) [[unlikely]] {
@@ -2336,6 +2410,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    Bun::SQLiteQuerySpan telemetry(lexicalGlobalObject, scope, castedThis->version_db->db);
+    telemetry.setStatement(stmt);
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
@@ -2390,6 +2466,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    Bun::SQLiteQuerySpan telemetry(lexicalGlobalObject, scope, castedThis->version_db->db);
+    telemetry.setStatement(stmt);
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
@@ -2479,6 +2557,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    Bun::SQLiteQuerySpan telemetry(lexicalGlobalObject, scope, castedThis->version_db->db);
+    telemetry.setStatement(stmt);
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
@@ -2570,6 +2650,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    Bun::SQLiteQuerySpan telemetry(lexicalGlobalObject, scope, castedThis->version_db->db);
+    telemetry.setStatement(stmt);
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {

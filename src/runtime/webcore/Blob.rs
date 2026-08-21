@@ -4588,9 +4588,19 @@ pub(crate) fn write_file_with_source_destination(
     let source_type = source_store.data.tag();
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
+        let otel = crate::telemetry::start_leaf(ctx, bun_telemetry::Instrument::Fs);
         let write_file_promise = bun_core::heap::into_raw(Box::new(WriteFilePromise {
             promise: jsc::JSPromiseStrong::default(),
             global_this: ctx,
+            otel_path: if otel.is_some() {
+                match &destination_store.data.as_file().pathlike {
+                    PathOrFileDescriptor::Path(p) => Some(p.slice().into()),
+                    PathOrFileDescriptor::Fd(_) => None,
+                }
+            } else {
+                None
+            },
+            otel,
         }));
 
         // The borrowed views below are +0 on the store ref;
@@ -4930,6 +4940,32 @@ pub(crate) fn write_file_internal(
     #[cfg(not(windows))]
     {
         let mut needs_async = false;
+        let otel = crate::telemetry::start_leaf(global_this, bun_telemetry::Instrument::Fs);
+        // Ends the span for the synchronous fast path; the async fallback has its own.
+        let otel_fast = |pathlike: &PathOrFileDescriptor, result: JSValue, needs_async: bool| {
+            if !otel.is_some() || needs_async {
+                return;
+            }
+            let failed = result.is_empty()
+                || global_this.has_exception()
+                || result
+                    .as_any_promise()
+                    .is_some_and(|p| p.status() == jsc::js_promise::Status::Rejected);
+            crate::telemetry::end_leaf(
+                bun_telemetry::Instrument::Fs,
+                &otel,
+                b"Bun.write",
+                bun_telemetry::SpanKind::Internal,
+                |w| {
+                    if let PathOrFileDescriptor::Path(p) = pathlike {
+                        w.attr_opt("file.path", p.slice());
+                    }
+                    if failed {
+                        w.status(bun_telemetry::StatusCode::Error, b"");
+                    }
+                },
+            );
+        };
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
@@ -4967,6 +5003,7 @@ pub(crate) fn write_file_internal(
                             &mut needs_async,
                         )
                     };
+                    otel_fast(&pathlike, result, needs_async);
                     if !needs_async {
                         return Ok(result);
                     }
@@ -4998,6 +5035,7 @@ pub(crate) fn write_file_internal(
                             &mut needs_async,
                         )
                     };
+                    otel_fast(&pathlike, result, needs_async);
                     if !needs_async {
                         return Ok(result);
                     }

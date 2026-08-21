@@ -13,15 +13,19 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_telemetry::config::{self, Compression, OtlpExporterConfig};
 use bun_telemetry::processor::{self, Processor};
-use bun_telemetry::{Instrument, Limits, Sampler, ScopeId, SpanContext, SpanKind, propagation};
+use bun_telemetry::{Instrument, Limits, Sampler, ScopeId, SpanContext, propagation};
 
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerTag};
 
 pub mod exporter;
 pub mod fetch;
+pub mod fs;
 pub mod http;
 pub mod server;
 pub mod span;
+pub mod spawn;
+pub mod sqlite;
+pub mod websocket;
 
 pub use span::{
     ContextScope, Entered, TelemetrySpan, active, active_context, active_js, active_ref, end_span,
@@ -265,6 +269,12 @@ pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<
     if cfg.console_exporter {
         p.add_exporter(Arc::new(exporter::ConsoleExporter));
     }
+    bun_telemetry::rt::install(bun_telemetry::rt::Hooks {
+        active_span: |g| span::active_ptr(g),
+        after_record,
+        sampler: || state().sampler,
+        capture_db_statement: || state().capture_db_statement,
+    });
     bun_telemetry::set_enabled_mask(cfg.instruments | bun_telemetry::enabled_mask(), cfg.roots);
     let s = vm_state_or_init(global);
     s.arm_timer();
@@ -303,40 +313,10 @@ pub fn should_start(i: Instrument, parent: Option<&SpanContext>) -> bool {
 /// Returns `SpanStub::NONE` when disabled / parent-required-but-absent.
 #[inline]
 pub fn start_leaf(global: &JSGlobalObject, i: Instrument) -> bun_telemetry::SpanStub {
-    if !bun_telemetry::enabled(i) {
-        return bun_telemetry::SpanStub::NONE;
-    }
-    let parent = active_context(global);
-    if parent.is_none() && !bun_telemetry::allows_root(i) {
-        return bun_telemetry::SpanStub::NONE;
-    }
-    bun_telemetry::SpanStub::start(
-        parent.as_ref(),
-        &state().sampler,
-        bun_telemetry::clock::now_unix_nanos(),
-    )
+    bun_telemetry::rt::start_leaf(global.as_ptr().cast(), i)
 }
 
-/// End a leaf span: `write` adds name/attrs via the `SpanWriter`.
-#[inline]
-pub fn end_leaf(
-    i: Instrument,
-    stub: &bun_telemetry::SpanStub,
-    name: &[u8],
-    kind: SpanKind,
-    write: impl FnOnce(&mut bun_telemetry::SpanWriter<'_>),
-) {
-    if !stub.is_recording() {
-        return;
-    }
-    let end_ns = bun_telemetry::clock::now_unix_nanos();
-    bun_telemetry::batch::record(ScopeId::from(i), |buf| {
-        let mut w = bun_telemetry::SpanWriter::begin(buf, stub, name, kind, end_ns);
-        write(&mut w);
-        w.finish();
-    });
-    after_record();
-}
+pub use bun_telemetry::rt::end_leaf;
 
 pub use propagation::{format_traceparent, parse_traceparent};
 

@@ -495,6 +495,10 @@ impl MySQLQuery {
     }
 
     #[inline]
+    pub(crate) fn query_text(&self) -> bun_core::ZigStringSlice {
+        self.query.to_utf8()
+    }
+
     pub(crate) fn is_completed(&self) -> bool {
         self.status == Status::Success || self.status == Status::Fail
     }

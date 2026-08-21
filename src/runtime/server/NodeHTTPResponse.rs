@@ -61,6 +61,9 @@ pub struct NodeHTTPResponse {
     /// resolves through the socket's current response, which under pipelining is a different
     /// one; delivering through it loses the body. Kept alive by req[kHandle]; cleared on finalize.
     pub(crate) armed_this_value: Cell<JSValue>,
+    /// Native OpenTelemetry server span, ended in `on_request_complete`/`deinit`.
+    pub(crate) otel_span: Cell<Option<bun_telemetry::Span>>,
+    pub(crate) otel_status: Cell<u16>,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
     /// req.headers materialize lazily (takeRawHeaders) instead of paying
@@ -995,6 +998,8 @@ impl NodeHTTPResponse {
             }
         }
 
+        self.otel_status
+            .set(u16::try_from(status_code).unwrap_or(0));
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
@@ -1467,6 +1472,7 @@ impl NodeHTTPResponse {
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
+        self.otel_end();
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
 
         self.mark_request_as_done_if_necessary();
@@ -2555,7 +2561,16 @@ impl NodeHTTPResponse {
     }
 
     /// Called by intrusive RefCount when count reaches zero.
+    pub(crate) fn otel_end(&self) {
+        if let Some(span) = self.otel_span.take() {
+            let flags = self.flags.get();
+            let aborted = flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED);
+            crate::telemetry::server::end(span, self.otel_status.get(), aborted);
+        }
+    }
+
     fn deinit(&self) {
+        self.otel_end();
         debug_assert!(!self.body_read_ref.get().has);
         debug_assert!(!self.poll_ref.get().has);
         debug_assert!(!self.pending_pinned_write.get().is_some());
@@ -2723,6 +2738,8 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
+        otel_span: Cell::new(None),
+        otel_status: Cell::new(0),
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),

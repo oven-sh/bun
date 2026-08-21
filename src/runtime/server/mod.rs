@@ -1289,7 +1289,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // request, so only the first request for a given method pays the FFI hop
         // into `Bun__HTTPMethod__toJS`. (`get(..)` falls back to a fresh intern
         // if a future method variant ever indexes past the cache.)
-        let method_string = match bun_http::Method::find(req.method()) {
+        let method = bun_http::Method::find(req.method());
+        let (otel_span, _otel_entered) =
+            if bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
+                match crate::telemetry::server::begin(
+                    global,
+                    method.unwrap_or(bun_http::Method::GET),
+                    &uws::AnyRequest::H1(std::ptr::from_mut::<uws_sys::Request>(req)),
+                    any_response_from::<SSL>(std::ptr::from_mut(resp)),
+                    SSL,
+                ) {
+                    Some((span, entered)) => (Some(span), Some(entered)),
+                    None => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+        let method_string = match method {
             Some(m) => match this_ref.method_name_cache.get(m as usize) {
                 Some(slot) => {
                     let cached = slot.get();
@@ -1335,6 +1351,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             )
         })
         .unwrap_or_else(|err| global.take_exception(err));
+
+        if let Some(span) = otel_span {
+            if node_http_response.is_null() {
+                crate::telemetry::server::end(span, 503, false);
+            } else {
+                // SAFETY: out-param written by `on_request_ffi`; live for this frame.
+                let nhr = unsafe { &*node_http_response };
+                if nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED) {
+                    crate::telemetry::server::end(span, nhr.otel_status.get(), false);
+                } else {
+                    nhr.otel_span.set(Some(span));
+                }
+            }
+        }
 
         if node_http_response.is_null() {
             // The request never reached the handler: an exception (in practice

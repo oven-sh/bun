@@ -46,6 +46,8 @@ pub struct JSMySQLQuery {
     vm: BackRef<VirtualMachine>,
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
+    /// Native OpenTelemetry client span for this query; `None` when off.
+    otel: Cell<Option<bun_telemetry::Span>>,
 }
 
 // Intrusive refcount (bun.ptr.RefCount): `ref_()`/`deref()` provided by
@@ -77,10 +79,48 @@ impl JSMySQLQuery {
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
     }
 
+    /// Finish the telemetry span (first call wins).
+    pub(crate) fn otel_end(&self, error: Option<(&[u8], &[u8])>) {
+        if let Some(span) = self.otel.take() {
+            let q = self.query.get().query_text();
+            bun_telemetry::db::end(span, q.slice(), None, error);
+        }
+    }
+
+    fn otel_end_js_error(&self, err: JSValue) {
+        let Some(span) = self.otel.take() else { return };
+        let global = self.global_object();
+        let mut code = None;
+        let mut message = None;
+        if err.is_object() {
+            if let Ok(Some(c)) = err.get(global, "code") {
+                if c.is_string() {
+                    code = c.to_slice(global).ok();
+                }
+            }
+            if let Ok(Some(m)) = err.get(global, "message") {
+                if m.is_string() {
+                    message = m.to_slice(global).ok();
+                }
+            }
+        }
+        let q = self.query.get().query_text();
+        bun_telemetry::db::end(
+            span,
+            q.slice(),
+            None,
+            Some((
+                code.as_ref().map(|c| c.slice()).unwrap_or(b"_OTHER"),
+                message.as_ref().map(|m| m.slice()).unwrap_or(b""),
+            )),
+        );
+    }
+
     fn deinit(this: *mut Self) {
         // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
         // `this` is the sole live owner of its `heap::alloc` allocation.
         unsafe {
+            (*this).otel_end(None);
             (*this).query.with_mut(|q| q.cleanup());
             drop(bun_core::heap::take(this));
         }
@@ -118,6 +158,7 @@ impl JSMySQLQuery {
                 bigint,
                 simple,
             )),
+            otel: Cell::new(None),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
         // until handed to the JS wrapper. R-2: every field is interior-mutable,
@@ -164,7 +205,19 @@ impl JSMySQLQuery {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
         this.set_target(target);
+        if bun_telemetry::enabled(bun_telemetry::Instrument::Sql) {
+            this.otel.set(bun_telemetry::db::begin(
+                global_object.as_ptr().cast(),
+                bun_telemetry::db::System::MySql,
+                &bun_telemetry::db::ConnectionInfo {
+                    host: &connection.connection.get().host,
+                    port: connection.connection.get().port,
+                    namespace: connection.connection.get().database_name(),
+                },
+            ));
+        }
         if let Err(err) = this.run(connection) {
+            this.otel_end(Some((<&'static str>::from(&err).as_bytes(), b"")));
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
@@ -239,6 +292,9 @@ impl JSMySQLQuery {
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
         let is_last_result = result.is_last_result;
+        if is_last_result {
+            self.otel_end(None);
+        }
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, move |s| {
@@ -307,6 +363,7 @@ impl JSMySQLQuery {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
         let _guard = self.ref_guard();
+        self.otel_end(Some((b"ConnectionClosed", b"")));
         if self.this_value.get().is_not_empty() {
             self.this_value.with_mut(|v| v.downgrade());
         }
@@ -327,6 +384,7 @@ impl JSMySQLQuery {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
+        self.otel_end_js_error(err);
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, |s| {

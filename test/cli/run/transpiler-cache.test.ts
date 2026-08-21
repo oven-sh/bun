@@ -152,7 +152,8 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(1);
 
     // Same input hash, different features hash: the file's entry is replaced,
-    // not reused.
+    // not reused. If stdin were served the file's entry, it would evaluate the
+    // wrapper function without calling it and print nothing at all.
     expect(await runStdin()).toBe("cjs object");
     expect(newCacheCount()).toBe(0);
     expect(await runStdin()).toBe("cjs object");

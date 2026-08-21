@@ -17,7 +17,7 @@
 // thing that can tear the connection down — without the fix these tests hang.
 
 import { SQL } from "bun";
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { neverAnsweringServer } from "./wire-frames";
 
 const drivers = [
@@ -36,6 +36,35 @@ for (const [name, scheme, closedCode] of drivers) {
       await accepted;
       await sql.close({ timeout: "0" });
       expect((await queryError).code).toBe(closedCode);
+    } finally {
+      server.close();
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/39940
+  //
+  // close() used to fire the user's onclose callback once per pool slot in
+  // the pending state, even when that slot's handshake never completed and
+  // onconnect never fired, so onconnect/onclose pairing drifted by up to
+  // `max` per pool close.
+  test(`${name}: close() does not fire onclose for slots that never connected`, async () => {
+    const { port, server, accepted } = await neverAnsweringServer();
+    try {
+      const onconnect = mock();
+      const onclose = mock();
+      const sql = new SQL({
+        url: `${scheme}127.0.0.1:${port}/db`,
+        max: 5,
+        connectionTimeout: 0,
+        onconnect,
+        onclose,
+      });
+      const queryError = sql`SELECT 1`.catch(e => e);
+      await accepted;
+      await sql.close({ timeout: "0" });
+      expect((await queryError).code).toBe(closedCode);
+      expect(onconnect).not.toHaveBeenCalled();
+      expect(onclose).not.toHaveBeenCalled();
     } finally {
       server.close();
     }

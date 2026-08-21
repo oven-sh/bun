@@ -591,6 +591,8 @@ const enum PooledConnectionFlags {
   reserved = 1 << 1,
   /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
   preReserved = 1 << 2,
+  /// onConnectFired is used to indicate that handleConnected ran for this slot, so the user's onconnect callback already fired (with null or an error)
+  onConnectFired = 1 << 3,
 }
 export type { PooledConnectionState };
 
@@ -657,6 +659,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (err) {
       err = this.wrapError(err);
     }
+    this.flags |= PooledConnectionFlags.onConnectFired;
     const connectionInfo = this.connectionInfo;
     try {
       // user code; a throw must not abort the pool bookkeeping below
@@ -759,9 +762,14 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   #finishClose(err: any) {
     const connectionInfo = this.connectionInfo;
+    // A pool-initiated close (onFinish set) can kill a slot whose handshake
+    // never completed. That slot never fired onconnect, so skip the user's
+    // onclose to keep the two callbacks paired. A connect failure outside of
+    // close() still reports through onclose.
+    const notifyUser = (this.flags & PooledConnectionFlags.onConnectFired) !== 0 || this.onFinish === null;
     try {
       // user code; a throw must not abort the pool bookkeeping below
-      if (connectionInfo?.onclose) {
+      if (notifyUser && connectionInfo?.onclose) {
         AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onclose, connectionInfo, err);
       }
     } finally {

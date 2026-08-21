@@ -567,8 +567,16 @@ function toWarning(e: unknown): Error {
   }
 }
 
+// Validation runs once per event and the handlers below fan the result out. Like
+// emitConsoleAPICalled, each session gets its own params and first-level objects,
+// so a listener that mutates its event cannot leak into the next session (or into
+// the bookkeeping, which reads ctx); the captured stack is shared, as there.
 function forEachNetworkSession<C>(fn: (session: Session, state: NetworkState, ctx: C) => void, ctx: C) {
   for (const { 0: session, 1: state } of networkEnabledSessions) fn(session, state, ctx);
+}
+
+function copyHeaders(headers: Record<string, string>) {
+  return { __proto__: null, ...headers } as Record<string, string>;
 }
 
 function captureNetworkInitiator() {
@@ -676,10 +684,10 @@ function sessionRequestWillBeSent(session, state, ctx) {
   );
   emitToSession(session, "Network.requestWillBeSent", {
     requestId,
-    request,
+    request: { ...request, headers: copyHeaders(request.headers) },
     timestamp: ctx.timestamp,
     wallTime: ctx.wallTime,
-    initiator: ctx.initiator,
+    initiator: { ...ctx.initiator },
   });
 }
 
@@ -692,7 +700,7 @@ function sessionResponseReceived(session, state, ctx) {
     requestId,
     timestamp: ctx.timestamp,
     type: ctx.type,
-    response,
+    response: { ...response, headers: copyHeaders(response.headers) },
   });
   const entry = state.requests.get(requestId);
   if (entry !== undefined) entry.responseIsUTF8 = response.charset === "utf-8";
@@ -750,7 +758,7 @@ function sessionWebSocketCreated(session, _state, ctx) {
   emitToSession(session, "Network.webSocketCreated", {
     requestId: ctx.requestId,
     url: ctx.url,
-    initiator: ctx.initiator,
+    initiator: { ...ctx.initiator },
   });
 }
 
@@ -759,10 +767,11 @@ function sessionWebSocketClosed(session, _state, ctx) {
 }
 
 function sessionWebSocketHandshakeResponseReceived(session, _state, ctx) {
+  const { response } = ctx;
   emitToSession(session, "Network.webSocketHandshakeResponseReceived", {
     requestId: ctx.requestId,
     timestamp: ctx.timestamp,
-    response: ctx.response,
+    response: { ...response, headers: copyHeaders(response.headers) },
   });
 }
 
@@ -784,8 +793,11 @@ guardEventParams(Network);
 // Mirrors https://github.com/nodejs/node/blob/main/src/inspector/dom_storage_agent.cc (event surface only).
 const domStorageEnabledSessions: Set<Session> = new SafeSet();
 
-function emitDOMStorageEvent(method: string, params: object) {
-  for (const session of domStorageEnabledSessions) emitToSession(session, method, params);
+// Same per-session copy discipline as the Network handlers; storageId is the only nested object.
+function emitDOMStorageEvent(method: string, params: { storageId: object }) {
+  for (const session of domStorageEnabledSessions) {
+    emitToSession(session, method, { ...params, storageId: { ...params.storageId } });
+  }
 }
 
 function storageIdFromObject(params: any) {

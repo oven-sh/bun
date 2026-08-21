@@ -37,6 +37,63 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "first second", stderr, exitCode: 0 });
   });
 
+  it("pauses the new connection although the previous one was left paused", async () => {
+    // The wrapper is reused, so the paused state recorded for the first connection must
+    // not turn the pause of the second one (a paused stream stops its new handle in
+    // afterConnect) into a no-op.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { createServer, connect } = require("node:net");
+          const { once } = require("node:events");
+          let connections = 0;
+          const srv = createServer(c => {
+            c.on("error", () => {});
+            if (++connections === 2) c.end("hello");
+          });
+          srv.listen(0, "127.0.0.1", async () => {
+            const port = srv.address().port;
+            let resumed = false;
+            let deliveredWhilePaused = false;
+            let received = "";
+            const onread = {
+              buffer: Buffer.alloc(64),
+              callback(n, buf) {
+                if (!resumed) deliveredWhilePaused = true;
+                received += buf.toString("utf8", 0, n);
+                if (received === "hello") {
+                  console.log(JSON.stringify({ deliveredWhilePaused, received }));
+                  s.destroy();
+                  srv.close();
+                }
+              },
+            };
+            const s = connect({ port, host: "127.0.0.1", onread });
+            await once(s, "connect");
+            // Connected and reading: this pause stops the first connection's handle.
+            s.pause();
+            s.connect({ port, host: "127.0.0.1" });
+            await once(s, "connect");
+            // Two turns: whatever the second connection's handle reads while it should
+            // be paused has been dispatched by then.
+            setImmediate(() => setImmediate(() => { resumed = true; s.resume(); }));
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ deliveredWhilePaused: false, received: "hello" }),
+      stderr,
+      exitCode: 0,
+    });
+  });
+
   it("does not crash when reconnecting while the first connect is still in flight", async () => {
     await using proc = Bun.spawn({
       cmd: [

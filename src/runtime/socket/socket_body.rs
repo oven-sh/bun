@@ -743,6 +743,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// Consumes `PAUSE_ON_CONNECT`: a TLS client dispatches another handshake after a renegotiation.
+    fn pause_on_connect_once(&self) {
+        if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
+            self.update_flags(|f| f.remove(Flags::PAUSE_ON_CONNECT));
+            self.pause_reads();
+        }
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set_keep_alive(
         this: &Self,
@@ -1435,8 +1443,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.ref_pollref_on_connect.replace(true) {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         }
-        if !SSL && this.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
-            this.pause_reads();
+        if !SSL {
+            this.pause_on_connect_once();
         }
         jsc::mark_binding!();
 
@@ -1833,8 +1841,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             if let Some(twin) = this.twin.get().as_ref() {
                 twin.update_flags(|f| f.insert(Flags::REJECTED));
             }
-        } else if SSL && flags.contains(Flags::PAUSE_ON_CONNECT) {
-            this.pause_reads();
+        } else if SSL {
+            this.pause_on_connect_once();
         }
 
         let mut callback = handlers.on_handshake();

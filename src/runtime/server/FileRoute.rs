@@ -52,16 +52,6 @@ pub struct InitOptions<'a> {
     pub(crate) headers: Option<&'a FetchHeaders>,
 }
 
-impl<'a> Default for InitOptions<'a> {
-    fn default() -> Self {
-        Self {
-            server: None,
-            status_code: 200,
-            headers: None,
-        }
-    }
-}
-
 use crate::webcore::headers_ref::blob_content_type;
 
 #[inline]

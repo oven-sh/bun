@@ -276,18 +276,6 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
     return true;
 }
 
-bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task)
-{
-    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
-
-    if (!context) {
-        return false;
-    }
-
-    context->postTaskConcurrently(WTF::move(task));
-    return true;
-}
-
 ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionContext()
 {
     Locker locker { allScriptExecutionContextsMapLock };
@@ -344,13 +332,6 @@ void ScriptExecutionContext::markTerminating()
     m_isTerminating.store(true, std::memory_order_release);
 }
 
-ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
-{
-    if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
-        return nullptr;
-    return uncheckedDowncast<JSDOMGlobalObject>(globalObject)->scriptExecutionContext();
-}
-
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     Bun__VmHandle__queueTaskConcurrently(m_vmHandle, new EventLoopTask(WTF::move(lambda)));
@@ -372,11 +353,6 @@ void ScriptExecutionContext::postTaskAfterYield(Function<void(ScriptExecutionCon
 }
 
 // Native bindings
-extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
-{
-    return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
-}
-
 extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
 {
     auto* context = ScriptExecutionContext::getScriptExecutionContext(id);

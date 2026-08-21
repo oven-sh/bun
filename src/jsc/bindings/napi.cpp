@@ -1143,7 +1143,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     bool can_be_weak = true;
 
     if (!(val.isObject() || val.isCallable() || val.isSymbol())) {
-        NAPI_RETURN_EARLY_IF_FALSE(env, env->napiModule().nm_version == NAPI_VERSION_EXPERIMENTAL, napi_invalid_arg);
+        NAPI_RETURN_EARLY_IF_FALSE(env, env->napiModule().nm_version >= 10, napi_invalid_arg);
         can_be_weak = false;
     }
 

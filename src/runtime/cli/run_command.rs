@@ -80,16 +80,6 @@ pub struct ExecCfg {
     pub(crate) allow_fast_run_for_extensions: bool,
 }
 
-impl Default for ExecCfg {
-    fn default() -> Self {
-        Self {
-            bin_dirs_only: false,
-            log_errors: true,
-            allow_fast_run_for_extensions: true,
-        }
-    }
-}
-
 /// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
 /// [`RunCommand::configure_env_for_run_without_linker`].
 #[derive(Clone, Copy)]
@@ -3484,9 +3474,7 @@ impl RunCommand {
         // hyperlinks when colors are on. Light/dark detected from env.
         let colors = Output::enable_ansi_colors_stdout();
         let columns: u16 = 'brk: {
-            // Output.terminal_size is never populated; query stdout
-            // directly. Honor COLUMNS so piped output and tests can
-            // pin a width.
+            // Honor COLUMNS so piped output and tests can pin a width.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
                 if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
                     if n > 0 {

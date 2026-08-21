@@ -513,3 +513,163 @@ test.concurrent("node:module: linking constructs the linked bindings, not the re
     resolveFilename: true,
   });
 });
+
+// Only exports whose value comes from Bun's own code (a static table entry, a native accessor, a getter compiled from
+// src/js) are declared lazily. A lazy export is materialized by JSC while the module importing it is being linked, and
+// linking must not run user code (see the re-entrancy tests below), so an accessor that user code defined on the
+// object is read when the builtin loads instead, the way every export used to be.
+
+test.concurrent("node:process: a user-defined accessor is read when the module loads, builtins stay lazy", async () => {
+  const result = await runEntry(`
+    import { constructedOnProcess, print } from "./native-helper.mjs";
+    let reads = 0;
+    Object.defineProperty(process, "userDefined", { enumerable: true, configurable: true, get: () => ++reads });
+    // Nothing binds to userDefined here: a lazy export would not be read at all.
+    const ns = await import("node:process");
+    print({
+      readsAfterLoad: reads,
+      afterLoad: constructedOnProcess(),
+      value: ns.userDefined,
+      readsAfterRead: reads,
+      on: ns.on === process.on,
+    });
+  `);
+  expect(result).toEqual({ readsAfterLoad: 1, afterLoad: [], value: 1, readsAfterRead: 1, on: true });
+});
+
+test.concurrent("node:fs: a user-defined accessor is read when the module loads, fs's own stay lazy", async () => {
+  const result = await runEntry(`
+    const fs = require("node:fs");
+    let reads = 0;
+    Object.defineProperty(fs, "userDefined", { enumerable: true, configurable: true, get: () => ++reads });
+    const ns = await import("node:fs");
+    console.log(JSON.stringify({
+      readsAfterLoad: reads,
+      readStreamStillAnAccessor: typeof Object.getOwnPropertyDescriptor(fs, "ReadStream").get === "function",
+      value: ns.userDefined,
+      readsAfterRead: reads,
+    }));
+  `);
+  expect(result).toEqual({ readsAfterLoad: 1, readStreamStillAnAccessor: true, value: 1, readsAfterRead: 1 });
+});
+
+test.concurrent("a user-defined getter can itself load the modules that import the export it backs", async () => {
+  // Read while E.mjs linked, the require() evaluated E.mjs inside that link, before the binding it imports had a
+  // value: "Cannot access 'userDefined' before initialization". Read while node:process loads, the require() loads
+  // E.mjs and X.mjs against the finished binding, and the import() of E.mjs that is under way picks them up.
+  const result = await runEntry(
+    `
+      import { print } from "./native-helper.mjs";
+      const log = (globalThis.log = []);
+      Object.defineProperty(process, "userDefined", {
+        enumerable: true,
+        configurable: true,
+        get() {
+          if (!log.includes("getter")) {
+            log.push("getter");
+            log.push("require(X) -> " + require("./X.mjs").x);
+          }
+          return "value";
+        },
+      });
+      const { e } = await import("./E.mjs");
+      const { x } = await import("./X.mjs");
+      print({ log, e, x });
+    `,
+    {
+      "E.mjs": `import { userDefined } from "node:process";\nglobalThis.log.push("E: " + userDefined);\nexport const e = 1;`,
+      "X.mjs": `import "./E.mjs";\nglobalThis.log.push("X");\nexport const x = 2;`,
+    },
+  );
+  expect(result).toEqual({ log: ["getter", "E: value", "X", "require(X) -> 2"], e: 1, x: 2 });
+});
+
+// The getter of a user-defined accessor that is exported by a builtin. It require()s Q.mjs and then throws.
+//
+// When the accessor was read while E.mjs was being linked, the require() linked Q.mjs, Y.mjs and X.mjs inside that
+// link. X.mjs imports E.mjs, which was still linking, so X.mjs was marked linked on its own; Y.mjs then threw while
+// Q.mjs evaluated, so X.mjs did not evaluate. The getter's throw failed E.mjs's link, which reset E.mjs to unlinked.
+// import("./X.mjs") afterwards had nothing left to link, evaluated X.mjs and with it the unlinked E.mjs, and
+// segfaulted in JSModuleRecord::evaluate. Read while the builtin loads, the getter runs before anything links against
+// the builtin, and its throw fails the builtin's load: every import that depends on it rejects with the getter's error.
+const throwingGetter = `{
+  enumerable: true,
+  configurable: true,
+  get() {
+    try {
+      require("./Q.mjs");
+    } catch {}
+    throw new Error("getter throws");
+  },
+}`;
+
+const linkReentrancyCases: {
+  name: string;
+  install: string;
+  exportName: string;
+  importFrom: string;
+  files?: Record<string, string>;
+}[] = [
+  {
+    name: "node:process, an accessor on process",
+    install: `Object.defineProperty(process, "userDefined", ${throwingGetter});`,
+    exportName: "userDefined",
+    importFrom: "node:process",
+  },
+  {
+    name: "node:process, an accessor process inherits from EventEmitter.prototype",
+    install: `Object.defineProperty(require("node:events").prototype, "userDefined", ${throwingGetter});`,
+    exportName: "userDefined",
+    importFrom: "node:process",
+  },
+  {
+    name: "node:module, a static table entry redefined as an accessor",
+    install: `Object.defineProperty(require("node:module"), "globalPaths", ${throwingGetter});`,
+    exportName: "globalPaths",
+    importFrom: "node:module",
+  },
+  {
+    name: '"bun", an accessor on the Bun object, bound through export *',
+    install: `Object.defineProperty(Bun, "userDefined", ${throwingGetter});`,
+    exportName: "userDefined",
+    importFrom: "./reexport.mjs",
+    files: { "reexport.mjs": bunReexport },
+  },
+  {
+    name: "node:fs, an accessor on the exports object of a src/js builtin",
+    install: `Object.defineProperty(require("node:fs"), "userDefined", ${throwingGetter});`,
+    exportName: "userDefined",
+    importFrom: "node:fs",
+  },
+];
+
+for (const { name, install, exportName, importFrom, files } of linkReentrancyCases) {
+  test.concurrent(`a user-defined getter does not run while a module links: ${name}`, async () => {
+    const result = await runEntry(
+      `
+        ${install}
+        const result = {};
+        try {
+          await import("./E.mjs");
+          result.E = "evaluated";
+        } catch (error) {
+          result.E = error.message;
+        }
+        try {
+          result.X = (await import("./X.mjs")).x;
+        } catch (error) {
+          result.X = error.message;
+        }
+        console.log(JSON.stringify(result));
+      `,
+      {
+        ...files,
+        "E.mjs": `import { ${exportName} } from ${JSON.stringify(importFrom)};\nexport const e = 1;`,
+        "X.mjs": `import "./E.mjs";\nexport const x = "evaluated";`,
+        "Q.mjs": `import "./Y.mjs";\nimport "./X.mjs";`,
+        "Y.mjs": `throw new Error("Y.mjs throws while evaluating");`,
+      },
+    );
+    expect(result).toEqual({ E: "getter throws", X: "getter throws" });
+  });
+}

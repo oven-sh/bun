@@ -298,12 +298,6 @@ impl Backend {
     }
 }
 
-impl Default for Backend {
-    fn default() -> Self {
-        Backend::default()
-    }
-}
-
 pub type Address = bun_sys::net::Address;
 
 pub struct GetAddrInfoResult {

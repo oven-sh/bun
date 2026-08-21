@@ -288,7 +288,8 @@ impl Processor {
                 spans: b,
             })
             .collect();
-        let body = otlp::encode_request(&resource, &chunks);
+        let limits = crate::rt::hooks().map(|h| (h.limits)()).unwrap_or(crate::data::DEFAULT_LIMITS);
+        let body = otlp::encode_request(&resource, &chunks, &limits);
         Some(Arc::new(ExportPayload {
             body,
             span_count: count,

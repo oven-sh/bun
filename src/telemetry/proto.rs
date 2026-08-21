@@ -33,6 +33,18 @@ pub const fn len_field_len(field: u32, payload: usize) -> usize {
 }
 
 #[inline]
+/// Varint into a fixed buffer; returns bytes written.
+pub fn write_varint_into(out: &mut [u8], mut v: u64) -> usize {
+    let mut n = 0;
+    while v >= 0x80 {
+        out[n] = (v as u8) | 0x80;
+        v >>= 7;
+        n += 1;
+    }
+    out[n] = v as u8;
+    n + 1
+}
+
 pub fn write_varint(out: &mut Vec<u8>, mut v: u64) {
     while v >= 0x80 {
         out.push((v as u8) | 0x80);

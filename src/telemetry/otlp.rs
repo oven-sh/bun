@@ -225,6 +225,18 @@ pub fn truncate_utf8(s: &[u8], max: usize) -> &[u8] {
     &s[..end]
 }
 
+/// Number of top-level entries with `field` in a concatenated buffer.
+pub fn count_fields(buf: &[u8], field: u32) -> usize {
+    let mut n = 0;
+    let mut r = proto::Reader::new(buf);
+    while let Ok(Some((fl, _))) = r.next() {
+        if fl == field {
+            n += 1;
+        }
+    }
+    n
+}
+
 /// Locate the encoded `KeyValue` for `key` in a buffer of concatenated
 /// `Span.attributes` entries: `(offset, total_len)` of the whole entry.
 pub fn find_attribute(attrs: &[u8], key: &[u8]) -> Option<(usize, usize)> {
@@ -496,7 +508,26 @@ pub struct ScopeChunk<'a> {
 
 /// Build an `ExportTraceServiceRequest` around pre-encoded pieces. All sizes
 /// are known so this is a single allocation and straight-line writes.
-pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>]) -> Vec<u8> {
+pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>], limits: &crate::data::Limits) -> Vec<u8> {
+    // Expand request-path records (see http_record.rs) into Span entries.
+    let expanded: Vec<Option<Vec<u8>>> = scopes
+        .iter()
+        .map(|s| {
+            if crate::http_record::has_records(s.spans) {
+                let mut v = Vec::with_capacity(s.spans.len() * 2);
+                crate::http_record::expand_into(&mut v, s.spans, limits);
+                Some(v)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let scopes: Vec<ScopeChunk<'_>> = scopes
+        .iter()
+        .zip(expanded.iter())
+        .map(|(s, e)| ScopeChunk { scope: s.scope, spans: e.as_deref().unwrap_or(s.spans) })
+        .collect();
+    let scopes = &scopes[..];
     let mut scope_spans_total = 0;
     for s in scopes {
         let ss_body = len_field_len(f::SS_SCOPE, s.scope.len()) + s.spans.len();
@@ -524,7 +555,7 @@ pub fn count_spans(spans: &[u8]) -> usize {
     let mut n = 0;
     let mut r = proto::Reader::new(spans);
     while let Ok(Some((field, _))) = r.next() {
-        if field == f::SS_SPANS {
+        if field == f::SS_SPANS || field == crate::http_record::FIELD {
             n += 1;
         }
     }

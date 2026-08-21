@@ -16,6 +16,7 @@ pub struct Hooks {
     /// (`Slot::js_cell`).
     pub release_cell: fn(js_cell: usize),
     pub sampler: fn() -> crate::Sampler,
+    pub limits: fn() -> crate::data::Limits,
     pub capture_db_statement: fn() -> bool,
 }
 

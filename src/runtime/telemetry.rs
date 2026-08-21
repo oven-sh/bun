@@ -298,6 +298,7 @@ pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<
         after_record,
         release_cell: span::release_cell,
         sampler: || state().sampler,
+        limits: || state().limits,
         capture_db_statement: || state().capture_db_statement,
     });
     bun_telemetry::set_enabled_mask(cfg.instruments, cfg.roots);

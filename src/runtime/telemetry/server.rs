@@ -2,8 +2,9 @@
 
 use bun_http::Method;
 use bun_jsc::JSGlobalObject;
+use bun_telemetry::http_record as R;
 use bun_telemetry::pool::{self, NativeSpan};
-use bun_telemetry::{Instrument, ScopeId, SpanKind, SpanStub, StatusCode, Value, clock, propagation};
+use bun_telemetry::{Instrument, ScopeId, SpanKind, SpanStub, Value, clock, propagation};
 
 use super::{Entered, http, state};
 
@@ -22,13 +23,14 @@ pub fn begin(
         return None;
     }
     let st = state();
+    let h = req.telemetry_headers();
     let mut parent = None;
     let mut trace_state: &[u8] = b"";
     if st.propagate_trace_context {
-        if let Some(h) = req.header(b"traceparent") {
-            parent = propagation::parse_traceparent(h);
+        if let Some(tp) = h.traceparent() {
+            parent = propagation::parse_traceparent(tp);
             if parent.is_some() {
-                if let Some(ts) = req.header(b"tracestate") {
+                if let Some(ts) = h.tracestate() {
                     if propagation::tracestate_is_reasonable(ts) {
                         trace_state = ts;
                     }
@@ -38,18 +40,15 @@ pub fn begin(
     }
     let now = clock::now_unix_nanos();
     let stub = SpanStub::start(parent.as_ref(), &st.sampler, now);
-    let method_name = http::method_name(method);
-    let span = pool::begin(
-        stub,
-        ScopeId::from(Instrument::HttpServer),
-        method_name.as_bytes(),
-        SpanKind::Server,
-    );
+    let method_name = http::method_name(method).as_bytes();
+    let span = pool::begin(stub, ScopeId::from(Instrument::HttpServer), b"", SpanKind::Server);
     let baggage = if st.propagate_baggage {
-        req.header(b"baggage").filter(|b| propagation::baggage_is_reasonable(b))
+        h.baggage().filter(|b| propagation::baggage_is_reasonable(b))
     } else {
         None
     };
+    // Facts only; attributes are encoded when the batch is exported
+    // (bun_telemetry::http_record).
     pool::with(span, |s| {
         if !trace_state.is_empty() {
             s.trace_state.extend_from_slice(trace_state);
@@ -57,45 +56,39 @@ pub fn begin(
         if let Some(b) = baggage {
             s.baggage.extend_from_slice(b);
         }
+        let f = &mut s.http;
+        f.active = true;
+        f.set_method(method_name);
         if !stub.ctx.flags.sampled() {
             return;
         }
-        let l = &st.limits;
-        s.push_str("http.request.method", method_name.as_bytes(), l);
-        let url = req.url();
-        // uWS gives us the path here; the query string (if any) follows '?'.
-        let (path, query) = match bun_core::strings::index_of_char_usize(url, b'?') {
-            Some(i) => (&url[..i], &url[i + 1..]),
-            None => (url, &b""[..]),
-        };
-        s.push_str("url.path", path, l);
-        if !query.is_empty() {
-            s.push_str("url.query", query, l);
-        }
-        s.push_str("url.scheme", if is_https { b"https" } else { b"http" }, l);
-        if let Some(host) = req.header(b"host") {
-            let (h, port) = http::split_host_port(host);
-            s.push_str("server.address", h, l);
-            if let Some(p) = port {
-                s.push_uint("server.port", p as u64, l);
-            }
-        }
-        if let Some(ua) = req.header(b"user-agent") {
-            s.push_str("user_agent.original", ua, l);
-        }
+        f.flags = if is_https { R::FLAG_HTTPS } else { 0 };
         if let Some((ip, port)) = resp.get_remote_address_raw() {
-            let mut buf = [0u8; 46];
-            s.push_str("client.address", ip.format(&mut buf), l);
-            if port > 0 {
-                s.push_uint("client.port", port as u64, l);
-            }
+            let raw = ip.bytes();
+            f.ip_len = raw.len() as u8;
+            f.ip[..raw.len()].copy_from_slice(raw);
+            f.client_port = port;
         }
-        for name in &st.capture_request_headers {
-            if let Some(v) = req.header(name) {
-                let mut key = Vec::with_capacity(20 + name.len());
-                key.extend_from_slice(b"http.request.header.");
-                key.extend_from_slice(name);
-                s.push_attribute(&key, &Value::Str(v), l);
+        let url = req.url();
+        let host = h.host().unwrap_or(b"");
+        let ua = h.user_agent().unwrap_or(b"");
+        f.raw.reserve(9 + url.len() + host.len() + ua.len());
+        f.push(R::S_URL, url);
+        if !host.is_empty() {
+            f.push(R::S_HOST, host);
+        }
+        if !ua.is_empty() {
+            f.push(R::S_UA, ua);
+        }
+        if !st.capture_request_headers.is_empty() {
+            let l = &st.limits;
+            for name in &st.capture_request_headers {
+                if let Some(v) = req.header(name) {
+                    let mut key = Vec::with_capacity(20 + name.len());
+                    key.extend_from_slice(b"http.request.header.");
+                    key.extend_from_slice(name);
+                    s.push_attribute(&key, &Value::Str(v), l);
+                }
             }
         }
     });
@@ -103,21 +96,14 @@ pub fn begin(
 }
 
 /// Refine the span name to `METHOD /route` once the matched route is known.
-pub fn set_route(span: NativeSpan, method: Method, route: &[u8]) {
+pub fn set_route(span: NativeSpan, _method: Method, route: &[u8]) {
     if route.is_empty() {
         return;
     }
     pool::with(span, |s| {
-        if !s.stub.ctx.flags.sampled() {
-            return;
+        if s.stub.ctx.flags.sampled() {
+            s.http.push(R::S_ROUTE, route);
         }
-        let m = http::method_name(method);
-        s.name.clear();
-        s.name.reserve(m.len() + 1 + route.len());
-        s.name.extend_from_slice(m.as_bytes());
-        s.name.push(b' ');
-        s.name.extend_from_slice(route);
-        s.push_str("http.route", route, &state().limits);
     });
 }
 
@@ -130,14 +116,14 @@ pub fn end(span: NativeSpan, status: u16, aborted: bool) {
 /// `handler_error`: the JS handler threw or rejected (node:http), which is an
 /// error even when the status line that went out was not 5xx.
 pub fn end_with(span: NativeSpan, status: u16, aborted: bool, handler_error: bool) {
-    super::end_native(span, 0, |w| {
-        http::status_attrs(w, status, true);
-        if aborted && status < 500 {
-            w.attr("error.type", "aborted");
-            w.status(StatusCode::Error, b"request aborted");
-        } else if handler_error && status < 500 {
-            w.attr("error.type", "uncaught exception");
-            w.status(StatusCode::Error, b"handler threw");
+    pool::with(span, |s| {
+        s.http.status = status;
+        if aborted {
+            s.http.flags |= R::FLAG_ABORTED;
+        }
+        if handler_error {
+            s.http.flags |= R::FLAG_HANDLER_ERROR;
         }
     });
+    super::end_native(span, 0, |_| {});
 }

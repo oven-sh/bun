@@ -1719,6 +1719,35 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return value.length();
   }
 
+  /* One pass over the header block for the headers telemetry needs:
+   * [0] host [1] user-agent [2] traceparent [3] tracestate [4] baggage. */
+  struct uws_telemetry_headers_t {
+    const char *ptr[5];
+    uint32_t len[5];
+  };
+  void uws_req_telemetry_headers(uws_req_t *res, struct uws_telemetry_headers_t *out)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    memset(out, 0, sizeof(*out));
+    for (auto header : *uwsReq)
+    {
+      std::string_view k = header.first;
+      int slot = -1;
+      switch (k.length()) {
+      case 4: if ((k[0] | 0x20) == 'h' && !strncasecmp(k.data(), "host", 4)) slot = 0; break;
+      case 10: if ((k[0] | 0x20) == 'u' && !strncasecmp(k.data(), "user-agent", 10)) slot = 1;
+               else if ((k[0] | 0x20) == 't' && !strncasecmp(k.data(), "tracestate", 10)) slot = 3; break;
+      case 11: if ((k[0] | 0x20) == 't' && !strncasecmp(k.data(), "traceparent", 11)) slot = 2; break;
+      case 7: if ((k[0] | 0x20) == 'b' && !strncasecmp(k.data(), "baggage", 7)) slot = 4; break;
+      default: break;
+      }
+      if (slot >= 0 && !out->ptr[slot]) {
+        out->ptr[slot] = header.second.data();
+        out->len[slot] = (uint32_t)header.second.length();
+      }
+    }
+  }
+
   void uws_req_for_each_header(uws_req_t *res, uws_get_headers_server_handler handler, void *user_data)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;

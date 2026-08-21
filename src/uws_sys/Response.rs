@@ -79,6 +79,15 @@ pub enum RawIp {
 }
 
 impl RawIp {
+    /// Network-order bytes (4 or 16).
+    #[inline]
+    pub fn bytes(&self) -> &[u8] {
+        match self {
+            RawIp::V4(b) => b,
+            RawIp::V6(b) => b,
+        }
+    }
+
     /// Text form: dotted quad, RFC 5952 IPv6, or dotted quad for
     /// IPv4-mapped IPv6 (matching what `requestIP()` reports).
     pub fn format<'a>(&self, buf: &'a mut [u8; 46]) -> &'a [u8] {

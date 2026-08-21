@@ -59,12 +59,8 @@ mod _impl {
             } else {
                 let s = str.slice();
                 dispatch_encoding!(encoding, {
-                    // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
-                    Encoding::Ucs2 => unsafe { encoder::write_u8::<{ Encoding::Utf16le as u8 }, true>(
-                        s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(),
-                    ) },
-                // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
-                }, |E| unsafe { encoder::write_u8::<E, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
+                    Encoding::Ucs2 => encoder::write_u8::<{ Encoding::Utf16le as u8 }, true>(s, buf),
+                }, |E| encoder::write_u8::<E, true>(s, buf))
             };
             let Ok(written) = result else {
                 return false;

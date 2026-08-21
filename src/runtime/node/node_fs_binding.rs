@@ -325,29 +325,6 @@ impl Binding {
             Ok(res) => Ok(res),
         }
     }
-
-    /// `callSync(.unwatchFile)` — `Arguments == void`.
-    pub(crate) fn unwatch_file(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // SAFETY: JS-thread borrow of the per-thread VM.
-        let vm: &VirtualMachine = global.bun_vm();
-        let _slice = ArgumentsSlice::init(vm, frame.arguments());
-
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-
-        match this
-            .node_fs
-            .with_mut(|nfs| nfs.unwatch_file((), Flavor::Sync))
-        {
-            Err(ref err) => Err(global.throw_value(err.to_js(global))),
-            Ok(()) => Ok(JSValue::UNDEFINED),
-        }
-    }
 }
 
 /// Generates the `pub const <name> = call{Async,Sync}(.<fn>)` block.

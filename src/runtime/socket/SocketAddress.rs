@@ -10,7 +10,7 @@ use core::ffi::{c_int, c_void};
 use core::mem;
 
 use bun_cares_sys::c_ares as ares;
-use bun_core::{OwnedString, String as BunString, ZStr};
+use bun_core::{OwnedString, String as BunString, ZStr, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
 
 // The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
@@ -32,15 +32,6 @@ pub struct SocketAddress {
     ///
     /// @internal
     _presentation: Cell<BunString>,
-}
-
-impl Default for SocketAddress {
-    fn default() -> Self {
-        Self {
-            _addr: sockaddr::LOOPBACK_V4,
-            _presentation: Cell::new(BunString::dead()),
-        }
-    }
 }
 
 impl SocketAddress {
@@ -242,7 +233,7 @@ impl SocketAddress {
         let addr = if paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
             let mut inner = &paddr[1..paddr.len() - 1];
             let mut scope_id: u32 = 0;
-            if let Some(pct) = inner.iter().position(|&b| b == b'%') {
+            if let Some(pct) = strings::index_of_char_usize(inner, b'%') {
                 let zone = &inner[pct + 1..];
                 inner = &inner[..pct];
                 // Numeric zone → scope_id directly.
@@ -1054,7 +1045,7 @@ pub unsafe extern "C" fn Bun__parseIpAddress(
     };
     let mut addr = bun_sys::net::Address::from_ip(ip, port);
     if ip.is_ipv6() {
-        if let Some(pct) = bytes.iter().position(|b| *b == b'%') {
+        if let Some(pct) = strings::index_of_char_usize(bytes, b'%') {
             addr.set_scope_id(scope_index(&bytes[pct + 1..]));
         }
     }

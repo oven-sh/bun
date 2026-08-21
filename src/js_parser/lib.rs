@@ -528,9 +528,9 @@ pub mod defines {
             if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
                 let tail = &key[last_dot + 1..key.len()];
                 let remainder = &key[0..last_dot];
-                let count = remainder.iter().filter(|&&b| b == b'.').count() + 1;
+                let count = strings::count_char(remainder, b'.') + 1;
                 let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
-                for split in remainder.split(|b| *b == b'.') {
+                for split in strings::split(remainder, b".") {
                     parts.push(Box::from(split));
                 }
                 parts.push(Box::from(tail));

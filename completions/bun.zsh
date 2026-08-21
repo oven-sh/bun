@@ -36,7 +36,10 @@ _bun_add_completion() {
         '--development[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
-        '--exact[Add the exact version instead of the ^range]' &&
+        '--exact[Add the exact version instead of the ^range]' \
+        '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
+        '*--filter[Add the package(s) to the matching workspaces instead of the current package]:workspace pattern' \
+        '*-F[Add the package(s) to the matching workspaces instead of the current package]:workspace pattern' &&
         ret=0
 
     case $state in
@@ -257,6 +260,7 @@ _bun_pm_completion() {
         sub_commands=(
             'bin\:"print the path to bin folder" '
             'ls\:"list the dependency tree according to the current lockfile" '
+            'licenses\:"list installed packages grouped by license" '
             'hash\:"generate & print the hash of the current lockfile" '
             'hash-string\:"print the string used to hash the lockfile" '
             'hash-print\:"print the hash stored in the current lockfile" '
@@ -293,6 +297,25 @@ _bun_pm_completion() {
             pmargs=(
                 "--all[list the entire dependency tree according to the current lockfile]"
                 "--trusted[list only trusted dependencies]"
+            )
+
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                $pmargs &&
+                ret=0
+
+            ;;
+        licenses)
+            pmargs=(
+                "--json[output as JSON]"
+                "--prod[omit devDependencies]"
+                "--production[omit devDependencies]"
+                "--dev[list only what devDependencies pull in]"
+                "-D[list only what devDependencies pull in]"
+                "--long[also print author, description and homepage]"
+                "*--filter[list only the matching workspaces' dependencies]:workspace pattern"
+                "*-F[list only the matching workspaces' dependencies]:workspace pattern"
             )
 
             _arguments -s -C \
@@ -377,7 +400,10 @@ _bun_install_completion() {
         '-D[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
-        '--exact[Add the exact version instead of the ^range]' &&
+        '--exact[Add the exact version instead of the ^range]' \
+        '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
+        '*--filter[Install packages for the matching workspaces]:workspace pattern' \
+        '*-F[Install packages for the matching workspaces]:workspace pattern' &&
         ret=0
 
     case $state in
@@ -417,7 +443,9 @@ _bun_remove_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
-        '--help[Print this help menu]' &&
+        '--help[Print this help menu]' \
+        '*--filter[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' \
+        '*-F[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' &&
         ret=0
 
     case $state in
@@ -596,13 +624,29 @@ _bun_update_completion() {
         '--config[Load config(bunfig.toml)]: :->config' \
         '-y[Write a yarn.lock file (yarn v1)]' \
         '--yarn[Write a yarn.lock file (yarn v1)]' \
-        '-p[Don'"'"'t install devDependencies]' \
-        '--production[Don'"'"'t install devDependencies]' \
+        '-p[Only update dependencies and optionalDependencies]' \
+        '--production[Only update dependencies and optionalDependencies]' \
+        '-P[Only update dependencies and optionalDependencies]' \
+        '--prod[Only update dependencies and optionalDependencies]' \
+        '-d[Only update devDependencies]' \
+        '--dev[Only update devDependencies]' \
+        '-D[Only update devDependencies]' \
+        '--development[Only update devDependencies]' \
+        '--no-optional[Don'"'"'t update optionalDependencies]' \
+        '-E[Write exact versions to package.json instead of ^ or ~ ranges]' \
+        '--exact[Write exact versions to package.json instead of ^ or ~ ranges]' \
         '--no-save[Don'"'"'t save a lockfile]' \
         '--save[Save to package.json]' \
         '--dry-run[Don'"'"'t install anything]' \
         '--frozen-lockfile[Disallow changes to lockfile]' \
-        '--latest[Updates dependencies to latest version, regardless of compatibility]' \
+        '-L[Update packages to their latest versions, ignoring the ranges in package.json]' \
+        '--latest[Update packages to their latest versions, ignoring the ranges in package.json]' \
+        '-i[Show an interactive list of outdated packages to select for update]' \
+        '--interactive[Show an interactive list of outdated packages to select for update]' \
+        '-r[Update packages in all workspaces]' \
+        '--recursive[Update packages in all workspaces]' \
+        '*--filter[Update packages for the matching workspaces]:workspace pattern' \
+        '*-F[Update packages for the matching workspaces]:workspace pattern' \
         '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
         '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
         '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
@@ -640,6 +684,91 @@ _bun_outdated_completion() {
     case $state in
     config)
         _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_dedupe_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '--check[Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything]' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '-y[Write a yarn.lock file (yarn v1)]' \
+        '--yarn[Write a yarn.lock file (yarn v1)]' \
+        '-p[Don'"'"'t install devDependencies]' \
+        '--production[Don'"'"'t install devDependencies]' \
+        '--no-save[Don'"'"'t save a lockfile]' \
+        '--save[Save to package.json]' \
+        '--dry-run[Don'"'"'t install anything]' \
+        '--frozen-lockfile[Disallow changes to lockfile]' \
+        '--lockfile-only[Generate a lockfile without installing dependencies]' \
+        '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
+        '--no-cache[Ignore manifest cache entirely]' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--no-verify[Skip verifying integrity of newly downloaded packages]' \
+        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
+        '--linker[Linker strategy]:linker:(isolated hoisted)' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_prune_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '-p[Also remove packages that are only needed by devDependencies]' \
+        '--production[Also remove packages that are only needed by devDependencies]' \
+        '-P[Also remove packages that are only needed by devDependencies]' \
+        '--prod[Also remove packages that are only needed by devDependencies]' \
+        '*--omit[Also remove packages that are only needed by the given dependency types]:type:(dev optional peer)' \
+        '--dry-run[Print what would be removed without deleting anything]' \
+        '*--os[Prune for a different operating system than the current one]:os' \
+        '*--cpu[Prune for a different CPU architecture than the current one]:cpu' \
+        '--linker[Prune a node_modules installed with the given linker]:linker:(isolated hoisted)' \
+        '*--filter[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
+        '*-F[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
+        '--silent[Don'"'"'t log anything]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '-h[Print this help menu]' \
+        '--help[Print this help menu]' &&
+        ret=0
+}
+
+_bun_audit_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '2: :->subcommand' \
+        '--json[Output in JSON format]' \
+        '--audit-level[Only print advisories with severity greater than or equal to the given level]:level:(low moderate high critical)' \
+        '*--ignore[Ignore advisories by GHSA or numeric advisory ID]:advisory' \
+        '--prod[Omit devDependencies]' \
+        '--production[Omit devDependencies]' \
+        '*--omit[Exclude dependency types from the audit]:type:(dev optional peer)' \
+        '--dry-run[Show what bun audit fix would change without changing anything]' \
+        '--latest[Let bun audit fix update direct dependencies past their declared ranges]' \
+        '-L[Let bun audit fix update direct dependencies past their declared ranges]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    subcommand)
+        _alternative 'args:subcommand:((fix\:"Upgrade vulnerable packages to the lowest safe version"))'
 
         ;;
     esac
@@ -753,6 +882,9 @@ _bun() {
             'add\:"Add a dependency to package.json (bun a)" '
             'remove\:"Remove a dependency from package.json (bun rm)" '
             'update\:"Update outdated dependencies & save to package.json" '
+            'audit\:"Check installed packages for vulnerabilities" '
+            'dedupe\:"Remove duplicate versions from the lockfile" '
+            'prune\:"Remove packages that are not in the lockfile from node_modules" '
             'outdated\:"Display the latest versions of outdated dependencies" '
             'link\:"Link an npm package globally" '
             'unlink\:"Globally unlink an npm package" '
@@ -832,6 +964,18 @@ _bun() {
             ;;
         outdated)
             _bun_outdated_completion
+
+            ;;
+        audit)
+            _bun_audit_completion
+
+            ;;
+        dedupe)
+            _bun_dedupe_completion
+
+            ;;
+        prune)
+            _bun_prune_completion
 
             ;;
         'test')
@@ -919,6 +1063,18 @@ _bun() {
                     ;;
                 outdated)
                     _bun_outdated_completion
+
+                    ;;
+                audit)
+                    _bun_audit_completion
+
+                    ;;
+                dedupe)
+                    _bun_dedupe_completion
+
+                    ;;
+                prune)
+                    _bun_prune_completion
 
                     ;;
                 'test')

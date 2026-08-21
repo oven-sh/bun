@@ -10,7 +10,7 @@ using namespace JSC;
 
 DEFINE_NATIVE_MODULE(BunApp)
 {
-    INIT_NATIVE_MODULE(1);
+    INIT_NATIVE_MODULE(BunApp, 1);
 
     auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
     JSValue ssrResponseConstructor = zig->bakeAdditions().JSBakeResponseConstructor(zig);

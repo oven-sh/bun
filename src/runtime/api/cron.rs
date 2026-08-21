@@ -21,7 +21,7 @@ use std::cell::Cell;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
+use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSValue, JsCell, JsRef, JsResult,
@@ -41,6 +41,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
+use bun_core::strings;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
@@ -209,7 +210,7 @@ enum JobAction {
 // CronRegisterJob
 // ============================================================================
 
-pub struct CronRegisterJob {
+struct CronRegisterJob {
     promise: jsc::JSPromiseStrong,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
@@ -250,8 +251,6 @@ enum RegisterState {
     BootingOut,
     #[cfg(target_os = "macos")]
     Bootstrapping,
-    Done,
-    Failed,
 }
 
 // Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
@@ -421,11 +420,6 @@ impl CronJobBase for CronRegisterJob {
     unsafe fn finish(this: *mut Self) {
         // SAFETY: caller transfers the unique Box<Self> leaked in cron_register.
         let mut job = unsafe { bun_core::heap::take(this) };
-        job.state = if job.err_msg.is_some() {
-            RegisterState::Failed
-        } else {
-            RegisterState::Done
-        };
         job.poll.unref(bun_io::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
@@ -1054,7 +1048,7 @@ const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 // CronRemoveJob
 // ============================================================================
 
-pub struct CronRemoveJob {
+struct CronRemoveJob {
     promise: jsc::JSPromiseStrong,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
@@ -1083,8 +1077,6 @@ enum RemoveState {
     ReadingCrontab,
     InstallingCrontab,
     BootingOut,
-    Done,
-    Failed,
 }
 
 // Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
@@ -1232,11 +1224,6 @@ impl CronJobBase for CronRemoveJob {
     unsafe fn finish(this: *mut Self) {
         // SAFETY: caller transfers the unique Box<Self> leaked in cron_remove.
         let mut job = unsafe { bun_core::heap::take(this) };
-        job.state = if job.err_msg.is_some() {
-            RemoveState::Failed
-        } else {
-            RemoveState::Done
-        };
         job.poll.unref(bun_io::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
@@ -1653,6 +1640,17 @@ impl CronJob {
         Self::remove_from_list(this, vm);
     }
 
+    /// The fake heap dropped this job's timer (`useRealTimers()` /
+    /// `clearAllTimers()`): stop the job as `stop()` would, so it does not
+    /// keep the event loop alive for a timer that can no longer fire.
+    ///
+    /// # Safety
+    /// `this` was recovered from a node just popped off the fake heap and no
+    /// JS has run since; a scheduled job's wrapper keeps it alive.
+    pub(crate) unsafe fn stop_dropped_from_fake_heap(this: *mut Self) {
+        Self::self_stop(this, VirtualMachine::get());
+    }
+
     fn self_stop(this: *mut Self, vm: &VirtualMachine) {
         let this_ref = Self::from_ctx_ptr(this);
         // While the callback is on the stack or its promise is pending, defer
@@ -1769,6 +1767,8 @@ impl CronJob {
         );
     }
 
+    /// The tick's callback runs here as a top-level call (what it throws
+    /// synchronously is reported), and the job is rescheduled either way.
     pub(crate) fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
@@ -1811,39 +1811,23 @@ impl CronJob {
         let _ev_guard = vm.enter_event_loop_scope();
 
         this_ref.in_fire.set(true);
-        let result = match cb.call(&this_ref.global, js_this, &[]) {
-            Ok(v) => {
-                this_ref.in_fire.set(false);
-                v
-            }
-            Err(_) => {
-                this_ref.in_fire.set(false);
-                if let Some(err) = this_ref.global.try_take_exception() {
-                    // terminate() arriving mid-callback leaves the TerminationException
-                    // pending (tryClearException refuses to clear it) while JSC clears
-                    // hasTerminationRequest on VMEntryScope exit. Reporting it would
-                    // enter a DeferTermination scope and assert; match setTimeout's
-                    // Bun__reportUnhandledError and drop it.
-                    if err.is_termination_exception() {
-                        Self::self_stop(this, vm);
-                        return;
-                    }
-                    let global_ref = vm.global();
-                    // SAFETY: single JS thread; `&mut` derived via the thread-local
-                    // raw pointer (avoids `&T` → `&mut T` provenance laundering).
-                    let _ = VirtualMachine::get()
-                        .as_mut()
-                        .uncaught_exception(global_ref, err, false);
-                }
-                Self::schedule_next(this, vm);
-                return;
-            }
-        };
+        // A top-level call: what the tick throws is reported here (before the
+        // job is re-armed, so an `uncaughtException` handler's `stop()` is
+        // observed by `schedule_next`), and does not stop the job — as with a
+        // rejected tick.
+        let result =
+            vm.event_loop_mut()
+                .run_callback_with_result(cb, &this_ref.global, js_this, &[]);
+        this_ref.in_fire.set(false);
 
         // terminate() may have arrived while the callback was running; bail out
         // without touching the timer heap or JS state the teardown path owns.
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             Self::self_stop(this, vm);
+            return;
+        }
+        if result.is_empty() {
+            Self::schedule_next(this, vm);
             return;
         }
 
@@ -1989,7 +1973,7 @@ impl CronJob {
         // The cron_jobs list exists so --hot reload and worker teardown can
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
-        if vm.hot_reload == HOT_RELOAD_HOT || vm.worker.is_some() {
+        if vm.hot_reload == HotReload::Hot || vm.worker.is_some() {
             job_ref.ref_(); // owned by cron_jobs entry
             // Note: `RareData::cron_jobs` stores the opaque high-tier
             // placeholder type; cast through `*mut ()` and let inference pick
@@ -2473,7 +2457,7 @@ unsafe fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         // callback + double-free on reader close).
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
             debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            s!().stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
+            s!().stderr_reader().set_source(bun_io::Source::Pipe(pipe));
             s!().stderr_reader().set_parent(this_ptr);
             *s!().remaining_fds() += 1;
             if s!().stderr_reader().start_with_current_pipe().is_err() {
@@ -2607,7 +2591,7 @@ pub(crate) fn filter_crontab(
     let mut marker = Vec::new();
     let _ = write!(&mut marker, "# bun-cron: {}", bstr::BStr::new(title));
     let mut skip_next = false;
-    for line in content.split(|&b| b == b'\n') {
+    for line in strings::split(content, b"\n") {
         if skip_next {
             skip_next = false;
             continue;
@@ -2664,7 +2648,7 @@ pub enum CalendarError {
 pub(crate) fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarError> {
     let mut fields: [&[u8]; 5] = [b""; 5];
     let mut count: usize = 0;
-    for field in schedule.split(|&b| b == b' ').filter(|s| !s.is_empty()) {
+    for field in strings::tokenize(schedule, b" ") {
         if count >= 5 {
             return Err(CalendarError::InvalidCron);
         }
@@ -2682,7 +2666,7 @@ pub(crate) fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, Cale
             continue;
         }
         let mut vals: Vec<i32> = Vec::new();
-        for part in field.split(|&b| b == b',') {
+        for part in strings::split(field, b",") {
             // parse_unsigned (not parse_int) keeps '-5' → InvalidCron.
             let val: i32 =
                 bun_core::parse_unsigned(part, 10).map_err(|_| CalendarError::InvalidCron)?;

@@ -183,7 +183,11 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
-    let mut timer = if manager.options.log_level != LogLevel::Silent {
+    let mut timer = if manager.options.log_level != LogLevel::Silent
+        && !bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_FILESYSTEM_WARNING
+            .get()
+            .unwrap_or(false)
+    {
         Some(bun_core::time::Timer::start())
     } else {
         None
@@ -272,8 +276,8 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         break;
     }
 
-    if manager.options.log_level != LogLevel::Silent {
-        let elapsed = timer.as_mut().unwrap().read();
+    if let Some(timer) = timer.as_mut() {
+        let elapsed = timer.read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
             let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
@@ -750,6 +754,29 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
     sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
+/// Cache hit for an unpatched entry: npm folders must contain `package.json`, git checkouts the `.bun-tag` written last.
+pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: ResolutionTag) -> bool {
+    let marker: &[u8] = match tag {
+        ResolutionTag::Npm => b"package.json",
+        ResolutionTag::Git => b".bun-tag",
+        _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
+    };
+    let mut buf = PathBuffer::uninit();
+    let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        &mut buf.0,
+        &[folder_path.as_bytes(), marker],
+    );
+    sys::exists_at(cache_dir, marker_path)
+}
+
+pub fn is_package_in_cache(
+    this: &mut PackageManager,
+    folder_path: &ZStr,
+    tag: ResolutionTag,
+) -> bool {
+    is_package_in_cache_at(get_cache_directory(this), folder_path, tag)
+}
+
 // ─────────────────────────── global directories ───────────────────────────────
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
@@ -1063,7 +1090,7 @@ pub fn save_lockfile(
     lockfile_before_install: &Lockfile,
     packages_len_before_install: usize,
     log_level: LogLevel,
-) -> Result<(), AllocError> {
+) -> Result<bool, AllocError> {
     if this.lockfile.is_empty() {
         if !this.options.dry_run {
             'delete: {
@@ -1086,7 +1113,7 @@ pub fn save_lockfile(
                         // we don't care
                         if err.get_errno() == sys::E::ENOENT {
                             if had_any_diffs {
-                                return Ok(());
+                                return Ok(false);
                             }
                             break 'delete;
                         }
@@ -1094,7 +1121,7 @@ pub fn save_lockfile(
                         if log_level != LogLevel::Silent {
                             Output::err(err, "failed to delete empty lockfile", ());
                         }
-                        return Ok(());
+                        return Ok(false);
                     }
                 }
             }
@@ -1112,7 +1139,7 @@ pub fn save_lockfile(
             }
         }
 
-        return Ok(());
+        return Ok(false);
     }
 
     // `Progress::start`
@@ -1130,7 +1157,7 @@ pub fn save_lockfile(
         this.progress.refresh();
     }
 
-    this.lockfile.save_to_disk(load_result, &this.options);
+    let wrote = this.lockfile.save_to_disk(load_result, &this.options);
 
     // delete binary lockfile if saving text lockfile
     if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
@@ -1169,12 +1196,12 @@ pub fn save_lockfile(
         this.progress.refresh();
         this.progress.root.end();
         this.progress = Default::default();
-    } else if log_level != LogLevel::Silent {
+    } else if wrote && log_level != LogLevel::Silent {
         bun_core::pretty_errorln!("Saved lockfile");
         Output::flush();
     }
 
-    Ok(())
+    Ok(wrote)
 }
 
 pub fn update_lockfile_if_needed(

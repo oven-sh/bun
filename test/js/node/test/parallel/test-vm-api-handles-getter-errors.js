@@ -30,8 +30,6 @@ const scripts = [];
 scripts.forEach((script) => {
   const node = process.execPath;
   execFile(node, [ '-e', script ], common.mustCall((err, stdout, stderr) => {
-    // Bun's uncaught-error printer lowercases the "error:" prefix
-    const expected = typeof Bun === 'undefined' ? 'Error: xyz' : 'error: xyz';
-    assert(stderr.includes(expected), 'createScript crashes');
+    assert(stderr.includes('Error: xyz'), 'createScript crashes');
   }));
 });

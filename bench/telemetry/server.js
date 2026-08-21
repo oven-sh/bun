@@ -82,3 +82,8 @@ if (MODE === "native") {
 
 const server = Bun.serve({ port: PORT, fetch: handler, development: false });
 console.error(`server (${MODE}, awaits=${AWAITS}) on ${server.port}`);
+for (const sig of ["SIGINT", "SIGTERM"])
+  process.on(sig, () => {
+    if (MODE === "native") console.error("otel stats:", JSON.stringify(Bun.otel.stats()));
+    process.exit(0);
+  });

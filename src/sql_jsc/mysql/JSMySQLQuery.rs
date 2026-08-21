@@ -47,7 +47,7 @@ pub struct JSMySQLQuery {
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
     /// Native OpenTelemetry client span for this query; `None` when off.
-    otel: Cell<Option<bun_telemetry::Span>>,
+    otel: Cell<bun_telemetry::NativeSpan>,
 }
 
 // Intrusive refcount (bun.ptr.RefCount): `ref_()`/`deref()` provided by
@@ -81,14 +81,18 @@ impl JSMySQLQuery {
 
     /// Finish the telemetry span (first call wins).
     pub(crate) fn otel_end(&self, error: Option<(&[u8], &[u8])>) {
-        if let Some(span) = self.otel.take() {
+        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
             let q = self.query.get().query_text();
             bun_telemetry::db::end(span, q.slice(), None, error);
         }
     }
 
     fn otel_end_js_error(&self, err: JSValue) {
-        let Some(span) = self.otel.take() else { return };
+        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
+        if !span.is_some() {
+            return;
+        }
         let q = self.query.get().query_text();
         crate::shared::otel::end_with_js_error(span, q.slice(), self.global_object(), err);
     }
@@ -135,7 +139,7 @@ impl JSMySQLQuery {
                 bigint,
                 simple,
             )),
-            otel: Cell::new(None),
+            otel: Cell::new(bun_telemetry::NativeSpan::NONE),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
         // until handed to the JS wrapper. R-2: every field is interior-mutable,

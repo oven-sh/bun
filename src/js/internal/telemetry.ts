@@ -10,19 +10,18 @@
 const nativeStart = $newRustFunction("telemetry.rs", "start", 1);
 const nativeIsEnabled = $newRustFunction("telemetry.rs", "isEnabled", 0);
 const createScope = $newRustFunction("telemetry.rs", "createScope", 2);
-const nativeStartSpan = $newRustFunction("telemetry.rs", "startSpan", 6);
+const nativeStartSpan = $newCppFunction("BunTelemetry.cpp", "jsTelemetryStartSpan", 5);
 const nativeActiveSpan = $newRustFunction("telemetry.rs", "activeSpan", 0);
-const wrapSpanContext = $newRustFunction("telemetry.rs", "wrapSpanContext", 1);
+const wrapSpanContext = $newCppFunction("BunTelemetry.cpp", "jsTelemetryWrapSpanContext", 1);
 const withContext = $newRustFunction("telemetry.rs", "withContext", 3);
 const nativeForceFlush = $newRustFunction("telemetry.rs", "forceFlush", 0);
 const nativeStats = $newRustFunction("telemetry.rs", "stats", 0);
 const nativeDecode = $newRustFunction("telemetry.rs", "decode", 1);
 const nativeSetEnabled = $newRustFunction("telemetry.rs", "setEnabled", 2);
-const nativeStartLeafSpan = $newRustFunction("telemetry.rs", "startLeafSpan", 3);
+const nativeStartLeafSpan = $newCppFunction("BunTelemetry.cpp", "jsTelemetryStartInstrumentSpan", 3);
 const enterWithExtras = $newCppFunction("BunTelemetry.cpp", "jsEnterWithExtras", 2);
 const exitContext = $newCppFunction("BunTelemetry.cpp", "jsExitContext", 1);
 const activeExtras = $newCppFunction("BunTelemetry.cpp", "jsActiveExtras", 0);
-const isTelemetrySpan = $newCppFunction("BunTelemetry.cpp", "jsIsTelemetrySpan", 1);
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
@@ -32,14 +31,10 @@ const API_KEY = Symbol.for("opentelemetry.js.api.1");
 const SpanKind = { INTERNAL: 0, SERVER: 1, CLIENT: 2, PRODUCER: 3, CONSUMER: 4 } as const;
 const SpanStatusCode = { UNSET: 0, OK: 1, ERROR: 2 } as const;
 
-function isNativeSpan(v: unknown): boolean {
-  return isTelemetrySpan(v);
-}
-
 /** Coerce anything span-like (ours, or a foreign api NonRecordingSpan) to a TelemetrySpan. */
 function toNativeSpan(span: any) {
   if (span == null) return undefined;
-  if (isNativeSpan(span)) return span;
+  if ($isTelemetrySpan(span)) return span;
   if (typeof span.spanContext === "function") return wrapSpanContext(span.spanContext());
   if (typeof span.traceId === "string") return wrapSpanContext(span);
   return undefined;

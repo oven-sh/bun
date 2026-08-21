@@ -571,3 +571,6 @@ declare function $getByIdDirectPrivate<T = any, K extends string = string>(
 declare var $Promise: PromiseConstructor;
 
 declare function $isPromise<T>(value: unknown): value is Promise<T>;
+declare function $isTelemetrySpan(value: unknown): boolean;
+/** BunTelemetry.cpp: mutate a native-owned span's slot (op 5 = current time in epoch ms). */
+declare function $telemetryNativeSpanOp(span: unknown, op: number, a: unknown, b: unknown, c?: unknown): any;

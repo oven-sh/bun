@@ -13,8 +13,8 @@
 
 #include "root.h"
 #include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
 #include "BunTelemetry.h"
+#include "JSTelemetrySpan.h"
 #include "InternalModuleRegistry.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSArray.h>
@@ -26,7 +26,7 @@ namespace Bun {
 
 static ALWAYS_INLINE JSTelemetrySpan* asSpan(JSValue value)
 {
-    return value && value.isCell() ? dynamicDowncast<JSTelemetrySpan>(value.asCell()) : nullptr;
+    return toTelemetrySpan(value);
 }
 
 static ALWAYS_INLINE JSTelemetrySpan* activeSpanFromSlot(JSValue slot)
@@ -34,8 +34,8 @@ static ALWAYS_INLINE JSTelemetrySpan* activeSpanFromSlot(JSValue slot)
     if (!slot.isCell())
         return nullptr;
     JSCell* cell = slot.asCell();
-    if (auto* span = dynamicDowncast<JSTelemetrySpan>(cell))
-        return span;
+    if (cell->type() == JSTelemetrySpan::Type)
+        return uncheckedDowncast<JSTelemetrySpan>(cell);
     if (auto* array = dynamicDowncast<JSArray>(cell)) {
         if (array->length() >= 2)
             return asSpan(array->getIndexQuickly(0));
@@ -46,21 +46,21 @@ static ALWAYS_INLINE JSTelemetrySpan* activeSpanFromSlot(JSValue slot)
 } // namespace Bun
 
 
-extern "C" JSC::EncodedJSValue Bun__Telemetry__activeSpan(Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__Telemetry__activeSpanCell(Zig::GlobalObject* globalObject)
 {
     JSValue slot = globalObject->m_asyncContextData.get()->getInternalField(0);
     if (auto* span = Bun::activeSpanFromSlot(slot))
         return JSValue::encode(span);
-    return JSValue::encode(JSValue());
+    return JSValue::encode(jsUndefined());
 }
 
-/// Native payload of the active span, or null. This is what fetch/sql/etc.
-/// call to find their parent: no JSValue decoding on the Rust side.
-extern "C" void* Bun__Telemetry__activeSpanPtr(Zig::GlobalObject* globalObject)
+/// Identity of the active span (points into the cell), or null. This is what
+/// fetch/sql/etc. call to find their parent.
+extern "C" const Bun::SpanStub* Bun__Telemetry__activeSpanStub(Zig::GlobalObject* globalObject)
 {
     JSValue slot = globalObject->m_asyncContextData.get()->getInternalField(0);
     if (auto* span = Bun::activeSpanFromSlot(slot))
-        return span->wrapped();
+        return &span->m_stub;
     return nullptr;
 }
 
@@ -221,11 +221,6 @@ JSC_DEFINE_HOST_FUNCTION(jsExitContext, (JSC::JSGlobalObject * globalObject, JSC
 JSC_DEFINE_HOST_FUNCTION(jsActiveExtras, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     return Bun__Telemetry__activeExtras(uncheckedDowncast<Zig::GlobalObject>(globalObject));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsIsTelemetrySpan, (JSC::JSGlobalObject*, JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(jsBoolean(asSpan(callFrame->argument(0)) != nullptr));
 }
 
 } // namespace Bun

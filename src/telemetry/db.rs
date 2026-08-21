@@ -3,8 +3,8 @@
 
 use core::ffi::c_void;
 
-use crate::data::DEFAULT_LIMITS;
-use crate::{Instrument, ScopeId, Span, SpanKind, StatusCode, Value, rt};
+use crate::pool::{self, NativeSpan};
+use crate::{DEFAULT_LIMITS, Instrument, ScopeId, SpanKind, StatusCode, Value, rt};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum System {
@@ -47,13 +47,13 @@ pub struct ConnectionInfo<'a> {
     pub namespace: &'a [u8],
 }
 
-/// Start a CLIENT span for one query/command. `None` when disabled.
-pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> Option<Span> {
+/// Start a CLIENT span for one query/command. `NativeSpan::NONE` when disabled.
+pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> NativeSpan {
     let stub = rt::start_leaf(global, system.instrument());
     if !stub.is_some() {
-        return None;
+        return NativeSpan::NONE;
     }
-    let span = Span::new(
+    let span = pool::begin(
         stub,
         ScopeId::from(system.instrument()),
         system.name().as_bytes(),
@@ -61,18 +61,20 @@ pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> 
     );
     if stub.is_recording() {
         let l = &DEFAULT_LIMITS;
-        span.set_attribute(b"db.system.name", &Value::Str(system.name().as_bytes()), l);
-        if !conn.namespace.is_empty() {
-            span.set_attribute(b"db.namespace", &Value::Str(conn.namespace), l);
-        }
-        if !conn.host.is_empty() {
-            span.set_attribute(b"server.address", &Value::Str(conn.host), l);
-            if conn.port != 0 {
-                span.set_attribute(b"server.port", &Value::Int(conn.port as i64), l);
+        pool::with(span, |s| {
+            s.push_attribute(b"db.system.name", &Value::Str(system.name().as_bytes()), l);
+            if !conn.namespace.is_empty() {
+                s.push_attribute(b"db.namespace", &Value::Str(conn.namespace), l);
             }
-        }
+            if !conn.host.is_empty() {
+                s.push_attribute(b"server.address", &Value::Str(conn.host), l);
+                if conn.port != 0 {
+                    s.push_attribute(b"server.port", &Value::Int(conn.port as i64), l);
+                }
+            }
+        });
     }
-    Some(span)
+    span
 }
 
 /// The leading SQL verb (`SELECT`, `INSERT`, …) if the statement starts with
@@ -140,8 +142,8 @@ fn op_len(op: &[u8; 16]) -> usize {
 
 /// Finish a query span. `statement` is recorded as `db.query.text` when
 /// statement capture is on; `error` = (error.type, message).
-pub fn end(span: Span, statement: &[u8], operation: Option<&[u8]>, error: Option<(&[u8], &[u8])>) {
-    if !span.stub.is_recording() {
+pub fn end(span: NativeSpan, statement: &[u8], operation: Option<&[u8]>, error: Option<(&[u8], &[u8])>) {
+    if !span.is_some() {
         return;
     }
     let op_buf;
@@ -156,34 +158,30 @@ pub fn end(span: Span, statement: &[u8], operation: Option<&[u8]>, error: Option
         },
     };
     if let Some(o) = op {
-        span.set_name(o);
+        pool::with(span, |s| s.set_name(o));
     }
     let capture = rt::capture_db_statement();
-    let scope = span.scope;
-    crate::batch::record(scope, |buf| {
-        span.end_into(buf, 0, |w| {
-            if let Some(o) = op {
-                w.attr("db.operation.name", o);
+    pool::end(span, 0, |w| {
+        if let Some(o) = op {
+            w.attr("db.operation.name", o);
+        }
+        if capture && !statement.is_empty() {
+            // Cap very large statements; collectors reject multi-MB attributes.
+            let s = if statement.len() > 16 * 1024 {
+                &statement[..16 * 1024]
+            } else {
+                statement
+            };
+            w.attr("db.query.text", s);
+        }
+        if let Some((ty, msg)) = error {
+            w.attr_opt("error.type", ty);
+            if !ty.is_empty() && ty.iter().all(|c| c.is_ascii_alphanumeric()) && ty.len() <= 8 {
+                w.attr("db.response.status_code", ty);
             }
-            if capture && !statement.is_empty() {
-                // Cap very large statements; collectors reject multi-MB attributes.
-                let s = if statement.len() > 16 * 1024 {
-                    &statement[..16 * 1024]
-                } else {
-                    statement
-                };
-                w.attr("db.query.text", s);
-            }
-            if let Some((ty, msg)) = error {
-                w.attr_opt("error.type", ty);
-                if !ty.is_empty() && ty.iter().all(|c| c.is_ascii_alphanumeric()) && ty.len() <= 8 {
-                    w.attr("db.response.status_code", ty);
-                }
-                w.status(StatusCode::Error, msg);
-            }
-        });
+            w.status(StatusCode::Error, msg);
+        }
     });
-    span.shrink();
     if let Some(h) = rt::hooks() {
         (h.after_record)();
     }

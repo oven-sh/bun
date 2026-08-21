@@ -1299,11 +1299,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     any_response_from::<SSL>(std::ptr::from_mut(resp)),
                     SSL,
                 ) {
-                    Some((span, entered)) => (Some(span), Some(entered)),
-                    None => (None, None),
+                    Some((span, entered)) => (span, entered),
+                    None => (bun_telemetry::NativeSpan::NONE, None),
                 }
             } else {
-                (None, None)
+                (bun_telemetry::NativeSpan::NONE, None)
             };
         let method_string = match method {
             Some(m) => match this_ref.method_name_cache.get(m as usize) {
@@ -1352,16 +1352,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         })
         .unwrap_or_else(|err| global.take_exception(err));
 
-        if let Some(span) = otel_span {
+        if otel_span.is_some() {
             if node_http_response.is_null() {
-                crate::telemetry::server::end(span, 503, false);
+                crate::telemetry::server::end(otel_span, 503, false);
             } else {
                 // SAFETY: out-param written by `on_request_ffi`; live for this frame.
                 let nhr = unsafe { &*node_http_response };
                 if nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED) {
-                    crate::telemetry::server::end(span, nhr.otel_status.get(), false);
+                    crate::telemetry::server::end(otel_span, nhr.otel_status.get(), false);
                 } else {
-                    nhr.otel_span.set(Some(span));
+                    nhr.otel_span.set(otel_span);
                 }
             }
         }

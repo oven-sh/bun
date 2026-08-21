@@ -222,7 +222,10 @@ impl Processor {
                 p.oldest_ns = clock::now_unix_nanos();
             }
             p.count += batch.count;
-            export_now = p.count >= cfg.max_export_batch_size;
+            // One export in flight at a time (like the SDK's BatchSpanProcessor):
+            // while the exporter is busy the queue fills up to `max_queue_size`
+            // and then drops, instead of buffering unboundedly in the exporter.
+            export_now = p.count >= cfg.max_export_batch_size && self.inflight() == 0;
         }
         if export_now {
             self.export();
@@ -237,7 +240,7 @@ impl Processor {
             e.tick(self);
         }
         let cfg = *self.config.read().unwrap();
-        let due = {
+        let due = self.inflight() == 0 && {
             let p = self.pending.lock().unwrap();
             p.count > 0
                 && clock::now_unix_nanos().saturating_sub(p.oldest_ns)
@@ -318,11 +321,19 @@ impl Processor {
             }
         }
         if self.inflight.fetch_sub(1, Ordering::AcqRel) == 1 {
-            let _g = self.idle_lock.lock().unwrap();
-            self.idle.notify_all();
-            drop(_g);
+            {
+                let _g = self.idle_lock.lock().unwrap();
+                self.idle.notify_all();
+            }
             for h in self.idle_hooks.read().unwrap().iter() {
                 h();
+            }
+            // A full batch accumulated while this export was running: chain.
+            let cfg = *self.config.read().unwrap();
+            if self.pending_count() >= cfg.max_export_batch_size {
+                if let Some(p) = global() {
+                    p.export();
+                }
             }
         }
     }

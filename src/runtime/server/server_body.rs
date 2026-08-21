@@ -2207,7 +2207,8 @@ where
         upgrader.reclaim_promise_cell();
         // The HTTP exchange is complete once the 101 is written; end the
         // request span now rather than when the pooled context is recycled.
-        if let Some(span) = upgrader.otel_span.take() {
+        let span = upgrader.otel_span.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
             crate::telemetry::server::end(span, 101, false);
         }
         upgrader.deref();

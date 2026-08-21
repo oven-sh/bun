@@ -4,18 +4,18 @@ use core::ffi::c_char;
 
 use bun_jsc::JSGlobalObject;
 use bun_telemetry::db::{self, ConnectionInfo, System};
-use bun_telemetry::{Instrument, Span};
+use bun_telemetry::{Instrument, NativeSpan};
 
-/// Start a SQLite query span. Returns an owned `Span` pointer (to be passed
-/// to `Bun__Telemetry__sqliteEnd`) or null when not recording.
+/// Start a SQLite query span. Returns a pool handle (to be passed to
+/// `Bun__Telemetry__sqliteEnd`) or 0 when not recording.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__sqliteBegin(
     global: &JSGlobalObject,
     file: *const c_char,
     file_len: usize,
-) -> *mut bun_telemetry::SpanData {
+) -> u64 {
     if !bun_telemetry::enabled(Instrument::Sqlite) {
-        return core::ptr::null_mut();
+        return 0;
     }
     // SAFETY: caller passes a valid (ptr,len) or (null,0).
     let file: &[u8] = if file.is_null() {
@@ -25,7 +25,7 @@ pub extern "C" fn Bun__Telemetry__sqliteBegin(
     };
     // `db.namespace` for SQLite is the main database file's base name.
     let name = bun_paths::basename(file);
-    match db::begin(
+    let span = db::begin(
         global.as_ptr().cast(),
         System::Sqlite,
         &ConnectionInfo {
@@ -33,26 +33,27 @@ pub extern "C" fn Bun__Telemetry__sqliteBegin(
             port: 0,
             namespace: name,
         },
-    ) {
-        Some(span) if span.stub.is_recording() => span.into_raw(),
-        Some(_) | None => core::ptr::null_mut(),
+    );
+    if bun_telemetry::pool::with_ref(span, |s| s.is_recording()) != Some(true) {
+        bun_telemetry::pool::discard(span);
+        return 0;
     }
+    span.0
 }
 
 /// Finish a span from `Bun__Telemetry__sqliteBegin`. `errcode == 0` ⇒ ok.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__sqliteEnd(
-    span: *mut bun_telemetry::SpanData,
+    span: u64,
     sql: *const c_char,
     sql_len: usize,
     errcode: i32,
     errmsg: *const c_char,
 ) {
-    if span.is_null() {
+    if span == 0 {
         return;
     }
-    // SAFETY: produced by `into_raw` above; consumed exactly once here.
-    let span = unsafe { Span::from_raw(span) };
+    let span = NativeSpan(span);
     let sql: &[u8] = if sql.is_null() {
         b""
     } else {

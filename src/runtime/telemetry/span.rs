@@ -1,76 +1,125 @@
-//! `TelemetrySpan`: the JS wrapper around a `bun_telemetry::SpanData`. The
-//! wrapper *is* the async-context value for an active span, so
-//! `Bun__Telemetry__activeSpanPtr` hands native integrations the `SpanData`
-//! directly.
+//! Glue between `JSTelemetrySpan` (C++, the JS-visible span and async-context
+//! value) and `bun_telemetry`: id/sampler/clock at start, protobuf encoding at
+//! end, and the native span pool for spans owned by integrations.
 
-use bun_jsc::{
-    CallFrame, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions,
-    JSValue, JsResult, bun_string_jsc,
-};
+use core::ffi::c_void;
+
+use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult};
+use bun_telemetry::pool::{self, NativeSpan};
 use bun_telemetry::{
-    Flags, Limits, ScopeId, Span, SpanContext, SpanData, SpanId, SpanKind, SpanStub, StatusCode,
-    TraceId, Value, clock,
+    Flags, Limits, ScopeId, SpanContext, SpanId, SpanKind, SpanStub, SpanWriter, StatusCode,
+    TraceId, Value, batch, clock,
 };
-
-pub use crate::generated_classes::js_TelemetrySpan as js;
-
-/// Layout-identical to `SpanData` so the JS wrapper's `m_ctx` is the span
-/// record itself; the wrapper owns one reference which `finalize` releases.
-#[bun_jsc::JsClass(no_constructor)]
-#[repr(transparent)]
-pub struct TelemetrySpan(SpanData);
 
 unsafe extern "C" {
-    safe fn Bun__Telemetry__activeSpan(global: &JSGlobalObject) -> JSValue;
-    safe fn Bun__Telemetry__activeSpanPtr(global: &JSGlobalObject) -> *mut core::ffi::c_void;
+    safe fn Bun__Telemetry__activeSpanStub(global: &JSGlobalObject) -> *const SpanStub;
+    safe fn Bun__Telemetry__activeSpanCell(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Telemetry__enter(global: &JSGlobalObject, span: JSValue) -> JSValue;
     safe fn Bun__Telemetry__exit(global: &JSGlobalObject, prev: JSValue);
     safe fn Bun__Telemetry__currentContext(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Telemetry__swapContext(global: &JSGlobalObject, value: JSValue) -> JSValue;
+    safe fn Bun__TelemetrySpan__createNative(
+        global: &JSGlobalObject,
+        stub: &SpanStub,
+        scope: u16,
+        kind: u8,
+        native: u64,
+    ) -> JSValue;
+    safe fn Bun__TelemetrySpan__fromJS(value: JSValue) -> *mut c_void;
+    safe fn Bun__TelemetrySpan__stub(cell: *mut c_void) -> *const SpanStub;
+    safe fn Bun__TelemetrySpan__native(cell: *mut c_void) -> u64;
 }
 
 /// `rt::Hooks::active_span` — `global` is a `JSGlobalObject*`.
-pub(crate) fn active_ptr(global: *mut core::ffi::c_void) -> *const SpanData {
+pub(crate) fn active_ptr(global: *mut c_void) -> *const SpanStub {
     // SAFETY: only ever called with a live JSGlobalObject pointer.
-    Bun__Telemetry__activeSpanPtr(unsafe { &*global.cast::<JSGlobalObject>() }).cast::<SpanData>()
+    Bun__Telemetry__activeSpanStub(unsafe { &*global.cast::<JSGlobalObject>() })
 }
 
-/// The active span's native record, if any. Borrow is valid for as long as
-/// the caller doesn't run JS (the wrapper roots it).
+/// The active span's identity. Valid until the caller next runs JS.
 #[inline]
-pub fn active<'a>(global: &'a JSGlobalObject) -> Option<&'a SpanData> {
-    let p = Bun__Telemetry__activeSpanPtr(global).cast::<SpanData>();
-    if p.is_null() {
-        None
-    } else {
-        Some(unsafe { &*p })
-    }
-}
-
-/// A new owning reference to the active span.
-#[inline]
-pub fn active_ref(global: &JSGlobalObject) -> Option<Span> {
-    let p = Bun__Telemetry__activeSpanPtr(global).cast::<SpanData>();
-    if p.is_null() {
-        None
-    } else {
-        Some(unsafe { Span::ref_raw(p) })
-    }
+pub fn active(global: &JSGlobalObject) -> Option<&SpanStub> {
+    let p = Bun__Telemetry__activeSpanStub(global);
+    if p.is_null() { None } else { Some(unsafe { &*p }) }
 }
 
 #[inline]
 pub fn active_context(global: &JSGlobalObject) -> Option<SpanContext> {
-    active(global)
-        .map(|s| *s.context())
-        .filter(SpanContext::is_valid)
+    active(global).map(|s| s.ctx).filter(SpanContext::is_valid)
 }
 
+/// The active span's JS cell (undefined if none).
 #[inline]
 pub fn active_js(global: &JSGlobalObject) -> JSValue {
-    Bun__Telemetry__activeSpan(global)
+    Bun__Telemetry__activeSpanCell(global)
 }
 
-/// RAII activation of a span wrapper for the duration of a native → JS call.
+/// The active span's pool handle if it is native-owned.
+#[inline]
+pub fn active_native(global: &JSGlobalObject) -> NativeSpan {
+    let cell = Bun__TelemetrySpan__fromJS(active_js(global));
+    if cell.is_null() {
+        NativeSpan::NONE
+    } else {
+        NativeSpan(Bun__TelemetrySpan__native(cell))
+    }
+}
+
+/// `f(trace_state, baggage)` for the active span (W3C headers to forward).
+pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8], &[u8]) -> R) -> R {
+    let native = active_native(global);
+    let owned = if native.is_some() {
+        pool::with_ref(native, |s| [s.trace_state.clone(), s.baggage.clone()]).unwrap_or_default()
+    } else {
+        // JS-owned spans keep inherited tracestate/baggage in their `extra`
+        // object; read through C++.
+        extra_propagation(global, active_js(global))
+    };
+    f(&owned[0], &owned[1])
+}
+
+fn extra_propagation(global: &JSGlobalObject, cell: JSValue) -> [Vec<u8>; 2] {
+    let mut out = [Vec::new(), Vec::new()];
+    if Bun__TelemetrySpan__fromJS(cell).is_null() {
+        return out;
+    }
+    unsafe extern "C" {
+        safe fn Bun__TelemetrySpan__extraString(global: &JSGlobalObject, cell: JSValue, which: u8) -> JSValue;
+    }
+    for (i, which) in [b't', b'b'].iter().enumerate() {
+        let v = Bun__TelemetrySpan__extraString(global, cell, *which);
+        if v.is_string() {
+            if let Ok(s) = v.to_slice(global) {
+                out[i].extend_from_slice(s.slice());
+            }
+        }
+    }
+    out
+}
+
+/// Create the JS cell for a native-owned span (request spans etc.).
+#[inline]
+pub fn create_native_cell(global: &JSGlobalObject, stub: &SpanStub, scope: ScopeId, kind: SpanKind, native: NativeSpan) -> JSValue {
+    Bun__TelemetrySpan__createNative(global, stub, scope.0, kind as u8, native.0)
+}
+
+/// Is `value` a JSTelemetrySpan?
+#[inline]
+pub fn is_span(value: JSValue) -> bool {
+    !Bun__TelemetrySpan__fromJS(value).is_null()
+}
+
+/// Identity of a JSTelemetrySpan value.
+#[inline]
+pub fn stub_of(value: JSValue) -> Option<SpanStub> {
+    let cell = Bun__TelemetrySpan__fromJS(value);
+    if cell.is_null() {
+        return None;
+    }
+    Some(unsafe { *Bun__TelemetrySpan__stub(cell) })
+}
+
+/// RAII activation of a span cell for the duration of a native → JS call.
 /// Must live on the stack (the displaced slot value is kept alive by the
 /// conservative scan) and be dropped on the same JS thread.
 pub struct Entered {
@@ -124,211 +173,16 @@ impl Drop for ContextScope<'_> {
     }
 }
 
-impl core::ops::Deref for TelemetrySpan {
-    type Target = SpanData;
-    #[inline]
-    fn deref(&self) -> &SpanData {
-        &self.0
-    }
-}
-
 pub fn limits() -> &'static Limits {
     &super::state().limits
 }
 
-/// Convert a JS attribute value. Strings borrow into `scratch`.
-pub(crate) fn with_attr_value<R>(
-    global: &JSGlobalObject,
-    v: JSValue,
-    f: impl FnOnce(Option<Value<'_>>) -> R,
-) -> JsResult<R> {
-    if v.is_string() {
-        let s = v.to_slice(global)?;
-        return Ok(f(Some(Value::Str(s.slice()))));
-    }
-    if v.is_number() {
-        let n = v.as_number();
-        if n.is_finite() && n == n.trunc() && n.abs() < 9007199254740992.0 {
-            return Ok(f(Some(Value::Int(n as i64))));
-        }
-        return Ok(f(Some(Value::Double(n))));
-    }
-    if v.is_boolean() {
-        return Ok(f(Some(Value::Bool(v.as_boolean()))));
-    }
-    if v.is_big_int() {
-        // Attribute ints are int64; out-of-range BigInts become strings.
-        if v.is_big_int_in_int64_range(i64::MIN, i64::MAX) {
-            return Ok(f(Some(Value::Int(v.to_int64()))));
-        }
-        let s = v.to_slice(global)?;
-        return Ok(f(Some(Value::Str(s.slice()))));
-    }
-    if v.is_array() {
-        // Two passes: own the string slices, then build the Value list.
-        let mut owned: Vec<OwnedAttr> = Vec::new();
-        let mut it = JSArrayIterator::init(v, global)?;
-        while let Some(item) = it.next()? {
-            if item.is_string() {
-                owned.push(OwnedAttr::Str(item.to_slice(global)?));
-            } else if item.is_number() {
-                let n = item.as_number();
-                if n.is_finite() && n == n.trunc() && n.abs() < 9007199254740992.0 {
-                    owned.push(OwnedAttr::Int(n as i64));
-                } else {
-                    owned.push(OwnedAttr::Double(n));
-                }
-            } else if item.is_boolean() {
-                owned.push(OwnedAttr::Bool(item.as_boolean()));
-            } else if item.is_undefined_or_null() {
-                // Spec allows null holes in arrays; encode as empty string to keep indices.
-                owned.push(OwnedAttr::Int(0));
-            }
-        }
-        let vals: Vec<Value<'_>> = owned
-            .iter()
-            .map(|o| match o {
-                OwnedAttr::Str(s) => Value::Str(s.slice()),
-                OwnedAttr::Int(i) => Value::Int(*i),
-                OwnedAttr::Double(d) => Value::Double(*d),
-                OwnedAttr::Bool(b) => Value::Bool(*b),
-            })
-            .collect();
-        return Ok(f(Some(Value::Array(&vals))));
-    }
-    Ok(f(None))
-}
-
-enum OwnedAttr {
-    Str(bun_core::ZigStringSlice),
-    Int(i64),
-    Double(f64),
-    Bool(bool),
-}
-
-pub(crate) fn kind_from_js(v: JSValue) -> SpanKind {
-    if v.is_number() {
-        // @opentelemetry/api SpanKind: INTERNAL=0 SERVER=1 CLIENT=2 PRODUCER=3 CONSUMER=4
-        return match v.as_number() as i32 {
-            1 => SpanKind::Server,
-            2 => SpanKind::Client,
-            3 => SpanKind::Producer,
-            4 => SpanKind::Consumer,
-            _ => SpanKind::Internal,
-        };
-    }
-    SpanKind::Internal
-}
-
-pub(crate) fn kind_to_api(k: SpanKind) -> i32 {
-    match k {
-        SpanKind::Internal => 0,
-        SpanKind::Server => 1,
-        SpanKind::Client => 2,
-        SpanKind::Producer => 3,
-        SpanKind::Consumer => 4,
-    }
-}
-
-/// Epoch nanoseconds from an OTel-API `TimeInput`: epoch-ms number, Date,
-/// or `[seconds, nanos]` HrTime. 0 = "now".
-pub(crate) fn time_from_js(global: &JSGlobalObject, v: JSValue) -> JsResult<u64> {
-    if v.is_undefined_or_null() {
-        return Ok(0);
-    }
-    if v.is_number() {
-        let ms = v.as_number();
-        if !(ms > 0.0) {
-            return Ok(0);
-        }
-        return Ok((ms * 1_000_000.0) as u64);
-    }
-    if v.is_array() {
-        let s = v.get_index(global, 0)?;
-        let n = v.get_index(global, 1)?;
-        if s.is_number() && n.is_number() {
-            return Ok((s.as_number() as u64)
-                .saturating_mul(1_000_000_000)
-                .saturating_add(n.as_number() as u64));
-        }
-        return Ok(0);
-    }
-    if v.is_object() {
-        // Date
-        let ms = v.to_number(global)?;
-        if ms > 0.0 {
-            return Ok((ms * 1_000_000.0) as u64);
-        }
-    }
-    Ok(0)
-}
-
-fn hex_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
-    let mut buf = [0u8; 32];
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for (i, b) in bytes.iter().enumerate() {
-        buf[i * 2] = HEX[(b >> 4) as usize];
-        buf[i * 2 + 1] = HEX[(b & 0xf) as usize];
-    }
-    bun_string_jsc::create_utf8_for_js(global, &buf[..bytes.len() * 2])
-}
-
-/// Read a `SpanContext`-shaped JS object (`{traceId, spanId, traceFlags, isRemote?}`)
-/// or a TelemetrySpan.
-pub(crate) fn span_context_from_js(
-    global: &JSGlobalObject,
-    v: JSValue,
-) -> JsResult<Option<SpanContext>> {
-    if !v.is_object() {
-        return Ok(None);
-    }
-    if let Some(span) = js::from_js(v) {
-        return Ok(Some(*unsafe { span.as_ref() }.0.context()));
-    }
-    let Some(tid) = v.get(global, "traceId")? else {
-        return Ok(None);
-    };
-    let Some(sid) = v.get(global, "spanId")? else {
-        return Ok(None);
-    };
-    if !tid.is_string() || !sid.is_string() {
-        return Ok(None);
-    }
-    let tid = tid.to_slice(global)?;
-    let sid = sid.to_slice(global)?;
-    let (Some(trace_id), Some(span_id)) = (
-        TraceId::from_hex(tid.slice()),
-        SpanId::from_hex(sid.slice()),
-    ) else {
-        return Ok(None);
-    };
-    let mut flags = 0u8;
-    if let Some(f) = v.get(global, "traceFlags")? {
-        if f.is_number() {
-            flags = (f.as_number() as u32 as u8) & Flags::SAMPLED;
-        }
-    }
-    if let Some(r) = v.get(global, "isRemote")? {
-        if r.to_boolean() {
-            flags |= Flags::REMOTE;
-        }
-    }
-    Ok(Some(SpanContext {
-        trace_id,
-        span_id,
-        flags: Flags(flags),
-    }))
-}
-
-/// Collect `attributes` object entries and call `each(key, value)`.
+/// `{ "k": v, ... }` → each (key, value) as attribute values (config paths).
 pub(crate) fn for_each_attribute(
     global: &JSGlobalObject,
     obj: JSValue,
-    mut each: impl FnMut(&[u8], &Value<'_>),
+    mut f: impl FnMut(&[u8], &Value<'_>),
 ) -> JsResult<()> {
-    if !obj.is_object() {
-        return Ok(());
-    }
     let Some(o) = obj.get_object() else {
         return Ok(());
     };
@@ -343,500 +197,458 @@ pub(crate) fn for_each_attribute(
     )?;
     while let Some(name) = iter.next()? {
         let value = iter.value;
-        if value.is_undefined_or_null() {
-            continue;
-        }
         let key = name.to_utf8();
-        with_attr_value(global, value, |v| {
-            if let Some(v) = v {
-                each(key.slice(), &v);
-            }
-        })?;
-    }
-    Ok(())
-}
-
-impl TelemetrySpan {
-    /// Wrap `span` in a new JS object (consumes the reference).
-    pub fn create(global: &JSGlobalObject, span: Span) -> JSValue {
-        js::to_js(span.into_raw().cast::<TelemetrySpan>(), global)
-    }
-
-    /// Start a span and return `(record, wrapper)`.
-    pub fn start(
-        global: &JSGlobalObject,
-        scope: ScopeId,
-        name: &[u8],
-        kind: SpanKind,
-        parent: Option<&SpanContext>,
-        start_ns: u64,
-    ) -> (Span, JSValue) {
-        let st = super::state();
-        let now = if start_ns == 0 {
-            clock::now_unix_nanos()
-        } else {
-            start_ns
-        };
-        let stub = SpanStub::start(parent, &st.sampler, now);
-        let span = Span::new(stub, scope, name, kind);
-        let js = Self::create(global, span.clone());
-        (span, js)
-    }
-
-    /// A non-recording wrapper carrying only a (typically remote) context, so
-    /// unsampled requests still propagate trace identity to outgoing calls.
-    pub fn non_recording(global: &JSGlobalObject, ctx: SpanContext) -> JSValue {
-        let stub = SpanStub {
-            ctx: SpanContext {
-                flags: Flags(ctx.flags.0 | Flags::NON_RECORDING),
-                ..ctx
-            },
-            parent: SpanId::INVALID,
-            start_ns: 1,
-        };
-        let span = Span::new(stub, ScopeId::from(bun_telemetry::Instrument::User), b"", SpanKind::Internal);
-        Self::create(global, span)
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        // SAFETY: the wrapper owned exactly one reference, created in `create`.
-        drop(unsafe { Span::from_raw(Box::into_raw(self).cast::<SpanData>()) });
-    }
-
-    #[inline]
-    pub fn data(&self) -> &SpanData {
-        &self.0
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn set_attribute(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        if !self.0.is_recording() {
-            return Ok(this);
-        }
-        let key = frame.argument(0);
-        let value = frame.argument(1);
-        if !key.is_string() || value.is_undefined_or_null() {
-            return Ok(this);
-        }
-        let key = key.to_slice(global)?;
-        with_attr_value(global, value, |v| {
-            if let Some(v) = v {
-                self.0.set_attribute(key.slice(), &v, limits());
-            }
-        })?;
-        Ok(this)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn set_attributes(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        if !self.0.is_recording() {
-            return Ok(this);
-        }
-        let l = limits();
-        for_each_attribute(global, frame.argument(0), |k, v| {
-            self.0.set_attribute(k, v, l)
-        })?;
-        Ok(this)
-    }
-
-    /// `addEvent(name, attributesOrStartTime?, startTime?)`
-    #[bun_jsc::host_fn(method)]
-    pub fn add_event(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        if !self.0.is_recording() {
-            return Ok(this);
-        }
-        let name = frame.argument(0);
-        if !name.is_string() {
-            return Ok(this);
-        }
-        let name = name.to_slice(global)?;
-        let mut a1 = frame.argument(1);
-        let mut a2 = frame.argument(2);
-        // OTel API: if the 2nd arg is a TimeInput, it is the start time.
-        if a1.is_number() || a1.is_array() || (a1.is_object() && a1.is_date()) {
-            a2 = a1;
-            a1 = JSValue::UNDEFINED;
-        }
-        let time = time_from_js(global, a2)?;
-        let mut owned: Vec<(Vec<u8>, OwnedValue)> = Vec::new();
-        collect_attributes(global, a1, &mut owned)?;
-        let borrowed: Vec<(&[u8], Value<'_>)> = owned
-            .iter()
-            .map(|(k, v)| (k.as_slice(), v.borrow()))
-            .collect();
-        self.0.add_event(name.slice(), time, &borrowed, limits());
-        Ok(this)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn add_link(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        self.add_link_value(global, frame.argument(0))?;
-        Ok(this)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn add_links(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        let links = frame.argument(0);
-        if links.is_array() {
-            let mut it = JSArrayIterator::init(links, global)?;
-            while let Some(l) = it.next()? {
-                self.add_link_value(global, l)?;
-            }
-        }
-        Ok(this)
-    }
-
-    pub(crate) fn add_link_value(&self, global: &JSGlobalObject, link: JSValue) -> JsResult<()> {
-        if !self.0.is_recording() || !link.is_object() {
-            return Ok(());
-        }
-        // OTel API Link: { context: SpanContext, attributes? }. Also accept a Span or bare SpanContext.
-        let ctx_v = link.get(global, "context")?.unwrap_or(link);
-        let Some(ctx) = span_context_from_js(global, ctx_v)? else {
-            return Ok(());
-        };
-        let mut owned: Vec<(Vec<u8>, OwnedValue)> = Vec::new();
-        if let Some(attrs) = link.get(global, "attributes")? {
-            collect_attributes(global, attrs, &mut owned)?;
-        }
-        let borrowed: Vec<(&[u8], Value<'_>)> = owned
-            .iter()
-            .map(|(k, v)| (k.as_slice(), v.borrow()))
-            .collect();
-        self.0.add_link(&ctx, b"", &borrowed, limits());
-        Ok(())
-    }
-
-    /// `setStatus({ code, message })` or `setStatus(code, message)`.
-    /// Codes follow @opentelemetry/api: UNSET=0 OK=1 ERROR=2.
-    #[bun_jsc::host_fn(method)]
-    pub fn set_status(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        let a0 = frame.argument(0);
-        let (code_v, msg_v) = if a0.is_object() {
-            (
-                a0.get(global, "code")?.unwrap_or(JSValue::UNDEFINED),
-                a0.get(global, "message")?.unwrap_or(JSValue::UNDEFINED),
-            )
-        } else {
-            (a0, frame.argument(1))
-        };
-        let code = if code_v.is_number() {
-            match code_v.as_number() as i32 {
-                1 => StatusCode::Ok,
-                2 => StatusCode::Error,
-                _ => StatusCode::Unset,
-            }
-        } else if code_v.is_string() {
-            let s = code_v.to_slice(global)?;
-            match s.slice() {
-                b"ok" | b"OK" => StatusCode::Ok,
-                b"error" | b"ERROR" => StatusCode::Error,
-                _ => StatusCode::Unset,
-            }
-        } else {
-            StatusCode::Unset
-        };
-        if msg_v.is_string() {
-            let m = msg_v.to_slice(global)?;
-            self.0.set_status(code, m.slice());
-        } else {
-            self.0.set_status(code, b"");
-        }
-        Ok(this)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn update_name(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        let n = frame.argument(0);
-        if n.is_string() {
-            let n = n.to_slice(global)?;
-            self.0.set_name(n.slice());
-        }
-        Ok(this)
-    }
-
-    /// `recordException(error, time?)`
-    #[bun_jsc::host_fn(method)]
-    pub fn record_exception(
-        &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let this = frame.this();
-        if !self.0.is_recording() {
-            return Ok(this);
-        }
-        record_exception_value(
-            &self.0,
-            global,
-            frame.argument(0),
-            time_from_js(global, frame.argument(1))?,
-        )?;
-        Ok(this)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn is_recording(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::from(self.0.is_recording()))
-    }
-
-    /// OTel API `SpanContext` object, cached on the wrapper.
-    #[bun_jsc::host_fn(method)]
-    pub fn span_context(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        if let Some(v) = js::context_get_cached(this) {
-            if !v.is_empty() && !v.is_undefined() {
-                return Ok(v);
-            }
-        }
-        let ctx = self.0.context();
-        let obj = JSValue::create_empty_object(global, 4);
-        obj.put(global, b"traceId", hex_js(global, &ctx.trace_id.0)?);
-        obj.put(global, b"spanId", hex_js(global, &ctx.span_id.0)?);
-        obj.put(
-            global,
-            b"traceFlags",
-            JSValue::js_number_from_int32(ctx.flags.w3c() as i32),
-        );
-        if ctx.flags.remote() {
-            obj.put(global, b"isRemote", JSValue::TRUE);
-        }
-        js::context_set_cached(this, global, obj);
-        Ok(obj)
-    }
-
-    /// `end(endTime?)`
-    #[bun_jsc::host_fn(method)]
-    pub fn end(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let t = time_from_js(global, frame.argument(0))?;
-        self.end_native(t);
-        Ok(JSValue::UNDEFINED)
-    }
-
-    pub fn end_native(&self, end_ns: u64) {
-        end_span(&self.0, end_ns, |_| {});
-    }
-
-    /// Make this span the active one until `exit()`/dispose. Stores the
-    /// displaced slot value on the wrapper.
-    #[bun_jsc::host_fn(method)]
-    pub fn enter(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        if let Some(v) = js::restore_get_cached(this) {
-            if !v.is_empty() {
-                // Already entered; keep the first restore point.
-                return Ok(this);
-            }
-        }
-        let prev = Bun__Telemetry__enter(global, this);
-        // Empty JSValue can't be stored; use the hole marker `null`? No —
-        // `undefined` is a legitimate previous value. Store as-is; "not
-        // entered" is represented by the slot being JSValue::ZERO (empty).
-        js::restore_set_cached(
-            this,
-            global,
-            if prev.is_empty() {
-                JSValue::UNDEFINED
-            } else {
-                prev
-            },
-        );
-        Ok(this)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn exit(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        self.exit_native(global, this);
-        Ok(this)
-    }
-
-    fn exit_native(&self, global: &JSGlobalObject, this: JSValue) {
-        if let Some(prev) = js::restore_get_cached(this) {
-            if !prev.is_empty() {
-                Bun__Telemetry__exit(global, prev);
-                js::restore_set_cached(this, global, JSValue::ZERO);
-            }
-        }
-    }
-
-    /// `using span = tracer.startActiveSpan(...)`: end and deactivate.
-    #[bun_jsc::host_fn(method)]
-    pub fn dispose(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this = frame.this();
-        self.end_native(0);
-        self.exit_native(global, this);
-        Ok(JSValue::UNDEFINED)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_trace_id(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        hex_js(global, &this.0.context().trace_id.0)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_span_id(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        hex_js(global, &this.0.context().span_id.0)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_parent_span_id(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        if this.0.stub.parent.is_valid() {
-            hex_js(global, &this.0.stub.parent.0)
-        } else {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_trace_flags(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number_from_int32(
-            this.0.context().flags.w3c() as i32
-        ))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_is_remote(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::from(this.0.context().flags.remote()))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_name(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.0
-            .with_name(|n| bun_string_jsc::create_utf8_for_js(global, n))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_kind(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number_from_int32(kind_to_api(this.0.kind())))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_ended(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::from(this.0.ended()))
-    }
-}
-
-pub(crate) enum OwnedValue {
-    Str(bun_core::ZigStringSlice),
-    Int(i64),
-    Double(f64),
-    Bool(bool),
-}
-
-impl OwnedValue {
-    pub(crate) fn borrow(&self) -> Value<'_> {
-        match self {
-            OwnedValue::Str(s) => Value::Str(s.slice()),
-            OwnedValue::Int(i) => Value::Int(*i),
-            OwnedValue::Double(d) => Value::Double(*d),
-            OwnedValue::Bool(b) => Value::Bool(*b),
-        }
-    }
-}
-
-pub(crate) fn collect_attributes(
-    global: &JSGlobalObject,
-    obj: JSValue,
-    out: &mut Vec<(Vec<u8>, OwnedValue)>,
-) -> JsResult<()> {
-    if !obj.is_object() {
-        return Ok(());
-    }
-    let Some(o) = obj.get_object() else {
-        return Ok(());
-    };
-    let mut iter = JSPropertyIterator::init(
-        global,
-        o,
-        JSPropertyIteratorOptions {
-            skip_empty_name: true,
-            include_value: true,
-            ..Default::default()
-        },
-    )?;
-    while let Some(name) = iter.next()? {
-        let value = iter.value;
-        let key = name.to_utf8().slice().to_vec();
         if value.is_string() {
-            out.push((key, OwnedValue::Str(value.to_slice(global)?)));
+            let s = value.to_slice(global)?;
+            f(key.slice(), &Value::Str(s.slice()));
         } else if value.is_number() {
             let n = value.as_number();
             if n.is_finite() && n == n.trunc() && n.abs() < 9007199254740992.0 {
-                out.push((key, OwnedValue::Int(n as i64)));
+                f(key.slice(), &Value::Int(n as i64));
             } else {
-                out.push((key, OwnedValue::Double(n)));
+                f(key.slice(), &Value::Double(n));
             }
         } else if value.is_boolean() {
-            out.push((key, OwnedValue::Bool(value.as_boolean())));
+            f(key.slice(), &Value::Bool(value.as_boolean()));
         }
     }
     Ok(())
 }
 
-/// Record a JS exception value as an `exception` event and set Error status.
-pub(crate) fn record_exception_value(
-    span: &SpanData,
-    global: &JSGlobalObject,
-    err: JSValue,
-    time_ns: u64,
-) -> JsResult<()> {
-    if !span.is_recording() {
-        return Ok(());
-    }
-    let mut ty_s = None;
-    let mut msg_s = None;
-    let mut stack_s = None;
-    if err.is_object() {
-        if let Some(n) = err.get(global, "name")? {
-            if n.is_string() {
-                ty_s = Some(n.to_slice(global)?);
-            }
-        }
-        if let Some(m) = err.get(global, "message")? {
-            if m.is_string() {
-                msg_s = Some(m.to_slice(global)?);
-            }
-        }
-        if let Some(s) = err.get(global, "stack")? {
-            if s.is_string() {
-                stack_s = Some(s.to_slice(global)?);
-            }
-        }
-    } else if err.is_string() {
-        msg_s = Some(err.to_slice(global)?);
-    }
-    let ty = ty_s.as_ref().map(|s| s.slice()).unwrap_or(b"Error");
-    let msg = msg_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
-    let stack = stack_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
-    let attrs: [(&[u8], Value<'_>); 3] = [
-        (b"exception.type", Value::Str(ty)),
-        (b"exception.message", Value::Str(msg)),
-        (b"exception.stacktrace", Value::Str(stack)),
-    ];
-    let n = if stack.is_empty() { 2 } else { 3 };
-    span.add_event(b"exception", time_ns, &attrs[..n], limits());
-    Ok(())
-}
-
-/// End `span` into this thread's batch. `extra` adds integration attributes.
+/// End a native-owned span into this thread's batch.
 #[inline]
-pub fn end_span(
-    span: &SpanData,
+pub fn end_native(span: NativeSpan, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'_>)) {
+    if pool::end(span, end_ns, extra) {
+        super::after_record();
+    }
+}
+
+// ───────────────────── ABI for JSTelemetrySpan.cpp ─────────────────────
+
+/// A JS string as JSC holds it: Latin-1 or UTF-16 code units.
+#[repr(C)]
+pub struct StrRef {
+    ptr: *const u8,
+    len: u32,
+    is16: u8,
+}
+
+impl StrRef {
+    /// Append as UTF-8.
+    fn append_to(&self, out: &mut Vec<u8>) {
+        if self.ptr.is_null() || self.len == 0 {
+            return;
+        }
+        if self.is16 != 0 {
+            let s = unsafe { core::slice::from_raw_parts(self.ptr.cast::<u16>(), self.len as usize) };
+            bun_core::strings::convert_utf16_to_utf8_append(out, s);
+        } else {
+            let s = unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) };
+            if bun_core::strings::is_all_ascii(s) {
+                out.extend_from_slice(s);
+            } else {
+                let at = out.len();
+                let taken = core::mem::take(out);
+                *out = bun_core::strings::allocate_latin1_into_utf8_with_list(taken, at, s);
+            }
+        }
+    }
+
+    fn range(&self, scratch: &mut Vec<u8>) -> (usize, usize) {
+        let start = scratch.len();
+        self.append_to(scratch);
+        (start, scratch.len() - start)
+    }
+
+    fn to_vec(&self) -> Vec<u8> {
+        let mut v = Vec::new();
+        self.append_to(&mut v);
+        v
+    }
+}
+
+/// Attribute value kinds (matches JSTelemetrySpan.cpp).
+const ATTR_STR: u8 = 0;
+const ATTR_BOOL: u8 = 1;
+const ATTR_INT: u8 = 2;
+const ATTR_DOUBLE: u8 = 3;
+const ATTR_ARRAY: u8 = 4;
+
+#[repr(C)]
+pub struct AttrRef {
+    key: StrRef,
+    kind: u8,
+    str_: StrRef,
+    num: f64,
+    int: i64,
+    /// kind == ATTR_ARRAY: `items[..n_items]` (their keys are unused).
+    items: *const AttrRef,
+    n_items: u32,
+}
+
+#[repr(C)]
+pub struct EventRef {
+    name: StrRef,
+    time_ns: u64,
+    attrs: *const AttrRef,
+    n_attrs: u32,
+}
+
+#[repr(C)]
+pub struct LinkRef {
+    trace_id: StrRef,
+    span_id: StrRef,
+    flags: u8,
+    attrs: *const AttrRef,
+    n_attrs: u32,
+}
+
+#[repr(C)]
+pub struct EndDesc {
+    stub: *const SpanStub,
+    scope: u16,
+    kind: u8,
+    status: u8,
     end_ns: u64,
-    extra: impl FnOnce(&mut bun_telemetry::SpanWriter<'_>),
+    name: StrRef,
+    status_message: StrRef,
+    trace_state: StrRef,
+    attrs: *const AttrRef,
+    n_attrs: u32,
+    dropped_attrs: u32,
+    events: *const EventRef,
+    n_events: u32,
+    links: *const LinkRef,
+    n_links: u32,
+}
+
+/// Attribute value with strings as ranges into a scratch buffer.
+enum Owned {
+    Str(usize, usize),
+    Bool(bool),
+    Int(i64),
+    Double(f64),
+    Array(Vec<Owned>),
+}
+
+fn own(a: &AttrRef, scratch: &mut Vec<u8>) -> Owned {
+    match a.kind {
+        ATTR_STR => {
+            let (s, n) = a.str_.range(scratch);
+            Owned::Str(s, n)
+        }
+        ATTR_BOOL => Owned::Bool(a.int != 0),
+        ATTR_INT => Owned::Int(a.int),
+        ATTR_DOUBLE => Owned::Double(a.num),
+        ATTR_ARRAY => {
+            let items = unsafe { core::slice::from_raw_parts(a.items, a.n_items as usize) };
+            Owned::Array(items.iter().map(|i| own(i, scratch)).collect())
+        }
+        _ => Owned::Bool(false),
+    }
+}
+
+fn primitive<'a>(o: &Owned, scratch: &'a [u8]) -> Value<'a> {
+    match o {
+        Owned::Str(s, n) => Value::Str(&scratch[*s..*s + *n]),
+        Owned::Bool(b) => Value::Bool(*b),
+        Owned::Int(i) => Value::Int(*i),
+        Owned::Double(d) => Value::Double(*d),
+        Owned::Array(_) => Value::Str(b""),
+    }
+}
+
+/// Decode `attrs[..n]` and hand each `(key, value)` to `emit`.
+fn with_attrs(attrs: *const AttrRef, n: u32, mut emit: impl FnMut(&[u8], &Value<'_>)) {
+    if n == 0 || attrs.is_null() {
+        return;
+    }
+    let attrs = unsafe { core::slice::from_raw_parts(attrs, n as usize) };
+    let mut scratch: Vec<u8> = Vec::with_capacity(64 * attrs.len());
+    let items: Vec<((usize, usize), Owned)> = attrs
+        .iter()
+        .map(|a| (a.key.range(&mut scratch), own(a, &mut scratch)))
+        .collect();
+    let scratch = &scratch[..];
+    let arrays: Vec<Vec<Value<'_>>> = items
+        .iter()
+        .map(|(_, v)| match v {
+            Owned::Array(xs) => xs.iter().map(|x| primitive(x, scratch)).collect(),
+            _ => Vec::new(),
+        })
+        .collect();
+    for (i, ((ks, kn), v)) in items.iter().enumerate() {
+        if *kn == 0 {
+            continue;
+        }
+        let key = &scratch[*ks..*ks + *kn];
+        let value = match v {
+            Owned::Array(_) => Value::Array(&arrays[i]),
+            o => primitive(o, scratch),
+        };
+        emit(key, &value);
+    }
+}
+
+/// Ids, sampling decision and start time for a new span.
+/// `parent` may be null (root) and may carry `Flags::REMOTE`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__stubStart(out: &mut SpanStub, parent: *const SpanStub, start_ns: u64) {
+    let parent = if parent.is_null() { None } else { Some(unsafe { &(*parent).ctx }) };
+    let now = if start_ns == 0 { clock::now_unix_nanos() } else { start_ns };
+    *out = SpanStub::start(parent.filter(|c| c.is_valid()), &super::state().sampler, now);
+}
+
+/// A non-recording carrier for a (possibly remote) span context.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__stubWrap(
+    out: &mut SpanStub,
+    trace_id: &[u8; 16],
+    span_id: &[u8; 8],
+    w3c_flags: u8,
+    remote: bool,
 ) {
-    let scope = span.scope;
-    bun_telemetry::batch::record(scope, |buf| {
-        span.end_into(buf, end_ns, extra);
+    *out = SpanStub {
+        ctx: SpanContext {
+            trace_id: TraceId(*trace_id),
+            span_id: SpanId(*span_id),
+            flags: Flags((w3c_flags & Flags::SAMPLED) | Flags::NON_RECORDING | if remote { Flags::REMOTE } else { 0 }),
+        },
+        parent: SpanId::INVALID,
+        start_ns: 1,
+    };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nowNs() -> u64 {
+    clock::now_unix_nanos()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__userScope() -> u16 {
+    ScopeId::from(bun_telemetry::Instrument::User).0
+}
+
+fn kind_from_u8(k: u8) -> SpanKind {
+    match k {
+        1 => SpanKind::Server,
+        2 => SpanKind::Client,
+        3 => SpanKind::Producer,
+        4 => SpanKind::Consumer,
+        _ => SpanKind::Internal,
+    }
+}
+
+fn status_from_u8(s: u8) -> StatusCode {
+    match s {
+        1 => StatusCode::Ok,
+        2 => StatusCode::Error,
+        _ => StatusCode::Unset,
+    }
+}
+
+/// Encode a JS-owned span that just ended into this thread's batch.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
+    let stub = unsafe { &*desc.stub };
+    if !stub.is_recording() {
+        return;
+    }
+    let scope = ScopeId(desc.scope);
+    let name = desc.name.to_vec();
+    let trace_state = desc.trace_state.to_vec();
+    let status_message = desc.status_message.to_vec();
+    let l = limits();
+    let n_attrs = desc.n_attrs.min(l.attributes as u32);
+    let n_events = desc.n_events.min(l.events as u32);
+    let n_links = desc.n_links.min(l.links as u32);
+    batch::record(scope, |buf| {
+        let mut w = SpanWriter::begin(buf, stub, &name, kind_from_u8(desc.kind), desc.end_ns);
+        w.trace_state(&trace_state);
+        with_attrs(desc.attrs, n_attrs, |k, v| match *v {
+            Value::Str(s) if s.len() > l.attribute_value_length as usize => {
+                w.attr_bytes_key(k, Value::Str(&s[..l.attribute_value_length as usize]));
+            }
+            _ => {
+                w.attr_bytes_key(k, *v);
+            }
+        });
+        if n_events != 0 {
+            let events = unsafe { core::slice::from_raw_parts(desc.events, n_events as usize) };
+            for e in events {
+                let ename = e.name.to_vec();
+                let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
+                with_attrs(e.attrs, e.n_attrs, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
+                let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
+                w.event(&ename, e.time_ns, &borrowed);
+            }
+        }
+        if n_links != 0 {
+            let links = unsafe { core::slice::from_raw_parts(desc.links, n_links as usize) };
+            for l in links {
+                let (Some(t), Some(s)) = (TraceId::from_hex(&l.trace_id.to_vec()), SpanId::from_hex(&l.span_id.to_vec())) else {
+                    continue;
+                };
+                let ctx = SpanContext { trace_id: t, span_id: s, flags: Flags(l.flags & Flags::SAMPLED) };
+                let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
+                with_attrs(l.attrs, l.n_attrs, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
+                let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
+                w.link(&ctx, &borrowed);
+            }
+        }
+        let dropped_attrs = desc.dropped_attrs + (desc.n_attrs - n_attrs);
+        if dropped_attrs != 0 {
+            w.dropped_attributes(dropped_attrs);
+        }
+        if desc.n_events != n_events {
+            w.dropped_events(desc.n_events - n_events);
+        }
+        if desc.n_links != n_links {
+            w.dropped_links(desc.n_links - n_links);
+        }
+        w.status(status_from_u8(desc.status), &status_message);
+        w.finish();
     });
-    span.shrink();
     super::after_record();
+}
+
+/// Flat owned attribute value for the (rare) event/link paths.
+enum OwnedFlat {
+    Str(Vec<u8>),
+    Bool(bool),
+    Int(i64),
+    Double(f64),
+}
+impl OwnedFlat {
+    fn from(v: &Value<'_>) -> OwnedFlat {
+        match *v {
+            Value::Str(s) => OwnedFlat::Str(s.to_vec()),
+            Value::Bytes(s) => OwnedFlat::Str(s.to_vec()),
+            Value::Bool(b) => OwnedFlat::Bool(b),
+            Value::Int(i) => OwnedFlat::Int(i),
+            Value::Double(d) => OwnedFlat::Double(d),
+            Value::Array(_) => OwnedFlat::Str(Vec::new()),
+        }
+    }
+    fn value(&self) -> Value<'_> {
+        match self {
+            OwnedFlat::Str(s) => Value::Str(s),
+            OwnedFlat::Bool(b) => Value::Bool(*b),
+            OwnedFlat::Int(i) => Value::Int(*i),
+            OwnedFlat::Double(d) => Value::Double(*d),
+        }
+    }
+}
+
+// ─────────────── native-owned span mutations from JS ───────────────
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativeIsLive(handle: u64) -> bool {
+    pool::with_ref(NativeSpan(handle), |_| ()).is_some()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativeEnd(handle: u64, end_ns: u64) -> bool {
+    let ended = pool::end(NativeSpan(handle), end_ns, |_| {});
+    if ended {
+        super::after_record();
+    }
+    ended
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativeSetAttribute(handle: u64, attr: &AttrRef) {
+    let l = limits();
+    with_attrs(attr, 1, |k, v| {
+        pool::with(NativeSpan(handle), |s| s.set_attribute(k, v, l));
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativeSetName(handle: u64, name: &StrRef) {
+    let n = name.to_vec();
+    pool::with(NativeSpan(handle), |s| s.set_name(&n));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativeSetStatus(handle: u64, code: u8, message: &StrRef) {
+    let m = message.to_vec();
+    pool::with(NativeSpan(handle), |s| s.set_status(status_from_u8(code), &m));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativeAddEvent(handle: u64, event: &EventRef) {
+    let name = event.name.to_vec();
+    let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
+    with_attrs(event.attrs, event.n_attrs, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
+    let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
+    pool::with(NativeSpan(handle), |s| s.add_event(&name, event.time_ns, &borrowed));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativeAddLink(handle: u64, link: &LinkRef) {
+    let (Some(t), Some(sid)) = (TraceId::from_hex(&link.trace_id.to_vec()), SpanId::from_hex(&link.span_id.to_vec())) else {
+        return;
+    };
+    let ctx = SpanContext { trace_id: t, span_id: sid, flags: Flags(link.flags & Flags::SAMPLED) };
+    let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
+    with_attrs(link.attrs, link.n_attrs, |k, v| pairs.push((k.to_vec(), OwnedFlat::from(v))));
+    let borrowed: Vec<(&[u8], Value<'_>)> = pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
+    pool::with(NativeSpan(handle), |s| bun_telemetry::otlp::encode_link(&mut s.extra, &ctx, b"", &borrowed));
+}
+
+/// The slot's current name as UTF-8 (for the `.name` getter). Writes up to
+/// `cap` bytes and returns the full length.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativeName(handle: u64, out: *mut u8, cap: usize) -> usize {
+    pool::with_ref(NativeSpan(handle), |s| {
+        let n = s.name.len().min(cap);
+        unsafe { core::ptr::copy_nonoverlapping(s.name.as_ptr(), out, n) };
+        s.name.len()
+    })
+    .unwrap_or(0)
+}
+
+/// `startLeafSpan(instrument, name, kind)` support: start a native-owned span
+/// for a JS-implemented built-in instrumentation (node:http client). Returns
+/// the JS cell or undefined when the instrumentation should not record.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
+    global: &JSGlobalObject,
+    instrument: u32,
+    name: &StrRef,
+    kind: u8,
+) -> JSValue {
+    let Some(i) = bun_telemetry::Instrument::ALL.get(instrument as usize).copied() else {
+        return JSValue::UNDEFINED;
+    };
+    let stub = super::start_leaf(global, i);
+    if !stub.is_some() {
+        return JSValue::UNDEFINED;
+    }
+    let n = name.to_vec();
+    let kind = kind_from_u8(kind);
+    let native = pool::begin(stub, ScopeId::from(i), &n, kind);
+    with_active_propagation(global, |ts, bg| {
+        if !ts.is_empty() || !bg.is_empty() {
+            pool::with(native, |s| {
+                s.trace_state.extend_from_slice(ts);
+                s.baggage.extend_from_slice(bg);
+            });
+        }
+    });
+    create_native_cell(global, &stub, ScopeId::from(i), kind, native)
+}
+
+/// tracestate (`which == b't'`) or baggage (`b'b'`) of a native-owned span.
+/// Writes up to `cap` bytes; returns the full length.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativePropagation(handle: u64, which: u8, out: *mut u8, cap: usize) -> usize {
+    pool::with_ref(NativeSpan(handle), |s| {
+        let src = if which == b't' { &s.trace_state } else { &s.baggage };
+        let n = src.len().min(cap);
+        unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), out, n) };
+        src.len()
+    })
+    .unwrap_or(0)
 }

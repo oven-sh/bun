@@ -201,8 +201,8 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 
 // ── Native OpenTelemetry (see src/runtime/telemetry/sqlite.rs) ───────────────
 extern "C" uint32_t Bun__Telemetry__enabled;
-extern "C" void* Bun__Telemetry__sqliteBegin(JSC::JSGlobalObject*, const char* file, size_t fileLen);
-extern "C" void Bun__Telemetry__sqliteEnd(void* span, const char* sql, size_t sqlLen, int errcode, const char* errmsg);
+extern "C" uint64_t Bun__Telemetry__sqliteBegin(JSC::JSGlobalObject*, const char* file, size_t fileLen);
+extern "C" void Bun__Telemetry__sqliteEnd(uint64_t span, const char* sql, size_t sqlLen, int errcode, const char* errmsg);
 
 namespace Bun {
 
@@ -251,7 +251,7 @@ private:
         }
         bool failed = !!m_scope.exception();
         Bun__Telemetry__sqliteEnd(m_span, sql, len, failed ? (m_db ? sqlite3_extended_errcode(m_db) : SQLITE_ERROR) : 0, failed && m_db ? sqlite3_errmsg(m_db) : nullptr);
-        m_span = nullptr;
+        m_span = 0;
     }
 
     JSC::ThrowScope& m_scope;
@@ -259,7 +259,7 @@ private:
     sqlite3_stmt* m_stmt { nullptr };
     const char* m_sql { nullptr };
     size_t m_sqlLen { 0 };
-    void* m_span { nullptr };
+    uint64_t m_span { 0 };
 };
 
 } // namespace Bun

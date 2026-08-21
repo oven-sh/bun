@@ -164,7 +164,7 @@ pub struct Subprocess<'a> {
     pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
     /// Native OpenTelemetry span covering the child's lifetime; `None` when off.
-    pub(crate) otel: Cell<Option<bun_telemetry::Span>>,
+    pub(crate) otel: Cell<bun_telemetry::NativeSpan>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -981,7 +981,8 @@ impl Subprocess<'_> {
         self.pid_rusage.set(Some(*rusage));
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
-        if let Some(span) = self.otel.take() {
+        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
             match status {
                 Status::Exited(e) => {
                     crate::telemetry::spawn::exited(span, Some(i32::from(e.code)), None, None)

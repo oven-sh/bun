@@ -58,6 +58,7 @@ using namespace JSC;
     macro(bytes) \
     macro(cancel) \
     macro(checkBufferRead) \
+    macro(telemetryNativeSpanOp) \
     macro(checks) \
     macro(close) \
     macro(cmd) \

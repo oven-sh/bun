@@ -1,0 +1,457 @@
+// Bun.otel — native OpenTelemetry tracing.
+//
+// Native side: src/runtime/telemetry.rs (host functions below), the
+// TelemetrySpan class (src/runtime/telemetry/span.rs), and the async-context
+// slot helpers in BunTelemetry.cpp. This module is the JS surface: `Bun.otel`
+// itself plus objects that satisfy the @opentelemetry/api TracerProvider /
+// ContextManager / TextMapPropagator interfaces so `trace.getTracer()` etc.
+// resolve to the native pipeline with no SDK installed.
+
+const nativeStart = $newRustFunction("telemetry.rs", "start", 1);
+const nativeIsEnabled = $newRustFunction("telemetry.rs", "isEnabled", 0);
+const createScope = $newRustFunction("telemetry.rs", "createScope", 2);
+const nativeStartSpan = $newRustFunction("telemetry.rs", "startSpan", 6);
+const nativeActiveSpan = $newRustFunction("telemetry.rs", "activeSpan", 0);
+const wrapSpanContext = $newRustFunction("telemetry.rs", "wrapSpanContext", 1);
+const withContext = $newRustFunction("telemetry.rs", "withContext", 3);
+const currentContext = $newRustFunction("telemetry.rs", "currentContext", 0);
+const nativeForceFlush = $newRustFunction("telemetry.rs", "forceFlush", 0);
+const nativeStats = $newRustFunction("telemetry.rs", "stats", 0);
+const nativeDecode = $newRustFunction("telemetry.rs", "decode", 1);
+const nativeSetEnabled = $newRustFunction("telemetry.rs", "setEnabled", 2);
+const enterWithExtras = $newCppFunction("BunTelemetry.cpp", "jsEnterWithExtras", 2);
+const exitContext = $newCppFunction("BunTelemetry.cpp", "jsExitContext", 1);
+const activeExtras = $newCppFunction("BunTelemetry.cpp", "jsActiveExtras", 0);
+const isTelemetrySpan = $newCppFunction("BunTelemetry.cpp", "jsIsTelemetrySpan", 1);
+
+// @opentelemetry/api well-known keys (createContextKey === Symbol.for).
+const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
+const BAGGAGE_KEY = Symbol.for("OpenTelemetry Baggage Key");
+const API_KEY = Symbol.for("opentelemetry.js.api.1");
+
+const SpanKind = { INTERNAL: 0, SERVER: 1, CLIENT: 2, PRODUCER: 3, CONSUMER: 4 } as const;
+const SpanStatusCode = { UNSET: 0, OK: 1, ERROR: 2 } as const;
+
+function isNativeSpan(v: unknown): boolean {
+  return isTelemetrySpan(v);
+}
+
+/** Coerce anything span-like (ours, or a foreign api NonRecordingSpan) to a TelemetrySpan. */
+function toNativeSpan(span: any) {
+  if (span == null) return undefined;
+  if (isNativeSpan(span)) return span;
+  if (typeof span.spanContext === "function") return wrapSpanContext(span.spanContext());
+  if (typeof span.traceId === "string") return wrapSpanContext(span);
+  return undefined;
+}
+
+// ── @opentelemetry/api Context ────────────────────────────────────────────
+//
+// A Context is an immutable (span, extras) pair. The active one is derived
+// from the async-context slot on demand; `with()` installs one via the native
+// helper which preserves any AsyncLocalStorage stores already in the slot.
+
+class BunContext {
+  #span: any;
+  #extras: Map<symbol, unknown> | undefined;
+
+  constructor(span?: any, extras?: Map<symbol, unknown>) {
+    this.#span = span;
+    this.#extras = extras;
+  }
+
+  getValue(key: symbol): unknown {
+    if (key === SPAN_KEY) return this.#span;
+    return this.#extras?.get(key);
+  }
+
+  setValue(key: symbol, value: unknown): BunContext {
+    if (key === SPAN_KEY) return new BunContext(toNativeSpan(value), this.#extras);
+    const m = new Map(this.#extras);
+    m.set(key, value);
+    return new BunContext(this.#span, m);
+  }
+
+  deleteValue(key: symbol): BunContext {
+    if (key === SPAN_KEY) return new BunContext(undefined, this.#extras);
+    if (!this.#extras?.has(key)) return this;
+    const m = new Map(this.#extras);
+    m.delete(key);
+    return new BunContext(this.#span, m.size ? m : undefined);
+  }
+
+  // Bun-internal accessors (not part of the api interface).
+  get span() {
+    return this.#span;
+  }
+  get extras() {
+    return this.#extras;
+  }
+}
+
+const ROOT_CONTEXT = new BunContext();
+
+function activeContext(): BunContext {
+  const span = nativeActiveSpan();
+  const extras = activeExtras();
+  if (span === undefined && extras === undefined) return ROOT_CONTEXT;
+  return new BunContext(span, extras);
+}
+
+/** Read (span, extras) out of any api Context implementation, not just ours. */
+function unpackContext(ctx: any): [any, Map<symbol, unknown> | undefined] {
+  if (ctx instanceof BunContext) return [ctx.span, ctx.extras];
+  if (ctx && typeof ctx.getValue === "function") {
+    // Foreign Context (e.g. api's ROOT_CONTEXT / BaseContext). We can only see
+    // the keys we know about.
+    const span = toNativeSpan(ctx.getValue(SPAN_KEY));
+    const bag = ctx.getValue(BAGGAGE_KEY);
+    return [span, bag === undefined ? undefined : new Map([[BAGGAGE_KEY, bag]])];
+  }
+  return [undefined, undefined];
+}
+
+let emptySpan: any;
+/** Header placeholder for a Context that carries extras but no span. */
+function placeholderSpan() {
+  return (emptySpan ??= wrapSpanContext(null));
+}
+
+function runWithContext(ctx: any, fn: Function, thisArg: unknown, args: any[]) {
+  const [span, extras] = unpackContext(ctx);
+  const prev = enterWithExtras(span ?? (extras ? placeholderSpan() : undefined), extras);
+  try {
+    return fn.$apply(thisArg, args);
+  } finally {
+    exitContext(prev);
+  }
+}
+
+const contextManager = {
+  active: activeContext,
+  with(ctx: any, fn: Function, thisArg?: unknown, ...args: any[]) {
+    return runWithContext(ctx, fn, thisArg, args);
+  },
+  bind(ctx: any, target: any) {
+    if (typeof target === "function") {
+      const bound = function (this: unknown, ...args: any[]) {
+        return runWithContext(ctx, target, this, args);
+      };
+      Object.defineProperty(bound, "length", { configurable: true, value: target.length });
+      return bound;
+    }
+    if (target && typeof target.emit === "function") {
+      const emit = target.emit;
+      target.emit = function (this: unknown, ...args: any[]) {
+        return runWithContext(ctx, emit, this, args);
+      };
+    }
+    return target;
+  },
+  enable() {
+    return this;
+  },
+  disable() {
+    return this;
+  },
+};
+
+// ── Tracer ────────────────────────────────────────────────────────────────
+
+class Tracer {
+  #scope: number;
+  readonly name: string;
+  readonly version: string | undefined;
+
+  constructor(name: string, version?: string) {
+    this.name = name;
+    this.version = version;
+    this.#scope = createScope(name, version);
+  }
+
+  /**
+   * @opentelemetry/api `Tracer.startSpan(name, options?, context?)`.
+   * Does not activate the span.
+   */
+  startSpan(name: string, options?: any, context?: any) {
+    let parent: any = undefined; // undefined → active span
+    if (options?.root) {
+      parent = null;
+    } else if (context !== undefined) {
+      const [span] = unpackContext(context);
+      parent = span ?? null;
+    } else if (options?.parent !== undefined) {
+      parent = options.parent === null ? null : toNativeSpan(options.parent);
+    }
+    const span = nativeStartSpan(this.#scope, String(name), options?.kind | 0, parent, options?.startTime);
+    if (options) {
+      if (options.attributes) span.setAttributes(options.attributes);
+      if (options.links) span.addLinks(options.links);
+    }
+    return span;
+  }
+
+  /**
+   * @opentelemetry/api `startActiveSpan(name, [options], [context], fn)`:
+   * runs `fn(span)` with the span active and returns its result. As in the
+   * api, the span is not ended for you — call `span.end()`.
+   *
+   * Bun extension: with no callback, returns the span already activated for
+   * `using span = tracer.startActiveSpan("x")`; disposal ends and
+   * deactivates it.
+   */
+  startActiveSpan(name: string, a?: any, b?: any, c?: any) {
+    let options: any, context: any, fn: any;
+    if (typeof a === "function") {
+      fn = a;
+    } else if (typeof b === "function") {
+      options = a;
+      fn = b;
+    } else if (typeof c === "function") {
+      options = a;
+      context = b;
+      fn = c;
+    } else {
+      options = a;
+      context = b;
+    }
+    const span = this.startSpan(name, options, context);
+    if (fn === undefined) {
+      span.enter();
+      return span;
+    }
+    let extras: any;
+    if (context !== undefined) extras = unpackContext(context)[1];
+    const prev = enterWithExtras(span, extras);
+    try {
+      return fn(span);
+    } finally {
+      exitContext(prev);
+    }
+  }
+}
+
+const tracers = new Map<string, Tracer>();
+function getTracer(name?: string, version?: string): Tracer {
+  name = name ? String(name) : "";
+  const key = version ? name + "@" + version : name;
+  let t = tracers.get(key);
+  if (!t) {
+    t = new Tracer(name, version);
+    tracers.set(key, t);
+  }
+  return t;
+}
+
+const tracerProvider = {
+  getTracer,
+  forceFlush: () => nativeForceFlush(),
+  shutdown: () => nativeForceFlush(),
+};
+
+// ── W3C propagator (api TextMapPropagator) ────────────────────────────────
+
+const HEX = /^[0-9a-f]+$/;
+
+class Baggage {
+  #entries: Map<string, { value: string; metadata?: unknown }>;
+  constructor(entries?: Map<string, { value: string; metadata?: unknown }>) {
+    this.#entries = entries ?? new Map();
+  }
+  getEntry(key: string) {
+    const e = this.#entries.get(key);
+    return e ? { ...e } : undefined;
+  }
+  getAllEntries() {
+    return Array.from(this.#entries, ([k, v]) => [k, { ...v }]);
+  }
+  setEntry(key: string, entry: { value: string }) {
+    const m = new Map(this.#entries);
+    m.set(key, entry);
+    return new Baggage(m);
+  }
+  removeEntry(key: string) {
+    const m = new Map(this.#entries);
+    m.delete(key);
+    return new Baggage(m);
+  }
+  removeEntries(...keys: string[]) {
+    const m = new Map(this.#entries);
+    for (const k of keys) m.delete(k);
+    return new Baggage(m);
+  }
+  clear() {
+    return new Baggage();
+  }
+}
+
+function parseBaggage(header: string): Baggage | undefined {
+  if (!header || header.length > 8192) return undefined;
+  const m = new Map();
+  for (const part of header.split(",")) {
+    const semi = part.indexOf(";");
+    const kv = semi === -1 ? part : part.slice(0, semi);
+    const eq = kv.indexOf("=");
+    if (eq <= 0) continue;
+    const key = kv.slice(0, eq).trim();
+    let value = kv.slice(eq + 1).trim();
+    if (!key) continue;
+    try {
+      value = decodeURIComponent(value);
+    } catch {}
+    const entry: any = { value };
+    if (semi !== -1) entry.metadata = { toString: () => part.slice(semi + 1).trim() };
+    m.set(key, entry);
+  }
+  return m.size ? new Baggage(m) : undefined;
+}
+
+function serializeBaggage(bag: any): string {
+  const parts: string[] = [];
+  for (const [k, e] of bag.getAllEntries()) {
+    let s = encodeURIComponent(k) + "=" + encodeURIComponent(e.value);
+    if (e.metadata !== undefined) s += ";" + String(e.metadata);
+    parts.push(s);
+  }
+  return parts.join(",");
+}
+
+const defaultGetter = {
+  get(carrier: any, key: string) {
+    if (carrier == null) return undefined;
+    if (typeof carrier.get === "function") return carrier.get(key) ?? undefined;
+    return carrier[key];
+  },
+  keys(carrier: any) {
+    if (carrier == null) return [];
+    if (typeof carrier.keys === "function") return Array.from(carrier.keys());
+    return Object.keys(carrier);
+  },
+};
+const defaultSetter = {
+  set(carrier: any, key: string, value: string) {
+    if (carrier == null) return;
+    if (typeof carrier.set === "function") carrier.set(key, value);
+    else carrier[key] = value;
+  },
+};
+
+const propagator = {
+  fields() {
+    return ["traceparent", "tracestate", "baggage"];
+  },
+  inject(context: any, carrier: any, setter: any = defaultSetter) {
+    const [span, extras] = unpackContext(context ?? activeContext());
+    if (span) {
+      const ctx = span.spanContext();
+      if (ctx.traceId && ctx.traceId !== "00000000000000000000000000000000") {
+        setter.set(
+          carrier,
+          "traceparent",
+          "00-" + ctx.traceId + "-" + ctx.spanId + "-" + (ctx.traceFlags & 0xff).toString(16).padStart(2, "0"),
+        );
+        const ts = ctx.traceState;
+        if (ts) setter.set(carrier, "tracestate", typeof ts === "string" ? ts : ts.serialize());
+      }
+    }
+    const bag = extras?.get(BAGGAGE_KEY);
+    if (bag) {
+      const s = serializeBaggage(bag);
+      if (s) setter.set(carrier, "baggage", s);
+    }
+  },
+  extract(context: any, carrier: any, getter: any = defaultGetter): BunContext {
+    let ctx: BunContext = context instanceof BunContext ? context : new BunContext(...unpackContext(context));
+    let tp = getter.get(carrier, "traceparent");
+    if (Array.isArray(tp)) tp = tp[0];
+    if (typeof tp === "string") {
+      const m = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(-.*)?$/.exec(tp.trim());
+      if (m && m[1] !== "ff" && !(m[1] === "00" && m[5]) && !/^0+$/.test(m[2]) && !/^0+$/.test(m[3])) {
+        let traceState = getter.get(carrier, "tracestate");
+        if (Array.isArray(traceState)) traceState = traceState.join(",");
+        const span = wrapSpanContext({
+          traceId: m[2],
+          spanId: m[3],
+          traceFlags: parseInt(m[4], 16),
+          isRemote: true,
+          traceState: typeof traceState === "string" ? traceState : undefined,
+        });
+        ctx = ctx.setValue(SPAN_KEY, span);
+      }
+    }
+    let bg = getter.get(carrier, "baggage");
+    if (Array.isArray(bg)) bg = bg.join(",");
+    if (typeof bg === "string") {
+      const bag = parseBaggage(bg);
+      if (bag) ctx = ctx.setValue(BAGGAGE_KEY, bag);
+    }
+    return ctx;
+  },
+};
+
+// ── @opentelemetry/api global registration ────────────────────────────────
+
+/**
+ * Populate the api package's global registry so that every copy of
+ * `@opentelemetry/api` (any 1.x) picks up the native provider. Called once
+ * per global when telemetry is enabled. If user code already registered a
+ * provider we leave it alone.
+ */
+function installGlobal() {
+  const g = globalThis as any;
+  let reg = g[API_KEY];
+  if (!reg) {
+    // Highest 1.x minor we claim compatibility with; the api accepts a global
+    // whose minor is >= its own.
+    reg = g[API_KEY] = { version: "1.999.0" };
+  }
+  reg.trace ??= tracerProvider;
+  reg.context ??= contextManager;
+  reg.propagation ??= propagator;
+}
+
+// ── Bun.otel ──────────────────────────────────────────────────────────────
+
+function start(options?: any) {
+  nativeStart(options);
+}
+
+async function shutdown() {
+  await nativeForceFlush();
+  nativeSetEnabled(0, 0);
+}
+
+export default {
+  start,
+  tracer: getTracer,
+  getTracer,
+  activeSpan: nativeActiveSpan,
+  /** Run `fn` with `span` (a Span, SpanContext-like object, or api Context) active. */
+  with(spanOrContext: any, fn: Function, thisArg?: unknown, ...args: any[]) {
+    if (spanOrContext && typeof spanOrContext.getValue === "function") {
+      return runWithContext(spanOrContext, fn, thisArg, args);
+    }
+    return withContext(toNativeSpan(spanOrContext), fn, thisArg, ...args);
+  },
+  forceFlush: () => nativeForceFlush(),
+  shutdown,
+  stats: nativeStats,
+  decode: nativeDecode,
+  get enabled() {
+    return nativeIsEnabled();
+  },
+  installGlobal,
+  // api-compatible building blocks, for manual wiring
+  // (`trace.setGlobalTracerProvider(Bun.otel.tracerProvider)` etc.)
+  tracerProvider,
+  contextManager,
+  propagator,
+  ROOT_CONTEXT,
+  SpanKind,
+  SpanStatusCode,
+  [Symbol.for("nodejs.util.inspect.custom")]() {
+    return `Bun.otel { enabled: ${nativeIsEnabled()} }`;
+  },
+  // testing hooks
+  __currentContext: currentContext,
+};

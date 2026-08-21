@@ -5707,11 +5707,13 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
 // in its parent and the moment the walk reads it. The walk skipped the
 // subdirectory when its open failed with ENOENT, but when the removal landed
 // after the open, the kernel reported ENOENT from getdents64(2) and the whole
-// call failed (readdirSync blamed the root). A concurrent deleter is not
-// deterministic, so LD_PRELOAD a shim that plays one from inside getdents64:
-// the marked directories are really removed and the kernel itself produces
-// the ENOENT. bun issues getdents64 through libc's syscall(), which is the
-// interposable symbol on this path. glibc-only, same as the statfs shim above.
+// call failed (readdirSync blamed the root). libc's readdir(3), and so node,
+// report that ENOENT as the end of the directory; bun reads with the raw
+// syscall and sees it. A concurrent deleter is not deterministic, so
+// LD_PRELOAD a shim that plays one from inside getdents64: the marked
+// directories are really removed and the kernel itself produces the ENOENT.
+// bun issues getdents64 through libc's syscall(), which is the interposable
+// symbol on this path. glibc-only, same as the statfs shim above.
 it.skipIf(!isGlibc || !cc)("recursive readdir skips a subdirectory that is removed after it was opened", async () => {
   using dir = tempDir("readdir-vanishing-subdir", {
     "shim.c": `
@@ -5810,7 +5812,8 @@ const outcome = async fn => {
   );
   out.asyncTypesLeft = fs.readdirSync(root);
 
-  // The root going away is still an error, recursive or not.
+  // Only subdirectories are skipped. A read error on the root itself is still
+  // returned, recursive or not.
   root = makeDoomedRoot("root-sync");
   out.rootSync = await outcome(() => fs.readdirSync(root, { recursive: true }));
   root = makeDoomedRoot("root-async");

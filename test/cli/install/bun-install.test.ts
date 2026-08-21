@@ -5444,7 +5444,9 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
         join("..", "uglify-js", "bin", "uglifyjs"),
       );
-      expect((await readdirCacheSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe("9694c5fe9c41ad51.git");
+      expect((await readdirCacheSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe(
+        "9694c5fe9c41ad51.git",
+      );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify-js"))).toEqual([
         ".bun-tag",
         ".gitattributes",
@@ -5507,7 +5509,9 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
         join("..", "uglify", "bin", "uglifyjs"),
       );
-      expect((await readdirCacheSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe("87d55589eb4217d2.git");
+      expect((await readdirCacheSorted(join(ctx.package_dir, "node_modules", ".cache")))[0]).toBe(
+        "87d55589eb4217d2.git",
+      );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify"))).toEqual([
         ".bun-tag",
         ".gitattributes",

@@ -1284,3 +1284,76 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     });
   });
 });
+
+// The hoisted installer looks up the patch of every package it places, whether
+// the copy lands in the root node_modules or in a nested one. Each copy of a
+// package name gets the patch of its own version.
+describe("patchedDependencies with the hoisted linker", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // Adds a file, so it applies to any version of the package.
+  const addPatchedTxt = (line: string) => `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++${line}
+`;
+
+  const patchedTxt = (packageDir: string, ...nested: string[]) =>
+    Bun.file(join(packageDir, "node_modules", ...nested, "no-deps", "patched.txt")).text();
+
+  test("patches the hoisted copy and the nested copy of a package", async () => {
+    // one-fixed-dep@1.0.0 depends on no-deps@1.0.0. The root depends on
+    // no-deps@2.0.0, so no-deps@1.0.0 is installed under one-fixed-dep.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "hoisted-patch-test",
+          dependencies: { "no-deps": "2.0.0", "one-fixed-dep": "1.0.0" },
+          patchedDependencies: {
+            "no-deps@2.0.0": "patches/no-deps@2.0.0.patch",
+            "no-deps@1.0.0": "patches/no-deps@1.0.0.patch",
+          },
+        }),
+        patches: {
+          "no-deps@2.0.0.patch": addPatchedTxt("hoisted no-deps@2.0.0"),
+          "no-deps@1.0.0.patch": addPatchedTxt("nested no-deps@1.0.0"),
+        },
+      },
+    });
+    // CI exports BUN_INSTALL_CACHE_DIR, which overrides the cache in bunfig.toml.
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+
+    // An empty cache: every package is downloaded and patched before it is placed.
+    await runBunInstall(env, packageDir);
+    expect({
+      hoisted: await patchedTxt(packageDir),
+      nested: await patchedTxt(packageDir, "one-fixed-dep", "node_modules"),
+    }).toEqual({
+      hoisted: "hoisted no-deps@2.0.0\n",
+      nested: "nested no-deps@1.0.0\n",
+    });
+
+    // A warm cache: both patched copies are placed straight from the cache.
+    rmSync(join(packageDir, "node_modules"), { recursive: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect({
+      hoisted: await patchedTxt(packageDir),
+      nested: await patchedTxt(packageDir, "one-fixed-dep", "node_modules"),
+    }).toEqual({
+      hoisted: "hoisted no-deps@2.0.0\n",
+      nested: "nested no-deps@1.0.0\n",
+    });
+  });
+});

@@ -24,6 +24,34 @@ it("prototype", () => {
   Bun.gc(true);
 });
 
+describe("options.depth", () => {
+  const deep = (() => {
+    let o = { x: 1 };
+    for (let i = 0; i < 15; i++) o = { o };
+    return o;
+  })();
+  const unlimited = Bun.inspect(deep, { depth: Infinity });
+
+  it("null means unlimited", () => {
+    expect(Bun.inspect(deep, { depth: null })).toBe(unlimited);
+    expect(Bun.inspect(deep, { depth: null })).not.toContain("[Object ...]");
+  });
+
+  it("Infinity means unlimited", () => {
+    expect(unlimited).not.toContain("[Object ...]");
+    expect(unlimited).toContain("x: 1");
+  });
+
+  it("undefined keeps the default", () => {
+    expect(Bun.inspect(deep, { depth: undefined })).toBe(Bun.inspect(deep));
+    expect(Bun.inspect(deep, { depth: undefined })).toContain("[Object ...]");
+  });
+
+  it("positional null means unlimited", () => {
+    expect(Bun.inspect(deep, null)).toBe(unlimited);
+  });
+});
+
 it("getters", () => {
   const obj = {
     get foo() {

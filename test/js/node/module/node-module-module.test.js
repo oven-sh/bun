@@ -266,13 +266,15 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       for (const invalid of [null, {}, [], Symbol(), () => {}, true, false, 1, 0]) {
         expect(() => findPackageJSON("", invalid)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
       }
-      // A malformed file: URL is rejected rather than treated as an empty path.
-      expect(() => findPackageJSON("file://[", import.meta.path)).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_URL", message: "Invalid URL: file://[" }),
-      );
-      expect(() => findPackageJSON("dep", "file://[")).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
-      // Any other URL scheme is rejected, like fileURLToPath() does, instead of
-      // being treated as a path or a package name.
+      // URLs go through the same checks as fileURLToPath(), in either position,
+      // instead of being treated as a path or a package name.
+      const invalidURL = expect.objectContaining({
+        code: "ERR_INVALID_URL",
+        message: "Invalid URL",
+        input: "file://[",
+      });
+      expect(() => findPackageJSON("file://[", import.meta.path)).toThrow(invalidURL);
+      expect(() => findPackageJSON("dep", "file://[")).toThrow(invalidURL);
       const notFile = expect.objectContaining({
         code: "ERR_INVALID_URL_SCHEME",
         message: "The URL must be of scheme file",
@@ -281,6 +283,23 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       expect(() => findPackageJSON("dep", "https://example.com/app.js")).toThrow(notFile);
       expect(() => findPackageJSON("node:fs", import.meta.path)).toThrow(notFile);
       expect(() => findPackageJSON("data:text/javascript,export{}")).toThrow(notFile);
+      const encodedSeparator = pathToFileURL(import.meta.path).href.replace(/\/([^/]+)$/, "%2F$1");
+      expect(() => findPackageJSON(encodedSeparator)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_FILE_URL_PATH" }),
+      );
+      expect(() => findPackageJSON("dep", encodedSeparator)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_FILE_URL_PATH" }),
+      );
+      if (!isWindows) {
+        // On Windows a host makes a UNC path; elsewhere only "localhost" is allowed.
+        const withHost = pathToFileURL(import.meta.path).href.replace("file://", "file://somehost");
+        expect(() => findPackageJSON("dep", withHost)).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_FILE_URL_HOST" }),
+        );
+        expect(() => findPackageJSON(withHost)).toThrow(expect.objectContaining({ code: "ERR_INVALID_FILE_URL_HOST" }));
+        const withLocalhost = pathToFileURL(import.meta.path).href.replace("file://", "file://localhost");
+        expect(findPackageJSON(withLocalhost)).toBe(findPackageJSON(import.meta.path));
+      }
       // Longer than any path the OS accepts (including Windows' ~96 KiB limit).
       const tooLong = path.join(import.meta.dir, Buffer.alloc(100_000, "a").toString());
       expect(() => findPackageJSON("dep", tooLong)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
@@ -288,6 +307,42 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
       );
     });
+
+    // Compiled executables do not load package.json files for resolution, but
+    // findPackageJSON() is about the files on disk and must still find them.
+    test("works in a compiled executable", async () => {
+      using dir = tempDir("find-package-json-compiled", {
+        "entry.js": `
+            import { findPackageJSON } from "node:module";
+            import path from "node:path";
+            const app = path.join(process.cwd(), "src", "app.js");
+            console.log(JSON.stringify([findPackageJSON("dep", app), findPackageJSON(app)]));
+          `,
+        "package.json": JSON.stringify({ name: "app" }),
+        "src/app.js": "",
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep" }),
+      });
+      const exe = path.join(String(dir), isWindows ? "app.exe" : "app");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", path.join(String(dir), "entry.js"), "--outfile", exe],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error:");
+      expect(buildExitCode).toBe(0);
+
+      await using proc = Bun.spawn({ cmd: [exe], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        path.join(String(dir), "node_modules", "dep", "package.json"),
+        path.join(String(dir), "package.json"),
+      ]);
+      expect(exitCode).toBe(0);
+    }, // Compiling copies the whole runtime, which takes a while in debug builds.
+    60_000);
 
     test("oversized specifiers throw ERR_MODULE_NOT_FOUND", () => {
       const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });

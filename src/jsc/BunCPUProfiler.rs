@@ -5,7 +5,7 @@ use crate::VM;
 use bun_core::{OwnedString, String as BunString};
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
-use bun_paths::PathBuffer;
+use bun_paths::{AutoAbsPathChecked, PathBuffer};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -16,25 +16,23 @@ pub(crate) enum ProfilerError {
     FilenameTooLong,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct CPUProfilerConfig {
-    // CLI-arg-backed and
-    // process-lifetime, so `&'static` is sound (no struct lifetime params).
-    pub name: &'static [u8],
-    pub dir: &'static [u8],
+    /// Empty: the default `CPU.<date>.<pid>.<tid>.<seq>` name / the cwd.
+    pub name: Box<[u8]>,
+    pub dir: Box<[u8]>,
     pub md_format: bool,
     pub json_format: bool,
     pub interval: u32,
-    /// 0 for the main thread; a worker's execution context id otherwise. Only
-    /// used to keep concurrently-written default filenames distinct.
+    /// `worker.threadId` (0 on the main thread): the tid segment of node's default profile names.
     pub thread_id: u32,
 }
 
 impl Default for CPUProfilerConfig {
     fn default() -> Self {
         Self {
-            name: b"",
-            dir: b"",
+            name: Box::default(),
+            dir: Box::default(),
             md_format: false,
             json_format: false,
             interval: 1000,
@@ -110,8 +108,8 @@ fn write_profile_to_file(
     let profile_slice = profile_string.to_utf8();
     // (defer profile_slice.deinit() — handled by Drop on Utf8Slice)
 
-    // Determine the output path using AutoAbsPath
-    let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+    // dir/name are unbounded CLI input, so use the length-checked variant.
+    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
     // (defer path_buf.deinit() — handled by Drop)
 
     build_output_path(&mut path_buf, config, is_md_format)?;
@@ -133,7 +131,7 @@ fn write_profile_to_file(
         let errno = err.get_errno();
         if errno == Errno::ENOENT || errno == Errno::EPERM || errno == Errno::EACCES {
             if !config.dir.is_empty() {
-                let _ = Fd::cwd().make_path(config.dir);
+                let _ = Fd::cwd().make_path(&config.dir);
                 // Retry write
                 let retry_result = bun_sys::File::write_file_os_path(
                     Fd::cwd(),
@@ -155,7 +153,7 @@ fn write_profile_to_file(
 }
 
 fn build_output_path(
-    path: &mut bun_paths::AutoAbsPath,
+    path: &mut AutoAbsPathChecked,
     config: &CPUProfilerConfig,
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {
@@ -172,28 +170,27 @@ fn build_output_path(
                 let ext: &[u8] = if is_md_format { b".md" } else { b".cpuprofile" };
                 let mut cursor = std::io::Cursor::new(&mut filename_buf[..]);
                 cursor
-                    .write_all(config.name)
+                    .write_all(&config.name)
                     .and_then(|_| cursor.write_all(ext))
                     .map_err(|_| ProfilerError::FilenameTooLong)?;
                 let len = usize::try_from(cursor.position()).expect("int cast");
                 break 'blk &filename_buf[..len];
             } else {
-                break 'blk config.name;
+                break 'blk &config.name;
             }
         }
     } else {
         generate_default_filename(&mut filename_buf, is_md_format, config.thread_id)?
     };
 
-    // Append directory if specified
     if !config.dir.is_empty() {
-        // AutoAbsPath uses CheckLength::ASSUME — Err arm is unreachable.
-        // See paths/Path.rs `options::Result` note.
-        path.join(&[config.dir]).expect("unreachable");
+        path.join(&[&config.dir])
+            .map_err(|_| ProfilerError::FilenameTooLong)?;
     }
 
-    // Append filename
-    path.append(filename).expect("unreachable");
+    // `join` resolves an absolute --cpu-prof-name where `append` asserts on it.
+    path.join(&[filename])
+        .map_err(|_| ProfilerError::FilenameTooLong)?;
 
     Ok(())
 }
@@ -203,38 +200,83 @@ fn generate_default_filename(
     md_format: bool,
     thread_id: u32,
 ) -> Result<&[u8], ProfilerError> {
-    // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile (or .md for markdown format)
-    // Use microsecond timestamp for uniqueness
-    let timespec = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    write_diagnostic_filename(&mut cursor, "CPU", extension, thread_id)
+        .map_err(|_| ProfilerError::FilenameTooLong)?;
+    let len = usize::try_from(cursor.position()).expect("int cast");
+    Ok(&buf[..len])
+}
+
+/// Node's DiagnosticFilename: `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
+/// https://github.com/nodejs/node/blob/main/src/util.cc (MakeFilename)
+pub(crate) fn write_diagnostic_filename(
+    cursor: &mut dyn std::io::Write,
+    prefix: &str,
+    extension: &str,
+    tid: u32,
+) -> std::io::Result<()> {
     #[cfg(windows)]
     let pid = bun_sys::windows::GetCurrentProcessId();
     #[cfg(not(windows))]
     // SAFETY: getpid() is always safe to call.
     let pid = unsafe { libc::getpid() };
 
-    let epoch_microseconds: u64 = u64::try_from(
-        timespec
-            .sec
-            .wrapping_mul(1_000_000)
-            .wrapping_add(timespec.nsec / 1000),
+    let (year, month, day, hour, minute, second) = local_time_now();
+
+    static SEQ: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    let seq = SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+
+    write!(
+        cursor,
+        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.{tid}.{seq:03}{extension}"
     )
-    .unwrap();
+}
 
-    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
+#[cfg(not(windows))]
+pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs()) as libc::time_t;
+    let mut tm: libc::tm = bun_core::ffi::zeroed();
+    // SAFETY: localtime_r only writes into `tm` and is thread-safe.
+    unsafe { libc::localtime_r(&raw const secs, &raw mut tm) };
+    (
+        tm.tm_year + 1900,
+        (tm.tm_mon + 1) as u32,
+        tm.tm_mday as u32,
+        tm.tm_hour as u32,
+        tm.tm_min as u32,
+        tm.tm_sec as u32,
+    )
+}
 
-    let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    // Worker threads carry their id so concurrent writes can't land on the same
-    // name; the main thread keeps the name it has always had.
-    if thread_id == 0 {
-        write!(cursor, "CPU.{}.{}{}", epoch_microseconds, pid, extension)
-    } else {
-        write!(
-            cursor,
-            "CPU.{}.{}.{}{}",
-            epoch_microseconds, pid, thread_id, extension
-        )
+#[cfg(windows)]
+pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+    #[repr(C)]
+    #[derive(Default)]
+    struct SystemTime {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        milliseconds: u16,
     }
-    .map_err(|_| ProfilerError::FilenameTooLong)?;
-    let len = usize::try_from(cursor.position()).expect("int cast");
-    Ok(&buf[..len])
+    unsafe extern "system" {
+        fn GetLocalTime(system_time: *mut SystemTime);
+    }
+    let mut st = SystemTime::default();
+    // SAFETY: GetLocalTime only writes the out-param (kernel32 SYSTEMTIME layout).
+    unsafe { GetLocalTime(&mut st) };
+    (
+        i32::from(st.year),
+        u32::from(st.month),
+        u32::from(st.day),
+        u32::from(st.hour),
+        u32::from(st.minute),
+        u32::from(st.second),
+    )
 }

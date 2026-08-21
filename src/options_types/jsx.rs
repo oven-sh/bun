@@ -268,7 +268,7 @@ impl Pragma {
 
         let mut needs_alloc = false;
         let mut current_i: usize = 0;
-        for str in new.split(|b| *b == b'.') {
+        for str in strings::split(new, b".") {
             if str.is_empty() {
                 continue;
             }
@@ -286,7 +286,7 @@ impl Pragma {
         }
 
         let mut out: Vec<Box<[u8]>> = Vec::with_capacity(count);
-        for str in new.split(|b| *b == b'.') {
+        for str in strings::split(new, b".") {
             if str.is_empty() {
                 continue;
             }

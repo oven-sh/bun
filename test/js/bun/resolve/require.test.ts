@@ -10,14 +10,17 @@ describe("require(specifier)", () => {
   it.failing("has an empty prototype", () => expect(require.prototype).toEqual({}));
 
   describe("when specifier is a path to a non js/ts/etc file", () => {
-    it.each(["obj.toml", "obj.json", "obj.jsonc"])("require('%s') synchronously produces an object", file => {
-      const result = require(fixture(file));
-      expect(result).toEqual({
-        foo: {
-          bar: "baz",
-        },
-      });
-    });
+    it.each(["obj.toml", "obj.json", "obj.jsonc", "obj.xml"])(
+      "require('%s') synchronously produces an object",
+      file => {
+        const result = require(fixture(file));
+        expect(result).toEqual({
+          foo: {
+            bar: "baz",
+          },
+        });
+      },
+    );
 
     // note: toml does not support top-level arrays
     it.each(["arr.json", "arr.jsonc"])("require('%s') synchronously produces an array", file => {

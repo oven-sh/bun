@@ -81,6 +81,8 @@ impl core::fmt::Debug for GlobalRef {
     }
 }
 
+bun_core::declare_scope!(TerminationTaken, hidden);
+
 impl JSGlobalObject {
     /// Alias of the macro-provided [`as_mut_ptr`](Self::as_mut_ptr) kept for
     /// call-site readability where mutation is not the intent.
@@ -104,6 +106,8 @@ impl JSGlobalObject {
         JsError::Thrown
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_out_of_memory(&self) -> JsError {
         // See `throw_stack_overflow` for the validation-scope rationale.
         crate::validation_scope!(scope, self);
@@ -116,6 +120,8 @@ impl JSGlobalObject {
         JSGlobalObject__createOutOfMemoryError(self)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
         JSGlobalObject__throwOutOfMemoryError(self);
         JSValue::ZERO
@@ -377,10 +383,6 @@ impl JSGlobalObject {
             format_args!("Expected {} to be a {} for '{}'.", field, typename, name_),
         )
         .to_js()
-    }
-
-    pub fn to_js<T: Into<JSValue>>(&self, value: T) -> JsResult<JSValue> {
-        Ok(value.into())
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
@@ -857,8 +859,8 @@ impl JSGlobalObject {
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
-            args.first().copied().unwrap_or(JSValue::ZERO),
-            args.get(1).copied().unwrap_or(JSValue::ZERO),
+            args.first().copied().unwrap_or_default(),
+            args.get(1).copied().unwrap_or_default(),
         );
     }
 
@@ -929,15 +931,6 @@ impl JSGlobalObject {
         self.throw_value(err_value)
     }
 
-    // TODO: delete these two fns
-    pub fn ref_(&self) -> &JSGlobalObject {
-        self
-    }
-    #[inline]
-    pub fn ctx(&self) -> &JSGlobalObject {
-        self.ref_()
-    }
-
     pub fn create_aggregate_error(
         &self,
         errors: &[JSValue],
@@ -985,6 +978,13 @@ impl JSGlobalObject {
         JSGlobalObject__hasException(self)
     }
 
+    /// The pending exception is the VM's TerminationException: for host code that handles ordinary errors
+    /// itself but must let a termination keep unwinding without taking it.
+    #[inline]
+    pub fn has_pending_termination_exception(&self) -> bool {
+        crate::cpp::JSC__JSGlobalObject__hasPendingTerminationException(self)
+    }
+
     pub fn clear_exception(&self) {
         JSGlobalObject__clearException(self)
     }
@@ -1009,35 +1009,35 @@ impl JSGlobalObject {
             JsError::OutOfMemory => {
                 let _ = self.throw_out_of_memory();
             }
-            JsError::Terminated => {}
+            // Already taken at the boundary; nothing is pending. Hand back the (inert) termination cell.
+            JsError::Terminated => return self.vm().termination_exception(),
         }
 
         self.try_take_exception().unwrap_or_else(|| {
-            panic!(
-                "A JavaScript exception was thrown, but it was cleared before it could be read."
-            );
+            // Nothing pending behind a `Thrown`. On a VM whose stop has been carried out that is a
+            // `Terminated` that lost its name on the way here (through an error type that has none for
+            // it): stand down the same way. Anywhere else it is a bug — the exception was cleared early.
+            if self.vm().execution_forbidden() {
+                bun_core::scoped_log!(
+                    TerminationTaken,
+                    "take_exception(Thrown) with nothing pending on a stopped VM: a Terminated collapsed to Thrown"
+                );
+                return self.vm().termination_exception();
+            }
+            panic!("A JavaScript exception was thrown, but it was cleared before it could be read.")
         })
     }
 
+    /// The taken exception as an error value; the VM's termination comes back as its (inert) cell —
+    /// every reporter recognises and drops it.
     pub fn take_error(&self, proof: JsError) -> JSValue {
-        match proof {
-            JsError::Thrown => {}
-            JsError::OutOfMemory => {
-                let _ = self.throw_out_of_memory();
-            }
-            JsError::Terminated => {}
+        let exception = self.take_exception(proof);
+        if exception.is_termination_exception() {
+            return exception;
         }
-
-        self.try_take_exception()
-            .unwrap_or_else(|| {
-                panic!(
-                    "A JavaScript exception was thrown, but it was cleared before it could be read."
-                );
-            })
-            .to_error()
-            .unwrap_or_else(|| {
-                panic!("Couldn't convert a JavaScript exception to an Error instance.");
-            })
+        exception.to_error().unwrap_or_else(|| {
+            panic!("Couldn't convert a JavaScript exception to an Error instance.");
+        })
     }
 
     pub fn try_take_exception(&self) -> Option<JSValue> {
@@ -1046,28 +1046,6 @@ impl JSGlobalObject {
             return None;
         }
         Some(value)
-    }
-
-    /// This is for the common scenario you are calling into JavaScript, but there is
-    /// no logical way to handle a thrown exception other than to treat it as unhandled.
-    ///
-    /// The pattern:
-    ///
-    /// ```ignore
-    /// let result = match value.call(...) {
-    ///     Ok(v) => v,
-    ///     Err(err) => return global.report_active_exception_as_unhandled(err),
-    /// };
-    /// ```
-    ///
-    pub fn report_active_exception_as_unhandled(&self, err: JsError) {
-        let exception = self.take_exception(err);
-        if !exception.is_termination_exception() {
-            let _ = self
-                .bun_vm()
-                .as_mut()
-                .uncaught_exception(self, exception, false);
-        }
     }
 
     pub fn vm(&self) -> &VM {
@@ -1103,13 +1081,13 @@ impl JSGlobalObject {
     /// C++ shim into Rust callers (905 out-of-line `callq` sites in the
     /// release binary), and
     /// the FFI result is provably the same singleton — debug-asserted below
-    /// and in [`Self::bun_vm`]. Same-thread callers only; cross-thread paths
-    /// must use [`Self::bun_vm_concurrently`].
+    /// and in [`Self::bun_vm`]. JS thread only; another thread reaches a VM
+    /// through its [`VmHandle`](crate::VmHandle), never through a global.
     #[inline]
     pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
         debug_assert!(
             self.bun_vm_unsafe() == VirtualMachine::get_mut_ptr().cast::<c_void>(),
-            "bun_vm_ptr called off the JS thread; use bun_vm_concurrently",
+            "bun_vm_ptr called off the JS thread",
         );
         VirtualMachine::get_mut_ptr()
     }
@@ -1132,8 +1110,7 @@ impl JSGlobalObject {
     /// Reads the thread-local directly instead of calling
     /// `JSC__JSGlobalObject__bunVM` — cross-language LTO does not inline the
     /// C++ shim, and the two are address-equal by construction (asserted in
-    /// debug builds). Same-thread callers only; cross-thread paths must use
-    /// [`Self::bun_vm_concurrently`].
+    /// debug builds). JS thread only (see [`Self::bun_vm_ptr`]).
     #[inline]
     pub fn bun_vm(&self) -> &'static VirtualMachine {
         #[cfg(debug_assertions)]
@@ -1152,19 +1129,10 @@ impl JSGlobalObject {
         VirtualMachine::get()
     }
 
-    /// We can't do the threadlocal check when queued from another thread
-    pub fn bun_vm_concurrently(&self) -> *mut VirtualMachine {
-        self.bun_vm_unsafe().cast::<VirtualMachine>()
-    }
-
-    pub fn handle_rejected_promises(&self) {
-        // JSC__JSGlobalObject__handleRejectedPromises catches and reports its
-        // own exceptions; the only thing that escapes is a TerminationException
-        // (worker terminate() or process.exit()), and the request flag may
-        // already be cleared by the time we observe it. Nothing actionable here.
-        let _ = crate::from_js_host_call_generic(self, || {
-            JSC__JSGlobalObject__handleRejectedPromises(self)
-        });
+    /// Runs the `unhandledRejection` machinery, which catches and reports its own exceptions; what
+    /// can come back is the VM's termination (taken at this boundary when at loop level).
+    pub fn handle_rejected_promises(&self) -> JsResult<()> {
+        crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
     }
 
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {
@@ -1386,17 +1354,6 @@ impl JSGlobalObject {
         Zig__GlobalObject__createForTestIsolation(old_global, console)
     }
 
-    pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
-        crate::mark_binding();
-        let exc = self
-            .take_exception(proof)
-            .as_exception(std::ptr::from_ref::<VM>(self.vm()).cast_mut())
-            .expect("exception value must be an Exception cell");
-        // `as_exception` returned a non-null cell pointer rooted on the VM;
-        // `Exception` is an opaque ZST handle — safe deref (panics on null).
-        let _ = report_uncaught_exception(self, crate::Exception::opaque_ref(exc));
-    }
-
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {
         code.fmt(self, args)
     }
@@ -1502,13 +1459,6 @@ unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
     crate::mark_binding();
     // SAFETY: C++ passes valid non-null pointers.
     unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
-}
-
-// Safe wrapper used internally.
-#[inline]
-pub(crate) fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exception) -> JSValue {
-    crate::mark_binding();
-    VirtualMachine::report_uncaught_exception(global, exception)
 }
 
 #[unsafe(no_mangle)]

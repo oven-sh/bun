@@ -25,6 +25,7 @@ unsafe extern "C" {
     safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> String;
     safe fn URL__getFileURLString(input: &mut String) -> String;
     safe fn URL__pathFromFileURL(input: &mut String) -> String;
+    safe fn Bun__fileURLToPath(global: &JSGlobalObject, value: JSValue) -> String;
 }
 
 impl URL {
@@ -36,6 +37,14 @@ impl URL {
     pub fn path_from_file_url(str: String) -> String {
         let mut input = str;
         URL__pathFromFileURL(&mut input)
+    }
+
+    /// `Bun.fileURLToPath()`: `value` is a `file:` URL string or `URL`. Throws
+    /// Node's errors for anything else (another scheme, a host on POSIX,
+    /// encoded separators), unlike [`Self::path_from_file_url`].
+    #[track_caller]
+    pub fn file_url_to_path_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
+        crate::call_check_slow(global, || Bun__fileURLToPath(global, value))
     }
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result

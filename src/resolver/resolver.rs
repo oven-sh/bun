@@ -6457,17 +6457,18 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Record if this directory has a package.json file
-        if self.opts.load_package_json {
-            if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
-                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                // dies (NLL) before any later `&mut` to this slot.
-                let entry = lookup.entry();
-                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
-                {
-                    info.flags
-                        .set_present(DirInfo::Flag::HasPackageJsonFile, true);
+        // Record if this directory has a package.json file. Loading it is
+        // optional (compiled executables skip it), but `findPackageJSON()` still
+        // needs to know it is there.
+        if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
+            // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+            // dies (NLL) before any later `&mut` to this slot.
+            let entry = lookup.entry();
+            // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+            if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File {
+                info.flags
+                    .set_present(DirInfo::Flag::HasPackageJsonFile, true);
+                if self.opts.load_package_json {
                     info.package_json = if self.use_package_manager()
                         && !info.has_node_modules()
                         && !info.is_node_modules()

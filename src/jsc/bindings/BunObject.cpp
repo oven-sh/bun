@@ -839,11 +839,11 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsonValue));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Node's `url.fileURLToPath()` rules. Returns a null string after throwing.
+// Shared by `Bun.fileURLToPath()` and `node:module`'s `findPackageJSON()`.
+static WTF::String fileURLToPath(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue arg0)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue arg0 = callFrame->argument(0);
     WTF::URL url;
 
     auto path = JSC::JSValue::encode(arg0);
@@ -852,6 +852,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
         if (arg0.isString()) {
             url = WTF::URL(arg0.toWTFString(globalObject));
             RETURN_IF_EXCEPTION(scope, {});
+            if (!url.isValid()) [[unlikely]] {
+                // Like Node, the input goes on the error rather than into the message.
+                auto* error = createError(globalObject, ErrorCode::ERR_INVALID_URL, "Invalid URL"_s);
+                error->putDirect(vm, vm.propertyNames->input, arg0);
+                scope.throwException(globalObject, error);
+                return {};
+            }
         } else {
             Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "url"_s, "string"_s, arg0);
             return {};
@@ -909,7 +916,24 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     }
 #endif
 
-    return JSC::JSValue::encode(JSC::jsString(vm, fileSystemPath));
+    return fileSystemPath;
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto path = fileURLToPath(globalObject, scope, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(JSC::jsString(vm, path));
+}
+
+extern "C" BunString Bun__fileURLToPath(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto path = fileURLToPath(globalObject, scope, JSC::JSValue::decode(value));
+    RETURN_IF_EXCEPTION(scope, { BunStringTag::Dead });
+    return Bun::toStringRef(path);
 }
 
 /* Source for BunObject.lut.h

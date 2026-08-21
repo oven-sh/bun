@@ -89,6 +89,8 @@ pub mod kernel32 {
 
         /// No preconditions; reads the calling thread's ID.
         pub safe fn GetCurrentThreadId() -> DWORD;
+        /// No preconditions; reads `PEB.BeingDebugged`.
+        pub safe fn IsDebuggerPresent() -> BOOL;
     }
 }
 
@@ -1207,9 +1209,13 @@ pub fn exe_image_range() -> core::ops::Range<usize> {
 
 // `STATUS_*` values surfaced as `ExceptionCode` (winnt.h).
 pub const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC0000005;
+pub const EXCEPTION_BREAKPOINT: u32 = 0x80000003;
 pub const EXCEPTION_DATATYPE_MISALIGNMENT: u32 = 0x80000002;
 pub const EXCEPTION_ILLEGAL_INSTRUCTION: u32 = 0xC000001D;
 pub const EXCEPTION_STACK_OVERFLOW: u32 = 0xC00000FD;
+/// Exit status of `__fastfail()`, i.e. of an unhandled `abort()`; never an
+/// `ExceptionCode`.
+pub const STATUS_STACK_BUFFER_OVERRUN: u32 = 0xC0000409;
 
 /// `EXCEPTION_RECORD` (winnt.h).
 #[repr(C)]

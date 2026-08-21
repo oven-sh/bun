@@ -457,7 +457,6 @@ mod draft {
 
     use core::cell::Cell;
     use core::ffi::c_char;
-    #[cfg(not(windows))]
     use core::ffi::c_int;
     #[cfg(windows)]
     use core::ffi::c_long;
@@ -487,24 +486,29 @@ mod draft {
     /// `AtomicBool` static. Re-exported here for shorter call sites.
     use bun_core::output::enable_ansi_colors_stderr;
 
-    /// On POSIX this is `libc::abort()` (async-signal-safe).
-    /// On Windows this is *not* MSVCRT `abort()` — it is
-    /// `if (Debug) breakpoint(); kernel32.ExitProcess(3);`. UCRT `abort()` would
-    /// raise SIGABRT, may print `R6010 - abort() has been called` to stderr, and
-    /// can pop a Watson/WER dialog — none of which we want here.
+    /// Last resort when the crash handler itself fails; reported crashes end
+    /// in `crash()`.
     #[inline(always)]
     fn abort() -> ! {
         #[cfg(windows)]
-        {
-            #[cfg(debug_assertions)]
-            core::intrinsics::breakpoint();
-            bun_sys::windows::kernel32::ExitProcess(3)
-        }
+        terminate_windows(3);
         #[cfg(not(windows))]
         // SAFETY: libc::abort has no preconditions; never returns.
         unsafe {
             libc::abort()
         }
+    }
+
+    /// Not UCRT `abort()`: `init` routes its SIGABRT back into `crash_handler`.
+    /// An unconditional `int3` would also exit with `STATUS_BREAKPOINT`
+    /// instead of `code` whenever no debugger is attached.
+    #[cfg(windows)]
+    fn terminate_windows(code: u32) -> ! {
+        #[cfg(debug_assertions)]
+        if bun_sys::windows::kernel32::IsDebuggerPresent() != 0 {
+            core::intrinsics::breakpoint();
+        }
+        bun_sys::windows::kernel32::ExitProcess(code)
     }
     use super::cpu_features::CPUFeatures;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -629,9 +633,12 @@ mod draft {
         BusError(usize),
         /// Posix-only
         FloatingPointError(usize),
-        /// Posix-only; libc/mimalloc `abort()`, `std::terminate`, etc.
+        /// `abort()` (WTF `RELEASE_ASSERT` in release builds, mimalloc, ...):
+        /// SIGABRT on POSIX, the CRT SIGABRT hook on Windows.
         Abort,
-        /// Posix-only; `__builtin_trap()` / WTF `CRASH()` / `brk` on aarch64.
+        /// `int3`/`brk` (JSC JIT `abortWithReason()`, LLInt `break`): SIGTRAP on
+        /// POSIX, `EXCEPTION_BREAKPOINT` on Windows. arm64 Windows reports every
+        /// `brk` immediate except `0xF000` as `IllegalInstruction` instead.
         Trap(usize),
         /// Windows-only
         DatatypeMisalignment,
@@ -665,6 +672,28 @@ mod draft {
                 | CrashReason::StackOverflow
                 | CrashReason::ZigError(_)
                 | CrashReason::OutOfMemory => libc::SIGABRT,
+            }
+        }
+
+        /// Windows counterpart of `terminal_signal`: the status the unreported
+        /// crash would have exited with, so `bun test --parallel` and CI
+        /// classify it the same way (a fixed code looks like `process.exit`).
+        #[cfg(windows)]
+        fn terminal_exit_code(&self) -> u32 {
+            use bun_sys::windows as w;
+            match self {
+                CrashReason::SegmentationFault(_) => w::EXCEPTION_ACCESS_VIOLATION,
+                CrashReason::IllegalInstruction(_) => w::EXCEPTION_ILLEGAL_INSTRUCTION,
+                CrashReason::DatatypeMisalignment => w::EXCEPTION_DATATYPE_MISALIGNMENT,
+                CrashReason::StackOverflow => w::EXCEPTION_STACK_OVERFLOW,
+                CrashReason::Trap(_) => w::EXCEPTION_BREAKPOINT,
+                CrashReason::Abort
+                | CrashReason::Panic(_)
+                | CrashReason::Unreachable
+                | CrashReason::BusError(_)
+                | CrashReason::FloatingPointError(_)
+                | CrashReason::ZigError(_)
+                | CrashReason::OutOfMemory => w::STATUS_STACK_BUFFER_OVERRUN,
             }
         }
     }
@@ -977,7 +1006,7 @@ mod draft {
                                         }
                                         // NOTE: `GetThreadDescription` heap-allocates `name` and the
                                         // caller is meant to `LocalFree` it. This runs on a
-                                        // `noreturn` crash path immediately before `ExitProcess(3)`,
+                                        // `noreturn` crash path immediately before `ExitProcess`,
                                         // so the leak is intentional.
                                     } else {
                                         if write!(
@@ -1703,6 +1732,20 @@ mod draft {
                     >(handle_unhandled_exception_windows),
                 ));
             }
+
+            // UCRT `abort()` (every C++ RELEASE_ASSERT in release builds) raises
+            // no exception for the handlers above: it calls this CRT signal slot
+            // if set and otherwise `__fastfail()`s.
+            // SAFETY: `handle_abort_windows` is a `void (*)(int)` that lives for
+            // the whole process.
+            unsafe {
+                libc::signal(
+                    libc::SIGABRT,
+                    handle_abort_windows as *const () as libc::sighandler_t,
+                );
+            }
+            // Debug UCRT only: skip its own "abort() has been called" dialog.
+            _set_abort_behavior(0, WRITE_ABORT_MSG);
         }
         #[cfg(any(
             target_os = "macos",
@@ -1942,9 +1985,10 @@ mod draft {
                 debug_assert!(rc != 0);
             }
             // SAFETY: no memory-safety preconditions; clears the top-level
-            // filter back to the OS default.
+            // filter and the CRT SIGABRT slot back to their defaults.
             unsafe {
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
+                libc::signal(libc::SIGABRT, libc::SIG_DFL);
             }
             return;
         }
@@ -1984,6 +2028,10 @@ mod draft {
                 CrashReason::IllegalInstruction(record.ExceptionAddress as usize)
             }
             bun_sys::windows::EXCEPTION_STACK_OVERFLOW => CrashReason::StackOverflow,
+            // A debugger, if attached, consumes these before any handler runs.
+            bun_sys::windows::EXCEPTION_BREAKPOINT => {
+                CrashReason::Trap(record.ExceptionAddress as usize)
+            }
             _ => return None,
         })
     }
@@ -2101,6 +2149,29 @@ mod draft {
                 fp: info.ContextRecord as usize,
             },
         );
+    }
+
+    /// Called synchronously by UCRT `raise(SIGABRT)` on the aborting thread,
+    /// after the slot has been reset to `SIG_DFL` (one-shot, like `SA_RESETHAND`).
+    #[cfg(windows)]
+    extern "C" fn handle_abort_windows(_sig: c_int) {
+        crash_handler(
+            CrashReason::Abort,
+            TraceSeed::BeginAddr(debug::return_address()),
+        );
+    }
+
+    /// `_WRITE_ABORT_MSG` (`<stdlib.h>`).
+    #[cfg(windows)]
+    const WRITE_ABORT_MSG: core::ffi::c_uint = 0x1;
+
+    #[cfg(windows)]
+    unsafe extern "C" {
+        /// UCRT `<stdlib.h>`; by-value integers, no preconditions.
+        safe fn _set_abort_behavior(
+            flags: core::ffi::c_uint,
+            mask: core::ffi::c_uint,
+        ) -> core::ffi::c_uint;
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -2896,7 +2967,7 @@ mod draft {
             // NOTE: on success `CreateProcessW` returns two open kernel handles in
             // `process.hProcess` / `process.hThread` that the caller is meant to
             // `CloseHandle`. `report()` runs immediately before
-            // `crash()` → `ExitProcess(3)`, so the kernel reclaims them anyway.
+            // `crash()` → `ExitProcess`, so the kernel reclaims them anyway.
             let _ = spawn_result;
             let _ = url;
         }
@@ -2970,7 +3041,7 @@ mod draft {
     /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.
     /// On POSIX this re-raises the signal that caused the crash (or SIGABRT
     /// for panics) so the parent sees the real fault and core dumps are
-    /// attributed correctly.
+    /// attributed correctly; Windows exits with `terminal_exit_code` instead.
     fn crash(reason: CrashReason) -> ! {
         #[cfg(not(windows))]
         {
@@ -3026,17 +3097,7 @@ mod draft {
             core::intrinsics::abort();
         }
         #[cfg(windows)]
-        {
-            let _ = reason;
-            // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it
-            // includes a breakpoint which makes crashes easier to debug.
-            //
-            // The same-module `abort()` helper on
-            // Windows is `breakpoint()` (Debug only) then `kernel32.ExitProcess(3)`.
-            // Do NOT call MSVCRT `libc::abort()` here — that raises SIGABRT, may print
-            // the CRT `abort() has been called` message, and can invoke WER.
-            abort()
-        }
+        terminate_windows(reason.terminal_exit_code())
     }
 
     pub static VERBOSE_ERROR_TRACE: AtomicBool = AtomicBool::new(false);

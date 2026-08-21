@@ -783,6 +783,12 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let _ = RemoveVectoredExceptionHandler(handle);
             let _ = SetUnhandledExceptionFilter(None);
         }
+        // The crash handler's CRT SIGABRT hook; UCRT `raise(6)` and `abort()`
+        // below both go through this slot.
+        // SAFETY: `SIG_DFL` is a valid disposition.
+        unsafe {
+            let _ = libc::signal(libc::SIGABRT, libc::SIG_DFL);
+        }
     }
 
     // clear signal handler

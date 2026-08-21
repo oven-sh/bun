@@ -352,37 +352,53 @@ test.if(process.platform === "darwin")("macOS has the assumed image offset", () 
   expect(getMachOImageZeroOffset()).toBe(0x100000000);
 });
 
-test("raise ignoring panic handler does not trigger the panic handler", async () => {
-  let sent = false;
-  const resolve_handler = Promise.withResolvers();
-
-  using server = Bun.serve({
-    port: 0,
-    fetch(request, server) {
-      sent = true;
-      resolve_handler.resolve();
-      return new Response("OK");
-    },
-  });
-
-  const proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "raiseIgnoringPanicHandler"],
-    env: mergeWindowEnvs([
-      bunEnv,
-      {
-        BUN_CRASH_REPORT_URL: server.url.toString(),
-        BUN_ENABLE_CRASH_REPORTING: "1",
+// `raise_ignoring_panic_handler` is how `bun run` re-raises the signal that
+// killed the script: it must tear down every crash-handler hook first, SIGABRT
+// included (on Windows that is the CRT SIGABRT slot, which UCRT `raise()`
+// reaches from SIGABRT's POSIX number too), then die of the raw signal.
+// The crash handler prints the report URL before uploading, so a clean stderr
+// is the proof that no report was made or sent.
+describe("raise ignoring panic handler does not trigger the panic handler", () => {
+  test.concurrent.each(["SIGSEGV", "SIGABRT"] as const)("%s", async signal => {
+    let sent = false;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        sent = true;
+        return new Response("OK");
       },
-    ]),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("bun:internal-for-testing").crash_handler.raiseIgnoringPanicHandler("${signal}")`,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("oh no");
+    expect(stderr).not.toContain(server.url.toString());
+    expect(sent).toBe(false);
+    if (isWindows) {
+      // UCRT raise() with the disposition back at SIG_DFL is _exit(3).
+      expect(exitCode).toBe(3);
+    } else {
+      expect(proc.signalCode).toBe(signal);
+    }
   });
-
-  await proc.exited;
-
-  /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
-  await Promise.race([resolve_handler.promise, Bun.sleep(2000)]);
-
-  expect(proc.exited).resolves.not.toBe(0);
-  expect(sent).toBe(false);
 });
 
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
@@ -500,8 +516,100 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
   });
 });
 
+// Windows twin of the two POSIX blocks above ("terminal signal reflects the
+// crash cause" and "SIGABRT/SIGTRAP are caught"). Windows delivers no signals:
+//  - UCRT abort() (what WTF CRASH()/RELEASE_ASSERT compiles to in release
+//    builds, and what mimalloc, BoringSSL and plain C code call) runs the
+//    CRT-level SIGABRT handler if one is installed and otherwise __fastfail()s.
+//    A fast-fail raises no exception, so the VEH/UEF crash handlers never saw
+//    it and every C++ assertion exited 0xC0000409 with nothing on stderr.
+//    init() now installs a CRT SIGABRT handler.
+//  - On x64, int3 (JSC JIT abortWithReason, LLInt break) raises
+//    EXCEPTION_BREAKPOINT, which the exception classifier did not know, so
+//    those died silently too. (arm64 Windows reports JSC's brk immediates as
+//    illegal instructions, which were already classified.)
+//  - After printing, the handler used to ExitProcess(3) for every crash, which
+//    a parent cannot tell from process.exit(3); it now exits with the status
+//    the unreported crash would have had. Bun.spawn reports the low byte of a
+//    Windows exit code, hence the truncated values below.
+describe.if(isWindows)("Windows: aborts and traps are reported, exit status reflects the crash cause", () => {
+  // The `trap` hook executes the instruction WTF/JSC emit (int3, brk #0xbb08).
+  // Either way the address printed must be the instruction's, not the 0 the
+  // hook used to pass when it called the handler directly.
+  const trapRow =
+    process.arch === "arm64"
+      ? // STATUS_ILLEGAL_INSTRUCTION 0xC000001D: only brk #0xF000 (__debugbreak) is
+        // a breakpoint to the arm64 kernel; every other immediate is this.
+        (["trap", /Illegal instruction at address 0x[0-9A-F]{6,}/, 0x1d] as const)
+      : // STATUS_BREAKPOINT 0x80000003
+        (["trap", /Trap instruction at address 0x[0-9A-F]{6,}/, 0x03] as const);
+
+  test.concurrent.each([
+    // STATUS_STACK_BUFFER_OVERRUN 0xC0000409: what an unreported abort() exits with
+    ["abort", "panic(main thread): abort() called", 0x09] as const,
+    ["panic", "panic(main thread): invoked crashByPanic() handler", 0x09] as const,
+    ["outOfMemory", "Bun has run out of memory", 0x09] as const,
+    // STATUS_ACCESS_VIOLATION 0xC0000005
+    ["segfault", "Segmentation fault at address 0xDEADBEEF", 0x05] as const,
+    trapRow,
+  ])("%s is reported and exits with the crash's status", async (approach, message, exitCodeLowByte) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        approach,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toMatch(message);
+    expect(stderr).toContain("oh no");
+    expect(exitCode).toBe(exitCodeLowByte);
+  });
+
+  // Terminations that must stay out of the crash handler. process.abort() is
+  // a user action (_exit(134) on Windows). fastfail is a bare __fastfail that
+  // never enters the CRT, so it still dies of the raw 0xC0000409 with nothing
+  // printed; that is the exit code the reported abort above shares with it.
+  test.concurrent.each([
+    ["process.abort()", 134],
+    ["crash_handler.fastfail()", 0x09],
+  ] as const)("%s does not report a crash", async (code, expectedExitCode) => {
+    let sent = false;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        sent = true;
+        return new Response("OK");
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const { crash_handler } = require("bun:internal-for-testing"); ${code}`],
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(sent).toBe(false);
+    expect(exitCode).toBe(expectedExitCode);
+  });
+});
+
 describe("automatic crash reporter", () => {
-  for (const approach of ["panic", "segfault", "outOfMemory"]) {
+  for (const approach of ["panic", "segfault", "outOfMemory", "abort"]) {
     test(`${approach} should report`, async () => {
       let sent = false;
       const resolve_handler = Promise.withResolvers();

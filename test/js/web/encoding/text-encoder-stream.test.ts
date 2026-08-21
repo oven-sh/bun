@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readableStreamFromArray } from "harness";
 
 // META: global=window,worker
@@ -266,4 +266,171 @@ test("TextEncoderStream -> TextDecoderStream -> TextEncoderStream -> native HTTP
   const out = Buffer.from(await (await fetch(server.url)).arrayBuffer());
   expect(out.byteLength).toBe(expected.byteLength);
   expect(Buffer.compare(out, Buffer.from(expected))).toBe(0);
+});
+
+// Two source shapes: `start` enqueues everything before the HTTP sink attaches
+// (readMany drains a pre-filled queue); `async pull` with a macrotask yield
+// keeps the source incomplete, so each chunk goes through encodeIntoSink while
+// the response is actively streaming.
+const sourceShapes = {
+  start(chunks: readonly unknown[]) {
+    return new ReadableStream({
+      start(c) {
+        for (const s of chunks) c.enqueue(s);
+        c.close();
+      },
+    });
+  },
+  "async pull"(chunks: readonly unknown[]) {
+    let i = 0;
+    return new ReadableStream({
+      async pull(c) {
+        await Bun.sleep(0);
+        if (i < chunks.length) c.enqueue(chunks[i++]);
+        else c.close();
+      },
+    });
+  },
+};
+
+describe.each(Object.entries(sourceShapes))("TextEncoderStream -> native sink (%s source)", (_, source) => {
+  // 8-bit (Latin-1) chunks go straight to the sink's own write_latin1. An
+  // all-ASCII chunk is zero-copy; a chunk with bytes 128-255 is widened to
+  // 2-byte UTF-8 inside the sink.
+  test("HTTP sink: 8-bit chunks (ASCII + Latin-1 non-ASCII)", async () => {
+    const ascii = Buffer.alloc(300_000, "plain ascii run.").toString();
+    const latin1 = "caf\xe9 \xffna\xefve \xbd"; // é ÿ ï ½
+    const chunks = [ascii, latin1, "mid", latin1, ascii];
+    const expected = Buffer.from(new TextEncoder().encode(chunks.join("")));
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(source(chunks).pipeThrough(new TextEncoderStream())),
+    });
+    const out = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+    expect(out.byteLength).toBe(expected.byteLength);
+    expect(Buffer.compare(out, expected)).toBe(0);
+  });
+
+  // 16-bit chunks go straight to the sink's own write_utf16. The encoder still
+  // owns cross-chunk surrogate carry (trailing lone lead), and mid-chunk lone
+  // surrogates become U+FFFD via the sink.
+  test("HTTP sink: 16-bit chunks with surrogate edge cases", async () => {
+    const chunks = [
+      "A" + leading + leading, // 8-bit "A" roped with a 16-bit tail: mid-chunk lone lead + trailing lone lead
+      trailing + "B", // completes the carried pair
+      trailing, // lone trail, no carry -> FFFD
+      leading + leading + trailing, // mid-chunk lone lead + valid pair
+      Buffer.alloc(32_000, "\u{1F499}").toString(), // long 16-bit run
+      leading + trailing + leading, // valid pair then trailing lone lead
+      trailing, // completes
+      leading, // dangling -> FFFD at flush
+    ];
+    // Reference via the non-sink encodeForStream path (JSUint8Array per chunk).
+    const ref = Buffer.from(
+      await new Response(readableStreamFromArray(chunks).pipeThrough(new TextEncoderStream())).arrayBuffer(),
+    );
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(source(chunks).pipeThrough(new TextEncoderStream())),
+    });
+    const out = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+    expect(out.toString("hex")).toBe(ref.toString("hex"));
+  });
+
+  // HTMLRewriter's sink runs user JS (content handlers) while the input slice
+  // is still being parsed; a non-string chunk exercises the ToString-created
+  // JSString being kept rooted across that call.
+  test("HTMLRewriter sink: non-string chunks + handler that allocates", async () => {
+    const ascii = Buffer.alloc(4096, "a").toString();
+    const chunks = [
+      "<div>",
+      { toString: () => "<p>" + ascii + "</p>" }, // 8-bit all-ASCII, ToString-coerced (RewriterPipe zero-copy branch)
+      { toString: () => "<p>caf\xe9</p>" }, // 8-bit non-ASCII, ToString-coerced (RewriterPipe Vec-copy branch)
+      { toString: () => "<p>\u{1F499}</p>" }, // 16-bit, ToString-coerced
+      "</div>",
+    ];
+    let seen = 0;
+    const out = await new HTMLRewriter()
+      .on("p", {
+        element() {
+          seen++;
+          Bun.gc(true);
+        },
+      })
+      .transform(new Response(source(chunks).pipeThrough(new TextEncoderStream())))
+      .text();
+    expect(seen).toBe(3);
+    expect(out).toBe("<div><p>" + ascii + "</p><p>caf\xe9</p><p>\u{1F499}</p></div>");
+  });
+});
+
+// Native-sink backpressure: when the HTTP response sink's socket buffer fills
+// (slow client), the sink's write_latin1 returns Backpressure, the transform
+// arm parks on m_nativeSinkReadyPromise, and the next writer.write() stays
+// pending until the client drains. Drive the writable side directly so the
+// parked write is observable via Bun.peek.status (no time-based polling).
+test("TextEncoderStream -> native HTTP sink applies backpressure to the writer", async () => {
+  const chunk = Buffer.alloc(256 * 1024, "x").toString();
+  const MAX = 128; // upper bound; backpressure engages well before this (tens of 256 KiB chunks)
+  const gotWriter = Promise.withResolvers<WritableStreamDefaultWriter<string>>();
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const tes = new TextEncoderStream();
+      gotWriter.resolve(tes.writable.getWriter());
+      return new Response(tes.readable);
+    },
+  });
+  // The response headers flow once the body produces its first bytes, so write
+  // before awaiting fetch() to avoid a writer↔fetch deadlock.
+  const resP = fetch(server.url);
+  const writer = await gotWriter.promise;
+  await writer.write(chunk);
+  const reader = (await resP).body!.getReader();
+
+  let parked: Promise<void> | undefined;
+  let written = 1;
+  for (; written < MAX; written++) {
+    const w = writer.write(chunk);
+    // One macrotask: the transform + native-sink write has run and either
+    // resolved w (sink accepted) or left it pending on m_nativeSinkReadyPromise.
+    await new Promise<void>(r => setImmediate(r));
+    if (Bun.peek.status(w) === "pending") {
+      parked = w;
+      break;
+    }
+  }
+  expect(written).toBeLessThan(MAX);
+  expect(parked && Bun.peek.status(parked)).toBe("pending");
+
+  const closed = writer.close();
+  let received = 0;
+  for (let r; !(r = await reader.read()).done; ) received += r.value!.byteLength;
+  await parked;
+  await closed;
+  expect(received).toBe((written + 1) * chunk.length);
+});
+
+// Readable-side backpressure (no native sink): the readable queue's HWM is 1,
+// so a single write completes without a reader, and a second write parks until
+// the readable side is drained.
+test("TextEncoderStream readable-side backpressure: second write stays pending until drained", async () => {
+  const tes = new TextEncoderStream();
+  const writer = tes.writable.getWriter();
+  const reader = tes.readable.getReader();
+
+  await writer.write("first");
+  const second = writer.write("second");
+  expect(Bun.peek.status(second)).toBe("pending");
+
+  const { value } = await reader.read();
+  expect(new TextDecoder().decode(value)).toBe("first");
+  expect(Bun.peek.status(second)).toBe("pending");
+  await second;
+
+  const closed = writer.close();
+  const rest: Uint8Array[] = [];
+  for (let r; !(r = await reader.read()).done; ) rest.push(r.value);
+  await closed;
+  expect(new TextDecoder().decode(Buffer.concat(rest))).toBe("second");
 });

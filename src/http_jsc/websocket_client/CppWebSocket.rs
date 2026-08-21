@@ -77,8 +77,8 @@ unsafe extern "C" {
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
-    safe fn WebSocket__incrementPendingActivity(websocket_context: &CppWebSocket);
-    safe fn WebSocket__decrementPendingActivity(websocket_context: &CppWebSocket);
+    safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
+    safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
     fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: *mut BunString);
 }
 
@@ -225,12 +225,12 @@ impl CppWebSocket {
 impl CppWebSocket {
     fn r#ref(&self) {
         bun_jsc::mark_binding!();
-        WebSocket__incrementPendingActivity(self);
+        WebSocket__holdPendingActivityForClient(self);
     }
 
     fn unref(&self) {
         bun_jsc::mark_binding!();
-        WebSocket__decrementPendingActivity(self);
+        WebSocket__releasePendingActivityForClient(self);
     }
 
     pub(crate) fn set_protocol(&self, protocol: &mut BunString) {

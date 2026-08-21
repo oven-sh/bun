@@ -129,7 +129,7 @@ impl HmrSocket {
                                         // lives in `RuntimeState` (see jsc_hooks.rs).
                                         let state = crate::jsc_hooks::runtime_state();
                                         let next = bun_core::Timespec::ms_from_now(
-                                            bun_core::TimespecMockMode::AllowMockedTime,
+                                            bun_core::TimespecMockMode::ForceRealTime,
                                             1000,
                                         );
                                         // SAFETY: `runtime_state()` is non-null after

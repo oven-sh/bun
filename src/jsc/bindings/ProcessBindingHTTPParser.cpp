@@ -6,34 +6,30 @@ namespace Bun {
 
 using namespace JSC;
 
-static JSValue ProcessBindingHTTPParser_methods(VM& vm, JSObject* binding)
+#define METHOD_NAME_LITERAL(num, name, string) #string ""_s,
+static constexpr ASCIILiteral httpMethodNames[] = { HTTP_METHOD_MAP(METHOD_NAME_LITERAL) };
+static constexpr ASCIILiteral httpAllMethodNames[] = { HTTP_ALL_METHOD_MAP(METHOD_NAME_LITERAL) };
+#undef METHOD_NAME_LITERAL
+
+static JSValue methodNamesArray(VM& vm, JSObject* binding, std::span<const ASCIILiteral> names)
 {
     JSGlobalObject* globalObject = binding->globalObject();
-
-    JSArray* methods = constructEmptyArray(globalObject, nullptr, 35);
-
-    int index = 0;
-#define FOR_EACH_METHOD(num, name, string) \
-    methods->putDirectIndex(globalObject, index++, jsString(vm, #string##_str));
-    HTTP_METHOD_MAP(FOR_EACH_METHOD)
-#undef FOR_EACH_METHOD
-
+    JSArray* methods = constructEmptyArray(globalObject, nullptr, names.size());
+    for (unsigned i = 0; i < names.size(); ++i)
+        methods->putDirectIndex(globalObject, i, jsString(vm, String(names[i])));
     return methods;
+}
+
+static JSValue ProcessBindingHTTPParser_methods(VM& vm, JSObject* binding)
+{
+    static_assert(std::size(httpMethodNames) == 35);
+    return methodNamesArray(vm, binding, httpMethodNames);
 }
 
 static JSValue ProcessBindingHTTPParser_allMethods(VM& vm, JSObject* binding)
 {
-    JSGlobalObject* globalObject = binding->globalObject();
-
-    JSArray* methods = constructEmptyArray(globalObject, nullptr, 47);
-
-    int index = 0;
-#define FOR_EACH_METHOD(num, name, string) \
-    methods->putDirectIndex(globalObject, index++, jsString(vm, #string##_str));
-    HTTP_ALL_METHOD_MAP(FOR_EACH_METHOD)
-#undef FOR_EACH_METHOD
-
-    return methods;
+    static_assert(std::size(httpAllMethodNames) == 47);
+    return methodNamesArray(vm, binding, httpAllMethodNames);
 }
 
 static JSValue ProcessBindingHTTPParser_HTTPParser(VM& vm, JSObject* binding)

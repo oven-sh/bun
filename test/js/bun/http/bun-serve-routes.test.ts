@@ -618,6 +618,69 @@ describe("route reloading", () => {
   });
 });
 
+describe("reload() keeps the server able to answer", () => {
+  it("rejects routes: {} on a routes-only server, and keeps serving the old routes", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": () => new Response("routes") },
+    });
+    // The routes are the only handler; taking them away without adding a fetch
+    // would leave nothing to answer requests, which is what the same check
+    // refuses at Bun.serve() time.
+    expect(() => server.reload({ routes: {} } as ServeOptions)).toThrow("Bun.serve() needs either:");
+    expect(await (await fetch(server.url)).text()).toBe("routes");
+  });
+
+  it("allows routes: {} when the server keeps its fetch handler", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fetch"),
+      routes: { "/": () => new Response("routes") },
+    });
+    server.reload({ routes: {} } as ServeOptions);
+    expect(await (await fetch(server.url)).text()).toBe("fetch");
+  });
+
+  it("allows a reload that names no handler at all on a routes-only server", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": () => new Response("routes") },
+    });
+    server.reload({ development: false } as ServeOptions);
+    expect(await (await fetch(server.url)).text()).toBe("routes");
+  });
+
+  it("allows a reload that names no handler at all on a fetch-only server", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fetch"),
+    });
+    server.reload({ error: _err => new Response("error") } as ServeOptions);
+    expect(await (await fetch(server.url)).text()).toBe("fetch");
+  });
+
+  // Unlike callback routes, static routes are replaced by every reload, even
+  // one without a routes object, so they cannot stand in for a missing handler.
+  it("rejects a reload that names no handler on a server whose only routes are static", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": new Response("static") },
+    });
+    expect(() => server.reload({ development: false } as ServeOptions)).toThrow("Bun.serve() needs either:");
+    expect(await (await fetch(server.url)).text()).toBe("static");
+  });
+
+  // Same for node:http's request handler: a reload that omits it clears it.
+  it("rejects a reload that names no handler on a server whose only handler is onNodeHTTPRequest", () => {
+    using server = Bun.serve({
+      port: 0,
+      // @ts-expect-error internal option used by node:http's Server
+      onNodeHTTPRequest() {},
+    });
+    expect(() => server.reload({ development: false } as ServeOptions)).toThrow("Bun.serve() needs either:");
+  });
+});
+
 describe("many route params", () => {
   let server: Server;
 

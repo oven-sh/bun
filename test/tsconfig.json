@@ -40,6 +40,7 @@
     "__snapshots__", // bun snapshots (toMatchSnapshot)
     "./snapshots",
     "./js/deno",
-    "./node.js" // entire node.js upstream repository
+    "./node.js", // entire node.js upstream repository
+    "regression/issue/14477/*-mismatch.tsx" // deliberately-mismatched JSX, the test asserts the parse error
   ]
 }

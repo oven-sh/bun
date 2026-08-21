@@ -72,12 +72,6 @@ impl Request {
             Some(unsafe { bun_core::ffi::slice(p, n) })
         }
     }
-    pub fn parameter(&mut self, idx: u16) -> &[u8] {
-        let mut p: *const u8 = ptr::null();
-        let n = c::uws_h3_req_get_parameter(self, idx, &mut p);
-        // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -104,6 +98,9 @@ impl Response {
     pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
         c::uws_h3_res_end_sendfile(self, write_offset, close_connection)
     }
+    /// H3 streams tear down through the QUIC engine; the TCP close-when-idle
+    /// gate has no equivalent here.
+    pub(crate) fn close_if_done_and_marked(&mut self) {}
     pub(crate) fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live FFI handle; data ptr valid for read; len out-ptr is a valid local
@@ -737,11 +734,6 @@ mod c {
             name: *const u8,
             len: usize,
             out: *mut *const u8,
-        ) -> usize;
-        pub(super) safe fn uws_h3_req_get_parameter(
-            req: &mut Request,
-            idx: u16,
-            out: &mut *const u8,
         ) -> usize;
     }
 }

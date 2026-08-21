@@ -253,12 +253,23 @@ function installExitTracing(): void {
   process.exit = exit as typeof process.exit;
 }
 
+// node's validateSignalName (lib/internal/validators.js); the flag value is
+// always a string, so only the signal table lookup is left.
+function validateSignalName(signal: string): void {
+  const signals = $processBindingConstants.os.signals;
+  if (signals[signal] !== undefined) return;
+  if (signals[signal.toUpperCase()] !== undefined) {
+    throw $ERR_UNKNOWN_SIGNAL(`Unknown signal: ${signal} (signals must use all capital letters)`);
+  }
+  throw $ERR_UNKNOWN_SIGNAL(`Unknown signal: ${signal}`);
+}
+
 // node's initializeHeapSnapshotSignalHandlers (lib/internal/process/pre_execution.js):
 // --heapsnapshot-signal installs a real `process.on(<signal>)` listener, so
 // `process.listenerCount(<signal>)` is observably 1 before user code runs.
 let heapSnapshotSequence = 0;
 function installHeapSnapshotSignalHandler(signal: string, diagnosticDir: string | null): void {
-  require("internal/validators").validateSignalName(signal, "--heapsnapshot-signal");
+  validateSignalName(signal);
   process.on(signal, function doWriteHeapSnapshot() {
     require("node:v8").writeHeapSnapshot(heapSnapshotFilename(diagnosticDir));
   });

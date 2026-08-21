@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -13,13 +13,16 @@ it("prototype", () => {
     ReadableStream.prototype,
     WritableStream.prototype,
     TransformStream.prototype,
-    MessageEvent.prototype,
-    CloseEvent.prototype,
     WebSocket.prototype,
   ];
 
   for (let prototype of prototypes) {
     for (let i = 0; i < 10; i++) expect(Bun.inspect(prototype).length > 0).toBeTrue();
+  }
+  // Event subclasses install node's brand-checked [util.inspect.custom], so
+  // inspecting the bare prototype throws — same as node's util.inspect.
+  for (let prototype of [MessageEvent.prototype, CloseEvent.prototype]) {
+    expect(() => Bun.inspect(prototype)).toThrow();
   }
   Bun.gc(true);
 });
@@ -172,21 +175,25 @@ Request (0 KB) {
 });
 
 it("MessageEvent", () => {
-  expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
-    `MessageEvent {
-  type: "message",
-  data: 123,
-}`,
-  );
+  expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toMatchInlineSnapshot(`
+    "MessageEvent {
+      type: 'message',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
+    }"
+  `);
 });
 
 it("MessageEvent with no data set", () => {
-  expect(Bun.inspect(new MessageEvent("message"))).toBe(
-    `MessageEvent {
-  type: "message",
-  data: null,
-}`,
-  );
+  expect(Bun.inspect(new MessageEvent("message"))).toMatchInlineSnapshot(`
+    "MessageEvent {
+      type: 'message',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
+    }"
+  `);
 });
 
 it("MessageEvent with deleted data", () => {
@@ -197,12 +204,14 @@ it("MessageEvent with deleted data", () => {
     configurable: true,
   });
   delete event.data;
-  expect(Bun.inspect(event)).toBe(
-    `MessageEvent {
-  type: "message",
-  data: null,
-}`,
-  );
+  expect(Bun.inspect(event)).toMatchInlineSnapshot(`
+    "MessageEvent {
+      type: 'message',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
+    }"
+  `);
 });
 
 // https://github.com/oven-sh/bun/issues/561
@@ -579,6 +588,98 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+// A property lookup that throws while an object is being formatted (a Proxy trap in the
+// prototype chain, a lazily initialized property whose initializer throws, a module namespace
+// export that is still in its temporal dead zone) used to leave the exception pending: the
+// lookups of the following properties failed and were dropped from the output or the formatter
+// rethrew the exception from the next property, debug builds asserted, and moving on to the
+// next prototype dereferenced the empty value returned by the throwing getPrototype. Each case
+// runs in a child so a regression fails the test instead of taking down the runner.
+describe.concurrent("Bun.inspect when a property lookup throws", () => {
+  async function runChild(args, cwd) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const inspectInChild = code => runChild(["-e", code]);
+
+  it("skips a prototype property whose Proxy get trap throws and keeps the rest", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1, b: 2, c: 3 }, {
+        get(target, key, receiver) {
+          if (key === "b") throw new Error("get trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({ stdout: "{\n  own: 0,\n  a: 1,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a prototype getter that throws behind a Proxy and keeps the rest", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1, get b() { throw new Error("getter"); }, c: 3 }, {});
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(result).toEqual({ stdout: "{\n  a: 1,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("stops walking the prototype chain at a Proxy whose getPrototypeOf trap throws", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1 }, {
+        getPrototypeOf() {
+          throw new Error("getPrototypeOf trap");
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({ stdout: "{\n  own: 0,\n  a: 1,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a lazily initialized Bun property whose initializer throws and keeps the rest", async () => {
+    // Bun.$ is the first property of the Bun object and is built by a builtin that calls
+    // Symbol(), as are Bun.sql and Bun.SQL further down, so breaking Symbol makes those
+    // initializers throw while Bun is formatted. Custom inspect functions (Bun.env has one on
+    // Windows) load node:util the first time one runs, which also needs Symbol, so load it first.
+    const result = await inspectInChild(`
+      Bun.inspect({ [Bun.inspect.custom]() { return ""; } });
+      globalThis.Symbol = 0;
+      const out = Bun.inspect(Bun);
+      console.log(JSON.stringify(["$", "Archive", "version"].map(key => out.includes("\\n  " + key + ": "))));
+    `);
+    expect(result).toEqual({ stdout: "[false,true,true]\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a module namespace export that is in its temporal dead zone and keeps the rest", async () => {
+    // b.mjs runs while a.mjs is still evaluating, so reading `later` off the namespace throws a
+    // ReferenceError. console.log used to rethrow it; util.inspect prints such an export as
+    // `<uninitialized>`, this formatter leaves it out.
+    using dir = tempDir("inspect-tdz-namespace", {
+      "a.mjs": `
+        import "./b.mjs";
+        export const later = 1;
+        export function hoisted() {}
+      `,
+      "b.mjs": `
+        import * as a from "./a.mjs";
+        console.log(a);
+      `,
+    });
+    const result = await runChild(["a.mjs"], String(dir));
+    expect(result).toEqual({ stdout: "Module {\n  hoisted: [Function: hoisted],\n}\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},
@@ -694,31 +795,10 @@ it("CloseEvent", () => {
   });
   expect(Bun.inspect(closeEvent)).toMatchInlineSnapshot(`
     "CloseEvent {
-      isTrusted: false,
-      wasClean: false,
-      code: 1000,
-      reason: "Normal",
-      type: "close",
-      target: null,
-      currentTarget: null,
-      eventPhase: 0,
-      cancelBubble: false,
-      bubbles: false,
-      cancelable: false,
+      type: 'close',
       defaultPrevented: false,
-      composed: false,
-      timeStamp: 0,
-      srcElement: null,
-      returnValue: true,
-      composedPath: [Function: composedPath],
-      stopPropagation: [Function: stopPropagation],
-      stopImmediatePropagation: [Function: stopImmediatePropagation],
-      preventDefault: [Function: preventDefault],
-      initEvent: [Function: initEvent],
-      NONE: 0,
-      CAPTURING_PHASE: 1,
-      AT_TARGET: 2,
-      BUBBLING_PHASE: 3,
+      cancelable: false,
+      timeStamp: 0
     }"
   `);
 });
@@ -731,20 +811,12 @@ it("ErrorEvent", () => {
     colno: 10,
     error: new Error("Test error"),
   });
-  expect(normalizeBunSnapshot(Bun.inspect(errorEvent)).replace(/\d+ \| /gim, "NNN |")).toMatchInlineSnapshot(`
+  expect(Bun.inspect(errorEvent)).toMatchInlineSnapshot(`
     "ErrorEvent {
-      type: "error",
-      message: "Something went wrong",
-      error: NNN |  const errorEvent = new ErrorEvent("error", {
-    NNN |    message: "Something went wrong",
-    NNN |    filename: "script.js",
-    NNN |    lineno: 42,
-    NNN |    colno: 10,
-    NNN |    error: new Error("Test error"),
-                         ^
-    error: Test error
-        at <anonymous> (file:NN:NN)
-    ,
+      type: 'error',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
     }"
   `);
 });
@@ -759,8 +831,10 @@ it("MessageEvent", () => {
   });
   expect(Bun.inspect(messageEvent)).toMatchInlineSnapshot(`
     "MessageEvent {
-      type: "message",
-      data: "Hello, world!",
+      type: 'message',
+      defaultPrevented: false,
+      cancelable: false,
+      timeStamp: 0
     }"
   `);
 });
@@ -773,33 +847,135 @@ it("CustomEvent", () => {
   });
   expect(Bun.inspect(customEvent)).toMatchInlineSnapshot(`
     "CustomEvent {
-      isTrusted: false,
-      detail: {
-        value: 42,
-        name: "test",
-      },
-      initCustomEvent: [Function: initCustomEvent],
-      type: "custom",
-      target: null,
-      currentTarget: null,
-      eventPhase: 0,
-      cancelBubble: false,
-      bubbles: true,
-      cancelable: true,
+      type: 'custom',
       defaultPrevented: false,
-      composed: false,
-      timeStamp: 0,
-      srcElement: null,
-      returnValue: true,
-      composedPath: [Function: composedPath],
-      stopPropagation: [Function: stopPropagation],
-      stopImmediatePropagation: [Function: stopImmediatePropagation],
-      preventDefault: [Function: preventDefault],
-      initEvent: [Function: initEvent],
-      NONE: 0,
-      CAPTURING_PHASE: 1,
-      AT_TARGET: 2,
-      BUBBLING_PHASE: 3,
+      cancelable: true,
+      timeStamp: 0
     }"
   `);
+});
+
+describe.skipIf(!isASAN)("object mutated while being formatted", () => {
+  it("does not read freed property tables", async () => {
+    const fixture = `
+      function makeParent() {
+        const p = {};
+        for (let i = 0; i < 8; i++) p["k" + i] = i;
+        return p;
+      }
+      // Enough added properties to cross several PropertyTable capacity
+      // doublings; each rehash frees the previous index vector.
+      const addMany = o => { for (let i = 0; i < 256; i++) o["n" + i] = i; };
+      const custom = Symbol.for("nodejs.util.inspect.custom");
+
+      {
+        // inspect.custom on a nested value adds properties to the parent mid-walk.
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) addMany(p); return "a"; } };
+        p.z = 1;
+        const s = Bun.inspect(p);
+        console.log("custom add:", s.includes("z: 1"));
+      }
+      {
+        // Same mutation through console.log instead of Bun.inspect.
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) addMany(p); return "a"; } };
+        p.z = 1;
+        console.log(p);
+      }
+      {
+        // Deleting parent properties mid-walk.
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() { if (!fired++) { for (let i = 0; i < 8; i++) delete p["k" + i]; } return "a"; } };
+        p.z = 1;
+        const s = Bun.inspect(p);
+        console.log("custom delete:", s.includes("z: 1"));
+      }
+      {
+        // A getter on a built-in subclass (Map.size) is another way the
+        // formatter runs user code for a nested value.
+        const p = makeParent();
+        let fired = 0;
+        class M extends Map { get size() { if (!fired++) addMany(p); return super.size; } }
+        p.a = new M([[1, 2]]);
+        p.z = 1;
+        const s = Bun.inspect(p);
+        console.log("map size getter:", s.includes("z: 1"), fired > 0);
+      }
+      {
+        // An object with no own properties is formatted by fast-walking its
+        // prototype's structure; mutating the prototype mid-walk rehashes it.
+        const proto = makeParent();
+        let fired = 0;
+        proto.a = { [custom]() { if (!fired++) addMany(proto); return "a"; } };
+        proto.z = 1;
+        const s = Bun.inspect(Object.create(proto));
+        console.log("prototype walk:", s.includes("z: 1"), fired > 0);
+      }
+      {
+        // Allocation churn + GC inside the hook, with object-valued siblings
+        // formatted afterwards: catches a snapshot that is invisible to GC.
+        const p = makeParent();
+        let fired = 0;
+        p.a = { [custom]() {
+          if (!fired++) {
+            addMany(p);
+            const junk = [];
+            for (let i = 0; i < 200; i++) { const o = {}; for (let j = 0; j < 20; j++) o["q" + j] = j; junk.push(o); }
+            Bun.gc(true);
+          }
+          return "a";
+        } };
+        for (let i = 0; i < 30; i++) p["s" + i] = { v: i };
+        p.z = 1;
+        const s = Bun.inspect(p);
+        console.log("gc churn:", s.includes("z: 1") && s.includes("v: 29"));
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        ...(isWindows ? {} : { Malloc: "1" }),
+        // Skip symbolizing a failure report; symbolization of the debug
+        // binary takes longer than the test timeout.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe(
+      [
+        "custom add: true",
+        // console.log dump of the mutated parent: properties added by the
+        // inspect.custom hook mid-format are not shown (the walk snapshots
+        // the properties up front, like Node).
+        "{",
+        "  k0: 0,",
+        "  k1: 1,",
+        "  k2: 2,",
+        "  k3: 3,",
+        "  k4: 4,",
+        "  k5: 5,",
+        "  k6: 6,",
+        "  k7: 7,",
+        "  a: a,",
+        "  z: 1,",
+        "}",
+        "custom delete: true",
+        "map size getter: true true",
+        "prototype walk: true true",
+        "gc churn: true",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(exitCode).toBe(0);
+  });
 });

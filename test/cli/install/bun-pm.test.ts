@@ -628,6 +628,55 @@ it("should list a trusted workspace the root also depends on once with --trusted
   expect(urls).toEqual([]);
 });
 
+// The root's optional peer on bar is bound to the copy of bar that moo brings
+// in. The listing must still show it: it is one of the root's own dependencies.
+it("should list a root optional peer that a dependency provides", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        moo: "./moo",
+      },
+      peerDependencies: {
+        bar: "*",
+      },
+      peerDependenciesMeta: {
+        bar: { optional: true },
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+  const [, err, installExitCode] = await spawnAndCollect("install");
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(installExitCode).toBe(0);
+  urls.length = 0;
+
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
+    "<dir> node_modules (2)
+    ├── bar@0.0.2
+    └── moo@moo"
+  `);
+  expect(exitCode).toBe(0);
+  expect(urls).toEqual([]);
+});
+
 it("should remove all cache", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

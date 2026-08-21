@@ -6774,10 +6774,13 @@ describe("pm trust", async () => {
       stderr: "pipe",
       env,
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).toContain("ENODEV");
-    expect(exitCode).toBe(1);
-    expect((await lstat(packageJson)).isSymbolicLink()).toBeTrue();
+    expect({ out, exitCode, stillTheSymlink: (await lstat(packageJson)).isSymbolicLink() }).toEqual({
+      out: "",
+      exitCode: 1,
+      stillTheSymlink: true,
+    });
   });
 });
 

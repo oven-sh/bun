@@ -641,18 +641,16 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeTo, (JSGlobalObje
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.pipeTo requires a WritableStream destination"_s))));
 
     // WebIDL: a promise-returning operation turns an argument-conversion failure into a rejection.
-    ConvertedStreamPipeOptions options = convertStreamPipeOptions(vm, lexicalGlobalObject, callFrame->argument(1));
-    if (scope.exception()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWithPendingException(lexicalGlobalObject, scope)));
-
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe a locked ReadableStream"_s))));
-    if (isWritableStreamLocked(destination))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe to a locked WritableStream"_s))));
-
-    auto* promise = readableStreamPipeTo(lexicalGlobalObject, stream, destination, options.preventClose, options.preventAbort, options.preventCancel, options.signal);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(promise);
+    RELEASE_AND_RETURN(scope, JSValue::encode(promiseFromSteps(lexicalGlobalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        ConvertedStreamPipeOptions options = convertStreamPipeOptions(vm, lexicalGlobalObject, callFrame->argument(1));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (isReadableStreamLocked(stream))
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe a locked ReadableStream"_s)));
+        if (isWritableStreamLocked(destination))
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe to a locked WritableStream"_s)));
+        RELEASE_AND_RETURN(scope, readableStreamPipeTo(lexicalGlobalObject, stream, destination, options.preventClose, options.preventAbort, options.preventCancel, options.signal));
+    })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_tee, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

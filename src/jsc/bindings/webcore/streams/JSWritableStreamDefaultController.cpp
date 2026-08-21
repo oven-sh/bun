@@ -544,12 +544,11 @@ double writableStreamDefaultControllerGetChunkSize(JSGlobalObject* globalObject,
     double size = 1;
     if (!scope.exception()) [[likely]]
         size = returnValue.toNumber(globalObject); // WebIDL `unrestricted double`
-    if (scope.exception()) [[unlikely]] {
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         // Spec step 3: "If returnValue is an abrupt completion, perform
         // ! WritableStreamDefaultControllerErrorIfNeeded(controller, returnValue.[[Value]]) and return 1."
-        JSValue thrown = takeException(scope);
-        RETURN_IF_EXCEPTION(scope, 1);
-        writableStreamDefaultControllerErrorIfNeeded(globalObject, controller, thrown);
+        TRY_CLEAR_EXCEPTION(scope, 1);
+        writableStreamDefaultControllerErrorIfNeeded(globalObject, controller, exception->value());
         RETURN_IF_EXCEPTION(scope, 1);
         return 1;
     }
@@ -602,13 +601,12 @@ void writableStreamDefaultControllerWrite(JSGlobalObject* globalObject, JSWritab
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     controller->m_queue.enqueueValueWithSize(globalObject, controller, chunk, chunkSize);
-    if (scope.exception()) [[unlikely]] {
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         // Spec step 2: "If enqueueResult is an abrupt completion, perform
         // ! WritableStreamDefaultControllerErrorIfNeeded(controller, enqueueResult.[[Value]]) and return."
         // (EnqueueValueWithSize's RangeError on an invalid size; no user JS runs.)
-        JSValue enqueueError = takeException(scope);
-        RETURN_IF_EXCEPTION(scope, );
-        RELEASE_AND_RETURN(scope, writableStreamDefaultControllerErrorIfNeeded(globalObject, controller, enqueueError));
+        TRY_CLEAR_EXCEPTION(scope, );
+        RELEASE_AND_RETURN(scope, writableStreamDefaultControllerErrorIfNeeded(globalObject, controller, exception->value()));
     }
 
     auto* stream = controller->m_stream.get();

@@ -47,11 +47,12 @@ static JSReadableStreamDefaultController* transformReadableController(JSTransfor
 // completion, return a promise rejected with result.[[Value]]. Otherwise a promise resolved with undefined."
 static JSPromise* defaultTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    transformStreamDefaultControllerEnqueue(globalObject, controller, chunk);
-    if (scope.exception()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        transformStreamDefaultControllerEnqueue(globalObject, controller, chunk);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 // The [[transformAlgorithm]] dispatch; the switch is total over TransformerKind.
@@ -403,13 +404,12 @@ void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTra
         return;
     }
     readableStreamDefaultControllerEnqueue(globalObject, readableController, chunk);
-    if (scope.exception()) [[unlikely]] {
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         // Spec steps 4-5: "If enqueueResult is an abrupt completion, perform
         // ! TransformStreamErrorWritableAndUnblockWrite(stream, enqueueResult.[[Value]]) and throw
         // stream.[[readable]].[[storedError]]."
-        JSValue thrown = takeException(scope);
-        RETURN_IF_EXCEPTION(scope, );
-        transformStreamErrorWritableAndUnblockWrite(globalObject, stream, thrown);
+        TRY_CLEAR_EXCEPTION(scope, );
+        transformStreamErrorWritableAndUnblockWrite(globalObject, stream, exception->value());
         RETURN_IF_EXCEPTION(scope, void());
         // The readable is not necessarily Errored here: the user size() callback may have
         // closed it before throwing, leaving [[storedError]] unset — then we throw undefined.

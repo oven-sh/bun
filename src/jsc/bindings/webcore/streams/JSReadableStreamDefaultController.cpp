@@ -564,14 +564,13 @@ void readableStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSRead
         }
         if (!scope.exception()) [[likely]]
             controller->m_queue.enqueueValueWithSize(globalObject, controller, chunk, chunkSize);
-        if (scope.exception()) [[unlikely]] {
+        if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
             // Spec steps 4.b / 5.b: "If result is an abrupt completion, perform
             // ! ReadableStreamDefaultControllerError(controller, result.[[Value]]) and return result."
-            JSValue thrown = takeException(scope);
+            TRY_CLEAR_EXCEPTION(scope, );
+            readableStreamDefaultControllerError(globalObject, controller, exception->value());
             RETURN_IF_EXCEPTION(scope, );
-            readableStreamDefaultControllerError(globalObject, controller, thrown);
-            RETURN_IF_EXCEPTION(scope, );
-            throwException(globalObject, scope, thrown);
+            throwException(globalObject, scope, exception);
             return;
         }
     }

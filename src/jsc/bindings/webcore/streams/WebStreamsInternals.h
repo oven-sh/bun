@@ -149,26 +149,70 @@ JSC::JSPromise* promiseFulfilledWith(JSC::JSGlobalObject*, JSC::JSValue); // use
 JSC::JSBoundFunction* createStreamsBoundHandler(JSC::JSGlobalObject*, JSC::JSFunction* target, JSC::JSCell* context);
 // obj.name(...args); returns the EMPTY value when `name` is not callable. userJS: yes — WebStreamsMisc.cpp
 JSC::JSValue invokeOptionalMethod(JSC::JSGlobalObject*, JSC::JSObject*, const JSC::Identifier& name, const JSC::MarkedArgumentBuffer&);
-// BOUNDARY helper for an algorithm whose contract is "returns a promise" (pull/cancel/write/
-// transform algorithms, promise-returning API methods): the exception it is about to return with
-// becomes the rejected promise it returns instead. nullptr only with a VM termination pending.
-JSC::JSPromise* promiseRejectedWithPendingException(JSC::JSGlobalObject*, JSC::ThrowScope&); // userJS: no — WebStreamsMisc.cpp
 // WebIDL "invoke a callback function" whose declared return type is Promise<T> (underlying
-// source/sink/transformer methods): the callback's completion is converted HERE, per WebIDL — a
-// throw becomes a rejected promise, any other result a resolved one — because the spec reacts to
-// that promise (e.g. "upon rejection of pullPromise, error the controller"); the throw must not
-// escape to whichever API call happened to trigger the algorithm.
+// source/sink/transformer methods). This is the boundary *into* user code: per WebIDL the
+// callback's completion is converted right here — a throw becomes a rejected promise, any other
+// result a resolved one — because the spec reacts to that promise (e.g. "upon rejection of
+// pullPromise, error the controller"), and only this frame knows which controller that is.
 // nullptr only with a VM termination pending. userJS: yes — WebStreamsMisc.cpp
 JSC::JSPromise* invokeCallbackReturningPromise(JSC::JSGlobalObject*, JSC::JSObject* callback, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer&);
 // Same conversion, minus wrappers the internal reaction machinery does not need: nullptr with
 // nothing pending for a synchronous non-thenable result (the caller runs its fulfilment step
 // inline), and a vanilla JSPromise returned unwrapped. userJS: yes — WebStreamsMisc.cpp
 JSC::JSPromise* invokeCallbackReturningPromiseFast(JSC::JSGlobalObject*, JSC::JSObject* callback, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer&);
-// error.code === code (a `code` getter can throw). userJS: yes — WebStreamsMisc.cpp
-bool errorCodeIs(JSC::JSGlobalObject*, JSC::JSValue error, WTF::ASCIILiteral code);
 JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
 // "a promise rejected with r" (rejection never does a `then` lookup)
 JSC::JSPromise* promiseRejectedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
+
+// ─── Exception boundaries ─────────────────────────────────────────────────────────────────────
+// Every function in this subsystem propagates: DECLARE_THROW_SCOPE + RETURN_IF_EXCEPTION and
+// nothing else — no helper looks at, takes, or is handed a pending exception. An exception stops in
+// exactly two kinds of frame, and these templates are those frames:
+//
+//   enterStreams(globalObject, step, deliver) — the body of a host function that JSC enters from a
+//     promise reaction, a queued microtask, or the event loop (atStreamsBoundary: the same for the
+//     few such entry points that are not host functions). Nothing above it would receive an
+//     exception, and whoever is waiting for the outcome waits on a promise/stream, not on this
+//     stack: whatever `step` threw is handed to `deliver(error)`, which errors that stream /
+//     rejects that promise. If delivering throws as well, that is left pending for the caller's
+//     runner to report.
+//   promiseFromSteps(globalObject, step) — the body of a function whose contract is "returns a
+//     promise" (a source/sink/transformer algorithm, a promise-returning API method, a WebIDL
+//     callback declared to return Promise<T>): whatever `step` threw is the rejection of the
+//     promise it returns.
+//
+// A VM termination is never converted; both return at once and leave it pending.
+template<typename Step, typename Deliver>
+ALWAYS_INLINE void atStreamsBoundary(JSC::JSGlobalObject* globalObject, Step&& step, Deliver&& deliver)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    step();
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        TRY_CLEAR_EXCEPTION(scope, );
+        RELEASE_AND_RETURN(scope, deliver(exception->value()));
+    }
+}
+
+template<typename Step, typename Deliver>
+ALWAYS_INLINE JSC::EncodedJSValue enterStreams(JSC::JSGlobalObject* globalObject, Step&& step, Deliver&& deliver)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    atStreamsBoundary(globalObject, std::forward<Step>(step), std::forward<Deliver>(deliver));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+template<typename Step>
+ALWAYS_INLINE JSC::JSPromise* promiseFromSteps(JSC::JSGlobalObject* globalObject, Step&& step)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSC::JSPromise* result = step();
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        TRY_CLEAR_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
+    }
+    return result;
+}
 // "resolve promise with v" — SAME `Object.prototype.then` hazard as promiseResolvedWith:
 // resolving with ANY object (user-controlled or our own) runs user JS.
 void resolvePromise(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
@@ -196,15 +240,8 @@ void rejectStreamClosedPromise(JSC::VM&, JSWritableStream*, JSC::JSValue error);
 void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — ReadableStreamOperations.cpp
 void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
 
-// Exceptions propagate (ThrowScope + RETURN_IF_EXCEPTION) through every helper in this
-// subsystem. They are converted into a value only at a BOUNDARY: a host function entered from a
-// promise reaction / microtask / the event loop (nothing above it would receive the exception),
-// an operation whose contract is "returns a promise" (WebIDL: a throw is a rejection), or a spec
-// step that literally reads the completion value ("if result is an abrupt completion, error the
-// stream with result.[[Value]]"). This is the primitive those places use: it clears and returns
-// the pending exception's value; for a VM termination it returns the EMPTY value and leaves the
-// termination pending — the caller returns (RETURN_IF_EXCEPTION) and never runs anything over it.
-JSC::JSValue takeException(JSC::ExceptionScope&); // userJS: no — WebStreamsMisc.cpp
+// error.code === code, for an own data property `code` (no getters or proxies run). userJS: no — WebStreamsMisc.cpp
+bool errorCodeIs(JSC::VM&, JSC::JSValue error, WTF::ASCIILiteral code);
 
 // Joins any pending bytes, strips a single leading BOM per stream (ignoreBOM=false), holds
 // back a trailing incomplete sequence (unless `flush`), and decodes the remaining span via

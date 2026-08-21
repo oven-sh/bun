@@ -479,10 +479,10 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
 
 // Invokes the user's pull() once, bracketed by m_pullInFlight (the spec sets [[pulling]]
 // before invoking pullAlgorithm); left set only when a promise's settlement reaction will
-// clear it. This is the callback boundary for pull(): its synchronous throw is returned as a
-// value (the caller errors the stream with it and rejects the read), a returned promise's
-// rejection goes to onDirectPullRejected. Empty on normal return, and on VM termination
-// (which is left pending).
+// clear it. This is the boundary into the user's pull(): as for the spec's promise-returning
+// pullAlgorithm, its completion is converted here — a synchronous throw is returned as a value
+// (the caller errors the stream with it and rejects the read), a returned promise's rejection goes
+// to onDirectPullRejected. Empty on normal return, and on VM termination (left pending).
 static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -493,11 +493,10 @@ static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirec
     MarkedArgumentBuffer args;
     args.append(controller);
     JSValue result = JSC::call(globalObject, pullFunction ? JSValue(pullFunction) : jsUndefined(), underlyingSource, args, "underlyingSource.pull is not a function"_s);
-    if (scope.exception()) [[unlikely]] {
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         controller->m_pullInFlight = false;
-        JSValue abrupt = takeException(scope);
-        RETURN_IF_EXCEPTION(scope, {});
-        return abrupt;
+        TRY_CLEAR_EXCEPTION(scope, {});
+        return exception->value();
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
         auto* runtime = JSStreamsRuntime::from(globalObject);
@@ -651,16 +650,7 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     directStreamControllerClearSource(this);
 
     JSValue flushed = endDirectSink(vm, globalObject, this);
-    if (scope.exception()) [[unlikely]] {
-        // A read waiting on this close owns the end() failure; with none, the closer does.
-        auto* pendingRead = m_pendingRead.get();
-        if (!pendingRead)
-            return;
-        JSValue thrown = takeException(scope);
-        RETURN_IF_EXCEPTION(scope, );
-        m_pendingRead.clear();
-        RELEASE_AND_RETURN(scope, rejectPromise(globalObject, pendingRead, thrown));
-    }
+    RETURN_IF_EXCEPTION(scope, );
 
     if (byteLengthOf(flushed)) {
         if (auto* pendingRead = m_pendingRead.get()) {
@@ -837,27 +827,17 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullRejected, (JSGlobalObje
     return JSValue::encode(jsUndefined());
 }
 
-// BOUNDARY: runs from the end-of-tick queue with nothing above it. A throw from onFlush (e.g. a
-// read request's chunkSteps) errors the stream; if erroring the stream throws too, that is left
-// for the tick runner to report.
+// Runs from the end-of-tick queue with nothing above it (enterStreams): a throw from onFlush
+// (e.g. a read request's chunkSteps) errors the stream.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(1));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
     controller->m_endOfTickFlushArmed = false;
     if (controller->m_closed || !controller->m_stream)
         return JSValue::encode(jsUndefined());
-    controller->onFlush(globalObject);
-    if (scope.exception()) [[unlikely]] {
-        JSC::JSValue error = takeException(scope);
-        RETURN_IF_EXCEPTION(scope, {});
-        controller->handleError(globalObject, error);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    return JSValue::encode(jsUndefined());
+    return enterStreams(globalObject, [&] { controller->onFlush(globalObject); }, [&](JSValue error) { controller->handleError(globalObject, error); });
 }
 
 // The FIVE public own methods are JSBoundFunctions over these [bound-convention] targets.

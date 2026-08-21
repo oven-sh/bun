@@ -281,31 +281,33 @@ static void enqueueIfNonEmptyView(JSGlobalObject* globalObject, JSTransformStrea
 // encoder writes straight to it via its reusable scratch buffer (no JSUint8Array).
 static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk, bool flush)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    bool sinkBackpressure = false;
-    if (void* sinkPtr = stream->m_nativeSinkPtr) {
-        JSValue wrote = JSValue::decode(flush
-                ? TextEncoderStreamEncoder__flushIntoSink(stream->m_encoder, globalObject, stream->m_nativeSinkId, sinkPtr)
-                : TextEncoderStreamEncoder__encodeIntoSink(stream->m_encoder, globalObject, JSValue::encode(chunk), stream->m_nativeSinkId, sinkPtr));
-        if (!scope.exception())
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        bool sinkBackpressure = false;
+        if (void* sinkPtr = stream->m_nativeSinkPtr) {
+            JSValue wrote = JSValue::decode(flush
+                    ? TextEncoderStreamEncoder__flushIntoSink(stream->m_encoder, globalObject, stream->m_nativeSinkId, sinkPtr)
+                    : TextEncoderStreamEncoder__encodeIntoSink(stream->m_encoder, globalObject, JSValue::encode(chunk), stream->m_nativeSinkId, sinkPtr));
+            RETURN_IF_EXCEPTION(scope, nullptr);
             sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
-    } else {
-        JSValue buffer = JSValue::decode(flush
-                ? TextEncoderStreamEncoder__flushForStream(stream->m_encoder, globalObject)
-                : TextEncoderStreamEncoder__encodeForStream(stream->m_encoder, globalObject, JSValue::encode(chunk)));
-        if (!scope.exception() && !buffer.isEmpty())
-            enqueueIfNonEmptyView(globalObject, controller, buffer);
-    }
-    if (scope.exception()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, promiseRejectedWithPendingException(globalObject, scope));
-    if (sinkBackpressure) {
-        auto* ready = JSPromise::create(vm, globalObject->promiseStructure());
-        stream->m_nativeSinkReadyPromise.set(vm, stream, ready);
-        return ready;
-    }
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        } else {
+            JSValue buffer = JSValue::decode(flush
+                    ? TextEncoderStreamEncoder__flushForStream(stream->m_encoder, globalObject)
+                    : TextEncoderStreamEncoder__encodeForStream(stream->m_encoder, globalObject, JSValue::encode(chunk)));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!buffer.isEmpty()) {
+                enqueueIfNonEmptyView(globalObject, controller, buffer);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+        }
+        if (sinkBackpressure) {
+            auto* ready = JSPromise::create(vm, globalObject->promiseStructure());
+            stream->m_nativeSinkReadyPromise.set(vm, stream, ready);
+            return ready;
+        }
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 JSPromise* textEncoderStreamTransform(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)

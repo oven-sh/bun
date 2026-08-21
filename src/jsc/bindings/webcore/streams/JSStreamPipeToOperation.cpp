@@ -494,15 +494,12 @@ static void pipeChunkDeferredWrite(JSGlobalObject* globalObject, JSStreamPipeToO
     }
 }
 
-// [reaction-convention] BOUNDARY: the deferred sink write, queued as a plain job (no result
-// capability). argument(0) = the chunk; context = InternalFieldTuple{op, the promise published as
+// [reaction-convention] the deferred sink write, queued as a plain job (enterStreams).
+// argument(0) = the chunk; context = InternalFieldTuple{op, the promise published as
 // m_currentWrite}, which adopts the real write's settlement. The shutdown paths wait on that
 // published promise, so a throw here must never leave it pending: it is rejected with the error.
-// A throw after it already settled has no owner and is left for the microtask runner to report.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeChunkDeferredWrite, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* context = dynamicDowncast<InternalFieldTuple>(callFrame->argument(1));
     if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -510,14 +507,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeChunkDeferredWrite, (JSGlobal
     if (!op) [[unlikely]]
         return JSValue::encode(jsUndefined());
     auto* trackingPromise = uncheckedDowncast<JSPromise>(context->getInternalField(1));
-    pipeChunkDeferredWrite(globalObject, op, trackingPromise, callFrame->argument(0));
-    if (scope.exception() && trackingPromise->status() == JSPromise::Status::Pending) [[unlikely]] {
-        JSValue error = takeException(scope);
-        RETURN_IF_EXCEPTION(scope, {});
-        rejectPromise(globalObject, trackingPromise, error);
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
+    return enterStreams(globalObject, [&] { pipeChunkDeferredWrite(globalObject, op, trackingPromise, callFrame->argument(0)); }, [&](JSValue error) {
+        if (trackingPromise->status() == JSPromise::Status::Pending)
+            rejectPromise(globalObject, trackingPromise, error); });
 }
 
 // [reaction-convention] shutdown-action settlement. The context is the op cell; the

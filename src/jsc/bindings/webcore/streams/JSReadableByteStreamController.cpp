@@ -777,14 +777,13 @@ void readableByteStreamControllerEnqueueClonedChunkToQueue(JSGlobalObject* globa
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     RefPtr<JSC::ArrayBuffer> cloneResult = cloneArrayBuffer(vm, globalObject, buffer, byteOffset, byteLength);
-    if (scope.exception()) [[unlikely]] {
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         // Spec step 2: "If cloneResult is an abrupt completion, perform
         // ! ReadableByteStreamControllerError(controller, cloneResult.[[Value]]) and return cloneResult."
-        JSValue thrown = takeException(scope);
+        TRY_CLEAR_EXCEPTION(scope, );
+        readableByteStreamControllerError(globalObject, controller, exception->value());
         RETURN_IF_EXCEPTION(scope, );
-        readableByteStreamControllerError(globalObject, controller, thrown);
-        RETURN_IF_EXCEPTION(scope, );
-        throwException(globalObject, scope, thrown);
+        throwException(globalObject, scope, exception);
         return;
     }
     readableByteStreamControllerEnqueueChunkToQueue(controller, WTF::move(cloneResult), 0, byteLength);
@@ -997,12 +996,11 @@ void readableByteStreamControllerPullInto(JSGlobalObject* globalObject, JSReadab
     size_t byteLength = view->byteLength();
     RefPtr<JSC::ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
     RefPtr<JSC::ArrayBuffer> buffer = transferArrayBufferImpl(globalObject, *viewedBuffer);
-    if (scope.exception()) [[unlikely]] {
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         // Spec step 10: "If bufferResult is an abrupt completion, perform readIntoRequest's error
         // steps given bufferResult.[[Value]] and return."
-        JSValue thrown = takeException(scope);
-        RETURN_IF_EXCEPTION(scope, );
-        RELEASE_AND_RETURN(scope, readIntoRequest->errorSteps(globalObject, thrown));
+        TRY_CLEAR_EXCEPTION(scope, );
+        RELEASE_AND_RETURN(scope, readIntoRequest->errorSteps(globalObject, exception->value()));
     }
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSPullIntoDescriptor* pullIntoDescriptor = JSPullIntoDescriptor::create(vm, JSStreamsRuntime::from(globalObject)->pullIntoDescriptorStructure(zigGlobalObject));

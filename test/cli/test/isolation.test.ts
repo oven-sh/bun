@@ -1028,6 +1028,9 @@ describe.concurrent("--isolate experimental global reuse", () => {
       import { test, expect } from "bun:test";
       test(${JSON.stringify(name)}, () => {
         expect((globalThis.fetch as any).mock).toBeDefined();
+        // The non-callable spy is installed as an accessor whose getter is the
+        // mock; reading it returns the original object.
+        expect((globalThis as any).CONFIG.apiUrl).toBe("http://localhost");
         ${extra}
       });
     `;
@@ -1035,6 +1038,8 @@ describe.concurrent("--isolate experimental global reuse", () => {
       "preload.ts": `
         import { spyOn } from "bun:test";
         spyOn(globalThis, "fetch");
+        (globalThis as any).CONFIG = { apiUrl: "http://localhost" };
+        spyOn(globalThis, "CONFIG");
       `,
       "a.test.ts": testFile("a"),
       "b.test.ts": testFile("b"),

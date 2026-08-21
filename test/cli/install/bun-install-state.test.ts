@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, statSync, utimesSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
@@ -134,9 +134,8 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     expect(r.code).toBe(0);
     expect(r.out).not.toMatch(noChanges);
 
-    // 8. install.stateFile = false disables the fast path (the classic per-package check
-    //    still reports "no changes", but only after verifying every package — observable
-    //    here as node_modules damage being repaired without any recorded state)
+    // 8. install.stateFile = false disables the fast path: no state is recorded, and the
+    //    classic per-package verification still repairs node_modules
     await writeFile(
       join(package_dir, "bunfig.toml"),
       Bun.TOML.stringify({
@@ -151,7 +150,10 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     );
     expect((await install(package_dir)).code).toBe(0);
     await rm(join(package_dir, ".cache", ".install-state"), { recursive: true, force: true });
-    expect((await install(package_dir)).code).toBe(0);
+    await rm(join(package_dir, "node_modules", "bar", "package.json"));
+    r = await install(package_dir);
+    expect(r.code).toBe(0);
+    expect(existsSync(join(package_dir, "node_modules", "bar", "package.json"))).toBeTrue();
     expect(existsSync(join(package_dir, ".cache", ".install-state"))).toBeFalse();
   });
 
@@ -171,8 +173,11 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     expect(r.code).toBe(0);
     expect(r.out).toMatch(noChanges);
 
-    await Bun.sleep(10);
-    await writeFile(join(package_dir, "local", "index.js"), "module.exports = 2;");
+    const src = join(package_dir, "local", "index.js");
+    const before = statSync(src).mtimeMs;
+    await writeFile(src, "module.exports = 2;");
+    // make the edit observable regardless of timestamp granularity
+    utimesSync(src, new Date(before + 2000), new Date(before + 2000));
     r = await install(package_dir);
     expect(r.code).toBe(0);
     expect(r.out).not.toMatch(noChanges);

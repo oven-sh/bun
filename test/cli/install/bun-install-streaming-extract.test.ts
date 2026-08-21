@@ -225,6 +225,10 @@ describe("streaming tarball extraction", () => {
   const entries = makeEntries();
   const { tgz, shasum, integrity } = buildTarball(entries);
 
+  // Valid gzip prefix, then garbage: libarchive fails partway through a
+  // streamed extraction with a fatal error. Used by the retry tests.
+  const corrupt = Buffer.concat([tgz.subarray(0, tgz.length >> 1), Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff)]);
+
   // Keep chunks small enough that tar headers, pax payloads and file
   // bodies all span multiple read-callback invocations, but not so
   // small that the drip-feed itself dominates the test runtime on a
@@ -442,17 +446,15 @@ describe("streaming tarball extraction", () => {
 
     const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toContain("Integrity check failed");
+    // The streaming integrity failure retries once through the buffered
+    // path, whose own integrity check is final: exactly one extra download
+    // at the default retry count, not max_retry_count of them.
+    expect(reg.tarballHits).toBe(2);
     expect(exitCode).not.toBe(0);
   });
 
   // https://github.com/oven-sh/bun/issues/39972
   test("retries a failed streaming extraction through the buffered path", async () => {
-    // Valid gzip prefix, then garbage: libarchive fails partway through
-    // the first (streamed) attempt with a fatal error.
-    const corrupt = Buffer.concat([
-      tgz.subarray(0, tgz.length >> 1),
-      Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff),
-    ]);
     await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes, hit => (hit === 1 ? corrupt : tgz));
     const registry = reg.url;
 
@@ -487,10 +489,6 @@ describe("streaming tarball extraction", () => {
   // attempt serves the same corrupt bytes, the final error is the integrity
   // mismatch from the retry, not a second streaming extraction failure.
   test("the retry verifies integrity instead of streaming again", async () => {
-    const corrupt = Buffer.concat([
-      tgz.subarray(0, tgz.length >> 1),
-      Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff),
-    ]);
     await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes, () => corrupt);
     const registry = reg.url;
 
@@ -513,11 +511,48 @@ describe("streaming tarball extraction", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  // A streaming integrity failure (extraction completes, hash mismatches)
+  // retries the same way a libarchive failure does: silently, through the
+  // buffered path.
+  test("retries a streaming integrity failure", async () => {
+    // A well-formed tarball whose bytes differ from the advertised
+    // integrity: flip one byte in an incompressible bulk entry.
+    const wrongEntries = entries.map(e => {
+      if (e.path !== "data/chunk-0.bin") return e;
+      const body = Buffer.from(e.body);
+      body[0] ^= 1;
+      return { path: e.path, body };
+    });
+    const wrong = buildTarball(wrongEntries);
+    expect(wrong.tgz.length).toBeGreaterThan(2 * 1024 * 1024);
+
+    await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes, hit => (hit === 1 ? wrong.tgz : tgz));
+    const registry = reg.url;
+
+    using dir = tempDir("streaming-extract-retry-integrity", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("Integrity check failed");
+    expect(stderr).toContain("Retrying 1/");
+    expect(reg.tarballHits).toBe(2);
+
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    for (const { path, body } of entries) {
+      const got = readFileSync(join(pkgRoot, path));
+      expect([path, got.equals(body)]).toEqual([path, true]);
+    }
+    expect(exitCode).toBe(0);
+  });
+
   test("reports the libarchive error when a streaming extraction fails for good", async () => {
-    const corrupt = Buffer.concat([
-      tgz.subarray(0, tgz.length >> 1),
-      Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff),
-    ]);
     await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes, () => corrupt);
     const registry = reg.url;
 

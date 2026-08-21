@@ -97,6 +97,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "sys.rs": "sys/sys.rs",
   "sys/Error.rs": "sys/Error.rs",
   "udp_socket.rs": "runtime/socket/udp_socket.rs",
+  "telemetry.rs": "runtime/telemetry.rs",
   "upgrade_command.rs": "runtime/cli/upgrade_command.rs",
   "virtual_machine_exports.rs": "jsc/virtual_machine_exports.rs",
 };

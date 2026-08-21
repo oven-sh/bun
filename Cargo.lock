@@ -1320,6 +1320,7 @@ dependencies = [
  "bun_sys",
  "bun_sys_jsc",
  "bun_tcc_sys",
+ "bun_telemetry",
  "bun_threading",
  "bun_url",
  "bun_uws",
@@ -1642,6 +1643,13 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
+]
+
+[[package]]
+name = "bun_telemetry"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
 ]
 
 [[package]]

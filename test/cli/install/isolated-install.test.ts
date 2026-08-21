@@ -654,7 +654,7 @@ describe("resolved peer bins", () => {
       stderr: "pipe",
     });
     const [err, exitCode] = await Promise.all([stderr.text(), exited]);
-    expect(err).not.toContain("error:");
+    expect(err).toBe("");
     const marker = await file(join(runDir, "what-bin.txt")).text();
     expect(exitCode).toBe(0);
     return marker;

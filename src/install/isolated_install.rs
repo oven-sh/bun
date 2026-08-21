@@ -2680,6 +2680,9 @@ pub(crate) fn install_isolated_packages(
                 }
                 if let Err(err) = installer.link_dependency_bins(entry_id, true) {
                     Output::err(err, "failed to link binaries", format_args!(""));
+                    if installer.manager().options.enable.fail_early() {
+                        Global::exit(1);
+                    }
                     installer.summary.fail += 1;
                 }
             }

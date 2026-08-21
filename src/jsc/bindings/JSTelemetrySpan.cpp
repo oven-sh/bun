@@ -774,10 +774,12 @@ JSTelemetryBinding* JSTelemetryBinding::create(VM& vm, Zig::GlobalObject* global
 static JSValue internalTelemetryHelper(Zig::GlobalObject* globalObject, ASCIILiteral name)
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue moduleValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalTelemetry);
+    RETURN_IF_EXCEPTION(scope, {});
     if (!moduleValue.isObject())
         return jsUndefined();
-    return moduleValue.getObject()->get(globalObject, Identifier::fromString(vm, name));
+    RELEASE_AND_RETURN(scope, moduleValue.getObject()->get(globalObject, Identifier::fromString(vm, name)));
 }
 
 // api Context → [span | undefined, extras | undefined] via internal/telemetry.ts unpackContext.

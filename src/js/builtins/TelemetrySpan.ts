@@ -175,10 +175,14 @@ export function recordException(this: any, exception: any, time?: unknown) {
   if (typeof exception === "string") {
     attributes["exception.message"] = exception;
   } else {
-    if (exception.code != null) attributes["exception.type"] = exception.code + "";
-    else if (exception.name) attributes["exception.type"] = exception.name + "";
-    if (exception.message) attributes["exception.message"] = exception.message + "";
-    if (exception.stack) attributes["exception.stack" + "trace"] = exception.stack + "";
+    const code = exception.code;
+    const name = exception.name;
+    const message = exception.message;
+    const stack = exception.stack;
+    if (code != null) attributes["exception.type"] = code + "";
+    else if (name) attributes["exception.type"] = name + "";
+    if (message) attributes["exception.message"] = message + "";
+    if (stack) attributes["exception.stack" + "trace"] = stack + "";
   }
   this.addEvent("exception", attributes, time);
   return this;

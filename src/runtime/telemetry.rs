@@ -49,6 +49,7 @@ pub struct State {
 /// leaked (a few hundred bytes per `Bun.otel.start()` call) so `state()` can
 /// hand out `&'static` without locking on hot paths.
 static STATE: core::sync::atomic::AtomicPtr<State> = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+static RETIRED_STATES: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 static DEFAULT_STATE: State = State {
     sampler: Sampler::ParentBasedAlwaysOn,
     limits: bun_telemetry::data::DEFAULT_LIMITS,
@@ -186,6 +187,13 @@ extern "C" fn on_vm_exit(ctx: *mut c_void) {
         processor().tick();
     }
     exporter::JsExporter::detach_all_for_vm(s);
+    if global.bun_vm().worker_ref().is_some() {
+        // The worker thread is going away; nothing can reach this VmState again.
+        VM_STATE.with(|c| c.set(core::ptr::null_mut()));
+        // SAFETY: allocated by `vm_state_or_init` via Box::leak on this thread;
+        // the thread-local that published it was just cleared.
+        drop(unsafe { Box::from_raw(ctx as *mut VmState) });
+    }
 }
 
 /// After a span was recorded on this thread: make sure a flush is scheduled.
@@ -260,7 +268,12 @@ pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<
             .map(|s| s.as_bytes().into())
             .collect(),
     }));
-    STATE.swap(new_state, core::sync::atomic::Ordering::AcqRel);
+    let old = STATE.swap(new_state, core::sync::atomic::Ordering::AcqRel);
+    if !old.is_null() {
+        // Other threads may still hold a `&'static State` from `state()`;
+        // retire instead of freeing (reconfiguration is rare).
+        RETIRED_STATES.lock().unwrap().push(old as usize);
+    }
     *p.config.write().unwrap() = cfg.batch;
     let script = bun_paths::basename(vm.main());
     let resource = bun_telemetry::resource::encode(&bun_telemetry::resource::ResourceInfo {

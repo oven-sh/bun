@@ -959,13 +959,25 @@ impl JsExporter {
                     return ExportResult::Failure;
                 }
             },
-            JsFormat::Protobuf => bun_jsc::JSUint8Array::from_bytes_copy(global, &payload.body),
+            JsFormat::Protobuf => {
+                match bun_jsc::host_fn::from_js_host_call(global, || {
+                    bun_jsc::JSUint8Array::from_bytes_copy(global, &payload.body)
+                }) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let ex = global.take_exception(e);
+                        global.bun_vm().as_mut().run_error_handler(ex, None);
+                        return ExportResult::Failure;
+                    }
+                }
+            }
             JsFormat::Json => {
                 let json = bun_telemetry::otlp_json::to_json(&payload.body);
                 match bun_string_jsc::create_utf8_for_js(global, &json) {
                     Ok(v) => v,
-                    Err(_) => {
-                        global.clear_exception();
+                    Err(e) => {
+                        let ex = global.take_exception(e);
+                        global.bun_vm().as_mut().run_error_handler(ex, None);
                         return ExportResult::Failure;
                     }
                 }

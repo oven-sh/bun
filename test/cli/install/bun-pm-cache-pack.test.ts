@@ -1,9 +1,9 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
-import { join } from "path";
+import { bunExe, bunEnv as env, isWindows, readdirSorted, tempDir } from "harness";
+import { basename, join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -17,7 +17,6 @@ import {
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-setDefaultTimeout(1000 * 60 * 5);
 
 let urls: string[];
 beforeEach(async () => {
@@ -58,8 +57,10 @@ function rec(kind: number, path: string, mode: number, data: string | Buffer) {
 const MAGIC = Buffer.from("BUNCACHEPACK\0v1\n");
 
 it("bun pm cache pack / unpack round-trips exactly the cache entries a lockfile needs", async () => {
-  const cache1 = tmpdirSync();
-  const cache2 = tmpdirSync();
+  using cache1Dir = tempDir("cache-pack-a", {});
+  using cache2Dir = tempDir("cache-pack-b", {});
+  const cache1 = String(cache1Dir);
+  const cache2 = String(cache2Dir);
   await writeFile(join(package_dir, "bunfig.toml"), bunfig());
   await writeFile(
     join(package_dir, "package.json"),
@@ -78,12 +79,14 @@ it("bun pm cache pack / unpack round-trips exactly the cache entries a lockfile 
   r = await run(["pm", "cache", "pack", pack], package_dir, cache1);
   expect(r.err).not.toContain("error:");
   expect(r.out).toContain("Packed 3 packages");
+  expect(r.code).toBe(0);
   expect(existsSync(pack)).toBeTrue();
 
   // restore into an empty cache dir …
   r = await run(["pm", "cache", "unpack", pack], package_dir, cache2);
   expect(r.err).not.toContain("error:");
   expect(r.out).toContain("3 new");
+  expect(r.code).toBe(0);
   const names = await readdirSorted(cache2);
   expect(names.some(n => n.startsWith("bar@0.0.2"))).toBeTrue();
   expect(existsSync(join(cache2, "@barn"))).toBeTrue();
@@ -103,22 +106,49 @@ it("bun pm cache pack / unpack round-trips exactly the cache entries a lockfile 
   // idempotent
   r = await run(["pm", "cache", "unpack", pack], package_dir, cache2);
   expect(r.out).toContain("0 new, 3 already cached");
+  expect(r.code).toBe(0);
+
+  // argument validation
+  r = await run(["pm", "cache", "pack"], package_dir, cache2);
+  expect(r.err).toContain("expected exactly one <file>");
+  expect(r.code).toBe(1);
+  r = await run(["pm", "cache", "unpack", pack, "extra"], package_dir, cache2);
+  expect(r.err).toContain("expected exactly one <file>");
+  expect(r.code).toBe(1);
 });
 
 it("bun pm cache unpack refuses hostile packs", async () => {
-  const cache = tmpdirSync();
-  const victim = tmpdirSync();
-  const dir = tmpdirSync();
-  await writeFile(join(dir, "package.json"), "{}");
+  using cacheDir = tempDir("cache-pack-c", {});
+  using victimDir = tempDir("cache-pack-v", {});
+  using dirDir = tempDir("cache-pack-d", { "package.json": "{}" });
+  const cache = String(cacheDir);
+  const victim = String(victimDir);
+  const dir = String(dirDir);
 
   // a folder name that tries to escape the cache dir
   await writeFile(join(dir, "traversal.pack"), Buffer.concat([MAGIC, rec(1, "../xx", 0, ""), rec(0, "", 0, "")]));
   let r = await run(["pm", "cache", "unpack", join(dir, "traversal.pack")], dir, cache);
-  expect(r.code).not.toBe(0);
   expect(r.err).toContain("unsafe");
+  expect(r.code).not.toBe(0);
+
+  // absolute folder name / absolute entry path
+  const abs = isWindows ? "C:\\evil" : "/tmp/evil";
+  await writeFile(join(dir, "absdir.pack"), Buffer.concat([MAGIC, rec(1, abs, 0, ""), rec(0, "", 0, "")]));
+  r = await run(["pm", "cache", "unpack", join(dir, "absdir.pack")], dir, cache);
+  expect(r.err).toContain("unsafe");
+  expect(r.code).not.toBe(0);
+  await writeFile(
+    join(dir, "absentry.pack"),
+    Buffer.concat([MAGIC, rec(1, "abs@1.0.0", 0, ""), rec(2, join(victim, "x"), 0o644, "x"), rec(0, "", 0, "")]),
+  );
+  r = await run(["pm", "cache", "unpack", join(dir, "absentry.pack")], dir, cache);
+  expect(r.err).toContain("unsafe");
+  expect(r.code).not.toBe(0);
+  expect(existsSync(join(victim, "x"))).toBeFalse();
+  expect((await readdirSorted(cache)).filter(n => !n.startsWith("."))).toEqual([]);
 
   // a symlink out of the package followed by a file written through it
-  const rel = "./../../" + require("path").basename(victim);
+  const rel = "./../../" + basename(victim);
   await writeFile(
     join(dir, "escape.pack"),
     Buffer.concat([
@@ -132,7 +162,7 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   r = await run(
     ["pm", "cache", "unpack", join(dir, "escape.pack")],
     dir,
-    join(victim, "..", require("path").basename(cache)),
+    join(victim, "..", basename(cache)),
   );
   expect(r.code).not.toBe(0);
   expect(r.err).toMatch(/unsafe|traverses/);
@@ -143,7 +173,7 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   // an absurd symlink target length
   await writeFile(
     join(dir, "long.pack"),
-    Buffer.concat([MAGIC, rec(1, "x@1.0.0", 0, ""), rec(3, "l", 0o777, "a".repeat(10000)), rec(0, "", 0, "")]),
+    Buffer.concat([MAGIC, rec(1, "x@1.0.0", 0, ""), rec(3, "l", 0o777, Buffer.alloc(10_000, "a")), rec(0, "", 0, "")]),
   );
   r = await run(["pm", "cache", "unpack", join(dir, "long.pack")], dir, cache);
   expect(r.code).not.toBe(0);

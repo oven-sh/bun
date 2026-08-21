@@ -1084,8 +1084,7 @@ class BunWebSocketMocked extends EventEmitter {
     this.#drain(ws);
   }
 
-  // uws calls this from inside ws.close() and ws.terminate() too. Like npm ws,
-  // stay CLOSING until the 'close' event, which goes out on the next tick.
+  // Runs synchronously inside ws.close() and ws.terminate() as well, hence the deferred 'close'.
   #close(ws, code, reason) {
     this.#state = ReadyState_CLOSING;
     this.#ws = null;

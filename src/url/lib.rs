@@ -360,8 +360,7 @@ impl<'a> URL<'a> {
         Ok(OwnedURL { href: owned })
     }
 
-    /// `[scheme://]host[:port][/prefix]`, `https` by default, read with WTF::URL so that the host
-    /// is the one `new URL(endpoint)` names. `None` when `parse` finds no host.
+    /// `input` is `[scheme://]host[:port][/prefix]`, `https` by default. `None` when it has no host.
     pub fn parse_s3_endpoint(input: &[u8]) -> Option<S3Endpoint> {
         let as_written = URL::parse(input);
         if as_written.host_with_path().is_empty() {

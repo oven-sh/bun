@@ -49,13 +49,10 @@ pub struct ThreadPool {
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
     pub(crate) io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
-    /// One count per parse task handed to `io_pool`, finished when its IO
-    /// callback returns. The IO pool outlives this `ThreadPool`, and the
-    /// callback's last step is to re-schedule the task onto `worker_pool`, so
-    /// teardown joins this ([`Self::wait_for_io_tasks`]) before [`Self::deinit`]
-    /// frees `worker_pool`. `graph.pending_items` cannot stand in for it: it
-    /// reaches zero as soon as the re-scheduled parse completes, which can be
-    /// while the IO callback is still inside `schedule`.
+    /// One count per task on `io_pool`, finished when its callback returns.
+    /// That callback ends by scheduling the task onto `worker_pool`, and the
+    /// parse can complete (`graph.pending_items` reaching zero) before it has
+    /// returned from that, so teardown joins this before it frees `worker_pool`.
     io_tasks_in_flight: WaitGroup,
     // Conditionally owned via `worker_pool_is_owned`; kept raw so callers
     // (bundle_v2.rs) can dereference for `wake_for_idle_events()` without a
@@ -225,20 +222,17 @@ impl ThreadPool {
         }
     }
 
-    /// Blocks until every IO callback of this pool has returned. Call it
-    /// (through `&self`, while IO threads may still read the pool) before
-    /// taking the `&mut self` that [`Self::deinit`] needs.
+    /// Blocks until every IO callback has returned. `&self` on purpose: IO
+    /// threads still read the pool until this returns.
     pub(crate) fn wait_for_io_tasks(&self) {
         self.io_tasks_in_flight.wait();
     }
 
-    /// The IO callback's last step (`io_task_callback`), after the task has been
-    /// handed to the worker pool.
+    /// The last step of `io_task_callback`.
     ///
     /// # Safety
-    /// `this` is the pool the task was scheduled on. The bundle keeps it alive
-    /// until [`Self::wait_for_io_tasks`] returns, which this call permits, so
-    /// nothing may touch the pool after it.
+    /// `this` scheduled the task. It may be freed once [`Self::wait_for_io_tasks`]
+    /// returns, which this call permits, so nothing may touch it afterwards.
     pub(crate) unsafe fn finish_io_task(this: *const Self) {
         // SAFETY: caller contract; `finish_raw` is the matching last access.
         unsafe { WaitGroup::finish_raw(&raw const (*this).io_tasks_in_flight) };
@@ -246,9 +240,8 @@ impl ThreadPool {
 
     /// Explicit teardown (no Drop on
     /// `ThreadPool` because `Graph.pool` is `NonNull<ThreadPool>` and the arena
-    /// owns the storage). The caller drains the parse tasks and calls
-    /// [`Self::wait_for_io_tasks`] first: a task still running would use the
-    /// pool this frees.
+    /// owns the storage). Only valid once no task of this pool is running:
+    /// the caller drains the parse tasks and calls [`Self::wait_for_io_tasks`].
     pub(crate) fn deinit(&mut self) {
         if self.worker_pool_is_owned {
             // SAFETY: worker_pool was heap-allocated in `init()` when owned.
@@ -260,11 +253,9 @@ impl ThreadPool {
         }
     }
 
-    /// Safe accessor for the underlying `bun_threading::ThreadPool`. The
-    /// pointer is set in `init`/`init_with_pool` and nulled by `deinit`. The
-    /// arena keeps `self` readable after `deinit`, so a task that is still
-    /// running at teardown gets here: fail with a message instead of a
-    /// null dereference inside the pool.
+    /// Safe accessor for the underlying `bun_threading::ThreadPool`. Set in
+    /// `init`/`init_with_pool`, nulled by `deinit`. `self` stays readable in the
+    /// arena after `deinit`, so a task that runs too late fails here by name.
     #[inline]
     pub(crate) fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
         assert!(
@@ -441,48 +432,31 @@ impl ThreadPool {
         let mut map = self.workers_assignments.lock();
         let worker: *mut Worker = match map.entry(id) {
             MapEntry::Occupied(o) => *o.into_mut(),
-            MapEntry::Vacant(v) => {
-                // Allocate raw uninitialized storage; fully written via
-                // `worker.write(...)` below before any read. Keep it as
-                // `*mut MaybeUninit<Worker>` → `.cast()` instead of
-                // `assume_init()` so we never materialize a `Box<Worker>`
-                // whose payload violates `Worker`'s validity invariants
-                // (niche-optimized `Option<_>` discriminants, the non-null
-                // fn-pointer in `deinit_task.callback`, `bool` fields).
-                let worker = bun_core::heap::into_raw(Box::<Worker>::new_uninit()).cast::<Worker>();
-                // SAFETY: `worker` is freshly heap-allocated and reachable from
-                // nothing until `v.insert` below. It has to be complete by then:
-                // `deinit_without_freeing_arena` takes this lock and tears down
-                // every Worker the map holds.
-                unsafe {
-                    worker.write(Worker {
-                        // Placeholder — overwritten by `init()` immediately below.
-                        ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
-                        heap: None,
-                        arena: bun_ptr::BackRef::from(NonNull::<ThreadLocalArena>::dangling()),
-                        thread: NonNull::new(ThreadPoolLib::Thread::current())
-                            .map(bun_ptr::ParentRef::from),
-                        data: None,
-                        ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
-                        has_created: false,
-                        deinit_task: ThreadPoolLib::Task {
-                            node: ThreadPoolLib::Node::default(),
-                            callback: Worker::deinit_callback,
-                        },
-                        temporary_arena: None,
-                        stmt_list: None,
-                    });
-                    (*worker).init(&*self.v2);
-                }
-                v.insert(worker);
-                worker
-            }
+            // Complete before it is inserted: `deinit_without_freeing_arena`
+            // takes this lock and tears down every Worker the map holds.
+            MapEntry::Vacant(v) => *v.insert(bun_core::heap::into_raw(Box::new(Worker {
+                // SAFETY: `v2` is the bundle that owns this pool; it outlives every Worker.
+                ctx: unsafe { bun_ptr::BackRef::from_raw(self.v2.cast_mut()) },
+                heap: None,
+                // Points into `heap` once `create()` runs.
+                arena: bun_ptr::BackRef::dangling(),
+                thread: NonNull::new(ThreadPoolLib::Thread::current())
+                    .map(bun_ptr::ParentRef::from),
+                data: None,
+                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
+                has_created: false,
+                deinit_task: ThreadPoolLib::Task {
+                    node: ThreadPoolLib::Node::default(),
+                    callback: Worker::deinit_callback,
+                },
+                temporary_arena: None,
+                stmt_list: None,
+            }))),
         };
         drop(map);
         TLS_WORKER.set((self.generation, worker));
-        // SAFETY: the map only holds Workers that were written before they were
-        // inserted (above); each lives until its `deinit_soon`, and this thread
-        // is the only one that uses the Worker keyed by its own id.
+        // SAFETY: the map only holds complete Workers; each lives until its
+        // `deinit_soon`, and only the thread whose id keys it uses it.
         unsafe { &mut *worker }
     }
 }
@@ -695,12 +669,6 @@ impl Worker {
 
     pub(crate) fn unget(&mut self) {
         self.ast_memory_store.pop();
-    }
-
-    pub(crate) fn init(&mut self, v2: &BundleV2<'_>) {
-        // Lifetime-erase `'_` → `'static` via `NonNull::cast` (BACKREF: the
-        // bundle outlives every worker).
-        self.ctx = bun_ptr::BackRef::from(NonNull::from(v2).cast::<BundleV2<'static>>());
     }
 
     fn create(&mut self, ctx: &BundleV2<'_>) {

@@ -808,10 +808,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (this.adapter.closed) {
       return;
     }
-    // reset error and state
+    // reset error and state; the new cycle has not fired onconnect yet
     this.storedError = null;
     this.connectStartedAt = 0;
     this.state = PooledConnectionState.pending;
+    this.flags &= ~PooledConnectionFlags.onConnectFired;
     // retry connection
     this.#beginConnecting();
   }

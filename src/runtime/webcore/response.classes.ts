@@ -155,7 +155,8 @@ export default [
       storable: true,
     },
     estimatedSize: true,
-    values: ["stream"],
+    // `name` backs the File.prototype.name accessor in JSDOMFile.cpp.
+    values: ["stream", "name"],
     overridesToJS: true,
     proto: {
       text: { fn: "getText", async: true },
@@ -176,21 +177,6 @@ export default [
 
       type: {
         getter: "getType",
-      },
-
-      // TODO: Move this to a separate `File` object or BunFile
-      // This is *not* spec-compliant.
-      name: {
-        this: true,
-        cache: true,
-        getter: "getName",
-        setter: "setName",
-      },
-
-      // TODO: Move this to a separate `File` object or BunFile
-      // This is *not* spec-compliant.
-      lastModified: {
-        getter: "getLastModified",
       },
 
       // Non-standard, s3 + BunFile support

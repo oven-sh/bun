@@ -61,4 +61,47 @@ describe("toMatchSnapshot errors", () => {
       expect({ a: 4 }).toMatchSnapshot({ a: expect.any("not a constructor") });
     }).toThrow();
   });
+
+  it("should throw if formatting a nested value throws, instead of leaving that property out", () => {
+    // The snapshot formatter reads `$$typeof` off every object to detect React elements.
+    const reads: string[] = [];
+    const formattable = (name: string) => ({
+      get $$typeof(): unknown {
+        reads.push(name);
+        return undefined;
+      },
+    });
+    const value = {
+      x: {
+        a: {
+          get $$typeof(): unknown {
+            reads.push("a");
+            throw new Error("boom");
+          },
+        },
+        b: formattable("b"),
+      },
+      y: formattable("y"),
+    };
+
+    // The matcher reports formatting failures with its own message rather than
+    // rethrowing the getter's error.
+    expect(() => {
+      // This is what used to get recorded: `a` dropped, both walks carried on.
+      expect(value).toMatchInlineSnapshot(`
+        {
+          "x": {
+            "b": {
+              "$$typeof": [native code],
+            },
+          },
+          "y": {
+            "$$typeof": [native code],
+          },
+        }
+      `);
+    }).toThrow("Failed to pretty format value");
+    // Neither the rest of `x` nor the rest of `value` was formatted.
+    expect(reads).toEqual(["a"]);
+  });
 });

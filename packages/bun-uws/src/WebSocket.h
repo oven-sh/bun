@@ -257,8 +257,9 @@ public:
         if (!this->isCorked()) {
             if (status == SUCCESS) {
                 /* If we are not corked, and we just sent off everything, we need to FIN right here.
-                 * In all other cases, we need to fin either if uncork was successful, or when drainage is complete
-                 * (onWritable). shutdown() with data still buffered would discard it, close frame included. */
+                 * In all other cases whoever uncorks us (onData, the upgrade path in HttpContext) sends the FIN
+                 * if the buffer is empty by then, else onWritable does once it has drained. shutdown() with data
+                 * still buffered would discard it, close frame included. */
                 this->shutdown();
             }
         }

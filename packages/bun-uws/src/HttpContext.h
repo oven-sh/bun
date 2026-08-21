@@ -672,13 +672,14 @@ private:
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) httpContextData->upgradedWebSocket;
 
             /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?) */
-            auto [written, failed] = asyncSocket->uncork();
+            asyncSocket->uncork();
 
-            /* If we succeeded in uncorking, check if we have sent WebSocket FIN */
-            if (!failed) {
+            /* An end() in the open handler left the TCP FIN to us. Gate on the buffer like onData / onWritable in
+             * WebSocketContext, not on uncork() succeeding: uncork() also succeeds when a large send in the open
+             * handler already released the cork and left a full buffer behind. onWritable FINs after the drain. */
+            if (!us_socket_is_closed((us_socket_t *) asyncSocket) && asyncSocket->getBufferedAmount() == 0) {
                 WebSocketData *webSocketData = (WebSocketData *) asyncSocket->getAsyncSocketData();
                 if (webSocketData->isShuttingDown) {
-                    /* In that case, also send TCP FIN (this is similar to what we have in ws drain handler) */
                     asyncSocket->shutdown();
                 }
             }

@@ -2522,6 +2522,54 @@ pub(crate) enum TsfnCallback {
     },
 }
 
+/// One dispatch's callback target, copied out of the function so no borrow of
+/// it is live while user code runs.
+enum Target {
+    Js(JSValue),
+    C(
+        napi_threadsafe_function_call_js,
+        Option<JSValue>,
+        *mut c_void,
+    ),
+}
+
+impl Target {
+    fn from_callback(callback: &TsfnCallback, ctx: *mut c_void) -> Target {
+        match callback {
+            TsfnCallback::Js(strong) => Target::Js(strong.get().unwrap_or(JSValue::UNDEFINED)),
+            TsfnCallback::C {
+                js: cb_js,
+                napi_threadsafe_function_call_js,
+            } => Target::C(*napi_threadsafe_function_call_js, cb_js.get(), ctx),
+        }
+    }
+
+    /// One queued call: a JS entry of its own, so what it leaves pending is
+    /// the `Err`, for the caller's landing frame to fold.
+    fn invoke(self, env: &NapiEnv, task: *mut c_void) -> JsResult<()> {
+        let global_object = env.to_js();
+        match self {
+            Target::Js(js) => {
+                if js.is_empty_or_undefined_or_null() {
+                    return Ok(());
+                }
+
+                js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
+            }
+            Target::C(call_js, cb_js, ctx) => {
+                let _hs = NapiHandleScope::open_scoped(env);
+                // No func at creation => null js_callback (Node), not encoded undefined.
+                let js = match cb_js {
+                    Some(v) => napi_value::create(env, v),
+                    None => napi_value(0),
+                };
+                call_js(env.as_mut_ptr(), js, ctx, task);
+                env.surface_exception(global_object)
+            }
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ClosingState {
@@ -2854,29 +2902,9 @@ impl ThreadSafeFunction {
             return Ok(());
         };
 
-        // Copy the callback target out so no borrow of `*this` is live while
-        // user code runs.
-        enum Target {
-            Js(JSValue),
-            C(
-                napi_threadsafe_function_call_js,
-                Option<JSValue>,
-                *mut c_void,
-            ),
-        }
-        // SAFETY: scoped reborrow.
-        let target = match unsafe { &(*this).callback } {
-            TsfnCallback::Js(strong) => Target::Js(strong.get().unwrap_or(JSValue::UNDEFINED)),
-            TsfnCallback::C {
-                js: cb_js,
-                napi_threadsafe_function_call_js,
-            } => Target::C(
-                *napi_threadsafe_function_call_js,
-                cb_js.get(),
-                // SAFETY: plain field read, same reborrow scope.
-                unsafe { (*this).ctx },
-            ),
-        };
+        // SAFETY: scoped reborrows; `Target` holds only copies, so no borrow
+        // of `*this` is live while user code runs.
+        let target = unsafe { Target::from_callback(&(*this).callback, (*this).ctx) };
 
         // SAFETY: env is valid while the TSF is live.
         let env = unsafe { &*env };
@@ -2886,26 +2914,7 @@ impl ThreadSafeFunction {
         // `global_object`.
         let _dispatch = unsafe { (*this).tracker }.dispatch(global_object);
 
-        let called = match target {
-            Target::Js(js) => {
-                if js.is_empty_or_undefined_or_null() {
-                    return Ok(());
-                }
-
-                js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
-            }
-            Target::C(call_js, cb_js, ctx) => {
-                let _hs = NapiHandleScope::open_scoped(env);
-                // No func at creation => null js_callback (Node), not encoded undefined.
-                let js = match cb_js {
-                    Some(v) => napi_value::create(env, v),
-                    None => napi_value(0),
-                };
-                call_js(env.as_mut_ptr(), js, ctx, task);
-                env.surface_exception(global_object)
-            }
-        };
-        match called {
+        match target.invoke(env, task) {
             Ok(()) => Ok(()),
             Err(err) => bun_jsc::task::report_error_or_terminate(global_object, err),
         }
@@ -2917,32 +2926,8 @@ impl ThreadSafeFunction {
     /// live-env drain, where no nested dispatch can re-enter; the re-entrant
     /// dispatch path uses `call`.
     fn deliver(&mut self, env: &NapiEnv, task: *mut c_void) -> JsResult<()> {
-        let global_object = env.to_js();
-        let _dispatch = self.tracker.dispatch(global_object);
-
-        match &self.callback {
-            TsfnCallback::Js(strong) => {
-                let js: JSValue = strong.get().unwrap_or(JSValue::UNDEFINED);
-                if js.is_empty_or_undefined_or_null() {
-                    return Ok(());
-                }
-
-                js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
-            }
-            TsfnCallback::C {
-                js: cb_js,
-                napi_threadsafe_function_call_js,
-            } => {
-                let _hs = NapiHandleScope::open_scoped(env);
-                // No func at creation => null js_callback (Node), not encoded undefined.
-                let js = match cb_js.get() {
-                    Some(v) => napi_value::create(env, v),
-                    None => napi_value(0),
-                };
-                napi_threadsafe_function_call_js(env.as_mut_ptr(), js, self.ctx, task);
-                env.surface_exception(global_object)
-            }
-        }
+        let _dispatch = self.tracker.dispatch(env.to_js());
+        Target::from_callback(&self.callback, self.ctx).invoke(env, task)
     }
 
     /// Caller holds `lock`. Empties the queue; the items are the caller's to

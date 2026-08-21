@@ -174,8 +174,9 @@ JSC::JSPromise* promiseRejectedWith(JSC::JSGlobalObject*, JSC::JSValue); // user
 //     few such entry points that are not host functions). Nothing above it would receive an
 //     exception, and whoever is waiting for the outcome waits on a promise/stream, not on this
 //     stack: whatever `step` threw is handed to `deliver(error)`, which errors that stream /
-//     rejects that promise. If delivering throws as well, that is left pending for the caller's
-//     runner to report.
+//     rejects that promise. If delivering throws as well (it may run user hooks), the optional
+//     `lastResort(error)` — which must run no user JS — settles the operation with that second
+//     error; without one it is left pending for the caller's runner to report.
 //   promiseFromSteps(globalObject, step) — the body of a function whose contract is "returns a
 //     promise" (a source/sink/transformer algorithm, a promise-returning API method, a WebIDL
 //     callback declared to return Promise<T>): whatever `step` threw is the rejection of the
@@ -193,11 +194,22 @@ ALWAYS_INLINE void atStreamsBoundary(JSC::JSGlobalObject* globalObject, Step&& s
     }
 }
 
-template<typename Step, typename Deliver>
-ALWAYS_INLINE JSC::EncodedJSValue enterStreams(JSC::JSGlobalObject* globalObject, Step&& step, Deliver&& deliver)
+template<typename Step, typename Deliver, typename LastResort>
+ALWAYS_INLINE void atStreamsBoundary(JSC::JSGlobalObject* globalObject, Step&& step, Deliver&& deliver, LastResort&& lastResort)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     atStreamsBoundary(globalObject, std::forward<Step>(step), std::forward<Deliver>(deliver));
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        TRY_CLEAR_EXCEPTION(scope, );
+        RELEASE_AND_RETURN(scope, lastResort(exception->value()));
+    }
+}
+
+template<typename Step, typename... Handlers>
+ALWAYS_INLINE JSC::EncodedJSValue enterStreams(JSC::JSGlobalObject* globalObject, Step&& step, Handlers&&... handlers)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    atStreamsBoundary(globalObject, std::forward<Step>(step), std::forward<Handlers>(handlers)...);
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

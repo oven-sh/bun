@@ -1084,8 +1084,11 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
     if (JSC::Exception* exception = scope.exception()) {
         TRY_CLEAR_EXCEPTION(scope, {});
         stream->m_lockedWithoutReader = false;
-        readableStreamError(globalObject, stream, exception->value());
-        RETURN_IF_EXCEPTION(scope, {});
+        // pull() may already have errored the stream through the sink before throwing.
+        if (stream->m_state == ReadableStreamState::Readable) {
+            readableStreamError(globalObject, stream, exception->value());
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {

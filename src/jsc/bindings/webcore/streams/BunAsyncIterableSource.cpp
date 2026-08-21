@@ -118,6 +118,14 @@ static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncItera
     }
 }
 
+// The boundaries' last resort: delivering an error ran a hook (iterator.throw()/return()) that
+// threw as well; drop the iterator and reject the pull with that. Runs no user JS.
+static void asyncIterAbandon(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
+{
+    op->m_iterator.clear();
+    settlePullPromiseRejected(globalObject, op, error);
+}
+
 // The success tail: controller.end(), then iterator.return(), then resolve the pull promise.
 static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
 {
@@ -347,7 +355,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceNextFulfilled,
         auto step = asyncIterHandleNextResult(globalObject, op, result);
         RETURN_IF_EXCEPTION(scope, );
         if (step == NextStep::ContinueLoop)
-            RELEASE_AND_RETURN(scope, driveAsyncIterator(globalObject, op)); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); });
+            RELEASE_AND_RETURN(scope, driveAsyncIterator(globalObject, op)); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceFlushFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -360,7 +368,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceFlushFulfilled
             return asyncIterReturnIteratorAndSettle(globalObject, op);
         if (op->m_iteratorDone) // The drained write may have been the iterator's final value.
             return asyncIterFinishSuccess(globalObject, op);
-        driveAsyncIterator(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); });
+        driveAsyncIterator(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 
 // Any rejection feeding the loop (next(), flush(true), end(), return()) takes the error path.
@@ -370,16 +378,13 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceErrored, (JSGl
     JSValue rejection = callFrame->argument(0);
     return enterStreams(globalObject, [&] {
         if (!op->m_done)
-            asyncIterFinishWithError(globalObject, op, rejection); }, [&](JSValue error) {
-        // Delivering the rejection threw (iterator.throw()/return()); that error settles the pull.
-        op->m_iterator.clear();
-        settlePullPromiseRejected(globalObject, op, error); });
+            asyncIterFinishWithError(globalObject, op, rejection); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceEndFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(1));
-    return enterStreams(globalObject, [&] { asyncIterReturnIteratorAndSettle(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); });
+    return enterStreams(globalObject, [&] { asyncIterReturnIteratorAndSettle(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 
 // iterator.return() fulfilled after the stream already ended.
@@ -415,7 +420,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceErrorSwallowed
 
 // pull(controller): one drive of the iterator runs at a time; every pull while it runs gets
 // the same promise. pull() answers with that promise, so a throw from the drive is the stream's
-// error (enterStreams), never a synchronous throw into the direct controller.
+// error (enterStreams) rather than a synchronous throw into the direct controller.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -433,7 +438,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGl
     auto* pullPromise = JSPromise::create(vm, globalObject->promiseStructure());
     op->m_pullPromise.set(vm, op, pullPromise);
     op->m_running = true;
-    enterStreams(globalObject, [&] { driveAsyncIterator(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); });
+    enterStreams(globalObject, [&] { driveAsyncIterator(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(pullPromise);
 }

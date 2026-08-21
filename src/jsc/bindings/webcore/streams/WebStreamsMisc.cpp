@@ -582,8 +582,6 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
     return promise;
 }
 
-// The ONE sanctioned completion-record catch: the spec's "interpreting X as a completion
-// record" sites only. Empty return = a VM termination the caller must propagate.
 } // namespace WebStreams
 } // namespace Bun
 

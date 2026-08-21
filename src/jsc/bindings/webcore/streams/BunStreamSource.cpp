@@ -984,8 +984,8 @@ static void rsisFinish(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperati
 }
 
 // The pump's `catch (e)` + `finally`, delivered at a boundary (the enterStreams `deliver` of the host
-// functions driving the pump, or the read's rejection reaction): tear down, reject the result, then
-// cancel the source and close the sink with the error. The result is settled before those hooks run,
+// functions driving the pump, or the read's rejection reaction): reject the result, tear down, then
+// cancel the source and close the sink with the error. The result is settled before anything else,
 // so a throw from them propagates without leaving the pump unsettled. The reader is deliberately
 // orphaned, never released.
 static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue error)
@@ -997,9 +997,9 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     JSObject* sink = op->m_didClose ? nullptr : op->m_sink.get();
     op->m_didClose = true;
     JSReadableStream* stream = op->m_stream.get();
-    rsisFinally(vm, globalObject, op);
-    RETURN_IF_EXCEPTION(scope, );
     rejectPromise(globalObject, result, error);
+    RETURN_IF_EXCEPTION(scope, );
+    rsisFinally(vm, globalObject, op);
     RETURN_IF_EXCEPTION(scope, );
     if (stream && !isReadableStreamLocked(stream)) {
         auto* cancelPromise = readableStreamCancel(globalObject, stream, error);

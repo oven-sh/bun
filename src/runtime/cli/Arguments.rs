@@ -802,24 +802,28 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
-/// Print Node's missing-argument error for runtime CLI flags Bun borrows from
-/// Node.js (`<execPath>: <flag> requires an argument`) and exit with code 9,
-/// Node's exit code for invalid command-line arguments.
+/// Report a bad command line for the runtime flags Bun borrows from Node.js the
+/// way `node` does (`<execPath>: <message>`) and exit with code 9, Node's exit
+/// code for invalid command-line arguments.
 #[cold]
 #[inline(never)]
-fn exit_node_requires_argument(flag: &[u8]) -> ! {
+fn exit_node_option_error(message: core::fmt::Arguments<'_>) -> ! {
     // Same source as `process.execPath` (node_process::get_exec_path), so the
     // prefix matches what scripts observe.
     let exec_path: &[u8] = bun_core::self_exe_path()
         .map(|p| p.as_bytes())
         .unwrap_or(b"bun");
-    bun_core::pretty_errorln!(
-        "{}: {} requires an argument",
-        BStr::new(exec_path),
-        BStr::new(flag)
-    );
+    bun_core::pretty_errorln!("{}: {}", BStr::new(exec_path), message);
     Output::flush();
     Global::exit(9);
+}
+
+/// `<execPath>: <flag> requires an argument`, Node's error for a flag that
+/// needs a value and did not get one.
+#[cold]
+#[inline(never)]
+fn exit_node_requires_argument(flag: &[u8]) -> ! {
+    exit_node_option_error(format_args!("{} requires an argument", BStr::new(flag)));
 }
 
 /// Options Node refuses to accept through the NODE_OPTIONS environment
@@ -882,16 +886,10 @@ fn validate_node_options(env: &[u8]) {
             .map(|&b| if b == b'_' { b'-' } else { b })
             .collect();
         if NODE_OPTIONS_DISALLOWED.contains(&canonical.as_slice()) {
-            let exec_path: &[u8] = bun_core::self_exe_path()
-                .map(|p| p.as_bytes())
-                .unwrap_or(b"bun");
-            bun_core::pretty_errorln!(
-                "{}: {} is not allowed in NODE_OPTIONS",
-                BStr::new(exec_path),
+            exit_node_option_error(format_args!(
+                "{} is not allowed in NODE_OPTIONS",
                 BStr::new(&token[..name_end])
-            );
-            Output::flush();
-            Global::exit(9);
+            ));
         }
     }
 }
@@ -1366,6 +1364,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.runtime_options.eval.script = script.into();
         }
         if let Some(input_type) = args.option(b"--input-type") {
+            // Node also takes "module-typescript" / "commonjs-typescript";
+            // `--check` does not strip types, so only the values it honors pass.
+            if !matches!(input_type, b"module" | b"commonjs") {
+                exit_node_option_error(format_args!(
+                    "--input-type must be \"module\" or \"commonjs\""
+                ));
+            }
             ctx.runtime_options.eval.input_type = input_type.into();
         }
 
@@ -1385,15 +1390,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 && (!ctx.runtime_options.eval.script.is_empty() || eval_arg.is_some())
             {
                 // Node prints this (and exits 9) for `node -c -e foo`.
-                let exec_path: &[u8] = bun_core::self_exe_path()
-                    .map(|p| p.as_bytes())
-                    .unwrap_or(b"bun");
-                bun_core::pretty_errorln!(
-                    "{}: either --check or --eval can be used, not both",
-                    BStr::new(exec_path)
-                );
-                Output::flush();
-                Global::exit(9);
+                exit_node_option_error(format_args!(
+                    "either --check or --eval can be used, not both"
+                ));
             }
         }
 

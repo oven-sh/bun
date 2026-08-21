@@ -342,6 +342,20 @@ describe("node-style CLI argument errors", () => {
     expect(exitCode).toBe(9);
   });
 
+  // Rejected while parsing arguments, so even stdin that would pass --check exits 9.
+  test.each(["esm", "bogus"])("--input-type=%s (unknown value) exits with code 9", value => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), `--input-type=${value}`, "--check"],
+      env: bunEnv,
+      stdin: Buffer.from("var ok = 1;"),
+    });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(
+      `${process.execPath}: --input-type must be "module" or "commonjs"`,
+    );
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
   test.each(["--allow-fs-read=*", "--allow-fs-write=*"])("%s without --permission exits with code 1", flag => {
     const { stdout, stderr, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), flag, "-e", "console.log('ran')"],

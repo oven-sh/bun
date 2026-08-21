@@ -2405,7 +2405,6 @@ impl Lockfile {
                 workspace_versions: &mut self.workspace_versions,
                 patched_dependencies: &mut self.patched_dependencies,
                 trusted_dependencies: &mut self.trusted_dependencies,
-                self_contained_workspaces: &mut self.self_contained_workspaces,
             },
         )
     }
@@ -2459,8 +2458,6 @@ pub(crate) struct LockfileFields<'a> {
     pub(crate) workspace_versions: &'a mut VersionHashMap,
     pub(crate) patched_dependencies: &'a mut PatchedDependenciesMap,
     pub(crate) trusted_dependencies: &'a mut Option<TrustedDependenciesSet>,
-    pub(crate) self_contained_workspaces:
-        &'a mut ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 }
 
 // ────────────────────────────────────────────────────────────────────────────

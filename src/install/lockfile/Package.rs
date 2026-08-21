@@ -2856,6 +2856,13 @@ impl Package<u64> {
                     }
 
                     let external_name = string_builder.append::<ExternalString>(&entry.name);
+                    // a property of the manifest, recorded whether or not the dependency
+                    // edge below turns out to be new
+                    if entry.hoisting_limits {
+                        lockfile
+                            .self_contained_workspaces
+                            .put(external_name.hash, ())?;
+                    }
 
                     let workspace_version = 'brk: {
                         if let Some(version_string) = &entry.version {
@@ -2910,11 +2917,6 @@ impl Package<u64> {
                             lockfile
                                 .workspace_versions
                                 .put(external_name.hash, version)?;
-                        }
-                        if entry.hoisting_limits {
-                            lockfile
-                                .self_contained_workspaces
-                                .put(external_name.hash, ())?;
                         }
                     }
                 }

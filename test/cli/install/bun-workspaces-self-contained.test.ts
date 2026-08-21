@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { existsSync, readlinkSync, statSync } from "fs";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, readdirSorted } from "harness";
 import { join } from "path";
 import {
@@ -111,11 +111,22 @@ describe.each([
     expect(existsSync(join(package_dir, "node_modules", "qux", "package.json"))).toBeTrue();
     expect(existsSync(join(package_dir, "apps", "web", "node_modules", "qux"))).toBeFalse();
 
-    // stable across a repeat / frozen install
-    const again = await install(package_dir, ["--frozen-lockfile"]);
+    // stable across a repeat / frozen install …
+    let again = await install(package_dir, ["--frozen-lockfile"]);
     expect(again.err).not.toContain("error:");
     expect(again.code).toBe(0);
     expect(await readdirSorted(desktopNm)).toEqual(["@barn", "bar", "baz", "shared"]);
+    // … and when installing from the existing lockfile into a clean tree (no dependency
+    // changes, so nothing is re-resolved — the layout must still come out self-contained)
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(desktopNm, { recursive: true, force: true });
+    again = await install(package_dir, []);
+    expect(again.err).not.toContain("error:");
+    expect(again.code).toBe(0);
+    expect(await readdirSorted(desktopNm)).toEqual(["@barn", "bar", "baz", "shared"]);
+    if (!isWindows) {
+      expect(statSync(join(desktopNm, "bar", "package.json")).nlink).toBe(1);
+    }
   });
 });
 

@@ -159,17 +159,14 @@ fn process_workspace_name(
     let entry = Entry {
         name: Box::<[u8]>::from(name),
         name_loc: name_expr.loc,
-        hoisting_limits: workspace_json
+        hoisting_limits: match workspace_json
             .root
             .get(b"installConfig")
             .and_then(|c| c.get(b"hoistingLimits"))
-            .and_then(|h| {
-                h.as_string_cloned(&scratch)
-                    .ok()
-                    .flatten()
-                    .map(|s| s == b"workspaces")
-            })
-            .unwrap_or(false),
+        {
+            Some(h) => h.as_string_cloned(&scratch)? == Some(b"workspaces".as_slice()),
+            None => false,
+        },
         version: 'brk: {
             if let Some(version_expr) = workspace_json.root.get(b"version") {
                 if let Some(version) = version_expr.as_string_cloned(&scratch)? {

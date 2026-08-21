@@ -53,7 +53,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     auto name = clientData->builtinNames()._eventsPublicName();
     JSValue _events = thisObject->get(lexicalGlobalObject, name);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    if (_events.isCell() && _events.inherits<JSEventEmitter>()) {
+    if (_events.inherits<JSEventEmitter>()) {
         return uncheckedDowncast<JSEventEmitter>(asObject(_events));
     }
 

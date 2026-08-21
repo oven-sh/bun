@@ -19,21 +19,12 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 
 declare namespace Internal {
-  const enum Operation {
-    Insert = 0,
-    Delete = 1,
-    Equal = 2,
-  }
-  interface Diff {
-    kind: Operation;
-    value: string;
-  }
-
-  function myersDiff(actual: string, expected: string, checkCommaDisparity?: boolean, lines?: boolean): string;
-  // todo
-
-  function printMyersDiff(...args: any[]): any;
-  function printSimpleMyersDiff(...args: any[]): any;
+  function printSimpleMyersDiff(actual: string, expected: string): string;
+  function printMyersDiff(
+    actual: string,
+    expected: string,
+    checkCommaDisparity: boolean,
+  ): { message: string; skipped: boolean };
 }
 
 const kReadableOperator = {

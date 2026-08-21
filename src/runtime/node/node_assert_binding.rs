@@ -9,21 +9,22 @@ use super::node_assert;
 ///     Delete = 1,
 ///     Equal  = 2,
 /// }
-/// type Diff = { operation: DiffType, text: string };
-/// declare function myersDiff(actual: string, expected: string): Diff[];
+/// // `value` is a line, or a char code when `lines` is false.
+/// type Diff = { kind: DiffType, value: string | number };
+/// declare function myersDiff(
+///     actual: string,
+///     expected: string,
+///     checkCommaDisparity?: boolean,
+///     lines?: boolean,
+/// ): Diff[];
 /// ```
 #[bun_jsc::host_fn]
 fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let check_comma_disparity = frame.argument(2).is_truthy();
-    let lines = frame.argument(3).is_truthy();
-    run(
-        global,
-        frame,
-        "myersDiff",
-        check_comma_disparity,
-        lines,
-        node_assert::Output::List,
-    )
+    let output = node_assert::Output::List {
+        check_comma_disparity: frame.argument(2).is_truthy(),
+        lines: frame.argument(3).is_truthy(),
+    };
+    run(global, frame, "myersDiff", &output)
 }
 
 /// `printSimpleMyersDiff(actual, expected, colors)`: char diff rendered to a string.
@@ -34,9 +35,7 @@ fn print_simple_myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         global,
         frame,
         "printSimpleMyersDiff",
-        false,
-        false,
-        node_assert::Output::Simple(&colors),
+        &node_assert::Output::Simple(&colors),
     )
 }
 
@@ -46,14 +45,11 @@ fn print_simple_myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 fn print_myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let check_comma_disparity = frame.argument(2).is_truthy();
     let colors = colors_from_js(global, frame.argument(3))?;
-    run(
-        global,
-        frame,
-        "printMyersDiff",
+    let output = node_assert::Output::Lines {
+        colors: &colors,
         check_comma_disparity,
-        true,
-        node_assert::Output::Lines(&colors),
-    )
+    };
+    run(global, frame, "printMyersDiff", &output)
 }
 
 /// Reads `{ green, red, white, blue }` (internal/util/colors) as ASCII escape sequences.
@@ -83,9 +79,7 @@ fn run(
     global: &JSGlobalObject,
     frame: &CallFrame,
     name: &'static str,
-    check_comma_disparity: bool,
-    lines: bool,
-    output: node_assert::Output<'_>,
+    output: &node_assert::Output<'_>,
 ) -> JsResult<JSValue> {
     let nargs = frame.arguments_count();
     if nargs < 2 {
@@ -110,14 +104,7 @@ fn run(
     debug_assert!(actual_str.tag() != bstring::Tag::Dead);
     debug_assert!(expected_str.tag() != bstring::Tag::Dead);
 
-    node_assert::myers_diff(
-        global,
-        &actual_str,
-        &expected_str,
-        check_comma_disparity,
-        lines,
-        output,
-    )
+    node_assert::myers_diff(global, &actual_str, &expected_str, output)
 }
 
 // =============================================================================

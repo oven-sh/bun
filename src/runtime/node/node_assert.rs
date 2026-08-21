@@ -7,27 +7,19 @@ use super::assert::myers_diff as MyersDiff;
 use super::assert::myers_diff::{Diff, DiffKind, Line};
 
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
-/// into `expected`.
+/// into `expected`, and hand it to JS in the shape `output` asks for.
 ///
-/// Lines in the returned diff have the same encoding as `actual` and
-/// `expected`. Lines borrow from these inputs, but the diff list itself must
-/// be deallocated.
-///
-/// Use an arena allocator, otherwise this will leak memory.
+/// The result has the encoding of the inputs: Latin-1 when both sides are
+/// Latin-1, otherwise UTF-16.
 ///
 /// ## Invariants
 /// If not met, this function will panic.
-/// - `actual` and `expected` are alive and have the same encoding.
+/// - `actual` and `expected` are alive.
 pub(crate) fn myers_diff(
     global: &JSGlobalObject,
     actual: &BunString,
     expected: &BunString,
-    // If true, strings that have a trailing comma but are otherwise equal are
-    // considered equal.
-    check_comma_disparity: bool,
-    // split `actual` and `expected` into lines before diffing
-    lines: bool,
-    output: Output<'_>,
+    output: &Output<'_>,
 ) -> JsResult<JSValue> {
     // Short circuit on empty strings. Note that, in release builds where
     // assertions are disabled, if `actual` and `expected` are both dead, this
@@ -35,8 +27,20 @@ pub(crate) fn myers_diff(
     // moot since BunStrings with non-zero reference counds should never be
     // dead.
     if actual.length() == 0 && expected.length() == 0 {
-        return emit::<u8, u8>(global, &Vec::new(), &output);
+        return emit::<u8, u8>(global, &Vec::new(), output);
     }
+
+    let (lines, check_comma_disparity) = match *output {
+        Output::List {
+            lines,
+            check_comma_disparity,
+        } => (lines, check_comma_disparity),
+        Output::Simple(_) => (false, false),
+        Output::Lines {
+            check_comma_disparity,
+            ..
+        } => (true, check_comma_disparity),
+    };
 
     // JS strings arrive as Latin-1 or UTF-16. When the two sides differ, widen the
     // Latin-1 side so both diff over the same code unit.
@@ -45,9 +49,9 @@ pub(crate) fn myers_diff(
     if !actual_is_16 && !expected_is_16 {
         let (a, e) = (actual.byte_slice(), expected.byte_slice());
         return if lines {
-            diff_lines::<u8>(global, a, e, check_comma_disparity, &output)
+            diff_lines::<u8>(global, a, e, check_comma_disparity, output)
         } else {
-            diff_chars::<u8>(global, a, e, &output)
+            diff_chars::<u8>(global, a, e, output)
         };
     }
 
@@ -68,9 +72,9 @@ pub(crate) fn myers_diff(
         &expected_wide
     };
     if lines {
-        diff_lines::<u16>(global, a, e, check_comma_disparity, &output)
+        diff_lines::<u16>(global, a, e, check_comma_disparity, output)
     } else {
-        diff_chars::<u16>(global, a, e, &output)
+        diff_chars::<u16>(global, a, e, output)
     }
 }
 
@@ -124,14 +128,24 @@ where
     })
 }
 
-/// What `myers_diff` should hand back to JS.
+/// What `myers_diff` should hand back to JS. The variant also decides how the
+/// inputs are diffed: by char or by line.
 pub(crate) enum Output<'a> {
-    /// `Diff[]` — `{ kind, value }` objects (internal/assert/myers_diff `myersDiff`).
-    List,
+    /// `Diff[]` of `{ kind, value }` objects (internal/assert/myers_diff `myersDiff`).
+    List {
+        /// Split `actual` and `expected` into lines before diffing.
+        lines: bool,
+        /// Lines that differ only by a trailing comma compare equal.
+        check_comma_disparity: bool,
+    },
     /// The `printSimpleMyersDiff` string for a char diff.
     Simple(&'a Colors),
     /// The `printMyersDiff` `{ message, skipped }` object for a line diff.
-    Lines(&'a Colors),
+    Lines {
+        colors: &'a Colors,
+        /// Lines that differ only by a trailing comma compare equal.
+        check_comma_disparity: bool,
+    },
 }
 
 /// ANSI sequences from internal/util/colors (empty when colors are off).
@@ -216,13 +230,13 @@ where
     C: CodeUnit,
     T: FromAny + Copy + DiffText<C>,
 {
-    match output {
-        Output::List => diff_list_to_js(global, diff_list),
+    match *output {
+        Output::List { .. } => diff_list_to_js(global, diff_list),
         Output::Simple(colors) => {
             let out = render_simple::<C, T>(diff_list, colors);
             C::to_bun_string(&out).transfer_to_js(global)
         }
-        Output::Lines(colors) => {
+        Output::Lines { colors, .. } => {
             let (out, skipped) = render_lines::<C, T>(diff_list, colors);
             let result = JSValue::create_empty_object(global, 2);
             result.put(

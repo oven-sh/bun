@@ -110,8 +110,9 @@ print({ afterwards: afterwards.status, html: (await afterwards.text()).includes(
 
 // The read runs on a work pool thread, so a regular file is read first, while
 // that thread can still be started. The pipe has no data, so the next read
-// parks on the IO thread, which is the one that is refused. The process exits
-// inside the call.
+// parks on the IO thread, which is the one that is refused (by stack size: the
+// pool may start one more worker for the read). The process exits inside the
+// call.
 const STDIN_FIXTURE = /* js */ `
 ${WHILE_REFUSED}
 await Bun.file(import.meta.path).text();
@@ -141,12 +142,18 @@ print({ afterwards: await Bun.spawn({ cmd: ["sleep", "0"], stdio }).exited });
 // The schedule of bun_threading::spawn_with_retry.
 const ATTEMPTS_PER_START = 20;
 
-// bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE, which the HTTP client
-// thread asks for. `bun install` runs no JS that could arm the marker at the
-// right moment, so the marker exists from the start, and the stack size singles
-// the HTTP thread out: the allocators start their scavenger threads before it
-// (with the default stack) and abort when one of those is refused.
+// With REFUSE_THREADS_WITH_STACK_SIZE the shim refuses only the thread that asks
+// for that stack size, which singles one of Bun's threads out from the others
+// that may start in the same window. The sizes are the ones the sources ask for.
+// bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE. `bun install` runs no
+// JS that could arm the marker, so the marker exists from the start, and the
+// size keeps the allocators' threads (default stack) out, which abort when
+// refused.
 const HTTP_THREAD_STACK_SIZE = 4 * 1024 * 1024;
+// src/io/lib.rs
+const IO_THREAD_STACK_SIZE = 2 * 1024 * 1024;
+// WaiterThreadPosix::STACK_SIZE in src/spawn/process.rs
+const WAITER_THREAD_STACK_SIZE = 512 * 1024;
 
 async function runFixture(
   dir: string,
@@ -349,7 +356,10 @@ test.concurrent.skipIf(!canRun)(
   async () => {
     using dir = tempDir("refuse-threads-spawn", { "fixture.js": SPAWN_FIXTURE });
     const { stdout, stderr, refused, exitCode } = await runFixture(String(dir), {
-      env: { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      env: {
+        BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1",
+        REFUSE_THREADS_WITH_STACK_SIZE: String(WAITER_THREAD_STACK_SIZE),
+      },
     });
 
     expect({ stdout: jsonLines(stdout), stderr, refused, exitCode }).toEqual({
@@ -379,6 +389,7 @@ test.concurrent.skipIf(!canRun)(
   async () => {
     using dir = tempDir("refuse-threads-stdin", { "fixture.js": STDIN_FIXTURE });
     const { stdout, stderr, refused, exitCode, signalCode } = await runFixture(String(dir), {
+      env: { REFUSE_THREADS_WITH_STACK_SIZE: String(IO_THREAD_STACK_SIZE) },
       stdin: "pipe",
       exitsMidway: true,
     });

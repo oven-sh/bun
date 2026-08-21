@@ -71,6 +71,11 @@ pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     if input.is_empty() || input.len() >= buf.len() {
         return None;
     }
+    // No numeric host contains whitespace. inet_aton(3) stops at it and ignores the rest, so
+    // `127.0.0.1 evil.example` would parse; the `__inet_aton_exact` behind getaddrinfo does not.
+    if crate::strings::index_of_any(input, b" \t\n\r\x0b\x0c").is_some() {
+        return None;
+    }
     // A `%zone` suffix belongs to a numeric v6 host; resolving the zone is the caller's business.
     let head = crate::strings::index_of_char_usize(input, b'%').unwrap_or(input.len());
     buf[..head].copy_from_slice(&input[..head]);

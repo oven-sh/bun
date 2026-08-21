@@ -3034,8 +3034,7 @@ impl BlobExt for Blob {
                 }
             }
             Lifetime::Transfer => {
-                // The bytes become a writable ArrayBuffer, so besides being the
-                // store's only holder nothing else may be able to read them.
+                // JS gets the bytes writable, so they must not be shared either.
                 if self
                     .store()
                     .is_some_and(|s| !s.has_one_ref() || AppendBuffer::shares_allocation(s))
@@ -3348,10 +3347,8 @@ impl BlobExt for Blob {
         let mut stack: Vec<JSValue> = Vec::new();
         let mut joiner = bun_core::string_joiner::StringJoiner::default();
         let mut could_have_non_ascii = false;
-        // Store of a Blob part that opens the result (`new Blob([blob, ...])`).
-        // Its bytes stay out of `joiner` and are appended onto instead of
-        // copied; see `AppendBuffer`. Held as a ref so user JS run by a later
-        // part cannot release it.
+        // A leading Blob part is appended onto (`AppendBuffer`) instead of
+        // joined; the ref keeps it alive while later parts may run user JS.
         let mut append_prefix: Option<StoreRef> = None;
 
         loop {
@@ -3528,9 +3525,7 @@ impl BlobExt for Blob {
         if let Some(prefix) = append_prefix {
             // As below, only a positive ASCII answer is recorded.
             let is_all_ascii = (!could_have_non_ascii).then_some(true);
-            // `joiner` still holds the remaining parts (borrowed ones are kept
-            // alive by `_keep`/`arg` exactly as for `done()`); `concat` reads
-            // them in place and dropping the joiner frees the owned ones.
+            // The joiner's borrowed parts are still alive here, as for `done()`.
             let store = AppendBuffer::concat(&prefix, &joiner, is_all_ascii);
             let blob = Blob::init_with_store(store, global);
             blob.charset

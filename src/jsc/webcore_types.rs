@@ -591,13 +591,10 @@ pub mod store {
     /// (`LinuxMemFdAllocator::create` → `mmap`'d region freed via `munmap`)
     /// can carry its allocator vtable with the buffer.
     ///
-    /// `ptr[..len]` is immutable for as long as this `Bytes` exists. The
-    /// allocation behind it is not necessarily this value's alone: the stores
-    /// that `bun_runtime`'s `AppendBuffer` builds are several `Bytes` viewing
-    /// prefixes of one allocation (their `allocator` keeps it alive), so only
-    /// `allocator.free` may be assumed about the memory past what `slice()`
-    /// returns, and writing through `ptr` additionally needs the allocation to
-    /// be exclusively this value's (see `as_array_list_leak`).
+    /// `ptr[..len]` is immutable. The allocation may be shared: the stores
+    /// `bun_runtime`'s `AppendBuffer` builds are several `Bytes` viewing
+    /// prefixes of one allocation, so writing through `ptr` needs more than
+    /// `&mut self` (see `as_array_list_leak`).
     pub struct Bytes {
         pub ptr: Option<NonNull<u8>>,
         pub len: SizeType,
@@ -608,10 +605,9 @@ pub mod store {
         pub stored_name: Box<[u8]>,
     }
 
-    // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. It never writes
-    // through `ptr` itself, other `Bytes` sharing the allocation (see the type
-    // doc) only read it too, the allocator's `free` is thread-safe, and
-    // `StdAllocator` is `Send + Sync`.
+    // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free over immutable
+    // bytes; every allocator's `free` is thread-safe and `StdAllocator` is
+    // `Send + Sync`.
     unsafe impl Send for Bytes {}
     // SAFETY: `&Bytes` only reads the immutable `ptr[..len]` via `slice()`; no
     // interior mutability, so sharing references across threads is sound.
@@ -746,16 +742,13 @@ pub mod store {
             self.as_array_list_leak()
         }
 
-        /// Writing through the result (or handing it out writable, as the
-        /// `Lifetime::Transfer` ArrayBuffer path does) is only sound when no
-        /// other `Bytes` shares the allocation: a freshly created store, or a
-        /// store that `AppendBuffer::shares_allocation` clears. Everything
-        /// else only reads through it.
+        /// Only write through the result (or hand it out writable) when no
+        /// other `Bytes` shares the allocation: a fresh store, or one that
+        /// `AppendBuffer::shares_allocation` clears.
         pub fn as_array_list_leak(&mut self) -> &mut [u8] {
             match self.ptr {
-                // SAFETY: `ptr[..len]` is live for as long as `*self` is, and
-                // `&mut self` rules out other users of this value; see the doc
-                // comment for what writers must additionally ensure.
+                // SAFETY: `ptr[..len]` is live while `*self` is; exclusivity of
+                // the memory is the caller's (see above).
                 Some(p) => unsafe {
                     core::slice::from_raw_parts_mut(p.as_ptr(), self.len as usize)
                 },

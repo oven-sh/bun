@@ -869,11 +869,12 @@ describe("new Blob([blob, ...]) appends onto the first part's store", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect(stdout).toStartWith("{");
 
     const { size, same, baselineMs, accumulateMs } = JSON.parse(stdout);
     expect({ size, same }).toEqual({ size: 1024 * 32 * 1024, same: true });
     expect(accumulateMs).toBeLessThan(20 * baselineMs + 100);
+    expect(exitCode).toBe(0);
   });
 
   test("every intermediate Blob keeps its own size and bytes as the chain grows", async () => {
@@ -1044,20 +1045,20 @@ describe("new Blob([blob, ...]) appends onto the first part's store", () => {
     shared = new Blob([shared, "-data"]);
     shared = new Blob([shared, "-twice"]);
     const url = URL.createObjectURL(shared);
-    const worker = new Worker(
-      URL.createObjectURL(
-        new Blob([
-          `
-            self.onmessage = async ({ data: url }) => {
-              const fromMain = await (await fetch(url)).blob();
-              const appended = new Blob([fromMain, "+worker"]);
-              postMessage([await fromMain.text(), await appended.text()]);
-            };
-          `,
-        ]),
-      ),
+    const scriptUrl = URL.createObjectURL(
+      new Blob([
+        `
+          self.onmessage = async ({ data: url }) => {
+            const fromMain = await (await fetch(url)).blob();
+            const appended = new Blob([fromMain, "+worker"]);
+            postMessage([await fromMain.text(), await appended.text()]);
+          };
+        `,
+      ]),
     );
+    let worker: Worker | undefined;
     try {
+      worker = new Worker(scriptUrl);
       const { promise, resolve, reject } = Promise.withResolvers<string[]>();
       worker.onmessage = event => resolve(event.data);
       worker.onerror = reject;
@@ -1067,7 +1068,8 @@ describe("new Blob([blob, ...]) appends onto the first part's store", () => {
       expect(await appendedOnMain.text()).toBe("shared-data-twice+main");
       expect(await shared.text()).toBe("shared-data-twice");
     } finally {
-      worker.terminate();
+      worker?.terminate();
+      URL.revokeObjectURL(scriptUrl);
       URL.revokeObjectURL(url);
     }
   });

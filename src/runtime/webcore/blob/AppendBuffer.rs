@@ -1,21 +1,15 @@
-//! Backing storage shared by the Blobs produced by `b = new Blob([b, chunk])`.
+//! Backing storage shared by the Blobs produced by `b = new Blob([b, chunk])`,
+//! which otherwise re-copies the whole prefix on every step.
 //!
-//! `new Blob(parts)` copies every part into a fresh store, so that idiom
-//! re-copies the whole prefix on every step and costs O(total²). When the
-//! first part is a Blob viewing a whole in-memory store, the result is built on
-//! an [`AppendBuffer`] instead: one allocation, carrying spare capacity, shared
-//! by every store that successive appends produce. Each of those stores is an
-//! ordinary immutable `Bytes` viewing the prefix `[0, len)` of the buffer.
-//! Appending onto the store that views the longest published prefix claims
-//! `[len, len + n)`, fills it and publishes a new store of length `len + n`;
-//! nothing an existing store can see is ever written again, so readers of the
-//! older stores (including ones on other threads) are unaffected. Once the
-//! buffer is full the next append allocates a bigger one with headroom, which
-//! keeps the total number of bytes copied linear in the final size.
+//! One allocation with spare capacity is shared by every store that successive
+//! appends produce; each store is an ordinary immutable `Bytes` viewing the
+//! prefix `[0, len)`. An append onto the store viewing the longest published
+//! prefix claims `[len, len + n)` and publishes a new store; bytes an existing
+//! store can see are never written again. A full buffer is replaced by a
+//! bigger one with headroom, so the bytes copied stay linear overall.
 //!
-//! The buffer rides along in `Bytes::allocator` the same way
-//! `LinuxMemFdAllocator` does: every store built on it owns one reference,
-//! released by the vtable's `free` when the store's `Bytes` is dropped.
+//! Like `LinuxMemFdAllocator`, the buffer travels in `Bytes::allocator`: every
+//! store built on it owns one reference, released by the vtable's `free`.
 
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
@@ -36,27 +30,23 @@ pub(crate) struct AppendBuffer {
     /// point straight into it.
     ptr: NonNull<u8>,
     capacity: usize,
-    /// Length of the longest prefix published as a store. `[0, committed)` is
-    /// initialized and immutable; an append moves it forward with a CAS, so two
-    /// appends onto the same prefix cannot both claim the tail.
+    /// Length of the longest prefix published as a store; advanced by CAS so
+    /// two appends onto the same prefix cannot both claim the tail.
     committed: AtomicUsize,
 }
 
 impl Drop for AppendBuffer {
     fn drop(&mut self) {
-        // SAFETY: `ptr`/`capacity` came out of the `Vec` in `create` (or were
-        // reset to an empty Vec's by `take_unique_storage`), and the refcount
-        // reaching zero means no store points into the allocation.
+        // SAFETY: `ptr`/`capacity` describe the `Vec` from `create` (or an
+        // empty one after `take_unique_storage`); no store points into it.
         drop(unsafe { Vec::from_raw_parts(self.ptr.as_ptr(), 0, self.capacity) });
     }
 }
 
-/// Releases the reference the dropped store's `Bytes` held. `buf` is that
-/// store's prefix view, not an allocation of its own; the memory goes away
-/// with the buffer's last store.
+/// Releases the dropped store's reference; `_buf` is only its prefix view.
 unsafe fn free(buffer: *mut c_void, _buf: &mut [u8], _: Alignment, _: usize) {
-    // SAFETY: `buffer` is the pointer `allocator()` stored in this `Bytes`,
-    // and that `Bytes` owned one reference (see `store`).
+    // SAFETY: `buffer` is the context `store` put in the `Bytes`' allocator,
+    // together with the reference released here.
     unsafe { bun_ptr::ThreadSafeRefCount::<AppendBuffer>::deref(buffer.cast::<AppendBuffer>()) };
 }
 
@@ -64,11 +54,8 @@ unsafe fn free(buffer: *mut c_void, _buf: &mut [u8], _: Alignment, _: usize) {
 static VTABLE: &AllocatorVTable = &AllocatorVTable::free_only(free);
 
 impl AppendBuffer {
-    /// The store whose bytes open the result when `blob` is the first part of
-    /// `new Blob(parts)`, if appending onto it is possible: in memory,
-    /// non-empty, and viewed in full (so the result's first bytes are exactly
-    /// the store's bytes, and for a buffer-backed store the append can extend
-    /// it in place).
+    /// `blob`'s store, if the first part of `new Blob(parts)` being this blob
+    /// can be appended onto: in memory, non-empty, and viewed in full.
     pub(crate) fn prefix_store(blob: &Blob) -> Option<&StoreRef> {
         let store = blob.store()?;
         let Data::Bytes(bytes) = &store.data else {
@@ -78,9 +65,8 @@ impl AppendBuffer {
             .then_some(store)
     }
 
-    /// Whether other stores can view the same memory as this store's bytes, in
-    /// which case the bytes must not be handed out writable even when the
-    /// store itself has a single reference.
+    /// Whether other stores view the same memory, so that even a store with a
+    /// single reference must not hand its bytes out writable.
     pub(crate) fn shares_allocation(store: &Store) -> bool {
         let Data::Bytes(bytes) = &store.data else {
             return false;
@@ -92,10 +78,9 @@ impl AppendBuffer {
         !unsafe { &(*buffer).ref_count }.has_one_ref()
     }
 
-    /// For `Bytes::to_internal_blob`: when `bytes` is the only store built on
-    /// its buffer, hands the allocation over as a `Vec` of the bytes the store
-    /// viewed instead of copying them, and leaves `bytes` empty. `None` when
-    /// `bytes` is not buffer-backed or the buffer is shared.
+    /// For `Bytes::to_internal_blob`: if `bytes` is the only store on its
+    /// buffer, moves the allocation out as a `Vec` of the store's bytes and
+    /// leaves `bytes` empty. `None` if not buffer-backed or the buffer is shared.
     pub(crate) fn take_unique_storage(bytes: &mut Bytes) -> Option<Vec<u8>> {
         let buffer = Self::from_allocator(bytes.allocator())?;
         // SAFETY: `bytes` holds a reference on the buffer, so it is live.
@@ -106,12 +91,10 @@ impl AppendBuffer {
         let len = core::mem::take(&mut bytes.len) as usize;
         bytes.cap = 0;
         bytes.allocator = bun_alloc::basic::C_ALLOCATOR;
-        // SAFETY: `bytes` owns the only reference, so nothing else can reach the
-        // buffer or its allocation. `ptr` is the allocation `create` made,
-        // `capacity` is what the `Vec` there reported, and `[0, len)` is
-        // initialized. The header is left describing an empty `Vec`, so the
-        // deref below (the reference `bytes` owned, which its `free` will no
-        // longer release now that `bytes.ptr` is `None`) frees only the header.
+        // SAFETY: `bytes` owns the only reference, so nothing else reaches the
+        // buffer; `ptr`/`capacity`/`len` are the `Vec` parts from `create`.
+        // Emptying the header first makes the deref (the reference `bytes`
+        // owned; with `ptr` taken its `free` no longer runs) free only the header.
         unsafe {
             let capacity = core::mem::replace(&mut (*buffer).capacity, 0);
             (*buffer).ptr = NonNull::dangling();
@@ -137,11 +120,8 @@ impl AppendBuffer {
             {
                 return store;
             }
-            // The buffer is full, or another append already claimed its tail.
-            // This is at least the second append onto this data, so leave room
-            // for the next one; the first append (onto a plain store) stays an
-            // exact-size copy so a one-off `new Blob([blob, x])` costs what it
-            // did before.
+            // Full, or the tail was already claimed. Only this second-or-later
+            // append adds headroom; a one-off `new Blob([blob, x])` stays exact.
             grow = true;
         }
         Self::create(prefix_bytes.slice(), suffix, grow, is_all_ascii)
@@ -163,10 +143,8 @@ impl AppendBuffer {
         suffix: &StringJoiner<'_>,
         is_all_ascii: Option<bool>,
     ) -> Option<StoreRef> {
-        // SAFETY: caller contract. The header's fields are only ever written
-        // by `take_unique_storage`, which needs the buffer's single remaining
-        // store exclusively, while this call holds a store of the buffer
-        // shared; so nothing writes the header during this shared borrow.
+        // SAFETY: live per the caller contract, and only `take_unique_storage`
+        // writes the header, which `prefix` being shared here rules out.
         let buffer = unsafe { &*this };
         debug_assert_eq!(prefix.slice().as_ptr(), buffer.ptr.as_ptr());
         let old_len = prefix.len() as usize;
@@ -178,16 +156,13 @@ impl AppendBuffer {
             .committed
             .compare_exchange(old_len, new_len, Ordering::AcqRel, Ordering::Relaxed)
             .ok()?;
-        // SAFETY: the CAS made this call the only writer of `[old_len,
-        // new_len)`, which lies inside the allocation and which no store views
-        // until the one created below is published.
+        // SAFETY: the CAS made this call the only writer of `[old_len, new_len)`,
+        // which is within capacity and not viewed by any store yet.
         unsafe { write_suffix(buffer.ptr.as_ptr().add(old_len), suffix) };
 
-        // SAFETY: `this` is live (caller contract); the new store gets its
-        // own reference.
+        // SAFETY: `this` is live; this reference becomes the new store's.
         unsafe { bun_ptr::ThreadSafeRefCount::<AppendBuffer>::ref_(this) };
-        // SAFETY: `[0, new_len)` is initialized and the reference taken above
-        // belongs to the new store.
+        // SAFETY: `[0, new_len)` is initialized and the reference was just taken.
         Some(unsafe { Self::store(this, new_len, is_all_ascii) })
     }
 
@@ -212,41 +187,35 @@ impl AppendBuffer {
             .unwrap_or_oom();
         let mut storage = ManuallyDrop::new(storage);
         let capacity = storage.capacity();
-        // `len <= capacity`, and nothing else points into `storage` yet.
         let ptr = storage.as_mut_ptr();
-        // SAFETY: the ranges `[0, prefix.len())` and `[prefix.len(), len)` are
-        // inside the reserved capacity, and `prefix` lives in some other
-        // allocation (a store's bytes), so the copies cannot overlap.
+        // SAFETY: `len <= capacity`, and the sources live in other allocations.
         unsafe {
             core::ptr::copy_nonoverlapping(prefix.as_ptr(), ptr, prefix.len());
             write_suffix(ptr.add(prefix.len()), suffix);
         }
         let buffer = bun_core::heap::into_raw(Box::new(AppendBuffer {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            // SAFETY: `Vec::as_mut_ptr` is non-null even for a zero-length
-            // buffer, and `len > 0` here anyway (`prefix` is non-empty).
+            // SAFETY: `Vec::as_mut_ptr` is never null.
             ptr: unsafe { NonNull::new_unchecked(ptr) },
             capacity,
             committed: AtomicUsize::new(len),
         }));
-        // SAFETY: `[0, len)` was just written, and the reference `init()`
-        // created belongs to the first store.
+        // SAFETY: `[0, len)` was just written; `init()`'s reference goes to
+        // this first store.
         unsafe { Self::store(buffer, len, is_all_ascii) }
     }
 
     /// A store viewing `[0, len)` of the buffer.
     ///
     /// # Safety
-    /// `this` must be live, `[0, len)` must be initialized, and the caller
-    /// must hand over one reference on the buffer, which the store's `Bytes`
-    /// releases through [`free`].
+    /// `this` must be live with `[0, len)` initialized, and the caller hands
+    /// over one reference, which the store's `Bytes` releases through [`free`].
     unsafe fn store(this: *mut AppendBuffer, len: usize, is_all_ascii: Option<bool>) -> StoreRef {
-        // SAFETY: `this` is live (caller contract); this only copies the field.
+        // SAFETY: `this` is live (caller contract).
         let ptr = unsafe { (*this).ptr }.as_ptr();
         let len = len as SizeType;
-        // SAFETY: `ptr[..len]` is initialized (caller contract) and stays valid
-        // until `free` releases the reference the caller handed over. `cap ==
-        // len` so `allocated_slice()` covers only what this store can read.
+        // SAFETY: `ptr[..len]` is initialized and outlives the reference handed
+        // over; `cap == len` keeps `allocated_slice()` within this store's view.
         let bytes = unsafe {
             Bytes::from_raw_parts(
                 ptr,
@@ -270,14 +239,12 @@ impl AppendBuffer {
 /// Writes the joiner's nodes back to back at `dst`.
 ///
 /// # Safety
-/// `dst` must be valid for writing `suffix.len` bytes that no node of the
-/// joiner reads from (the nodes are either joiner-owned or borrowed from
-/// already published bytes; the destination is never published yet).
+/// `dst` must be valid for `suffix.len` bytes of writes, and no node may
+/// overlap it (unpublished buffer space never does).
 unsafe fn write_suffix(dst: *mut u8, suffix: &StringJoiner<'_>) {
     let mut written = 0usize;
     for node in suffix.node_slices() {
-        // SAFETY: `written + node.len() <= suffix.len` because `suffix.len` is
-        // the sum of the node lengths; non-overlap is the caller's contract.
+        // SAFETY: `suffix.len` is the sum of the node lengths; see the contract.
         unsafe { core::ptr::copy_nonoverlapping(node.as_ptr(), dst.add(written), node.len()) };
         written += node.len();
     }

@@ -674,7 +674,7 @@ impl Interpreter {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
         }
         // We are the script's shell (`bun run <script>`, `bun exec`, `bun x.sh`).
-        let _ctrl_c = crate::api::bun_process::sync::LeaveCtrlCToChildren::install();
+        bun_spawn::ctrl_c::install();
 
         let mut shargs = ShellArgs::init();
 
@@ -788,12 +788,7 @@ macro_rules! shell_state_dispatch {
         /// Signal to `parent` that `child` finished with `exit_code`. This is the
         /// single hoisted `match` dispatching on the parent's state tag.
         pub fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
-            let child_kind = self.nodes.get()[child.idx()].kind();
-            let in_pipeline = parent != NodeId::INTERPRETER
-                && self.nodes.get()[parent.idx()].kind() == StateKind::Pipeline;
-            if child_kind == StateKind::Pipeline || (child_kind == StateKind::Cmd && !in_pipeline) {
-                crate::api::bun_process::sync::LeaveCtrlCToChildren::job_done(exit_code == 0);
-            }
+            self.propagate_interrupt(parent, child);
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
             }
@@ -898,6 +893,52 @@ impl Interpreter {
     }
 
     #[inline]
+    /// A child that a Ctrl+C we left to it killed marks its node `interrupted`;
+    /// the mark flows up through every parent except a pipeline the child is
+    /// not the rightmost member of (bash judges a pipeline by its last member).
+    /// When it reaches a sequencing parent (anything but a pipeline) with no
+    /// foreground children still running, the interrupt ends us the way it
+    /// ended the child, so `a; b` and `a || b` stop at `a`.
+    fn propagate_interrupt(&self, parent: NodeId, child: NodeId) {
+        if !self.node(child).base().is_some_and(|b| b.interrupted) {
+            return;
+        }
+        if parent != NodeId::INTERPRETER {
+            if let Node::Pipeline(p) = self.node(parent) {
+                let rightmost = p.cmds.as_deref().is_none_or(|c| {
+                    c.len() < 2 || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd(id)) if *id == child)
+                });
+                if rightmost {
+                    self.as_pipeline_mut(parent).base.interrupted = true;
+                }
+                return;
+            }
+        }
+        if bun_spawn::ctrl_c::Child::alive() == 0 {
+            bun_spawn::ctrl_c::exit_like_child();
+        }
+        if parent != NodeId::INTERPRETER {
+            if let Some(base) = self.node_mut(parent).base_mut() {
+                base.interrupted = true;
+            }
+        }
+    }
+
+    /// Inside an `&` command: not a foreground job.
+    pub(crate) fn in_background(&self, mut id: NodeId) -> bool {
+        while id != NodeId::INTERPRETER {
+            let node = self.node(id);
+            if node.kind() == StateKind::Async {
+                return true;
+            }
+            id = match node.base() {
+                Some(b) => b.parent,
+                None => return false,
+            };
+        }
+        false
+    }
+
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes.get()[id.idx()]
     }

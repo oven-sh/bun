@@ -394,7 +394,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let envp = env.map.create_null_delimited_env_map()?;
 
         #[cfg(windows)]
-        let _ctrl_c = sync::LeaveCtrlCToChildren::install();
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(shell_bin.as_ptr().cast::<::core::ffi::c_char>()),
@@ -469,9 +469,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 // cmd.exe exits 0 after abandoning a line whose command was Ctrl+C'd.
                 #[cfg(windows)]
                 if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT
-                    || (exit_code.raw == 0 && sync::LeaveCtrlCToChildren::took_ctrl_c())
+                    || (bun_spawn::ctrl_c::take_received() && exit_code.raw == 0)
                 {
-                    Global::exit(bun_sys::windows::STATUS_CONTROL_C_EXIT);
+                    bun_spawn::ctrl_c::exit_like_child();
                 }
 
                 if exit_code.code != 0 {
@@ -2076,7 +2076,7 @@ impl RunCommand {
         // POSIX forwards signals inside `sync::spawn`; on Windows the child shares
         // our console and gets Ctrl+C itself, we just have to outlive it.
         #[cfg(windows)]
-        let _ctrl_c = sync::LeaveCtrlCToChildren::install();
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(executable_z.as_ptr().cast::<c_char>()),
@@ -2206,7 +2206,7 @@ impl RunCommand {
 
                         #[cfg(windows)]
                         if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
-                            Global::exit(exit_code.raw);
+                            bun_spawn::ctrl_c::exit_like_child();
                         }
 
                         let code = exit_code.code;

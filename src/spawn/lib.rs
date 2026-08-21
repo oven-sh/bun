@@ -41,6 +41,9 @@ pub mod posix_spawn {
 /// `Status` / `SpawnOptions` / `SpawnResult`.
 #[path = "process.rs"]
 pub mod process;
+/// Ctrl+C handling for a process acting as a shell for foreground children.
+#[path = "ctrl_c.rs"]
+pub mod ctrl_c;
 
 /// Generic `StaticPipeWriter<P>`.
 #[path = "static_pipe_writer.rs"]

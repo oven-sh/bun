@@ -248,7 +248,7 @@ pub struct ShellSubprocess {
 
     pub closed: EnumSet<StdioKind>,
 
-    ctrl_c_child: Option<bun_process::sync::CtrlCChild>,
+    ctrl_c_child: Option<bun_spawn::ctrl_c::Child>,
 }
 
 pub(crate) type SignalCode = bun_core::SignalCode;
@@ -734,8 +734,9 @@ impl ShellSubprocess {
 
         spawn_args.env_array.push(core::ptr::null());
 
-        #[cfg_attr(windows, allow(unused_mut))]
-        let mut ctrl_c_child = bun_process::sync::CtrlCChild::enter();
+        // SAFETY: `interp` is the live owning interpreter (see `SpawnArgs::interp`).
+        let foreground = !unsafe { &*interp }.in_background(cmd_parent.id);
+        let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
         // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
         // C-string arrays with argv[0] non-null; valid for this call.
         let spawn_result = match unsafe {
@@ -785,8 +786,6 @@ impl ShellSubprocess {
         };
 
         let mut spawn_result = spawn_result;
-        #[cfg(unix)]
-        ctrl_c_child.set_pid(spawn_result.pid);
 
         // Note: Stdio impls Drop, so move out via mem::replace instead of clone.
         let stdio0 = core::mem::replace(&mut stdio_guard[0], Stdio::Ignore);
@@ -851,7 +850,7 @@ impl ShellSubprocess {
                 stderr,
                 cmd_parent,
                 closed: EnumSet::empty(),
-                ctrl_c_child: Some(ctrl_c_child),
+                ctrl_c_child,
             });
         }
         // Ownership of the now-initialised Box is released as a raw pointer
@@ -969,9 +968,8 @@ impl ShellSubprocess {
 
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
-        if self.ctrl_c_child.take().is_some() {
-            bun_process::sync::LeaveCtrlCToChildren::child_exited(status);
-        }
+        let interrupted =
+            self.ctrl_c_child.take().is_some() && bun_spawn::ctrl_c::child_died_of_it(status);
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
                 #[cfg(windows)]
@@ -1000,6 +998,7 @@ impl ShellSubprocess {
             // through the node arena so it survives `Vec<Node>` reallocation.
             // `&mut self` is dead by NLL before `on_exit` re-enters interp.
             let cmd = unsafe { handle.cmd_mut() };
+            cmd.base.interrupted |= interrupted;
             if cmd.exit_code.is_none() {
                 cmd.on_exit(code.into());
             }

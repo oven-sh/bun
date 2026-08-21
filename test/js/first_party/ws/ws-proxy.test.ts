@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { gc, tls as tlsCerts } from "harness";
+import { clearProxyEnv, gc, restoreProxyEnv, tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import net from "net";
 import tls from "tls";
@@ -22,8 +22,13 @@ let authProxyPort: number;
 let httpsProxyPort: number;
 let wsPort: number;
 let wssPort: number;
+// The tunneling tests connect to 127.0.0.1 through an explicit proxy and
+// assert on the proxy's response; an ambient NO_PROXY would bypass it.
+let savedProxyEnv: ReturnType<typeof clearProxyEnv>;
 
 beforeAll(async () => {
+  savedProxyEnv = clearProxyEnv();
+
   // Create HTTP CONNECT proxy
   proxy = createConnectProxy();
   proxyPort = await startProxy(proxy);
@@ -89,6 +94,7 @@ afterAll(() => {
   httpsProxy?.close();
   wsServer?.stop(true);
   wssServer?.stop(true);
+  restoreProxyEnv(savedProxyEnv);
 });
 
 describe("ws package proxy API", () => {

@@ -19,48 +19,10 @@ import zlib from "node:zlib";
 import { once } from "node:events";
 import { tls as tlsCert } from "harness";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Environment hygiene: ambient HTTP_PROXY / NO_PROXY on CI hosts will reroute
-// or bypass localhost fetches and silently turn every assertion here into a
-// false positive. Importers of this module get the cleared env (and a
-// restorer) for free.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const PROXY_ENV_KEYS = [
-  "NO_PROXY",
-  "no_proxy",
-  "HTTP_PROXY",
-  "http_proxy",
-  "HTTPS_PROXY",
-  "https_proxy",
-] as const;
-
-export function clearProxyEnv(): Record<string, string | undefined> {
-  const saved: Record<string, string | undefined> = {};
-  for (const key of PROXY_ENV_KEYS) {
-    saved[key] = process.env[key];
-    // Assign "" rather than delete: the native env loader only observes
-    // assignments. An empty value disables the proxy/bypass.
-    process.env[key] = "";
-  }
-  return saved;
-}
-
-export function restoreProxyEnv(saved: Record<string, string | undefined>) {
-  for (const key of PROXY_ENV_KEYS) {
-    process.env[key] = saved[key] ?? "";
-  }
-}
-
-/** Env override for subprocess fixtures: wipes every proxy-relevant key. */
-export const proxyFreeEnv = {
-  NO_PROXY: undefined,
-  no_proxy: undefined,
-  HTTP_PROXY: undefined,
-  http_proxy: undefined,
-  HTTPS_PROXY: undefined,
-  https_proxy: undefined,
-} as const;
+// Environment hygiene: ambient HTTP_PROXY / NO_PROXY would reroute or bypass
+// the localhost fetches in every stress file, so they all clear the env in
+// beforeAll/afterAll with these.
+export { PROXY_ENV_KEYS, clearProxyEnv, proxyFreeEnv, restoreProxyEnv } from "harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Adversarial proxy

@@ -1231,13 +1231,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     namespace_ref = p.store_name_in_ref(name);
                 }
 
-                let import_record_index = p.add_import_record(
-                    ImportKind::Stmt,
-                    path.loc,
-                    path.text,
-                    // TODO: import assertions
-                    // path.assertions
-                );
+                let import_record_index =
+                    p.add_import_record(ImportKind::Stmt, path.loc, path.text);
 
                 if path.is_macro {
                     p.log().add_error(
@@ -1249,8 +1244,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.log().add_error(
                         Some(p.source),
                         loc,
-                        b"cannot use export statement with \"type\" attribute",
+                        b"cannot use export statement with \"bunBakeGraph\" attribute",
                     );
+                } else if let Some(loader) = path.loader {
+                    // `export *` imports no particular name, so there is nothing to validate.
+                    p.set_import_record_loader(import_record_index, loader, core::iter::empty());
                 }
 
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1294,6 +1292,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
+                    let import_record_index =
+                        p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
+
                     if parsed_path.is_macro {
                         p.log().add_error(
                             Some(p.source),
@@ -1304,12 +1305,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.log().add_error(
                             Some(p.source),
                             loc,
-                            b"export from cannot be used with \"type\" attribute",
+                            b"export from cannot be used with \"bunBakeGraph\" attribute",
+                        );
+                    } else if let Some(loader) = parsed_path.loader {
+                        // In `export { a as b } from "x"`, `original_name` ("a") is the name
+                        // imported from the module; `alias` ("b") is the name re-exported.
+                        p.set_import_record_loader(
+                            import_record_index,
+                            loader,
+                            export_clause
+                                .clauses
+                                .iter()
+                                .map(|item| (item.original_name.slice(), item.name.loc)),
                         );
                     }
 
-                    let import_record_index =
-                        p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {
                         use std::io::Write as _;

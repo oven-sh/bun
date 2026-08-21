@@ -74,6 +74,54 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  // The same two cases reached through `export ... from`, which takes the attribute
+  // as well. A ".sqlite" extension alone already selects the sqlite loader, so these
+  // use ".db", which only the attribute can turn into a database.
+  itBundled("bun/embedded-sqlite-file-export-from", {
+    target: "bun",
+    outfile: "",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import { db } from './db.ts';
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+      "/db.ts": /* js */ `
+        export { default as db } from './app.db' with {type: "sqlite", embed: "true"};
+      `,
+      "/app.db": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    run: { stdout: "Hello, world!" },
+  });
+  itBundled("bun/sqlite-file-export-from", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import { db, sameDb } from './db.ts';
+        console.log(db.query("select message from messages LIMIT 1").get().message, db === sameDb);
+      `,
+      "/db.ts": /* js */ `
+        export { default as db, db as sameDb } from './app.db' with {type: "sqlite"};
+      `,
+    },
+    runtimeFiles: {
+      "/app.db": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`from "./app.db" with { type: "sqlite" }`);
+    },
+    run: { stdout: "Hello, world! true", setCwd: true },
+  });
   itBundled("bun/TargetBunNoSourcemapMessage", {
     target: "bun",
     files: {

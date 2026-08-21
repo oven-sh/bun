@@ -433,6 +433,29 @@ devTest("importing html file with text loader (#18154)", {
     await c.expectMessage("<div>hello world</div>");
   },
 });
+devTest("re-exporting html file with text loader", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { html, ns } from "./reexport.ts";
+      console.log(html);
+      console.log(ns.default);
+    `,
+    "reexport.ts": `
+      export { default as html } from "./app.html" with { type: "text" };
+      export * as ns from "./app.html" with { type: "text" };
+    `,
+    "app.html": "<div>hello world</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage("<div>hello world</div>", "<div>hello world</div>");
+  },
+});
 devTest("importing bun on the client", {
   files: {
     "index.html": emptyHtmlFile({

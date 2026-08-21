@@ -763,10 +763,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Stmt::alloc(t, loc)
     }
 
-    /// A module-level `"use strict"` is not kept as a statement: `parse_stmts_up_to`
-    /// records it in `module_scope.strict_mode` and drops it. Output that is
-    /// evaluated as sloppy-by-default code (the CommonJS wrapper, the eval entry
-    /// point, the REPL) re-emits it with this statement.
+    /// `parse_stmts_up_to` drops a module-level `"use strict"`, so script-like output re-emits it.
     pub(crate) fn use_strict_directive(&self) -> Stmt {
         debug_assert_eq!(
             self.module_scope().strict_mode,
@@ -8066,10 +8063,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `parse_stmts_up_to` consumes a module-level "use strict" into
-        // `module_scope.strict_mode`, so CommonJS output has to emit it again.
-        // It always goes first: any other directive the file keeps (e.g. "use
-        // client") is still part of the prologue after it.
+        // Goes in front of any other directive the file kept. The prologue order does not matter.
         let preserve_strict_mode = wrap_mode == WrapMode::BunCommonjs
             && self.module_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode;
 
@@ -8197,10 +8191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parts.truncate(1);
             parts[0].stmts = bun_ast::StoreSlice::new_mut(top_level_stmts);
         } else if preserve_strict_mode {
-            // `remove_cjs_module_wrapper`: the eval/stdin entry point. Without
-            // the wrapper, `evaluateCommonJSModuleOnce` runs the printed
-            // statements as a classic script, so the directive has to be the
-            // first statement of the program.
+            // No wrapper (the eval entry point): the output runs as a classic script, so lead it.
             let stmts = arena.alloc_slice_copy(&[self.use_strict_directive()]);
             parts.insert(
                 0,

@@ -420,6 +420,14 @@ impl<'a> URL<'a> {
         bun_core::fmt::parse_int::<u16>(self.port, 10).ok()
     }
 
+    /// `true` when the URL carries a `:port` component whose text does not
+    /// parse as a u16 (`:107688`, `:9000abc`). `get_port_auto()` silently
+    /// substitutes the scheme default for these, so consumers that connect
+    /// with user-supplied URLs must reject them first.
+    pub fn has_invalid_port(&self) -> bool {
+        !self.port.is_empty() && self.get_port().is_none()
+    }
+
     pub fn get_port_auto(&self) -> u16 {
         self.get_port().unwrap_or_else(|| self.get_default_port())
     }

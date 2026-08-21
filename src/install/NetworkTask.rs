@@ -807,6 +807,20 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
+        // Only reached when the tarball is not already in the cache.
+        if pm.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+            pm.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "--offline: {} is not in the cache (would fetch {})",
+                    quote(tarball.name.slice()),
+                    quote(&self.url_buf),
+                ),
+            );
+            return Err(ForTarballError::InvalidURL);
+        }
+
         // Userinfo becomes a header and leaves the URL: `bun_url` keeps it in `origin`, which the redirect same-origin check compares.
         let url_authorization: Option<Vec<u8>> = match split_url_userinfo(&self.url_buf) {
             Some((userinfo, url_without_userinfo)) => {

@@ -178,6 +178,20 @@ Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or us
 
 To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`.
 
+### Offline installs
+
+With a warm cache, `bun install` can run without the network:
+
+```bash terminal icon="terminal"
+# Use cached package metadata regardless of age; only fetch what is missing from the cache
+bun install --prefer-offline
+
+# Never touch the network; anything that is not already cached is an error
+bun install --offline
+```
+
+`--prefer-offline` is also what `install.prefer = "offline"` in `bunfig.toml` selects; `install.offline = true` is the config form of `--offline`. Combined with `--frozen-lockfile` this makes CI installs from a restored cache fully deterministic and network-free.
+
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
 ---

@@ -654,10 +654,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
+                            // Read every export before overriding any, so a throwing getter leaves the
+                            // namespace untouched.
+                            MarkedArgumentBuffer values;
                             for (auto& name : names) {
                                 JSValue value = object->get(globalObject, name);
                                 RETURN_IF_EXCEPTION(scope, {});
-                                moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                                values.append(value);
+                            }
+                            for (size_t i = 0; i < names.size(); ++i) {
+                                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
 

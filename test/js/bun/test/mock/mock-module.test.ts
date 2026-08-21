@@ -177,15 +177,17 @@ test("a factory export getter that throws fails the import", async () => {
   await expect(import("mock-module-getter-throws")).rejects.toThrow("export getter");
 });
 
-test("a factory export getter that throws while patching an already-imported module throws from mock.module", async () => {
-  const before = spyFixture.iSpy;
+test("a factory export getter that throws while patching an already-imported module throws from mock.module and leaves the namespace untouched", async () => {
+  const before = { fn, variable };
   expect(() =>
-    mock.module("./spymodule-fixture", () => ({
-      get iSpy() {
+    mock.module("./mock-module-fixture", () => ({
+      fn: () => "patched",
+      get variable() {
         throw new Error("export getter");
       },
     })),
   ).toThrow("export getter");
-  expect(spyFixture.iSpy).toBe(before);
-  mock.module("./spymodule-fixture", () => ({ iSpy: before }));
+  // `fn` was read successfully before `variable` threw; neither may have been applied.
+  expect(fn).toBe(before.fn);
+  expect(variable).toBe(before.variable);
 });

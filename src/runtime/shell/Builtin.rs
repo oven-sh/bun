@@ -452,6 +452,23 @@ impl Builtin {
         &self.args
     }
 
+    /// `PinnedArrayBuf::drop`'s unpin would write to a `JSC::ArrayBuffer`
+    /// impl the heap sweep already deleted; see
+    /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
+    /// only.
+    #[cfg(not(windows))]
+    pub(crate) fn defuse_array_buf_pins(&mut self) {
+        if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
+            buf.pinned = false;
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stdout {
+            buf.pinned = false;
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stderr {
+            buf.pinned = false;
+        }
+    }
+
     /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
     ///
     /// Every entry in `self.args` borrows into the owning `Cmd`'s

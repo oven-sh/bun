@@ -369,6 +369,7 @@ const errors: ErrorCodeMapping = [
   ["HPE_STRICT", Error],
   ["ERR_WORKER_INVALID_EXEC_ARGV", Error],
   ["ERR_UNKNOWN_MODULE_FORMAT", RangeError],
+  ["ERR_NOT_BUILDING_SNAPSHOT", Error],
   ["ERR_CANNOT_WATCH_SIGINT", Error],
   ["ERR_INSPECTOR_NOT_AVAILABLE", Error],
   ["ERR_INVALID_REPL_EVAL_CONFIG", TypeError],
@@ -379,5 +380,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_NOT_CONNECTED", Error],
   ["ERR_INSPECTOR_NOT_WORKER", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
+  ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
 ];
 export default errors;

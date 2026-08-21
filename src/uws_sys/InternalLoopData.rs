@@ -46,6 +46,9 @@ pub struct InternalLoopData {
     /// loop_data.h — see the layout warning on `idle_ns`.
     #[cfg(not(windows))]
     pub idle_entry_ns: u64,
+    /// Seqlock guarding the park-exit update of the two fields above; mirrors loop_data.h.
+    #[cfg(not(windows))]
+    pub idle_seq: u64,
     pub iterator: *mut SocketGroup,
     pub recv_buf: *mut u8,
     pub send_buf: *mut u8,

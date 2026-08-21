@@ -22,8 +22,6 @@ pub use bun_sql_jsc::postgres::create_binding as sql_jsc_postgres_create_binding
 // The real body already lives in this crate.
 pub(crate) use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
 
-pub use bun_install_jsc::dependency_jsc::dependency_from_js as install_dependency_from_js;
-pub use bun_install_jsc::dependency_jsc::tag_infer_from_js as install_dependency_version_tag_infer_from_js;
 pub use bun_install_jsc::hosted_git_info_jsc::js_from_url as install_hosted_git_info_testing_ap_is_js_from_url;
 pub use bun_install_jsc::hosted_git_info_jsc::js_parse_url as install_hosted_git_info_testing_ap_is_js_parse_url;
 pub use bun_install_jsc::install_binding::bun_install_js_bindings::generate as install_jsc_install_binding_bun_install_js_bindings_generate;
@@ -61,8 +59,10 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-/// Per-VM (node treats `--use-system-ca` as an Environment option, so a Worker's execArgv can differ).
-/// `undefined` ⇒ neither flag given, NODE_USE_SYSTEM_CA decides; only `--no-use-system-ca` beats the env var.
+/// This thread's resolved `--use-system-ca` decision (see `VirtualMachine::use_system_ca`);
+/// `undefined` when nothing decided it, in which case tls.ts falls back to NODE_USE_SYSTEM_CA the
+/// way the process default store does:
+/// https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L2207
 pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -75,24 +75,30 @@ pub(crate) fn bun_get_use_system_ca(
     )
 }
 
+/// Process-wide `--use-openssl-ca`, under which the default store holds neither the bundled nor
+/// the system roots; `getCACertificates('default')` leaves them out to match, as node's does:
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/tls.js#L157
+pub(crate) fn bun_get_use_openssl_ca(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_boolean(crate::cli::Arguments::use_openssl_ca()))
+}
+
 /// `[elapsedSinceLoopStartMs, idleMs]` for THIS thread's loop — the two numbers
 /// performance.eventLoopUtilization() is defined in terms of (node derives
-/// active as now - loopStart - idle).
+/// active as now - loopStart - idle) — or `null` before the loop has begun.
 pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-    // SAFETY: the VM owns this loop and this runs on its thread. Raw *mut, no
-    // &Loop — a &mut PosixLoop is live above us via tick_with_timeout for the
-    // whole tick (see the re-export comment in Loop.rs).
-    let loop_ptr = unsafe { (*vm.event_loop).usockets_loop() };
-    if loop_ptr.is_null() {
+    // SAFETY: the VM owns this loop (installed by `ensure_waker` before any JS ran; `usockets_loop`
+    // panics rather than return null) and this runs on its thread. Raw *mut, no &Loop — a
+    // &mut PosixLoop is live above us via tick_with_timeout for the whole tick.
+    // Idle before elapsed, so the derived active (elapsed - idle) never dips negative.
+    let raw_idle_ns = unsafe { bun_uws::us_loop_idle_ns((*vm.event_loop).usockets_loop()) };
+    let idle_ms = vm.loop_idle_ms(raw_idle_ns);
+    let Some(elapsed_ms) = vm.loop_elapsed_ms() else {
         return Ok(JSValue::NULL);
-    }
-    // Idle BEFORE elapsed, matching node's order (it passes loopIdleTime() in
-    // and reads process.hrtime() after). Reversed, idle is dated after now and
-    // active = now - idle comes out short.
-    // SAFETY: `loop_ptr` is the live usockets loop (non-null checked above).
-    let idle_ms = unsafe { bun_uws::us_loop_idle_ns(loop_ptr) } as f64 / 1_000_000.0;
-    let elapsed_ms = vm.loop_start.elapsed().as_secs_f64() * 1000.0;
+    };
     let arr = JSValue::create_empty_array(global, 2)?;
     arr.put_index(global, 0, JSValue::js_number(elapsed_ms))?;
     arr.put_index(global, 1, JSValue::js_number(idle_ms))?;

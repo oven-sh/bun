@@ -333,21 +333,6 @@ void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSDOMExceptionOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSDOMExceptionOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsDOMException = static_cast<JSDOMException*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsDOMException->wrapped(), jsDOMException);
-}
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
 {
     return createWrapper<DOMException>(globalObject, WTF::move(impl));
@@ -363,12 +348,6 @@ DOMException* JSDOMException::toWrapped(JSC::VM& vm, JSC::JSValue value)
     if (auto* wrapper = dynamicDowncast<JSDOMException>(value))
         return &wrapper->wrapped();
     return nullptr;
-}
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, DOMException*)
-{
-    static NeverDestroyed<JSDOMExceptionOwner> owner;
-    return &owner.get();
 }
 
 }

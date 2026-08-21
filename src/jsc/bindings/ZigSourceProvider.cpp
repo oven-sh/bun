@@ -40,7 +40,7 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);
+extern "C" int ByteRangeMapping__getSourceID(void* mappings);
 extern "C" void* ByteRangeMapping__find(BunString sourceURL);
 
 extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, int sourceID);
@@ -52,7 +52,7 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
         return 0;
     }
 
-    return ByteRangeMapping__getSourceID(mappings, Bun::toString(sourceURL));
+    return ByteRangeMapping__getSourceID(mappings);
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);

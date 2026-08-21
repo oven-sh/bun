@@ -2,7 +2,6 @@
 
 #include "JSDOMWrapper.h"
 #include "Cookie.h"
-#include <wtf/NeverDestroyed.h>
 #include <JavaScriptCore/DateInstance.h>
 namespace WebCore {
 
@@ -48,22 +47,6 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
-class JSCookieOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Cookie*)
-{
-    static NeverDestroyed<JSCookieOwner> owner;
-    return &owner.get();
-}
-
-inline void* wrapperKey(Cookie* wrappableObject)
-{
-    return wrappableObject;
-}
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSCookie* castedThis);
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Cookie&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Cookie* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

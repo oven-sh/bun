@@ -116,8 +116,6 @@ function createPerformanceNodeTiming() {
   return object;
 }
 
-// [elapsedSinceLoopStartMs, idleMs] for this thread's loop, or null before it
-// has turned.
 const getLoopELU = $newRustFunction("bun.rs", "getLoopELU", 0);
 const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
 

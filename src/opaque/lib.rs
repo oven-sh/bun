@@ -89,16 +89,6 @@ macro_rules! opaque_ffi {
             pub fn opaque_mut<'a>(p: *mut Self) -> &'a mut Self {
                 $crate::opaque_deref_mut(p)
             }
-            /// Unchecked `*mut Self → &mut Self`. See [`opaque_ref_nn`].
-            ///
-            /// # Safety
-            /// `p` must be non-null.
-            #[inline(always)]
-            #[allow(dead_code)]
-            pub unsafe fn opaque_mut_nn<'a>(p: *mut Self) -> &'a mut Self {
-                // SAFETY: forwarded to caller.
-                unsafe { $crate::opaque_deref_mut_nn(p) }
-            }
             /// `&self → *mut Self` for FFI calls that take a non-const handle.
             ///
             /// Sound because `_p: UnsafeCell<_>` sits at offset 0 of this

@@ -74,6 +74,12 @@ bool JSNextTickQueue::isEmpty()
     return !internalField(0) || internalField(0).get().asNumber() == 0;
 }
 
+void JSNextTickQueue::discard(JSC::VM& vm)
+{
+    internalField(0).set(vm, this, jsNumber(0));
+    internalField(2).set(vm, this, jsUndefined());
+}
+
 void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -92,6 +98,8 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
             RETURN_IF_EXCEPTION(throwScope, );
         }
         auto* drainFn = internalField(2).get().getObject();
+        if (!drainFn)
+            return; // discarded at teardown
         MarkedArgumentBuffer drainArgs;
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
         RETURN_IF_EXCEPTION(throwScope, );

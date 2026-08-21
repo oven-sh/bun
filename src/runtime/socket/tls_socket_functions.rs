@@ -252,7 +252,7 @@ pub(super) mod ffi {
         pub(crate) fn OPENSSL_sk_num(sk: *const c_void) -> usize;
         // The process-wide default root store; up-refs before returning, so
         // the caller owns a reference it must release with X509_STORE_free.
-        pub(crate) fn us_get_shared_default_ca_store() -> *mut X509_STORE;
+        pub(crate) fn us_get_shared_default_ca_store(use_system_ca: i32) -> *mut X509_STORE;
         pub(crate) fn X509_STORE_free(store: *mut X509_STORE);
         // X509_STORE_CTX lifecycle for issuer lookups; `new` allocates,
         // `init` borrows the store, `free` releases. Used to extend the peer
@@ -557,7 +557,9 @@ pub(super) fn get_peer_certificate(
         // reference is released after the walk.
         let mut shared_store: *mut boringssl::X509_STORE = core::ptr::null_mut();
         if store.is_null() || ffi::OPENSSL_sk_num(ffi::X509_STORE_get0_objects(store)) == 0 {
-            shared_store = ffi::us_get_shared_default_ca_store();
+            shared_store = ffi::us_get_shared_default_ca_store(i32::from(
+                bun_jsc::virtual_machine::VirtualMachine::get().tls_use_system_ca(),
+            ));
             if !shared_store.is_null() {
                 store = shared_store;
             }
@@ -941,69 +943,54 @@ pub(crate) fn export_keying_material(
 
     let label = label_arg.to_slice_or_null(global)?;
     let label_slice = label.slice();
+
+    // Converting `context` can run user JS (toString / Symbol.toPrimitive)
+    // that closes the socket, so do it before fetching the SSL*.
+    let context = if frame.arguments_count() > 2 {
+        match StringOrBuffer::from_js(global, context_arg)? {
+            Some(sb) => Some(sb),
+            None => {
+                return Err(global.throw(format_args!(
+                    "Expected context to be a string, Buffer or TypedArray"
+                )));
+            }
+        }
+    } else {
+        None
+    };
+    let (context_ptr, context_len, use_context) = match &context {
+        Some(sb) => (sb.slice().as_ptr(), sb.slice().len(), 1),
+        None => (core::ptr::null(), 0, 0),
+    };
+
+    let buffer_size = usize::try_from(length).expect("int cast");
+    let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
+    let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
+
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
 
-    if frame.arguments_count() > 2 {
-        if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
-            let context_slice = sb.slice();
-
-            let buffer_size = usize::try_from(length).expect("int cast");
-            let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
-            let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
-
-            // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context_slice are valid for the lengths passed.
-            let result = unsafe {
-                ffi::SSL_export_keying_material(
-                    ssl_ptr,
-                    buffer_ptr,
-                    buffer_size,
-                    label_slice.as_ptr().cast::<c_char>(),
-                    label_slice.len(),
-                    context_slice.as_ptr(),
-                    context_slice.len(),
-                    1,
-                )
-            };
-            if result != 1 {
-                return Err(global.throw_value(get_ssl_exception(
-                    global,
-                    b"Failed to export keying material",
-                )));
-            }
-            Ok(buffer)
-        } else {
-            Err(global.throw(format_args!(
-                "Expected context to be a string, Buffer or TypedArray"
-            )))
-        }
-    } else {
-        let buffer_size = usize::try_from(length).expect("int cast");
-        let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
-        let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
-
-        // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice are valid for the lengths passed; context is null with use_context=0.
-        let result = unsafe {
-            ffi::SSL_export_keying_material(
-                ssl_ptr,
-                buffer_ptr,
-                buffer_size,
-                label_slice.as_ptr().cast::<c_char>(),
-                label_slice.len(),
-                core::ptr::null(),
-                0,
-                0,
-            )
-        };
-        if result != 1 {
-            return Err(global.throw_value(get_ssl_exception(
-                global,
-                b"Failed to export keying material",
-            )));
-        }
-        Ok(buffer)
+    // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context are valid for the lengths passed (context is null with use_context=0).
+    let result = unsafe {
+        ffi::SSL_export_keying_material(
+            ssl_ptr,
+            buffer_ptr,
+            buffer_size,
+            label_slice.as_ptr().cast::<c_char>(),
+            label_slice.len(),
+            context_ptr,
+            context_len,
+            use_context,
+        )
+    };
+    if result != 1 {
+        return Err(global.throw_value(get_ssl_exception(
+            global,
+            b"Failed to export keying material",
+        )));
     }
+    Ok(buffer)
 }
 
 pub(super) fn get_ephemeral_key_info(

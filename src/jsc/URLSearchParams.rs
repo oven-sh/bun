@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::{JSGlobalObject, JSValue};
+use crate::JSValue;
 use bun_core::ZigString;
 
 bun_opaque::opaque_ffi! {
@@ -9,9 +9,7 @@ bun_opaque::opaque_ffi! {
     pub struct URLSearchParams;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
-    safe fn URLSearchParams__create(global_object: &JSGlobalObject, init: &ZigString) -> JSValue;
     safe fn URLSearchParams__fromJS(value: JSValue) -> Option<NonNull<URLSearchParams>>;
     // safe: `URLSearchParams` is an `opaque_ffi!` ZST handle (`&mut` is
     // ABI-identical to a non-null `*mut`); `ctx` is an opaque round-trip pointer
@@ -24,19 +22,15 @@ unsafe extern "C" {
 }
 
 impl URLSearchParams {
-    pub fn create(global_object: &JSGlobalObject, init: ZigString) -> JSValue {
-        URLSearchParams__create(global_object, &init)
-    }
-
-    // TODO(port): lifetime — opaque handle is owned by the JS GC heap, not by `value`.
+    // The returned opaque handle is owned by the JS GC heap, not by `value`;
+    // callers must keep the JS object alive while using it.
     pub fn from_js(value: JSValue) -> Option<NonNull<URLSearchParams>> {
         URLSearchParams__fromJS(value)
     }
 
     pub fn to_string<Ctx>(&mut self, ctx: &mut Ctx, callback: fn(ctx: &mut Ctx, str: ZigString)) {
-        // PORT NOTE: reshaped — Zig captured `callback` at comptime so the C trampoline
-        // only needed `ctx` through the void*. Rust cannot take a fn pointer as a const
-        // generic, so pack (ctx, callback) on the stack and pass that instead.
+        // A fn pointer cannot be a const generic, so pack (ctx, callback) on the
+        // stack and pass the pair through the C trampoline's void* context.
         struct Wrap<'a, Ctx> {
             ctx: &'a mut Ctx,
             callback: fn(&mut Ctx, ZigString),
@@ -58,5 +52,3 @@ impl URLSearchParams {
         URLSearchParams__toString(self, (&raw mut w).cast::<c_void>(), cb::<Ctx>);
     }
 }
-
-// ported from: src/jsc/URLSearchParams.zig

@@ -23,12 +23,7 @@ const JSC::ClassInfo JSNextTickQueue::s_info = { "NextTickQueue"_s, &Base::s_inf
 template<typename, JSC::SubspaceAccess mode>
 JSC::GCClient::IsoSubspace* JSNextTickQueue::subspaceFor(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSNextTickQueue, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSNextTickQueue.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSNextTickQueue = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSNextTickQueue.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNextTickQueue = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSNextTickQueue, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSNextTickQueue, m_subspaceForJSNextTickQueue));
 }
 
 JSNextTickQueue* JSNextTickQueue::create(VM& vm, Structure* structure)
@@ -39,7 +34,7 @@ JSNextTickQueue* JSNextTickQueue::create(VM& vm, Structure* structure)
 }
 Structure* JSNextTickQueue::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSNextTickQueue::JSNextTickQueue(VM& vm, Structure* structure)
@@ -74,6 +69,12 @@ bool JSNextTickQueue::isEmpty()
     return !internalField(0) || internalField(0).get().asNumber() == 0;
 }
 
+void JSNextTickQueue::discard(JSC::VM& vm)
+{
+    internalField(0).set(vm, this, jsNumber(0));
+    internalField(2).set(vm, this, jsUndefined());
+}
+
 void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -92,6 +93,8 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
             RETURN_IF_EXCEPTION(throwScope, );
         }
         auto* drainFn = internalField(2).get().getObject();
+        if (!drainFn)
+            return; // discarded at teardown
         MarkedArgumentBuffer drainArgs;
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
         RETURN_IF_EXCEPTION(throwScope, );

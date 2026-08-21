@@ -21,6 +21,8 @@
 
 extern "C" BUN_PLUGIN_EXPORT const char *BUN_PLUGIN_NAME = "native_plugin_test";
 
+static std::atomic<int> g_external_finalized_count{0};
+
 struct External {
   std::atomic<size_t> foo_count;
   std::atomic<size_t> bar_count;
@@ -182,8 +184,15 @@ plugin_impl_baz(const OnBeforeParseArguments *args,
 extern "C" void finalizer(napi_env env, void *data, void *hint) {
   External *external = (External *)data;
   if (external != nullptr) {
+    g_external_finalized_count.fetch_add(1);
     delete external;
   }
+}
+
+napi_value get_external_finalized_count(napi_env env, napi_callback_info info) {
+  napi_value result;
+  napi_create_int32(env, g_external_finalized_count.load(), &result);
+  return result;
 }
 
 napi_value create_external(napi_env env, napi_callback_info info) {
@@ -542,6 +551,22 @@ napi_value Init(napi_env env, napi_value exports) {
   if (status != napi_ok) {
     napi_throw_error(env, nullptr,
                      "Failed to add set_will_crash function to exports");
+    return nullptr;
+  }
+
+  napi_value fn_get_external_finalized_count;
+  status = napi_create_function(env, nullptr, 0, get_external_finalized_count,
+                                nullptr, &fn_get_external_finalized_count);
+  if (status != napi_ok) {
+    napi_throw_error(env, nullptr,
+                     "Failed to create get_external_finalized_count function");
+    return nullptr;
+  }
+  status = napi_set_named_property(env, exports, "getExternalFinalizedCount",
+                                   fn_get_external_finalized_count);
+  if (status != napi_ok) {
+    napi_throw_error(env, nullptr,
+                     "Failed to add get_external_finalized_count to exports");
     return nullptr;
   }
 

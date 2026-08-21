@@ -13,9 +13,10 @@ export function from(value, encodingOrOffset, length) {
       return Buffer.from(valueOf, encodingOrOffset, length);
     }
 
-    if (value.length !== undefined || $inheritsArrayBuffer(value.buffer)) {
-      if (typeof value.length !== "number") return new $Buffer(0);
-      if (value.length <= 0) return new $Buffer(0);
+    const valueLength = value.length;
+    if (valueLength !== undefined || $inheritsArrayBuffer(value.buffer)) {
+      if (typeof valueLength !== "number") return new $Buffer(0);
+      if (valueLength <= 0) return new $Buffer(0);
       return new $Buffer(value);
     }
     const { type, data } = value;
@@ -24,7 +25,7 @@ export function from(value, encodingOrOffset, length) {
       return new $Buffer(data);
     }
 
-    const toPrimitive = $tryGetByIdWithWellKnownSymbol(value, "toPrimitive");
+    const toPrimitive = value[Symbol.toPrimitive];
     if (typeof toPrimitive === "function") {
       const primitive = toPrimitive.$call(value, "string");
       if (typeof primitive === "string") {

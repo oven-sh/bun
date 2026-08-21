@@ -101,7 +101,7 @@ test(
   },
   {
     onConstructorFailure: error => {
-      expect(error.message).toContain("BoringSSL error:0900006e:PEM routines:OPENSSL_internal:NO_START_LINE");
+      expect(error.message).toContain("error:0900006e:PEM routines:OPENSSL_internal:NO_START_LINE");
     },
   },
 );

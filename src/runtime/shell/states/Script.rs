@@ -10,14 +10,14 @@ use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
 pub struct Script {
-    pub base: Base,
+    pub(crate) base: Base,
     /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
     /// The arena outlives every state node (it's dropped only when the
     /// interpreter is finalized), so the BackRef invariant holds. Stored
     /// lifetime-erased to keep `Node` lifetime-free.
     pub node: bun_ptr::BackRef<ast::Script>,
-    pub io: IO,
-    pub state: ScriptState,
+    pub(crate) io: IO,
+    pub(crate) state: ScriptState,
 }
 
 pub enum ScriptState {
@@ -39,7 +39,7 @@ impl Script {
         io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Script(Script {
-            base: Base::new(StateKind::Script, parent, shell),
+            base: Base::new(parent, shell),
             // SAFETY: `node` is non-null and points into the AST arena
             // (`ShellArgs::__arena`), which the interpreter holds for its
             // entire lifetime — strictly outliving every state node (the
@@ -72,8 +72,6 @@ impl Script {
             *idx += 1;
             (i, me.base.shell)
         };
-        // PORT NOTE: reshaped for borrowck — captured idx/shell into locals
-        // before re-borrowing interp for Stmt::init.
         let stmt_node = Self::stmt_at(interp, this, idx);
         let io = interp.as_script(this).io.clone();
         let stmt = Stmt::init(interp, shell, stmt_node, this, io);
@@ -118,7 +116,7 @@ impl Script {
             // The shell env is owned by the parent when the parent is the
             // Interpreter or a Subshell; otherwise this Script represents a
             // command substitution which duped from the parent and must
-            // deinitialize it (Zig: `this.base.shell.deinit()`).
+            // deinitialize it.
             if !me.base.shell.is_null() {
                 // SAFETY: `me.base.shell` is the duped env this Script owned;
                 // null-checked and exclusively held here.
@@ -156,5 +154,3 @@ impl Script {
         &raw const me.node.stmts[idx]
     }
 }
-
-// ported from: src/shell/states/Script.zig

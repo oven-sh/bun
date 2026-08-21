@@ -8,7 +8,7 @@ Bun implements the `node:fs` module, which includes the `fs.appendFile` and `fs.
 
 ---
 
-You can use `fs.appendFile` to asynchronously append data to a file, creating the file if it does not yet exist. The content can be a string or a `Buffer`.
+`fs.appendFile` asynchronously appends data to a file, creating the file if it does not yet exist. The content can be a string or a `Buffer`.
 
 ```ts
 import { appendFile } from "node:fs/promises";
@@ -51,4 +51,4 @@ appendFileSync("message.txt", "data to append", "utf8");
 
 ---
 
-See the [Node.js documentation](https://nodejs.org/api/fs.html#fspromisesappendfilepath-data-options) for more information.
+See the [Node.js documentation](https://nodejs.org/api/fs.html#fspromisesappendfilepath-data-options) for `fs.appendFile`.

@@ -4,11 +4,10 @@ use bun_core::String;
 
 use super::field_type::FieldType;
 use super::new_reader::NewReader;
+use crate::postgres::AnyPostgresError;
 
-/// Zig: `union(FieldType)` — every variant carries a `bun.String`.
 pub enum FieldMessage {
     Severity(String),
-    LocalizedSeverity(String),
     Code(String),
     Message(String),
     Detail(String),
@@ -29,10 +28,15 @@ pub enum FieldMessage {
 
 impl fmt::Display for FieldMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Zig: `switch (this) { inline else => |str| writer.print("{f}", .{str}) }`
+        write!(f, "{}", self.payload())
+    }
+}
+
+impl FieldMessage {
+    /// Every variant carries a single `bun.String` payload.
+    pub fn payload(&self) -> &String {
         match self {
             FieldMessage::Severity(s)
-            | FieldMessage::LocalizedSeverity(s)
             | FieldMessage::Code(s)
             | FieldMessage::Message(s)
             | FieldMessage::Detail(s)
@@ -48,35 +52,25 @@ impl fmt::Display for FieldMessage {
             | FieldMessage::Constraint(s)
             | FieldMessage::File(s)
             | FieldMessage::Line(s)
-            | FieldMessage::Routine(s) => write!(f, "{s}"),
+            | FieldMessage::Routine(s) => s,
         }
     }
-}
 
-// Zig `deinit` called `.deref()` on the payload `bun.String`. In Rust,
-// `bun_core::String`'s own `Drop` performs the deref, so no explicit `Drop`
-// impl is needed here — dropping the enum drops the payload.
-
-impl FieldMessage {
-    pub fn decode_list<Context: super::new_reader::ReaderContext>(
+    pub(crate) fn decode_list<Context: super::new_reader::ReaderContext>(
         mut reader: NewReader<Context>,
-    ) -> Result<Vec<FieldMessage>, bun_core::Error> {
-        // TODO(port): narrow error set
+        mut remaining: usize,
+    ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
         let mut messages: Vec<FieldMessage> = Vec::new();
-        loop {
+        while remaining > 0 {
             let field_int: u8 = reader.int::<u8>()?;
+            remaining -= 1;
             if field_int == 0 {
                 break;
             }
-            // TODO(port): Zig `FieldType` is a non-exhaustive `enum(u8)` (the
-            // `init` switch has an `else` arm). `from_raw` must accept any u8
-            // without UB — do NOT `transmute` here.
             let field: FieldType = FieldType::from(field_int);
 
-            let message = reader.read_z()?;
-            if message.slice().is_empty() {
-                break;
-            }
+            let (message, consumed) = reader.string_within(remaining)?;
+            remaining -= consumed;
 
             let Ok(field_msg) = FieldMessage::init(field, message.slice()) else {
                 continue;
@@ -87,7 +81,7 @@ impl FieldMessage {
         Ok(messages)
     }
 
-    pub fn init(tag: FieldType, message: &[u8]) -> Result<FieldMessage, bun_core::Error> {
+    pub(crate) fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
         Ok(match tag {
             FieldType::SEVERITY => FieldMessage::Severity(String::clone_utf8(message)),
             // Ignore this one for now.
@@ -110,9 +104,7 @@ impl FieldMessage {
             FieldType::FILE => FieldMessage::File(String::clone_utf8(message)),
             FieldType::LINE => FieldMessage::Line(String::clone_utf8(message)),
             FieldType::ROUTINE => FieldMessage::Routine(String::clone_utf8(message)),
-            _ => return Err(bun_core::err!("UnknownFieldType")),
+            _ => return Err(crate::Error::UnknownFieldType),
         })
     }
 }
-
-// ported from: src/sql/postgres/protocol/FieldMessage.zig

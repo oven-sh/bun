@@ -1,8 +1,8 @@
 //! The [`Resolver`] state machine: import-path resolution against the on-disk
 //! filesystem, `node_modules` tree, `tsconfig.json` paths, package `exports`,
 //! `browser` maps, and the standalone (compiled) module graph. Holds the
-//! Zig→Rust port of `src/resolver/resolver.zig`'s `Resolver` struct and its
-//! impl, plus the local helper shims (`bun_paths` value-dispatch joins,
+//! `Resolver` struct and its impl,
+//! plus the local helper shims (`bun_paths` value-dispatch joins,
 //! `bun_sys` dir-open wrappers, `FdExt`) and threadlocal scratch buffers.
 
 use crate::{is_package_path, is_package_path_not_absolute};
@@ -19,34 +19,30 @@ use std::io::Write as _;
 use ::bun_install_types::resolver_hooks as Install;
 use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
 use ::bun_semver as Semver;
-// Re-exported so downstream (bun_bundler) can name the trait in
-// `Transpiler::get_package_manager`'s return type without a direct
-// `bun_install_types` dep (LAYERING: pass-through, no new edge).
-pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
 
-// LAYERING: `PackageManager.initWithRuntime` (Zig resolver.zig:540) lives in
+// LAYERING: `PackageManager.initWithRuntime` lives in
 // `bun_install`, which depends on this crate. The lazy-init body is defined
 // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
 // (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
-// `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`
-// (lifetime-erased to `'static` — the install crate stores it as a raw
-// `NonNull<Loader<'static>>`, matching Zig's untracked `*DotEnv.Loader`).
+// `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
 unsafe extern "Rust" {
     /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
     /// reborrows `&mut *log` / `&mut *env` and reads `*install` if non-null.
     /// All three must point at process-lifetime Transpiler-owned storage; the
     /// returned `NonNull` names the `'static` `PackageManager` singleton.
+    /// Errs when the one-time init fails (e.g. the top-level directory is
+    /// unreadable); the failure is sticky across calls.
     fn __bun_resolver_init_package_manager(
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
-        env: NonNull<bun_dotenv::Loader<'static>>,
-    ) -> NonNull<dyn AutoInstaller>;
+        env: NonNull<bun_dotenv::Loader>,
+    ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
 }
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 
-/// `Dependency` namespace as the body spells it (Zig: `Dependency.Version` /
-/// `Dependency.Behavior`). Re-exports the canonical `bun_install_types` items.
+/// `Dependency` namespace as the body spells it (`Dependency::Version` /
+/// `Dependency::Behavior`). Re-exports the canonical `bun_install_types` items.
 pub mod Dependency {
     pub use ::bun_install_types::resolver_hooks::{
         Behavior, Dependency, DependencyVersion as Version, DependencyVersionTag,
@@ -56,12 +52,8 @@ pub mod Dependency {
     }
 }
 
-/// Transitional re-export module: `package_json.rs` and a few external crates
-/// still spell these paths via `__forward_decls`; the items are now real
-/// re-exports of `bun_install_types` (no local stubs).
-pub(crate) mod __forward_decls {}
 // bun_paths shim — value-dispatched join helpers over `resolve_path::Platform`.
-// `dirname` (`Option`-returning, `std.fs.path.dirname` semantics) and
+// `dirname` (`Option`-returning) and
 // `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
 // glob / explicit re-export below, no local re-implementation.
 mod bun_paths {
@@ -71,8 +63,7 @@ mod bun_paths {
 
     /// Value-dispatch over `Platform` to the const-generic `PlatformT`
     /// monomorphizations in `resolve_path`. The resolver body threads
-    /// `Platform::AUTO` / `Platform::Loose` at runtime (carried over from Zig's
-    /// `comptime _platform: Platform` callsites that took a function param).
+    /// `Platform::AUTO` / `Platform::Loose` at runtime.
     macro_rules! dispatch_platform {
         ($p:expr, |$P:ident| $body:expr) => {{
             use ::bun_paths::resolve_path::{self as rp, platform};
@@ -112,7 +103,7 @@ mod bun_paths {
         )
     }
     pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
-        // PORT NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
+        // NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
         // returned slice always points into the threadlocal `PARSER_JOIN_INPUT_BUFFER`
         // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
         // pass exactly one part). Re-erase to `'static` so the resolver can hold it
@@ -120,7 +111,7 @@ mod bun_paths {
         let s = dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs::<P>(
             cwd, part
         ));
-        // SAFETY: see PORT NOTE — slice borrows threadlocal storage, valid 'static per-thread.
+        // SAFETY: see NOTE — slice borrows threadlocal storage, valid 'static per-thread.
         unsafe { bun_ptr::detach_lifetime(s) }
     }
     pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
@@ -136,11 +127,10 @@ mod bun_paths {
             |P| ::bun_paths::resolve_path::join_string_buf::<P>(buf, parts)
         )
     }
-    /// Zig `bun.pathLiteral` — compile-time platform-separator literal. Zig
-    /// rewrites `/` → `\` at comptime; Rust can't transform a borrowed
-    /// `&'static [u8]` in a const fn, so this is a macro that emits a fresh
-    /// const array with the swap applied. Result is `&'static [u8; N]`
-    /// (coerces to `&[u8]`).
+    /// Compile-time platform-separator literal (`/` → `\` on Windows). A
+    /// const fn can't transform a borrowed `&'static [u8]`, so this is a
+    /// macro that emits a fresh const array with the swap applied. Result is
+    /// `&'static [u8; N]` (coerces to `&[u8]`).
     #[macro_export]
     #[doc(hidden)]
     macro_rules! __resolver_path_literal {
@@ -181,10 +171,6 @@ mod strings {
         without_trailing_slash_windows_path,
     };
     pub(super) use bun_paths::strings::*;
-    #[inline]
-    pub(super) fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {
-        bun_core::strings::index_of_any(slice, chars)
-    }
 }
 // bun_sys shim — adds the `std.fs`-shaped dir-open surface the resolver names
 // (`openDirAbsoluteZ` / `Dir.openDirZ`) on top of the real `::bun_sys` crate.
@@ -193,14 +179,13 @@ mod strings {
 mod bun_sys {
     pub(super) use ::bun_sys::*;
 
-    /// Port of `std.fs.openDirAbsoluteZ` — `open(path, O_DIRECTORY|O_RDONLY|O_CLOEXEC[|O_NOFOLLOW])`.
-    /// `opts.iterate` is a no-op on POSIX (Zig only used it to pick `iterate=true`
-    /// on `IterableDir`, which is just an open mode hint).
+    /// `open(path, O_DIRECTORY|O_RDONLY|O_CLOEXEC[|O_NOFOLLOW])`.
+    /// `opts.iterate` is a no-op on POSIX (just an open mode hint).
     #[cfg(not(windows))]
     pub(super) fn open_dir_absolute_z(
         path: &::bun_core::ZStr,
         opts: OpenDirOptions,
-    ) -> core::result::Result<Fd, ::bun_core::Error> {
+    ) -> crate::CrateResult<Fd> {
         #[cfg(unix)]
         let nofollow = if opts.no_follow { libc::O_NOFOLLOW } else { 0 };
         #[cfg(not(unix))]
@@ -211,13 +196,13 @@ mod bun_sys {
         ::bun_sys::open(path, O::DIRECTORY | O::CLOEXEC | O::RDONLY | nofollow, 0)
             .map_err(Into::into)
     }
-    /// Port of `std.fs.Dir.openDirZ` — `openat(dir, path, O_DIRECTORY|O_RDONLY|O_CLOEXEC)`.
+    /// Opens a directory relative to `dir`: `openat(dir, path, O_DIRECTORY|O_RDONLY|O_CLOEXEC)`.
     pub(super) fn open_dir_z(
         dir: Fd,
         path: &[u8],
         _opts: OpenDirOptions,
-    ) -> core::result::Result<Fd, ::bun_core::Error> {
-        // PORT NOTE: callers pass either a `&'static [u8]` literal or a NUL-terminated
+    ) -> crate::CrateResult<Fd> {
+        // NOTE: callers pass either a `&'static [u8]` literal or a NUL-terminated
         // slice; `open_dir_at` builds its own ZStr internally so we strip the sentinel.
         let path = if path.last() == Some(&0) {
             &path[..path.len() - 1]
@@ -233,13 +218,10 @@ mod bun_sys {
 
 /// `bun_sys::Fd` extension surface — thin method-syntax wrappers over the
 /// free functions `::bun_sys::{close, get_fd_path}` and `Fd::native`, so the
-/// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)` per the Zig.
+/// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)`.
 trait FdExt: Sized {
     fn close(self);
-    fn get_fd_path<'b>(
-        self,
-        buf: &'b mut ::bun_paths::PathBuffer,
-    ) -> core::result::Result<&'b [u8], ::bun_core::Error>;
+    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline]
@@ -247,10 +229,7 @@ impl FdExt for ::bun_sys::Fd {
         let _ = ::bun_sys::close(self);
     }
     #[inline]
-    fn get_fd_path<'b>(
-        self,
-        buf: &'b mut ::bun_paths::PathBuffer,
-    ) -> core::result::Result<&'b [u8], ::bun_core::Error> {
+    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]> {
         ::bun_sys::get_fd_path(self, buf)
             .map(|s| &*s)
             .map_err(Into::into)
@@ -265,15 +244,13 @@ impl FdZero for ::bun_sys::Fd {
 
 use self::bun_paths as ResolvePath;
 use ::bun_ast::import_record as ast;
-#[cfg(debug_assertions)]
-use ::bun_core::Output;
 use ::bun_core::{FeatureFlags, Generation};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
-use bun_core::PathString;
 use bun_dotenv::env_loader as DotEnv;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
+use bun_ptr::Interned;
 use bun_sys::Fd as FD;
 use bun_threading::Mutex;
 
@@ -292,8 +269,9 @@ pub use ::bun_options_types::global_cache::GlobalCache;
 // inside `impl Resolver` resolve unchanged.
 use crate::options;
 use crate::result::{
-    DebugLogs, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair,
-    PendingResolution, PendingResolutionTag, Result, ResultFlags, ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
+    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
+    ResultUnion,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
@@ -304,16 +282,15 @@ use bun_ast::SideEffects;
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
 // The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
 // singleton; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
-// borrow `&'static [u8]` source bytes. Zig models this with `bun.TrivialNew`
-// (heap-allocate, never free). PORTING.md §Forbidden bars `Box::leak`/
+// borrow `&'static [u8]` source bytes. PORTING.md §Forbidden bars `Box::leak`/
 // `mem::forget` for this — process-lifetime storage must go through
 // `LazyLock`. These append-only arenas are that storage; the `Box<T>` heap
 // address is stable across `Vec` growth, so handing out `&'static T` is sound.
 
 /// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena.
-/// Returns `NonNull` (not `&'static`) so the mut-provenance survives into
-/// `DirInfo::reset()`'s `drop_in_place` -- handing out `&T` here and casting
-/// back to `*mut T` at the drop site would be UB under Stacked Borrows.
+/// Returns `NonNull` (not `&'static`) so mut-provenance survives to write
+/// sites — handing out `&T` here and casting back to `*mut T` would be UB
+/// under Stacked Borrows.
 fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     // `Box` is load-bearing: returns `NonNull<PackageJSON>` derived from the
     // box interior, treated as `'static`; unboxing would dangle on `Vec` realloc.
@@ -328,24 +305,24 @@ fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     core::ptr::NonNull::from(&mut **guard.last_mut().unwrap())
 }
 
-// Port of `const debuglog = Output.scoped(.Resolver, .hidden)` (resolver.zig:4).
 // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
 // `debuglog!` macro forwards to the real `bun_core::scoped_log!` so debug builds
 // emit and release builds dead-strip (PORTING.md §Logging).
 //
-// PORT NOTE: resolver.zig:1692 also binds `const dev = Output.scoped(.Resolver,
-// .visible)` for `bustDirCache` — same scope name, different visibility. Rust's
-// `declare_scope!` is one static per ident; route both through the `.hidden`
-// declaration (matches the file-top binding) and let `BUN_DEBUG_Resolver=1`
-// surface the bust log.
 bun_core::define_scoped_log!(debuglog, Resolver, hidden);
 
-// PORT NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
+// Used by `bustDirCache`. Same `Resolver` tag as `debuglog` above (so
+// `BUN_DEBUG_Resolver` controls both) but visible by default. `declare_scope!`
+// derives the tag from the static's ident, so this one is hand-declared to
+// keep the printed tag identical.
+#[allow(non_upper_case_globals)]
+static ResolverDev: bun_core::output::ScopedLogger =
+    bun_core::output::ScopedLogger::new("Resolver", bun_core::output::Visibility::Visible);
+
+// NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the ~80 bare-`Path` use sites
 // resolve without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
-
-use crate::dir_info::HashMapExt as _;
 
 /// A temporary threadlocal buffer with a lifetime more than the current
 /// function call.
@@ -360,53 +337,49 @@ use crate::dir_info::HashMapExt as _;
 /// threadlocal vars yielded no performance improvement on macOS when bundling
 /// 10 copies of Three.js. Potentially revisit after https://github.com/oven-sh/bun/issues/2716
 pub struct Bufs {
-    pub extension_path: PathBuffer,
-    pub tsconfig_match_full_buf: PathBuffer,
-    pub tsconfig_match_full_buf2: PathBuffer,
-    pub tsconfig_match_full_buf3: PathBuffer,
+    pub(crate) extension_path: PathBuffer,
+    pub(crate) tsconfig_match_full_buf: PathBuffer,
+    pub(crate) tsconfig_match_full_buf2: PathBuffer,
+    pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
-    pub esm_subpath: [u8; 512],
-    pub esm_absolute_package_path: PathBuffer,
-    pub esm_absolute_package_path_joined: PathBuffer,
+    pub(crate) esm_subpath: [u8; 512],
+    pub(crate) esm_absolute_package_path: PathBuffer,
+    pub(crate) esm_absolute_package_path_joined: PathBuffer,
 
-    // PORT NOTE: Zig left this `= undefined`; `DirEntryResolveQueueItem` holds
-    // `&'static [u8]` fields, so a zeroed bit-pattern is UB in Rust. Use
+    // NOTE: `DirEntryResolveQueueItem` holds
+    // `&'static [u8]` fields, so a zeroed bit-pattern is UB. Use
     // `MaybeUninit` and `assume_init_{ref,mut}` at the (linear write-then-read)
     // use sites in `dir_info_cached_maybe_log`.
-    pub dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
-    pub open_dirs: [FD; 256],
-    pub resolve_without_remapping: PathBuffer,
-    pub index: PathBuffer,
-    pub dir_info_uncached_filename: PathBuffer,
-    pub node_bin_path: PathBuffer,
-    pub dir_info_uncached_path: PathBuffer,
-    pub tsconfig_base_url: PathBuffer,
-    pub relative_abs_path: PathBuffer,
-    pub load_as_file_or_directory_via_tsconfig_base_path: PathBuffer,
-    pub node_modules_check: PathBuffer,
-    pub field_abs_path: PathBuffer,
-    pub tsconfig_path_abs: PathBuffer,
-    pub check_browser_map: PathBuffer,
-    pub remap_path: PathBuffer,
-    pub load_as_file: PathBuffer,
-    pub remap_path_trailing_slash: PathBuffer,
-    pub path_in_global_disk_cache: PathBuffer,
-    pub abs_to_rel: PathBuffer,
-    pub node_modules_paths_buf: PathBuffer,
-    pub import_path_for_standalone_module_graph: PathBuffer,
+    pub(crate) dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
+    pub(crate) open_dirs: [FD; 256],
+    pub(crate) resolve_without_remapping: PathBuffer,
+    pub(crate) index: PathBuffer,
+    pub(crate) dir_info_uncached_filename: PathBuffer,
+    pub(crate) node_bin_path: PathBuffer,
+    pub(crate) dir_info_uncached_path: PathBuffer,
+    pub(crate) tsconfig_base_url: PathBuffer,
+    pub(crate) relative_abs_path: PathBuffer,
+    pub(crate) load_as_file_or_directory_via_tsconfig_base_path: PathBuffer,
+    pub(crate) node_modules_check: PathBuffer,
+    pub(crate) field_abs_path: PathBuffer,
+    pub(crate) tsconfig_path_abs: PathBuffer,
+    pub(crate) check_browser_map: PathBuffer,
+    pub(crate) remap_path: PathBuffer,
+    pub(crate) load_as_file: PathBuffer,
+    pub(crate) remap_path_trailing_slash: PathBuffer,
+    pub(crate) path_in_global_disk_cache: PathBuffer,
+    pub(crate) abs_to_rel: PathBuffer,
+    pub(crate) import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
-    pub win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
-    #[cfg(not(windows))]
-    pub win32_normalized_dir_info_cache: (),
+    pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
 }
-// TODO(port): bun.ThreadlocalBuffers(Bufs) — lazily-allocated threadlocal Box<Bufs>.
-// In Rust we model it as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
+// `Bufs` is modeled as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
 // leaked `Box<Bufs>` pointer. `BufsSlot`'s `Drop` reclaims that box when a
-// worker/transpiler-pool thread exits; the main thread's lives process-lifetime
-// (as in Zig, which never freed it). The `bufs!()` macro hands out `&mut` to a
+// worker/transpiler-pool thread exits; the main thread's lives process-lifetime.
+// The `bufs!()` macro hands out `&mut` to a
 // single field. This relies on the caller never holding two `bufs!()` borrows
-// simultaneously across the same field; the Zig code already obeys that invariant.
+// simultaneously across the same field.
 struct BufsSlot(core::cell::Cell<*mut Bufs>);
 impl Drop for BufsSlot {
     fn drop(&mut self) {
@@ -446,7 +419,7 @@ fn bufs_storage_init() -> *mut Bufs {
     // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
     // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
     // no validity requirement, `()`), so EVERY bit-pattern — not just
-    // all-zero — is a valid `Bufs`. Zig left these `= undefined`; each
+    // all-zero — is a valid `Bufs`. Each
     // field is scratch (write-then-read within a single resolve call,
     // including `open_dirs` which is bounded by `open_dir_count`), so
     // there is no need to pay for zero-filling ~100 KiB on first use.
@@ -465,19 +438,16 @@ macro_rules! bufs {
 }
 
 // This is a global so even if multiple resolvers are created, the mutex will still work
-// TODO(port): `bun_threading::Mutex` has no `const fn new()`; use LazyLock until it does.
 // `pub(crate)` so the `fs::EntriesMap::inner` debug-assert can verify it is held
 // (the resolver mutex is one of the two documented guards for the entries singleton).
-pub(crate) static RESOLVER_MUTEX: std::sync::LazyLock<Mutex> =
-    std::sync::LazyLock::new(Mutex::default);
-// Zig had `resolver_Mutex_loaded` to lazily zero-init; Rust const init handles that.
+static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
-// TODO(port): `BoundedArray` has no const constructor; init lazily under
-// `BIN_FOLDERS_LOADED` (matches Zig's `bin_folders_loaded` lazy zero-init).
+// `BoundedArray` has no const constructor; init lazily under
+// `BIN_FOLDERS_LOADED`.
 static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
-static BIN_FOLDERS_LOCK: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
+static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
 static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -488,42 +458,14 @@ static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
 // `Resolver.watcher` without a seam converter.
 pub use bun_watcher::AnyResolveWatcher;
 
-// Zig: `pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type` —
-// type-generator returning a struct with `.init(ctx) -> AnyResolveWatcher` and a
-// monomorphized `watch` shim. Per PORTING.md (`fn Foo(comptime T) type` → `struct Foo<T>`).
-//
-// PORT NOTE: const fn-pointer generics (`adt_const_params` for fn ptrs) and
-// const params depending on type params are both forbidden. Reshape to a
-// runtime fn-pointer carried alongside the context — `init` produces the same
-// `AnyResolveWatcher` erased shim as Zig's monomorphized `wrap`.
-
-pub struct ResolveWatcher<C> {
-    on_watch: fn(*mut C, &[u8], FD),
-    _marker: core::marker::PhantomData<*mut C>,
-}
-impl<C> ResolveWatcher<C> {
-    pub const fn new(on_watch: fn(*mut C, &[u8], FD)) -> Self {
-        Self {
-            on_watch,
-            _marker: core::marker::PhantomData,
-        }
-    }
-    pub fn init(self, ctx: *mut C) -> AnyResolveWatcher {
-        AnyResolveWatcher {
-            context: ctx.cast(),
-            // SAFETY: `fn(*mut C, ..)` and `fn(*mut (), ..)` are ABI-identical
-            // (Rust-ABI, thin-ptr first arg); the `wrap` shim in Zig did the
-            // same erase. The callback body discharges its own type-recovery.
-            callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch)
-            },
-        }
-    }
-}
+// NOTE: const fn-pointer generics (`adt_const_params` for fn ptrs) and
+// const params depending on type params are both forbidden. Carry a
+// runtime fn-pointer alongside the context — `init` produces the
+// `AnyResolveWatcher` erased shim.
 
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
-    // PORT NOTE: Zig `fs: *Fs.FileSystem` / `log: *logger.Log` are raw aliasing
+    // NOTE: `fs` / `log` are raw aliasing
     // pointers — the bundler builds a `Resolver` per worker thread sharing the
     // process-wide `FileSystem` singleton, so `&'a mut` here would manufacture
     // aliased unique refs across threads (instant UB). Model as `*mut` /
@@ -532,19 +474,18 @@ pub struct Resolver<'a> {
     pub fs: *mut Fs::FileSystem,
     pub log: NonNull<bun_ast::Log>,
     // allocator dropped — global mimalloc
-    /// PORT NOTE: Zig stores `[]const []const u8` aliasing into
-    /// `r.opts.extension_order` and saves/restores it across nested resolves.
+    /// NOTE: saved/restored across nested resolves.
     /// Stored as a `Copy` enum tag (no self-reference) and resolved on demand
     /// via [`Self::extension_order`] / [`options::BundleOptions::ext_order_slice`].
-    pub extension_order: options::ExtOrder,
-    pub timer: Timer,
+    pub(crate) extension_order: options::ExtOrder,
+    pub(crate) timer: Timer,
 
     pub care_about_bin_folder: bool,
     pub care_about_scripts: bool,
 
     /// Read the "browser" field in package.json files?
     /// For Bun's runtime, we don't.
-    pub care_about_browser_field: bool,
+    pub(crate) care_about_browser_field: bool,
 
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
@@ -556,23 +497,20 @@ pub struct Resolver<'a> {
 
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
-    /// below `bun_install` in the dep graph. The runtime/bundler that enables
-    /// auto-install (`opts.global_cache != .disable`) is responsible for
-    /// constructing the `PackageManager` (Zig: `PackageManager.initWithRuntime`)
-    /// and assigning it here BEFORE resolution; the resolver no longer
-    /// constructs it lazily — that would require depending on `bun_install`,
-    /// which depends on us. When `None`, [`get_package_manager`] panics if the
-    /// auto-install path is reached.
+    /// below `bun_install` in the dep graph. `None` until the auto-install
+    /// path is first reached: [`get_package_manager`] then initializes the
+    /// singleton through the link-time `__bun_resolver_init_package_manager`
+    /// factory and caches the pointer here. A failed init (e.g. unreadable
+    /// top-level directory) is returned as an error and leaves this `None`.
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
     pub on_wake_package_manager: Install::WakeHandler,
-    // Spec resolver.zig:477 `env_loader: ?*DotEnv.Loader` — raw nullable pointer.
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
     // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
     // set (e.g. bake/production.rs assigns this then calls `configure_defines()`
     // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
-    // pointer carries no aliasing guarantee and matches the Zig shape.
-    pub env_loader: Option<NonNull<DotEnv::Loader<'a>>>,
+    // pointer carries no aliasing guarantee.
+    pub env_loader: Option<NonNull<DotEnv::Loader>>,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
@@ -615,17 +553,17 @@ pub struct Resolver<'a> {
     // reducing parallelism in the resolver helps the rest of the bundler go
     // faster. I'm not sure why this is but please don't change this unless you
     // do a lot of testing with various benchmarks and there aren't any regressions.
-    pub mutex: &'static Mutex,
+    pub(crate) mutex: &'static Mutex,
 
     /// This cache maps a directory path to information about that directory and
     /// all parent directories. When interacting with this structure, make sure
     /// to validate your keys with `Resolver.assertValidCacheKey`
-    // PORT NOTE: Zig `dir_cache: *DirInfo.HashMap` is a raw aliasing pointer to the
+    // NOTE: a raw aliasing pointer to the
     // `DirInfo::hash_map_instance()` singleton. Modeled as `*mut` (not `&'static mut`)
     // for the same reason as `fs`/`log` above — every per-worker `Resolver` shares the
     // singleton, so a `&'static mut` here would manufacture aliased unique refs (UB).
     // Deref through the `dir_cache()` accessor below.
-    pub dir_cache: *mut DirInfo::HashMap,
+    pub(crate) dir_cache: *mut DirInfo::HashMap,
 
     /// This is set to false for the runtime. The runtime should choose "main"
     /// over "module" in package.json
@@ -640,8 +578,7 @@ pub struct Resolver<'a> {
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
-/// `Resolver::log` pointer on drop — port of the Zig
-/// `defer resolver.log = orig_log` save/restore pattern.
+/// `Resolver::log` pointer on drop.
 pub struct ResolverLogScope {
     slot: *mut NonNull<bun_ast::Log>,
     prev: NonNull<bun_ast::Log>,
@@ -659,7 +596,7 @@ impl Drop for ResolverLogScope {
 
 impl<'a> Resolver<'a> {
     /// Per-worker constructor — replaces the bundler's prior bitwise
-    /// `transpiler.* = from.*` (Zig ThreadPool.zig:308) for the resolver
+    /// copy-from-`from` for the resolver
     /// portion. Every `Copy` / raw-pointer field is copied from `from`; the
     /// per-worker `caches` (the only `Drop`-carrying field, via the
     /// `Json` cache's `MimallocArena`) and `debug_logs`/`timer` are freshly
@@ -691,13 +628,11 @@ impl<'a> Resolver<'a> {
             debug_logs: None,
             elapsed: 0,
             watcher: from.watcher,
-            // Spec ThreadPool.zig:313 `transpiler.resolver.caches = CacheSet.Set.init(allocator)`.
             caches: CacheSet::init(),
             generation: from.generation,
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
-            // SAFETY: see fn doc — pointee outlives `'a`.
-            env_loader: from.env_loader.map(|p| p.cast::<DotEnv::Loader<'a>>()),
+            env_loader: from.env_loader,
             store_fd: from.store_fd,
             // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
             // vtable layout is identical (only the borrow-checker tag differs);
@@ -718,16 +653,13 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Port of Zig `r.fs` deref.
-    ///
-    /// PORT NOTE (Stacked Borrows): returns the RAW `*mut` (NOT `&'a mut`). A
+    /// NOTE (Stacked Borrows): returns the RAW `*mut` (NOT `&'a mut`). A
     /// `&'a mut` accessor would let two `fs()` calls manufacture coexisting
     /// aliased unique refs to the same singleton (PORTING.md §Forbidden:
     /// aliased-&mut), and any later `&mut *self.fs` retag would pop a previously
     /// returned `&'a mut`'s SB tag while it's still nominally live for `'a`.
     /// Callers must `unsafe { &mut *r.fs() }` at the narrowest use site and let
-    /// the projection die at end-of-expression. Spec resolver.zig:455 stores raw
-    /// `*Fs.FileSystem` and dereferences per-use.
+    /// the projection die at end-of-expression.
     #[inline(always)]
     pub fn fs(&self) -> *mut Fs::FileSystem {
         self.fs
@@ -740,7 +672,7 @@ impl<'a> Resolver<'a> {
     /// that could (under Stacked Borrows) pop a coexisting `rfs_ptr()` /
     /// `&mut *query.entry` tag derived from the same allocation.
     #[inline(always)]
-    pub fn fs_ref(&self) -> &Fs::FileSystem {
+    pub(crate) fn fs_ref(&self) -> &Fs::FileSystem {
         // SAFETY: BACKREF — `self.fs` is the process-global FileSystem singleton
         // (LIFETIMES.tsv: STATIC); resolver mutex serializes all mutation. A
         // shared `&` cannot alias-UB with the raw `*mut RealFS` projections
@@ -756,7 +688,7 @@ impl<'a> Resolver<'a> {
     /// `&mut self` and continue to narrow-retag via the raw [`fs()`](Self::fs)
     /// accessor — same caveat as [`log_mut`](Self::log_mut).
     #[inline(always)]
-    pub fn fs_mut(&mut self) -> &mut Fs::FileSystem {
+    pub(crate) fn fs_mut(&mut self) -> &mut Fs::FileSystem {
         // SAFETY: BACKREF — `self.fs` is the never-null process-global
         // `FileSystem` singleton (set in `init1`); resolver mutex serializes
         // all mutation across worker clones; `&mut self` rules out
@@ -764,44 +696,34 @@ impl<'a> Resolver<'a> {
         unsafe { &mut *self.fs }
     }
 
-    /// Resolve the current [`options::ExtOrder`] tag to the slice it names
-    /// inside `self.opts`. Port of Zig `r.extension_order` field read.
-    #[inline(always)]
-    pub fn extension_order(&self) -> &[Box<[u8]>] {
-        self.opts.ext_order_slice(self.extension_order)
-    }
-
     /// Raw-pointer projection to the inner `RealFS` (`self.fs.fs`).
     ///
-    /// PORT NOTE (Stacked Borrows): derived directly from the raw `*mut
+    /// NOTE (Stacked Borrows): derived directly from the raw `*mut
     /// FileSystem` field via `addr_of_mut!` so the resulting `*mut RealFS`
     /// carries SharedReadWrite provenance — later `fs_ref()` (Shared) or
     /// short-lived `&mut *self.fs()` retags do NOT invalidate it. Callers
     /// re-borrow `&mut *self.rfs_ptr()` per use; do not bind a `&mut RealFS`
     /// across another `fs()` deref.
     #[inline(always)]
-    pub fn rfs_ptr(&self) -> *mut Fs::file_system::RealFS {
+    pub(crate) fn rfs_ptr(&self) -> *mut Fs::file_system::RealFS {
         // SAFETY: `self.fs` is the process-global FileSystem singleton; valid
         // for the resolver's lifetime. `addr_of_mut!` creates a raw place
         // projection without an intermediate `&mut FileSystem`.
         unsafe { core::ptr::addr_of_mut!((*self.fs).fs) }
     }
 
-    /// Port of Zig `r.log` deref.
-    ///
-    /// PORT NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). BACKREF
+    /// NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). BACKREF
     /// — owner (Transpiler/BundleV2) outlives the Resolver; worker clones share
     /// the same Log under the resolver mutex. Caller `unsafe { &mut *r.log() }`
     /// at each use site; do not bind the projected `&mut Log` across another
     /// `log()` deref.
     #[inline(always)]
-    pub fn log(&self) -> *mut bun_ast::Log {
+    pub(crate) fn log(&self) -> *mut bun_ast::Log {
         self.log.as_ptr()
     }
 
     /// Temporarily redirect `self.log` to `log`, returning a guard that
-    /// restores the previous pointer on drop. Port of the Zig
-    /// `const orig = r.log; r.log = &tmp; defer r.log = orig;` pattern.
+    /// restores the previous pointer on drop.
     ///
     /// Takes a raw `*mut Self` (not `&mut self`) so the stored slot pointer
     /// carries SharedReadWrite provenance and stays valid under Stacked
@@ -827,7 +749,7 @@ impl<'a> Resolver<'a> {
     /// Shared-borrow of the resolver's `Log` for read-only inspection
     /// (e.g. `log.level`). Preferred over `unsafe { &*self.log() }`.
     #[inline(always)]
-    pub fn log_ref(&self) -> &bun_ast::Log {
+    pub(crate) fn log_ref(&self) -> &bun_ast::Log {
         // SAFETY: BACKREF — `self.log` is set in `init1` / `scoped_log`,
         // owner-allocated, outlives the Resolver. Resolver mutex serializes
         // mutation; a Shared `&` here pushes no Unique tag and so cannot
@@ -857,13 +779,11 @@ impl<'a> Resolver<'a> {
         unsafe { self.log.as_mut() }
     }
 
-    /// Port of Zig `r.dir_cache` deref.
-    ///
-    /// PORT NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). ARENA —
+    /// NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). ARENA —
     /// `DirInfo::hash_map_instance()` singleton; never freed. Caller
     /// `unsafe { &mut *r.dir_cache() }` at each use site.
     #[inline(always)]
-    pub fn dir_cache(&self) -> *mut DirInfo::HashMap {
+    pub(crate) fn dir_cache(&self) -> *mut DirInfo::HashMap {
         self.dir_cache
     }
 
@@ -878,11 +798,12 @@ impl<'a> Resolver<'a> {
     ///
     /// Stacked Borrows: each call pushes a fresh Unique tag on the BSSMap
     /// allocation, so any `*mut DirInfo` previously projected from an earlier
-    /// `dir_cache_mut()` borrow is popped. Callers that need a slot pointer to
-    /// survive a subsequent map access must route both through ONE bound
-    /// `&mut HashMap` (see `dir_info_for_resolution` / `dir_info_cached_maybe_log`).
+    /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
+    /// subsequent map access are re-derived from the raw singleton via
+    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
+    /// `ref_at_index` are only durable until the next map access.
     #[inline(always)]
-    pub fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
+    pub(crate) fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
         // `DirInfo::hash_map_instance()` static (set in `init1`, never
         // reassigned, never freed). Resolver mutex serializes all mutation
@@ -890,43 +811,38 @@ impl<'a> Resolver<'a> {
         unsafe { &mut *self.dir_cache }
     }
 
-    /// Port of resolver.zig `getPackageManager`. The Zig spec lazily calls
-    /// `PackageManager.initWithRuntime` here; in the Rust crate graph that
-    /// would be a `bun_resolver → bun_install` cycle, so the lazy init is
+    /// Lazily initializing
+    /// `PackageManager.initWithRuntime` here directly would
+    /// be a `bun_resolver → bun_install` cycle, so the lazy init is
     /// dispatched through the link-time `extern "Rust"` factory
     /// [`__bun_resolver_init_package_manager`] (defined `#[no_mangle]` in
     /// `bun_install::auto_installer`). The factory performs
     /// `HTTPThread.init` + `PackageManager.initWithRuntime` and returns the
     /// process-static singleton as a `dyn AutoInstaller`. We then wire
-    /// `on_wake` and cache the pointer — exactly the Zig body. Reached from
+    /// `on_wake` and cache the pointer. Reached from
     /// the auto-install path (`load_node_modules` global-cache block) when
-    /// [`use_package_manager`] is `true`.
-    pub fn get_package_manager(&mut self) -> *mut dyn AutoInstaller {
+    /// [`use_package_manager`] is `true`. Errs (without caching, but sticky
+    /// inside the factory) when the one-time init fails, e.g. the top-level
+    /// directory was deleted or is unreadable — callers surface that as a
+    /// resolve failure rather than panicking.
+    pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
         if let Some(pm) = self.package_manager {
-            return pm.as_ptr();
+            return Ok(pm.as_ptr());
         }
-        // Zig: `bun.HTTPThread.init(&.{}); const pm = PackageManager.initWithRuntime(
-        //     this.log, this.opts.install, bun.default_allocator, .{}, this.env_loader.?);`
-        // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;
-        // `init_with_runtime` only borrows it for the synchronous init (the
-        // static `PackageManager` retains a raw `NonNull<Loader<'static>>`,
-        // matching Zig's untracked `*DotEnv.Loader` aliasing).
-        let env: NonNull<DotEnv::Loader<'static>> = self
+        let env: NonNull<DotEnv::Loader> = self
             .env_loader
-            .expect("Resolver.env_loader must be set before auto-install")
-            .cast::<DotEnv::Loader<'static>>();
+            .expect("Resolver.env_loader must be set before auto-install");
         // SAFETY: `__bun_resolver_init_package_manager` is defined
         // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
         // final binary; `self.log` / `self.opts.install` / `env` point at
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
         let pm: NonNull<dyn AutoInstaller> =
-            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) };
-        // Zig: `pm.onWake = this.onWakePackageManager;`
+            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         self.package_manager = Some(pm);
-        pm.as_ptr()
+        Ok(pm.as_ptr())
     }
 
     /// Safe accessor for the optional [`AutoInstaller`] back-reference.
@@ -939,7 +855,7 @@ impl<'a> Resolver<'a> {
     /// resolver. `&mut self` ensures the returned `&mut dyn AutoInstaller` is
     /// the only live reference for its lifetime.
     #[inline]
-    pub fn auto_installer(&mut self) -> Option<&mut dyn AutoInstaller> {
+    pub(crate) fn auto_installer(&mut self) -> Option<&mut dyn AutoInstaller> {
         // SAFETY: BACKREF — `package_manager` names the bun_install-owned
         // singleton, live for the resolver's lifetime once installed; `&mut
         // self` ⇒ exclusive access to the only Rust handle.
@@ -955,7 +871,7 @@ impl<'a> Resolver<'a> {
     /// live concurrently — see the field comment for why this is *not* stored
     /// as `Option<&'a Loader>`.
     #[inline]
-    pub fn env_loader(&self) -> Option<&'a DotEnv::Loader<'a>> {
+    pub(crate) fn env_loader(&self) -> Option<&'a DotEnv::Loader> {
         // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
         // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
         // never mutates the env, so no `&mut Loader` overlaps this shared
@@ -965,7 +881,7 @@ impl<'a> Resolver<'a> {
     }
 
     #[inline]
-    pub fn use_package_manager(&self) -> bool {
+    pub(crate) fn use_package_manager(&self) -> bool {
         // TODO: make this configurable. the rationale for disabling
         // auto-install in standalone mode is that such executable must either:
         //
@@ -997,10 +913,9 @@ impl<'a> Resolver<'a> {
         Resolver {
             // allocator dropped
             // Route through the per-monomorphization singleton so this field and
-            // `DirInfo::get_parent()` / `get_enclosing_browser_scope()` share storage
-            // (Zig `BSSMap.init()` is a per-type singleton, not a fresh alloc).
+            // `DirInfo::get_parent()` / `get_enclosing_browser_scope()` share storage.
             dir_cache: DirInfo::hash_map_instance(),
-            mutex: &*RESOLVER_MUTEX,
+            mutex: &RESOLVER_MUTEX,
             caches: CacheSet::init(),
             opts,
             timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
@@ -1024,7 +939,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub fn is_external_pattern(&self, import_path: &[u8]) -> bool {
+    pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
         if self.opts.packages == options::Packages::External && is_package_path(import_path) {
             return true;
         }
@@ -1034,7 +949,7 @@ impl<'a> Resolver<'a> {
     /// True iff `import_path` matches a user-supplied `--external` wildcard
     /// pattern. Does NOT consider `packages = external`; use
     /// `isExternalPattern` for the combined check.
-    pub fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
+    pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
         for pattern in self.opts.external.patterns.iter() {
             if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
                 && (import_path.starts_with(pattern.prefix.as_ref())
@@ -1051,16 +966,16 @@ impl<'a> Resolver<'a> {
     /// disk. Used to let path-aliased local files win over `packages=external`
     /// without breaking catch-all `"*"` paths entries that only cover ambient
     /// type stubs.
-    pub fn resolve_via_tsconfig_paths(
+    pub(crate) fn resolve_via_tsconfig_paths(
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        // SAFETY: PORT — `import_path` is caller-interned (DirnameStore/source text)
-        // and outlives the returned MatchResult. Zig used raw `[]const u8` here.
-        // TODO(port): thread an explicit `'a` through MatchResult instead.
+        // SAFETY: `import_path` is caller-interned (DirnameStore/source text)
+        // and outlives the returned MatchResult.
+        // TODO: thread an explicit `'a` through MatchResult instead.
         let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
         if source_dir.is_empty() {
             return MatchStatus::NotFound;
@@ -1080,12 +995,8 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(tsconfig, import_path, kind, out)
     }
 
-    pub fn flush_debug_logs(
-        &mut self,
-        flush_mode: FlushMode,
-    ) -> core::result::Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: capture `log` before partially borrowing `self.debug_logs`
+    pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
+        // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
         // derefs the raw `*mut Log` and is lifetime-decoupled from `&self`).
         // SAFETY: BACKREF — `self.log` points at owner-allocated `Log`; disjoint from
@@ -1093,7 +1004,7 @@ impl<'a> Resolver<'a> {
         // `self.debug_logs.as_mut()` borrow below.
         let log = unsafe { &mut *self.log() };
         if let Some(debug) = self.debug_logs.as_mut() {
-            // PORT NOTE: spec resolver.zig:650-658 — only consume `what`/`notes` inside
+            // NOTE: only consume `what`/`notes` inside
             // the arm that actually emits, so the success-at-non-verbose path touches
             // nothing. `add_range_debug_with_notes`/`add_verbose_with_notes` take
             // `&'static [u8]`; bypass them and build the `Msg` directly so the Log owns
@@ -1149,32 +1060,43 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
-        // SAFETY: PORT — `import_path` is caller-interned (source text / DirnameStore)
-        // and outlives the returned Result. Zig used raw `[]const u8` here.
-        // TODO(port): thread an explicit lifetime through Result instead.
+        // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
+        // and outlives the returned Result.
+        // TODO: thread an explicit lifetime through Result instead.
         let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
         let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
 
         // Only setting 'current_action' in debug mode because module resolution
         // is done very often, and has a very low crash rate.
-        // TODO(port): bun.crash_handler.current_action save/restore (Environment.show_crash_trace gated)
         #[cfg(debug_assertions)]
-        let _crash_guard =
-            ::bun_crash_handler::set_current_action_resolver(source_dir, import_path, kind);
+        let _crash_guard = ::bun_crash_handler::set_current_action_resolver();
 
         #[cfg(debug_assertions)]
         if bun_core::debug_flags::has_resolve_breakpoint(import_path) {
-            bun_core::Output::debug(format_args!(
+            bun_core::debug!(
                 "Resolving <green>{}<r> from <blue>{}<r>",
                 bstr::BStr::new(import_path),
                 bstr::BStr::new(source_dir),
-            ));
-            // @breakpoint() — no Rust equiv; left as TODO(port)
+            );
+            // Trap into an attached debugger.
+            // NOTE: `core::arch::breakpoint()` is still unstable on the pinned
+            // toolchain; emit the trap instruction directly via stable `asm!`.
+            #[cfg(target_arch = "x86_64")]
+            // SAFETY: `int3` only raises SIGTRAP/EXCEPTION_BREAKPOINT; no memory or
+            // register state is touched.
+            unsafe {
+                core::arch::asm!("int3")
+            };
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: `brk` only raises SIGTRAP/EXCEPTION_BREAKPOINT; no memory or
+            // register state is touched.
+            unsafe {
+                core::arch::asm!("brk #0xf000")
+            };
         }
 
         let original_order = self.extension_order;
-        // PORT NOTE: Zig `defer r.extension_order = original_order` — reshaped for
-        // borrowck so the restore happens explicitly at every return point below.
+        // NOTE: the restore happens explicitly at every return point below.
         self.extension_order = match kind {
             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
                 options::ExtOrder::Css
@@ -1190,8 +1112,8 @@ impl<'a> Resolver<'a> {
             self.timer.reset();
         }
 
-        // Spec resolver.zig:703-707: `defer { if (tracing) r.elapsed += r.timer.read() }`
-        // — fires on EVERY return path. Capture raw field ptrs (Copy) so the closure
+        // The tracing-elapsed accumulation
+        // fires on EVERY return path. Capture raw field ptrs (Copy) so the closure
         // does not hold a `&mut self` borrow across the function body.
         let elapsed_ptr: *mut u64 = core::ptr::addr_of_mut!(self.elapsed);
         let timer_ptr: *const Timer = core::ptr::addr_of!(self.timer);
@@ -1226,6 +1148,9 @@ impl<'a> Resolver<'a> {
                         rewrite_jest_for_tests: self.opts.rewrite_jest_for_tests,
                     },
                 )
+                // Node's `--expose-internals`.
+                || (import_path.starts_with(b"internal/")
+                    && ::bun_resolve_builtins::expose_internals_enabled())
             {
                 self.extension_order = original_order;
                 return ResultUnion::Success(Result {
@@ -1269,7 +1194,6 @@ impl<'a> Resolver<'a> {
                 return ResultUnion::Success(Result {
                     import_kind: kind,
                     path_pair: res.path_pair,
-                    diff_case: res.diff_case,
                     package_json: res.package_json,
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
@@ -1318,7 +1242,7 @@ impl<'a> Resolver<'a> {
         match DataURL::parse(import_path) {
             Err(_) => {
                 self.extension_order = original_order;
-                return ResultUnion::Failure(bun_core::err!("InvalidDataURL"));
+                return ResultUnion::Failure(crate::Error::InvalidDataURL);
             }
             Ok(Some(data_url)) => {
                 // "import 'data:text/javascript,console.log(123)';"
@@ -1437,7 +1361,7 @@ impl<'a> Resolver<'a> {
                 //     debug.add_note(b"Cannot resolve this path without a directory".to_vec());
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
-                // return ResultUnion::Failure(bun_core::err!("MissingResolveDir"));
+                // return ResultUnion::Failure(crate::Error::MissingResolveDir);
                 break 'brk Fs::FileSystem::instance().top_level_dir;
             }
 
@@ -1449,7 +1373,7 @@ impl<'a> Resolver<'a> {
                 //     debug.add_note(b"Cannot resolve this path without an absolute directory".to_vec());
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
-                // return ResultUnion::Failure(bun_core::err!("InvalidResolveDir"));
+                // return ResultUnion::Failure(crate::Error::InvalidResolveDir);
                 break 'brk Fs::FileSystem::instance().top_level_dir;
             }
 
@@ -1517,8 +1441,30 @@ impl<'a> Resolver<'a> {
 
                 let _ = self.flush_debug_logs(FlushMode::Success);
                 result.import_kind = kind;
-                if cfg!(feature = "debug_logs") {
-                    // TODO(port): debuglog! with bun.fmt.fmtPath formatting
+                if cfg!(debug_assertions) {
+                    // `debuglog!` self-gates on `debug_assertions`, the outer `if`
+                    // dead-strips the `resolved_text` computation in release too.
+                    let resolved_text: &[u8] =
+                        result.path().map_or(&b"<NULL>"[..], |path| path.text());
+                    let opts = bun_core::fmt::PathFormatOptions::default;
+                    if let Some(secondary) = result.path_pair.secondary.as_ref() {
+                        debuglog!(
+                            "resolve({}, from: {}, {}) = {} (secondary: {})",
+                            bun_core::fmt::fmt_path(import_path, opts()),
+                            bun_core::fmt::fmt_path(source_dir, opts()),
+                            bstr::BStr::new(kind.label()),
+                            bun_core::fmt::fmt_path(resolved_text, opts()),
+                            bun_core::fmt::fmt_path(secondary.text(), opts()),
+                        );
+                    } else {
+                        debuglog!(
+                            "resolve({}, from: {}, {}) = {}",
+                            bun_core::fmt::fmt_path(import_path, opts()),
+                            bun_core::fmt::fmt_path(source_dir, opts()),
+                            bstr::BStr::new(kind.label()),
+                            bun_core::fmt::fmt_path(resolved_text, opts()),
+                        );
+                    }
                 }
                 ResultUnion::Success(result)
             }
@@ -1546,13 +1492,10 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
-    ) -> core::result::Result<Result, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::CrateResult<Result> {
         match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
             ResultUnion::Success(result) => Ok(result),
-            ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                Err(bun_core::err!("ModuleNotFound"))
-            }
+            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
         }
     }
@@ -1564,11 +1507,10 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
-    ) -> core::result::Result<Result, bun_core::Error> {
-        // SAFETY: PORT — `import_path` is caller-interned (source text / DirnameStore)
-        // and outlives the returned Result. TODO(port): thread explicit lifetime.
+    ) -> crate::CrateResult<Result> {
+        // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
+        // and outlives the returned Result. TODO: thread an explicit lifetime.
         let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
-        // TODO(port): narrow error set
         if let Some(f) = self.opts.framework.as_ref() {
             if let Some(mod_) = f.built_in_modules.get(import_path) {
                 match mod_ {
@@ -1587,7 +1529,7 @@ impl<'a> Resolver<'a> {
                         });
                     }
                     bun_options_types::BuiltInModule::Import(path) => {
-                        // PORT NOTE: copy out `path` so the `&self.opts.framework` borrow
+                        // NOTE: copy out `path` so the `&self.opts.framework` borrow
                         // ends before `self.resolve(&mut self, ...)`.
                         // SAFETY: `path` borrows `self.opts.framework`, which lives for the
                         // resolver's lifetime; the `'static` erase only releases the `&self` borrow.
@@ -1597,18 +1539,16 @@ impl<'a> Resolver<'a> {
                         return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
                     }
                 }
-                // unreachable in Zig (return after switch)
             }
         }
         self.resolve(source_dir, import_path, kind)
     }
 
-    pub fn finalize_result(
+    pub(crate) fn finalize_result(
         &mut self,
         result: &mut Result,
         kind: ast::ImportKind,
-    ) -> core::result::Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::CrateResult<()> {
         if result.flags.is_external() {
             return Ok(());
         }
@@ -1631,33 +1571,8 @@ impl<'a> Resolver<'a> {
                     PJSideEffects::Unspecified | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_)
                 );
 
-                result.primary_side_effects_data = match &existing.side_effects {
-                    PJSideEffects::Unspecified => SideEffects::HasSideEffects,
-                    PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
-                    PJSideEffects::Map(map) => {
-                        if map.contains_key(&crate::package_json::StringHashMapUnownedKey::init(
-                            path.text(),
-                        )) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                    PJSideEffects::Glob(_) => {
-                        if existing.side_effects.has_side_effects(path.text()) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                    PJSideEffects::Mixed(_) => {
-                        if existing.side_effects.has_side_effects(path.text()) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                };
+                result.primary_side_effects_data =
+                    primary_side_effects(&existing.side_effects, path.text());
 
                 if existing.name.is_empty() || self.care_about_bin_folder {
                     result.package_json = None;
@@ -1670,34 +1585,8 @@ impl<'a> Resolver<'a> {
 
             if needs_side_effects {
                 if let Some(package_json) = Result::deref_package_json(result.package_json) {
-                    use crate::package_json::SideEffects as PJSideEffects;
-                    result.primary_side_effects_data = match &package_json.side_effects {
-                        PJSideEffects::Unspecified => SideEffects::HasSideEffects,
-                        PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
-                        PJSideEffects::Map(map) => {
-                            if map.contains_key(
-                                &crate::package_json::StringHashMapUnownedKey::init(path.text()),
-                            ) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                        PJSideEffects::Glob(_) => {
-                            if package_json.side_effects.has_side_effects(path.text()) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                        PJSideEffects::Mixed(_) => {
-                            if package_json.side_effects.has_side_effects(path.text()) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                    };
+                    result.primary_side_effects_data =
+                        primary_side_effects(&package_json.side_effects, path.text());
                 }
             }
 
@@ -1709,6 +1598,9 @@ impl<'a> Resolver<'a> {
                 result.flags.set_experimental_decorators(
                     result.flags.experimental_decorators() || tsconfig.experimental_decorators,
                 );
+                if let Some(v) = tsconfig.use_define_for_class_fields {
+                    result.flags.set_use_define_for_class_fields(v);
+                }
             }
 
             // If you use mjs or mts, then you're using esm
@@ -1722,87 +1614,99 @@ impl<'a> Resolver<'a> {
                     module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
-            if let Some(entries) = dir.get_entries_ref(self.generation) {
-                if let Some(query) = entries.get(name.filename) {
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    let symlink_path =
-                        unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
-                    if !symlink_path.is_empty() {
-                        path.set_realpath(symlink_path);
-                        if !result.file_fd.is_valid() {
-                            result.file_fd = query.entry().cache().fd;
-                        }
+            // Probe the listing in one `entries_mutex` critical section: a
+            // concurrent resolver at a newer generation rewrites this `DirEntry`'s
+            // map in place under that lock. The entry pointer stays valid after
+            // unlock (EntryStore-owned).
+            if let Some(query) = dir.get_entry(self.generation, name.filename) {
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `symlink()` is serialized on the per-entry mutex.
+                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                if !symlink_path.is_empty() {
+                    path.set_realpath(symlink_path);
+                    if !result.file_fd.is_valid() {
+                        result.file_fd = query.entry().cache().fd;
+                    }
 
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "Resolved symlink \"{}\" to \"{}\"",
-                                bstr::BStr::new(path.text()),
-                                bstr::BStr::new(symlink_path)
-                            ));
-                        }
-                    } else if !dir.abs_real_path.is_empty() {
-                        // When the directory is a symlink, we don't need to call getFdPath.
-                        let parts = [dir.abs_real_path, query.entry().base()];
-                        let mut buf = bun_paths::PathBuffer::uninit();
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(path.text()),
+                            bstr::BStr::new(symlink_path)
+                        ));
+                    }
+                } else if !dir.abs_real_path.is_empty() {
+                    // When the directory is a symlink, we don't need to call getFdPath.
+                    let parts = [dir.abs_real_path, query.entry().base()];
+                    let mut buf = bun_paths::PathBuffer::uninit();
 
-                        // PORT NOTE: `abs_buf` returns a borrow of `buf`; capture only the
-                        // length so `buf` can be re-borrowed for null-termination below.
-                        let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
+                    // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
+                    // length so `buf` can be re-borrowed for null-termination below.
+                    let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
 
-                        let store_fd = self.store_fd;
+                    let store_fd = self.store_fd;
 
-                        if !query.entry().cache().fd.is_valid() && store_fd {
-                            buf[out_len] = 0;
-                            // SAFETY: buf[out_len] == 0 written above
-                            let span = bun_core::ZStr::from_buf(&buf[..], out_len);
-                            // Spec resolver.zig:1099 uses `try std.fs.openFileAbsoluteZ`,
-                            // which propagates I/O errors so `resolveAndAutoInstall` can
-                            // return them as `Result.Union.failure`. Mirror that — never
-                            // panic on EACCES/EMFILE/ELOOP here.
-                            let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
-                                .map_err(Into::<bun_core::Error>::into)?;
+                    if !query.entry().cache().fd.is_valid() && store_fd {
+                        buf[out_len] = 0;
+                        // SAFETY: buf[out_len] == 0 written above
+                        let span = bun_core::ZStr::from_buf(&buf[..], out_len);
+                        // I/O errors propagate so `resolveAndAutoInstall` can
+                        // return them as `Result.Union.failure` — never
+                        // panic on EACCES/EMFILE/ELOOP here.
+                        let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
+                            .map_err(Into::<crate::Error>::into)?;
+                        {
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = query.entry().mutex.lock_guard();
                             query.entry().set_cache_fd(file);
-                            Fs::FileSystem::set_max_fd(file.native());
                         }
+                        Fs::FileSystem::set_max_fd(file.native());
+                    }
 
-                        // PORT NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
-                        // the closure captures only Copy values — keeps `self` and
-                        // `query.entry` reborrowable across the guard's lifetime.
-                        let need_close = self.fs_ref().fs.need_to_close_files();
-                        // ARENA — Entry lives in the BSSMap singleton; guard runs before
-                        // the slot is reused (resolver mutex held). Capture as `BackRef`
-                        // (Copy, Deref) so the closure stays Copy-only while the read is
-                        // a safe `BackRef::get()` instead of a raw-ptr deref.
-                        let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
-                            core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
-                        );
-                        scopeguard::defer! {
-                            if need_close {
-                                let e = entry_ref.get();
-                                let fd = e.cache().fd;
-                                if fd.is_valid() {
-                                    fd.close();
-                                    e.set_cache_fd(FD::INVALID);
-                                }
+                    // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
+                    // the closure captures only Copy values — keeps `self` and
+                    // `query.entry` reborrowable across the guard's lifetime.
+                    let need_close = self.fs_ref().fs.need_to_close_files();
+                    // ARENA — Entry lives in the BSSMap singleton; guard runs before
+                    // the slot is reused (resolver mutex held). Capture as `BackRef`
+                    // (Copy, Deref) so the closure stays Copy-only while the read is
+                    // a safe `BackRef::get()` instead of a raw-ptr deref.
+                    let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
+                        core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
+                    );
+                    scopeguard::defer! {
+                        if need_close {
+                            let e = entry_ref.get();
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = e.mutex.lock_guard();
+                            let fd = e.cache().fd;
+                            if fd.is_valid() {
+                                fd.close();
+                                e.set_cache_fd(FD::INVALID);
                             }
                         }
-
-                        let symlink =
-                            Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "Resolved symlink \"{}\" to \"{}\"",
-                                bstr::BStr::new(symlink),
-                                bstr::BStr::new(path.text())
-                            ));
-                        }
-                        query.entry().set_cache_symlink(PathString::init(symlink));
-                        if !result.file_fd.is_valid() && store_fd {
-                            result.file_fd = query.entry().cache().fd;
-                        }
-
-                        path.set_realpath(symlink);
                     }
+
+                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(symlink),
+                            bstr::BStr::new(path.text())
+                        ));
+                    }
+                    {
+                        // Every cached-`Entry` rewrite takes the per-entry mutex.
+                        let _entry_guard = query.entry().mutex.lock_guard();
+                        query
+                            .entry()
+                            .set_cache_symlink(Interned::from_static(symlink));
+                    }
+                    if !result.file_fd.is_valid() && store_fd {
+                        result.file_fd = query.entry().cache().fd;
+                    }
+
+                    path.set_realpath(symlink);
                 }
             }
         }
@@ -1817,7 +1721,7 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    pub fn resolve_without_symlinks(
+    pub(crate) fn resolve_without_symlinks(
         &mut self,
         source_dir: &[u8],
         input_import_path: &'static [u8],
@@ -1852,19 +1756,17 @@ impl<'a> Resolver<'a> {
             // loose check to avoid always doing this copy, but avoid spending
             // too much time on the check.
             if strings::index_of(import_path, b"..").is_some() {
-                let platform = bun_paths::Platform::AUTO;
-                let ends_with_dir = platform.is_separator(import_path[import_path.len() - 1])
-                    || (import_path.len() > 3
-                        && platform.is_separator(import_path[import_path.len() - 3])
-                        && import_path[import_path.len() - 2] == b'.'
-                        && import_path[import_path.len() - 1] == b'.');
+                let ends_with_dir = Self::import_path_names_directory(import_path);
                 let buf = bufs!(relative_abs_path);
                 let Some(abs) = self.fs_ref().abs_buf_checked(&[import_path], buf) else {
                     return ResultUnion::NotFound;
                 };
                 let mut len = abs.len();
                 if ends_with_dir {
-                    buf[len] = platform.separator();
+                    if len >= buf.len() {
+                        return ResultUnion::NotFound;
+                    }
+                    buf[len] = bun_paths::Platform::AUTO.separator();
                     len += 1;
                 }
                 // `bufs!` hands out an unconstrained-lifetime `&mut PathBuffer`
@@ -1891,7 +1793,6 @@ impl<'a> Resolver<'a> {
                             // We don't set the directory fd here because it might remap an entirely different directory
                             return ResultUnion::Success(Result {
                                 path_pair: res.path_pair,
-                                diff_case: res.diff_case,
                                 package_json: res.package_json,
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
@@ -1941,7 +1842,6 @@ impl<'a> Resolver<'a> {
                 return ResultUnion::Success(Result {
                     dirname_fd: entry.dirname_fd,
                     path_pair: entry.path_pair,
-                    diff_case: entry.diff_case,
                     package_json: entry.package_json,
                     file_fd: entry.file_fd,
                     jsx: self.opts.jsx.clone(),
@@ -1991,59 +1891,80 @@ impl<'a> Resolver<'a> {
 
         if check_package {
             if self.opts.polyfill_node_globals {
-                result.jsx = self.opts.jsx.clone();
                 let had_node_prefix = import_path.starts_with(b"node:");
-                let import_path_without_node_prefix = if had_node_prefix {
+                let import_path_without_node_prefix: &'static [u8] = if had_node_prefix {
                     &import_path[b"node:".len()..]
                 } else {
                     import_path
                 };
 
-                if let Some(fallback_module) =
-                    NodeFallbackModules::map().get(import_path_without_node_prefix)
-                {
-                    result.path_pair.primary = fallback_module.path;
-                    result.module_type = options::ModuleType::Cjs;
-                    // @ptrFromInt(@intFromPtr(...)) — cast away constness
-                    result.package_json = Some(std::ptr::from_ref::<PackageJSON>(
-                        fallback_module.package_json,
-                    ));
-                    result.flags.set_is_from_node_modules(true);
-                    return ResultUnion::Success(result);
-                }
+                // The importer's package.json "browser" map wins over the builtin
+                // polyfill. The lookup uses the bare name so it matches the same
+                // spellings the polyfill table below does.
+                let browser_map_overrides_builtin = self.care_about_browser_field
+                    && matches!(self.dir_info_cached(source_dir), Ok(Some(info))
+                    if info
+                        .get_enclosing_browser_scope()
+                        .is_some_and(|scope| {
+                            self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
+                                &scope,
+                                import_path_without_node_prefix,
+                            )
+                            .is_some()
+                        }));
 
-                if had_node_prefix {
-                    // Module resolution fails automatically for unknown node builtins
-                    if !HardcodedAlias::has(
-                        import_path_without_node_prefix,
-                        options::Target::Node,
-                        HardcodedAliasCfg::default(),
-                    ) {
-                        return ResultUnion::NotFound;
+                if browser_map_overrides_builtin {
+                    // check_package_path re-runs this lookup; give it the bare name.
+                    import_path = import_path_without_node_prefix;
+                } else {
+                    result.jsx = self.opts.jsx.clone();
+
+                    if let Some(fallback_module) =
+                        NodeFallbackModules::map().get(import_path_without_node_prefix)
+                    {
+                        result.path_pair.primary = fallback_module.path;
+                        result.module_type = options::ModuleType::Cjs;
+                        // @ptrFromInt(@intFromPtr(...)) — cast away constness
+                        result.package_json = Some(std::ptr::from_ref::<PackageJSON>(
+                            fallback_module.package_json,
+                        ));
+                        result.flags.set_is_from_node_modules(true);
+                        return ResultUnion::Success(result);
                     }
 
-                    // Valid node:* modules becomes {} in the output
-                    result.path_pair.primary.namespace = b"node";
-                    result.path_pair.primary.text = import_path_without_node_prefix;
-                    result.module_type = options::ModuleType::Cjs;
-                    result.path_pair.primary.is_disabled = true;
-                    result.flags.set_is_from_node_modules(true);
-                    result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
-                    return ResultUnion::Success(result);
-                }
+                    if had_node_prefix {
+                        // Module resolution fails automatically for unknown node builtins
+                        if !HardcodedAlias::has(
+                            import_path_without_node_prefix,
+                            options::Target::Node,
+                            HardcodedAliasCfg::default(),
+                        ) {
+                            return ResultUnion::NotFound;
+                        }
 
-                // Always mark "fs" as disabled, matching Webpack v4 behavior
-                if import_path_without_node_prefix.starts_with(b"fs")
-                    && (import_path_without_node_prefix.len() == 2
-                        || import_path_without_node_prefix[2] == b'/')
-                {
-                    result.path_pair.primary.namespace = b"node";
-                    result.path_pair.primary.text = import_path_without_node_prefix;
-                    result.module_type = options::ModuleType::Cjs;
-                    result.path_pair.primary.is_disabled = true;
-                    result.flags.set_is_from_node_modules(true);
-                    result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
-                    return ResultUnion::Success(result);
+                        // Valid node:* modules becomes {} in the output
+                        result.path_pair.primary.namespace = b"node";
+                        result.path_pair.primary.text = import_path_without_node_prefix;
+                        result.module_type = options::ModuleType::Cjs;
+                        result.path_pair.primary.is_disabled = true;
+                        result.flags.set_is_from_node_modules(true);
+                        result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
+                        return ResultUnion::Success(result);
+                    }
+
+                    // Always mark "fs" as disabled, matching Webpack v4 behavior
+                    if import_path_without_node_prefix.starts_with(b"fs")
+                        && (import_path_without_node_prefix.len() == 2
+                            || import_path_without_node_prefix[2] == b'/')
+                    {
+                        result.path_pair.primary.namespace = b"node";
+                        result.path_pair.primary.text = import_path_without_node_prefix;
+                        result.module_type = options::ModuleType::Cjs;
+                        result.path_pair.primary.is_disabled = true;
+                        result.flags.set_is_from_node_modules(true);
+                        result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
+                        return ResultUnion::Success(result);
+                    }
                 }
             }
 
@@ -2109,7 +2030,26 @@ impl<'a> Resolver<'a> {
         ResultUnion::NotFound
     }
 
-    pub fn check_relative_path(
+    /// Whether an import specifier explicitly names a directory: a trailing
+    /// separator, `.`, `..`, or a path ending in `/.` or `/..`.
+    fn import_path_names_directory(import_path: &[u8]) -> bool {
+        let Some(&last) = import_path.last() else {
+            return false;
+        };
+        if ResolvePath::is_sep_any(last) {
+            return true;
+        }
+        let rest = if let Some(r) = import_path.strip_suffix(b"..") {
+            r
+        } else if let Some(r) = import_path.strip_suffix(b".") {
+            r
+        } else {
+            return false;
+        };
+        rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
+    }
+
+    pub(crate) fn check_relative_path(
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
@@ -2194,11 +2134,13 @@ impl<'a> Resolver<'a> {
                             .is_success()
                         {
                             let mut flags = ResultFlags::default();
-                            flags.set_is_external(match_result.is_external);
-                            flags.set_is_external_and_rewrite_import_path(match_result.is_external);
+                            flags.set_external_kind(if match_result.is_external {
+                                ExternalKind::ExternalRewritePath
+                            } else {
+                                ExternalKind::NotExternal
+                            });
                             return ResultUnion::Success(Result {
                                 path_pair: match_result.path_pair,
-                                diff_case: match_result.diff_case,
                                 dirname_fd: match_result.dirname_fd,
                                 package_json: Some(std::ptr::from_ref(pkg)),
                                 jsx: self.opts.jsx.clone(),
@@ -2213,10 +2155,27 @@ impl<'a> Resolver<'a> {
         }
 
         let prev_extension_order = self.extension_order;
-        // PORT NOTE: defer restore reshaped — restored before each return
+        // NOTE: defer restore reshaped — restored before each return
         if strings::path_contains_node_modules_folder(abs_path) {
             self.extension_order = self.opts.extension_order.kind(kind, true);
         }
+
+        // Re-append the separator the join stripped so "." resolves like "./".
+        let abs_path: &[u8] = if Self::import_path_names_directory(import_path)
+            && !strings::ends_with_char(abs_path, SEP)
+        {
+            let len = abs_path.len();
+            let buf = bufs!(relative_abs_path);
+            if len >= buf.len() {
+                self.extension_order = prev_extension_order;
+                return ResultUnion::NotFound;
+            }
+            buf[len] = SEP;
+            &buf[..=len]
+        } else {
+            abs_path
+        };
+
         let mut res = MatchResult::default();
         let ret = if self
             .load_as_file_or_directory(abs_path, kind, &mut res)
@@ -2224,7 +2183,6 @@ impl<'a> Resolver<'a> {
         {
             ResultUnion::Success(Result {
                 path_pair: res.path_pair,
-                diff_case: res.diff_case,
                 dirname_fd: res.dirname_fd,
                 package_json: res.package_json,
                 jsx: self.opts.jsx.clone(),
@@ -2237,7 +2195,7 @@ impl<'a> Resolver<'a> {
         ret
     }
 
-    pub fn check_package_path(
+    pub(crate) fn check_package_path(
         &mut self,
         source_dir: &[u8],
         unremapped_import_path: &'static [u8],
@@ -2272,13 +2230,11 @@ impl<'a> Resolver<'a> {
                 //
                 // [1]: https://github.com/oven-sh/bun/issues/16705
                 // [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
-                if cfg!(debug_assertions) {
-                    debug_assert!(is_package_path(import_path));
-                }
+                debug_assert!(is_package_path(import_path));
                 let mut closest_dir = source_dir;
-                // Use std.fs.path.dirname to get `null` once the entire
-                // directory tree has been visited. `null` is theoretically
-                // impossible since the drive root should always exist.
+                // `dirname` returns `None` once the entire directory tree
+                // has been visited. `None` is theoretically impossible since
+                // the drive root should always exist.
                 while let Some(current) = bun_paths::dirname(closest_dir) {
                     match self.dir_info_cached(current) {
                         Err(_) => return ResultUnion::NotFound,
@@ -2324,7 +2280,6 @@ impl<'a> Resolver<'a> {
                                 return ResultUnion::Success(Result {
                                     path_pair: pair,
                                     dirname_fd: node_module.dirname_fd,
-                                    diff_case: node_module.diff_case,
                                     package_json: Some(std::ptr::from_ref(package_json)),
                                     jsx: self.opts.jsx.clone(),
                                     ..Default::default()
@@ -2340,7 +2295,6 @@ impl<'a> Resolver<'a> {
                                         primary,
                                         secondary: None,
                                     },
-                                    diff_case: None,
                                     jsx: self.opts.jsx.clone(),
                                     ..Default::default()
                                 });
@@ -2375,17 +2329,17 @@ impl<'a> Resolver<'a> {
                 result.dirname_fd = res.dirname_fd;
                 result.file_fd = res.file_fd;
                 result.package_json = res.package_json;
-                result.diff_case = res.diff_case;
                 result.flags.set_is_from_node_modules(
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
                 result.module_type = res.module_type;
-                result.flags.set_is_external(res.is_external);
                 // Potentially rewrite the import path if it's external that
                 // was remapped to a different path
-                result
-                    .flags
-                    .set_is_external_and_rewrite_import_path(result.flags.is_external());
+                result.flags.set_external_kind(if res.is_external {
+                    ExternalKind::ExternalRewritePath
+                } else {
+                    ExternalKind::NotExternal
+                });
 
                 if result.path_pair.primary.is_disabled && result.path_pair.secondary.is_none() {
                     return ResultUnion::Success(result);
@@ -2426,15 +2380,15 @@ impl<'a> Resolver<'a> {
                                     result.dirname_fd = remapped.dirname_fd;
                                     result.file_fd = remapped.file_fd;
                                     result.package_json = remapped.package_json;
-                                    result.diff_case = remapped.diff_case;
                                     result.module_type = remapped.module_type;
-                                    result.flags.set_is_external(remapped.is_external);
 
                                     // Potentially rewrite the import path if it's external that
                                     // was remapped to a different path
-                                    result.flags.set_is_external_and_rewrite_import_path(
-                                        result.flags.is_external(),
-                                    );
+                                    result.flags.set_external_kind(if remapped.is_external {
+                                        ExternalKind::ExternalRewritePath
+                                    } else {
+                                        ExternalKind::NotExternal
+                                    });
 
                                     result.flags.set_is_from_node_modules(
                                         result.flags.is_from_node_modules()
@@ -2452,78 +2406,6 @@ impl<'a> Resolver<'a> {
             MatchStatus::Pending(p) => ResultUnion::Pending(*p),
             MatchStatus::Failure(p) => ResultUnion::Failure(p),
             MatchStatus::NotFound => ResultUnion::NotFound,
-        }
-    }
-
-    // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
-    pub fn package_json_for_resolved_node_module(
-        &mut self,
-        result: &Result,
-    ) -> Option<*const PackageJSON> {
-        let mut dir_info = self
-            .dir_info_cached(result.path_pair.primary.name().dir)
-            .ok()
-            .flatten()?;
-        loop {
-            if let Some(pkg) = dir_info.package_json() {
-                // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
-                // In that case, we really would like the top-level package that you download from NPM
-                // so we ignore any unnamed packages
-                return Some(std::ptr::from_ref(pkg));
-            }
-
-            dir_info = dir_info.get_parent()?;
-        }
-    }
-
-    pub fn root_node_module_package_json(&mut self, result: &Result) -> Option<RootPathPair<'_>> {
-        let path = result.path_const()?;
-        let mut absolute = path.text();
-        // /foo/node_modules/@babel/standalone/index.js
-        //     ^------------^
-        let mut end = strings::last_index_of(absolute, NODE_MODULE_ROOT_STRING).or_else(|| {
-            // try non-symlinked version
-            if path.pretty().len() != absolute.len() {
-                absolute = path.pretty();
-                return strings::last_index_of(absolute, NODE_MODULE_ROOT_STRING);
-            }
-            None
-        })?;
-        end += NODE_MODULE_ROOT_STRING.len();
-
-        let is_scoped_package = absolute[end] == b'@';
-        end += strings::index_of_char(&absolute[end..], SEP)? as usize;
-
-        // /foo/node_modules/@babel/standalone/index.js
-        //                   ^
-        if is_scoped_package {
-            end += 1;
-            end += strings::index_of_char(&absolute[end..], SEP)? as usize;
-        }
-
-        end += 1;
-
-        // /foo/node_modules/@babel/standalone/index.js
-        //                                    ^
-        let slice = &absolute[0..end];
-
-        // Try to avoid the hash table lookup whenever possible
-        // That can cause filesystem lookups in parent directories and it requires a lock
-        if let Some(pkg) = result.package_json_ref() {
-            if slice == pkg.source.path.name().dir_with_trailing_slash() {
-                return Some(RootPathPair {
-                    package_json: std::ptr::from_ref(pkg),
-                    base_path: slice,
-                });
-            }
-        }
-
-        {
-            let dir_info = self.dir_info_cached(slice).ok().flatten()?;
-            Some(RootPathPair {
-                base_path: slice,
-                package_json: std::ptr::from_ref(dir_info.package_json()?),
-            })
         }
     }
 
@@ -2545,7 +2427,7 @@ impl<'a> Resolver<'a> {
     ///
     /// The helper function bun.strings.withoutTrailingSlashWindowsPath can be used
     /// to remove the trailing slash from a path
-    pub fn assert_valid_cache_key(path: &[u8]) {
+    pub(crate) fn assert_valid_cache_key(path: &[u8]) {
         if cfg!(debug_assertions) {
             if path.len() > 1
                 && strings::char_is_any_slash(path[path.len() - 1])
@@ -2570,7 +2452,7 @@ impl<'a> Resolver<'a> {
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
         bun_core::scoped_log!(
-            Resolver,
+            ResolverDev,
             "Bust {} = {}, {}",
             bstr::BStr::new(path),
             first_bust,
@@ -2612,15 +2494,15 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
-    pub fn load_node_modules(
+    pub(crate) fn load_node_modules(
         &mut self,
         import_path: &[u8],
         kind: ast::ImportKind,
-        // PORT NOTE: `DirInfoRef` (not `&mut`) — body re-enters `dir_cache` via
+        // NOTE: `DirInfoRef` (not `&mut`) — body re-enters `dir_cache` via
         // `dir_info_cached()` which, in the self-reference branch, returns the
         // SAME BSSMap slot. A `&mut` param carries an FnEntry protector under
         // Stacked Borrows; the inner retag would pop it (aliased-&mut UB).
-        // Spec resolver.zig:1761 takes raw `*DirInfo`; the arena handle Derefs
+        // The arena handle Derefs
         // to `&DirInfo` per use so overlapping shared reads are sound.
         _dir_info: DirInfoRef,
         global_cache: GlobalCache,
@@ -2636,8 +2518,7 @@ impl<'a> Resolver<'a> {
             ));
             debug.increase_indent();
         }
-        // PORT NOTE: Zig `defer { debug.decreaseIndent() }` — reshaped for borrowck;
-        // `decrease_indent()` is called explicitly at every return point below.
+        // NOTE: `decrease_indent()` is called explicitly at every return point below.
 
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
@@ -2753,7 +2634,7 @@ impl<'a> Resolver<'a> {
                     }
 
                     let prev_extension_order = self.extension_order;
-                    // PORT NOTE: defer restore reshaped — restored at end of block
+                    // NOTE: defer restore reshaped — restored at end of block
 
                     if let Some(ref esm) = esm_ {
                         let abs_package_path: &[u8] = if is_self_reference {
@@ -2776,9 +2657,7 @@ impl<'a> Resolver<'a> {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
                                     let mut module_type = package_json.module_type;
-                                    // PORT NOTE: reshaped for borrowck — Zig held a single `ESModule`
-                                    // with a raw `*DebugLogs` across both `resolve` calls and the
-                                    // intervening `handle_esm_resolution`. In Rust, keeping the
+                                    // NOTE: keeping a single
                                     // `ESModule` (which holds `&mut self.debug_logs`) alive across a
                                     // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
                                     // `ESModule` per `resolve` call so its borrow ends before
@@ -2895,7 +2774,7 @@ impl<'a> Resolver<'a> {
                                             d.decrease_indent();
                                         }
                                         *out = MatchResult {
-                                            // PORT NOTE: PackageJSON.source.path is bun_paths::fs::Path<'static>; convert
+                                            // NOTE: PackageJSON.source.path is bun_paths::fs::Path<'static>; convert
                                             // to the resolver's interned crate::fs::Path<'static> via its text.
                                             path_pair: PathPair {
                                                 primary: Path::init(package_json.source.path.text),
@@ -2903,7 +2782,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             dirname_fd: pkg_dir_info.get_file_descriptor(),
                                             file_fd: FD::INVALID,
-                                            // Spec resolver.zig:1930 — `Path.isNodeModule()` checks
+                                            // `Path.isNodeModule()` checks
                                             // `lastIndexOf(name.dir, SEP++"node_modules"++SEP)`, i.e. a
                                             // separator-bounded directory component on `name.dir` (not a
                                             // bare substring of the full text). `bun_paths::fs::Path<'static>`
@@ -2996,13 +2875,40 @@ impl<'a> Resolver<'a> {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
                 //
-                // PORT NOTE (Stacked Borrows): `get_package_manager` returns the
+                // NOTE (Stacked Borrows): `get_package_manager` returns the
                 // `*mut dyn AutoInstaller` raw pointer; the body below re-borrows
                 // `self` for `enqueue_dependency_to_resolve` / `debug_logs` /
                 // `log()`. The PackageManager lives in a separate allocation, so
                 // derive a raw pointer once and re-borrow per use — disjoint
                 // from `self`'s storage.
-                let manager_ptr: *mut dyn AutoInstaller = self.get_package_manager();
+                let manager_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
+                    Ok(pm) => pm,
+                    Err(err) => {
+                        // One-time init reads the top-level directory, which
+                        // can fail at runtime (cwd deleted, EACCES, a dropped
+                        // network drive). Report it as a catchable resolve
+                        // error; the `Metadata::Resolve` msg carries the text
+                        // for `import.meta.resolveSync` & co.
+                        let top_level_dir = self.fs_ref().top_level_dir;
+                        self.log_mut().add_resolve_error(
+                            None,
+                            bun_ast::Range::NONE,
+                            format_args!(
+                                "Cannot read directory \"{}\": {} while resolving \"{}\"",
+                                bstr::BStr::new(top_level_dir),
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(import_path)
+                            ),
+                            import_path,
+                            kind,
+                            bun_ast::Error::ModuleNotFound,
+                        );
+                        if let Some(d) = self.debug_logs.as_mut() {
+                            d.decrease_indent();
+                        }
+                        return MatchStatus::Failure(err);
+                    }
+                };
                 macro_rules! manager {
                     () => {
                         // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
@@ -3091,9 +2997,9 @@ impl<'a> Resolver<'a> {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
                                 }
-                                return MatchStatus::Failure(bun_core::err!(
-                                    "VersionSpecifierNotAllowedHere"
-                                ));
+                                return MatchStatus::Failure(
+                                    crate::Error::VersionSpecifierNotAllowedHere,
+                                );
                             }
                             string_buf = esm.version;
                             dependency_version = match manager!().parse_dependency(
@@ -3122,8 +3028,7 @@ impl<'a> Resolver<'a> {
                     match self.enqueue_dependency_to_resolve(
                         // Read the raw `NonNull` fields directly (NOT the
                         // `&'static`-yielding accessors) so mut-provenance from
-                        // `intern_package_json` survives to the write inside
-                        // (Zig: resolver.zig:2074).
+                        // `intern_package_json` survives to the write inside.
                         dir_info
                             .package_json_for_dependencies
                             .or(dir_info.package_json),
@@ -3164,12 +3069,12 @@ impl<'a> Resolver<'a> {
                     Ok(p) => p,
                     Err(err) => {
                         // if it's missing, we need to install it
-                        if err == bun_core::err!("FileNotFound") {
+                        if err == bun_core::Error::FileNotFound {
                             match manager!().get_preinstall_state(resolved_package_id) {
                                 Install::PreinstallState::Done => {
-                                    // PORT NOTE: `MatchResult.path_pair` is `Path<'static>`;
+                                    // NOTE: `MatchResult.path_pair` is `Path<'static>`;
                                     // intern `import_path` so the disabled-module record
-                                    // outlives this frame (Zig had no lifetime here).
+                                    // outlives this frame.
                                     let interned = Fs::file_system::DirnameStore::instance()
                                         .append_slice(import_path)
                                         .expect("unreachable");
@@ -3219,7 +3124,9 @@ impl<'a> Resolver<'a> {
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
                                             }
-                                            return MatchStatus::Failure(enqueue_download_err);
+                                            return MatchStatus::Failure(
+                                                enqueue_download_err.into(),
+                                            );
                                         }
                                     }
 
@@ -3229,7 +3136,6 @@ impl<'a> Resolver<'a> {
                                     return MatchStatus::Pending(Box::new(PendingResolution {
                                         esm: cloned,
                                         dependency: dependency_version,
-                                        resolution_id: resolved_package_id,
                                         string_buf,
                                         tag: PendingResolutionTag::Download,
                                         ..Default::default()
@@ -3242,7 +3148,7 @@ impl<'a> Resolver<'a> {
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
                         }
-                        return MatchStatus::Failure(err);
+                        return MatchStatus::Failure(err.into());
                     }
                 };
 
@@ -3254,7 +3160,7 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    // PORT NOTE: reshaped for borrowck — see identical note above.
+                                    // NOTE: reshaped for borrowck — see identical note above.
                                     // Resolve against the path "/", then join it with the absolute
                                     // directory path. This is done because ESM package resolution uses
                                     // URLs while our path resolution uses file system paths. We don't
@@ -3416,24 +3322,20 @@ impl<'a> Resolver<'a> {
         &mut self,
         dir_path_maybe_trail_slash: &[u8],
         package_id: Install::PackageID,
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         debug_assert!(self.package_manager.is_some());
 
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
-        // Stacked Borrows: bind ONE `&mut HashMap` and route both the lookup and the slot
-        // projection through it so the returned `*mut DirInfo` shares a parent tag with the
-        // borrow it was derived from (a second `dir_cache_mut()` Unique retag of the
-        // whole `BSSMapInner` would otherwise pop it).
-        let dc = self.dir_cache_mut();
-        let mut dir_cache_info_result = dc.get_or_put(dir_path)?;
+        let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
-            return Ok(dc
-                .at_index(dir_cache_info_result.index)
-                .map(DirInfoRef::from_slot));
+            // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
+            // The slot pointer is rooted at the singleton, so the returned ref
+            // survives the caller's later map reborrows.
+            return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) }));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
@@ -3445,10 +3347,13 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *rfs }
             };
         }
-        // resolver mutex held; `EntriesMap` methods are safe wrappers over the singleton.
+        // Hold `entries_mutex` across the in-place `DirEntry` rewrite below and
+        // the `dir_info_uncached` call, mirroring `dir_info_cached_miss`: the
+        // route loaders iterate the `DirEntry.data` map under this lock.
+        let _entries_unlock = rfs!().entries_mutex.lock_guard();
         let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
 
-        // PORT NOTE: always assigned by either the cached-hit arm or the
+        // NOTE: always assigned by either the cached-hit arm or the
         // `needs_iter` block below; null-init so rustc accepts the proof.
         let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
             core::ptr::null_mut();
@@ -3517,7 +3422,7 @@ impl<'a> Resolver<'a> {
             }
             if let Some(existing) = in_place {
                 // SAFETY: see block-wide note above.
-                // PORT NOTE: Zig `clearAndFree` — `StringHashMap` (std::HashMap newtype)
+                // NOTE: `StringHashMap` (std::HashMap newtype)
                 // has no separate `clear_and_free`; `clear()` drops all entries.
                 unsafe { &mut *existing }.data.clear();
             }
@@ -3525,7 +3430,7 @@ impl<'a> Resolver<'a> {
             if self.store_fd {
                 new_entry.fd = open_dir;
             }
-            // PORT NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
+            // NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
             // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
             let dir_entries_ptr = match in_place {
                 Some(p) => {
@@ -3536,7 +3441,15 @@ impl<'a> Resolver<'a> {
                 None => bun_core::heap::into_raw(Box::new(new_entry)),
             };
 
-            // bun.fs.debug("readdir({f}, {s}) = {d}", ...) — TODO(port): scoped log
+            bun_core::scoped_log!(
+                crate::fs_full::Fs,
+                "readdir({}, {}) = {}",
+                open_dir,
+                bstr::BStr::new(dir_path),
+                // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly
+                // boxed entry (see block-wide note above).
+                unsafe { (*dir_entries_ptr).data.count() },
+            );
 
             dir_entries_option = rfs!()
                 .entries
@@ -3552,15 +3465,18 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        // PORT NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
-        // `self.dir_cache` (and `*self`) are reborrowable for the call below.
-        let dir_info_ptr: *mut DirInfo::DirInfo = self
-            .dir_cache_mut()
-            .put(&mut dir_cache_info_result, DirInfo::DirInfo::default())
-            .expect("unreachable");
+        // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+        let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
+            DirInfo::put_slot(
+                self.dir_cache(),
+                &mut dir_cache_info_result,
+                DirInfo::DirInfo::default(),
+            )
+        }
+        .expect("unreachable");
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
-        // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
+        // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
         // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
         // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
         // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and
@@ -3588,7 +3504,7 @@ impl<'a> Resolver<'a> {
 
     fn enqueue_dependency_to_resolve(
         &mut self,
-        // PORT NOTE: Zig `package_json_: ?*PackageJSON` (mutable). Carried as
+        // NOTE: carried as
         // `NonNull` end-to-end so the mut-provenance from `intern_package_json`
         // survives to the `package_manager_package_id` write below — taking
         // `*const` and casting back to `*mut` would be UB under Stacked Borrows.
@@ -3608,9 +3524,15 @@ impl<'a> Resolver<'a> {
         }
 
         let input_package_id = *input_package_id_;
-        // PORT NOTE: see `manager_ptr` note in `load_node_modules` — split the
+        // NOTE: see `manager_ptr` note in `load_node_modules` — split the
         // `&mut self` borrow by holding the PackageManager via raw pointer.
-        let pm_ptr: *mut dyn AutoInstaller = self.get_package_manager();
+        // Init failure is unreachable in practice (`load_node_modules`
+        // initialized the manager before calling here), but propagate rather
+        // than unwrap so the invariant isn't load-bearing for safety.
+        let pm_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
+            Ok(pm) => pm,
+            Err(err) => return DependencyToResolve::Failure(err),
+        };
         macro_rules! pm {
             () => {
                 // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
@@ -3631,10 +3553,9 @@ impl<'a> Resolver<'a> {
                 // from `NonNull::from(&mut **last)` and no other live borrow
                 // exists here.
                 let package_json: &mut PackageJSON = unsafe { package_json.as_mut() };
-                // PORT NOTE: Zig called `Package.fromPackageJSON(lockfile, pm,
-                // log, package_json, features)` then `setHasInstallScript` then
-                // `lockfile.appendPackage`. The `Package` type is bun_install-
-                // internal; the `AutoInstaller` impl performs all three steps.
+                // NOTE: the `Package` type is bun_install-internal; the
+                // `AutoInstaller` impl performs the from-package-json /
+                // setHasInstallScript / appendPackage steps.
                 let id = match pm!().lockfile_append_from_package_json(
                     package_json,
                     Install::Features {
@@ -3646,19 +3567,19 @@ impl<'a> Resolver<'a> {
                     },
                 ) {
                     Ok(id) => id,
-                    Err(err) => return DependencyToResolve::Failure(err),
+                    Err(err) => return DependencyToResolve::Failure(err.into()),
                 };
                 package_json.package_manager_package_id = id;
             } else {
                 // we're resolving an unknown package
                 // the unknown package is the root package
                 if let Err(err) = pm!().lockfile_append_root_stub() {
-                    return DependencyToResolve::Failure(err);
+                    return DependencyToResolve::Failure(err.into());
                 }
             }
         }
 
-        if self.opts.prefer_offline_install {
+        if self.opts.install_preference == bun_options_types::offline_mode::OfflineMode::Offline {
             if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
                 *input_package_id_ = package_id;
                 return DependencyToResolve::Resolution(
@@ -3694,15 +3615,12 @@ impl<'a> Resolver<'a> {
                     return DependencyToResolve::NotFound;
                 }
                 Install::EnqueueResult::Failure(err) => {
-                    return DependencyToResolve::Failure(err);
+                    return DependencyToResolve::Failure(err.into());
                 }
             }
         }
 
-        // PORT NOTE: 1:1 with Zig — `resolver.zig` ends this function with
-        // `bun.unreachablePanic("TODO: implement enqueueDependencyToResolve for
-        // non-root packages", .{})`. The non-root path is genuinely unimplemented
-        // in the Zig source; this is not a porting stub.
+        // NOTE: the non-root path is genuinely unimplemented; this is not a stub.
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
     }
 
@@ -3753,13 +3671,6 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::NotFound;
                     }
                 };
-                let entries = match resolved_dir_info.get_entries_ref(self.generation) {
-                    Some(e) => e,
-                    None => {
-                        esm_resolution.status = Status::ModuleNotFound;
-                        return MatchStatus::NotFound;
-                    }
-                };
                 let extension_order: options::ExtOrder =
                     if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
                         self.extension_order
@@ -3770,85 +3681,98 @@ impl<'a> Resolver<'a> {
                     };
 
                 let base = bun_paths::basename(abs_esm_path);
-                let entry_query = match entries.get(base) {
+                // One `entries_mutex` critical section for the probe and the
+                // listing fd: a concurrent resolver at a newer generation
+                // rewrites the `DirEntry` in place under that lock. The entry
+                // pointer stays valid after unlock (EntryStore-owned).
+                let looked_up = {
+                    let rfs = &mut Fs::FileSystem::instance().fs;
+                    let _entries_lock = rfs.entries_mutex.lock_guard();
+                    resolved_dir_info
+                        .get_entries_ref_locked(self.generation)
+                        .map(|entries| (entries.get(base), entries.fd))
+                };
+                let Some((entry_lookup, dirname_fd)) = looked_up else {
+                    esm_resolution.status = Status::ModuleNotFound;
+                    return MatchStatus::NotFound;
+                };
+                let entry_query = match entry_lookup {
                     Some(q) => q,
                     None => {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
-                        // Try to have a friendly error message if people forget the extension
-                        if ends_with_star {
-                            let buf = bufs!(load_as_file);
-                            buf[..base.len()].copy_from_slice(base);
-                            for ext in self.opts.ext_order_slice(extension_order).iter() {
-                                let ext: &[u8] = ext;
-                                let file_name = &mut buf[0..base.len() + ext.len()];
-                                file_name[base.len()..].copy_from_slice(ext);
-                                if entries.get(&file_name[..]).is_some() {
-                                    if let Some(debug) = self.debug_logs.as_mut() {
-                                        let parts = [package_json.name.as_ref(), package_subpath];
-                                        debug.add_note_fmt(format_args!(
-                                            "The import {} is missing the extension {}",
-                                            bstr::BStr::new(ResolvePath::join(
-                                                &parts,
-                                                bun_paths::Platform::AUTO
-                                            )),
-                                            bstr::BStr::new(ext)
-                                        ));
-                                    }
-                                    esm_resolution.status = Status::ModuleNotFoundMissingExtension;
-                                    let _ = ext; // PORT NOTE: Zig stored `missing_suffix = ext` here; unused after `return null`.
-                                    break;
-                                }
-                            }
+                        if ends_with_star
+                            && self.probe_wildcard_extensions(
+                                resolved_dir_info,
+                                dirname_fd,
+                                package_json,
+                                base,
+                                extension_order,
+                                out,
+                            )
+                        {
+                            return MatchStatus::Success;
                         }
                         return MatchStatus::NotFound;
                     }
                 };
 
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
                 if unsafe { entry_query.entry().kind(self.rfs_ptr(), self.store_fd) }
                     == Fs::file_system::EntryKind::Dir
                 {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
+                    if ends_with_star
+                        && self.probe_wildcard_extensions(
+                            resolved_dir_info,
+                            dirname_fd,
+                            package_json,
+                            base,
+                            extension_order,
+                            out,
+                        )
+                    {
+                        return MatchStatus::Success;
+                    }
                     esm_resolution.status = Status::UnsupportedDirectoryImport;
 
                     // Try to have a friendly error message if people forget the "/index.js" suffix
                     if ends_with_star {
                         if let Ok(Some(dir_info_ref)) = self.dir_info_cached(abs_esm_path) {
-                            if let Some(dir_entries) = dir_info_ref.get_entries_ref(self.generation)
-                            {
-                                let index = b"index";
-                                let buf = bufs!(load_as_file);
-                                buf[..index.len()].copy_from_slice(index);
-                                for ext in self.opts.ext_order_slice(extension_order).iter() {
-                                    let ext: &[u8] = ext;
-                                    let file_name = &mut buf[0..index.len() + ext.len()];
-                                    file_name[index.len()..].copy_from_slice(ext);
-                                    let index_query = dir_entries.get(&file_name[..]);
-                                    if let Some(iq) = index_query {
-                                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                                        if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
-                                            == Fs::file_system::EntryKind::File
-                                        {
-                                            if let Some(debug) = self.debug_logs.as_mut() {
-                                                let mut ms =
-                                                    Vec::with_capacity(1 + file_name.len());
-                                                ms.push(b'/');
-                                                ms.extend_from_slice(&file_name[..]);
-                                                let parts =
-                                                    [package_json.name.as_ref(), package_subpath];
-                                                debug.add_note_fmt(format_args!(
-                                                    "The import {} is missing the suffix {}",
-                                                    bstr::BStr::new(ResolvePath::join(
-                                                        &parts,
-                                                        bun_paths::Platform::AUTO
-                                                    )),
-                                                    bstr::BStr::new(&ms)
-                                                ));
-                                            }
-                                            break;
+                            let index = b"index";
+                            let buf = bufs!(load_as_file);
+                            buf[..index.len()].copy_from_slice(index);
+                            for ext in self.opts.ext_order_slice(extension_order).iter() {
+                                let ext: &[u8] = ext;
+                                let file_name = &mut buf[0..index.len() + ext.len()];
+                                file_name[index.len()..].copy_from_slice(ext);
+                                let index_query =
+                                    dir_info_ref.get_entry(self.generation, &file_name[..]);
+                                if let Some(iq) = index_query {
+                                    // SAFETY: rfs points at the process-global RealFS; the
+                                    // lazy-stat rewrite inside `kind()` is serialized on the
+                                    // per-entry mutex.
+                                    if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
+                                        == Fs::file_system::EntryKind::File
+                                    {
+                                        if let Some(debug) = self.debug_logs.as_mut() {
+                                            let mut ms = Vec::with_capacity(1 + file_name.len());
+                                            ms.push(b'/');
+                                            ms.extend_from_slice(&file_name[..]);
+                                            let parts =
+                                                [package_json.name.as_ref(), package_subpath];
+                                            debug.add_note_fmt(format_args!(
+                                                "The import {} is missing the suffix {}",
+                                                bstr::BStr::new(ResolvePath::join(
+                                                    &parts,
+                                                    bun_paths::Platform::AUTO
+                                                )),
+                                                bstr::BStr::new(&ms)
+                                            ));
                                         }
+                                        break;
                                     }
                                 }
                             }
@@ -3862,14 +3786,14 @@ impl<'a> Resolver<'a> {
                     if entry_query.entry().abs_path.is_empty() {
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *entry_query.entry }.abs_path = PathString::init(
+                        unsafe { &mut *entry_query.entry }.abs_path = Interned::from_static(
                             self.fs_ref()
                                 .dirname_store
                                 .append_slice(abs_esm_path)
                                 .expect("unreachable"),
                         );
                     }
-                    entry_query.entry().abs_path.slice()
+                    entry_query.entry().abs_path.as_bytes()
                 };
                 let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
                     pkg.module_type
@@ -3882,10 +3806,9 @@ impl<'a> Resolver<'a> {
                         primary: Path::init_with_namespace(absolute_out_path, b"file"),
                         secondary: None,
                     },
-                    dirname_fd: entries.fd,
+                    dirname_fd,
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
-                    diff_case: entry_query.diff_case,
                     is_node_module: true,
                     package_json: Some(
                         resolved_dir_info
@@ -3919,11 +3842,165 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub fn resolve_without_remapping(
+    /// Wildcard `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
+    ///
+    /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
+    /// under `entries_mutex`; `dirname_fd` was captured under the caller's
+    /// critical section.
+    fn probe_wildcard_extensions(
         &mut self,
-        // PORT NOTE: `DirInfoRef` (not `&mut`) — forwards into `load_node_modules`
+        resolved_dir_info: DirInfoRef,
+        dirname_fd: FD,
+        package_json: &PackageJSON,
+        base: &[u8],
+        extension_order: options::ExtOrder,
+        out: &mut MatchResult,
+    ) -> bool {
+        let rfs = self.rfs_ptr();
+
+        // Extensionless target (`"./*": "./dist/*"`): append extension_order (oven-sh/bun#29679).
+        if bun_paths::extension(base).is_empty() {
+            let buf = bufs!(load_as_file);
+            buf[..base.len()].copy_from_slice(base);
+            for ext in self.opts.ext_order_slice(extension_order).iter() {
+                let ext: &[u8] = ext;
+                let file_name = &mut buf[0..base.len() + ext.len()];
+                file_name[base.len()..].copy_from_slice(ext);
+                if let Some(ext_query) =
+                    resolved_dir_info.get_entry(self.generation, &file_name[..])
+                {
+                    // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                    // rewrite inside `kind()` is serialized on the per-entry mutex.
+                    if unsafe { ext_query.entry().kind(rfs, self.store_fd) }
+                        == Fs::file_system::EntryKind::File
+                    {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "Resolved to \"{}\" by adding extension \"{}\"",
+                                bstr::BStr::new(file_name),
+                                bstr::BStr::new(ext)
+                            ));
+                        }
+                        self.build_wildcard_match(
+                            resolved_dir_info,
+                            dirname_fd,
+                            package_json,
+                            &ext_query,
+                            out,
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // `.js`/`.jsx`/`.mjs` → `.ts`/`.tsx`/`.mts`: same rewrite as `load_as_file` (oven-sh/bun#10001).
+        if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
+            let ext = &base[last_dot..];
+            let ts_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
+                &[b".ts", b".tsx", b".mts"]
+            } else if ext == b".mjs"
+                && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
+                    || !(resolved_dir_info.is_node_modules()
+                        || resolved_dir_info.is_inside_node_modules()))
+            {
+                &[b".mts"]
+            } else {
+                &[]
+            };
+
+            if !ts_exts.is_empty() {
+                let segment = &base[..last_dot];
+                let buf = bufs!(load_as_file);
+                buf[..segment.len()].copy_from_slice(segment);
+                for &replacement in ts_exts.iter() {
+                    let file_name = &mut buf[0..segment.len() + replacement.len()];
+                    file_name[segment.len()..].copy_from_slice(replacement);
+                    if let Some(ts_query) =
+                        resolved_dir_info.get_entry(self.generation, &file_name[..])
+                    {
+                        // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                        // rewrite inside `kind()` is serialized on the per-entry mutex.
+                        if unsafe { ts_query.entry().kind(rfs, self.store_fd) }
+                            == Fs::file_system::EntryKind::File
+                        {
+                            if let Some(debug) = self.debug_logs.as_mut() {
+                                debug.add_note_fmt(format_args!(
+                                    "Rewrote \"{}\" to \"{}\"",
+                                    bstr::BStr::new(base),
+                                    bstr::BStr::new(file_name)
+                                ));
+                            }
+                            self.build_wildcard_match(
+                                resolved_dir_info,
+                                dirname_fd,
+                                package_json,
+                                &ts_query,
+                                out,
+                            );
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    fn build_wildcard_match(
+        &mut self,
+        resolved_dir_info: DirInfoRef,
+        dirname_fd: FD,
+        package_json: &PackageJSON,
+        query: &crate::fs::EntryLookup<'static>,
+        out: &mut MatchResult,
+    ) {
+        let abs_path: &[u8] = {
+            if query.entry().abs_path.is_empty() {
+                let parts = [query.entry().dir, query.entry().base()];
+                let abs = self.fs_ref().abs_buf(&parts, bufs!(remap_path));
+                // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                // evaluated before LHS `&mut Entry` is materialized.
+                unsafe { &mut *query.entry }.abs_path = Interned::from_static(
+                    self.fs_ref()
+                        .dirname_store
+                        .append_slice(abs)
+                        .expect("unreachable"),
+                );
+            }
+            query.entry().abs_path.as_bytes()
+        };
+        let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
+            pkg.module_type
+        } else {
+            options::ModuleType::Unknown
+        };
+
+        *out = MatchResult {
+            path_pair: PathPair {
+                primary: Path::init_with_namespace(abs_path, b"file"),
+                secondary: None,
+            },
+            dirname_fd,
+            file_fd: query.entry().cache().fd,
+            dir_info: Some(resolved_dir_info),
+            is_node_module: true,
+            package_json: Some(
+                resolved_dir_info
+                    .package_json()
+                    .map(std::ptr::from_ref)
+                    .unwrap_or_else(|| std::ptr::from_ref(package_json)),
+            ),
+            module_type,
+            ..Default::default()
+        };
+    }
+
+    pub(crate) fn resolve_without_remapping(
+        &mut self,
+        // NOTE: `DirInfoRef` (not `&mut`) — forwards into `load_node_modules`
         // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
-        // Spec resolver.zig:2584 takes raw `*DirInfo`.
         source_dir_info: DirInfoRef,
         import_path: &[u8],
         kind: ast::ImportKind,
@@ -3943,15 +4020,15 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub fn parse_tsconfig(
+    pub(crate) fn parse_tsconfig(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
-    ) -> core::result::Result<Option<Box<TSConfigJSON>>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
-            // SAFETY: process-global `FileSystem` singleton (see `fs()` PORT NOTE); narrow `&mut`
+            // SAFETY: process-global `FileSystem` singleton (see `fs()` NOTE); narrow `&mut`
             // for this call only — `self.caches` is a field of `self` (disjoint allocation).
             unsafe { &mut *self.fs() },
             file,
@@ -3960,7 +4037,7 @@ impl<'a> Resolver<'a> {
             None,
             None,
         )?;
-        // PORT NOTE: reshaped for borrowck — `mem::take` the contents (leaving
+        // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
         let entry_contents = core::mem::take(&mut entry.contents);
         let _close_guard = scopeguard::guard(entry, |mut e| {
@@ -3977,11 +4054,9 @@ impl<'a> Resolver<'a> {
             .expect("unreachable");
 
         // `use_shared_buffer = false` above, so `entry_contents` is
-        // `Contents::Owned`/`Empty`. Zig reads with `bun.default_allocator` and
-        // never frees because the Zig `TSConfigJSON` borrows slices into the
-        // source; the Rust `TSConfigJSON` owns `Box<[u8]>` copies of every
-        // field, so the source bytes are dead once `parse` returns and can be
-        // dropped with the local `Source`.
+        // `Contents::Owned`/`Empty`. `TSConfigJSON` owns `Box<[u8]>` copies of
+        // every field, so the source bytes are dead once `parse` returns and
+        // can be dropped with the local `Source`.
         let contents = match entry_contents {
             crate::cache::Contents::Owned(v) => v,
             crate::cache::Contents::Empty => Vec::new(),
@@ -3991,7 +4066,7 @@ impl<'a> Resolver<'a> {
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
 
-        // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); disjoint from `self.caches`,
+        // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
         // narrow `&mut` for this call only.
         let mut result =
             match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
@@ -4003,10 +4078,9 @@ impl<'a> Resolver<'a> {
         if result.has_base_url() {
             // this might leak
             if !bun_paths::is_absolute(&result.base_url) {
-                // PORT NOTE: Zig interns into `dirname_store` and stores the
-                // arena slice; Rust `base_url: Box<[u8]>` owns its bytes, so
+                // NOTE: `base_url: Box<[u8]>` owns its bytes, so
                 // copy `abs_buf`'s thread-local result directly instead of
-                // double-copying through the arena.
+                // double-copying through the `dirname_store` arena.
                 let abs = self
                     .fs_ref()
                     .abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
@@ -4025,8 +4099,7 @@ impl<'a> Resolver<'a> {
             result.base_url_for_paths = Box::from(abs);
         }
 
-        // PORT NOTE: Zig `TSConfigJSON.parse` returns `*TSConfigJSON` (already
-        // heap). Return the `Box` so the caller (`dir_info_uncached`) takes
+        // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
         // ownership — intermediate configs in an extends-chain are dropped via
         // `heap::take`, the final one is interned into the DirInfo cache.
         Ok(Some(result))
@@ -4041,14 +4114,14 @@ impl<'a> Resolver<'a> {
         unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
     }
 
-    pub fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
+    pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
-    ) -> core::result::Result<Option<core::ptr::NonNull<PackageJSON>>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<core::ptr::NonNull<PackageJSON>>> {
         use crate::package_json::{IncludeDependencies, IncludeScripts};
-        // PORT NOTE: Zig threaded both as comptime params; `IncludeDependencies` is a
+        // NOTE: `IncludeDependencies` is a
         // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
         // gates one branch).
         let include_scripts = if self.care_about_scripts {
@@ -4075,24 +4148,17 @@ impl<'a> Resolver<'a> {
         };
         let Some(pkg) = pkg else { return Ok(None) };
 
-        // PORT NOTE: Zig `PackageJSON.new` = `bun.TrivialNew` (heap-allocate,
-        // never freed — DirInfo cache holds `&'static` refs). PORTING.md
+        // NOTE: the DirInfo cache holds `&'static` refs. PORTING.md
         // §Forbidden bars `Box::leak`; intern into the process-lifetime arena
         // owned alongside the DirInfo singleton instead.
         Ok(Some(intern_package_json(pkg)))
     }
 
-    fn dir_info_cached(
-        &mut self,
-        path: &[u8],
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    fn dir_info_cached(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(true, path)
     }
 
-    pub fn read_dir_info(
-        &mut self,
-        path: &[u8],
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(false, path)
     }
 
@@ -4101,8 +4167,7 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
-    // PORT NOTE: Zig's `dirInfoCachedMaybeLog` takes `comptime enable_logging`
-    // and `comptime follow_symlinks`. `follow_symlinks` is `true` at every call
+    // NOTE: `follow_symlinks` is `true` at every call
     // site, so it's dropped here; `enable_logging` is a plain runtime parameter
     // (it gates one cold error-formatting branch) so this large dir-walk function
     // monomorphizes to a single copy instead of two faulted in at startup.
@@ -4110,8 +4175,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         enable_logging: bool,
         raw_input_path: &[u8],
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
         // doesn't keep `self` borrowed across the body.
         let _unlock = self.mutex.lock_guard();
@@ -4124,7 +4188,17 @@ impl<'a> Resolver<'a> {
         // A path longer than MAX_PATH_BYTES cannot name a real directory.
         // Bailing here also prevents overflowing `dir_info_uncached_path`
         // below when called with user-controlled absolute import paths.
-        if input_path.len() > MAX_PATH_BYTES {
+        if input_path.len() >= MAX_PATH_BYTES {
+            return Ok(None);
+        }
+
+        // `PathName::init` leaves `.dir` empty when the separator is the
+        // leading one (e.g. `/a.js`) or the path has no separator at all
+        // (virtual/plugin specifiers). Callers like `finalize_result` pass
+        // that `.dir` straight through and already treat `None` as "skip",
+        // so return it here instead of walking the cache with an empty key.
+        // https://github.com/oven-sh/bun/issues/30429
+        if input_path.is_empty() {
             return Ok(None);
         }
 
@@ -4160,11 +4234,12 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        assert!(
-            bun_paths::is_absolute(input_path),
-            "cannot resolve DirInfo for non-absolute path: {}",
-            bstr::BStr::new(input_path)
-        );
+        // A non-absolute path has no DirInfo. Every caller already routes
+        // `Ok(None)` into its fallback, so bail instead of panicking on a
+        // path shape the caller produced.
+        if !bun_paths::is_absolute(input_path) {
+            return Ok(None);
+        }
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
@@ -4193,7 +4268,7 @@ impl<'a> Resolver<'a> {
         enable_logging: bool,
         input_path: &[u8],
         top_result: allocators::Result,
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
 
         let mut i: usize = 1;
@@ -4202,9 +4277,9 @@ impl<'a> Resolver<'a> {
         dir_info_uncached_path_buf[..input_path_len].copy_from_slice(input_path);
         // The slice spans one byte past the copied path so the NUL-splice/restore at
         // `input_path_len` (queue index 0, processed last in the open-dir loop below)
-        // writes through `path`'s own provenance. `input_path_len + 1 ≤ MAX_PATH_BYTES + 1`
-        // (checked above) and `PathBuffer` always carries the +1 sentinel slot, so the
-        // safe slice is in-bounds and the threadlocal buffer outlives this fn.
+        // writes through `path`'s own provenance. `input_path_len < MAX_PATH_BYTES`
+        // (checked in `dir_info_cached_maybe_log`), so `input_path_len + 1` is
+        // in-bounds of the `MAX_PATH_BYTES` buffer, which outlives this fn.
         let path: &mut [u8] = &mut dir_info_uncached_path_buf[..input_path_len + 1];
 
         queue[0].write(DirEntryResolveQueueItem {
@@ -4230,7 +4305,7 @@ impl<'a> Resolver<'a> {
         let root_path = &path[0..1];
         Self::assert_valid_cache_key(root_path);
 
-        // PORT NOTE: hold RealFS as a raw `*mut` so the entries-mutex/close-dirs
+        // NOTE: hold RealFS as a raw `*mut` so the entries-mutex/close-dirs
         // scopeguards can capture it by Copy without keeping a `self.rfs_ptr()`
         // borrow live across the loop body (which calls `&mut self` methods).
         // SAFETY: ARENA — `self.fs` points at the process-global FileSystem singleton.
@@ -4297,6 +4372,9 @@ impl<'a> Resolver<'a> {
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {
+                if i >= queue.len() {
+                    return Ok(None);
+                }
                 queue[i].write(DirEntryResolveQueueItem {
                     unsafe_path: bun_ptr::RawSlice::new(root_path),
                     result,
@@ -4328,16 +4406,14 @@ impl<'a> Resolver<'a> {
         }
 
         let mut queue_slice_len = i;
-        if cfg!(debug_assertions) {
-            debug_assert!(queue_slice_len > 0);
-        }
+        debug_assert!(queue_slice_len > 0);
         let open_dir_count = core::cell::Cell::new(0usize);
 
         // When this function halts, any item not processed means it's not found.
-        // PORT NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
+        // NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
         // (open_dir_count) so the guard doesn't pin `&mut self` across the loop
-        // body. `need_to_close_files()` is evaluated AT DROP TIME (matching
-        // Zig's `defer`), not snapshotted up-front — the loop body calls
+        // body. `need_to_close_files()` is evaluated AT DROP TIME,
+        // not snapshotted up-front — the loop body calls
         // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
         // mid-walk. Reach the RealFS via the `&'static` singleton accessor
         // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
@@ -4396,8 +4472,7 @@ impl<'a> Resolver<'a> {
                     let sentinel = bun_core::ZStr::from_buf(path, nul_at);
 
                     #[cfg(unix)]
-                    let open_req: core::result::Result<FD, bun_core::Error> = {
-                        // TODO(port): std.fs.openDirAbsoluteZ — using bun_sys equivalent
+                    let open_req: crate::CrateResult<FD> = {
                         bun_sys::open_dir_absolute_z(
                             sentinel,
                             bun_sys::OpenDirOptions {
@@ -4407,22 +4482,25 @@ impl<'a> Resolver<'a> {
                         )
                     };
                     #[cfg(windows)]
-                    let open_req: core::result::Result<FD, bun_core::Error> = {
+                    let open_req: crate::CrateResult<FD> = {
                         bun_sys::open_dir_at_windows_a(
                             FD::INVALID,
                             sentinel.as_bytes(),
                             bun_sys::WindowsOpenDirOptions {
                                 iterable: true,
                                 no_follow: false,
-                                read_only: true,
                                 ..Default::default()
                             },
                         )
                         .map_err(Into::into)
                     };
 
-                    // bun.fs.debug("open({s})", .{sentinel}) — TODO(port): scoped log
-                    // Restore the byte we NUL-terminated above (Zig: `defer path[len] = prev_char`).
+                    bun_core::scoped_log!(
+                        crate::fs_full::Fs,
+                        "open({})",
+                        bstr::BStr::new(sentinel.as_bytes()),
+                    );
+                    // Restore the byte we NUL-terminated above.
                     // No early-return path exists between the write and here, so a guard is unnecessary.
                     path[nul_at] = prev_char;
 
@@ -4436,11 +4514,27 @@ impl<'a> Resolver<'a> {
                             // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
                             // list which contains such paths and treating them as missing means we just
                             // ignore them during path resolution.
-                            if err == bun_core::err!("ENOTDIR")
-                                || err == bun_core::err!("IsDir")
-                                || err == bun_core::err!("NotDir")
+                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                                || err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                             {
                                 return Ok(None);
+                            }
+                            // A permission-denied ancestor (sandboxed drive roots, x-only
+                            // shared dirs) is treated as opaque and empty, like the
+                            // ENOTDIR tolerance; the requested directory itself stays fatal.
+                            if queue_slice_len > 0
+                                && matches!(
+                                    err,
+                                    crate::Error::Sys(bun_errno::SystemErrno::EPERM)
+                                        | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                                )
+                            {
+                                debuglog!(
+                                    "treating permission-denied ancestor \"{}\" as empty: {}",
+                                    bstr::BStr::new(queue_top_unsafe_path),
+                                    bstr::BStr::new(err.name())
+                                );
+                                break 'open_dir FD::INVALID;
                             }
                             let cached_dir_entry_result = rfs!()
                                 .entries
@@ -4453,9 +4547,7 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if !(err == bun_core::err!("ENOENT")
-                                || err == bun_core::err!("FileNotFound"))
-                            {
+                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
@@ -4476,7 +4568,9 @@ impl<'a> Resolver<'a> {
                 }
             };
 
-            if !queue_top.fd.is_valid() {
+            // `open_dir` is INVALID for a permission-denied ancestor treated as
+            // an opaque directory; there is nothing to track or close then.
+            if !queue_top.fd.is_valid() && open_dir.is_valid() {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
@@ -4493,7 +4587,7 @@ impl<'a> Resolver<'a> {
                 if _safe_path.is_none() {
                     // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
                     // `path` spans `input_path_len + 1` for the NUL-splice above; the
-                    // logical input is `path[..input_path_len]` (Zig resolver.zig:2750).
+                    // logical input is `path[..input_path_len]`.
                     let input = &path[..input_path_len];
                     if input[input.len() - 1] != SEP {
                         let parts: [&[u8]; 2] = [input, SEP_STR.as_bytes()];
@@ -4505,13 +4599,12 @@ impl<'a> Resolver<'a> {
 
                 let safe_path = _safe_path.unwrap();
 
-                // Spec resolver.zig:2965 calls `std.mem.indexOf` (returns 0 for an
-                // empty needle), not `bun.strings.indexOf` (returns null for an
-                // empty needle). On Windows `queue_top_unsafe_path` is empty when
+                // An empty needle must yield index 0, not None. On Windows
+                // `queue_top_unsafe_path` is empty when
                 // `windows_filesystem_root` cannot classify the input — e.g.
                 // `import(":://x")` is "absolute" per std but has no drive root,
-                // so `root_path` is `path[0..0]`. Match the spec so the resolver
-                // caches a not-found instead of panicking.
+                // so `root_path` is `path[0..0]`. Treat that as 0 so the
+                // resolver caches a not-found instead of panicking.
                 let dir_path_i = if queue_top_unsafe_path.is_empty() {
                     0
                 } else {
@@ -4571,38 +4664,39 @@ impl<'a> Resolver<'a> {
                 // still rehash from there (cheap relative to starting at 0).
                 new_entry.data.reserve(64);
 
-                let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-                // PORT NOTE: Zig `while (dir_iterator.next().unwrap()) |entry|` —
-                // `.unwrap()` was on the inner `Maybe(?Entry)`; the Rust `WrappedIterator::next`
-                // is already flattened to `Result<Option<IteratorResult>>`, so the `.unwrap()`
-                // moved to `?`-style break-on-error.
-                // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
-                // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
-                let mut filename_store = FilenameStoreAppender::new();
-                loop {
-                    let _value = match dir_iterator.next() {
-                        Ok(Some(v)) => v,
-                        Ok(None) => break,
-                        Err(_) => break,
-                    };
-                    new_entry
-                        .add_entry_with_store(
-                            // SAFETY: see block-wide note above.
-                            in_place.map(|existing| unsafe { &mut (*existing).data }),
-                            &_value,
-                            &mut filename_store,
-                            (),
-                        )
-                        .expect("unreachable");
+                // A permission-denied ancestor has no fd to enumerate; its
+                // entry set stays empty.
+                if open_dir.is_valid() {
+                    let mut dir_iterator = bun_sys::iterate_dir(open_dir);
+                    // NOTE: `WrappedIterator::next` returns
+                    // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
+                    // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
+                    // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
+                    let mut filename_store = FilenameStoreAppender::new();
+                    loop {
+                        let _value = match dir_iterator.next() {
+                            Ok(Some(v)) => v,
+                            Ok(None) => break,
+                            Err(_) => break,
+                        };
+                        new_entry
+                            .add_entry_with_store(
+                                // SAFETY: see block-wide note above.
+                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                &_value,
+                                &mut filename_store,
+                                (),
+                            )
+                            .expect("unreachable");
+                    }
                 }
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.
-                    // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
+                    // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
                     unsafe { &mut *existing }.data.clear();
                 }
                 new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
-                // PORT NOTE: Zig `entries_ptr = in_place orelse allocator.create(DirEntry)` then
-                // `entries_ptr.* = new_entry` (no drop glue). `DirEntry.data` is a `HashMap`
+                // NOTE: `DirEntry.data` is a `HashMap`
                 // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
                 // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.
                 let dir_entries_ptr = match in_place {
@@ -4613,6 +4707,19 @@ impl<'a> Resolver<'a> {
                     }
                     None => bun_core::heap::into_raw(Box::new(new_entry)),
                 };
+                // NOTE (Stacked Borrows): log BEFORE `entries.put` stores the
+                // `&'static mut DirEntry` — a later read through the parent raw
+                // pointer would pop that reference's Unique tag (the ordering
+                // is unobservable).
+                bun_core::scoped_log!(
+                    crate::fs_full::Fs,
+                    "readdir({}, {}) = {}",
+                    open_dir,
+                    bstr::BStr::new(dir_path),
+                    // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a
+                    // freshly boxed entry (see block-wide note above).
+                    unsafe { (*dir_entries_ptr).data.count() },
+                );
                 dir_entries_option = rfs!().entries.put(
                     &mut cached_dir_entry_result,
                     Fs::file_system::real_fs::EntriesOption::Entries(
@@ -4620,25 +4727,24 @@ impl<'a> Resolver<'a> {
                         unsafe { &mut *dir_entries_ptr },
                     ),
                 )?;
-                // bun.fs.debug("readdir({f}, {s}) = {d}", ...) — TODO(port): scoped log
             }
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            // PORT NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
-            // `self.dir_cache` (and `*self`) are reborrowable for the call below.
-            // SAFETY: ARENA — `dir_cache()` singleton (see PORT NOTE). Stacked Borrows: bind
-            // ONE `&mut HashMap` and derive BOTH slot pointers from it so they share a parent
-            // tag — a second `&mut *self.dir_cache()` Unique retag of the whole `BSSMapInner`
-            // (whose `backing_buf` is inline) would pop `dir_info_ptr`'s tag before
-            // `dir_info_uncached` writes through it. Spec resolver.zig:3022/3030 routes both
-            // through the single raw `r.dir_cache: *HashMap` with no intermediate retag.
-            // NOTE: erasing `&mut V` to `*mut V` does NOT, by itself, survive a sibling Unique
-            // retag of the parent allocation; the shared `dc` parent is what keeps both live.
-            let dc = self.dir_cache_mut();
-            let dir_info_ptr: *mut DirInfo::DirInfo =
-                dc.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
-            let parent_dir_ptr = dc.at_index(top_parent.index).map(DirInfoRef::from_slot);
+            // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+            // Both slot pointers are rooted at the singleton, so the map
+            // reborrows inside `dir_info_uncached` cannot pop them.
+            let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
+                DirInfo::put_slot(
+                    self.dir_cache(),
+                    &mut queue_top.result,
+                    DirInfo::DirInfo::default(),
+                )
+            }?;
+            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
+            // `put`; resolver mutex held.
+            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -4661,13 +4767,9 @@ impl<'a> Resolver<'a> {
 
                 // Is the directory we're searching for actually a file?
             } else if queue_slice_len == 1 {
-                // const next_in_queue = queue_slice[0];
-                // const next_basename = std.fs.path.basename(next_in_queue.unsafe_path);
-                // if (dir_info_ptr.getEntries(r.generation)) |entries| {
-                //     if (entries.get(next_basename) != null) {
-                //         return null;
-                //     }
-                // }
+                // (Unimplemented fast path: if this directory's entries already
+                // contain the next queue entry's basename, the "directory" being
+                // searched for is actually a file and resolution could bail early.)
             }
         }
 
@@ -4676,7 +4778,7 @@ impl<'a> Resolver<'a> {
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
     // official TypeScript compiler
-    pub fn match_tsconfig_paths(
+    pub(crate) fn match_tsconfig_paths(
         &mut self,
         tsconfig: &TSConfigJSON,
         path: &[u8],
@@ -4709,7 +4811,7 @@ impl<'a> Resolver<'a> {
 
         // Check for exact matches first
         {
-            // PORT NOTE: ArrayHashMap has no `&self` (key,value) iterator; zip the
+            // NOTE: ArrayHashMap has no `&self` (key,value) iterator; zip the
             // parallel `keys()`/`values()` slices (insertion order).
             for (key, value) in tsconfig
                 .paths
@@ -4769,7 +4871,8 @@ impl<'a> Resolver<'a> {
                 // because we want the output to always be deterministic
                 let plen = i32::try_from(prefix.len()).expect("int cast");
                 let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.starts_with(prefix)
+                if path.len() >= prefix.len() + suffix.len()
+                    && path.starts_with(prefix)
                     && path.ends_with(suffix)
                     && (plen > longest_match_prefix_length
                         || (plen == longest_match_prefix_length
@@ -4863,15 +4966,14 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    pub fn load_package_imports(
+    pub(crate) fn load_package_imports(
         &mut self,
         import_path: &[u8],
-        // PORT NOTE: `DirInfoRef` (not `&mut`) — `handle_esm_resolution` re-enters
+        // NOTE: `DirInfoRef` (not `&mut`) — `handle_esm_resolution` re-enters
         // `dir_cache` via `dir_info_cached(dirname(abs_esm_path))`; for any
         // imports-map entry resolving to `./<file>` that dirname equals
         // `dir_info.abs_path`, re-deriving `&mut` to the SAME slot while a
         // `&mut` param's FnEntry protector is live is aliased-&mut UB.
-        // Spec resolver.zig:3182 takes raw `*DirInfo`.
         dir_info: DirInfoRef,
         kind: ast::ImportKind,
         global_cache: GlobalCache,
@@ -4885,7 +4987,7 @@ impl<'a> Resolver<'a> {
                 bstr::BStr::new(package_json.source.path.text)
             ));
             debug.increase_indent();
-            // defer debug.decreaseIndent() — TODO(port): missing matching decrease in Zig too
+            // No matching `decreaseIndent()` — the indent is intentionally leaked here.
         }
         let imports_map = package_json.imports.as_ref().unwrap();
 
@@ -4900,9 +5002,9 @@ impl<'a> Resolver<'a> {
         }
         let mut module_type = options::ModuleType::Unknown;
 
-        // PORT NOTE: reshaped for borrowck — Zig kept a raw `*DebugLogs` inside
-        // `ESModule` across the subsequent `&mut self` calls. In Rust that is
-        // aliased-&mut UB, so the `ESModule` is constructed as a temporary whose
+        // NOTE: keeping the `ESModule`'s borrow of `self.debug_logs` alive
+        // across the subsequent `&mut self` calls would be aliased-&mut UB, so
+        // the `ESModule` is constructed as a temporary whose
         // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
         let esm_resolution = ESModule {
             conditions: match kind {
@@ -4969,7 +5071,7 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    pub fn check_browser_map<const KIND: BrowserMapPathKind>(
+    pub(crate) fn check_browser_map<const KIND: BrowserMapPathKind>(
         &mut self,
         dir_info: &DirInfo::DirInfo,
         input_path_: &[u8],
@@ -5062,19 +5164,19 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    pub fn load_from_main_field(
+    pub(crate) fn load_from_main_field(
         &mut self,
         path: &[u8],
-        // PORT NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
-        // may return `dir_info` itself (resolver.zig:4161 self-browser-scope),
-        // which would alias a live `&mut`. Spec uses raw `*DirInfo`.
+        // NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
+        // may return `dir_info` itself (self-browser-scope),
+        // which would alias a live `&mut`.
         dir_info: DirInfoRef,
         _field_rel_path: &[u8],
         field: &[u8],
         extension_order: options::ExtOrder,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let mut field_rel_path = _field_rel_path;
+        let field_rel_path = _field_rel_path;
         // Is this a directory?
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
@@ -5095,6 +5197,10 @@ impl<'a> Resolver<'a> {
             }};
         }
 
+        let mut field_abs_path: &[u8] = self
+            .fs_ref()
+            .abs_buf(&[path, field_rel_path], bufs!(field_abs_path));
+
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
@@ -5102,7 +5208,7 @@ impl<'a> Resolver<'a> {
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
-                            field_rel_path,
+                            field_abs_path,
                         )
                     {
                         // Is the path disabled?
@@ -5122,13 +5228,14 @@ impl<'a> Resolver<'a> {
                             dec_ret!(MatchStatus::Success);
                         }
 
-                        field_rel_path = remap;
+                        // `remap` is relative to the package that owns the browser map.
+                        field_abs_path = self
+                            .fs_ref()
+                            .abs_buf(&[browser_scope.abs_path, remap], bufs!(field_abs_path));
                     }
                 }
             }
         }
-        let _paths = [path, field_rel_path];
-        let field_abs_path = self.fs_ref().abs_buf(&_paths, bufs!(field_abs_path));
 
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
@@ -5151,7 +5258,6 @@ impl<'a> Resolver<'a> {
                     secondary: None,
                 },
                 dirname_fd: result.dirname_fd,
-                diff_case: result.diff_case,
                 ..Default::default()
             };
             dec_ret!(MatchStatus::Success);
@@ -5174,19 +5280,19 @@ impl<'a> Resolver<'a> {
         r
     }
 
-    // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.zig
-    // (no Zig callers; exported to C++ only)
+    // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.rs
+    // (exported to C++ only)
 
-    // PORT NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so
+    // NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so
     // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
-    pub fn load_as_index(
+    pub(crate) fn load_as_index(
         &mut self,
         dir_info: DirInfoRef,
         extension_order: options::ExtOrder,
         out: &mut MatchResult,
     ) -> MatchStatus {
         // Try the "index" file with extensions
-        // PORT NOTE: index by `0..len` so each iteration takes a fresh short
+        // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_index_with_extension` (matches `extra_cjs_extensions` loop below).
         let n = self.opts.ext_order_slice(extension_order).len();
@@ -5202,7 +5308,7 @@ impl<'a> Resolver<'a> {
                 return MatchStatus::Success;
             }
         }
-        // PORT NOTE: index by `0..len` so each iteration takes a fresh short
+        // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_index_with_extension` (avoids the forbidden lifetime-extension cast).
         let n = self.opts.extra_cjs_extensions.len();
@@ -5238,60 +5344,74 @@ impl<'a> Resolver<'a> {
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
-        if let Some(entries) = dir_info.get_entries_ref(self.generation) {
-            if let Some(lookup) = entries.get(&base[..]) {
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                if unsafe { lookup.entry().kind(rfs, self.store_fd) }
-                    == Fs::file_system::EntryKind::File
-                {
-                    let out_buf: &[u8] = {
-                        if lookup.entry().abs_path.is_empty() {
-                            let parts = [dir_info.abs_path, &base[..]];
-                            let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
-                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                            // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *lookup.entry }.abs_path = PathString::init(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(out_buf_)
-                                    .expect("unreachable"),
-                            );
-                        }
-                        lookup.entry().abs_path.slice()
-                    };
-
-                    if let Some(debug) = self.debug_logs.as_mut() {
-                        debug.add_note_fmt(format_args!(
-                            "Found file: \"{}\"",
-                            bstr::BStr::new(out_buf)
-                        ));
+        // Lookup + listing fd in one critical section (see `DirInfo::get_entry`
+        // for the rewrite this guards against); the fd gate matches
+        // `DirInfo::get_file_descriptor`.
+        let looked_up = {
+            let realfs = &mut Fs::FileSystem::instance().fs;
+            let _entries_lock = realfs.entries_mutex.lock_guard();
+            dir_info
+                .get_entries_ref_locked(self.generation)
+                .map(|entries| {
+                    (
+                        entries.get(&base[..]),
+                        if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                            entries.fd
+                        } else {
+                            FD::INVALID
+                        },
+                    )
+                })
+        };
+        if let Some((Some(lookup), dirname_fd)) = looked_up {
+            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+            // rewrite inside `kind()` is serialized on the per-entry mutex.
+            if unsafe { lookup.entry().kind(rfs, self.store_fd) }
+                == Fs::file_system::EntryKind::File
+            {
+                let out_buf: &[u8] = {
+                    if lookup.entry().abs_path.is_empty() {
+                        let parts = [dir_info.abs_path, &base[..]];
+                        let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
+                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                        // evaluated before LHS `&mut Entry` is materialized.
+                        unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
+                            self.fs_ref()
+                                .dirname_store
+                                .append_slice(out_buf_)
+                                .expect("unreachable"),
+                        );
                     }
+                    lookup.entry().abs_path.as_bytes()
+                };
 
-                    if let Some(package_json) = dir_info.package_json() {
-                        *out = MatchResult {
-                            path_pair: PathPair {
-                                primary: Path::init(out_buf),
-                                secondary: None,
-                            },
-                            diff_case: lookup.diff_case,
-                            package_json: Some(std::ptr::from_ref(package_json)),
-                            dirname_fd: dir_info.get_file_descriptor(),
-                            ..Default::default()
-                        };
-                        return MatchStatus::Success;
-                    }
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug
+                        .add_note_fmt(format_args!("Found file: \"{}\"", bstr::BStr::new(out_buf)));
+                }
 
+                if let Some(package_json) = dir_info.package_json() {
                     *out = MatchResult {
                         path_pair: PathPair {
                             primary: Path::init(out_buf),
                             secondary: None,
                         },
-                        diff_case: lookup.diff_case,
-                        dirname_fd: dir_info.get_file_descriptor(),
+                        package_json: Some(std::ptr::from_ref(package_json)),
+                        dirname_fd,
                         ..Default::default()
                     };
                     return MatchStatus::Success;
                 }
+
+                *out = MatchResult {
+                    path_pair: PathPair {
+                        primary: Path::init(out_buf),
+                        secondary: None,
+                    },
+                    dirname_fd,
+                    ..Default::default()
+                };
+                return MatchStatus::Success;
             }
         }
 
@@ -5306,11 +5426,11 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    pub fn load_as_index_with_browser_remapping(
+    pub(crate) fn load_as_index_with_browser_remapping(
         &mut self,
-        // PORT NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
-        // may return `dir_info` itself (resolver.zig:4161 self-browser-scope),
-        // which would alias a live `&mut`. Spec uses raw `*DirInfo`.
+        // NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
+        // may return `dir_info` itself (self-browser-scope),
+        // which would alias a live `&mut`.
         dir_info: DirInfoRef,
         path_: &[u8],
         extension_order: options::ExtOrder,
@@ -5334,16 +5454,18 @@ impl<'a> Resolver<'a> {
                 const FIELD_REL_PATH: &[u8] = b"index";
 
                 if let Some(browser_json) = browser_scope.package_json() {
+                    let index_paths = [path, FIELD_REL_PATH];
+                    let index_abs_path = self.fs_ref().abs_buf(&index_paths, bufs!(remap_path));
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
-                            FIELD_REL_PATH,
+                            index_abs_path,
                         )
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let paths = [path, FIELD_REL_PATH];
-                            let new_path = self.fs_ref().abs_buf(&paths, bufs!(remap_path));
+                            let new_path =
+                                self.fs_ref().abs_alloc(&index_paths).expect("unreachable");
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             *out = MatchResult {
@@ -5357,7 +5479,8 @@ impl<'a> Resolver<'a> {
                             return MatchStatus::Success;
                         }
 
-                        let new_paths = [path, remap];
+                        // `remap` is relative to the browser scope, which may be an ancestor of `path`.
+                        let new_paths = [browser_scope.abs_path, remap];
                         let remapped_abs = self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));
 
                         // Is this a file
@@ -5369,7 +5492,6 @@ impl<'a> Resolver<'a> {
                                     primary: Path::init(file_result.path),
                                     secondary: None,
                                 },
-                                diff_case: file_result.diff_case,
                                 ..Default::default()
                             };
                             return MatchStatus::Success;
@@ -5394,7 +5516,7 @@ impl<'a> Resolver<'a> {
         self.load_as_index(dir_info, extension_order, out)
     }
 
-    pub fn load_as_file_or_directory(
+    pub(crate) fn load_as_file_or_directory(
         &mut self,
         path: &[u8],
         kind: ast::ImportKind,
@@ -5421,7 +5543,6 @@ impl<'a> Resolver<'a> {
                                     primary: Path::init(file.path),
                                     secondary: None,
                                 },
-                                diff_case: file.diff_case,
                                 dirname_fd: file.dirname_fd,
                                 package_json: Some(std::ptr::from_ref(package_json)),
                                 file_fd: file.file_fd,
@@ -5433,16 +5554,13 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if cfg!(debug_assertions) {
-                debug_assert!(bun_paths::is_absolute(file.path));
-            }
+            debug_assert!(bun_paths::is_absolute(file.path));
 
             *out = MatchResult {
                 path_pair: PathPair {
                     primary: Path::init(file.path),
                     secondary: None,
                 },
-                diff_case: file.diff_case,
                 dirname_fd: file.dirname_fd,
                 file_fd: file.file_fd,
                 ..Default::default()
@@ -5468,7 +5586,7 @@ impl<'a> Resolver<'a> {
             }};
         }
 
-        // PORT NOTE: `DirInfoRef` (matching spec resolver.zig:3674 raw `*DirInfo`).
+        // NOTE: `DirInfoRef` (not `&mut`).
         // The callees fetch `get_enclosing_browser_scope()` which can resolve
         // back to this same BSSMap slot — holding a `&mut` here would alias.
         let dir_info: DirInfoRef = match self.dir_info_cached(path) {
@@ -5476,11 +5594,11 @@ impl<'a> Resolver<'a> {
             Ok(None) => dec_ret!(MatchStatus::NotFound),
             Err(_err) => {
                 #[cfg(debug_assertions)]
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "err: {} reading {}",
                     bstr::BStr::new(_err.name()),
                     bstr::BStr::new(path)
-                ));
+                );
                 dec_ret!(MatchStatus::NotFound);
             }
         };
@@ -5497,11 +5615,9 @@ impl<'a> Resolver<'a> {
                 // never mutated during resolve.
                 let main_field_keys = bun_ptr::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
                 let mf_ext_order = options::ExtOrder::MainField;
-                // Spec resolver.zig compares the *pointer* of `opts.main_fields`
-                // against the per-target default to detect "user did not pass
-                // --main-fields"; the bundler now projects that as an explicit
-                // bool because the owned `Box<[Box<[u8]>]>` can never alias a
-                // static.
+                // The bundler projects "user did not pass --main-fields" as an
+                // explicit bool because the owned `Box<[Box<[u8]>]>` can never
+                // alias a static default to compare pointers against.
                 let auto_main = self.opts.main_fields_is_default;
 
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -5548,7 +5664,13 @@ impl<'a> Resolver<'a> {
                     // use a special per-module automatic algorithm to decide whether to
                     // use "module" or "main" based on whether the package is imported
                     // using "import" or "require".
-                    if auto_main && key == b"module" {
+                    //
+                    // "jsnext:main" is the historical name for "module" (same semantics:
+                    // an ESM entry point) and is in the browser default main-field list,
+                    // so it needs the same fallback or `require("pkg")` on a package
+                    // that only has `jsnext:main` + `main` (e.g. moment) resolves to the
+                    // ESM file and hands back `{ default }` instead of the CJS export.
+                    if auto_main && (key == b"module" || key == b"jsnext:main") {
                         let mut auto_main_result = MatchResult::default();
                         let mut auto_main_found = false;
 
@@ -5593,8 +5715,9 @@ impl<'a> Resolver<'a> {
                             if self.prefer_module_field && kind != ast::ImportKind::Require {
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
-                                        "Resolved to \"{}\" using the \"module\" field in \"{}\"",
-                                        bstr::BStr::new(auto_main_result.path_pair.primary.text()),
+                                        "Resolved to \"{}\" using the \"{}\" field in \"{}\"",
+                                        bstr::BStr::new(out.path_pair.primary.text()),
+                                        bstr::BStr::new(key),
                                         bstr::BStr::new(pkg_json.source.path.text)
                                     ));
                                     debug.add_note_fmt(format_args!(
@@ -5610,7 +5733,6 @@ impl<'a> Resolver<'a> {
                                         primary,
                                         secondary: Some(auto_main_result.path_pair.primary),
                                     },
-                                    diff_case: out.diff_case,
                                     dirname_fd: out.dirname_fd,
                                     package_json,
                                     file_fd: auto_main_result.file_fd,
@@ -5620,9 +5742,8 @@ impl<'a> Resolver<'a> {
                             } else {
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
-                                        "Resolved to \"{}\" using the \"{}\" field in \"{}\"",
+                                        "Resolved to \"{}\" using the \"main\" field in \"{}\"",
                                         bstr::BStr::new(auto_main_result.path_pair.primary.text()),
-                                        bstr::BStr::new(key),
                                         bstr::BStr::new(pkg_json.source.path.text)
                                     ));
                                 }
@@ -5651,13 +5772,12 @@ impl<'a> Resolver<'a> {
         dec_ret!(MatchStatus::NotFound);
     }
 
-    pub fn load_as_file(
+    pub(crate) fn load_as_file(
         &mut self,
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
-        // SAFETY: PORT — RealFS is the global singleton (fs.zig); Zig held a raw
-        // pointer here (resolver.zig:3784). Derive provenance from the raw
+        // SAFETY: RealFS is the global singleton. Derive provenance from the raw
         // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
         // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
         // under Stacked Borrows. We re-borrow `&mut *rfs` at each use site.
@@ -5694,16 +5814,14 @@ impl<'a> Resolver<'a> {
                 self.generation,
                 self.store_fd,
             ) {
-                Ok(e) => bun_ptr::BackRef::new_mut(e),
+                Ok(e) => bun_ptr::BackRef::new(&*e),
                 Err(_) => dec_ret!(None),
             };
 
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
-                e if e == bun_core::err!("ENOENT")
-                    || e == bun_core::err!("FileNotFound")
-                    || e == bun_core::err!("ENOTDIR")
-                    || e == bun_core::err!("NotDir") => {}
+                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -5719,15 +5837,6 @@ impl<'a> Resolver<'a> {
             dec_ret!(None);
         }
 
-        // ARENA-backed `DirEntry` (see `dir_entry` note above) — `BackRef` so each
-        // `entries!()` is a fresh safe shared borrow instead of an open-coded raw deref.
-        let entries = bun_ptr::BackRef::new(dir_entry.entries());
-        macro_rules! entries {
-            () => {
-                entries.get()
-            };
-        }
-
         let base = bun_paths::basename(path);
 
         // Try the plain path without any extensions
@@ -5738,8 +5847,13 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        if let Some(query) = entries!().get(base) {
-            // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+        // Each probe of the listing goes through `EntriesOption::lookup`, a
+        // single `entries_mutex` critical section (see its doc for the
+        // in-place rewrite this guards against).
+        let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
+        if let Some(query) = plain_query {
+            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+            // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -5752,29 +5866,27 @@ impl<'a> Resolver<'a> {
                         let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *query.entry }.abs_path = PathString::init(
+                        unsafe { &mut *query.entry }.abs_path = Interned::from_static(
                             self.fs_ref()
                                 .dirname_store
                                 .append_slice(joined)
                                 .expect("unreachable"),
                         );
                     }
-                    crate::path_string_static(&query.entry().abs_path)
+                    query.entry().abs_path.as_bytes()
                 };
 
                 dec_ret!(Some(LoadResult {
                     path: abs_path,
-                    diff_case: query.diff_case,
-                    dirname_fd: entries!().fd,
+                    dirname_fd: plain_dirname_fd,
                     file_fd: query.entry().cache().fd,
-                    dir_info: None,
                 }));
             }
         }
 
         // Try the path with extensions
         bufs!(load_as_file)[..path.len()].copy_from_slice(path);
-        // PORT NOTE: index by `0..len` so each iteration takes a fresh short
+        // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_extension` (matches `extra_cjs_extensions` loop below).
         let n = self.opts.ext_order_slice(extension_order).len();
@@ -5783,12 +5895,12 @@ impl<'a> Resolver<'a> {
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
             let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
+            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
 
-        // PORT NOTE: index by `0..len` so each iteration takes a fresh short
+        // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_extension` (avoids the forbidden lifetime-extension cast).
         let n = self.opts.extra_cjs_extensions.len();
@@ -5796,7 +5908,7 @@ impl<'a> Resolver<'a> {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
+            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -5818,8 +5930,7 @@ impl<'a> Resolver<'a> {
         // https://github.com/microsoft/TypeScript/issues/4595
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            // PORT NOTE: spec resolver.zig:3890-3891 — Zig `and` binds tighter than `or`, so the
-            // node_modules gate only applies to the `.mjs` arm. Mirror that precedence exactly.
+            // NOTE: the node_modules gate only applies to the `.mjs` arm.
             if ext == b".js"
                 || ext == b".jsx"
                 || (ext == b".mjs"
@@ -5840,8 +5951,10 @@ impl<'a> Resolver<'a> {
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
-                    if let Some(query) = entries!().get(&buffer[..]) {
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                    let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
+                    if let Some(query) = ts_query {
+                        // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                        // rewrite inside `kind()` is serialized on the per-entry mutex.
                         if unsafe { query.entry().kind(rfs, self.store_fd) }
                             == Fs::file_system::EntryKind::File
                         {
@@ -5863,7 +5976,7 @@ impl<'a> Resolver<'a> {
                                             && entry_dir[entry_dir.len() - 1] == SEP
                                         {
                                             let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
-                                            PathString::init(
+                                            Interned::from_static(
                                                 self.fs_ref()
                                                     .filename_store
                                                     .append_parts(&parts)
@@ -5873,7 +5986,7 @@ impl<'a> Resolver<'a> {
                                         } else {
                                             let parts: [&[u8]; 3] =
                                                 [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
-                                            PathString::init(
+                                            Interned::from_static(
                                                 self.fs_ref()
                                                     .filename_store
                                                     .append_parts(&parts)
@@ -5884,12 +5997,10 @@ impl<'a> Resolver<'a> {
                                         // fully evaluated above — sole `&mut Entry` for this write.
                                         unsafe { &mut *query.entry }.abs_path = new_abs;
                                     }
-                                    crate::path_string_static(&query.entry().abs_path)
+                                    query.entry().abs_path.as_bytes()
                                 },
-                                diff_case: query.diff_case,
-                                dirname_fd: entries!().fd,
+                                dirname_fd: ts_dirname_fd,
                                 file_fd: query.entry().cache().fd,
-                                dir_info: None,
                             }));
                         }
                     }
@@ -5914,7 +6025,9 @@ impl<'a> Resolver<'a> {
             // For existent directories which don't find a match
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
-                watcher.watch(entries!().dir, entries!().fd);
+                if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
+                    watcher.watch(dir, fd);
+                }
             }
         }
         dec_ret!(None);
@@ -5925,17 +6038,12 @@ impl<'a> Resolver<'a> {
         base: &[u8],
         path: &[u8],
         ext: &[u8],
-        entries: &Fs::file_system::DirEntry,
+        dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>,
     ) -> Option<LoadResult> {
         // SAFETY: PORT — see load_as_file; derive `rfs` from the raw `*mut FileSystem`
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        // BACKREF — `entries` is a slot in the BSSMap-backed `DirEntry` arena
-        // (see `load_as_file`); detach the borrowck lifetime via `BackRef` so the
-        // `&mut self` calls below (debug_logs / fs_ref) don't conflict, while
-        // each read stays a safe `BackRef: Deref`.
-        let entries = bun_ptr::BackRef::new(entries);
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
@@ -5947,8 +6055,10 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        if let Some(query) = entries.get().get(file_name) {
-            // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+        let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
+        if let Some(query) = ext_query {
+            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+            // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -5966,7 +6076,7 @@ impl<'a> Resolver<'a> {
                         // materialized for the write — no overlapping unique borrow.
                         unsafe { &mut *query.entry }.abs_path = if query.entry().abs_path.is_empty()
                         {
-                            PathString::init(
+                            Interned::from_static(
                                 self.fs_ref()
                                     .dirname_store
                                     .append_slice(&buffer[..])
@@ -5975,12 +6085,10 @@ impl<'a> Resolver<'a> {
                         } else {
                             query.entry().abs_path
                         };
-                        crate::path_string_static(&query.entry().abs_path)
+                        query.entry().abs_path.as_bytes()
                     },
-                    diff_case: query.diff_case,
-                    dirname_fd: entries.fd,
+                    dirname_fd,
                     file_fd: query.entry().cache().fd,
-                    dir_info: None,
                 });
             }
         }
@@ -5999,31 +6107,22 @@ impl<'a> Resolver<'a> {
         parent_index: allocators::IndexType,
         fd: FD,
         package_id: Option<Install::PackageID>,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         let result = _result;
 
-        // SAFETY: PORT — RealFS / DirEntry are global ARENA singletons (BSSMap-backed);
-        // Zig held raw pointers here (resolver.zig:4004 `rfs: *Fs.FileSystem.RealFS`).
-        // Derive `rfs_ptr` from the raw `*mut FileSystem` field so later `unsafe { &mut *self.fs() }` calls
-        // (`abs_buf` / `dirname_store.append_slice` in the parent-symlink block) cannot
-        // invalidate it under Stacked Borrows. Re-borrow at EACH use site so no `&mut`
-        // outlives a `unsafe { &mut *self.fs() }` / `get_entries()` / `parse_package_json()` call.
-        // TODO(port): split RealFS borrow once entries iteration is interior-mutability-backed.
+        // SAFETY: RealFS is the process-global ARENA singleton. `Entry::kind` /
+        // `Entry::symlink` take it by raw pointer and reborrow only internally,
+        // so the interleaved `&mut self` calls below cannot invalidate `rfs_ptr`
+        // under Stacked Borrows.
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        // SAFETY: caller passes `_entries` as a live slot in the global BSSMap-backed entries cache (ARENA).
-        let entries_ptr: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
-        // PORT NOTE: re-borrow per use; see SAFETY note above.
-        macro_rules! rfs {
-            () => {
-                // SAFETY: `rfs_ptr` points at the process-global RealFS singleton; see note above.
-                // Caller must invoke from an `unsafe` block (all sites wrap the unsafe `kind`/`symlink` call).
-                &mut *rfs_ptr
-            };
-        }
+        // SAFETY: `_entries` is a live slot (caller contract); the payload
+        // `DirEntry` is a separate process-lifetime allocation, so the shared
+        // `BackRef` survives entries-map traffic. All uses below are `&self`
+        // reads under `entries_mutex`.
+        let dir_entries = bun_ptr::BackRef::new(unsafe { &*_entries }.entries());
         macro_rules! entries {
             () => {
-                // SAFETY: `entries_ptr` is a live BSSMap-backed `DirEntry` slot (ARENA); see note above.
-                unsafe { &mut *entries_ptr }
+                dir_entries.get()
             };
         }
 
@@ -6064,8 +6163,8 @@ impl<'a> Resolver<'a> {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    unsafe { entry.entry().kind(rfs!(), self.store_fd) }
+                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                    unsafe { entry.entry().kind(rfs_ptr, self.store_fd) }
                         == Fs::file_system::EntryKind::Dir,
                 );
             }
@@ -6082,7 +6181,6 @@ impl<'a> Resolver<'a> {
                             BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
                         }
 
-                        // TODO(port): std.fs.Dir.openDirZ → bun_sys
                         let Ok(file) = bun_sys::open_dir_z(
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
@@ -6117,8 +6215,8 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        if unsafe { q.entry().kind(rfs!(), self.store_fd) }
+                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        if unsafe { q.entry().kind(rfs_ptr, self.store_fd) }
                             == Fs::file_system::EntryKind::Dir
                         {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
@@ -6178,7 +6276,7 @@ impl<'a> Resolver<'a> {
                 if parent_package_json.dependencies.map.count() > 0
                     || parent_package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
                 {
-                    // PORT NOTE: store the raw `NonNull` field (not the
+                    // NOTE: store the raw `NonNull` field (not the
                     // `&'static` accessor result) so mut-provenance flows
                     // through to `enqueue_dependency_to_resolve`.
                     info.package_json_for_dependencies = parent_.package_json;
@@ -6194,41 +6292,43 @@ impl<'a> Resolver<'a> {
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if !self.opts.preserve_symlinks {
-                if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
+                // The only caller that reaches this with `parent` set
+                // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
+                // mutex is non-recursive, so go through the `_locked` accessor.
+                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
-                        // `entries_ptr` is a slot in the BSSMap-backed entries singleton —
-                        // route the read-only `.fd` access through the existing
-                        // `entries!()` re-borrow macro instead of a raw-ptr deref.
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
                             && !lookup.entry().cache().fd.is_valid()
                             && self.store_fd
                         {
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = lookup.entry().mutex.lock_guard();
                             lookup.entry().set_cache_fd(entries_fd);
                         }
-                        // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+                        // SAFETY: EntryStore-owned slot — read-only borrow,
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
 
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        let mut symlink = unsafe { entry.symlink(rfs!(), self.store_fd) };
+                        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
+                        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
+                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
-                                write!(
+                                let _ = write!(
                                     &mut buf,
                                     "Resolved symlink \"{}\" to \"{}\"",
                                     bstr::BStr::new(path),
                                     bstr::BStr::new(symlink)
-                                )
-                                .ok();
+                                );
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
                         } else if !parent_.abs_real_path.is_empty() {
                             // this might leak a little i'm not sure
                             let parts = [parent_.abs_real_path, base];
-                            // PORT NOTE: split into two statements so the two `&mut FileSystem`
+                            // NOTE: split into two statements so the two `&mut FileSystem`
                             // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
                             let joined = self
                                 .fs_ref()
@@ -6241,16 +6341,21 @@ impl<'a> Resolver<'a> {
 
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
-                                write!(
+                                let _ = write!(
                                     &mut buf,
                                     "Resolved symlink \"{}\" to \"{}\"",
                                     bstr::BStr::new(path),
                                     bstr::BStr::new(symlink)
-                                )
-                                .ok();
+                                );
                                 logs.add_note(buf);
                             }
-                            lookup.entry().set_cache_symlink(PathString::init(symlink));
+                            {
+                                // Every cached-`Entry` rewrite takes the per-entry mutex.
+                                let _entry_guard = lookup.entry().mutex.lock_guard();
+                                lookup
+                                    .entry()
+                                    .set_cache_symlink(Interned::from_static(symlink));
+                            }
                             info.abs_real_path = symlink;
                         }
                     }
@@ -6269,8 +6374,8 @@ impl<'a> Resolver<'a> {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
                 let entry = lookup.entry();
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                if unsafe { entry.kind(rfs!(), self.store_fd) } == Fs::file_system::EntryKind::File
+                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
                     info.package_json = if self.use_package_manager()
                         && !info.has_node_modules()
@@ -6314,7 +6419,7 @@ impl<'a> Resolver<'a> {
                         if pkg.dependencies.map.count() > 0
                             || pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID
                         {
-                            // PORT NOTE: store the raw `NonNull` field (not the
+                            // NOTE: store the raw `NonNull` field (not the
                             // `&'static` accessor result) so mut-provenance flows
                             // through to `enqueue_dependency_to_resolve`.
                             info.package_json_for_dependencies = info.package_json;
@@ -6339,8 +6444,8 @@ impl<'a> Resolver<'a> {
                     // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                     // dies (NLL) before any later `&mut` to this slot.
                     let entry = lookup.entry();
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    if unsafe { entry.kind(rfs!(), self.store_fd) }
+                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                    if unsafe { entry.kind(rfs_ptr, self.store_fd) }
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"tsconfig.json".as_slice()];
@@ -6355,8 +6460,8 @@ impl<'a> Resolver<'a> {
                         // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        if unsafe { entry.kind(rfs!(), self.store_fd) }
+                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        if unsafe { entry.kind(rfs_ptr, self.store_fd) }
                             == Fs::file_system::EntryKind::File
                         {
                             let parts = [path, b"jsconfig.json".as_slice()];
@@ -6368,7 +6473,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
             } else if parent.is_none() {
-                // PORT NOTE: re-borrow as 'static so the `&self.opts` borrow ends before
+                // NOTE: re-borrow as 'static so the `&self.opts` borrow ends before
                 // `self.parse_tsconfig(&mut self, ...)`. `tsconfig_override` is owned by
                 // BundleOptions (lives for the resolver's lifetime).
                 // SAFETY: `tsconfig_override` is owned by `self.opts` (resolver-lifetime);
@@ -6392,8 +6497,7 @@ impl<'a> Resolver<'a> {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;
-                        if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")
-                        {
+                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -6402,9 +6506,8 @@ impl<'a> Resolver<'a> {
                                     bun_core::fmt::quote(pretty)
                                 ),
                             );
-                        } else if err != bun_core::err!("ParseErrorAlreadyLogged")
-                            && err != bun_core::err!("IsDir")
-                            && err != bun_core::err!("EISDIR")
+                        } else if err != crate::Error::ParseErrorAlreadyLogged
+                            && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                         {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
@@ -6419,10 +6522,11 @@ impl<'a> Resolver<'a> {
                         None
                     }
                 };
-                // PORT NOTE: spec resolver.zig:4207 assigns info.tsconfig_json here (a raw
-                // ?*TSConfigJSON), then frees that allocation in the merge loop below before
-                // reassigning. With Rust references (Option<&'static TSConfigJSON>, dir_info.rs)
-                // that briefly-dangling state is UB. Defer the assignment to after the merge —
+                // NOTE: assigning info.tsconfig_json here and then freeing that
+                // allocation in the merge loop below before reassigning would
+                // leave a briefly-dangling reference
+                // (Option<&'static TSConfigJSON>, dir_info.rs) — UB.
+                // Defer the assignment to after the merge —
                 // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
                 // tsconfig_json to None otherwise.
                 if let Some(tsconfig_json) = parsed_tsconfig {
@@ -6481,6 +6585,9 @@ impl<'a> Resolver<'a> {
                         let mc = unsafe { &mut *merged_config };
                         mc.emit_decorator_metadata =
                             mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+                        if let Some(v) = parent_config.use_define_for_class_fields {
+                            mc.use_define_for_class_fields = Some(v);
+                        }
                         if !parent_config.base_url.is_empty() {
                             mc.base_url = core::mem::take(&mut parent_config.base_url);
                         }
@@ -6498,12 +6605,9 @@ impl<'a> Resolver<'a> {
                         // "not defined" from "defined as {}" — the latter clears inherited
                         // paths per TypeScript semantics.
                         if !parent_config.base_url_for_paths.is_empty() {
-                            // The previous merged_config.paths is being replaced; free its
-                            // backing storage before overwriting so the PathsMap from the
-                            // deeper config doesn't leak. Each value is a []string slice
-                            // that was separately heap-allocated in TSConfigJSON.parse()
-                            // (tsconfig_json.zig), so free those before the map itself.
-                            // (In Rust, dropping the map frees values automatically.)
+                            // The previous merged_config.paths is being replaced;
+                            // dropping the map frees the values automatically, so the
+                            // PathsMap from the deeper config doesn't leak.
                             mc.paths = core::mem::take(&mut parent_config.paths);
                             mc.base_url_for_paths =
                                 core::mem::take(&mut parent_config.base_url_for_paths);
@@ -6518,8 +6622,8 @@ impl<'a> Resolver<'a> {
                         // (strings live in dirname_store or default_allocator and outlive the
                         // struct). The heap-allocated TSConfigJSON itself is no longer needed;
                         // without this, every intermediate config in an extends chain leaks on
-                        // each dirInfoUncached() call, which is especially bad under HMR where
-                        // bustDirCache triggers a re-parse of the whole chain on every reload.
+                        // each dir_info_uncached() call, which is especially bad under HMR where
+                        // bust_dir_cache triggers a re-parse of the whole chain on every reload.
                         // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
                         TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
                     }
@@ -6536,34 +6640,12 @@ impl<'a> Resolver<'a> {
     }
 }
 
-impl<'a> Resolver<'a> {
-    /// Port of `pub fn deinit(r: *ThisResolver)` (resolver.zig:601-604).
-    ///
-    /// PORT NOTE: NOT `impl Drop` — the bundler builds a `Resolver` per worker
-    /// thread (see `for_worker`), and all instances share the same `dir_cache`
-    /// singleton. A `Drop` impl would fire once per worker going out of scope,
-    /// resetting the SHARED cache (freeing PackageJSON/TSConfigJSON, closing cached
-    /// fds) while other live Resolvers still hold pointers into it. Spec calls
-    /// `deinit` explicitly exactly once at shutdown; mirror that.
-    pub fn deinit(&mut self) {
-        // Caller is the sole remaining owner at shutdown; no other Resolver alias is live.
-        for di in self.dir_cache_mut().values_mut() {
-            // Zig: `di.deinit()` — releases owned PackageJSON / TSConfigJSON resources
-            // in-place (side effects beyond memory: those Drops close cached fds /
-            // deref intrusive refcounts). Ported as `DirInfo::reset`.
-            di.reset();
-        }
-        // dir_cache is &'static — do not deinit the singleton here
-        // TODO(port): Zig calls dir_cache.deinit() but it's a global BSSMap; revisit ownership
-    }
-}
-
 // ─── nested helper types ───────────────────────────────────────────────────
 
 enum DependencyToResolve {
     NotFound,
     Pending(Box<PendingResolution>),
-    Failure(bun_core::Error),
+    Failure(crate::Error),
     Resolution(Resolution),
 }
 
@@ -6573,16 +6655,19 @@ pub enum BrowserMapPathKind {
     AbsolutePath,
 }
 
-pub struct BrowserMapPath<'b> {
-    pub remapped: &'static [u8],
-    pub cleaned: &'b [u8],
-    pub input_path: &'b [u8],
-    pub extension_order: &'b [Box<[u8]>],
-    pub map: &'b BrowserMap,
+pub(crate) struct BrowserMapPath<'b> {
+    pub(crate) remapped: &'static [u8],
+    pub(crate) cleaned: &'b [u8],
+    pub(crate) input_path: &'b [u8],
+    pub(crate) extension_order: &'b [Box<[u8]>],
+    pub(crate) map: &'b BrowserMap,
 }
 
 impl<'b> BrowserMapPath<'b> {
-    pub fn check_path(&mut self, path_to_check: &[u8]) -> bool {
+    /// On a match only `self.remapped` is updated; the matched candidate may
+    /// borrow threadlocal scratch buffers and must never be stored back into
+    /// the checker.
+    pub(crate) fn check_path(&mut self, path_to_check: &[u8]) -> bool {
         let map = self.map;
 
         let cleaned = self.cleaned;
@@ -6593,8 +6678,6 @@ impl<'b> BrowserMapPath<'b> {
             // cache is process-global); the `'b` borrow on `map` artificially shortens
             // what is process-lifetime storage. `Interned` is the canonical proof type.
             self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
-            // SAFETY: TODO(port): lifetime — extending borrow of caller-owned slice; consumed before checker is dropped.
-            self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(path_to_check) };
             return true;
         }
 
@@ -6617,10 +6700,6 @@ impl<'b> BrowserMapPath<'b> {
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
                     self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-                    // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
-                    self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
-                    // SAFETY: same as above.
-                    self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     return true;
                 }
             }
@@ -6644,8 +6723,6 @@ impl<'b> BrowserMapPath<'b> {
         if let Some(_remapped) = map.get(index_path) {
             // SAFETY: ARENA — see `result` note above.
             self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-            // SAFETY: TODO(port): lifetime — `index_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
-            self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(index_path) };
             return true;
         }
 
@@ -6665,16 +6742,23 @@ impl<'b> BrowserMapPath<'b> {
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
                     self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-                    // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
-                    self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
-                    // SAFETY: same as above.
-                    self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     return true;
                 }
             }
         }
 
         false
+    }
+}
+
+fn primary_side_effects(
+    side_effects: &crate::package_json::SideEffects,
+    path: &[u8],
+) -> SideEffects {
+    if side_effects.has_side_effects(path) {
+        SideEffects::HasSideEffects
+    } else {
+        SideEffects::NoSideEffectsPackageJson
     }
 }
 
@@ -6690,37 +6774,25 @@ fn is_dot_slash(path: &[u8]) -> bool {
     }
 }
 
-// ModuleTypeMap = bun.ComptimeStringMap(options.ModuleType, .{...})
-//
-// PERF(port): was `phf::Map<&[u8], ModuleType>`. With only 4 keys — all
-// length 4 — the phf hash + index probe is strictly more work than a single
-// length gate followed by 4-byte compares (which LLVM lowers to one u32
-// load + compare per arm once `len == 4` is established). Mirrors the
-// length-gated dispatch used in `clap::find_param`.
-#[inline]
-fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
-    if ext.len() != 4 {
-        return None;
-    }
-    match ext {
-        b".mjs" | b".mts" => Some(options::ModuleType::Esm),
-        b".cjs" | b".cts" => Some(options::ModuleType::Cjs),
-        _ => None,
-    }
+bun_core::comptime_string_map! {
+    static MODULE_TYPE_FROM_EXT: options::ModuleType = {
+        b".mjs" => options::ModuleType::Esm,
+        b".mts" => options::ModuleType::Esm,
+        b".cjs" => options::ModuleType::Cjs,
+        b".cts" => options::ModuleType::Cjs,
+    };
 }
 
-const NODE_MODULE_ROOT_STRING: &[u8] =
-    const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
-
-// `dev` scope (Output.scoped(.Resolver, .visible)) — same scope name as `debuglog` but visible.
-// Folded into the same `Resolver` declared scope; TODO(port): restore the visible/hidden
-// scope distinction.
+#[inline]
+fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
+    MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
 
 pub struct Dirname;
 
 impl Dirname {
-    /// NOT `std.fs.path.dirname`. Resolver-specific upward-traversal dirname
-    /// (resolver.zig:4297): returns trailing-sep-INCLUSIVE slice, never `None`,
+    /// Resolver-specific upward-traversal dirname:
+    /// returns trailing-sep-INCLUSIVE slice, never `None`,
     /// `is_sep_any` on all platforms. Do NOT replace with `bun_core::dirname`.
     pub fn dirname(path: &[u8]) -> &[u8] {
         if path.is_empty() {
@@ -6772,10 +6844,3 @@ impl Dirname {
         &path[0..end_index + 1]
     }
 }
-
-pub struct RootPathPair<'b> {
-    pub base_path: &'b [u8],
-    pub package_json: *const PackageJSON,
-}
-
-// ported from: src/resolver/resolver.zig

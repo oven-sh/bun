@@ -6,7 +6,7 @@ const { getValidatedPath, throwIfNullBytesInFileName } = require("internal/valid
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
 
-/** Implemented in `node_fs_stat_watcher.zig` */
+/** Implemented natively. */
 interface StatWatcherHandle {
   ref();
   unref();

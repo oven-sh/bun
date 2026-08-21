@@ -14,7 +14,11 @@ source "azure-arm" "windows-x64" {
 
   // Build VM — only used during image creation, not for CI runners.
   // CI runner VM sizes are set in ci.mjs (azureVmSizes).
-  vm_size         = "Standard_D4ds_v6"
+  // D4as_v7 (AMD): D4ds_v6 hit repeated AllocationFailed (no capacity for
+  // that size in the region); Azure's allocation-guidance suggested this
+  // size as an in-region alternative. Build-only VM, so the CPU vendor
+  // doesn't affect the produced image.
+  vm_size         = "Standard_D4as_v7"
 
   // Use existing resource group instead of creating a temp one
   build_resource_group_name = var.resource_group

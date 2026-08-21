@@ -38,7 +38,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 
         if (!keyString) {
             auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
-            promise->reject(vm, global, JSC::createError(global, "import() requires a string"_s));
+            promise->reject(vm, JSC::createError(global, "import() requires a string"_s));
             return promise;
         }
 
@@ -50,7 +50,6 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     }
 
     // TODO: make static cast instead of jscast
-    // Use Zig::GlobalObject's function
     return uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false);
 }
 
@@ -88,7 +87,6 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         }
     }
 
-    // Use Zig::GlobalObject's function
     return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap);
 }
 
@@ -96,7 +94,7 @@ static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->rejectAsHandled(vm, globalObject, value);
+    promise->rejectAsHandled(vm, value);
     return promise;
 }
 
@@ -104,7 +102,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->fulfill(vm, globalObject, value);
+    promise->fulfill(vm, value);
     return promise;
 }
 
@@ -148,7 +146,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
             }
 
             // We unconditionally prefix the key with "bake:" inside
-            // BakeProdResolve in production.zig.
+            // BakeProdResolve.
             //
             // But if someone does: `await import(resolve(import.meta.dir, "nav.ts"))`
             // we don't actually want to load it from the Bake production module
@@ -250,7 +248,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();
-    WebCore::JSVMClientData::create(&vm, bunVM);
+    WebCore::JSVMClientData::create(&vm, bunVM, /* worker */ nullptr);
 
     JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
     Bake::GlobalObject* global = Bake::GlobalObject::create(
@@ -263,25 +261,9 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     JSC::gcProtect(global);
 
     global->setConsole(console);
-    global->setStackTraceLimit(10); // Node.js defaults to 10
     global->isThreadLocalDefaultGlobalObject = true;
 
-    // if (shouldDisableStopIfNecessaryTimer) {
     vm.heap.disableStopIfNecessaryTimer();
-    // }
-
-    // if you process.nextTick on a microtask we need thsi
-    // TODO: it segfaults! process.nextTick is scoped out for now i guess!
-    // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
-    // vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
-    //   if (auto nextTickQueue = global->m_nextTickQueue.get()) {
-    //     global->resetOnEachMicrotaskTick();
-    //     // Bun::JSNextTickQueue *queue =
-    //     //     uncheckedDowncast<Bun::JSNextTickQueue>(nextTickQueue);
-    //     // queue->drain(vm, global);
-    //     return;
-    //   }
-    // });
 
     return global;
 }

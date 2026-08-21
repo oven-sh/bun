@@ -10,8 +10,8 @@
 //!
 //! Centralising here means each invariant is documented and audited **once**:
 //!
-//! * `zst::<H>()`         — conjure a ZST handler value (the
-//!   `comptime handler` → monomorphised-ZST trick).
+//! * `zst::<H>()`         — conjure a ZST handler value (handlers are
+//!   monomorphised zero-sized types, so no runtime data is needed).
 //! * `user_mut`           — null-checked `*mut c_void → Option<&mut U>`.
 //! * `handle_mut`         — `*mut Opaque → &mut Opaque` for uWS handles.
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
@@ -25,8 +25,6 @@
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
-
-use crate::us_socket_t;
 
 /// Marker for `#[repr(C)]` zero-sized opaque FFI handles
 /// (`UnsafeCell<[u8; 0]>` + `PhantomPinned`).
@@ -138,9 +136,9 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     }
 }
 
-/// Dereference the `Option<NonNull<T>>` stored in a socket's ext slot
-/// (`socket.ext(**T).*` in Zig). `None` covers the calloc'd-but-not-yet-
-/// stamped window during connect/accept.
+/// Dereference the `Option<NonNull<T>>` stored in a socket's ext slot.
+/// `None` covers the calloc'd-but-not-yet-stamped window during
+/// connect/accept.
 ///
 /// # Safety
 /// The pointee, when present, must be live and uniquely borrowed for `'a`
@@ -149,14 +147,6 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
     // SAFETY: per caller contract above.
     ext.map(|mut p| unsafe { p.as_mut() })
-}
-
-/// `Option<NonNull<T>>` at context creation; pointee (if any) is live and
-/// uniquely accessed.
-#[inline(always)]
-pub unsafe fn socket_ext_owner<'a, T>(s: *mut us_socket_t) -> Option<&'a mut T> {
-    // SAFETY: per caller contract above.
-    unsafe { ext_owner(&*(*s).ext::<Option<NonNull<T>>>()) }
 }
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────
@@ -203,6 +193,16 @@ impl<T> ExtSlot<T> {
             // `Handler::Ext = ExtSlot<T>` contract — non-re-entrant on this
             // user-data, so no aliasing `&mut T` exists for `'_`.
             Some(mut p) => Some(unsafe { p.as_mut() }),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
+    pub fn owner_ref(&self) -> Option<&T> {
+        match self.0 {
+            // SAFETY: same liveness invariant as `owner_mut`; only `&T` is
+            // formed, so re-entrant dispatch cannot alias an exclusive borrow.
+            Some(p) => Some(unsafe { &*p.as_ptr() }),
             None => None,
         }
     }

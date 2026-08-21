@@ -8,7 +8,6 @@ use super::codecs;
 use super::quantize;
 use crate::encoded_wrap_free;
 
-// TODO(port): move to runtime_sys (or a dedicated spng_sys crate)
 bun_opaque::opaque_ffi! { pub struct spng_ctx; }
 
 unsafe extern "C" {
@@ -98,7 +97,7 @@ struct Trns {
     type3_alpha: [u8; 256],
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     // SAFETY: spng_ctx_new is safe to call with any flags; null return = OOM.
     let ctx = unsafe { spng_ctx_new(0) };
     if ctx.is_null() {
@@ -124,13 +123,13 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     if unsafe { spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &raw mut size) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    let mut out = vec![0u8; size];
-    // SAFETY: ctx is valid; out is a valid mutable buffer of `size` bytes.
+    let mut out: Vec<u8> = Vec::with_capacity(size);
+    // SAFETY: ctx is valid; out has `size` bytes of capacity, which libspng only writes.
     if unsafe {
         spng_decode_image(
             ctx,
             out.as_mut_ptr(),
-            out.len(),
+            size,
             SPNG_FMT_RGBA8,
             SPNG_DECODE_TRNS,
         )
@@ -138,6 +137,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     {
         return Err(codecs::Error::DecodeFailed);
     }
+    // SAFETY: libspng returns 0 only once it reached end-of-image, i.e. wrote all `size` bytes.
+    unsafe { bun_core::vec::commit_spare(&mut out, size) };
 
     // iCCP after decode so the chunk has definitely been parsed. A non-zero
     // return here means "no iCCP" or "iCCP was malformed" — treat both as
@@ -378,5 +379,3 @@ pub(crate) fn encode_indexed(
         free: encoded_wrap_free!(libc::free),
     })
 }
-
-// ported from: src/runtime/image/codec_png.zig

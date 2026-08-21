@@ -9,10 +9,6 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 
-#if ASAN_ENABLED
-#include <sanitizer/lsan_interface.h>
-#endif
-
 extern "C" void BunString__toThreadSafe(BunString* str);
 
 namespace Bun {
@@ -52,12 +48,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * glo
     return JSValue::encode(jsBoolean(false));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_lsanDoLeakCheck, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Side-effect-free report of whether this binary was compiled with
+// AddressSanitizer. Lets the test harness detect ASAN cheaply.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 #if ASAN_ENABLED
-    return JSValue::encode(jsNumber(__lsan_do_recoverable_leak_check()));
+    return JSValue::encode(jsBoolean(true));
+#else
+    return JSValue::encode(jsBoolean(false));
 #endif
-    return encodedJSUndefined();
 }
 
 // Returns the net refcount change on the *original* StringImpl after a
@@ -73,7 +72,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 
     const unsigned before = original->refCount();
 
-    // Give the BunString its own ref, mirroring how a Zig-side bun.String
+    // Give the BunString its own ref, mirroring how a Rust-side bun.String
     // owns one reference to the underlying StringImpl.
     original->ref();
     BunString str = { BunStringTag::WTFStringImpl, { .wtf = original.ptr() } };
@@ -87,6 +86,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 
     const unsigned after = original->refCount();
     return JSValue::encode(jsNumber(static_cast<int32_t>(after) - static_cast<int32_t>(before)));
+}
+
+extern "C" void Bun__MemoryPressure__emit(JSC::JSGlobalObject* global, int level);
+extern "C" bool Bun__MemoryPressure__isInstalled(JSC::JSGlobalObject* global);
+
+// Synthetically fire process.on("memoryPressure") so tests can exercise the
+// emit path without depending on real OS memory pressure.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto str = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int level = str == "warning"_s ? 2 : 4;
+    Bun__MemoryPressure__emit(defaultGlobalObject(globalObject), level);
+    return encodedJSUndefined();
+}
+
+// Whether the per-VM memory-pressure watcher is currently installed, so tests
+// can observe that process.on/off actually arm/disarm the OS backend.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
 }
 
 }

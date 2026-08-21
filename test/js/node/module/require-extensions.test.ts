@@ -1,6 +1,6 @@
 import assert from "assert";
 import { expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -165,7 +165,7 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions
   const files = ["node_modules/next/dist/build/next-config-ts/index.js", "node_modules/@meteorjs/babel/index.js"];
-  const fixture = tempDirWithFiles(
+  using fixture = tempDir(
     "extensions-fixture",
     Object.fromEntries(
       files.map(file => [

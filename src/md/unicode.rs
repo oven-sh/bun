@@ -1,6 +1,3 @@
-// PORT NOTE: Zig `u21` (codepoint) → `u32`; Zig `u2` (count) → `u8`.
-// Rust has no arbitrary-bit-width integers; the next natural width is used.
-
 pub(crate) struct FoldInfo {
     pub codepoints: [u32; 3],
     pub n_codepoints: u8,
@@ -350,7 +347,6 @@ fn case_fold_from_map<const N: u8>(
     };
 
     // Copy the base codepoints from the data table.
-    // PERF(port): was `inline for` (compile-time unrolled) — profile if hot.
     result.codepoints[..(N as usize)]
         .copy_from_slice(&data[data_offset..data_offset + (N as usize)]);
 
@@ -525,5 +521,3 @@ mod tests {
         assert_eq!(1u8, info.n_codepoints);
     }
 }
-
-// ported from: src/md/unicode.zig

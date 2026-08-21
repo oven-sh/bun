@@ -44,7 +44,7 @@ RUN apt-get update -qq \
       -fsSLO \
       --compressed \
       --retry 5 \
-    && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \
+    && gpg --batch --verify --output SHASUMS256.txt SHASUMS256.txt.asc \
       || (echo "error: failed to verify: $tag" && exit 1) \
     && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \
       || (echo "error: failed to verify: $tag" && exit 1) \
@@ -56,6 +56,13 @@ RUN apt-get update -qq \
     && bun --version
 
 FROM debian:trixie-slim
+
+# Install CA certificates so tools that verify TLS (e.g. apt over HTTPS on
+# Debian 13) have a trust store. The base image ships none.
+RUN apt-get update -qq \
+    && apt-get install -qq --no-install-recommends ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful

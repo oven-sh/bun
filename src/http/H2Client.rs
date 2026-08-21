@@ -12,8 +12,7 @@ use core::sync::atomic::AtomicI32;
 
 /// Advertised as SETTINGS_INITIAL_WINDOW_SIZE; replenished via WINDOW_UPDATE
 /// once half has been consumed.
-// PORT NOTE: Zig type was `u31` (HTTP/2 window sizes are 31-bit); Rust has no
-// `u31`, so widen to `u32`. Value `1 << 24` is well within range.
+// HTTP/2 window sizes are 31-bit on the wire; `1 << 24` is well within range.
 pub(crate) const LOCAL_INITIAL_WINDOW_SIZE: u32 = 1 << 24;
 
 /// Advertised as SETTINGS_MAX_HEADER_LIST_SIZE and enforced as a hard cap on
@@ -23,38 +22,37 @@ pub(crate) const LOCAL_INITIAL_WINDOW_SIZE: u32 = 1 << 24;
 /// cap is checked locally regardless of what the server honors.
 pub(crate) const LOCAL_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
 
+/// CONTINUATION frames allowed per header block. Matches nghttp2's
+/// `NGHTTP2_DEFAULT_MAX_CONTINUATIONS` (CVE-2024-28182).
+pub(crate) const LOCAL_MAX_CONTINUATIONS: u8 = 8;
+
 /// `write_buffer` high-water mark. `writeDataWindowed` stops queueing once the
 /// userland send buffer crosses this even if flow-control window remains, so a
 /// large grant doesn't duplicate the whole body in memory before the first
 /// `flush()`. `onWritable → drainSendBodies` resumes once the socket drains.
-pub const WRITE_BUFFER_HIGH_WATER: usize = 256 * 1024;
+pub(crate) const WRITE_BUFFER_HIGH_WATER: usize = 256 * 1024;
 
 /// Abandon the connection (ENHANCE_YOUR_CALM) if queued control-frame replies
 /// (PING/SETTINGS ACKs) push `write_buffer` past this while the socket is
 /// stalled — caps the PING-reflection growth at a fixed budget instead of OOM.
-pub const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
+pub(crate) const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 
 /// Live-object counters for the leak test in fetch-http2-leak.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
 /// via TestingAPIs.liveCounts so they must be atomic.
-// PORT NOTE: Zig names are `live_sessions`/`live_streams` (snake_case module
-// vars). Kept verbatim so cross-crate readers (`bun_http_jsc`) and the gated
-// submodules see the same identifier the Zig uses; SCREAMING_SNAKE aliases
-// preserved for the existing internal references.
+// Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
+// submodules share one identifier; SCREAMING_SNAKE alias preserved for the
+// existing internal reference.
 #[allow(non_upper_case_globals)]
 pub static live_sessions: AtomicI32 = AtomicI32::new(0);
 #[allow(non_upper_case_globals)]
 pub static live_streams: AtomicI32 = AtomicI32::new(0);
-pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
-// Un-gated: Stream/ClientSession/dispatch/encode now compile against the
-// real crate surface (bridge stubs below cover gated HTTPClient methods).
-// They no longer reference bun_str/bun_output/crate::state/crate::Signal.
 #[path = "h2_client/ClientSession.rs"]
 pub mod client_session;
 #[path = "h2_client/dispatch.rs"]
-pub mod dispatch;
+pub(crate) mod dispatch;
 #[path = "h2_client/encode.rs"]
 pub mod encode;
 #[path = "h2_client/PendingConnect.rs"]
@@ -63,12 +61,9 @@ pub mod pending_connect;
 pub mod stream;
 
 pub use client_session::ClientSession;
+pub(crate) use client_session::SessionPtr;
 pub use pending_connect::PendingConnect;
 pub use stream::Stream;
-
-// PORT NOTE: Zig had `pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H2TestingAPIs;`
-// — a `*_jsc` alias. Deleted per PORTING.md: `to_js`/host-fn surfaces live in the
-// `*_jsc` crate via extension traits; the base crate has no mention of jsc.
 
 // ═══════════════════════════════════════════════════════════════════════
 // Thin `h2_*` forwarders on HTTPClient / HTTPContext that the h2_client
@@ -80,30 +75,30 @@ pub use stream::Stream;
 // using `client` after building the request. Kept as inherent methods so the
 // many call sites in `h2_client/*.rs` need no churn.
 // ═══════════════════════════════════════════════════════════════════════
-pub(crate) mod bridge {
+mod bridge {
     use crate::http_context::HTTPSocket;
     use crate::{HTTPClient, NewHTTPContext};
     use bun_picohttp as picohttp;
 
     impl HTTPClient<'_> {
         #[inline]
-        pub fn h2_register_abort_tracker(&mut self, socket: HTTPSocket<true>) {
+        pub(crate) fn h2_register_abort_tracker(&mut self, socket: HTTPSocket<true>) {
             self.register_abort_tracker::<true>(socket);
         }
         #[inline]
-        pub fn h2_retry_after_coalesce(&mut self) {
+        pub(crate) fn h2_retry_after_coalesce(&mut self) {
             self.retry_after_h2_coalesce();
         }
         #[inline]
-        pub fn h2_retry(&mut self) {
+        pub(crate) fn h2_retry(&mut self) {
             self.retry_from_h2();
         }
         #[inline]
-        pub fn h2_fail(&mut self, err: bun_core::Error) {
+        pub(crate) fn h2_fail(&mut self, err: crate::Error) {
             self.fail_from_h2(err);
         }
         #[inline]
-        pub fn h2_progress_update(
+        pub(crate) fn h2_progress_update(
             &mut self,
             ctx: *mut NewHTTPContext<true>,
             socket: HTTPSocket<true>,
@@ -111,34 +106,37 @@ pub(crate) mod bridge {
             self.progress_update::<true>(ctx, socket);
         }
         #[inline]
-        pub fn h2_do_redirect(&mut self, ctx: *mut NewHTTPContext<true>, socket: HTTPSocket<true>) {
+        pub(crate) fn h2_do_redirect(
+            &mut self,
+            ctx: *mut NewHTTPContext<true>,
+            socket: HTTPSocket<true>,
+        ) {
             self.do_redirect::<true>(ctx, socket);
         }
         #[inline]
-        pub fn h2_clone_metadata(&mut self) {
-            self.clone_metadata();
+        pub(crate) fn h2_clone_metadata(&mut self, response: &bun_picohttp::Response<'_>) {
+            self.clone_metadata(response);
         }
         #[inline]
-        pub fn h2_handle_response_body(
+        pub(crate) fn h2_handle_response_body(
             &mut self,
             buf: &[u8],
             is_only_buffer: bool,
-        ) -> Result<bool, bun_core::Error> {
+        ) -> crate::Result<bool> {
             self.handle_response_body(buf, is_only_buffer)
         }
         #[inline]
-        pub fn h2_drain_response_body(&mut self, socket: HTTPSocket<true>) {
+        pub(crate) fn h2_drain_response_body(&mut self, socket: HTTPSocket<true>) {
             self.drain_response_body::<true>(socket);
         }
         #[inline]
-        pub fn h2_build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
+        pub(crate) fn h2_build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
             // SAFETY: `build_request` returns a `Request<'_>` whose borrowed
             // slices point only at (a) the thread-local
             // `SHARED_REQUEST_HEADERS_BUF` static and (b) `self.header_buf`,
             // which is itself `&'static [u8]` — neither is tied to the `&mut
-            // self` borrow. Erasing to `'static` matches the Zig
-            // `buildRequest` (returns slices into module-static storage) and
-            // lets `ClientSession::attach` re-borrow `client` while the
+            // self` borrow. Erasing to `'static` lets
+            // `ClientSession::attach` re-borrow `client` while the
             // `Request` is still live. Same pattern as lib.rs `on_writable`.
             unsafe { self.build_request(body_len).detach_lifetime() }
         }
@@ -151,5 +149,3 @@ pub(crate) mod bridge {
         }
     }
 }
-
-// ported from: src/http/H2Client.zig

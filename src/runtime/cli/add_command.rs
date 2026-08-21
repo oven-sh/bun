@@ -5,11 +5,8 @@ use bun_install::package_manager::Subcommand;
 pub(crate) struct AddCommand;
 
 impl AddCommand {
-    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub(crate) fn exec(ctx: command::Context) -> Result<(), crate::Error> {
         update_package_json_and_install_catch_error(ctx, Subcommand::Add)?;
         Ok(())
     }
 }
-
-// ported from: src/cli/add_command.zig

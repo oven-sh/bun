@@ -17,20 +17,19 @@ pub mod ffi {
     pub use bun_boringssl_sys::{
         ENGINE, EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
         EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
-        EVP_md5_sha1, EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384,
-        EVP_sha3_512, EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224,
-        EVP_sha512_256, HMAC,
+        EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512,
+        EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
     };
 
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
     /// as `usize` (sys crate exposes `c_int`) so `[u8; EVP_MAX_MD_SIZE]` array
     /// lengths in `hmac` / `SASL` / `s3_signing` keep compiling unchanged.
-    pub const EVP_MAX_MD_SIZE: usize = bun_boringssl_sys::EVP_MAX_MD_SIZE as usize;
+    pub(crate) const EVP_MAX_MD_SIZE: usize = bun_boringssl_sys::EVP_MAX_MD_SIZE as usize;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Digest-length constants (Zig pulled these from `std.crypto.hash.*.digest_length`;
-// Rust has no stdlib equivalents, so the literal values are inlined here).
+// Digest-length constants (Rust has no stdlib equivalents, so the literal
+// values are inlined here).
 // ──────────────────────────────────────────────────────────────────────────
 const SHA1_DIGEST_LENGTH: usize = 20;
 const SHA256_DIGEST_LENGTH: usize = 32;
@@ -38,15 +37,13 @@ const SHA384_DIGEST_LENGTH: usize = 48;
 const SHA512_DIGEST_LENGTH: usize = 64;
 const SHA512_256_DIGEST_LENGTH: usize = 32;
 
-/// Zig: `fn NewHasher(comptime digest_size, comptime ContextType, Full, Init, Update, Final) type`
-///
-/// The Zig function returns an anonymous struct type parameterised by a context
-/// type and four FFI function *values* (passed as `anytype`). Stable Rust cannot
+/// Generates a hasher type parameterised by a context
+/// type and four FFI functions. Stable Rust cannot
 /// take function items as const-generic parameters, and the call sites are pure
 /// token-pasting of BoringSSL symbol names, so this is expressed as a
 /// `macro_rules!` type-generator.
-// TODO(port): inherent associated type `Digest = [u8; N]` requires nightly
-// `inherent_associated_types`; callers should use `[u8; <Name>::DIGEST]` for now.
+// An inherent associated type `Digest = [u8; N]` would require nightly
+// `inherent_associated_types`; callers spell `[u8; <Name>::DIGEST]` instead.
 macro_rules! new_hasher {
     (
         $name:ident,
@@ -103,11 +100,8 @@ macro_rules! new_hasher {
     };
 }
 
-/// Zig: `fn NewEVP(comptime digest_size, comptime MDName: []const u8) type`
-///
-/// `MDName` is used via `@field(BoringSSL, MDName)()` — comptime reflection to
-/// resolve a function by string name. That is token-pasting; expressed here by
-/// passing the BoringSSL `EVP_*` md-getter as an ident.
+/// Generates an EVP-backed hasher type;
+/// the BoringSSL `EVP_*` md-getter is passed as an ident.
 macro_rules! new_evp {
     ($name:ident, $digest_size:expr, $md_fn:ident) => {
         #[repr(C)]
@@ -199,16 +193,13 @@ pub mod evp {
     new_evp!(SHA384, SHA384_DIGEST_LENGTH, EVP_sha384);
     new_evp!(SHA256, SHA256_DIGEST_LENGTH, EVP_sha256);
     new_evp!(SHA512_256, SHA512_256_DIGEST_LENGTH, EVP_sha512_256);
-    new_evp!(MD5_SHA1, 36, EVP_md5_sha1); // EVP_md5_sha1 writes MD5(16) || SHA1(20) = 36 bytes
-    new_evp!(Blake2, 256 / 8, EVP_blake2b256);
 
     // ──────────────────────────────────────────────────────────────────────
-    // evp::Algorithm — moved from bun_jsc::api::bun::crypto.
-    //   source: src/runtime/crypto/EVP.zig (`pub const Algorithm = enum { ... }`)
-    //   moved here so `csrf` and `sha_hmac::hmac` can name it without
+    // evp::Algorithm — moved from bun_jsc::api::bun::crypto,
+    //   so `csrf` and `sha_hmac::hmac` can name it without
     //   depending upward on bun_jsc/bun_runtime.
     //   Only the enum + `md()` are lowered; `names` (needs bun.String) and
-    //   the comptime string map stay in the higher-tier EVP wrapper.
+    //   the name-lookup map stay in the higher-tier EVP wrapper.
     // ──────────────────────────────────────────────────────────────────────
 
     /// We do this to avoid asking BoringSSL what the digest name is, because
@@ -280,7 +271,6 @@ pub mod evp {
 pub use evp::Algorithm;
 pub use evp::MD4;
 pub use evp::MD5;
-pub use evp::MD5_SHA1;
 pub use evp::SHA1;
 pub use evp::SHA224;
 pub use evp::SHA256;
@@ -303,26 +293,6 @@ pub mod hashers {
     );
 
     new_hasher!(
-        SHA512,
-        SHA512_DIGEST_LENGTH,
-        boringssl_sys::SHA512_CTX,
-        boringssl_sys::SHA512,
-        boringssl_sys::SHA512_Init,
-        boringssl_sys::SHA512_Update,
-        boringssl_sys::SHA512_Final
-    );
-
-    new_hasher!(
-        SHA384,
-        SHA384_DIGEST_LENGTH,
-        boringssl_sys::SHA512_CTX,
-        boringssl_sys::SHA384,
-        boringssl_sys::SHA384_Init,
-        boringssl_sys::SHA384_Update,
-        boringssl_sys::SHA384_Final
-    );
-
-    new_hasher!(
         SHA256,
         SHA256_DIGEST_LENGTH,
         boringssl_sys::SHA256_CTX,
@@ -331,31 +301,4 @@ pub mod hashers {
         boringssl_sys::SHA256_Update,
         boringssl_sys::SHA256_Final
     );
-
-    new_hasher!(
-        SHA512_256,
-        SHA512_256_DIGEST_LENGTH,
-        boringssl_sys::SHA512_CTX,
-        boringssl_sys::SHA512_256,
-        boringssl_sys::SHA512_256_Init,
-        boringssl_sys::SHA512_256_Update,
-        boringssl_sys::SHA512_256_Final
-    );
-
-    new_hasher!(
-        RIPEMD160,
-        boringssl_sys::RIPEMD160_DIGEST_LENGTH as usize,
-        boringssl_sys::RIPEMD160_CTX,
-        boringssl_sys::RIPEMD160,
-        boringssl_sys::RIPEMD160_Init,
-        boringssl_sys::RIPEMD160_Update,
-        boringssl_sys::RIPEMD160_Final
-    );
 }
-
-// TODO(port): `boring`, `zig`, `evp` below were Zig `[_]type{...}` comptime type
-// lists (with `void` sentinels) used for ad-hoc benchmarking against Zig's
-// `std.crypto.hash`. Rust has no type-list value equivalent and no `std.crypto`
-// counterpart; they are private and unreferenced in the Zig source.
-
-// ported from: src/sha_hmac/sha.zig

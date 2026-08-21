@@ -20,7 +20,7 @@ namespace Zig {
 
 const JSC::ClassInfo CallSite::s_info = { "CallSite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CallSite) };
 
-void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
+void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
 {
     Base::finishCreation(vm);
 
@@ -39,25 +39,18 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
         }
     }
 
-    // Initialize "this" and "function" (and set the "IsStrict" flag if needed)
-    JSC::CallFrame* callFrame = stackFrame.callFrame();
+    // JSC::StackFrame has no receiver, so getThis() is always undefined.
+    m_thisValue.set(vm, this, JSC::jsUndefined());
     if (isStrictFrame) {
-        m_thisValue.set(vm, this, JSC::jsUndefined());
         m_function.set(vm, this, JSC::jsUndefined());
         m_flags |= static_cast<unsigned int>(Flags::IsStrict);
     } else {
-        if (callFrame && callFrame->thisValue()) {
-            // We know that we're not in strict mode
-            m_thisValue.set(vm, this, callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy()));
-        } else {
-            m_thisValue.set(vm, this, JSC::jsUndefined());
-        }
-
         m_function.set(vm, this, stackFrame.callee());
     }
 
     m_functionName.set(vm, this, stackFrame.functionName());
     m_sourceURL.set(vm, this, stackFrame.sourceURL());
+    m_sourceID = stackFrame.sourceID();
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {

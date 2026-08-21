@@ -28,13 +28,13 @@ type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
 pub(crate) struct DefaultTrustedCommand;
 
 impl DefaultTrustedCommand {
-    pub(crate) fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> crate::Result<()> {
         Output::print(format_args!(
             "Default trusted dependencies ({}):\n",
             DEFAULT_TRUSTED_DEPENDENCIES_LIST.len()
         ));
         for name in DEFAULT_TRUSTED_DEPENDENCIES_LIST.iter() {
-            Output::pretty(format_args!(" <d>-<r> {}\n", bstr::BStr::new(name)));
+            bun_core::pretty!(" <d>-<r> {}\n", bstr::BStr::new(name));
         }
 
         Ok(())
@@ -48,22 +48,22 @@ impl UntrustedCommand {
         ctx: Command::Context,
         pm: &mut PackageManager,
         args: &[&[u8]],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let _ = args;
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><b>bun pm untrusted <r><d>v{}<r>\n\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
-        // PORT NOTE: reshaped for borrowck — `LoadResult` returned by
+        // Reshaped for borrowck — `LoadResult` returned by
         // `load_lockfile_from_cwd` mutably borrows `pm.lockfile`, so all
         // subsequent `pm` access goes through `pm_raw`. Same singleton pattern
         // as `package_manager_command.rs::print_hash`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
+        PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
         // SAFETY: `pm_raw` derived from `pm` above; `update_lockfile_if_needed`
         // reads `load_result.serializer_result` (no `ok.lockfile` deref) and
         // writes through `manager.lockfile`, which is the same heap allocation
@@ -116,8 +116,8 @@ impl UntrustedCommand {
         let mut node_modules_path = AutoAbsPath::init_top_level_dir();
 
         while let Some(node_modules) = tree_iterator.next(None) {
-            // PORT NOTE: Zig `node_modules_path.save()/.restore()` — `ResetScope`
-            // exclusively borrows the path in Rust, so save/restore the length
+            // `ResetScope`
+            // exclusively borrows the path, so save/restore the length
             // explicitly. Restored at end of each iteration; the inner-loop
             // `continue`/`return` paths only need the inner `folder_saved`
             // restore (done immediately after `get_list`).
@@ -153,8 +153,8 @@ impl UntrustedCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(e) if e == bun_core::err!(ENOENT) => continue,
-                    Err(e) => return Err(e),
+                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(e) => return Err(e.into()),
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
@@ -181,41 +181,38 @@ impl UntrustedCommand {
             let resolution = &lockfile.packages.items_resolution()[package_id as usize];
 
             scripts_list.print_scripts(resolution, buf, PrintFormat::Untrusted);
-            Output::pretty(format_args!("\n"));
+            bun_core::pretty!("\n");
         }
 
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "These dependencies had their lifecycle scripts blocked during install.\n\
              \n\
              If you trust them and wish to run their scripts, use <d>`<r><blue>bun pm trust<r><d>`<r>.\n"
-        ));
+        );
 
         let _ = ctx;
         Ok(())
     }
 
     fn print_zero_untrusted_dependencies_found() {
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "Found <b>0<r> untrusted dependencies with scripts.\n\
              \n\
              This means all packages with scripts are in \"trustedDependencies\" or none of your dependencies have scripts.\n\
              \n\
              For more information, visit <magenta>https://bun.com/docs/install/lifecycle#trusteddependencies<r>\n"
-        ));
+        );
     }
 }
 
 pub(crate) struct TrustCommand;
 
-/// Anonymous struct from Zig: value type stored in `scripts_at_depth`.
+/// Value type stored in `scripts_at_depth`.
 struct ScriptInfo {
     package_id: PackageID,
     scripts_list: ScriptsList,
     skip: bool,
 }
-
-// structs in impl blocks — hoisted to module level.
-pub struct TrustCommandSorter;
 
 impl TrustCommand {
     fn error_expected_args() -> ! {
@@ -236,7 +233,7 @@ impl TrustCommand {
                 (),
             );
             for arg in packages_to_trust {
-                Output::pretty_error(format_args!(" <d>-<r> {}\n", bstr::BStr::new(arg)));
+                bun_core::pretty_error!(" <d>-<r> {}\n", bstr::BStr::new(arg));
             }
         }
     }
@@ -245,25 +242,25 @@ impl TrustCommand {
         ctx: Command::Context,
         pm: &mut PackageManager,
         args: &[&[u8]],
-    ) -> Result<(), bun_core::Error> {
-        Output::pretty_error(format_args!(
+    ) -> crate::Result<()> {
+        bun_core::pretty_error!(
             "<r><b>bun pm trust <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         if args.len() == 2 {
             Self::error_expected_args();
         }
 
-        // PORT NOTE: reshaped for borrowck — see `UntrustedCommand::exec`.
+        // Reshaped for borrowck — see `UntrustedCommand::exec`.
         // `load_lockfile` lives until `save_to_disk` near the end, so every
         // `pm`/`pm.lockfile` access in between goes through `pm_raw`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
-        // PORT NOTE: `update_lockfile_if_needed` consumes `LoadResult` but we
+        PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "trust");
+        // `update_lockfile_if_needed` consumes `LoadResult` but we
         // need it again for `save_to_disk`; inline the body (it only flips
         // `meta.has_install_script` when `packages_need_update`).
         if matches!(&load_lockfile, LoadResult::Ok(ok) if ok.serializer_result.packages_need_update)
@@ -280,7 +277,6 @@ impl TrustCommand {
         for arg in &args[2..] {
             if !arg.is_empty() && arg[0] != b'-' {
                 packages_to_trust.push(arg);
-                // PERF(port): was appendAssumeCapacity.
             }
         }
         let trust_all =
@@ -351,10 +347,10 @@ impl TrustCommand {
 
             let _node_modules_dir = match bun_sys::Dir::cwd()
                 .open_at(node_modules.relative_path.as_bytes())
-                .map_err(bun_core::Error::from)
+                .map_err(crate::Error::from)
             {
                 Ok(d) => d,
-                Err(e) if e == bun_core::err!(ENOENT) => {
+                Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {
                     node_modules_path.set_length(nm_saved);
                     continue;
                 }
@@ -391,8 +387,8 @@ impl TrustCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(e) if e == bun_core::err!(ENOENT) => continue,
-                    Err(e) => return Err(e),
+                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(e) => return Err(e.into()),
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
@@ -461,10 +457,10 @@ impl TrustCommand {
             }
         }
 
-        // PORT NOTE: `scripts_at_depth.values()` is taken twice (run, then
-        // print). Rust can't move `scripts_list: List` out for
+        // `scripts_at_depth.values()` is taken twice (run, then
+        // print). We can't move `scripts_list: List` out for
         // `spawn_package_lifecycle_scripts` and still print it later, so clone
-        // the `List` per spawn (matches the by-value Zig pass).
+        // the `List` per spawn.
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
                 if info.skip {
@@ -480,10 +476,10 @@ impl TrustCommand {
                     if unsafe { (*pm_raw).options.log_level.is_verbose() }
                         && PackageManager::has_enough_time_passed_between_waiting_messages()
                     {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<d>[PackageManager]<r> waiting for {} scripts\n",
                             LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
-                        ));
+                        );
                     }
 
                     // SAFETY: `pm_raw` singleton.
@@ -539,13 +535,13 @@ impl TrustCommand {
 
         // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
         // (the original `pm.root_package_json_file` is replaced with INVALID so
-        // its eventual drop is a no-op). Matches Zig's by-value `File` move.
+        // its eventual drop is a no-op).
         let root_file = unsafe {
             let fd = (*pm_raw).root_package_json_file.handle;
             (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
             bun_sys::File::from_fd(fd)
         };
-        let package_json_contents = root_file.read_to_end().map_err(bun_core::Error::from)?;
+        let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
@@ -556,7 +552,7 @@ impl TrustCommand {
 
         let bump = Bump::new();
         // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
-        // PORT NOTE (layering): `parse_utf8` returns the T2
+        // Layering: `parse_utf8` returns the T2
         // `bun_ast::Expr`; `PackageJSONEditor` and
         // `js_printer::print_json` consume the T4 `bun_ast::Expr`. Lift
         // once via `From<T2> for T4` (same as `updatePackageJSONAndInstall` /
@@ -578,7 +574,6 @@ impl TrustCommand {
         };
 
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
-        #[cfg(debug_assertions)]
         debug_assert!(!package_names_to_add.keys().is_empty());
 
         // could be null if these are the first packages to be trusted
@@ -636,7 +631,7 @@ impl TrustCommand {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
+        // Reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
         // and `&LoadResult` simultaneously, but `LoadResultOk.lockfile` already
         // holds the only `&mut`. Same projection pattern as `migrate` in
         // `package_manager_command.rs`.
@@ -676,14 +671,13 @@ impl TrustCommand {
 
         root_file
             .pwrite_all(new_package_json_contents, 0)
-            .map_err(bun_core::Error::from)?;
+            .map_err(crate::Error::from)?;
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
         let _ = root_file.close();
 
-        #[cfg(debug_assertions)]
         debug_assert!(total_scripts_ran > 0);
 
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             " <green>{}<r> script{} ran across {} package{} ",
             total_scripts_ran,
             if total_scripts_ran > 1 { "s" } else { "" },
@@ -693,22 +687,20 @@ impl TrustCommand {
             } else {
                 ""
             },
-        ));
+        );
 
         Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
         Output::print(format_args!("\n"));
 
         if total_skipped_packages > 0 {
             Output::print(format_args!("\n"));
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 " <yellow>{}<r> package{} with blocked scripts",
                 total_skipped_packages,
                 if total_skipped_packages > 1 { "s" } else { "" },
-            ));
+            );
         }
 
         Ok(())
     }
 }
-
-// ported from: src/cli/pm_trusted_command.zig

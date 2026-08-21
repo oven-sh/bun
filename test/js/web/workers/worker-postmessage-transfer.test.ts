@@ -61,6 +61,45 @@ describe("self.postMessage transfer list", () => {
     expect(results[1]).toEqual({ detached: true });
   });
 
+  // https://html.spec.whatwg.org/multipage/workers.html#dom-dedicatedworkerglobalscope-postmessage
+  // The transfer list is a WebIDL sequence<object>: an invalid entry throws a
+  // TypeError before serialization, so nothing in the list gets detached.
+  test("postMessage(msg, [ArrayBuffer, null]) throws TypeError and detaches nothing", async () => {
+    const results = await roundtrip(
+      `
+        const buf = new ArrayBuffer(16);
+        let name = "no throw";
+        try {
+          self.postMessage(buf, [buf, null]);
+        } catch (err) {
+          name = err.constructor.name;
+        }
+        self.postMessage({ name, byteLength: buf.byteLength });
+      `,
+      1,
+    );
+    expect(results[0]).toEqual({ name: "TypeError", byteLength: 16 });
+  });
+
+  test("postMessage(msg, invalidOptions) throws TypeError", async () => {
+    const results = await roundtrip(
+      `
+        const names = [];
+        for (const options of [42, "abc", { transfer: 42 }, { transfer: [null] }]) {
+          try {
+            self.postMessage("x", options);
+            names.push("no throw");
+          } catch (err) {
+            names.push(err.constructor.name);
+          }
+        }
+        self.postMessage(names);
+      `,
+      1,
+    );
+    expect(results[0]).toEqual(["TypeError", "TypeError", "TypeError", "TypeError"]);
+  });
+
   test("postMessage(msg, [MessagePort]) transfers the port", async () => {
     // Don't reuse roundtrip() here: it terminates the worker as soon as the
     // first message lands, which can race the port-channel delivery. Keep the

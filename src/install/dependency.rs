@@ -13,7 +13,7 @@ use crate::{PackageManager, PackageNameHash};
 // NpmAliasRegistry — exposes only the one `PackageManager` method `parse`
 // actually touches (`known_npm_aliases.put`) so `parse_with_tag` can take an
 // `Option<&mut dyn NpmAliasRegistry>` and stay decoupled from the full
-// `PackageManager` surface (Zig threads `*PackageManager` directly).
+// `PackageManager` surface.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait NpmAliasRegistry {
@@ -23,7 +23,6 @@ pub trait NpmAliasRegistry {
 impl NpmAliasRegistry for PackageManager {
     #[inline]
     fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        // Zig: `pm.known_npm_aliases.put(hash, result)`.
         self.known_npm_aliases.insert(hash, Clone::clone(version));
     }
 }
@@ -73,8 +72,6 @@ pub trait DependencyExt {
         log: impl Into<Option<&'a mut bun_ast::Log>>,
         package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
-    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool;
-    fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering;
     fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
         name_buf: &[u8],
@@ -87,16 +84,15 @@ pub trait DependencyExt {
         package_manager: &mut PM,
         buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Dependency, bun_core::Error>;
+    ) -> Result<Dependency, crate::Error>;
     fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry>(
         &self,
         package_manager: &mut PM,
         name_buf: &[u8],
         version_buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Dependency, bun_core::Error>;
+    ) -> Result<Dependency, crate::Error>;
     fn realname(&self) -> String;
-    fn is_aliased(&self, buf: &[u8]) -> bool;
     fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
     fn is_remote_tarball(dep: &[u8]) -> bool;
     fn parse<'a, 'b>(
@@ -110,38 +106,35 @@ pub trait DependencyExt {
 }
 
 impl DependencyExt for Dependency {
-    /// Forwards to the module-level `is_tarball` (Zig: `Dependency.isTarball`).
+    /// Forwards to the module-level `is_tarball`.
     #[inline]
     fn is_tarball(dependency: &[u8]) -> bool {
         is_tarball(dependency)
     }
 
-    /// Forwards to the module-level free fn (Zig file-struct method:
-    /// `Dependency.splitNameAndMaybeVersion`).
+    /// Forwards to the module-level `split_name_and_maybe_version`.
     #[inline]
     fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
         split_name_and_maybe_version(str)
     }
 
-    /// Zig: `Dependency.unscopedPackageName`. Strips a leading `@scope/` if present.
+    /// Strips a leading `@scope/` if present.
     fn unscoped_package_name(name: &[u8]) -> &[u8] {
         if name.is_empty() || name[0] != b'@' {
             return name;
         }
         let name_ = &name[1..];
-        match bun_core::index_of_char(name_, b'/') {
+        match bun_core::strings::index_of_char_usize(name_, b'/') {
             Some(i) => &name_[i + 1..],
             None => name,
         }
     }
 
-    /// Forwards to the module-level `parse_with_optional_tag`
-    /// (Zig: `Dependency.parseWithOptionalTag`).
+    /// Forwards to the module-level `parse_with_optional_tag`.
     ///
     /// `alias_hash`, `log`, and `package_manager` accept either the bare value
-    /// (`u64` / `&mut Log` / `&mut PackageManager`) or `Option<_>` — Zig callers
-    /// pass both forms (`null` vs pointer) and the port keeps that ergonomics
-    /// via `impl Into<Option<_>>`.
+    /// (`u64` / `&mut Log` / `&mut PackageManager`) or `Option<_>` via
+    /// `impl Into<Option<_>>`.
     #[inline]
     fn parse_with_optional_tag<'a, 'b>(
         alias: String,
@@ -163,33 +156,6 @@ impl DependencyExt for Dependency {
         )
     }
 
-    /// Sorting order for dependencies is:
-    /// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
-    /// 2. name ASC
-    /// "name" must be ASC so that later, when we rebuild the lockfile
-    /// we insert it back in reverse order without an extra sorting pass
-    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior == Ordering::Less;
-        }
-
-        let lhs_name = lhs.name.slice(string_buf);
-        let rhs_name = rhs.name.slice(string_buf);
-        strings::cmp_strings_asc((), lhs_name, rhs_name)
-    }
-
-    /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
-    /// accepts a strict-weak `lessThan`; Rust's sort requires a full
-    /// `Ordering`). Same key as `is_less_than`: behavior group, then name ASC.
-    fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior;
-        }
-        lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
-    }
-
     fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
         name_buf: &[u8],
@@ -204,7 +170,7 @@ impl DependencyExt for Dependency {
         self.count_with_different_buffers(buf, buf, builder);
     }
 
-    /// Zig: `Dependency.clone`. Renamed to `clone_in` so it doesn't shadow
+    /// Named `clone_in` so it doesn't shadow
     /// `std::clone::Clone::clone` (callers in `migration.rs` / `PackageManager.rs`
     /// rely on the trait method for shallow copy).
     fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry>(
@@ -212,8 +178,7 @@ impl DependencyExt for Dependency {
         package_manager: &mut PM,
         buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Dependency, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<Dependency, crate::Error> {
         self.clone_with_different_buffers(package_manager, buf, buf, builder)
     }
 
@@ -223,11 +188,9 @@ impl DependencyExt for Dependency {
         name_buf: &[u8],
         version_buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Dependency, bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: reshaped for borrowck — Zig captured `out_slice` first, but
-        // `append_string` may reallocate `string_bytes`, invalidating the slice.
-        // Append first, then borrow the (now-stable) buffer.
+    ) -> Result<Dependency, crate::Error> {
+        // `append_string` may reallocate `string_bytes`, invalidating any
+        // prior slice. Append first, then borrow the (now-stable) buffer.
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
         let new_name = builder.append_string(self.name.slice(name_buf));
         let out_slice = builder.string_bytes();
@@ -265,18 +228,6 @@ impl DependencyExt for Dependency {
         }
     }
 
-    #[inline]
-    fn is_aliased(&self, buf: &[u8]) -> bool {
-        match self.version.tag {
-            Tag::Npm => !self.version.npm().name.eql(self.name, buf, buf),
-            Tag::DistTag => !self.version.dist_tag().name.eql(self.name, buf, buf),
-            Tag::Git => !self.version.git().package_name.eql(self.name, buf, buf),
-            Tag::Github => !self.version.github().package_name.eql(self.name, buf, buf),
-            Tag::Tarball => !self.version.tarball().package_name.eql(self.name, buf, buf),
-            _ => false,
-        }
-    }
-
     fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
         self.name_hash == b.name_hash
             && self.name.len() == b.name.len()
@@ -292,7 +243,7 @@ impl DependencyExt for Dependency {
     /// (`bun_install_jsc`) keep type-checking.
     ///
     /// `alias_hash`, `log`, and `manager` accept either bare values or
-    /// `Option<_>` (Zig callers pass both `null` and concrete pointers).
+    /// `Option<_>`.
     #[inline]
     fn parse<'a, 'b>(
         alias: String,
@@ -306,22 +257,19 @@ impl DependencyExt for Dependency {
     }
 }
 
-// `comptime StringBuilder: type` param maps onto `bun_semver::StringBuilder`
+// Uses the `bun_semver::StringBuilder` trait
 // (count / append<T> / append_string). The only extra method needed here is
-// access to the FULL backing buffer (Zig: `builder.lockfile.buffers
-// .string_bytes.items`), which is intentionally NOT on the base trait since
+// access to the FULL backing buffer, which is intentionally NOT on the base trait since
 // `semver_string::Builder`'s isolated Box<[u8]> would be wrong for callers
 // that need the lockfile's full string_bytes.
 pub trait StringBuilderLike: bun_semver::StringBuilder {
-    /// Full backing string buffer (Zig: `builder.lockfile.buffers.string_bytes.items`).
+    /// Full backing string buffer.
     fn string_bytes(&self) -> &[u8];
 }
 
-// PORT NOTE: single-impl monomorphization is intentional. Every Zig call site
-// of `Dependency.count`/`clone`/`*WithDifferentBuffers` passes
-// `*Lockfile.StringBuilder` (Package.zig, OverrideMap.zig, CatalogMap.zig,
-// install_with_manager.zig) — `semver_string::Builder` is never used here, and
-// its isolated Box<[u8]> can't satisfy `builder.lockfile.buffers.string_bytes`.
+// single-impl monomorphization is intentional — `semver_string::Builder` is
+// never used here, and its isolated Box<[u8]> can't satisfy
+// `builder.lockfile.buffers.string_bytes`.
 impl<'a> StringBuilderLike for crate::lockfile_real::StringBuilder<'a> {
     #[inline]
     fn string_bytes(&self) -> &[u8] {
@@ -342,9 +290,9 @@ const SIZE: usize = core::mem::size_of::<VersionExternal>()
 
 pub struct Context<'a> {
     // allocator dropped (global mimalloc)
-    pub log: &'a mut bun_ast::Log,
-    pub buffer: &'a [u8],
-    pub package_manager: Option<&'a mut PackageManager>,
+    pub(crate) log: &'a mut bun_ast::Log,
+    pub(crate) buffer: &'a [u8],
+    pub(crate) package_manager: Option<&'a mut PackageManager>,
 }
 
 pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
@@ -428,7 +376,7 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
 ///
 /// This also checks for a github url that ends with ".tar.gz"
 #[inline]
-pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
+fn is_github_tarball_path(dependency: &[u8]) -> bool {
     if is_tarball(dependency) {
         return true;
     }
@@ -450,8 +398,15 @@ pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
 // This won't work for query string params, but I'll let someone file an issue
 // before I add that.
 #[inline]
-pub(crate) fn is_tarball(dependency: &[u8]) -> bool {
-    dependency.ends_with(b".tgz") || dependency.ends_with(b".tar.gz")
+fn is_tarball(dependency: &[u8]) -> bool {
+    has_suffix_ignore_ascii_case(dependency, b".tgz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar.gz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar")
+}
+
+#[inline]
+fn has_suffix_ignore_ascii_case(s: &[u8], suffix: &[u8]) -> bool {
+    s.len() >= suffix.len() && s[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
 }
 
 /// the input is assumed to be either a remote or local tarball
@@ -463,8 +418,8 @@ pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // Compat aliases: dependents reference `dependency::version::Tag`,
 // `dependency::VersionTag`, `Dependency::is_remote_tarball`, and a `tarball`
-// submodule. The Zig nests `Tag` under `Dependency.Version`, but here it's
-// flattened to top-level — keep both paths so dependents type-check.
+// submodule. `Tag` lives at top level here — keep both paths so dependents
+// type-check.
 // ──────────────────────────────────────────────────────────────────────────
 pub use Tag as VersionTag;
 pub mod version {
@@ -474,26 +429,8 @@ pub mod tarball {
     pub use super::{TarballInfo, URI as Uri};
 }
 
-pub(crate) fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
-    if let Some(at_index) = strings::index_of_char(str, b'@') {
-        let at_index = at_index as usize;
-        if at_index != 0 {
-            return (&str[at_index + 1..], Some(&str[0..at_index]));
-        }
-
-        let Some(second) = strings::index_of_char(&str[1..], b'@') else {
-            return (str, None);
-        };
-        let second_at_index = second as usize + 1;
-
-        return (&str[second_at_index + 1..], Some(&str[0..second_at_index]));
-    }
-
-    (str, None)
-}
-
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
-pub(crate) fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
+fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
     if let Some(at_index) = strings::index_of_char(str, b'@') {
         let at_index = at_index as usize;
         if at_index != 0 {
@@ -580,19 +517,17 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
 /// A dependency name/alias becomes a directory under `node_modules/`. Names
 /// come from untrusted `package.json` / manifest keys, so reject anything that
 /// could resolve outside that directory. `@scope/name` stays valid.
-pub fn is_safe_install_folder_name(name: &[u8]) -> bool {
+pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     if name.is_empty() {
         return false;
     }
 
-    for component in name.split(|&c| c == b'/') {
+    for component in strings::split(name, b"/") {
         if component.is_empty() || component == b"." || component == b".." {
             return false;
         }
-        for &c in component {
-            if c == b'\\' || c == b':' || c == 0 {
-                return false;
-            }
+        if strings::contains_any(component, b"\\:\0") {
+            return false;
         }
     }
 
@@ -615,13 +550,6 @@ pub fn without_build_tag(version: &[u8]) -> &[u8] {
 pub(crate) type VersionExternal = [u8; 9];
 
 pub trait VersionExt {
-    fn zeroed() -> Version;
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        buf: &[u8],
-        builder: &mut SB,
-    ) -> Result<Version, bun_core::Error>;
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn to_version(
         alias: String,
@@ -634,38 +562,6 @@ pub trait VersionExt {
 }
 
 impl VersionExt for Version {
-    // Zig: `pub const zeroed = Version{};` — a const value. Rust can't const-init
-    // (Default::default() isn't const), so callers should use `Version::zeroed()`
-    // or `Version::default()` instead.
-    #[inline]
-    fn zeroed() -> Version {
-        Version::default()
-    }
-
-    /// Zig: `Version.clone`. Renamed to `clone_in` so it doesn't shadow
-    /// `std::clone::Clone::clone`.
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        buf: &[u8],
-        builder: &mut SB,
-    ) -> Result<Version, bun_core::Error> {
-        // TODO(port): narrow error set
-        Ok(Version {
-            tag: self.tag,
-            literal: builder.append_string(self.literal.slice(buf)),
-            value: self.value.clone_in(self.tag, buf, builder)?,
-        })
-    }
-
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        debug_assert!(lhs.tag == rhs.tag);
-        strings::cmp_strings_asc(
-            (),
-            lhs.literal.slice(string_buf),
-            rhs.literal.slice(string_buf),
-        )
-    }
-
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
         let tag_order = lhs.tag.cmp(rhs.tag);
         if tag_order != Ordering::Equal {
@@ -762,6 +658,7 @@ impl VersionExt for Version {
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
             Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
+            Tag::Catalog => self.catalog().eql(*rhs.catalog(), lhs_buf, rhs_buf),
             _ => true,
         }
     }
@@ -770,36 +667,6 @@ impl VersionExt for Version {
 // ──────────────────────────────────────────────────────────────────────────
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
-
-// PORT NOTE: Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
-// in an earlier draft; rewritten as a length-gated match (cf. 12577e958d71
-// clap::find_param) — 9 entries with near-unique lengths, so a single `usize`
-// compare rejects almost every miss before touching bytes, and hits resolve in
-// ≤3 slice compares with no hashing or static-init overhead.
-#[inline]
-pub fn tag_from_bytes(bytes: &[u8]) -> Option<Tag> {
-    match bytes.len() {
-        3 => match bytes {
-            b"npm" => Some(Tag::Npm),
-            b"git" => Some(Tag::Git),
-            _ => None,
-        },
-        6 => match bytes {
-            b"folder" => Some(Tag::Folder),
-            b"github" => Some(Tag::Github),
-            _ => None,
-        },
-        7 => match bytes {
-            b"tarball" => Some(Tag::Tarball),
-            b"symlink" => Some(Tag::Symlink),
-            b"catalog" => Some(Tag::Catalog),
-            _ => None,
-        },
-        8 if bytes == b"dist_tag" => Some(Tag::DistTag),
-        9 if bytes == b"workspace" => Some(Tag::Workspace),
-        _ => None,
-    }
-}
 
 pub trait TagExt {
     fn cmp(self, other: Tag) -> Ordering;
@@ -825,8 +692,8 @@ impl TagExt for Tag {
         }
 
         if strings::starts_with_windows_drive_letter_t(dependency)
-            // PORT NOTE: Zig `std.fs.path.isSep` — platform-native separator only
-            // (`/` on POSIX, `/` or `\` on Windows). NOT `isSepAny`.
+            // Platform-native separator only
+            // (`/` on POSIX, `/` or `\` on Windows).
             && {
                 #[cfg(windows)]
                 { matches!(dependency[2], b'/' | b'\\') }
@@ -839,8 +706,6 @@ impl TagExt for Tag {
             }
             return Tag::Folder;
         }
-
-        // PERF(port): was stack-fallback allocator (1024B); now uses global mimalloc — profile if it shows up on a hot path.
 
         match dependency[0] {
             // =1
@@ -919,7 +784,7 @@ impl TagExt for Tag {
                         match url[0] {
                             b':' => {
                                 // TODO(markovejnovic): This check for testing whether the URL
-                                // is a Git URL shall be moved to npm_package_arg.zig when that
+                                // is a Git URL shall be moved to npm_package_arg when that
                                 // is implemented.
                                 if url.starts_with(b"://") {
                                     url = &url[b"://".len()..];
@@ -1049,7 +914,7 @@ impl TagExt for Tag {
                             url = &url[b"git@".len()..];
                         }
 
-                        let _ = url; // PORT NOTE: Zig mutates `url` but doesn't use it after this point
+                        let _ = url; // not used after this point
 
                         if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
                         {
@@ -1167,45 +1032,11 @@ impl TagExt for Tag {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Version payload types
-// ──────────────────────────────────────────────────────────────────────────
-
-pub trait ValueExt {
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        _tag: Tag,
-        _buf: &[u8],
-        _builder: &mut SB,
-    ) -> Result<Value, bun_core::Error>;
-}
-
-impl ValueExt for Value {
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        tag: Tag,
-        _buf: &[u8],
-        _builder: &mut SB,
-    ) -> Result<Value, bun_core::Error> {
-        Ok(match tag {
-            Tag::Npm => {
-                // SAFETY: `tag == Npm` selects the `npm` union arm.
-                let npm = unsafe { (*self.npm).clone() };
-                Value {
-                    npm: ManuallyDrop::new(npm),
-                }
-            }
-            // SAFETY: every other arm is `Copy` (no heap), so a bitwise read is a true clone.
-            _ => unsafe { core::ptr::read(self) },
-        })
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Free functions: parse
 // ──────────────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
-pub fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
+#[cfg(windows)]
+pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
     let mut i: usize = 0;
     if dep.len() > 2 && dep[i] == b'/' {
         while dep[i] == b'/' {
@@ -1245,7 +1076,7 @@ pub fn parse<'a, 'b>(
     )
 }
 
-pub fn parse_with_optional_tag<'a, 'b>(
+pub(crate) fn parse_with_optional_tag<'a, 'b>(
     alias: String,
     alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
@@ -1268,7 +1099,7 @@ pub fn parse_with_optional_tag<'a, 'b>(
     )
 }
 
-pub fn parse_with_tag(
+pub(crate) fn parse_with_tag(
     alias: String,
     alias_hash: Option<PackageNameHash>,
     dependency: &[u8],
@@ -1335,7 +1166,6 @@ pub fn parse_with_tag(
 
             if is_alias {
                 if let Some(pm) = package_manager {
-                    // Zig: `pm.known_npm_aliases.put(alias_hash.?, result)`.
                     pm.record_npm_alias(alias_hash.unwrap(), &result);
                 }
             }
@@ -1651,7 +1481,11 @@ pub fn parse_with_tag(
                 literal: sliced.value(),
             })
         }
-        Tag::Uninitialized => None,
+        Tag::Uninitialized => Some(Version {
+            tag: Tag::Uninitialized,
+            literal: sliced.value(),
+            value: Value::default(),
+        }),
         Tag::Symlink => {
             if let Some(colon) = strings::index_of_char(dependency, b':') {
                 return Some(Version {
@@ -1725,5 +1559,3 @@ fn hgi_to_tag(info: &hosted_git_info::HostedGitInfo) -> Tag {
         | hosted_git_info::HostProvider::Sourcehut => Tag::Git,
     }
 }
-
-// ported from: src/install/dependency.zig

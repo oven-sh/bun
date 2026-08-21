@@ -1,14 +1,11 @@
-//! YAML parser ported from src/interchange/yaml.zig
+//! YAML parser.
 //!
-//! NOTE ON GENERICITY: Zig's `Parser(comptime enc: Encoding)` returns a type whose
-//! `enc.unit()` is `u8` or `u16`. Rust const generics cannot return types, so this
-//! port models `Encoding` as a trait with an associated `Unit` type, and `Parser<Enc>`
-//! is generic over `Enc: Encoding`.
+//! `Encoding` is modeled as a trait with an associated `Unit` type (`u8` or
+//! `u16`), and `Parser<Enc>` is generic over `Enc: Encoding`.
 //!
-//! NOTE ON LABELED SWITCH: Zig's `label: switch (x) { ... continue :label y; }` is a
-//! state-machine loop. These are ported as `let mut __c = x; loop { match __c { ... } }`
-//! with `__c = y; continue;` for `continue :label y`. Each is marked
-//! `// PORT NOTE: labeled-switch loop`.
+//! Several scanners are state-machine loops written as
+//! `let mut __c = x; loop { match __c { ... } }` with `__c = y; continue;`.
+//! Each is marked `// labeled-switch loop`.
 
 use core::cmp::Ordering;
 use core::fmt;
@@ -25,24 +22,36 @@ use bun_core::{self, StackCheck};
 
 pub struct YAML;
 
+/// Whether an alias may refer to an anchored collection that encloses it
+/// (`&a [*a]`, `&a { key: *a }`, ...).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CyclicAliases {
+    /// The returned `Expr` graph may contain cycles: an `E::Array`/`E::Object`
+    /// reachable from its own items/properties. Only for consumers that walk
+    /// it with pointer-identity tracking (`Bun.YAML.parse`).
+    Allow,
+    /// Cyclic aliases are a syntax error, so the returned `Expr` is acyclic
+    /// (aliases still share nodes, so it is a DAG rather than a tree).
+    Reject,
+}
+
 impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
+        cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
-        // Zig: `bun.analytics.Features.yaml_parse += 1;`
         bun_core::analytics::Features::yaml_parse_inc();
+        source.check_parseable_len(log, "YAML document")?;
 
-        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents());
+        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
 
         let stream = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
-                let err = ParseResult::<Utf8>::fail(e, &parser);
-                if let ParseResult::Err(err) = err {
-                    err.add_to_log(source, log)?;
-                }
+                let err = ParseResultError::from_parse_error(e, &parser);
+                err.add_to_log(source, log)?;
                 return Err(YamlParseError::SyntaxError);
             }
         };
@@ -56,7 +65,6 @@ impl YAML {
                     ast::ExprNodeList::init_capacity(stream.docs.len());
                 for doc in &stream.docs {
                     items.push(doc.root);
-                    // PERF(port): was appendAssumeCapacity
                 }
                 Ok(Expr::init(
                     E::Array {
@@ -82,17 +90,19 @@ pub enum YamlParseError {
 
 bun_core::oom_from_alloc!(YamlParseError);
 
-impl From<YamlParseError> for bun_core::Error {
-    // PORT NOTE: Zig `YAML.ParseError` is an `error{...}` set, so callers
-    // (e.g. `try YAML.parse(...)` in `ParseTask.getAST`) coerce it into the
-    // wider inferred error union. Mirror that by mapping each variant to its
-    // Zig-tag string via `bun.err!`, the same shape `json5::ExternalError`
-    // uses one file over.
+/// Already logged, like every other `SyntaxError`.
+impl From<bun_ast::SourceTooLarge> for YamlParseError {
+    fn from(_: bun_ast::SourceTooLarge) -> Self {
+        YamlParseError::SyntaxError
+    }
+}
+
+impl From<YamlParseError> for crate::Error {
     fn from(e: YamlParseError) -> Self {
         match e {
-            YamlParseError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            YamlParseError::SyntaxError => bun_core::err!("SyntaxError"),
-            YamlParseError::StackOverflow => bun_core::err!("StackOverflow"),
+            YamlParseError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            YamlParseError::SyntaxError => crate::Error::SyntaxError,
+            YamlParseError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }
@@ -100,28 +110,6 @@ impl From<YamlParseError> for bun_core::Error {
 // ───────────────────────────────────────────────────────────────────────────
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
-
-pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> ParseResult<Enc> {
-    let mut parser: Parser<Enc> = Parser::init(bump, input);
-
-    match parser.parse() {
-        Ok(stream) => ParseResult::success(stream, &parser),
-        Err(err) => ParseResult::fail(err, &parser),
-    }
-}
-
-pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<Enc>, writer: &mut W) -> fmt::Result {
-    // Zig body (yaml.zig:44-53) constructs `Parser(encoding).Printer(@TypeOf(writer))`
-    // and calls `printer.print()`. The `Printer` type is commented out in the spec
-    // (yaml.zig:4927-5250) and operates on the removed `Node` enum, so any Zig
-    // call to `print()` is a compile error on instantiation. Rust eagerly checks
-    // generics, so we cannot mirror that; instead this is a hard panic on the
-    // (currently unreachable — `rg yaml::print src/` has no callers) path.
-    let _ = (stream, writer);
-    panic!(
-        "yaml::print: Printer is commented out in yaml.zig (dead-by-spec; uses removed Node type)"
-    );
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Context
@@ -136,26 +124,26 @@ pub enum Context {
     FlowKey,
 }
 
-pub struct ContextStack {
+pub(crate) struct ContextStack {
     list: Vec<Context>,
 }
 
 impl ContextStack {
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self { list: Vec::new() }
     }
 
-    pub fn set(&mut self, context: Context) -> Result<(), AllocError> {
+    pub(crate) fn set(&mut self, context: Context) -> Result<(), AllocError> {
         self.list.push(context);
         Ok(())
     }
 
-    pub fn unset(&mut self, context: Context) {
+    pub(crate) fn unset(&mut self, context: Context) {
         let prev_context = self.list.pop();
         debug_assert!(prev_context.is_some() && prev_context.unwrap() == context);
     }
 
-    pub fn get(&self) -> Context {
+    pub(crate) fn get(&self) -> Context {
         // top level context is always BLOCK-OUT
         self.list.last().copied().unwrap_or(Context::BlockOut)
     }
@@ -179,7 +167,7 @@ pub enum Chomp {
 }
 
 impl Chomp {
-    pub const DEFAULT: Chomp = Chomp::Clip;
+    pub(crate) const DEFAULT: Chomp = Chomp::Clip;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -191,41 +179,33 @@ impl Chomp {
 pub struct Indent(usize);
 
 impl Indent {
-    pub const NONE: Indent = Indent(0);
+    pub(crate) const NONE: Indent = Indent(0);
 
-    pub fn from(indent: usize) -> Indent {
+    pub(crate) fn from(indent: usize) -> Indent {
         Indent(indent)
     }
 
-    pub fn cast(self) -> usize {
+    pub(crate) fn cast(self) -> usize {
         self.0
     }
 
-    pub fn inc(&mut self, n: usize) {
+    pub(crate) fn inc(&mut self, n: usize) {
         self.0 += n;
     }
 
-    pub fn dec(&mut self, n: usize) {
-        self.0 -= n;
-    }
-
-    pub fn add(self, n: usize) -> Indent {
+    pub(crate) fn add(self, n: usize) -> Indent {
         Indent(self.0 + n)
     }
 
-    pub fn sub(self, n: usize) -> Indent {
-        Indent(self.0 - n)
-    }
-
-    pub fn is_less_than(self, other: Indent) -> bool {
+    pub(crate) fn is_less_than(self, other: Indent) -> bool {
         self.0 < other.0
     }
 
-    pub fn is_less_than_or_equal(self, other: Indent) -> bool {
+    pub(crate) fn is_less_than_or_equal(self, other: Indent) -> bool {
         self.0 <= other.0
     }
 
-    pub fn cmp(self, r: Indent) -> Ordering {
+    pub(crate) fn cmp(self, r: Indent) -> Ordering {
         if self.0 > r.0 {
             return Ordering::Greater;
         }
@@ -238,7 +218,7 @@ impl Indent {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub enum IndentIndicator {
+enum IndentIndicator {
     /// trim leading indentation (spaces) (default)
     Auto = 0,
     N1 = 1,
@@ -253,13 +233,13 @@ pub enum IndentIndicator {
 }
 
 impl IndentIndicator {
-    pub const DEFAULT: IndentIndicator = IndentIndicator::Auto;
+    pub(crate) const DEFAULT: IndentIndicator = IndentIndicator::Auto;
 
-    pub fn get(self) -> u8 {
+    pub(crate) fn get(self) -> u8 {
         self as u8
     }
 
-    pub const fn from_raw(n: u8) -> Self {
+    pub(crate) const fn from_raw(n: u8) -> Self {
         match n {
             0 => IndentIndicator::Auto,
             1 => IndentIndicator::N1,
@@ -271,34 +251,33 @@ impl IndentIndicator {
             7 => IndentIndicator::N7,
             8 => IndentIndicator::N8,
             9 => IndentIndicator::N9,
-            // Zig's safety-checked `@enumFromInt` traps on out-of-range; the
-            // only caller (`read_indentation_indicator`) passes `digit - b'0'`
+            // The only caller (`read_indentation_indicator`) passes `digit - b'0'`
             // after a `b'1'..=b'9'` guard, so this arm is unreachable.
             _ => panic!("invalid IndentIndicator"),
         }
     }
 }
 
-pub struct IndentStack {
+pub(crate) struct IndentStack {
     list: Vec<Indent>,
 }
 
 impl IndentStack {
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self { list: Vec::new() }
     }
 
-    pub fn push(&mut self, indent: Indent) -> Result<(), AllocError> {
+    pub(crate) fn push(&mut self, indent: Indent) -> Result<(), AllocError> {
         self.list.push(indent);
         Ok(())
     }
 
-    pub fn pop(&mut self) {
+    pub(crate) fn pop(&mut self) {
         debug_assert!(!self.list.is_empty());
         self.list.pop();
     }
 
-    pub fn get(&self) -> Option<Indent> {
+    pub(crate) fn get(&self) -> Option<Indent> {
         self.list.last().copied()
     }
 }
@@ -312,50 +291,32 @@ impl IndentStack {
 pub struct Pos(usize);
 
 impl Pos {
-    pub const ZERO: Pos = Pos(0);
+    pub(crate) const ZERO: Pos = Pos(0);
 
-    pub fn from(pos: usize) -> Pos {
+    pub(crate) fn from(pos: usize) -> Pos {
         Pos(pos)
     }
 
-    pub fn cast(self) -> usize {
+    pub(crate) fn cast(self) -> usize {
         self.0
     }
 
-    pub fn loc(self) -> bun_ast::Loc {
+    pub(crate) fn loc(self) -> bun_ast::Loc {
         bun_ast::Loc {
             start: i32::try_from(self.0).expect("int cast"),
         }
     }
 
-    pub fn inc(&mut self, n: usize) {
-        self.0 += n;
-    }
-
-    pub fn dec(&mut self, n: usize) {
-        self.0 -= n;
-    }
-
-    pub fn add(self, n: usize) -> Pos {
+    pub(crate) fn add(self, n: usize) -> Pos {
         Pos(self.0 + n)
     }
 
-    pub fn sub(self, n: usize) -> Pos {
+    pub(crate) fn sub(self, n: usize) -> Pos {
         Pos(self.0 - n)
     }
 
-    pub fn is_less_than(self, other: usize) -> bool {
+    pub(crate) fn is_less_than(self, other: usize) -> bool {
         self.0 < other
-    }
-
-    pub fn cmp(self, r: usize) -> Ordering {
-        if self.0 < r {
-            return Ordering::Less;
-        }
-        if self.0 > r {
-            return Ordering::Greater;
-        }
-        Ordering::Equal
     }
 }
 
@@ -368,36 +329,17 @@ impl Pos {
 pub struct Line(usize);
 
 impl Line {
-    pub fn from(line: usize) -> Line {
+    pub(crate) fn from(line: usize) -> Line {
         Line(line)
     }
 
-    pub fn cast(self) -> usize {
-        self.0
-    }
-
-    pub fn inc(&mut self, n: usize) {
+    pub(crate) fn inc(&mut self, n: usize) {
         self.0 += n;
-    }
-
-    pub fn dec(&mut self, n: usize) {
-        self.0 -= n;
-    }
-
-    pub fn add(self, n: usize) -> Line {
-        Line(self.0 + n)
-    }
-
-    pub fn sub(self, n: usize) -> Line {
-        Line(self.0 - n)
     }
 }
 
-// Zig: comptime { bun.assert(Pos != Indent); ... } — type-distinctness checks.
-// Rust newtypes are already distinct; nothing to assert.
-
 // ───────────────────────────────────────────────────────────────────────────
-// Encoding trait (replaces Zig `Encoding` enum + `enc.unit()` type fn)
+// Encoding trait
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -407,11 +349,10 @@ pub enum EncodingKind {
     Utf16,
 }
 
-/// Stack buffer for an ASCII literal widened to `Enc::Unit`. Replaces Zig's
-/// `enc.literal("...")` (a `comptime` utf8→utf16 transcode via
-/// `std.unicode.utf8ToUtf16LeStringLiteral`). Rust cannot do const transcoding
-/// behind a trait method, so the literal is widened at the call site into this
-/// inline buffer instead. All call sites in this file pass ≤4-byte ASCII; the
+/// Stack buffer for an ASCII literal widened to `Enc::Unit`. Rust cannot do
+/// const transcoding behind a trait method, so the literal is widened at the
+/// call site into this inline buffer instead.
+/// All call sites in this file pass ≤4-byte ASCII; the
 /// cap of 8 leaves headroom for new literals.
 #[derive(Clone, Copy)]
 pub struct EncLit<U: Copy + Default> {
@@ -441,7 +382,7 @@ impl<U: Copy + Default> AsRef<[U]> for EncLit<U> {
     }
 }
 
-/// Trait modeling Zig's `Encoding` comptime enum where `unit()` returns a type.
+/// Code-unit encoding of the parser input; `Unit` is `u8` or `u16`.
 pub trait Encoding: Copy + 'static {
     type Unit: Copy + Eq + Ord + Default + fmt::Debug + Into<u32> + 'static;
 
@@ -458,19 +399,17 @@ pub trait Encoding: Copy + 'static {
         u.into()
     }
 
-    /// `enc.literal("...")` — Zig's comptime string literal in the target
-    /// encoding. Callers pass ASCII only; widened into an inline `EncLit`
-    /// buffer (see `EncLit` doc for the const-generics rationale).
+    /// A string literal in the target encoding. Callers pass ASCII only;
+    /// widened into an inline `EncLit` buffer (see `EncLit` doc for the
+    /// const-generics rationale).
     fn literal(s: &'static [u8]) -> EncLit<Self::Unit>;
 
     /// Number of leading units to skip if `input` starts with [3] c-byte-order-mark.
     fn bom_len(input: &[Self::Unit]) -> usize;
 
     /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
-    /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
-    /// `[]const u8`; calls like `tag_handles.put(handle.slice(self.input), {})`
-    /// only type-check there for `unit() == u8` thanks to lazy generic
-    /// instantiation. Rust eagerly checks generics, so we route through this
+    /// (`anchors` / `tag_handles`). `StringHashMap` is keyed by `&[u8]`, so we
+    /// route through this
     /// method — identity for `u8` encodings, byte-reinterpret (`len * 2`) for
     /// `Utf16`. Byte-reinterpret preserves key uniqueness; do **not** use this
     /// for text (see `NodeScalar::to_expr` for the encoding-aware string path).
@@ -478,9 +417,7 @@ pub trait Encoding: Copy + 'static {
 
     /// Construct a Unit from a `u16` code unit. Only meaningful for `Utf16`
     /// (identity); the `u8` encodings mark this `unreachable!()` because every
-    /// call site is gated on `Enc::KIND == EncodingKind::Utf16`. Mirrors Zig's
-    /// `text.append(@intCast(cp))` paths in `scanDoubleQuotedScalar` /
-    /// `decodeHexCodePoint` where `unit() == u16`.
+    /// call site is gated on `Enc::KIND == EncodingKind::Utf16`.
     fn unit_from_u16(u: u16) -> Self::Unit;
 
     /// Reinterpret `&[Unit]` as `&[u16]`. Identity for `Utf16`; the `u8`
@@ -490,6 +427,17 @@ pub trait Encoding: Copy + 'static {
     #[inline]
     fn as_u16_slice(_s: &[Self::Unit]) -> &[u16] {
         unreachable!("as_u16_slice on u8 encoding")
+    }
+}
+
+#[inline]
+fn byte_literal(s: &'static [u8]) -> EncLit<u8> {
+    debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
+    let mut buf = [0u8; 8];
+    buf[..s.len()].copy_from_slice(s);
+    EncLit {
+        buf,
+        len: s.len() as u8,
     }
 }
 
@@ -509,13 +457,7 @@ impl Encoding for Latin1 {
     }
     #[inline]
     fn literal(s: &'static [u8]) -> EncLit<u8> {
-        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
-        let mut buf = [0u8; 8];
-        buf[..s.len()].copy_from_slice(s);
-        EncLit {
-            buf,
-            len: s.len() as u8,
-        }
+        byte_literal(s)
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
@@ -541,13 +483,7 @@ impl Encoding for Utf8 {
     }
     #[inline]
     fn literal(s: &'static [u8]) -> EncLit<u8> {
-        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
-        let mut buf = [0u8; 8];
-        buf[..s.len()].copy_from_slice(s);
-        EncLit {
-            buf,
-            len: s.len() as u8,
-        }
+        byte_literal(s)
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
@@ -577,8 +513,7 @@ impl Encoding for Utf16 {
     }
     #[inline]
     fn literal(s: &'static [u8]) -> EncLit<u16> {
-        // Zig: `std.unicode.utf8ToUtf16LeStringLiteral` (comptime). All call
-        // sites pass ASCII, so widen byte-by-byte into the inline buffer.
+        // All call sites pass ASCII, so widen byte-by-byte into the inline buffer.
         debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
         let mut buf = [0u16; 8];
         let mut i = 0;
@@ -614,29 +549,29 @@ impl Encoding for Utf16 {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// chars — character classification (Zig: `Encoding.chars()` returned a type)
+// chars — character classification
 // ───────────────────────────────────────────────────────────────────────────
 
-pub mod chars {
+pub(crate) mod chars {
     use super::{Encoding, EncodingKind};
 
-    pub fn is_ns_dec_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_dec_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
         matches!(Enc::wide(c), 0x30..=0x39)
     }
 
-    pub fn is_ns_hex_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_hex_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
         // YAML 1.2 production [36] ns-hex-digit — keep spec name, delegate to canonical.
         bun_core::strings::is_hex_code_point(Enc::wide(c))
     }
 
-    pub fn is_ns_word_char<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_word_char<Enc: Encoding>(c: Enc::Unit) -> bool {
         matches!(
             Enc::wide(c),
             0x30..=0x39 | 0x41..=0x5A | 0x61..=0x7A | 0x2D /* '-' */
         )
     }
 
-    pub fn is_ns_char<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_char<Enc: Encoding>(c: Enc::Unit) -> bool {
         let cw = Enc::wide(c);
         match Enc::KIND {
             EncodingKind::Utf8 => match cw {
@@ -669,7 +604,7 @@ pub mod chars {
     }
 
     /// null if false, length if true
-    pub fn is_ns_tag_char<Enc: Encoding>(cs: &[Enc::Unit]) -> Option<u8> {
+    pub(crate) fn is_ns_tag_char<Enc: Encoding>(cs: &[Enc::Unit]) -> Option<u8> {
         if cs.is_empty() {
             return None;
         }
@@ -700,55 +635,21 @@ pub mod chars {
         }
     }
 
-    pub fn is_b_char<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_b_char<Enc: Encoding>(c: Enc::Unit) -> bool {
         let cw = Enc::wide(c);
         cw == 0x0A || cw == 0x0D
     }
 
-    pub fn is_s_white<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_s_white<Enc: Encoding>(c: Enc::Unit) -> bool {
         let cw = Enc::wide(c);
         cw == 0x20 || cw == 0x09
     }
 
-    pub fn is_ns_plain_safe_out<Enc: Encoding>(c: Enc::Unit) -> bool {
-        is_ns_char::<Enc>(c)
-    }
-
-    pub fn is_ns_plain_safe_in<Enc: Encoding>(c: Enc::Unit) -> bool {
-        // TODO: inline isCFlowIndicator
-        is_ns_char::<Enc>(c) && !is_c_flow_indicator::<Enc>(c)
-    }
-
-    pub fn is_c_indicator<Enc: Encoding>(c: Enc::Unit) -> bool {
-        matches!(
-            Enc::wide(c),
-            // - ? : , [ ] { } # & * ! | > ' " % @ `
-            0x2D | 0x3F
-                | 0x3A
-                | 0x2C
-                | 0x5B
-                | 0x5D
-                | 0x7B
-                | 0x7D
-                | 0x23
-                | 0x26
-                | 0x2A
-                | 0x21
-                | 0x7C
-                | 0x3E
-                | 0x27
-                | 0x22
-                | 0x25
-                | 0x40
-                | 0x60
-        )
-    }
-
-    pub fn is_c_flow_indicator<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_c_flow_indicator<Enc: Encoding>(c: Enc::Unit) -> bool {
         matches!(Enc::wide(c), 0x2C | 0x5B | 0x5D | 0x7B | 0x7D)
     }
 
-    pub fn is_ns_uri_char<Enc: Encoding>(cs: &[Enc::Unit]) -> bool {
+    pub(crate) fn is_ns_uri_char<Enc: Encoding>(cs: &[Enc::Unit]) -> bool {
         if cs.is_empty() {
             return false;
         }
@@ -770,7 +671,7 @@ pub mod chars {
         }
     }
 
-    pub fn is_ns_anchor_char<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_anchor_char<Enc: Encoding>(c: Enc::Unit) -> bool {
         // TODO: inline isCFlowIndicator
         is_ns_char::<Enc>(c) && !is_c_flow_indicator::<Enc>(c)
     }
@@ -816,11 +717,13 @@ pub enum ParseError {
     StackOverflow,
     #[error("ExcessiveAliasing")]
     ExcessiveAliasing,
+    #[error("CyclicAlias")]
+    CyclicAlias,
+    #[error("CyclicMerge")]
+    CyclicMerge,
 }
 
 bun_core::oom_from_alloc!(ParseError);
-
-bun_core::named_error_set!(ParseError);
 
 // ───────────────────────────────────────────────────────────────────────────
 // String / StringRange / StringBuilder
@@ -828,126 +731,67 @@ bun_core::named_error_set!(ParseError);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StringRange {
-    pub off: Pos,
-    pub end: Pos,
+    pub(crate) off: Pos,
+    pub(crate) end: Pos,
 }
 
 impl StringRange {
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.off == self.end
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.end.cast() - self.off.cast()
     }
 
-    pub fn slice<'i, U>(&self, input: &'i [U]) -> &'i [U] {
+    pub(crate) fn slice<'i, U>(&self, input: &'i [U]) -> &'i [U] {
         &input[self.off.cast()..self.end.cast()]
     }
 }
 
-// PORT NOTE: reshaped for borrowck — Zig captured `parser.pos` lazily via a
-// pointer field; in Rust that pins an immutable borrow across mutating scans.
+// Capturing `parser.pos` lazily via a pointer field would pin an immutable
+// borrow across mutating scans.
 // Capture only `off` and have callers pass the end `Pos` explicitly.
 #[derive(Clone, Copy)]
-pub struct StringRangeStart {
-    pub off: Pos,
+struct StringRangeStart {
+    pub(crate) off: Pos,
 }
 
 impl StringRangeStart {
     #[inline]
-    pub fn end(self, end: Pos) -> StringRange {
+    pub(crate) fn end(self, end: Pos) -> StringRange {
         StringRange { off: self.off, end }
     }
 }
 
+#[derive(Clone)]
 pub enum YamlString<Enc: Encoding> {
     Range(StringRange),
     List(Vec<Enc::Unit>),
 }
 
 impl<Enc: Encoding> YamlString<Enc> {
-    pub fn slice<'i>(&'i self, input: &'i [Enc::Unit]) -> &'i [Enc::Unit] {
-        match self {
-            YamlString::Range(range) => range.slice(input),
-            YamlString::List(list) => list.as_slice(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             YamlString::Range(range) => range.len(),
             YamlString::List(list) => list.len(),
         }
     }
-
-    pub fn is_empty(&self) -> bool {
-        match self {
-            YamlString::Range(range) => range.is_empty(),
-            YamlString::List(list) => list.is_empty(),
-        }
-    }
-
-    pub fn eql(&self, r: &[u8], input: &[Enc::Unit]) -> bool {
-        // TODO(port): Zig compared []const enc.unit() against []const u8 via
-        // std.mem.eql(enc.unit(), ...) which only compiles when enc.unit() == u8.
-        // TODO(port): constrain or transcode.
-        let l_slice = self.slice(input);
-        if l_slice.len() != r.len() {
-            return false;
-        }
-        l_slice
-            .iter()
-            .zip(r.iter())
-            .all(|(a, b)| Enc::wide(*a) == *b as u32)
-    }
 }
 
-// `String.Builder` — owns a back-reference into the parser. The Zig code stored
-// `parser: *Parser(enc)` and mutated `parser.whitespace_buf`. In Rust this is a
-// borrow-checker hazard (the builder borrows `&mut Parser` while the parser also
-// drives scanning). We keep a raw pointer with SAFETY notes.
-// TODO(port): refactor whitespace_buf out of Parser or pass &mut explicitly.
-pub struct StringBuilder<'a, Enc: Encoding> {
-    // PORT NOTE: a `&'a mut Parser<'a, Enc>` field would tie the borrow lifetime
-    // to Parser's input lifetime (invariant under &mut), which both fails
-    // borrowck at `string_builder()` and is exactly the aliasing the Zig already
-    // had. Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
-    // Private — invariant-bearing raw backref; reach via `parser()`/`parser_mut()`.
-    parser: *mut Parser<'a, Enc>,
-    pub str: YamlString<Enc>,
+// Plain-scalar string builder. `whitespace_buf` is taken from the parser by
+// `string_builder()` and returned by `done()` for capacity reuse.
+pub(crate) struct StringBuilder<'i, Enc: Encoding> {
+    input: &'i [Enc::Unit],
+    whitespace_buf: Vec<Whitespace<Enc>>,
+    pub(crate) str: YamlString<Enc>,
 }
 
-impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
-    #[inline]
-    fn parser(&self) -> &Parser<'a, Enc> {
-        // SAFETY: callers construct StringBuilder via Parser::string_builder{,_raw}()
-        // which stores `self as *mut Parser`; the builder never outlives the parser
-        // stack frame and is the sole mutator of `whitespace_buf` while live.
-        unsafe { &*self.parser }
-    }
-    #[inline]
-    fn parser_mut(&mut self) -> &mut Parser<'a, Enc> {
-        // SAFETY: same backref invariant as `parser()`; `&mut self` guarantees
-        // exclusive access to the builder so the derived `&mut Parser` does not
-        // alias another live borrow.
-        unsafe { &mut *self.parser }
-    }
-    /// Shortcut for `self.parser().input` that returns the slice with its
-    /// original `'a` lifetime (decoupled from `&self`), so it can be hoisted
-    /// above `match &mut self.str` without tripping borrowck.
-    #[inline]
-    fn input(&self) -> &'a [Enc::Unit] {
-        // SAFETY: same backref invariant as `parser()`; `input` is a `&'a`
-        // borrow stored in the Parser and is unaffected by any mutation this
-        // builder performs.
-        unsafe { (*self.parser).input }
-    }
-
-    pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
+impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
+    pub(crate) fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
-        assert!(self.parser().input[pos.cast()] == unit);
+        assert!(self.input[pos.cast()] == unit);
         match &mut self.str {
             YamlString::Range(range) => {
                 if range.is_empty() {
@@ -965,9 +809,8 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     }
 
     fn drain_whitespace(&mut self) -> Result<(), AllocError> {
-        // PORT NOTE: reshaped for borrowck — take ownership of buf, process, clear.
-        let buf = core::mem::take(&mut self.parser_mut().whitespace_buf);
-        let input = self.input();
+        let buf = core::mem::take(&mut self.whitespace_buf);
+        let input = self.input;
         for ws in &buf {
             match ws {
                 Whitespace::Source { pos, unit } => {
@@ -989,7 +832,6 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                         let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
                         list.extend_from_slice(range.slice(input));
                         list.push(*unit);
-                        // PERF(port): was assume_capacity
                         self.str = YamlString::List(list);
                     }
                     YamlString::List(list) => list.push(*unit),
@@ -998,57 +840,41 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         }
         let mut buf = buf;
         buf.clear();
-        self.parser_mut().whitespace_buf = buf;
+        self.whitespace_buf = buf;
         Ok(())
     }
 
-    pub fn append_source_whitespace(
+    /// Discards pending (not yet drained) whitespace.
+    pub(crate) fn clear_whitespace(&mut self) {
+        self.whitespace_buf.clear();
+    }
+
+    pub(crate) fn append_source_whitespace(
         &mut self,
         unit: Enc::Unit,
         pos: Pos,
     ) -> Result<(), AllocError> {
-        self.parser_mut()
-            .whitespace_buf
-            .push(Whitespace::Source { unit, pos });
+        self.whitespace_buf.push(Whitespace::Source { unit, pos });
         Ok(())
     }
 
-    pub fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.parser_mut().whitespace_buf.push(Whitespace::New(unit));
+    pub(crate) fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
+        self.whitespace_buf.push(Whitespace::New(unit));
         Ok(())
     }
 
-    pub fn append_whitespace_n_times(
+    pub(crate) fn append_whitespace_n_times(
         &mut self,
         unit: Enc::Unit,
         n: usize,
     ) -> Result<(), AllocError> {
         for _ in 0..n {
-            self.parser_mut().whitespace_buf.push(Whitespace::New(unit));
+            self.whitespace_buf.push(Whitespace::New(unit));
         }
         Ok(())
     }
 
-    pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
-        self.drain_whitespace()?;
-        let input = self.input();
-        match &mut self.str {
-            YamlString::Range(range) => {
-                if range.is_empty() {
-                    range.off = off;
-                    range.end = off;
-                }
-                debug_assert!(range.end == off);
-                range.end = end;
-            }
-            YamlString::List(list) => {
-                list.extend_from_slice(&input[off.cast()..end.cast()]);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn append_expected_source_slice(
+    pub(crate) fn append_expected_source_slice(
         &mut self,
         off: Pos,
         end: Pos,
@@ -1056,7 +882,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     ) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
-        let input = self.input();
+        let input = self.input;
         assert!(&input[off.cast()..end.cast()] == expected);
 
         match &mut self.str {
@@ -1075,65 +901,14 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         Ok(())
     }
 
-    pub fn append(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.drain_whitespace()?;
-        let input = self.input();
-        match &mut self.str {
-            YamlString::Range(range) => {
-                let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
-                list.extend_from_slice(range.slice(input));
-                list.push(unit);
-                // PERF(port): was assume_capacity
-                self.str = YamlString::List(list);
-            }
-            YamlString::List(list) => list.push(unit),
-        }
-        Ok(())
-    }
-
-    pub fn append_slice(&mut self, s: &[Enc::Unit]) -> Result<(), AllocError> {
-        if s.is_empty() {
-            return Ok(());
-        }
-        self.drain_whitespace()?;
-        let input = self.input();
-        match &mut self.str {
-            YamlString::Range(range) => {
-                let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + s.len());
-                list.extend_from_slice(range.slice(input));
-                list.extend_from_slice(s);
-                // PERF(port): was assume_capacity
-                self.str = YamlString::List(list);
-            }
-            YamlString::List(list) => list.extend_from_slice(s),
-        }
-        Ok(())
-    }
-
-    pub fn append_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
-        if n == 0 {
-            return Ok(());
-        }
-        self.drain_whitespace()?;
-        let input = self.input();
-        match &mut self.str {
-            YamlString::Range(range) => {
-                let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + n);
-                list.extend_from_slice(range.slice(input));
-                bun_core::vec::push_n(&mut list, unit, n);
-                self.str = YamlString::List(list);
-            }
-            YamlString::List(list) => bun_core::vec::push_n(list, unit, n),
-        }
-        Ok(())
-    }
-
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.str.len()
     }
 
-    pub fn done(mut self) -> YamlString<Enc> {
-        self.parser_mut().whitespace_buf.clear();
+    /// Returns the built string and hands the whitespace buffer back to the parser.
+    pub(crate) fn done(mut self, parser: &mut Parser<'i, Enc>) -> YamlString<Enc> {
+        self.whitespace_buf.clear();
+        parser.whitespace_buf = core::mem::take(&mut self.whitespace_buf);
         self.str
     }
 }
@@ -1150,31 +925,23 @@ pub enum FirstChar {
     Other,
 }
 
-// PORT NOTE: Zig defined this inline inside scanPlainScalar. Hoisted to module
-// scope so methods can be `impl`'d. `parser` is `*mut` because the outer
-// `&mut self` in scan_plain_scalar drives scanning concurrently — see
-// LIFETIMES.tsv BACKREF.
-pub struct ScalarResolverCtx<'i, Enc: Encoding> {
-    pub str_builder: StringBuilder<'i, Enc>,
+pub(crate) struct ScalarResolverCtx<'i, Enc: Encoding> {
+    pub(crate) str_builder: StringBuilder<'i, Enc>,
 
-    pub resolved: bool,
-    pub scalar: Option<NodeScalar<Enc>>,
-    pub tag: NodeTag,
+    pub(crate) resolved: bool,
+    pub(crate) scalar: Option<NodeScalar<Enc>>,
+    pub(crate) tag: NodeTag,
 
-    // Private — invariant-bearing raw backref (same pointer as
-    // `str_builder.parser`); never reassign independently.
-    parser: *mut Parser<'i, Enc>,
+    pub(crate) resolved_scalar_len: usize,
 
-    pub resolved_scalar_len: usize,
-
-    pub start: Pos,
-    pub line: Line,
-    pub line_indent: Indent,
-    pub multiline: bool,
+    pub(crate) start: Pos,
+    pub(crate) line: Line,
+    pub(crate) line_indent: Indent,
+    pub(crate) multiline: bool,
 }
 
 impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
-    pub fn done(self) -> Token<Enc> {
+    pub(crate) fn done(self, parser: &mut Parser<'i, Enc>) -> Token<Enc> {
         let multiline = self.multiline;
         let start = self.start;
         let line_indent = self.line_indent;
@@ -1183,14 +950,13 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let scalar_opt = self.scalar;
 
         let scalar: TokenScalar<Enc> = 'scalar: {
-            let scalar_str = self.str_builder.done();
+            let scalar_str = self.str_builder.done(parser);
 
             if let Some(scalar) = scalar_opt {
                 if scalar_str.len() == resolved_scalar_len {
                     drop(scalar_str);
                     break 'scalar TokenScalar {
-                        multiline,
-                        is_quoted: false,
+                        style: ScalarStyle::Plain { multiline },
                         data: scalar,
                     };
                 }
@@ -1199,8 +965,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             }
 
             break 'scalar TokenScalar {
-                multiline,
-                is_quoted: false,
+                style: ScalarStyle::Plain { multiline },
                 data: NodeScalar::String(scalar_str),
             };
         };
@@ -1213,9 +978,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         })
     }
 
-    pub fn check_append(&mut self) {
-        // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
-        let parser = unsafe { &*self.parser };
+    pub(crate) fn check_append(&mut self, parser: &Parser<'i, Enc>) {
         if self.str_builder.len() == 0 {
             self.line_indent = parser.line_indent;
             self.line = parser.line;
@@ -1224,12 +987,17 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         }
     }
 
-    pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
-        self.check_append();
+    pub(crate) fn append_source(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        unit: Enc::Unit,
+        pos: Pos,
+    ) -> Result<(), AllocError> {
+        self.check_append(parser);
         self.str_builder.append_source(unit, pos)
     }
 
-    pub fn append_source_whitespace(
+    pub(crate) fn append_source_whitespace(
         &mut self,
         unit: Enc::Unit,
         pos: Pos,
@@ -1237,23 +1005,22 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_source_whitespace(unit, pos)
     }
 
-    pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
-        self.check_append();
-        self.str_builder.append_source_slice(off, end)
-    }
-
     // may or may not contain whitespace
-    pub fn append_unknown_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
+    pub(crate) fn append_unknown_source_slice(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        off: Pos,
+        end: Pos,
+    ) -> Result<(), AllocError> {
         for _pos in off.cast()..end.cast() {
             let pos = Pos::from(_pos);
-            // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
-            let unit = unsafe { (*self.parser).input[pos.cast()] };
+            let unit = parser.input[pos.cast()];
             match Enc::wide(unit) {
                 0x20 | 0x09 | 0x0D | 0x0A => {
                     self.str_builder.append_source_whitespace(unit, pos)?;
                 }
                 _ => {
-                    self.check_append();
+                    self.check_append(parser);
                     self.str_builder.append_source(unit, pos)?;
                 }
             }
@@ -1261,29 +1028,11 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         Ok(())
     }
 
-    pub fn append(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.check_append();
-        self.str_builder.append(unit)
-    }
-
-    pub fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
+    pub(crate) fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
         self.str_builder.append_whitespace(unit)
     }
 
-    pub fn append_slice(&mut self, str: &[Enc::Unit]) -> Result<(), AllocError> {
-        self.check_append();
-        self.str_builder.append_slice(str)
-    }
-
-    pub fn append_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
-        if n == 0 {
-            return Ok(());
-        }
-        self.check_append();
-        self.str_builder.append_n_times(unit, n)
-    }
-
-    pub fn append_whitespace_n_times(
+    pub(crate) fn append_whitespace_n_times(
         &mut self,
         unit: Enc::Unit,
         n: usize,
@@ -1294,9 +1043,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_whitespace_n_times(unit, n)
     }
 
-    // PORT NOTE: Zig `Keywords` enum (yaml.zig:1862-1887) was unused; not ported.
-
-    pub fn resolve(
+    pub(crate) fn resolve(
         &mut self,
         scalar: NodeScalar<Enc>,
         off: Pos,
@@ -1350,130 +1097,116 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         Ok(())
     }
 
-    pub fn try_resolve_number(&mut self, first_char: FirstChar) -> Result<(), AllocError> {
-        // SAFETY: `self.parser` was set from `&mut self` in scan_plain_scalar
-        // and ctx never outlives it. Route all parser access through the raw
-        // pointer instead of taking `&mut Parser` as an argument — holding an
-        // explicit `&mut Parser` across calls into `self.append_*` (which also
-        // derive `&mut Parser` via StringBuilder::parser_mut) would create two
-        // live `&mut` to the same object (Stacked Borrows UB). Re-deriving on
-        // every access keeps each borrow non-overlapping.
-        let raw_parser: *mut Parser<'i, Enc> = self.parser;
-        macro_rules! parser {
-            () => {
-                // SAFETY: `raw_parser` is `self.parser`, set from `&mut Parser`
-                // in `scan_plain_scalar`; ctx never outlives that borrow and each
-                // expansion's `&mut` is dropped before the next is derived.
-                unsafe { &mut *raw_parser }
-            };
-        }
-
+    pub(crate) fn try_resolve_number(
+        &mut self,
+        parser: &mut Parser<'i, Enc>,
+        first_char: FirstChar,
+    ) -> Result<(), AllocError> {
         let nan = f64::NAN;
         let inf = f64::INFINITY;
 
         match first_char {
-            FirstChar::Dot => match Enc::wide(parser!().next()) {
+            FirstChar::Dot => match Enc::wide(parser.next()) {
                 0x6E /* 'n' */ => {
-                    let n_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"an")) {
+                    let n_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"an")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"nan"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'n'), n_start)?;
+                    self.append_source(parser, Enc::ch(b'n'), n_start)?;
                     return Ok(());
                 }
                 0x4E /* 'N' */ => {
-                    let n_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"aN")) {
+                    let n_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"aN")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NaN"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    if parser!().remain_starts_with(Enc::literal(b"AN")) {
+                    if parser.remain_starts_with(Enc::literal(b"AN")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NAN"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'N'), n_start)?;
+                    self.append_source(parser, Enc::ch(b'N'), n_start)?;
                     return Ok(());
                 }
                 0x69 /* 'i' */ => {
-                    let i_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                    let i_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"nf")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"inf"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'i'), i_start)?;
+                    self.append_source(parser, Enc::ch(b'i'), i_start)?;
                     return Ok(());
                 }
                 0x49 /* 'I' */ => {
-                    let i_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                    let i_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"nf")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"Inf"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    if parser!().remain_starts_with(Enc::literal(b"NF")) {
+                    if parser.remain_starts_with(Enc::literal(b"NF")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"INF"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'I'), i_start)?;
+                    self.append_source(parser, Enc::ch(b'I'), i_start)?;
                     return Ok(());
                 }
                 _ => {}
             },
             FirstChar::Negative | FirstChar::Positive => {
-                if Enc::wide(parser!().next()) == 0x2E
-                    && (Enc::wide(parser!().peek(1)) == 0x69
-                        || Enc::wide(parser!().peek(1)) == 0x49)
+                if Enc::wide(parser.next()) == 0x2E
+                    && (Enc::wide(parser.peek(1)) == 0x69 || Enc::wide(parser.peek(1)) == 0x49)
                 {
-                    self.append_source(Enc::ch(b'.'), parser!().pos)?;
-                    parser!().inc(1);
-                    match Enc::wide(parser!().next()) {
+                    self.append_source(parser, Enc::ch(b'.'), parser.pos)?;
+                    parser.inc(1);
+                    match Enc::wide(parser.next()) {
                         0x69 /* 'i' */ => {
-                            let i_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                            let i_start = parser.pos;
+                            parser.inc(1);
+                            if parser.remain_starts_with(Enc::literal(b"nf")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"inf"),
                                 )?;
-                                parser!().inc(2);
+                                parser.inc(2);
                                 return Ok(());
                             }
-                            self.append_source(Enc::ch(b'i'), i_start)?;
+                            self.append_source(parser, Enc::ch(b'i'), i_start)?;
                             return Ok(());
                         }
                         0x49 /* 'I' */ => {
-                            let i_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                            let i_start = parser.pos;
+                            parser.inc(1);
+                            if parser.remain_starts_with(Enc::literal(b"nf")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"Inf"),
                                 )?;
-                                parser!().inc(2);
+                                parser.inc(2);
                                 return Ok(());
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"NF")) {
+                            if parser.remain_starts_with(Enc::literal(b"NF")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"INF"),
                                 )?;
-                                parser!().inc(2);
+                                parser.inc(2);
                                 return Ok(());
                             }
-                            self.append_source(Enc::ch(b'I'), i_start)?;
+                            self.append_source(parser, Enc::ch(b'I'), i_start)?;
                             return Ok(());
                         }
                         _ => {
@@ -1485,9 +1218,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             FirstChar::Other => {}
         }
 
-        let start = parser!().pos;
+        let start = parser.pos;
 
-        let mut decimal = Enc::wide(parser!().next()) == 0x2E /* '.' */;
+        let mut decimal = Enc::wide(parser.next()) == 0x2E /* '.' */;
         let mut x = false;
         let mut o = false;
         let mut e = false;
@@ -1501,13 +1234,13 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         // loop starts at the second body char with the `decimal`/digit flags
         // already reflecting the first.
         if !matches!(first_char, FirstChar::Negative | FirstChar::Positive) || decimal {
-            parser!().inc(1);
+            parser.inc(1);
         }
 
         let mut first = true;
 
-        // PORT NOTE: labeled-switch loop
-        let mut __c = Enc::wide(parser!().next());
+        // labeled-switch loop
+        let mut __c = Enc::wide(parser.next());
         let (end, valid): (Pos, bool) = 'end: loop {
             match __c {
                 // can only be valid if it ends on:
@@ -1519,28 +1252,28 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 // - ':'
                 0x20 | 0x09 | 0 | 0x0A | 0x0D | 0x3A => {
                     if first && (first_char == FirstChar::Positive || first_char == FirstChar::Negative) {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
-                    break 'end (parser!().pos, true);
+                    break 'end (parser.pos, true);
                 }
 
                 0x2C | 0x5D | 0x7D /* , ] } */ => {
-                    match parser!().context.get() {
+                    match parser.context.get() {
                         // it's valid for ',' ']' '}' to end the scalar
                         // in flow context
-                        Context::FlowIn | Context::FlowKey => break 'end (parser!().pos, true),
-                        Context::BlockIn | Context::BlockOut => break 'end (parser!().pos, false),
+                        Context::FlowIn | Context::FlowKey => break 'end (parser.pos, true),
+                        Context::BlockIn | Context::BlockOut => break 'end (parser.pos, false),
                     }
                 }
 
                 0x30 /* '0' */ => {
                     let was_first = first;
                     first = false;
-                    parser!().inc(1);
+                    parser.inc(1);
                     if was_first {
-                        match Enc::wide(parser!().next()) {
+                        match Enc::wide(parser.next()) {
                             0x62 | 0x42 /* 'b' 'B' */ => {
-                                break 'end (parser!().pos, false);
+                                break 'end (parser.pos, false);
                             }
                             c => {
                                 __c = c;
@@ -1548,14 +1281,14 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                             }
                         }
                     }
-                    __c = Enc::wide(parser!().next());
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x31..=0x39 /* '1'..'9' */ => {
                     first = false;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
@@ -1565,8 +1298,8 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                         hex = true;
                     }
                     e = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
@@ -1575,86 +1308,86 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
                     if first {
                         if __c == 0x62 || __c == 0x42 {
-                            break 'end (parser!().pos, false);
+                            break 'end (parser.pos, false);
                         }
                     }
                     first = false;
 
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x78 /* 'x' */ => {
                     first = false;
                     if x {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
 
                     x = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x6F /* 'o' */ => {
                     first = false;
                     if o {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
 
                     o = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x2E /* '.' */ => {
                     first = false;
                     if decimal {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
 
                     decimal = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x2B /* '+' */ => {
                     first = false;
                     if x {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
                     plus = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
                 0x2D /* '-' */ => {
                     first = false;
                     if minus {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
                     minus = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
                 _ => {
-                    break 'end (parser!().pos, false);
+                    break 'end (parser.pos, false);
                 }
             }
         };
         let _ = plus;
 
-        self.append_unknown_source_slice(start, end)?;
+        self.append_unknown_source_slice(parser, start, end)?;
 
         if !valid {
             return Ok(());
         }
 
-        let lexed = parser!().slice(start, end);
+        let lexed = parser.slice(start, end);
         let mut scalar: NodeScalar<Enc> = 'scalar: {
             if x || o || hex {
                 let unsigned = match parse_unsigned_radix0::<Enc>(lexed) {
@@ -1768,8 +1501,8 @@ fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     }
 }
 
-/// Port of `std.fmt.parseUnsigned(u64, slice, 0)` over an encoding-generic
-/// slice. Radix 0 = auto-detect `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
+/// Parses a `u64` from an encoding-generic slice with radix
+/// auto-detection: `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
 /// (bin), else decimal; `_` is a digit separator. Utf8/Latin1 narrow via
 /// `Enc::key_bytes`; Utf16 narrows via [`bun_core::strings::narrow_ascii_u16`].
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
@@ -1813,7 +1546,7 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
-    pub fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
         match self {
             NodeTag::None
             | NodeTag::Bool
@@ -1829,6 +1562,7 @@ impl NodeTag {
     }
 }
 
+#[derive(Clone)]
 pub enum NodeScalar<Enc: Encoding> {
     Null,
     Boolean(bool),
@@ -1837,26 +1571,20 @@ pub enum NodeScalar<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> NodeScalar<Enc> {
-    pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
+    pub(crate) fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
-            NodeScalar::Number(value) => Expr::init(E::Number { value: *value }, pos.loc()),
+            NodeScalar::Number(value) => Expr::init(E::Number::new(*value), pos.loc()),
             NodeScalar::String(value) => {
-                // Zig: `.init(E.String, .{ .data = value.slice(input) }, pos.loc())`.
-                // `E.String.data` is `[]const u8`, so the Zig source only
-                // type-checks for `unit() == u8`. For `Utf16` we route through
-                // `E::String::init_utf16` instead of mirroring the Zig compile
-                // error (Rust eagerly monomorphizes).
+                // For `Utf16` we route through `E::String::init_utf16`.
                 //
-                // LIFETIME: Zig's `String.list` is `array_list.Managed` backed
-                // by `parser.allocator` (the bump arena), so `list.items`
-                // outlives the scalar token. The Rust port uses a global-alloc
-                // `Vec` that is dropped with the local `scalar` immediately
-                // after this returns — the resulting `EString.data` would
-                // dangle. Dupe `.list` bytes into the bump arena to recover the
-                // Zig lifetime; `.range` already borrows `input` (source text)
-                // which outlives the Expr → JS conversion.
+                // LIFETIME: `YamlString::List` is a global-alloc `Vec` that is
+                // dropped with the local `scalar` immediately after this
+                // returns — the resulting `EString.data` would dangle. Dupe
+                // the list bytes into the bump arena; `.range` already borrows
+                // `input` (source text) which outlives the Expr → JS
+                // conversion.
                 let s: &[Enc::Unit] = match value {
                     YamlString::Range(range) => range.slice(input),
                     YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
@@ -1883,47 +1611,70 @@ impl<Enc: Encoding> NodeScalar<Enc> {
 // Directive / Document / Stream
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum Directive {
+/// Only `%YAML` is tracked (at most one per document); `%TAG` directives
+/// register their handle as a side effect of parsing and reserved directives
+/// are skipped, so neither needs a variant of its own.
+pub(crate) enum Directive {
     Yaml,
-    Tag(DirectiveTag),
-    Reserved(StringRange),
+    Other,
 }
 
-/// '%TAG <handle> <prefix>'
-pub struct DirectiveTag {
-    pub handle: DirectiveTagHandle,
-    pub prefix: DirectiveTagPrefix,
+pub(crate) struct Document {
+    pub(crate) root: Expr,
 }
 
-pub enum DirectiveTagHandle {
-    /// '!name!'
-    Named(StringRange),
-    /// '!!'
-    Secondary,
-    /// '!'
-    Primary,
+/// Should only be used with expressions created with the YAML parser. It assumes
+/// only null, boolean, number, string, array, object are possible. It also only
+/// does pointer comparison with arrays and objects (so exponential merges are avoided).
+/// Operates on already-built `Expr`s, so it is independent of the input encoding.
+fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
+    if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
+        return false;
+    }
+    match (&l.data, &r.data) {
+        (ast::ExprData::ENull(_), _) => true,
+        (ast::ExprData::EBoolean(lb), ast::ExprData::EBoolean(rb)) => lb.value == rb.value,
+        (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value() == rn.value(),
+        (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
+            // UTF-8/UTF-16-aware string equality.
+            if ls.is_utf16 != rs.is_utf16 {
+                if ls.is_utf16 {
+                    rs.eql_bytes(ls.data.slice())
+                } else {
+                    ls.eql_bytes(rs.data.slice())
+                }
+            } else if ls.is_utf16 {
+                ls.slice16() == rs.slice16()
+            } else {
+                ls.data == rs.data
+            }
+        }
+        // pointer comparison
+        (ast::ExprData::EArray(la), ast::ExprData::EArray(ra)) => la.as_ptr() == ra.as_ptr(),
+        (ast::ExprData::EObject(lo), ast::ExprData::EObject(ro)) => lo.as_ptr() == ro.as_ptr(),
+        _ => false,
+    }
 }
 
-pub enum DirectiveTagPrefix {
-    /// c-ns-local-tag-prefix
-    /// '!my-prefix'
-    Local(StringRange),
-    /// ns-global-tag-prefix
-    /// 'tag:example.com,2000:app/'
-    Global(StringRange),
+/// Encoding-independent companion to [`yaml_merge_key_expr_eql`].
+fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
+    match &key.data {
+        ast::ExprData::ENull(_) => 0,
+        ast::ExprData::EBoolean(b) => 1 + b.value as u64,
+        ast::ExprData::ENumber(n) => {
+            let value = if n.value() == 0.0 { 0.0 } else { n.value() };
+            value.to_bits()
+        }
+        ast::ExprData::EString(s) => s.hash(),
+        ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
+        ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
+        _ => u64::MAX,
+    }
 }
 
-pub struct Document {
-    pub directives: Vec<Directive>,
-    pub root: Expr,
-}
-
-// impl Drop for Document — Vec<Directive> auto-drops; Expr is arena-backed.
-
-pub struct Stream<Enc: Encoding> {
-    pub docs: Vec<Document>,
-    pub input: *const [Enc::Unit],
-    // TODO(port): lifetime — Zig stored `[]const enc.unit()` borrowing parser input.
+pub struct Stream<'i, Enc: Encoding> {
+    pub(crate) docs: Vec<Document>,
+    pub(crate) _input: core::marker::PhantomData<&'i [Enc::Unit]>,
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1932,32 +1683,22 @@ pub struct Stream<Enc: Encoding> {
 
 #[derive(Clone, Copy)]
 pub struct TokenInit {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
 }
 
+// `Clone` deep-copies the `Vec` inside `YamlString::List`, which is fine for
+// the read-only uses here.
+#[derive(Clone)]
 pub struct Token<Enc: Encoding> {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
-    pub data: TokenData<Enc>,
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
+    pub(crate) data: TokenData<Enc>,
 }
 
-impl<Enc: Encoding> Clone for Token<Enc> {
-    fn clone(&self) -> Self {
-        // TODO(port): TokenData contains NodeScalar<Enc> which holds a Vec for
-        // String::List. Zig copied tokens by value (struct copy). TODO(port):
-        // make Token cheaply-copyable or store scalars by index.
-        Token {
-            start: self.start,
-            indent: self.indent,
-            line: self.line,
-            data: self.data.clone(),
-        }
-    }
-}
-
+#[derive(Clone)]
 pub enum TokenData<Enc: Encoding> {
     Eof,
     /// `-`
@@ -1995,94 +1736,54 @@ pub enum TokenData<Enc: Encoding> {
     Scalar(TokenScalar<Enc>),
 }
 
-impl<Enc: Encoding> Clone for TokenData<Enc> {
-    fn clone(&self) -> Self {
-        // TODO(port): see Token::clone note
-        match self {
-            TokenData::Eof => TokenData::Eof,
-            TokenData::SequenceEntry => TokenData::SequenceEntry,
-            TokenData::MappingKey => TokenData::MappingKey,
-            TokenData::MappingValue => TokenData::MappingValue,
-            TokenData::CollectEntry => TokenData::CollectEntry,
-            TokenData::SequenceStart => TokenData::SequenceStart,
-            TokenData::SequenceEnd => TokenData::SequenceEnd,
-            TokenData::MappingStart => TokenData::MappingStart,
-            TokenData::MappingEnd => TokenData::MappingEnd,
-            TokenData::Anchor(r) => TokenData::Anchor(*r),
-            TokenData::Alias(r) => TokenData::Alias(*r),
-            TokenData::Tag(t) => TokenData::Tag(*t),
-            TokenData::Directive => TokenData::Directive,
-            TokenData::Reserved => TokenData::Reserved,
-            TokenData::DocumentStart => TokenData::DocumentStart,
-            TokenData::DocumentEnd => TokenData::DocumentEnd,
-            TokenData::Scalar(_) => {
-                // TODO(port): Scalar contains a Vec; Zig copied by value. Reshape to make it Copy.
-                unreachable!("Token<Scalar> should not be cloned")
-            }
-        }
-    }
-}
-
-impl<Enc: Encoding> TokenData<Enc> {
-    pub fn discriminant(&self) -> u8 {
-        // SAFETY: #[repr(...)] not declared; use mem::discriminant for comparisons instead.
-        // This helper exists only for the labeled-switch-loop ports below.
-        // TODO(port): replace with core::mem::discriminant comparisons.
-        match self {
-            TokenData::Eof => 0,
-            TokenData::SequenceEntry => 1,
-            TokenData::MappingKey => 2,
-            TokenData::MappingValue => 3,
-            TokenData::CollectEntry => 4,
-            TokenData::SequenceStart => 5,
-            TokenData::SequenceEnd => 6,
-            TokenData::MappingStart => 7,
-            TokenData::MappingEnd => 8,
-            TokenData::Anchor(_) => 9,
-            TokenData::Alias(_) => 10,
-            TokenData::Tag(_) => 11,
-            TokenData::Directive => 12,
-            TokenData::Reserved => 13,
-            TokenData::DocumentStart => 14,
-            TokenData::DocumentEnd => 15,
-            TokenData::Scalar(_) => 16,
-        }
-    }
-}
-
+#[derive(Clone)]
 pub struct TokenScalar<Enc: Encoding> {
-    pub data: NodeScalar<Enc>,
-    pub multiline: bool,
-    pub is_quoted: bool,
+    pub(crate) data: NodeScalar<Enc>,
+    pub(crate) style: ScalarStyle,
+}
+
+/// How a scalar token was written in the source. Only `Plain` carries
+/// `multiline`: the sole reader (`parse_block_indented`'s tag-neutral
+/// rewind) cares exclusively about plain single-line scalars, and the
+/// value has no well-defined meaning for quoted or block styles.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ScalarStyle {
+    /// [131] ns-plain. `multiline` = source text spans more than one line,
+    /// tracked by `ScalarResolverCtx::check_append`.
+    Plain { multiline: bool },
+    /// [170] `|` literal or [174] `>` folded.
+    Block,
+    /// [120] single-quoted or [109] double-quoted.
+    Quoted,
 }
 
 #[derive(Clone, Copy)]
 pub struct AnchorInit {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
-    pub name: StringRange,
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
+    pub(crate) name: StringRange,
 }
 
-pub type AliasInit = AnchorInit;
+pub(crate) type AliasInit = AnchorInit;
 
 #[derive(Clone, Copy)]
 pub struct TagInit {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
-    pub tag: NodeTag,
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
+    pub(crate) tag: NodeTag,
 }
 
-pub struct ScalarInit<Enc: Encoding> {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
-    pub resolved: TokenScalar<Enc>,
+pub(crate) struct ScalarInit<Enc: Encoding> {
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
+    pub(crate) resolved: TokenScalar<Enc>,
 }
 
 impl<Enc: Encoding> Token<Enc> {
-    pub fn eof(init: TokenInit) -> Self {
+    pub(crate) fn eof(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2090,7 +1791,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Eof,
         }
     }
-    pub fn sequence_entry(init: TokenInit) -> Self {
+    pub(crate) fn sequence_entry(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2098,7 +1799,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::SequenceEntry,
         }
     }
-    pub fn mapping_key(init: TokenInit) -> Self {
+    pub(crate) fn mapping_key(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2106,7 +1807,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::MappingKey,
         }
     }
-    pub fn mapping_value(init: TokenInit) -> Self {
+    pub(crate) fn mapping_value(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2114,7 +1815,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::MappingValue,
         }
     }
-    pub fn collect_entry(init: TokenInit) -> Self {
+    pub(crate) fn collect_entry(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2122,7 +1823,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::CollectEntry,
         }
     }
-    pub fn sequence_start(init: TokenInit) -> Self {
+    pub(crate) fn sequence_start(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2130,7 +1831,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::SequenceStart,
         }
     }
-    pub fn sequence_end(init: TokenInit) -> Self {
+    pub(crate) fn sequence_end(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2138,7 +1839,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::SequenceEnd,
         }
     }
-    pub fn mapping_start(init: TokenInit) -> Self {
+    pub(crate) fn mapping_start(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2146,7 +1847,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::MappingStart,
         }
     }
-    pub fn mapping_end(init: TokenInit) -> Self {
+    pub(crate) fn mapping_end(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2154,7 +1855,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::MappingEnd,
         }
     }
-    pub fn anchor(init: AnchorInit) -> Self {
+    pub(crate) fn anchor(init: AnchorInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2162,7 +1863,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Anchor(init.name),
         }
     }
-    pub fn alias(init: AliasInit) -> Self {
+    pub(crate) fn alias(init: AliasInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2170,7 +1871,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Alias(init.name),
         }
     }
-    pub fn tag(init: TagInit) -> Self {
+    pub(crate) fn tag(init: TagInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2178,7 +1879,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Tag(init.tag),
         }
     }
-    pub fn directive(init: TokenInit) -> Self {
+    pub(crate) fn directive(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2186,7 +1887,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Directive,
         }
     }
-    pub fn reserved(init: TokenInit) -> Self {
+    pub(crate) fn reserved(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2194,7 +1895,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Reserved,
         }
     }
-    pub fn document_start(init: TokenInit) -> Self {
+    pub(crate) fn document_start(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2202,7 +1903,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::DocumentStart,
         }
     }
-    pub fn document_end(init: TokenInit) -> Self {
+    pub(crate) fn document_end(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2210,7 +1911,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::DocumentEnd,
         }
     }
-    pub fn scalar(init: ScalarInit<Enc>) -> Self {
+    pub(crate) fn scalar(init: ScalarInit<Enc>) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2221,18 +1922,8 @@ impl<Enc: Encoding> Token<Enc> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// ParseResult
+// ParseResultError
 // ───────────────────────────────────────────────────────────────────────────
-
-pub enum ParseResult<Enc: Encoding> {
-    Result(ParseResultOk<Enc>),
-    Err(ParseResultError),
-}
-
-pub struct ParseResultOk<Enc: Encoding> {
-    pub stream: Stream<Enc>,
-    // allocator dropped — global mimalloc
-}
 
 pub enum ParseResultError {
     Oom,
@@ -2252,10 +1943,12 @@ pub enum ParseResultError {
     MultipleYamlDirectives { pos: Pos },
     InvalidIndentation { pos: Pos },
     ExcessiveAliasing { pos: Pos },
+    CyclicAlias { pos: Pos },
+    CyclicMerge { pos: Pos },
 }
 
 impl ParseResultError {
-    pub fn add_to_log(
+    pub(crate) fn add_to_log(
         &self,
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -2312,18 +2005,31 @@ impl ParseResultError {
             ParseResultError::ExcessiveAliasing { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Excessive aliasing");
             }
+            ParseResultError::CyclicAlias { pos } => {
+                log.add_error(
+                    Some(source),
+                    pos.loc(),
+                    b"Cyclic aliases are only supported by Bun.YAML.parse",
+                );
+            }
+            ParseResultError::CyclicMerge { pos } => {
+                log.add_error(
+                    Some(source),
+                    pos.loc(),
+                    b"Merge key cannot reference an enclosing node",
+                );
+            }
         }
         Ok(())
     }
 }
 
-impl<Enc: Encoding> ParseResult<Enc> {
-    pub fn success(stream: Stream<Enc>, _parser: &Parser<Enc>) -> Self {
-        ParseResult::Result(ParseResultOk { stream })
-    }
-
-    pub fn fail(err: ParseError, parser: &Parser<Enc>) -> Self {
-        let e = match err {
+impl ParseResultError {
+    pub(crate) fn from_parse_error<Enc: Encoding>(
+        err: ParseError,
+        parser: &Parser<'_, Enc>,
+    ) -> Self {
+        match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
             ParseError::UnexpectedToken => ParseResultError::UnexpectedToken {
@@ -2375,8 +2081,13 @@ impl<Enc: Encoding> ParseResult<Enc> {
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
                 pos: parser.token.start,
             },
-        };
-        ParseResult::Err(e)
+            ParseError::CyclicAlias => ParseResultError::CyclicAlias {
+                pos: parser.token.start,
+            },
+            ParseError::CyclicMerge => ParseResultError::CyclicMerge {
+                pos: parser.token.start,
+            },
+        }
     }
 }
 
@@ -2384,7 +2095,7 @@ impl<Enc: Encoding> ParseResult<Enc> {
 // Whitespace (parser-internal)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum Whitespace<Enc: Encoding> {
+pub(crate) enum Whitespace<Enc: Encoding> {
     Source { pos: Pos, unit: Enc::Unit },
     New(Enc::Unit),
 }
@@ -2394,44 +2105,50 @@ pub enum Whitespace<Enc: Encoding> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct Parser<'i, Enc: Encoding> {
-    pub input: &'i [Enc::Unit],
+    pub(crate) input: &'i [Enc::Unit],
 
-    pub pos: Pos,
+    pub(crate) pos: Pos,
     /// Position of the first byte of the current line (one past the most
     /// recently consumed `\n`/`\r`). Set in `newline()`.
-    pub line_start_pos: Pos,
-    pub line_indent: Indent,
+    pub(crate) line_start_pos: Pos,
+    pub(crate) line_indent: Indent,
     /// A tab was seen between the line's s-indent (or post-indicator
     /// additional_parent_indent position) and the current token's content.
     /// [62]/[63] s-indent is spaces only; tab here is s-separate-in-line, valid
     /// before [197] flow-in-block content but not before a [185] compact
     /// construct or a sibling block entry. Reset on newline().
-    pub tab_after_indent: bool,
-    pub line: Line,
-    pub token: Token<Enc>,
+    pub(crate) tab_after_indent: bool,
+    pub(crate) line: Line,
+    pub(crate) token: Token<Enc>,
 
-    /// Zig `parser.allocator`. Growable buffers in this port use the global
+    /// Growable buffers use the global
     /// allocator (and `Drop`); the arena is threaded for the few places that
     /// must hand a borrowed slice into the long-lived `Expr` tree (see
     /// `NodeScalar::to_expr`).
-    pub bump: &'i bun_alloc::Arena,
+    pub(crate) bump: &'i bun_alloc::Arena,
 
-    pub context: ContextStack,
-    pub block_indents: IndentStack,
+    pub(crate) context: ContextStack,
+    pub(crate) block_indents: IndentStack,
 
-    pub explicit_document_start_line: Option<Line>,
+    pub(crate) explicit_document_start_line: Option<Line>,
 
-    pub anchors: StringHashMap<Expr>,
-    // TODO(port): Zig key type was []const enc.unit(); StringHashMap keys are &[u8].
-    // For Utf16 this needs a different map type.
-    pub tag_handles: StringHashMap<()>,
+    pub(crate) anchors: StringHashMap<Expr>,
+    /// Anchored collections enclosing the current position, innermost last.
+    /// Pushed/popped only by `parse_collection`.
+    pub(crate) open_collections: Vec<OpenCollection>,
+    pub(crate) cyclic_aliases: CyclicAliases,
+    /// An alias in this document resolved to an enclosing collection, so the
+    /// graph has a cycle and `charge_alias_expansion` must watch for it.
+    pub(crate) has_cyclic_alias: bool,
+    pub(crate) tag_handles: StringHashMap<()>,
 
-    pub whitespace_buf: Vec<Whitespace<Enc>>,
+    /// Backing storage lent to `StringBuilder`; empty while a builder is live.
+    pub(crate) whitespace_buf: Vec<Whitespace<Enc>>,
 
-    pub stack_check: StackCheck,
+    pub(crate) stack_check: StackCheck,
 
-    pub merge_props_budget: usize,
-    pub alias_expansion_budget: usize,
+    pub(crate) merge_props_budget: usize,
+    pub(crate) alias_expansion_budget: usize,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2441,9 +2158,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// deduplicate, so this needs enough headroom for legitimate documents that
     /// reuse a large anchor many times while still rejecting exponential
     /// (billion-laughs style) expansion.
-    pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
+    pub(crate) const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
-    pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
+    pub(crate) fn init(
+        bump: &'i bun_alloc::Arena,
+        input: &'i [Enc::Unit],
+        cyclic_aliases: CyclicAliases,
+    ) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
         Self {
@@ -2463,6 +2184,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             block_indents: IndentStack::init(),
             explicit_document_start_line: None,
             anchors: StringHashMap::default(),
+            open_collections: Vec::new(),
+            cyclic_aliases,
+            has_cyclic_alias: false,
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
@@ -2477,7 +2201,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ParseError::UnexpectedToken
     }
 
-    pub fn parse(&mut self) -> Result<Stream<Enc>, ParseError> {
+    pub(crate) fn parse(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         self.scan(ScanOptions {
             first_scan: true,
             ..Default::default()
@@ -2485,7 +2209,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.parse_stream()
     }
 
-    pub fn parse_stream(&mut self) -> Result<Stream<Enc>, ParseError> {
+    pub(crate) fn parse_stream(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         let mut docs: Vec<Document> = Vec::new();
 
         // we want one null document if eof, not zero documents.
@@ -2498,11 +2222,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         Ok(Stream {
             docs,
-            input: std::ptr::from_ref::<[Enc::Unit]>(self.input),
+            _input: core::marker::PhantomData,
         })
     }
 
-    // PERF(port): was comptime monomorphization — profile
     fn peek(&self, n: usize) -> Enc::Unit {
         let pos = self.pos.add(n);
         if pos.is_less_than(self.input.len()) {
@@ -2581,24 +2304,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // primary tag handle
             if self.is_s_white() {
                 self.skip_s_white();
-                let prefix = self.parse_directive_tag_prefix()?;
+                self.parse_directive_tag_prefix()?;
                 self.try_skip_to_new_line()?;
-                return Ok(Directive::Tag(DirectiveTag {
-                    handle: DirectiveTagHandle::Primary,
-                    prefix,
-                }));
+                return Ok(Directive::Other);
             }
 
             // secondary tag handle
             if self.is_char(Enc::ch(b'!')) {
                 self.inc(1);
                 self.try_skip_s_white()?;
-                let prefix = self.parse_directive_tag_prefix()?;
+                self.parse_directive_tag_prefix()?;
                 self.try_skip_to_new_line()?;
-                return Ok(Directive::Tag(DirectiveTag {
-                    handle: DirectiveTagHandle::Secondary,
-                    prefix,
-                }));
+                return Ok(Directive::Other);
             }
 
             // named tag handle
@@ -2608,22 +2325,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.try_skip_char(Enc::ch(b'!'))?;
             self.try_skip_s_white()?;
 
-            // TODO(port): StringHashMap key type; for Utf16 needs different keying.
             self.tag_handles
                 .put(Enc::key_bytes(handle.slice(self.input)), ())?;
 
-            let prefix = self.parse_directive_tag_prefix()?;
+            self.parse_directive_tag_prefix()?;
             self.try_skip_to_new_line()?;
-            return Ok(Directive::Tag(DirectiveTag {
-                handle: DirectiveTagHandle::Named(handle),
-                prefix,
-            }));
+            return Ok(Directive::Other);
         }
 
         // reserved directive
-        let range = self.string_range();
         self.try_skip_ns_chars()?;
-        let reserved = range.end(self.pos);
 
         self.skip_s_white();
 
@@ -2634,47 +2345,43 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.try_skip_to_new_line()?;
 
-        Ok(Directive::Reserved(reserved))
+        Ok(Directive::Other)
     }
 
-    pub fn parse_directive_tag_prefix(&mut self) -> Result<DirectiveTagPrefix, ParseError> {
+    pub(crate) fn parse_directive_tag_prefix(&mut self) -> Result<(), ParseError> {
         // local tag prefix
         if self.is_char(Enc::ch(b'!')) {
             self.inc(1);
-            let range = self.string_range();
             self.skip_ns_uri_chars();
-            return Ok(DirectiveTagPrefix::Local(range.end(self.pos)));
+            return Ok(());
         }
 
         // global tag prefix
         if let Some(char_len) = self.is_ns_tag_char() {
-            let range = self.string_range();
             self.inc(char_len as usize);
             self.skip_ns_uri_chars();
-            return Ok(DirectiveTagPrefix::Global(range.end(self.pos)));
+            return Ok(());
         }
 
         Err(ParseError::InvalidDirective)
     }
 
-    pub fn parse_document(&mut self) -> Result<Document, ParseError> {
-        let mut directives: Vec<Directive> = Vec::new();
-
-        // Zig: `clearRetainingCapacity()` — `HashMap::clear()` already retains capacity.
+    pub(crate) fn parse_document(&mut self) -> Result<Document, ParseError> {
         self.anchors.clear();
+        self.has_cyclic_alias = false;
         self.tag_handles.clear();
 
+        let mut has_directives = false;
         let mut has_yaml_directive = false;
 
         while matches!(self.token.data, TokenData::Directive) {
-            let directive = self.parse_directive()?;
-            if matches!(directive, Directive::Yaml) {
+            if let Directive::Yaml = self.parse_directive()? {
                 if has_yaml_directive {
                     return Err(ParseError::MultipleYamlDirectives);
                 }
                 has_yaml_directive = true;
             }
-            directives.push(directive);
+            has_directives = true;
             self.scan(ScanOptions::default())?;
         }
 
@@ -2683,12 +2390,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if matches!(self.token.data, TokenData::DocumentStart) {
             self.explicit_document_start_line = Some(self.token.line);
             self.scan(ScanOptions::default())?;
-        } else if !directives.is_empty() {
+        } else if has_directives {
             // if there's directives they must end with '---'
             return Err(Self::unexpected_token());
         }
 
         let root = self.parse_node(ParseNodeOptions::default())?;
+
+        debug_assert!(self.open_collections.is_empty());
 
         // If document_start it needs to create a new document.
         // If document_end, consume as many as possible. They should
@@ -2717,7 +2426,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        Ok(Document { root, directives })
+        Ok(Document { root })
     }
 
     /// [149] c-ns-flow-map-json-key-entry — when a JSON-style key (quoted
@@ -2775,11 +2484,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // first scan above. The FlowKey wrap is only for the content parse so
         // a JSON-style key early-returns at the trailing `:`.
         let mut scanned_tag: Option<Token<Enc>> = None;
-        let mut scanned_anchor: Option<Token<Enc>> = None;
+        let mut scanned_anchor: Option<PendingAnchor> = None;
         loop {
             match self.token.data {
-                TokenData::Anchor(_) if scanned_anchor.is_none() => {
-                    scanned_anchor = Some(self.token.clone());
+                TokenData::Anchor(name) if scanned_anchor.is_none() => {
+                    scanned_anchor = Some(PendingAnchor::new(&self.token, name));
                 }
                 TokenData::Tag(_) if scanned_tag.is_none() => {
                     scanned_tag = Some(self.token.clone());
@@ -2804,7 +2513,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     | TokenData::MappingEnd
                     | TokenData::SequenceEnd
             ) {
-                return self.props_to_e_node(&scanned_tag, &scanned_anchor, start.loc());
+                return self.props_to_e_node(&scanned_tag, scanned_anchor, start.loc());
             }
         }
 
@@ -2819,19 +2528,23 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         k
     }
 
-    fn parse_flow_sequence(&mut self) -> Result<Expr, ParseError> {
+    fn parse_flow_sequence(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
         let sequence_start = self.token.start;
-        let _sequence_indent = self.token.indent;
-        let _sequence_line = self.line;
+        self.parse_collection(
+            anchor,
+            sequence_start.loc(),
+            Self::parse_flow_sequence_entries,
+        )
+    }
 
+    fn parse_flow_sequence_entries(&mut self) -> Result<E::Array, ParseError> {
         let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
         self.context.set(Context::FlowIn)?;
 
-        // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
-        // fallible body's result and unset on EVERY exit (including `?` paths).
-        // The post-`]` scan happens AFTER `.flow_in` is popped (yaml.zig:771),
-        // so only the loop body lives inside the closure.
+        // Capture the fallible body's result and unset `FlowIn` on EVERY exit
+        // (including `?` paths). The post-`]` scan happens AFTER `FlowIn` is
+        // popped, so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
             self.scan(ScanOptions::default())?;
             while !matches!(self.token.data, TokenData::SequenceEnd) {
@@ -2861,7 +2574,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         Expr::init(E::Null {}, self.token.start.loc())
                     };
                     let mut props = MappingProps::init();
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    self.append_entry(&mut props, key, value)?;
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
@@ -2896,31 +2609,32 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.scan(ScanOptions::default())?;
 
-        Ok(Expr::init(
-            E::Array {
-                items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()),
-                ..Default::default()
-            },
-            sequence_start.loc(),
-        ))
+        Ok(E::Array {
+            items: seq,
+            ..Default::default()
+        })
     }
 
-    fn parse_flow_mapping(&mut self) -> Result<Expr, ParseError> {
+    fn parse_flow_mapping(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
         let mapping_start = self.token.start;
-        let _mapping_indent = self.token.indent;
-        let _mapping_line = self.token.line;
+        self.parse_collection(
+            anchor,
+            mapping_start.loc(),
+            Self::parse_flow_mapping_entries,
+        )
+    }
 
+    fn parse_flow_mapping_entries(&mut self) -> Result<E::Object, ParseError> {
         let mut props = MappingProps::init();
 
         self.context.set(Context::FlowIn)?;
 
-        // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
-        // fallible body's result and unset on EVERY exit (including `?` paths).
-        // The post-`}` scan happens AFTER `.flow_in` is popped (yaml.zig:852),
-        // so only the loop body lives inside the closure.
+        // Capture the fallible body's result and unset `FlowIn` on EVERY exit
+        // (including `?` paths). The post-`}` scan happens AFTER `FlowIn` is
+        // popped, so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
             {
-                // Zig `defer self.context.unset(.flow_key)` — unset before propagating.
+                // Unset `FlowKey` before propagating.
                 self.context.set(Context::FlowKey)?;
                 let r = self.scan(ScanOptions::default());
                 self.context.unset(Context::FlowKey);
@@ -2995,7 +2709,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         current_mapping_indent: Some(self.token.indent),
                         ..Default::default()
                     })?;
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    self.append_entry(&mut props, key, value)?;
                 }
 
                 // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
@@ -3019,17 +2733,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.scan(ScanOptions::default())?;
 
-        Ok(Expr::init(
-            E::Object {
-                properties: props.move_list(),
-                ..Default::default()
-            },
-            mapping_start.loc(),
-        ))
+        Ok(E::Object {
+            properties: props.move_list(),
+            ..Default::default()
+        })
     }
 
-    fn parse_block_sequence(&mut self) -> Result<Expr, ParseError> {
+    fn parse_block_sequence(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
         let sequence_start = self.token.start;
+        self.parse_collection(
+            anchor,
+            sequence_start.loc(),
+            Self::parse_block_sequence_entries,
+        )
+    }
+
+    fn parse_block_sequence_entries(&mut self) -> Result<E::Array, ParseError> {
         let sequence_indent = self.token.indent;
 
         // [200] s-l+block-collection requires s-l-comments (a line break)
@@ -3043,9 +2762,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.block_indents.push(sequence_indent)?;
 
-        // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
-        // body's result and pop on EVERY exit (including `?` paths).
-        let result: Result<Expr, ParseError> = (|| {
+        // Capture the fallible body's result and pop `block_indents` on EVERY
+        // exit (including `?` paths).
+        let result: Result<E::Array, ParseError> = (|| {
             let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
             let mut prev_line = Line::from(0);
@@ -3083,74 +2802,72 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 seq.push(item);
             }
 
-            Ok(Expr::init(
-                E::Array {
-                    items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()),
-                    ..Default::default()
-                },
-                sequence_start.loc(),
-            ))
+            Ok(E::Array {
+                items: seq,
+                ..Default::default()
+            })
         })();
 
         self.block_indents.pop();
         result
     }
 
-    /// Should only be used with expressions created with the YAML parser. It assumes
-    /// only null, boolean, number, string, array, object are possible. It also only
-    /// does pointer comparison with arrays and objects (so exponential merges are avoided)
-    fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
-        if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
-            return false;
-        }
-        match (&l.data, &r.data) {
-            (ast::ExprData::ENull(_), _) => true,
-            (ast::ExprData::EBoolean(lb), ast::ExprData::EBoolean(rb)) => lb.value == rb.value,
-            (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value == rn.value,
-            (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
-                // Zig: `ls.eqlEString(rs)` — inline the UTF-8/UTF-16 + slice-eq logic.
-                if ls.is_utf16 != rs.is_utf16 {
-                    if ls.is_utf16 {
-                        rs.eql_bytes(ls.data.slice())
-                    } else {
-                        ls.eql_bytes(rs.data.slice())
-                    }
-                } else if ls.is_utf16 {
-                    ls.slice16() == rs.slice16()
-                } else {
-                    ls.data == rs.data
-                }
-            }
-            // pointer comparison
-            (ast::ExprData::EArray(la), ast::ExprData::EArray(ra)) => la.as_ptr() == ra.as_ptr(),
-            (ast::ExprData::EObject(lo), ast::ExprData::EObject(ro)) => lo.as_ptr() == ro.as_ptr(),
-            _ => false,
-        }
+    /// [190] c-l-block-map-explicit-key. The current token is the `?`.
+    fn parse_block_explicit_key(
+        &mut self,
+        mapping_start: Pos,
+        mapping_indent: Indent,
+        mapping_line: Line,
+    ) -> Result<Expr, ParseError> {
+        self.block_indents.push(mapping_indent)?;
+
+        let key: Result<Expr, ParseError> = (|| {
+            self.scan(ScanOptions {
+                additional_parent_indent: Some(mapping_indent.add(1)),
+                ..Default::default()
+            })?;
+
+            self.parse_block_indented(
+                mapping_indent,
+                mapping_line,
+                mapping_start,
+                BlockIndentedKind::MapExplicitKey,
+            )
+        })();
+
+        self.block_indents.pop();
+        key
     }
 
-    fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
-        match &key.data {
-            ast::ExprData::ENull(_) => 0,
-            ast::ExprData::EBoolean(b) => 1 + b.value as u64,
-            ast::ExprData::ENumber(n) => {
-                let value = if n.value == 0.0 { 0.0 } else { n.value };
-                value.to_bits()
-            }
-            ast::ExprData::EString(s) => s.hash(),
-            ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
-            ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
-            _ => u64::MAX,
-        }
-    }
-
+    /// `anchor` is the [200] block collection's own anchor; an anchor on
+    /// `first_key` has already been bound by the caller.
     fn parse_block_mapping(
         &mut self,
+        anchor: Option<PendingAnchor>,
         first_key: Expr,
         mapping_start: Pos,
         mapping_indent: Indent,
         mapping_line: Line,
         flow_pair_allowed: bool,
     ) -> Result<Expr, ParseError> {
+        self.parse_collection::<E::Object>(anchor, mapping_start.loc(), |p| {
+            p.parse_block_mapping_entries(
+                first_key,
+                mapping_indent,
+                mapping_line,
+                flow_pair_allowed,
+            )
+        })
+    }
+
+    /// The current token is the one after `first_key`.
+    fn parse_block_mapping_entries(
+        &mut self,
+        first_key: Expr,
+        mapping_indent: Indent,
+        mapping_line: Line,
+        flow_pair_allowed: bool,
+    ) -> Result<E::Object, ParseError> {
         if let Some(explicit_document_start_line) = self.explicit_document_start_line {
             if mapping_line == explicit_document_start_line {
                 // TODO: more specific error
@@ -3168,9 +2885,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.block_indents.push(mapping_indent)?;
         }
 
-        // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
-        // body's result and pop on EVERY exit (including `?` paths).
-        let result: Result<Expr, ParseError> = (|| {
+        // Capture the fallible body's result and pop `block_indents` on EVERY
+        // exit (including `?` paths).
+        let result: Result<E::Object, ParseError> = (|| {
             let mut props = MappingProps::init();
             let mut first_entry_end_line = mapping_line;
 
@@ -3232,24 +2949,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     _ => Expr::init(E::Null {}, mapping_value_start.loc()),
                 };
 
-                props.append_maybe_merge(first_key, value, &mut self.merge_props_budget)?;
+                self.append_entry(&mut props, first_key, value)?;
             }
 
             if self.context.get() == Context::FlowIn {
-                return Ok(Expr::init(
-                    E::Object {
-                        properties: props.move_list(),
-                        ..Default::default()
-                    },
-                    mapping_start.loc(),
-                ));
+                return Ok(E::Object {
+                    properties: props.move_list(),
+                    ..Default::default()
+                });
             }
 
             self.context.set(Context::BlockIn)?;
 
-            // PORT NOTE: Zig `defer self.context.unset(.block_in)` — same
-            // capture-then-unset pattern, nested.
-            let inner: Result<Expr, ParseError> = (|| {
+            // Same capture-then-unset pattern, nested.
+            let inner: Result<(), ParseError> = (|| {
                 let mut previous_line = first_entry_end_line;
 
                 while !matches!(
@@ -3365,20 +3078,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     };
 
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    self.append_entry(&mut props, key, value)?;
                 }
 
-                Ok(Expr::init(
-                    E::Object {
-                        properties: props.move_list(),
-                        ..Default::default()
-                    },
-                    mapping_start.loc(),
-                ))
+                Ok(())
             })();
 
             self.context.unset(Context::BlockIn);
-            inner
+            inner?;
+
+            Ok(E::Object {
+                properties: props.move_list(),
+                ..Default::default()
+            })
         })();
 
         if pushed_block_indent {
@@ -3392,16 +3104,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 // MappingProps
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct MappingProps {
+pub(crate) struct MappingProps {
     list: G::PropertyList,
     merge_index: bun_collections::HashMap<u64, Vec<u32>>,
     merge_indexed: usize,
 }
 
 impl MappingProps {
-    pub const MAX_MERGED_PROPERTIES: usize = 1024 * 1024;
+    pub(crate) const MAX_MERGED_PROPERTIES: usize = 1024 * 1024;
 
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
             merge_index: bun_collections::HashMap::default(),
@@ -3409,23 +3121,25 @@ impl MappingProps {
         }
     }
 
-    pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
+    pub(crate) fn append(&mut self, mut prop: G::Property) -> Result<(), AllocError> {
+        if let Some(key) = &prop.key {
+            prop.flags |= E::own_key_property_flags(key);
+        }
         self.list.push(prop);
         Ok(())
     }
 
-    pub fn merge(
+    pub(crate) fn merge(
         &mut self,
         merge_props: &[G::Property],
         budget: &mut usize,
     ) -> Result<(), AllocError> {
         self.list.reserve(merge_props.len().min(*budget));
-        // PERF(port): was ensureUnusedCapacity
 
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
             let key = self.list[idx].key.as_ref().unwrap();
-            let hash = Parser::<Utf8>::yaml_merge_key_expr_hash(key);
+            let hash = yaml_merge_key_expr_hash(key);
             self.merge_index
                 .get_or_put(hash)?
                 .value_ptr
@@ -3435,19 +3149,17 @@ impl MappingProps {
 
         'next_merge_prop: for merge_prop in merge_props.iter().rev() {
             let merge_key = merge_prop.key.as_ref().unwrap();
-            let merge_hash = Parser::<Utf8>::yaml_merge_key_expr_hash(merge_key);
+            let merge_hash = yaml_merge_key_expr_hash(merge_key);
             if let Some(candidates) = self.merge_index.get(&merge_hash) {
                 for existing_idx in candidates.iter() {
                     let existing_key = self.list[*existing_idx as usize].key.as_ref().unwrap();
-                    if Parser::<Utf8>::yaml_merge_key_expr_eql(existing_key, merge_key) {
-                        // TODO(port): yaml_merge_key_expr_eql is generic-agnostic; using Utf8 monomorph here is a hack.
+                    if yaml_merge_key_expr_eql(existing_key, merge_key) {
                         continue 'next_merge_prop;
                     }
                 }
             }
             *budget = budget.checked_sub(1).ok_or(AllocError)?;
-            // `G::Property` is not `Clone`; reconstruct from its `Copy` fields
-            // (Zig copied the struct by value).
+            // `G::Property` is not `Clone`; reconstruct from its `Copy` fields.
             self.list.push(G::Property {
                 key: merge_prop.key,
                 value: merge_prop.value,
@@ -3456,7 +3168,6 @@ impl MappingProps {
                 initializer: merge_prop.initializer,
                 ..Default::default()
             });
-            // PERF(port): was appendAssumeCapacity
             self.merge_index
                 .get_or_put(merge_hash)?
                 .value_ptr
@@ -3466,54 +3177,224 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn append_maybe_merge(
+    pub(crate) fn move_list(&mut self) -> G::PropertyList {
+        self.merge_index.clear();
+        self.merge_indexed = 0;
+        core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
+    }
+}
+
+impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    /// Appends `key: value` to `props`, expanding a `<<` merge key. A merge
+    /// cannot pull in a collection that is still being parsed (its properties
+    /// are not there yet).
+    fn append_entry(
         &mut self,
+        props: &mut MappingProps,
         key: Expr,
         value: Expr,
-        budget: &mut usize,
-    ) -> Result<(), AllocError> {
+    ) -> Result<(), ParseError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,
         };
-        // TODO(port): exact ExprData variant names depend on bun_ast.
 
-        if !is_merge_key {
-            self.list.push(G::Property {
-                key: Some(key),
-                value: Some(value),
-                ..Default::default()
-            });
-            return Ok(());
+        if is_merge_key {
+            self.reject_open_merge_source(&value)?;
+            match &value.data {
+                ast::ExprData::EObject(value_obj) => {
+                    props.merge(value_obj.properties.slice(), &mut self.merge_props_budget)?;
+                    return Ok(());
+                }
+                ast::ExprData::EArray(value_arr) => {
+                    for item in value_arr.items.slice() {
+                        if let ast::ExprData::EObject(item_obj) = &item.data {
+                            self.reject_open_merge_source(item)?;
+                            props
+                                .merge(item_obj.properties.slice(), &mut self.merge_props_budget)?;
+                        }
+                    }
+                    return Ok(());
+                }
+                _ => {}
+            }
         }
 
-        match &value.data {
-            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice(), budget),
-            ast::ExprData::EArray(value_arr) => {
-                for item in value_arr.items.slice() {
-                    let item_obj = match &item.data {
-                        ast::ExprData::EObject(obj) => obj,
-                        _ => continue,
-                    };
-                    self.merge(item_obj.properties.slice(), budget)?;
-                }
-                Ok(())
-            }
-            _ => {
-                self.list.push(G::Property {
-                    key: Some(key),
-                    value: Some(value),
-                    ..Default::default()
-                });
-                Ok(())
+        Ok(props.append(G::Property {
+            key: Some(key),
+            value: Some(value),
+            ..Default::default()
+        })?)
+    }
+
+    fn reject_open_merge_source(&mut self, node: &Expr) -> Result<(), ParseError> {
+        // An open collection is only reachable through a cyclic alias.
+        if !self.has_cyclic_alias || !self.is_open_collection(node) {
+            return Ok(());
+        }
+        if let Ok(start) = usize::try_from(node.loc.start) {
+            self.token.start = Pos::from(start);
+        }
+        Err(ParseError::CyclicMerge)
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Anchors
+// ───────────────────────────────────────────────────────────────────────────
+
+/// A scanned `&name` property not yet bound to the node it annotates. Every
+/// value ends in exactly one of `Parser::bind_anchor` (finished node) or
+/// `Parser::parse_collection` (the collection it annotates), or is dropped on
+/// an error path.
+#[must_use = "an anchor must be bound to the node it annotates"]
+pub(crate) struct PendingAnchor {
+    name: StringRange,
+    start: Pos,
+    line: Line,
+}
+
+impl PendingAnchor {
+    fn new<Enc: Encoding>(token: &Token<Enc>, name: StringRange) -> Self {
+        Self {
+            name,
+            start: token.start,
+            line: token.line,
+        }
+    }
+}
+
+/// An anchored collection whose entries are being parsed: `node` is allocated
+/// but still empty (see `parse_collection`). The anchor is not in
+/// `Parser::anchors` until the node completes, so it is only found here by
+/// aliases that would otherwise be unresolved — the cyclic ones.
+#[derive(Clone, Copy)]
+pub(crate) struct OpenCollection {
+    anchor: StringRange,
+    node: Expr,
+}
+
+/// A collection node's identity, for pointer comparison.
+fn collection_id(node: &Expr) -> Option<usize> {
+    match node.data {
+        ast::ExprData::EArray(arr) => Some(arr.as_ptr() as usize),
+        ast::ExprData::EObject(obj) => Some(obj.as_ptr() as usize),
+        _ => None,
+    }
+}
+
+/// Collection node payloads. The node is allocated when its opening token is
+/// seen and filled in once its entries are parsed (`parse_collection`).
+trait CollectionData: Sized {
+    /// Allocates an empty node, returning it with the slot to move the parsed
+    /// entries into.
+    fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>);
+}
+
+impl CollectionData for E::Array {
+    fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>) {
+        let slot = ast::expr::Store::append(E::Array::default());
+        (
+            Expr {
+                loc,
+                data: ast::ExprData::EArray(slot),
+            },
+            slot,
+        )
+    }
+}
+
+impl CollectionData for E::Object {
+    fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>) {
+        let slot = ast::expr::Store::append(E::Object::default());
+        (
+            Expr {
+                loc,
+                data: ast::ExprData::EObject(slot),
+            },
+            slot,
+        )
+    }
+}
+
+impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    // By value so binding consumes the `#[must_use]` anchor token.
+    #[allow(clippy::needless_pass_by_value)]
+    fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
+        self.anchors
+            .put(Enc::key_bytes(anchor.name.slice(self.input)), node)
+    }
+
+    /// Parses a collection node: it is allocated (empty) before `body` parses
+    /// its entries, which are then moved into it. A node with an `anchor` sits
+    /// on `open_collections` meanwhile, so an alias to it from inside — a
+    /// cyclic alias, see `resolve_alias` — copies the same node the returned
+    /// `Expr` points at. The anchor itself is bound when the node completes,
+    /// as for any other node. `body` returning the payload rather than an
+    /// `Expr` is what guarantees every exit either fills the node or fails
+    /// the parse.
+    fn parse_collection<T: CollectionData>(
+        &mut self,
+        anchor: Option<PendingAnchor>,
+        loc: Loc,
+        body: impl FnOnce(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<Expr, ParseError> {
+        let (node, mut slot) = T::alloc_empty(loc);
+
+        let Some(anchor) = anchor else {
+            *slot = body(self)?;
+            return Ok(node);
+        };
+
+        self.open_collections.push(OpenCollection {
+            anchor: anchor.name,
+            node,
+        });
+        let result = body(self);
+        let closed = self.open_collections.pop();
+        debug_assert!(closed.is_some_and(|c| collection_id(&c.node) == collection_id(&node)));
+
+        *slot = result?;
+        self.bind_anchor(anchor, node)?;
+        Ok(node)
+    }
+
+    /// Anchors bind when their node completes, so a name found in `anchors`
+    /// resolves exactly as it would without cycle support. Only a name that
+    /// would otherwise be unresolved is looked up among the enclosing
+    /// collections still being parsed (innermost first): a cyclic alias.
+    fn resolve_alias(&mut self, name: StringRange) -> Result<Expr, ParseError> {
+        let name = name.slice(self.input);
+        if let Some(node) = self.anchors.get(Enc::key_bytes(name)) {
+            return Ok(*node);
+        }
+        let Some(OpenCollection { node, .. }) = self
+            .open_collections
+            .iter()
+            .rev()
+            .find(|open| open.anchor.slice(self.input) == name)
+            .copied()
+        else {
+            return Err(ParseError::UnresolvedAlias);
+        };
+        match self.cyclic_aliases {
+            CyclicAliases::Reject => Err(ParseError::CyclicAlias),
+            CyclicAliases::Allow => {
+                self.has_cyclic_alias = true;
+                Ok(node)
             }
         }
     }
 
-    pub fn move_list(&mut self) -> G::PropertyList {
-        self.merge_index.clear();
-        self.merge_indexed = 0;
-        core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
+    /// Whether `node` is a collection enclosing the current position, i.e.
+    /// its entries are not there yet.
+    fn is_open_collection(&self, node: &Expr) -> bool {
+        let Some(id) = collection_id(node) else {
+            return false;
+        };
+        self.open_collections
+            .iter()
+            .any(|open| collection_id(&open.node) == Some(id))
     }
 }
 
@@ -3521,14 +3402,14 @@ impl MappingProps {
 // NodeProperties
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct NodeProperties<Enc: Encoding> {
+struct NodeProperties<Enc: Encoding> {
     // c-ns-properties
-    pub has_anchor: Option<Token<Enc>>,
-    pub has_tag: Option<Token<Enc>>,
+    pub(crate) has_anchor: Option<PendingAnchor>,
+    pub(crate) has_tag: Option<Token<Enc>>,
 
     // when properties for mapping and first key are right next to eachother
-    pub has_mapping_anchor: Option<Token<Enc>>,
-    pub has_mapping_tag: Option<Token<Enc>>,
+    pub(crate) has_mapping_anchor: Option<PendingAnchor>,
+    pub(crate) has_mapping_tag: Option<Token<Enc>>,
 }
 
 impl<Enc: Encoding> Default for NodeProperties<Enc> {
@@ -3542,91 +3423,84 @@ impl<Enc: Encoding> Default for NodeProperties<Enc> {
     }
 }
 
-pub struct ImplicitKeyAnchors {
-    pub key_anchor: Option<StringRange>,
-    pub mapping_anchor: Option<StringRange>,
+pub(crate) struct ImplicitKeyAnchors {
+    key_anchor: Option<PendingAnchor>,
+    mapping_anchor: Option<PendingAnchor>,
 }
 
 impl<Enc: Encoding> NodeProperties<Enc> {
-    pub fn has_anchor_or_tag(&self) -> bool {
+    pub(crate) fn has_anchor_or_tag(&self) -> bool {
         self.has_anchor.is_some() || self.has_tag.is_some()
     }
 
-    pub fn set_anchor(&mut self, anchor_token: Token<Enc>) -> Result<(), ParseError> {
-        if let Some(previous_anchor) = &self.has_anchor {
-            if previous_anchor.line == anchor_token.line || self.has_mapping_anchor.is_some() {
+    pub(crate) fn set_anchor(&mut self, anchor: PendingAnchor) -> Result<(), ParseError> {
+        if let Some(previous_anchor) = self.has_anchor.take() {
+            if previous_anchor.line == anchor.line || self.has_mapping_anchor.is_some() {
                 return Err(ParseError::MultipleAnchors);
             }
-            self.has_mapping_anchor = Some(previous_anchor.clone());
+            self.has_mapping_anchor = Some(previous_anchor);
         }
-        self.has_anchor = Some(anchor_token);
+        self.has_anchor = Some(anchor);
         Ok(())
     }
 
-    pub fn anchor(&self) -> Option<StringRange> {
-        self.has_anchor.as_ref().and_then(|t| match &t.data {
-            TokenData::Anchor(r) => Some(*r),
-            _ => None,
-        })
+    pub(crate) fn anchor_line(&self) -> Option<Line> {
+        self.has_anchor.as_ref().map(|a| a.line)
     }
 
-    pub fn anchor_line(&self) -> Option<Line> {
-        self.has_anchor.as_ref().map(|t| t.line)
+    /// The anchor annotating a flow collection that starts on `line`
+    /// regardless of whether the collection turns out to be an implicit key.
+    /// An anchor on an earlier line stays pending: it is the collection's
+    /// only if no `:` follows, else the block mapping's, so it is bound once
+    /// that is known (an alias to it inside the collection stays unresolved).
+    fn take_flow_node_anchor(&mut self, line: Line) -> Option<PendingAnchor> {
+        self.has_anchor.take_if(|anchor| anchor.line == line)
     }
 
-    pub fn anchor_indent(&self) -> Option<Indent> {
-        self.has_anchor.as_ref().map(|t| t.indent)
+    /// `take_implicit_key_anchors` for a key that cannot have an anchor of its
+    /// own left here: an alias ([104]), or a flow collection whose anchor
+    /// went to `take_flow_node_anchor`.
+    fn take_block_mapping_anchor(
+        &mut self,
+        implicit_key_line: Line,
+    ) -> Result<Option<PendingAnchor>, ParseError> {
+        let anchors = self.take_implicit_key_anchors(implicit_key_line)?;
+        debug_assert!(anchors.key_anchor.is_none());
+        Ok(anchors.mapping_anchor)
     }
 
-    pub fn mapping_anchor(&self) -> Option<StringRange> {
-        self.has_mapping_anchor
-            .as_ref()
-            .and_then(|t| match &t.data {
-                TokenData::Anchor(r) => Some(*r),
-                _ => None,
-            })
-    }
-
-    pub fn implicit_key_anchors(
-        &self,
+    /// Splits the pending anchors between an implicit key on
+    /// `implicit_key_line` and the block mapping it starts.
+    pub(crate) fn take_implicit_key_anchors(
+        &mut self,
         implicit_key_line: Line,
     ) -> Result<ImplicitKeyAnchors, ParseError> {
-        if let Some(mapping_anchor) = &self.has_mapping_anchor {
+        if let Some(mapping_anchor) = self.has_mapping_anchor.take() {
             // Two anchors recorded: the outer anchors the [200] block
             // collection; the inner anchors the implicit first key. The key's
             // c-ns-properties are in BLOCK-KEY context (s-separate-in-line),
             // so the inner anchor must share the key's line.
-            let inner = self.has_anchor.as_ref();
-            if inner.is_some_and(|t| t.line != implicit_key_line) {
+            let inner = self.has_anchor.take();
+            if inner.as_ref().is_some_and(|a| a.line != implicit_key_line) {
                 return Err(ParseError::MultipleAnchors);
             }
             return Ok(ImplicitKeyAnchors {
-                key_anchor: inner.and_then(|t| match &t.data {
-                    TokenData::Anchor(r) => Some(*r),
-                    _ => None,
-                }),
-                mapping_anchor: match &mapping_anchor.data {
-                    TokenData::Anchor(r) => Some(*r),
-                    _ => None,
-                },
+                key_anchor: inner,
+                mapping_anchor: Some(mapping_anchor),
             });
         }
 
-        if let Some(mystery_anchor) = &self.has_anchor {
+        if let Some(mystery_anchor) = self.has_anchor.take() {
             // might be the anchor for the key, or anchor for the mapping
-            let r = match &mystery_anchor.data {
-                TokenData::Anchor(r) => Some(*r),
-                _ => None,
-            };
             if mystery_anchor.line == implicit_key_line {
                 return Ok(ImplicitKeyAnchors {
-                    key_anchor: r,
+                    key_anchor: Some(mystery_anchor),
                     mapping_anchor: None,
                 });
             }
             return Ok(ImplicitKeyAnchors {
                 key_anchor: None,
-                mapping_anchor: r,
+                mapping_anchor: Some(mystery_anchor),
             });
         }
 
@@ -3636,7 +3510,7 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         })
     }
 
-    pub fn set_tag(&mut self, tag_token: Token<Enc>) -> Result<(), ParseError> {
+    pub(crate) fn set_tag(&mut self, tag_token: Token<Enc>) -> Result<(), ParseError> {
         if let Some(previous_tag) = &self.has_tag {
             if previous_tag.line == tag_token.line {
                 return Err(ParseError::MultipleTags);
@@ -3647,7 +3521,7 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         Ok(())
     }
 
-    pub fn tag(&self) -> NodeTag {
+    pub(crate) fn tag(&self) -> NodeTag {
         self.has_tag
             .as_ref()
             .and_then(|t| match &t.data {
@@ -3657,18 +3531,14 @@ impl<Enc: Encoding> NodeProperties<Enc> {
             .unwrap_or(NodeTag::None)
     }
 
-    pub fn tag_line(&self) -> Option<Line> {
+    pub(crate) fn tag_line(&self) -> Option<Line> {
         self.has_tag.as_ref().map(|t| t.line)
     }
 
-    pub fn take_tag(&mut self) -> NodeTag {
+    pub(crate) fn take_tag(&mut self) -> NodeTag {
         let t = self.tag();
         self.has_tag = None;
         t
-    }
-
-    pub fn tag_indent(&self) -> Option<Indent> {
-        self.has_tag.as_ref().map(|t| t.indent)
     }
 }
 
@@ -3676,15 +3546,15 @@ impl<Enc: Encoding> NodeProperties<Enc> {
 // ParseNodeOptions
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct ParseNodeOptions<Enc: Encoding> {
-    pub current_mapping_indent: Option<Indent>,
-    pub explicit_mapping_key: bool,
+struct ParseNodeOptions<Enc: Encoding> {
+    pub(crate) current_mapping_indent: Option<Indent>,
+    pub(crate) explicit_mapping_key: bool,
     /// [139] ns-flow-seq-entry may be a [150] ns-flow-pair, so a JSON-style
     /// node followed by an adjacent `:` is a key. Set by parse_flow_sequence;
     /// flow-mapping values are plain ns-flow-node and must not become a pair.
-    pub flow_pair_allowed: bool,
-    pub scanned_tag: Option<Token<Enc>>,
-    pub scanned_anchor: Option<Token<Enc>>,
+    pub(crate) flow_pair_allowed: bool,
+    pub(crate) scanned_tag: Option<Token<Enc>>,
+    pub(crate) scanned_anchor: Option<PendingAnchor>,
 }
 
 impl<Enc: Encoding> Default for ParseNodeOptions<Enc> {
@@ -3706,13 +3576,13 @@ impl<Enc: Encoding> Default for ParseNodeOptions<Enc> {
 #[derive(Clone, Copy)]
 pub struct ScanOptions {
     /// Used by compact sequences. We need to add the parent indentation
-    pub additional_parent_indent: Option<Indent>,
+    pub(crate) additional_parent_indent: Option<Indent>,
     /// If a scalar is scanned, this tag might be used.
-    pub tag: NodeTag,
+    pub(crate) tag: NodeTag,
     /// The scanner only counts indentation after a newline (or in compact
     /// collections). First scan needs to count indentation.
-    pub first_scan: bool,
-    pub outside_context: bool,
+    pub(crate) first_scan: bool,
+    pub(crate) outside_context: bool,
 }
 
 impl Default for ScanOptions {
@@ -3730,8 +3600,8 @@ impl Default for ScanOptions {
 // Escape
 // ───────────────────────────────────────────────────────────────────────────
 
-// PERF(port): was a comptime parameter (Zig `comptime escape`); ConstParamTy needs
-// nightly `adt_const_params`. Downgraded to a runtime arg — branch is trivially
+// PERF: a const-generic parameter would need nightly `adt_const_params`
+// (ConstParamTy). Kept as a runtime arg — branch is trivially
 // predicted (3 fixed call sites). Re-evaluate.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -3739,12 +3609,6 @@ pub enum Escape {
     X = 2,
     LowerU = 4,
     UpperU = 8,
-}
-
-impl Escape {
-    pub const fn characters(self) -> u8 {
-        self as u8
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3781,7 +3645,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         kind: BlockIndentedKind,
     ) -> Result<Expr, ParseError> {
         let mut value_tag: Option<Token<Enc>> = None;
-        let mut value_anchor: Option<Token<Enc>> = None;
+        let mut value_anchor: Option<PendingAnchor> = None;
 
         // The [196] indent dispatch below is block-semantics; in flow context
         // ([149]/[80] s-separate(n,FLOW-IN) = s-separate-lines, any indent on
@@ -3811,17 +3675,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // is now abandoned to the parent, rewind to its start and
                     // re-scan tag-neutral so the sibling key resolves under
                     // the default schema. Only plain single-line scalars are
-                    // tag-resolved at scan time; quoted scalars ignore
+                    // tag-resolved at scan time; quoted/block scalars ignore
                     // ScanOptions.tag (and their token.start is past the
-                    // opening quote, so rewind would be wrong); multiline
+                    // opening indicator, so rewind would be wrong); multiline
                     // plain scalars may have advanced parser state across
                     // lines that a positional rewind cannot fully restore.
                     if value_tag.is_some()
                         && matches!(
                             &self.token.data,
                             TokenData::Scalar(TokenScalar {
-                                is_quoted: false,
-                                multiline: false,
+                                style: ScalarStyle::Plain { multiline: false },
                                 ..
                             })
                         )
@@ -3835,13 +3698,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // re-detect it since pos is already past the tab.
                         self.scan(ScanOptions::default())?;
                     }
-                    return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
+                    return self.props_to_e_node(&value_tag, value_anchor, indicator_start.loc());
                 }
             }
 
             match self.token.data {
-                TokenData::Anchor(_) if value_anchor.is_none() => {
-                    value_anchor = Some(self.token.clone());
+                TokenData::Anchor(name) if value_anchor.is_none() => {
+                    value_anchor = Some(PendingAnchor::new(&self.token, name));
                 }
                 TokenData::Tag(_) if value_tag.is_none() => {
                     value_tag = Some(self.token.clone());
@@ -3872,7 +3735,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     ) && matches!(self.context.get(), Context::FlowIn | Context::FlowKey) =>
                 {
-                    return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
+                    return self.props_to_e_node(&value_tag, value_anchor, indicator_start.loc());
                 }
                 _ => {
                     return self.parse_node(ParseNodeOptions {
@@ -3906,7 +3769,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn props_to_e_node(
         &mut self,
         tag: &Option<Token<Enc>>,
-        anchor: &Option<Token<Enc>>,
+        anchor: Option<PendingAnchor>,
         loc: Loc,
     ) -> Result<Expr, ParseError> {
         let resolved_tag = match tag {
@@ -3917,41 +3780,73 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             _ => NodeTag::None,
         };
         let e_node = resolved_tag.resolve_null(loc);
-        if let Some(Token {
-            data: TokenData::Anchor(name),
-            ..
-        }) = anchor
-        {
-            self.anchors
-                .put(Enc::key_bytes(name.slice(self.input)), e_node)?;
+        if let Some(anchor) = anchor {
+            self.bind_anchor(anchor, e_node)?;
         }
         Ok(e_node)
     }
 
+    /// Charges the budget for every node reachable from `root`, once per path
+    /// (a node shared by two aliases under `root` counts twice, as a consumer
+    /// expanding the tree would visit it twice). An edge back to a collection
+    /// on the current path — a cyclic alias — counts as a single reference.
     fn charge_alias_expansion(&mut self, root: Expr) -> Result<(), ParseError> {
-        let mut stack: Vec<Expr> = vec![root];
-        while let Some(node) = stack.pop() {
-            self.alias_expansion_budget = self
-                .alias_expansion_budget
-                .checked_sub(1)
-                .ok_or(ParseError::ExcessiveAliasing)?;
+        enum Visit {
+            Enter(Expr),
+            Exit(usize),
+        }
+        if collection_id(&root).is_none() {
+            return self.charge_alias_node();
+        }
+        // Only a document with a cyclic alias can lead the walk back to a
+        // collection it is still inside of.
+        let mut on_path = self
+            .has_cyclic_alias
+            .then(bun_collections::HashMap::<usize, ()>::default);
+        let mut stack: Vec<Visit> = vec![Visit::Enter(root)];
+        while let Some(visit) = stack.pop() {
+            let node = match visit {
+                Visit::Enter(node) => node,
+                Visit::Exit(id) => {
+                    if let Some(on_path) = &mut on_path {
+                        on_path.remove(&id);
+                    }
+                    continue;
+                }
+            };
+            self.charge_alias_node()?;
+            if let (Some(on_path), Some(id)) = (&mut on_path, collection_id(&node)) {
+                if on_path.contains(&id) {
+                    continue;
+                }
+                on_path.put(id, ())?;
+                stack.push(Visit::Exit(id));
+            }
             match &node.data {
                 ast::ExprData::EArray(arr) => {
-                    stack.extend_from_slice(arr.items.slice());
+                    stack.extend(arr.items.slice().iter().map(|item| Visit::Enter(*item)));
                 }
                 ast::ExprData::EObject(obj) => {
                     for prop in obj.properties.slice() {
                         if let Some(key) = prop.key {
-                            stack.push(key);
+                            stack.push(Visit::Enter(key));
                         }
                         if let Some(value) = prop.value {
-                            stack.push(value);
+                            stack.push(Visit::Enter(value));
                         }
                     }
                 }
                 _ => {}
             }
         }
+        Ok(())
+    }
+
+    fn charge_alias_node(&mut self) -> Result<(), ParseError> {
+        self.alias_expansion_budget = self
+            .alias_expansion_budget
+            .checked_sub(1)
+            .ok_or(ParseError::ExcessiveAliasing)?;
         Ok(())
     }
 
@@ -3970,17 +3865,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             node_props.set_anchor(anchor)?;
         }
 
-        // PORT NOTE: labeled-switch loop on `self.token.data`. The Zig
-        // `continue :node self.token.data` re-enters with the new token after
-        // scanning. We loop and re-match.
+        // labeled-switch loop on `self.token.data`: loop and re-match with
+        // the new token after scanning.
         let node: Expr = 'node: loop {
             match &self.token.data {
                 TokenData::Eof | TokenData::DocumentStart | TokenData::DocumentEnd => {
                     break 'node Expr::init(E::Null {}, self.token.start.loc());
                 }
 
-                TokenData::Anchor(_anchor) => {
-                    node_props.set_anchor(self.token.clone())?;
+                TokenData::Anchor(name) => {
+                    node_props.set_anchor(PendingAnchor::new(&self.token, *name))?;
                     self.scan(ScanOptions {
                         tag: node_props.tag(),
                         ..Default::default()
@@ -4016,14 +3910,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    let mut copy = match self.anchors.get(Enc::key_bytes(alias.slice(self.input))) {
-                        Some(e) => *e,
-                        None => {
-                            // we failed to find the alias, but it might be cyclic and
-                            // available later. (see Zig comment block)
-                            return Err(ParseError::UnresolvedAlias);
-                        }
-                    };
+                    let mut copy = self.resolve_alias(alias)?;
 
                     self.charge_alias_expansion(copy)?;
 
@@ -4070,6 +3957,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
 
                         let map = self.parse_block_mapping(
+                            node_props.take_block_mapping_anchor(alias_line)?,
                             copy,
                             alias_start,
                             alias_indent,
@@ -4087,8 +3975,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let sequence_indent = self.token.indent;
                     let sequence_line = self.token.line;
                     let sequence_tab_after_indent = self.tab_after_indent;
+                    let anchor = node_props.take_flow_node_anchor(sequence_line);
                     let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
-                    let seq = self.parse_flow_sequence();
+                    let seq = self.parse_flow_sequence(anchor);
                     self.unset_json_key(json_key);
                     let seq = seq?;
 
@@ -4125,26 +4014,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node seq;
                         }
 
-                        let implicit_key_anchors =
-                            node_props.implicit_key_anchors(sequence_line)?;
-
-                        if let Some(key_anchor) = implicit_key_anchors.key_anchor {
-                            self.anchors
-                                .put(Enc::key_bytes(key_anchor.slice(self.input)), seq)?;
-                        }
-
                         let map = self.parse_block_mapping(
+                            node_props.take_block_mapping_anchor(sequence_line)?,
                             seq,
                             sequence_start,
                             sequence_indent,
                             sequence_line,
                             opts.flow_pair_allowed,
                         )?;
-
-                        if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors
-                                .put(Enc::key_bytes(mapping_anchor.slice(self.input)), map)?;
-                        }
 
                         return Ok(map);
                     }
@@ -4170,7 +4047,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             return Err(Self::unexpected_token());
                         }
                     }
-                    break 'node self.parse_block_sequence()?;
+                    break 'node self.parse_block_sequence(node_props.has_anchor.take())?;
                 }
 
                 TokenData::MappingStart => {
@@ -4178,9 +4055,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping_indent = self.token.indent;
                     let mapping_line = self.token.line;
                     let mapping_tab_after_indent = self.tab_after_indent;
+                    let anchor = node_props.take_flow_node_anchor(mapping_line);
 
                     let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
-                    let map = self.parse_flow_mapping();
+                    let map = self.parse_flow_mapping(anchor);
                     self.unset_json_key(json_key);
                     let map = map?;
 
@@ -4217,27 +4095,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node map;
                         }
 
-                        let implicit_key_anchors = node_props.implicit_key_anchors(mapping_line)?;
-
-                        if let Some(key_anchor) = implicit_key_anchors.key_anchor {
-                            self.anchors
-                                .put(Enc::key_bytes(key_anchor.slice(self.input)), map)?;
-                        }
-
                         let parent_map = self.parse_block_mapping(
+                            node_props.take_block_mapping_anchor(mapping_line)?,
                             map,
                             mapping_start,
                             mapping_indent,
                             mapping_line,
                             opts.flow_pair_allowed,
                         )?;
-
-                        if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors.put(
-                                Enc::key_bytes(mapping_anchor.slice(self.input)),
-                                parent_map,
-                            )?;
-                        }
 
                         break 'node parent_map;
                     }
@@ -4262,34 +4127,35 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping_indent = self.token.indent;
                     let mapping_line = self.token.line;
 
-                    self.block_indents.push(mapping_indent)?;
-
-                    self.scan(ScanOptions {
-                        additional_parent_indent: Some(mapping_indent.add(1)),
-                        ..Default::default()
-                    })?;
-
-                    let key = self.parse_block_indented(
-                        mapping_indent,
-                        mapping_line,
-                        mapping_start,
-                        BlockIndentedKind::MapExplicitKey,
-                    )?;
-
-                    self.block_indents.pop();
-
-                    if let Some(current_mapping_indent) = opts.current_mapping_indent {
-                        if current_mapping_indent == mapping_indent {
-                            return Ok(key);
-                        }
+                    // A subsequent key of the enclosing mapping, which takes
+                    // it from the `:`.
+                    if opts.current_mapping_indent == Some(mapping_indent) {
+                        return self.parse_block_explicit_key(
+                            mapping_start,
+                            mapping_indent,
+                            mapping_line,
+                        );
                     }
 
-                    break 'node self.parse_block_mapping(
-                        key,
-                        mapping_start,
-                        mapping_indent,
-                        mapping_line,
-                        opts.flow_pair_allowed,
+                    // The first key of a new mapping. The mapping's node exists
+                    // before its key is parsed so the key may alias it.
+                    let flow_pair_allowed = opts.flow_pair_allowed;
+                    break 'node self.parse_collection::<E::Object>(
+                        node_props.has_anchor.take(),
+                        mapping_start.loc(),
+                        |p| {
+                            let key = p.parse_block_explicit_key(
+                                mapping_start,
+                                mapping_indent,
+                                mapping_line,
+                            )?;
+                            p.parse_block_mapping_entries(
+                                key,
+                                mapping_indent,
+                                mapping_line,
+                                flow_pair_allowed,
+                            )
+                        },
                     )?;
                 }
 
@@ -4318,13 +4184,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     };
                     let first_key = key_tag.resolve_null(self.token.start.loc());
 
-                    let implicit_key_anchors = node_props.implicit_key_anchors(colon_line)?;
-                    if let Some(key_anchor) = implicit_key_anchors.key_anchor {
-                        self.anchors
-                            .put(Enc::key_bytes(key_anchor.slice(self.input)), first_key)?;
+                    let anchors = node_props.take_implicit_key_anchors(colon_line)?;
+                    if let Some(key_anchor) = anchors.key_anchor {
+                        self.bind_anchor(key_anchor, first_key)?;
                     }
 
                     let mapping = self.parse_block_mapping(
+                        anchors.mapping_anchor,
                         first_key,
                         self.token.start,
                         self.token.indent,
@@ -4332,17 +4198,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         opts.flow_pair_allowed,
                     )?;
 
-                    if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                        self.anchors
-                            .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
-                    }
-                    // Anchors are fully consumed by implicit_key_anchors;
-                    // clear both so the post-loop fallback doesn't re-register
-                    // (or over-reject `&outer\n&inner : x` via the
-                    // has_mapping_anchor guard). Tag fields stay so the
-                    // has_mapping_tag guard still catches `!!a\n!!b\n: x`.
-                    node_props.has_anchor = None;
-                    node_props.has_mapping_anchor = None;
                     break 'node mapping;
                 }
 
@@ -4352,7 +4207,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let scalar_line = self.token.line;
                     let scalar_tab_after_indent = self.tab_after_indent;
 
-                    // PORT NOTE: reshaped for borrowck — we must hold the scalar
+                    // reshaped for borrowck — we must hold the scalar
                     // payload across `self.scan()` which replaces self.token.
                     // Take it out before scanning.
                     let scalar = match core::mem::replace(
@@ -4363,7 +4218,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         _ => unreachable!("token.data was Scalar at match guard"),
                     };
 
-                    let json_key = if scalar.is_quoted {
+                    let json_key = if scalar.style == ScalarStyle::Quoted {
                         self.maybe_set_json_key(opts.flow_pair_allowed)?
                     } else {
                         false
@@ -4378,7 +4233,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         // this might be the start of a new object with an implicit key
-                        // (see Zig comments for cases 1-4)
                         if self.token.indent.is_less_than(scalar_indent)
                             || (opts.explicit_mapping_key
                                 && scalar_line != self.token.line
@@ -4438,25 +4292,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
 
-                        let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line)?;
-
-                        if let Some(key_anchor) = implicit_key_anchors.key_anchor {
-                            self.anchors
-                                .put(Enc::key_bytes(key_anchor.slice(self.input)), implicit_key)?;
+                        let anchors = node_props.take_implicit_key_anchors(scalar_line)?;
+                        if let Some(key_anchor) = anchors.key_anchor {
+                            self.bind_anchor(key_anchor, implicit_key)?;
                         }
 
                         let mapping = self.parse_block_mapping(
+                            anchors.mapping_anchor,
                             implicit_key,
                             scalar_start,
                             scalar_indent,
                             scalar_line,
                             opts.flow_pair_allowed,
                         )?;
-
-                        if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors
-                                .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
-                        }
 
                         return Ok(mapping);
                     }
@@ -4469,24 +4317,33 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         };
 
-        if let Some(mapping_anchor) = node_props.has_mapping_anchor {
-            self.token = mapping_anchor;
+        // Whatever was not claimed above belongs to `node`.
+        let tag = node_props.tag();
+        let NodeProperties {
+            has_anchor,
+            has_tag: _,
+            has_mapping_anchor,
+            has_mapping_tag,
+        } = node_props;
+
+        if let Some(mapping_anchor) = has_mapping_anchor {
+            // for the error position
+            self.token.start = mapping_anchor.start;
             return Err(ParseError::MultipleAnchors);
         }
 
-        if let Some(mapping_tag) = node_props.has_mapping_tag {
+        if let Some(mapping_tag) = has_mapping_tag {
             self.token = mapping_tag;
             return Err(ParseError::MultipleTags);
         }
 
         let resolved = match &node.data {
-            ast::ExprData::ENull(_) => node_props.tag().resolve_null(node.loc),
+            ast::ExprData::ENull(_) => tag.resolve_null(node.loc),
             _ => node,
         };
 
-        if let Some(anchor) = node_props.anchor() {
-            self.anchors
-                .put(Enc::key_bytes(anchor.slice(self.input)), resolved)?;
+        if let Some(anchor) = has_anchor {
+            self.bind_anchor(anchor, resolved)?;
         }
 
         Ok(resolved)
@@ -4502,7 +4359,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn fold_lines(&mut self) -> usize {
         let mut total: usize = 0;
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut __c = Enc::wide(self.next());
         loop {
             match __c {
@@ -4548,229 +4405,213 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
+    fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
+        StringBuilder {
+            input: self.input,
+            whitespace_buf: core::mem::take(&mut self.whitespace_buf),
+            str: YamlString::Range(StringRange {
+                off: Pos::ZERO,
+                end: Pos::ZERO,
+            }),
+        }
+    }
+
     // ── scanPlainScalar ─────────────────────────────────────────────────────
     //
     // This is the largest function in the file: a labeled-switch state machine
-    // with an inner local struct `ScalarResolverCtx` that holds `*Parser` AND a
-    // `StringBuilder` that ALSO holds `*Parser`. Both are BACKREF in
-    // LIFETIMES.tsv → modeled as raw `*mut Parser` here.
-    //
-    // TODO(port): borrowck reshape — TODO(port): either (a) move
-    // `whitespace_buf` out of Parser, or (b) restructure ctx to take `&mut self`
-    // per call instead of storing it. The raw-pointer aliasing below is sound
-    // because `ctx` never outlives `&mut self` and never re-enters Parser
-    // methods that re-borrow `whitespace_buf`/`input` concurrently.
+    // with an inner `ScalarResolverCtx`.
 
     fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
-        let parser: *mut Parser<'i, Enc> = self;
-        macro_rules! parser {
-            () => {
-                // SAFETY: single provenance chain — `parser` was derived from
-                // `&mut self` above; all access routes through it (never reborrow
-                // `self` directly), and each expansion's `&mut` is dropped before
-                // the next is derived.
-                unsafe { &mut *parser }
-            };
-        }
-        // SAFETY: ctx outlived by the &mut self this fn was entered with. Both
-        // `ctx.parser` and `ctx.str_builder.parser` are copies of the SAME raw
-        // pointer (`parser` above) so all derived `&mut Parser` share one
-        // provenance chain.
         let mut ctx = ScalarResolverCtx::<Enc> {
-            str_builder: StringBuilder {
-                parser,
-                str: YamlString::Range(StringRange {
-                    off: Pos::ZERO,
-                    end: Pos::ZERO,
-                }),
-            },
+            str_builder: self.string_builder(),
             resolved: false,
             scalar: None,
             tag: opts.tag,
-            parser,
             resolved_scalar_len: 0,
-            start: parser!().pos,
-            line: parser!().line,
-            line_indent: parser!().line_indent,
+            start: self.pos,
+            line: self.line,
+            line_indent: self.line_indent,
             multiline: false,
         };
 
-        // PORT NOTE: labeled-switch loop
-        let mut __c = Enc::wide(parser!().next());
+        // labeled-switch loop
+        let mut __c = Enc::wide(self.next());
         loop {
             match __c {
                 0 => {
-                    return Ok(ctx.done());
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
+                    return Ok(ctx.done(self));
                 }
 
                 0x2D /* '-' */ => {
                     // [203] c-directives-end is line-starting at column 0.
-                    if parser!().is_at_line_start()
-                        && parser!().line_indent == Indent::NONE
-                        && parser!().remain_starts_with(Enc::literal(b"---"))
-                        && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    if self.is_at_line_start()
+                        && self.line_indent == Indent::NONE
+                        && self.remain_starts_with(Enc::literal(b"---"))
+                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
-                        return Ok(ctx.done());
+                        return Ok(ctx.done(self));
                     }
 
                     if !ctx.resolved && ctx.str_builder.len() == 0 {
-                        ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
-                        parser!().inc(1);
-                        ctx.try_resolve_number(FirstChar::Negative)?;
-                        __c = Enc::wide(parser!().next());
+                        ctx.append_source(self, Enc::ch(b'-'), self.pos)?;
+                        self.inc(1);
+                        ctx.try_resolve_number(self, FirstChar::Negative)?;
+                        __c = Enc::wide(self.next());
                         continue;
                     }
 
-                    ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b'-'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x2E /* '.' */ => {
-                    if parser!().is_at_line_start()
-                        && parser!().line_indent == Indent::NONE
-                        && parser!().remain_starts_with(Enc::literal(b"..."))
-                        && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    if self.is_at_line_start()
+                        && self.line_indent == Indent::NONE
+                        && self.remain_starts_with(Enc::literal(b"..."))
+                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
-                        return Ok(ctx.done());
+                        return Ok(ctx.done(self));
                     }
 
                     if !ctx.resolved && ctx.str_builder.len() == 0 {
-                        match Enc::wide(parser!().peek(1)) {
+                        match Enc::wide(self.peek(1)) {
                             0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
-                                ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
-                                parser!().inc(1);
-                                ctx.try_resolve_number(FirstChar::Dot)?;
-                                __c = Enc::wide(parser!().next());
+                                ctx.append_source(self, Enc::ch(b'.'), self.pos)?;
+                                self.inc(1);
+                                ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
                             _ => {
-                                ctx.try_resolve_number(FirstChar::Other)?;
-                                __c = Enc::wide(parser!().next());
+                                ctx.try_resolve_number(self, FirstChar::Other)?;
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
                         }
                     }
 
-                    ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b'.'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x3A /* ':' */ => {
-                    if parser!().is_s_white_or_b_char_or_eof_at(1) {
-                        return Ok(ctx.done());
+                    if self.is_s_white_or_b_char_or_eof_at(1) {
+                        return Ok(ctx.done(self));
                     }
 
-                    match parser!().context.get() {
+                    match self.context.get() {
                         Context::BlockOut | Context::BlockIn => {}
                         // [130] `:` is ns-plain-char only when followed by
                         // ns-plain-safe(c); in flow context that excludes
                         // c-flow-indicator.
                         Context::FlowIn | Context::FlowKey => {
-                            match Enc::wide(parser!().peek(1)) {
+                            match Enc::wide(self.peek(1)) {
                                 0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
-                                    return Ok(ctx.done());
+                                    return Ok(ctx.done(self));
                                 }
                                 _ => {}
                             }
                         }
                     }
 
-                    ctx.append_source(Enc::ch(b':'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b':'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x23 /* '#' */ => {
-                    if parser!().is_at_line_start()
+                    if self.is_at_line_start()
                         || matches!(
-                            Enc::wide(parser!().input[parser!().pos.sub(1).cast()]),
+                            Enc::wide(self.input[self.pos.sub(1).cast()]),
                             0x20 | 0x09 | 0x0D | 0x0A
                         )
                     {
-                        return Ok(ctx.done());
+                        return Ok(ctx.done(self));
                     }
 
-                    ctx.append_source(Enc::ch(b'#'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b'#'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
-                    match parser!().context.get() {
+                    match self.context.get() {
                         Context::BlockIn | Context::BlockOut => {}
                         Context::FlowIn | Context::FlowKey => {
-                            return Ok(ctx.done());
+                            return Ok(ctx.done(self));
                         }
                     }
 
-                    let c = parser!().next();
-                    ctx.append_source(c, parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    let c = self.next();
+                    ctx.append_source(self, c, self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x20 | 0x09 /* ' ' '\t' */ => {
-                    let c = parser!().next();
-                    ctx.append_source_whitespace(c, parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    let c = self.next();
+                    ctx.append_source_whitespace(c, self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x0D /* '\r' */ => {
-                    if Enc::wide(parser!().peek(1)) == 0x0A {
-                        parser!().inc(1);
+                    if Enc::wide(self.peek(1)) == 0x0A {
+                        self.inc(1);
                     }
                     __c = 0x0A;
                     continue;
                 }
 
                 0x0A /* '\n' */ => {
-                    parser!().newline();
-                    parser!().inc(1);
+                    self.newline();
+                    self.inc(1);
 
-                    let lines = parser!().fold_lines();
+                    let lines = self.fold_lines();
 
-                    if let Some(block_indent) = parser!().block_indents.get() {
-                        match parser!().line_indent.cmp(block_indent) {
+                    if let Some(block_indent) = self.block_indents.get() {
+                        match self.line_indent.cmp(block_indent) {
                             Ordering::Greater => {
                                 // continue (whitespace already stripped)
                             }
                             Ordering::Less | Ordering::Equal => {
                                 // end here. this is the start of a new value.
-                                return Ok(ctx.done());
+                                return Ok(ctx.done(self));
                             }
                         }
                     }
 
                     // clear the leading whitespace before the newline.
-                    // clear via the single raw-pointer provenance chain.
-                    parser!().whitespace_buf.clear();
+                    ctx.str_builder.clear_whitespace();
 
-                    if lines == 0 && !parser!().is_eof() {
+                    if lines == 0 && !self.is_eof() {
                         ctx.append_whitespace(Enc::ch(b' '))?;
                     }
 
                     ctx.append_whitespace_n_times(Enc::ch(b'\n'), lines)?;
 
-                    __c = Enc::wide(parser!().next());
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 _ => {
-                    let c = parser!().next();
+                    let c = self.next();
                     if ctx.resolved || ctx.str_builder.len() != 0 {
-                        let start = parser!().pos;
-                        parser!().inc(1);
-                        ctx.append_source(c, start)?;
-                        __c = Enc::wide(parser!().next());
+                        let start = self.pos;
+                        self.inc(1);
+                        ctx.append_source(self, c, start)?;
+                        __c = Enc::wide(self.next());
                         continue;
                     }
 
@@ -4779,153 +4620,153 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // TODO: make more better
                     match __c {
                         0x6E /* 'n' */ => {
-                            let n_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"ull")) {
+                            let n_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"ull")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"null"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, n_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, n_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x4E /* 'N' */ => {
-                            let n_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"ull")) {
+                            let n_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"ull")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"Null"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"ULL")) {
+                            if self.remain_starts_with(Enc::literal(b"ULL")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"NULL"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, n_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, n_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x7E /* '~' */ => {
-                            let start = parser!().pos;
-                            parser!().inc(1);
+                            let start = self.pos;
+                            self.inc(1);
                             ctx.resolve(NodeScalar::Null, start, Enc::literal(b"~"))?;
-                            __c = Enc::wide(parser!().next());
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x74 /* 't' */ => {
-                            let t_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"rue")) {
+                            let t_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"rue")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"true"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, t_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, t_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x54 /* 'T' */ => {
-                            let t_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"rue")) {
+                            let t_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"rue")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"True"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"RUE")) {
+                            if self.remain_starts_with(Enc::literal(b"RUE")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"TRUE"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, t_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, t_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x66 /* 'f' */ => {
-                            let f_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"alse")) {
+                            let f_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"alse")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"false"))?;
-                                parser!().inc(4);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, f_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, f_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x46 /* 'F' */ => {
-                            let f_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"alse")) {
+                            let f_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"alse")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"False"))?;
-                                parser!().inc(4);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"ALSE")) {
+                            if self.remain_starts_with(Enc::literal(b"ALSE")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"FALSE"))?;
-                                parser!().inc(4);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, f_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, f_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x2D /* '-' */ => {
-                            ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
-                            parser!().inc(1);
-                            ctx.try_resolve_number(FirstChar::Negative)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, Enc::ch(b'-'), self.pos)?;
+                            self.inc(1);
+                            ctx.try_resolve_number(self, FirstChar::Negative)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x2B /* '+' */ => {
-                            ctx.append_source(Enc::ch(b'+'), parser!().pos)?;
-                            parser!().inc(1);
-                            ctx.try_resolve_number(FirstChar::Positive)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, Enc::ch(b'+'), self.pos)?;
+                            self.inc(1);
+                            ctx.try_resolve_number(self, FirstChar::Positive)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x30..=0x39 /* '0'..'9' */ => {
-                            ctx.try_resolve_number(FirstChar::Other)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.try_resolve_number(self, FirstChar::Other)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x2E /* '.' */ => {
-                            match Enc::wide(parser!().peek(1)) {
+                            match Enc::wide(self.peek(1)) {
                                 0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
-                                    ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
-                                    parser!().inc(1);
-                                    ctx.try_resolve_number(FirstChar::Dot)?;
-                                    __c = Enc::wide(parser!().next());
+                                    ctx.append_source(self, Enc::ch(b'.'), self.pos)?;
+                                    self.inc(1);
+                                    ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                    __c = Enc::wide(self.next());
                                     continue;
                                 }
                                 _ => {
-                                    ctx.try_resolve_number(FirstChar::Other)?;
-                                    __c = Enc::wide(parser!().next());
+                                    ctx.try_resolve_number(self, FirstChar::Other)?;
+                                    __c = Enc::wide(self.next());
                                     continue;
                                 }
                             }
                         }
 
                         _ => {
-                            let start = parser!().pos;
-                            parser!().inc(1);
-                            ctx.append_source(c, start)?;
-                            __c = Enc::wide(parser!().next());
+                            let start = self.pos;
+                            self.inc(1);
+                            ctx.append_source(self, c, start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                     }
@@ -4940,11 +4781,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut indent_indicator: Option<IndentIndicator> = None;
         let mut chomp: Option<Chomp> = None;
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut __c = Enc::wide(self.next());
         loop {
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     return Ok((
                         indent_indicator.unwrap_or(IndentIndicator::DEFAULT),
                         chomp.unwrap_or(Chomp::DEFAULT),
@@ -4983,6 +4827,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
                         self.inc(1);
                         while !self.is_b_char_or_eof() {
+                            if Enc::wide(self.next()) == 0 {
+                                return Err(ParseError::UnexpectedCharacter);
+                            }
                             self.inc(1);
                         }
                     }
@@ -5016,11 +4863,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     // ── scanAutoIndentedLiteralScalar ───────────────────────────────────────
     //
-    // TODO(port): Another large labeled-switch state machine (yaml.zig:2703-2979)
-    // with an inner `LiteralScalarCtx` struct. The two-phase loop (find
-    // content_indent, then scan body) with `ctx.append`/`ctx.done` and chomp
-    // handling is preserved structurally below; verify the nested `newlines:`
-    // switch translation against the Zig original.
+    // Another large labeled-switch state machine with an inner
+    // `LiteralScalarCtx` struct: a two-phase loop (find content_indent,
+    // then scan body) with `ctx.append`/`ctx.done` (verified against the
+    // official yaml-test-suite):
+    // - explicit `indent_indicator` support;
+    // - EOF chomping normalized via `leading_newlines` in `done()` so Clip and
+    //   Keep agree with eemeli/yaml + js-yaml (L24T/01, JEF9/02);
+    // - folded more-indented lines tracked with `prev/cur_more_indented`
+    //   flags, so breaks adjacent to more-indented lines are not folded
+    //   (spec [73]-[74]);
+    // - the per-line indent guard is the precomputed `min_indent`
+    //   (>= content_indent AND > parent block indent);
+    // - `---`/`...` document markers additionally require line start.
 
     fn scan_auto_indented_literal_scalar(
         &mut self,
@@ -5080,8 +4935,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     line: self.line,
                     resolved: TokenScalar {
                         data: NodeScalar::String(YamlString::List(self.text)),
-                        multiline: true,
-                        is_quoted: false,
+                        style: ScalarStyle::Block,
                     },
                 }))
             }
@@ -5154,12 +5008,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
 
         // Phase 1: find content_indent and first non-ws char
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut consumed_indent_this_line = false;
         let (content_indent, first): (Indent, u32) = 'phase1: loop {
             let __c = Enc::wide(self.next());
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     // Official yaml-test-suite JEF9/02: trailing indentation
                     // at EOF without a final break counts as one trailing
                     // empty line for chomping (matches eemeli/yaml + js-yaml).
@@ -5246,11 +5103,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
 
         // Phase 2: scan body
-        // PORT NOTE: labeled-switch loop with nested `newlines:` switch
+        // labeled-switch loop with nested `newlines:` switch
         let mut __c = first;
         loop {
             match __c {
-                0 => return Ok(ctx.done()?),
+                0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
+                    return Ok(ctx.done()?);
+                }
                 0x0D => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -5353,8 +5215,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if self.line_indent.is_less_than(min_indent) {
                         return Ok(ctx.done()?);
                     }
-                    // TODO(port): need Enc::Unit from u32; assuming Enc::Unit: From<u8> for ASCII range only.
-                    // For non-ASCII units we need to read self.next() directly.
                     let unit = self.next();
                     let _ = c;
                     ctx.append(unit)?;
@@ -5395,7 +5255,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let mut text: Vec<Enc::Unit> = Vec::new();
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         loop {
             let c = Enc::wide(self.next());
             match c {
@@ -5457,9 +5317,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong! (matches Zig comment)
-                            multiline: self.line != scalar_line,
-                            is_quoted: true,
+                            style: ScalarStyle::Quoted,
                             data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));
@@ -5478,7 +5336,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let scalar_indent = self.line_indent;
         let mut text: Vec<Enc::Unit> = Vec::new();
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         loop {
             let c = Enc::wide(self.next());
             match c {
@@ -5535,9 +5393,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong! (matches Zig comment)
-                            multiline: self.line != scalar_line,
-                            is_quoted: true,
+                            style: ScalarStyle::Quoted,
                             data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));
@@ -5614,42 +5470,58 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    // TODO: should this append replacement characters instead of erroring?
-    fn decode_hex_code_point(
-        &mut self,
-        escape: Escape,
-        text: &mut Vec<Enc::Unit>,
-    ) -> Result<(), ParseError> {
+    fn read_hex_digits(&mut self, count: u8) -> Result<u32, ParseError> {
         let mut value: u32 = 0;
-        for _ in 0..(escape as u8) {
+        for _ in 0..count {
             self.inc(1);
             let digit = Enc::wide(self.next());
             let num =
                 bun_core::fmt::hex_digit_value_u32(digit).ok_or(ParseError::UnexpectedCharacter)?;
             value = value * 16 + num as u32;
         }
+        Ok(value)
+    }
 
-        if value > 0x10_FFFF {
+    fn decode_hex_code_point(
+        &mut self,
+        escape: Escape,
+        text: &mut Vec<Enc::Unit>,
+    ) -> Result<(), ParseError> {
+        let mut cp = self.read_hex_digits(escape as u8)?;
+
+        if cp > 0x10_FFFF {
             return Err(ParseError::UnexpectedCharacter);
         }
-        let cp = value;
+
+        // JSON encodes supplementary code points as a `\uD8xx\uDCxx` surrogate
+        // pair; YAML 1.2 is a JSON superset. Lone surrogates remain an error.
+        if (0xD800..=0xDFFF).contains(&cp) {
+            if !matches!(escape, Escape::LowerU)
+                || !bun_core::strings::u16_is_lead(cp as u16)
+                || Enc::wide(self.peek(1)) != 0x5C /* '\\' */
+                || Enc::wide(self.peek(2)) != 0x75
+            /* 'u' */
+            {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+            self.inc(2);
+            let low = self.read_hex_digits(Escape::LowerU as u8)?;
+            if !bun_core::strings::u16_is_trail(low as u16) {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+            cp = bun_core::strings::u16_get_supplementary(cp as u16, low as u16);
+        }
 
         match Enc::KIND {
             EncodingKind::Utf8 => {
                 let ch = char::from_u32(cp).ok_or(ParseError::UnexpectedCharacter)?;
                 let mut buf = [0u8; 4];
                 let s = ch.encode_utf8(&mut buf);
-                // TODO(port): need to push &[u8] into Vec<Enc::Unit>; Enc::Unit==u8 here.
                 for b in s.bytes() {
                     text.push(Enc::ch(b));
                 }
             }
             EncodingKind::Utf16 => {
-                // Zig: std.unicode.utf16CodepointSequenceLength + manual surrogate split.
-                // utf16CodepointSequenceLength rejects surrogate code points; mirror that.
-                if (0xD800..=0xDFFF).contains(&cp) {
-                    return Err(ParseError::UnexpectedCharacter);
-                }
                 if cp < 0x10000 {
                     text.push(Enc::unit_from_u16(cp as u16));
                 } else {
@@ -5795,7 +5667,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn shorthand_to_tag(&self, shorthand: StringRange) -> NodeTag {
         let s = shorthand.slice(self.input);
-        // TODO(port): comparing &[Enc::Unit] to ASCII literals; assumes u8-compatible.
         if eq_ascii::<Enc>(s, b"bool") {
             return NodeTag::Bool;
         }
@@ -5831,12 +5702,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let previous_token_line = self.token.line;
 
-        // PORT NOTE: labeled-switch loop with `inline` whitespace dispatch.
+        // labeled-switch loop with `inline` whitespace dispatch.
         // We loop on `Enc::wide(self.next())` and break with the resulting token.
         let token: Token<Enc> = 'next: loop {
             let c = Enc::wide(self.next());
             match c {
                 0 => {
+                    // [1] c-printable excludes U+0000. `next()` returns NUL as
+                    // the EOF sentinel, so a literal NUL in the input must be
+                    // rejected here rather than silently ending the stream.
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     let start = self.pos;
                     break 'next Token::eof(self.token_init(start));
                 }
@@ -5981,6 +5858,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     self.inc(1);
                     while !self.is_b_char_or_eof() {
+                        if Enc::wide(self.next()) == 0 {
+                            return Err(ParseError::UnexpectedCharacter);
+                        }
                         self.inc(1);
                     }
                     continue;
@@ -6084,8 +5964,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token = Token::reserved(self.token_init(start));
                     return Err(Self::unexpected_token());
                 }
-                // PORT NOTE: ScanCtx.scanWhitespace inlined.
-                // whitespace — Zig used `inline '\r','\n',' ','\t' => |ws| ctx.scanWhitespace(ws)`
+                // ScanCtx.scanWhitespace inlined.
                 0x0D /* '\r' */ => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -6272,6 +6151,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
             self.inc(1);
             while !self.is_b_char_or_eof() {
+                if Enc::wide(self.next()) == 0 {
+                    return Err(ParseError::UnexpectedCharacter);
+                }
                 self.inc(1);
             }
         }
@@ -6428,12 +6310,3 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 fn eq_ascii<Enc: Encoding>(s: &[Enc::Unit], lit: &[u8]) -> bool {
     s.len() == lit.len() && s.iter().zip(lit).all(|(a, b)| Enc::wide(*a) == *b as u32)
 }
-
-// ───────────────────────────────────────────────────────────────────────────
-// Omitted: large commented-out blocks from yaml.zig
-//   - `Node` struct (lines 4758-4881) — commented out in source
-//   - `Printer` fn   (lines 4927-5248) — commented out in source
-// These were not active code; intentionally not ported.
-// ───────────────────────────────────────────────────────────────────────────
-
-// ported from: src/interchange/yaml.zig

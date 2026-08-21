@@ -10,6 +10,8 @@ import {
   getAbi,
   getAbiVersion,
   getArch,
+  getAwsSecret,
+  getAzureSecret,
   getCloud,
   getCloudMetadataTag,
   getDistro,
@@ -27,6 +29,13 @@ import {
   which,
   writeFile,
 } from "./utils.mjs";
+
+// The buildkite-agent registration token, per cloud. AWS builders read
+// Secrets Manager with their instance role; Azure builders read Key Vault
+// with their managed identity. It is not in launch parameters or tags.
+const BUILDKITE_TOKEN_SECRET = "buildkite/agent-token";
+const AZURE_KEYVAULT = "bun-ci";
+const AZURE_TOKEN_SECRET = "buildkite-agent-token";
 
 // macOS major-version thresholds for the `release-tier` agent tag.
 //   >= LATEST   -> "latest"   (current macOS; arm64-only in practice)
@@ -277,6 +286,13 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
     const cloud = await getCloud();
 
     let token = getEnv("BUILDKITE_AGENT_TOKEN", false);
+    if (!token && cloud === "aws") {
+      token = await getAwsSecret(BUILDKITE_TOKEN_SECRET);
+    }
+    if (!token && cloud === "azure") {
+      token = await getAzureSecret(AZURE_KEYVAULT, AZURE_TOKEN_SECRET);
+    }
+    // Images baked before the secret stores existed only had the tag.
     if (!token && cloud) {
       token = await getCloudMetadataTag("buildkite:token");
     }
@@ -284,7 +300,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
     const hasCfg = isMacOS && existsSync(cfgPath);
     if (!token && !hasCfg) {
       throw new Error(
-        "Buildkite token not found: either set BUILDKITE_AGENT_TOKEN or add a buildkite:token label to the instance",
+        "Buildkite token not found: set BUILDKITE_AGENT_TOKEN or grant this machine access to the buildkite agent-token secret",
       );
     }
 

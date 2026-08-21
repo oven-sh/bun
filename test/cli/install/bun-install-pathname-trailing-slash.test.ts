@@ -22,11 +22,12 @@ test("custom registry doesn't have multiple trailing slashes in pathname", async
   const { port, hostname } = server;
   await Bun.write(
     join(package_dir, "bunfig.toml"),
-    `
-[install]
-cache = false
-registry = "http://${hostname}:${port}/prefixed-route/"
-`,
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `http://${hostname}:${port}/prefixed-route/`,
+      },
+    }),
   );
   await Bun.write(
     join(package_dir, "package.json"),

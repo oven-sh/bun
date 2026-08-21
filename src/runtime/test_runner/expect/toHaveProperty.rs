@@ -1,21 +1,20 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 
+use super::throw;
 use super::DiffFormatter;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_have_property(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
+    // `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old::<2>();
-    let arguments: &[JSValue] = _arguments.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -69,8 +68,7 @@ pub(crate) fn to_have_property(
     }
 
     // handle failure
-    // PORT NOTE: Zig shares one `*Formatter` across both `to_fmt` calls; in Rust each `to_fmt`
-    // takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
+    // Each `to_fmt` takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
     // toInclude.rs / toStartWith.rs).
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
@@ -80,27 +78,25 @@ pub(crate) fn to_have_property(
             let signature =
                 Expect::get_signature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
             if !received_property.is_empty() {
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    format_args!(
-                        "\n\nExpected path: <green>{}<r>\n\nExpected value: not <green>{}<r>\n",
-                        expected_property_path.to_fmt(&mut formatter),
-                        expected_property_value.to_fmt(&mut formatter2),
-                    ),
+                    "\n\nExpected path: <green>{}<r>\n\nExpected value: not <green>{}<r>\n",
+                    expected_property_path.to_fmt(&mut formatter),
+                    expected_property_value.to_fmt(&mut formatter2),
                 );
             }
         }
 
         let signature = Expect::get_signature("toHaveProperty", "<green>path<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected path: not <green>{}<r>\n\nReceived value: <red>{}<r>\n",
-                expected_property_path.to_fmt(&mut formatter),
-                received_property.to_fmt(&mut formatter2),
-            ),
+            "\n\nExpected path: not <green>{}<r>\n\nReceived value: <red>{}<r>\n",
+            expected_property_path.to_fmt(&mut formatter),
+            received_property.to_fmt(&mut formatter2),
         );
     }
 
@@ -116,29 +112,25 @@ pub(crate) fn to_have_property(
                 ..Default::default()
             };
 
-            return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));
+            return throw!(this, global, signature, "\n\n{}\n", diff_format);
         }
 
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected path: <green>{}<r>\n\nExpected value: <green>{}<r>\n\nUnable to find property\n",
-                expected_property_path.to_fmt(&mut formatter),
-                expected_property_value.to_fmt(&mut formatter2),
-            ),
+            "\n\nExpected path: <green>{}<r>\n\nExpected value: <green>{}<r>\n\nUnable to find property\n",
+            expected_property_path.to_fmt(&mut formatter),
+            expected_property_value.to_fmt(&mut formatter2),
         );
     }
 
     let signature = Expect::get_signature("toHaveProperty", "<green>path<r>", false);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\nExpected path: <green>{}<r>\n\nUnable to find property\n",
-            expected_property_path.to_fmt(&mut formatter),
-        ),
+        "\n\nExpected path: <green>{}<r>\n\nUnable to find property\n",
+        expected_property_path.to_fmt(&mut formatter),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveProperty.zig

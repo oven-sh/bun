@@ -34,12 +34,6 @@ impl JSMap {
         crate::cpp::JSC__JSMap__get(self, global, key)
     }
 
-    /// Test whether this JS Map object has a given key.
-    #[track_caller]
-    pub fn has(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
-        crate::cpp::JSC__JSMap__has(self, global, key)
-    }
-
     /// Attempt to remove a key from this JS Map object.
     #[track_caller]
     pub fn remove(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
@@ -53,21 +47,18 @@ impl JSMap {
     }
 
     /// Retrieve the number of entries in this JS Map object.
-    #[track_caller]
-    pub fn size(&mut self, global: &JSGlobalObject) -> JsResult<u32> {
-        crate::cpp::JSC__JSMap__size(self, global)
+    pub fn size(&mut self) -> u32 {
+        crate::cpp::JSC__JSMap__size(self)
     }
 
     /// Attempt to convert a `JSValue` to a `*JSMap`.
     ///
     /// Returns `None` if the value is not a Map.
     ///
-    /// Returns a raw `NonNull<JSMap>` (mirrors Zig's `?*JSMap`). The pointee is a
+    /// Returns a raw `NonNull<JSMap>`. The pointee is a
     /// GC-heap cell; callers must dereference unsafely at use-site and ensure the
     /// underlying `JSValue` is kept alive across GC.
     pub fn from_js(value: JSValue) -> Option<NonNull<JSMap>> {
-        // PORT NOTE: Zig used `jsTypeLoose() == .JSMap`; the Rust stub surface
-        // exposes `is_cell()` + `js_type()` (which together are equivalent).
         if value.is_cell() && value.js_type() == crate::JSType::Map {
             // SAFETY: value is a Map cell; its encoded pointer is a valid,
             // non-null *JSMap on the GC heap.
@@ -76,5 +67,3 @@ impl JSMap {
         None
     }
 }
-
-// ported from: src/jsc/JSMap.zig

@@ -91,9 +91,14 @@ describe("Readable", () => {
     readable.push(DEF);
     readable.unshift(ABC);
 
+    // Node returns one buffered chunk per read() call (nodejs/node#60441).
     const buf = readable.read();
     expect(buf instanceof Buffer).toBe(true);
-    expect([...buf]).toEqual([...ABC, ...DEF]);
+    expect([...buf]).toEqual([...ABC]);
+
+    const buf2 = readable.read();
+    expect(buf2 instanceof Buffer).toBe(true);
+    expect([...buf2]).toEqual([...DEF]);
   });
 
   it("should work with setEncoding()", () => {

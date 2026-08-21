@@ -9,40 +9,35 @@ use crate::unicode;
 
 /// Maximum raw length of a link label (CommonMark: "a link label can have at
 /// most 999 characters inside the square brackets").
-pub const MAX_LINK_LABEL_LEN: usize = 999;
+pub(crate) const MAX_LINK_LABEL_LEN: usize = 999;
 
-pub struct RefDef {
-    pub label: Box<[u8]>, // normalized label
-    pub dest: Box<[u8]>,  // raw destination (slice of source)
-    pub title: Box<[u8]>, // raw title (slice of source)
+pub(crate) struct RefDef {
+    pub(crate) dest: Box<[u8]>,  // raw destination (slice of source)
+    pub(crate) title: Box<[u8]>, // raw title (slice of source)
 }
 
-// PORT NOTE: Zig anonymous return structs `?struct { ... }` are mapped to small
-// named structs borrowing from the `text` parameter (BORROW_PARAM class).
-pub struct ParsedRefDef<'a> {
-    pub end_pos: usize,
-    pub label: &'a [u8],
-    pub dest: &'a [u8],
-    pub title: &'a [u8],
+pub(crate) struct ParsedRefDef<'a> {
+    pub(crate) end_pos: usize,
+    pub(crate) label: &'a [u8],
+    pub(crate) dest: &'a [u8],
+    pub(crate) title: &'a [u8],
 }
 
-pub struct ParsedDest<'a> {
-    pub dest: &'a [u8],
-    pub end_pos: usize,
+pub(crate) struct ParsedDest<'a> {
+    pub(crate) dest: &'a [u8],
+    pub(crate) end_pos: usize,
 }
 
-pub struct ParsedTitle<'a> {
-    pub title: &'a [u8],
-    pub end_pos: usize,
+pub(crate) struct ParsedTitle<'a> {
+    pub(crate) title: &'a [u8],
+    pub(crate) end_pos: usize,
 }
 
 impl Parser<'_> {
     /// Normalize a link label for comparison: collapse whitespace runs to single space,
     /// strip leading/trailing whitespace, case-fold.
-    pub fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
+    pub(crate) fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
         // Collapse whitespace and apply Unicode case folding (per CommonMark §6.7)
-        // PORT NOTE: Zig returned `raw` on alloc failure; Rust Vec aborts on OOM, so
-        // the `catch return raw` paths are dropped.
         let mut result: Vec<u8> = Vec::new();
         let mut in_ws = true; // skip leading whitespace
         let mut i: usize = 0;
@@ -88,9 +83,8 @@ impl Parser<'_> {
     }
 
     /// Look up a reference definition by label (case-insensitive, whitespace-normalized).
-    // PORT NOTE: returns `Option<&RefDef>` instead of by-value copy; Zig RefDef was
-    // three borrowed slices (Copy), Rust RefDef owns its buffers.
-    pub fn lookup_ref_def(&mut self, raw_label: &[u8]) -> Option<&RefDef> {
+    // Returns `Option<&RefDef>` instead of a by-value copy: RefDef owns its buffers.
+    pub(crate) fn lookup_ref_def(&mut self, raw_label: &[u8]) -> Option<&RefDef> {
         if raw_label.is_empty() || self.ref_defs.is_empty() {
             return None;
         }
@@ -109,7 +103,7 @@ impl Parser<'_> {
 
     /// Try to parse a link reference definition from merged paragraph text at position `pos`.
     /// Returns the end position and the parsed ref def, or None if not a valid ref def.
-    pub fn parse_ref_def<'a>(&self, text: &'a [u8], pos: usize) -> Option<ParsedRefDef<'a>> {
+    pub(crate) fn parse_ref_def<'a>(&self, text: &'a [u8], pos: usize) -> Option<ParsedRefDef<'a>> {
         let mut p = pos;
 
         // Must start with [
@@ -237,7 +231,7 @@ impl Parser<'_> {
         })
     }
 
-    pub fn skip_ref_def_whitespace(&self, text: &[u8], start: usize) -> usize {
+    pub(crate) fn skip_ref_def_whitespace(&self, text: &[u8], start: usize) -> usize {
         let mut p = start;
         while p < text.len() && (text[p] == b' ' || text[p] == b'\t') {
             p += 1;
@@ -251,7 +245,11 @@ impl Parser<'_> {
         p
     }
 
-    pub fn parse_ref_def_dest<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedDest<'a>> {
+    pub(crate) fn parse_ref_def_dest<'a>(
+        &self,
+        text: &'a [u8],
+        start: usize,
+    ) -> Option<ParsedDest<'a>> {
         let mut p = start;
         if p >= text.len() {
             return None;
@@ -303,7 +301,11 @@ impl Parser<'_> {
         }
     }
 
-    pub fn parse_ref_def_title<'a>(&self, text: &'a [u8], start: usize) -> Option<ParsedTitle<'a>> {
+    pub(crate) fn parse_ref_def_title<'a>(
+        &self,
+        text: &'a [u8],
+        start: usize,
+    ) -> Option<ParsedTitle<'a>> {
         let mut p = start;
         if p >= text.len() {
             return None;
@@ -337,12 +339,11 @@ impl Parser<'_> {
         Some(ParsedTitle { title, end_pos: p })
     }
 
-    pub fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
+    pub(crate) fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
         let mut off: usize = 0;
-        // PORT NOTE: reshaped for borrowck — take a raw pointer to block_bytes so we
-        // can call &mut self methods (normalize_label, parse_ref_def via self.buffer)
-        // while iterating the byte buffer. The Zig code mutates headers in-place via
-        // pointer casts; we preserve that with raw pointer arithmetic.
+        // Take a raw pointer to block_bytes so we can call &mut self methods
+        // (normalize_label, parse_ref_def via self.buffer) while iterating the
+        // byte buffer. Headers are mutated in-place via raw pointer arithmetic.
         let bytes_ptr = self.block_bytes.as_mut_ptr();
         let bytes_len = self.block_bytes.len();
 
@@ -404,8 +405,8 @@ impl Parser<'_> {
                     .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
             }
 
-            // PORT NOTE: reshaped for borrowck — move merged buffer out of self so
-            // parse_ref_def/normalize_label can borrow &self/&mut self.
+            // Move the merged buffer out of self so parse_ref_def/normalize_label
+            // can borrow &self/&mut self.
             let merged = core::mem::take(&mut self.buffer);
             let mut pos: usize = 0;
             let mut lines_consumed: u32 = 0;
@@ -428,11 +429,9 @@ impl Parser<'_> {
                     let dest_dupe: Box<[u8]> = Box::from(result.dest);
                     let title_dupe: Box<[u8]> = Box::from(result.title);
                     self.ref_defs.push(RefDef {
-                        label,
                         dest: dest_dupe,
                         title: title_dupe,
                     });
-                    // PERF(port): was assume_capacity / arena alloc — profile if hot.
                 }
 
                 // Count how many newlines were consumed to track lines
@@ -496,5 +495,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/ref_defs.zig

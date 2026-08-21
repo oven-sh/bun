@@ -1,6 +1,5 @@
 #[derive(Copy, Clone)]
 pub struct PacketHeader {
-    // TODO(port): Zig used u24; Rust has no u24, using u32 (value is always < 2^24)
     pub length: u32,
     pub sequence_id: u8,
 }
@@ -24,7 +23,7 @@ impl PacketHeader {
         })
     }
 
-    pub fn encode(self) -> [u8; 4] {
+    pub(crate) fn encode(self) -> [u8; 4] {
         [
             u8::try_from(self.length & 0xff).expect("int cast"),
             u8::try_from((self.length >> 8) & 0xff).expect("int cast"),
@@ -33,5 +32,3 @@ impl PacketHeader {
         ]
     }
 }
-
-// ported from: src/sql/mysql/protocol/PacketHeader.zig

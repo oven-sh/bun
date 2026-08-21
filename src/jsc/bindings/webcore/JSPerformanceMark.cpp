@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSPerformanceMark.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
@@ -59,7 +58,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceMarkPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceMarkPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMarkPrototype>(vm)) JSPerformanceMarkPrototype(vm, globalObject, structure);
+        JSPerformanceMarkPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceMarkPrototype))) JSPerformanceMarkPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -73,7 +72,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -127,11 +126,7 @@ template<> JSValue JSPerformanceMarkDOMConstructor::prototypeForStructure(JSC::V
 
 template<> void JSPerformanceMarkDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "PerformanceMark"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSPerformanceMark::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "PerformanceMark"_s, JSPerformanceMark::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -146,8 +141,8 @@ const ClassInfo JSPerformanceMarkPrototype::s_info = { "PerformanceMark"_s, &Bas
 void JSPerformanceMarkPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceMark::info(), JSPerformanceMarkPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceMark::info(), JSPerformanceMarkPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSPerformanceMark::s_info = { "PerformanceMark"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMark) };
@@ -206,12 +201,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMark_detail, (JSGlobalObject * lexicalGlob
 
 JSC::GCClient::IsoSubspace* JSPerformanceMark::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceMark, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceMark.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMark = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceMark.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMark = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceMark, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceMark, m_subspaceForPerformanceMark));
 }
 
 template<typename Visitor>

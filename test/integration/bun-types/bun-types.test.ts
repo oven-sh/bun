@@ -1,18 +1,24 @@
 import { $ as Shell, fileURLToPath } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, makeTree } from "harness";
-import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, makeTree } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 
 import ts from "typescript";
+
+// beforeAll packs bun-types and installs it from the registry, and each case below copies
+// a fixture and type-checks it for several seconds, so everything here outlives the 5s
+// default that a plain `bun test <this file>` (CLAUDE.md, .github/workflows/bun-types.yml)
+// runs with; only the CI runner passes a larger --timeout. This call has to precede the
+// registrations: each hook/test captures the default when it is declared.
+setDefaultTimeout(1000 * 60 * 2);
 
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
 const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
 const FIXTURE_SOURCE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
 const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/cli/init/tsconfig.default.json");
-const BUN_TYPES_PACKAGE_JSON_PATH = join(BUN_TYPES_PACKAGE_ROOT, "package.json");
 const BUN_VERSION = (process.env.BUN_VERSION ?? Bun.version ?? process.versions.bun).replace(/^.*v/, "");
 const BUN_TYPES_TARBALL_NAME = `bun-types-${BUN_VERSION}.tgz`;
 
@@ -26,39 +32,38 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
 
 const $ = Shell.cwd(BUN_REPO_ROOT);
 
+// What `bun run build` generates. beforeAll builds into a copy of the package under
+// TEMP_DIR, so none of this may change in the checkout (it used to be built in place,
+// with package.json restored afterwards, which left the tree dirty whenever beforeAll
+// was interrupted).
+function snapshotBunTypesCheckout() {
+  return {
+    "package.json": readFileSync(join(BUN_TYPES_PACKAGE_ROOT, "package.json"), "utf8"),
+    "CLAUDE.md": existsSync(join(BUN_TYPES_PACKAGE_ROOT, "CLAUDE.md")),
+    "docs": existsSync(join(BUN_TYPES_PACKAGE_ROOT, "docs")),
+  };
+}
+
+const bunTypesCheckoutBeforeSetup = snapshotBunTypesCheckout();
+
 let TEMP_DIR: string;
 let BASE_FIXTURE_DIR: string;
 
 beforeAll(async () => {
   TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
   BASE_FIXTURE_DIR = join(TEMP_DIR, "base-fixture");
+  const bunTypesBuildDir = join(TEMP_DIR, "bun-types");
 
   try {
-    await $`mkdir -p ${BASE_FIXTURE_DIR}`.quiet();
-
     await cp(FIXTURE_SOURCE_DIR, BASE_FIXTURE_DIR, { recursive: true });
+    await cp(BUN_TYPES_PACKAGE_ROOT, bunTypesBuildDir, {
+      recursive: true,
+      filter: source => basename(source) !== "node_modules",
+    });
 
-    await $`
-      cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun install --no-cache
-      cp package.json package.json.backup
-    `.quiet();
-
-    const pkg = await Bun.file(BUN_TYPES_PACKAGE_JSON_PATH).json();
-
-    await Bun.write(BUN_TYPES_PACKAGE_JSON_PATH, JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
-
-    await $`
-      cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun run build
-      bun pm pack --destination ${BASE_FIXTURE_DIR}
-      rm CLAUDE.md
-      mv package.json.backup package.json
-
-      cd ${BASE_FIXTURE_DIR}
-      bun add bun-types@${BUN_TYPES_TARBALL_NAME}
-      rm ${BUN_TYPES_TARBALL_NAME}
-    `.quiet();
+    await $`cd ${BUN_TYPES_PACKAGE_ROOT} && BUN_VERSION=${BUN_VERSION} bun run build ${bunTypesBuildDir}`.quiet();
+    await $`cd ${bunTypesBuildDir} && bun pm pack --destination ${BASE_FIXTURE_DIR}`.quiet();
+    await $`cd ${BASE_FIXTURE_DIR} && bun add bun-types@${BUN_TYPES_TARBALL_NAME} && rm ${BUN_TYPES_TARBALL_NAME}`.quiet();
 
     const atTypesBunDir = join(BASE_FIXTURE_DIR, "node_modules", "@types", "bun");
 
@@ -113,7 +118,10 @@ async function createIsolatedFixture(packages?: string[]): Promise<string> {
 }
 
 function typeTest(name: string, config: TypeTestConfig) {
-  test(name, async () => {
+  // This file only tests the bun-types .d.ts, not bun's own code. Driving the
+  // TypeScript LanguageService in-process under a debug build is ~40x slower,
+  // so run the type-checking cases on release builds only.
+  test.skipIf(isDebug)(name, async () => {
     const fixtureDir = await createIsolatedFixture(config.packages);
     const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
       options: config.options,
@@ -183,10 +191,10 @@ async function diagnose(
     },
     getCurrentDirectory: () => fixtureDir,
     getCompilationSettings: () => options,
-    getDefaultLibFileName: options => {
-      const defaultLibFileName = ts.getDefaultLibFileName(options);
-      return join(fixtureDir, "node_modules", "typescript", "lib", defaultLibFileName);
-    },
+    // Resolve lib.*.d.ts from the same TypeScript install that provides this compiler API.
+    // typescript@7 (native) no longer ships lib/lib.*.d.ts in its npm package, so the
+    // fixture's `typescript` dep cannot be used as the lib source.
+    getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
     fileExists: ts.sys.fileExists,
     readFile: ts.sys.readFile,
     readDirectory: ts.sys.readDirectory,
@@ -308,6 +316,16 @@ afterAll(async () => {
 });
 
 describe("@types/bun integration test", () => {
+  test("building and packing bun-types leaves packages/bun-types untouched", () => {
+    expect(snapshotBunTypesCheckout()).toEqual(bunTypesCheckoutBeforeSetup);
+  });
+
+  test("packed bun-types includes CLAUDE.md", async () => {
+    const claude = Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "CLAUDE.md"));
+    expect(await claude.exists()).toBe(true);
+    expect((await claude.text()).length).toBeGreaterThan(0);
+  });
+
   describe("basic type checks", () => {
     typeTest("checks without lib.dom.d.ts", {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
@@ -319,7 +337,7 @@ describe("@types/bun integration test", () => {
   // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
   // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
   describe("tsgo (TypeScript 7 native preview)", () => {
-    test("checks without lib.dom.d.ts", async () => {
+    test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
       const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
 
       const tsconfig = structuredClone(sourceTsconfig);
@@ -327,12 +345,49 @@ describe("@types/bun integration test", () => {
       tsconfig.include = ["*.ts", "*.tsx"];
       await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
-      const tsgo = join(fixtureDir, "node_modules", "@typescript", "native-preview", "bin", "tsgo.js");
+      // Resolve the entrypoint from the package's own bin field; the nightly
+      // has renamed it before (bin/tsgo.js -> bin/tsgo).
+      const tsgoPkgDir = join(fixtureDir, "node_modules", "@typescript", "native-preview");
+      const tsgoPkg = await Bun.file(join(tsgoPkgDir, "package.json")).json();
+      const tsgo = join(tsgoPkgDir, typeof tsgoPkg.bin === "string" ? tsgoPkg.bin : tsgoPkg.bin.tsgo);
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), tsgo, "-p", "."],
         env: bunEnv,
         cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Runs on debug builds too: spawning tsc over a single file is cheap,
+  // unlike the in-process LanguageService runs above.
+  describe("Bun.mmap", () => {
+    test("MMapOptions accepts offset and size", async () => {
+      const checkDir = join(TEMP_DIR, "mmap-options-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["mmap-options.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
+           view satisfies Uint8Array<ArrayBuffer>;
+           Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
+           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
         stdout: "pipe",
         stderr: "pipe",
       });

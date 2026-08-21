@@ -35,3 +35,37 @@ test("Blob.arrayBuffer copy-on-write is not shared", async () => {
   expect(buf3[0]).toBe(2);
   expect(buf4[0]).toBe(3);
 });
+
+test("Response.arrayBuffer from a Blob body is not shared with the Blob", async () => {
+  const blob = new Blob(["hello world"]);
+  const buf = new Uint8Array(await new Response(blob).arrayBuffer());
+  expect(new TextDecoder().decode(buf)).toBe("hello world");
+  buf.fill(120);
+  expect(await blob.text()).toBe("hello world");
+});
+
+test("Response.bytes from a Blob body is not shared with the Blob", async () => {
+  const blob = new Blob(["hello world"]);
+  const buf = await new Response(blob).bytes();
+  expect(new TextDecoder().decode(buf)).toBe("hello world");
+  buf.fill(120);
+  expect(await blob.text()).toBe("hello world");
+});
+
+test("Request.arrayBuffer from a Blob body is not shared with the Blob", async () => {
+  const blob = new Blob(["hello world"]);
+  const request = new Request("http://localhost/", { method: "POST", body: blob });
+  const buf = new Uint8Array(await request.arrayBuffer());
+  expect(new TextDecoder().decode(buf)).toBe("hello world");
+  buf.fill(120);
+  expect(await blob.text()).toBe("hello world");
+});
+
+test("Response.bytes from a Blob body is not shared with text previously read from the Blob", async () => {
+  const blob = new Blob(["hello world"]);
+  const text = await blob.text();
+  const buf = await new Response(blob).bytes();
+  buf.fill(120);
+  expect(text).toBe("hello world");
+  expect(await blob.text()).toBe("hello world");
+});

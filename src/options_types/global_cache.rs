@@ -10,13 +10,19 @@ pub enum GlobalCache {
     disable,
 }
 
-impl GlobalCache {
-    pub const MAP: phf::Map<&'static [u8], GlobalCache> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static MAP: GlobalCache = {
         b"auto" => GlobalCache::auto,
         b"force" => GlobalCache::force,
         b"disable" => GlobalCache::disable,
         b"fallback" => GlobalCache::fallback,
     };
+}
+
+impl GlobalCache {
+    /// The map type is a zero-sized handle, so this is the same map as the
+    /// module-level `MAP` static.
+    pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
 
     pub fn allow_version_specifier(self) -> bool {
         self == GlobalCache::force
@@ -57,5 +63,3 @@ impl GlobalCache {
         )
     }
 }
-
-// ported from: src/options_types/GlobalCache.zig

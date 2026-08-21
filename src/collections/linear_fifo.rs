@@ -1,8 +1,6 @@
-// clone of zig stdlib
-// except, this one vectorizes
-
-// FIFO of fixed size items
-// Usually used for e.g. byte buffers
+// FIFO of fixed size `Copy` items, usually byte buffers, raw pointers or small
+// plain structs. The ring never runs item destructors, so `T: Copy` is the
+// contract; owning element types belong in `VecDeque`.
 
 use core::marker::PhantomData;
 use core::mem::{self, MaybeUninit};
@@ -10,31 +8,12 @@ use core::ptr;
 
 use bun_alloc::AllocError;
 
-// TODO(port): std.heap.page_size_min — Zig resolves this per-target; 4096 is the
-// conservative minimum on every platform Bun ships on.
+// 4096 is the conservative minimum page size on every platform Bun ships on.
 const PAGE_SIZE_MIN: usize = 4096;
 
-/// Mirrors Zig's `LinearFifoBufferType = union(enum)`.
-///
-/// In the Zig original this is a *comptime* value that selects a struct layout
-/// (`buf: [N]T` vs `buf: []T`, `std.mem.Allocator` param vs `void`). Rust cannot
-/// branch struct layout on a const-generic enum payload, so dispatch is done
-/// via the [`LinearFifoBuffer`] trait below; this enum is kept for API parity.
-pub enum LinearFifoBufferType {
-    /// The buffer is internal to the fifo; it is of the specified size.
-    Static(usize),
-    /// The buffer is passed as a slice to the initialiser.
-    Slice,
-    /// The buffer is managed dynamically using a `mem.Allocator`.
-    Dynamic,
-}
-
-/// Backing-storage abstraction replacing Zig's `comptime buffer_type` switch.
-/// `POWERS_OF_TWO` mirrors the Zig `powers_of_two` const inside the returned
-/// struct; `DYNAMIC` mirrors `buffer_type == .Dynamic`.
-// TODO(port): the Zig fn returns structurally different layouts per variant;
-// trait+assoc-consts is the closest stable-Rust encoding. Phase B: confirm all
-// in-tree callers are covered by the three impls below.
+/// Backing-storage abstraction; `DYNAMIC` is true for the `.Dynamic` variant.
+// Trait + assoc-consts encode the structurally different layouts per
+// variant.
 pub trait LinearFifoBuffer<T> {
     const POWERS_OF_TWO: bool;
     const DYNAMIC: bool;
@@ -46,12 +25,6 @@ pub trait LinearFifoBuffer<T> {
         self.as_slice().len()
     }
 
-    /// Reallocate to exactly `new_size` elements, preserving the prefix.
-    /// Static/Slice variants are unreachable (callers gate on `DYNAMIC`).
-    fn realloc(&mut self, _new_size: usize) -> Result<(), AllocError> {
-        unreachable!("realloc on non-Dynamic LinearFifo buffer")
-    }
-
     /// Allocate fresh storage of `new_size` and return the old buffer so the
     /// caller can copy out of it before drop.
     fn alloc_swap(&mut self, _new_size: usize) -> Result<Box<[MaybeUninit<T>]>, AllocError> {
@@ -61,9 +34,11 @@ pub trait LinearFifoBuffer<T> {
 
 /// Reinterpret `&[MaybeUninit<T>]` as `&[T]`. `MaybeUninit<T>` has identical
 /// layout to `T`; exposing uninitialized bytes as `T` is sound only when any
-/// bit pattern is a valid `T` (in-tree LinearFifo users are byte buffers —
-/// see the `StaticBuffer` TODO below). Centralises the four per-buffer-kind
-/// casts behind one audited block.
+/// bit pattern is a valid `T`. NOT every in-tree element type satisfies this:
+/// besides byte buffers and raw pointers, fifos today store `NonNull`-bearing
+/// enums (`bun_test::RefDataValue`) and the `event_loop::Task` enum — see the
+/// `StaticBuffer` note below for the pending MaybeUninit accessor rework.
+/// Centralises the four per-buffer-kind casts behind one audited block.
 #[inline(always)]
 fn assume_init_slice<T>(s: &[MaybeUninit<T>]) -> &[T] {
     // SAFETY: see fn doc.
@@ -79,19 +54,14 @@ fn assume_init_slice_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
     unsafe { &mut *(ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) }
 }
 
-/// Shift `slice[1..]` down to `slice[0..len-1]` (memmove). Used by
-/// `ordered_remove_item` for the four wrap/non-wrap segment shifts. Not
-/// `slice::copy_within` because that requires `T: Copy`; this fifo permits
-/// move-only `T` (the duplicated tail slot is logically discarded by the
-/// subsequent `count -= 1`).
+/// Shift `slice[1..]` down to `slice[0..len-1]`. Used by
+/// `ordered_remove_item` for the four wrap/non-wrap segment shifts; the
+/// duplicated tail slot is logically discarded by the subsequent `count -= 1`.
 #[inline(always)]
-fn shift_down_one<T>(slice: &mut [T]) {
-    if slice.len() <= 1 {
-        return;
+fn shift_down_one<T: Copy>(slice: &mut [T]) {
+    if slice.len() > 1 {
+        slice.copy_within(1.., 0);
     }
-    // SAFETY: src `[1..len)` and dst `[0..len-1)` are both in-bounds of
-    // `slice`; `ptr::copy` handles the overlap.
-    unsafe { ptr::copy(slice.as_ptr().add(1), slice.as_mut_ptr(), slice.len() - 1) };
 }
 
 #[cfg(debug_assertions)]
@@ -112,10 +82,19 @@ fn poison<T>(slice: &mut [T], n: usize) {
 // ── .Static ───────────────────────────────────────────────────────────────────
 
 /// `buffer_type == .Static` — inline `[T; N]` storage.
-// TODO(port): Zig leaves the array `undefined`; we use MaybeUninit and expose
-// it as &[T] via pointer cast. Sound only for `T` whose any-bit-pattern is
-// valid (in-tree users are byte buffers). Phase B: bound `T: Copy` or rework
-// accessors to MaybeUninit if a non-POD T appears.
+// INVARIANT: storage is MaybeUninit and exposed as &[T] via pointer cast
+// (`assume_init_slice`). The public API
+// (`writable_slice` hands out `&mut [T]` over not-yet-written slots) bakes in
+// the same exposure for every buffer kind. Sound only for `T` whose
+// any-bit-pattern is valid — and in-tree element types ALREADY violate that:
+// `RefDataValue` (NonNull<DescribeScope> payload) and the `Task` enum are
+// stored in fifos today, so materialising `&[T]` over uninitialized slots for
+// those types is latent UB.
+// The fix is reworking the accessors to operate on `&[MaybeUninit<T>]` and
+// only assume-init the logically-written subranges; `writable_slice`-family
+// callers in other crates see the signature change, so that lives in #31835.
+// The `T: Copy` bound below only pins the no-destructor contract; it does not
+// close this gap.
 pub struct StaticBuffer<T, const N: usize>([MaybeUninit<T>; N]);
 
 impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
@@ -132,31 +111,10 @@ impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
     }
 }
 
-// ── .Slice ────────────────────────────────────────────────────────────────────
-
-/// `buffer_type == .Slice` — caller-provided `[]T`.
-pub struct SliceBuffer<'a, T>(&'a mut [T]);
-
-impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {
-    const POWERS_OF_TWO: bool = false; // Any size slice could be passed in
-    const DYNAMIC: bool = false;
-
-    #[inline]
-    fn as_slice(&self) -> &[T] {
-        self.0
-    }
-    #[inline]
-    fn as_mut_slice(&mut self) -> &mut [T] {
-        self.0
-    }
-}
-
 // ── .Dynamic ──────────────────────────────────────────────────────────────────
 
-/// `buffer_type == .Dynamic` — heap-allocated, growable.
-///
-/// Zig stores `std.mem.Allocator` param + `buf: []T`. Per §Allocators (non-AST
-/// crate) the allocator param is dropped and global mimalloc backs `Box`.
+/// `buffer_type == .Dynamic` — heap-allocated, growable. Global mimalloc
+/// backs the `Box`.
 pub struct DynamicBuffer<T>(Box<[MaybeUninit<T>]>);
 
 impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
@@ -172,16 +130,6 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
         assume_init_slice_mut(&mut self.0)
     }
 
-    fn realloc(&mut self, new_size: usize) -> Result<(), AllocError> {
-        // Zig: `self.allocator.realloc(self.buf, size)` preserving prefix.
-        let mut new = Box::<[T]>::new_uninit_slice(new_size);
-        let n = self.0.len().min(new_size);
-        // SAFETY: disjoint allocations; MaybeUninit copy is always sound.
-        unsafe { ptr::copy_nonoverlapping(self.0.as_ptr(), new.as_mut_ptr(), n) };
-        self.0 = new;
-        Ok(())
-    }
-
     fn alloc_swap(&mut self, new_size: usize) -> Result<Box<[MaybeUninit<T>]>, AllocError> {
         let new = Box::<[T]>::new_uninit_slice(new_size);
         Ok(mem::replace(&mut self.0, new))
@@ -191,23 +139,18 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
 // ── LinearFifo ────────────────────────────────────────────────────────────────
 
 pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
-    // Zig field `allocator` is folded into `B` (or dropped) — see DynamicBuffer.
     buf: B,
     head: usize,
     count: usize,
     _marker: PhantomData<T>,
 }
 
-// PORT NOTE: Zig's `SliceSelfArg = if (.Static) *Self else Self` exists because
-// returning a slice into a by-value `Self` would dangle when buf is inline. In
-// Rust every accessor takes `&self`/`&mut self`, so the distinction disappears.
+// Reader/Writer access is via the impls on `LinearFifo<u8, B>` after the
+// inherent impl below: `bun_core::write::Write` (the canonical byte sink,
+// re-exported as `bun_io::Write`), plus `std::io::Read`, `std::io::Write`,
+// and `core::fmt::Write` for std interop.
 
-// TODO(port): Reader/Writer std.Io adapters. Zig exposes
-// `pub const Reader = std.Io.GenericReader(*Self, error{}, readFn)` and a
-// matching Writer. Phase B: impl `bun_io::Read`/`bun_io::Write` (and
-// `core::fmt::Write`) on `LinearFifo<u8, B>`.
-
-impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
+impl<T: Copy, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
     /// `init` for `.Static`.
     pub fn init() -> Self {
         Self {
@@ -219,21 +162,8 @@ impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
     }
 }
 
-impl<'a, T> LinearFifo<T, SliceBuffer<'a, T>> {
-    /// `init` for `.Slice`.
-    pub fn init(buf: &'a mut [T]) -> Self {
-        Self {
-            buf: SliceBuffer(buf),
-            head: 0,
-            count: 0,
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<T> LinearFifo<T, DynamicBuffer<T>> {
-    /// `init` for `.Dynamic`. Zig takes `std.mem.Allocator` param; dropped per
-    /// §Allocators (non-AST crate).
+impl<T: Copy> LinearFifo<T, DynamicBuffer<T>> {
+    /// `init` for `.Dynamic`.
     pub fn init() -> Self {
         Self {
             buf: DynamicBuffer(Box::new([])),
@@ -244,16 +174,16 @@ impl<T> LinearFifo<T, DynamicBuffer<T>> {
     }
 }
 
-// `pub fn deinit` → Drop. Dynamic frees `buf` via `Box` drop; Static/Slice are
-// no-ops. Field drop glue covers it; no explicit impl needed.
+// `pub fn deinit` → Drop. Dynamic frees `buf` via `Box` drop; Static is a
+// no-op. Items are never dropped, which is why every impl requires `T: Copy`.
 
-impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
+impl<T: Copy, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     #[inline]
     fn buf_len(&self) -> usize {
         self.buf.len()
     }
 
-    /// Allocated capacity of the backing buffer (Zig: `fifo.buf.len`).
+    /// Allocated capacity of the backing buffer.
     /// Distinct from [`readable_length`] (live items) and
     /// [`writable_length`] (free slots) — `capacity == readable + writable`.
     /// Used by GC `memoryCost` reporting where the *allocation* size, not the
@@ -265,8 +195,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Rewind `head` to 0 when the queue is empty so the next `write` can use
     /// the full contiguous buffer without wrapping. Perf-only micro-opt; a
-    /// no-op when items remain. Mirrors the `head = 0` post-drain idiom in
-    /// `src/jsc/Task.zig` `tickQueueWithCount`.
+    /// no-op when items remain.
     #[inline]
     pub fn reset_head_if_empty(&mut self) {
         if self.count == 0 {
@@ -274,22 +203,20 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
-    pub fn realign(&mut self) {
+    pub(crate) fn realign(&mut self) {
         let buf_len = self.buf_len();
         if buf_len - self.head >= self.count {
             // this copy overlaps
             let count = self.count;
             let head = self.head;
-            let buf = self.buf.as_mut_slice();
+            let buf = self.buf.as_mut_slice().as_mut_ptr();
             // SAFETY: src/dst within same allocation; ptr::copy is memmove.
-            unsafe { ptr::copy(buf.as_ptr().add(head), buf.as_mut_ptr(), count) };
+            unsafe { ptr::copy(buf.add(head), buf, count) };
             self.head = 0;
         } else {
-            // Zig: `var tmp: [page_size_min / 2 / @sizeOf(T)]T = undefined;`
             // Stable Rust cannot size a stack array by `size_of::<T>()`, so use
-            // a fixed byte scratch and compute the element count at runtime.
-            // PERF(port): was stack array sized by page_size/2/sizeof(T) — same
-            // byte footprint here, no heap.
+            // a fixed byte scratch (page_size/2 bytes, no heap) and compute the
+            // element count at runtime.
             //
             // The scratch is a `[MaybeUninit<u8>; _]` (alignment 1). Reading or
             // writing through it as `*mut T` would violate
@@ -305,19 +232,15 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             while self.head != 0 {
                 let n = self.head.min(tmp_len);
                 let m = buf_len - n;
-                let buf = self.buf.as_mut_slice();
-                // SAFETY: `tmp` is disjoint from `buf`. The tmp↔buf copies move
+                let buf = self.buf.as_mut_slice().as_mut_ptr();
+                // SAFETY: `tmp_bytes` is disjoint from `buf`. The tmp↔buf copies move
                 // `n * size_of::<T>()` raw bytes (no `T` typed access through
                 // the 1-aligned scratch). The buf→buf shift overlaps, so use
                 // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
                 unsafe {
-                    ptr::copy_nonoverlapping(buf.as_ptr().cast::<u8>(), tmp_ptr, n * t_size);
-                    ptr::copy(buf.as_ptr().add(n), buf.as_mut_ptr(), m);
-                    ptr::copy_nonoverlapping(
-                        tmp_ptr,
-                        buf.as_mut_ptr().add(m).cast::<u8>(),
-                        n * t_size,
-                    );
+                    ptr::copy_nonoverlapping(buf.cast::<u8>(), tmp_ptr, n * t_size);
+                    ptr::copy(buf.add(n), buf, m);
+                    ptr::copy_nonoverlapping(tmp_ptr, buf.add(m).cast::<u8>(), n * t_size);
                 }
                 self.head -= n;
             }
@@ -327,7 +250,8 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         {
             let count = self.count;
             let unused = &mut self.buf.as_mut_slice()[count..];
-            // SAFETY: poisoning unused tail; matches Zig `@memset(unused, undefined)`.
+            // SAFETY: the tail past `count` is logically uninitialized; writing
+            // the 0xAA poison pattern there cannot invalidate live items.
             unsafe {
                 ptr::write_bytes(
                     unused.as_mut_ptr().cast::<u8>(),
@@ -338,26 +262,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
-    /// Reduce allocated capacity to `size`.
-    pub fn shrink(&mut self, size: usize) {
-        debug_assert!(size >= self.count);
-        if B::DYNAMIC {
-            self.realign();
-            match self.buf.realloc(size) {
-                Ok(()) => {}
-                Err(AllocError) => return, // no problem, capacity is still correct then.
-            }
-        }
-    }
-
-    #[deprecated(note = "deprecated; call `ensure_unused_capacity` or `ensure_total_capacity`")]
-    pub fn ensure_capacity(&mut self, _size: usize) {
-        // Zig: `pub const ensureCapacity = @compileError(...)`
-        unreachable!("deprecated; call ensure_unused_capacity or ensure_total_capacity");
-    }
-
     /// Ensure that the buffer can fit at least `size` items
-    // TODO(port): narrow error set
     pub fn ensure_total_capacity(&mut self, size: usize) -> Result<(), AllocError> {
         if self.buf_len() >= size {
             return Ok(());
@@ -365,12 +270,10 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         if B::DYNAMIC {
             self.realign();
             let new_size = if B::POWERS_OF_TWO {
-                // math.ceilPowerOfTwo(usize, size) catch return error.OutOfMemory
                 size.checked_next_power_of_two().ok_or(AllocError)?
             } else {
                 size
             };
-            // Zig: alloc new, memcpy readableSlice(0) bytes, free old.
             let count = self.count;
             let old = self.buf.alloc_swap(new_size)?;
             if count > 0 {
@@ -447,7 +350,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         #[cfg(debug_assertions)]
         {
             // set old range to undefined. Note: may be wrapped around
-            // PORT NOTE: reshaped for borrowck — capture len, then re-borrow.
+            // reshaped for borrowck — capture len, then re-borrow.
             let slice_len = self.readable_slice_mut(0).len();
             if slice_len >= count {
                 poison(self.readable_slice_mut(0), count);
@@ -483,10 +386,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Read data from the fifo into `dst`, returns number of items copied.
-    pub fn read(&mut self, dst: &mut [T]) -> usize
-    where
-        T: Copy,
-    {
+    pub(crate) fn read(&mut self, dst: &mut [T]) -> usize {
         let total = dst.len();
         let mut dst_left = &mut dst[..];
 
@@ -497,15 +397,13 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             }
             let n = slice.len().min(dst_left.len());
             dst_left[..n].copy_from_slice(&slice[..n]);
-            // PORT NOTE: NLL drops `slice` borrow here before `&mut self`.
+            // NLL drops `slice` borrow here before `&mut self`.
             self.discard(n);
             dst_left = &mut dst_left[n..];
         }
 
         total - dst_left.len()
     }
-
-    // TODO(port): `pub fn reader(self: *Self) Reader` — see Reader/Writer note.
 
     /// Returns number of items available in fifo
     #[inline]
@@ -515,7 +413,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns the first section of writable buffer.
     /// Note that this may be of length 0.
-    pub fn writable_slice(&mut self, offset: usize) -> &mut [T] {
+    pub(crate) fn writable_slice(&mut self, offset: usize) -> &mut [T] {
         let buf_len = self.buf_len();
         if offset > buf_len {
             return &mut [];
@@ -535,12 +433,11 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns a writable buffer of at least `size` items, allocating memory as needed.
     /// Use `fifo.update` once you've written data to it.
-    // TODO(port): narrow error set
     pub fn writable_with_size(&mut self, size: usize) -> Result<&mut [T], AllocError> {
         self.ensure_unused_capacity(size)?;
 
         // try to avoid realigning buffer
-        // PORT NOTE: reshaped for borrowck — check len, drop borrow, maybe
+        // reshaped for borrowck — check len, drop borrow, maybe
         // realign, then take the final borrow.
         if self.writable_slice(0).len() < size {
             self.realign();
@@ -558,15 +455,12 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Appends the data in `src` to the fifo.
     /// You must have ensured there is enough space.
-    pub fn write_assume_capacity(&mut self, src: &[T])
-    where
-        T: Copy,
-    {
+    pub(crate) fn write_assume_capacity(&mut self, src: &[T]) {
         debug_assert!(self.writable_length() >= src.len());
 
         let mut src_left = src;
         while !src_left.is_empty() {
-            // PORT NOTE: reshaped for borrowck — scoped block drops the
+            // reshaped for borrowck — scoped block drops the
             // `writable` borrow before `self.update`.
             let n = {
                 let writable = self.writable_slice(0);
@@ -581,7 +475,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Write a single item to the fifo
-    // TODO(port): narrow error set
     pub fn write_item(&mut self, item: T) -> Result<(), AllocError> {
         self.ensure_unused_capacity(1)?;
         self.write_item_assume_capacity(item);
@@ -596,26 +489,19 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             tail %= self.buf_len();
         }
         // SAFETY: `tail` is in-bounds (capacity reserved by caller). The slot is
-        // logically uninitialized — `ptr::write` matches Zig assignment semantics
-        // (no drop of the prior bit-pattern), required for non-`Copy` `T` whose
-        // backing storage is `MaybeUninit<T>`.
+        // logically uninitialized `MaybeUninit<T>` storage; `ptr::write`
+        // initializes it without reading the prior bit-pattern.
         unsafe { ptr::write(self.buf.as_mut_slice().as_mut_ptr().add(tail), item) };
         self.update(1);
     }
 
     /// Appends the data in `src` to the fifo.
     /// Allocates more memory as necessary
-    // TODO(port): narrow error set
-    pub fn write(&mut self, src: &[T]) -> Result<(), AllocError>
-    where
-        T: Copy,
-    {
+    pub fn write(&mut self, src: &[T]) -> Result<(), AllocError> {
         self.ensure_unused_capacity(src.len())?;
         self.write_assume_capacity(src);
         Ok(())
     }
-
-    // TODO(port): `pub fn writer(self: *Self) Writer` — see Reader/Writer note.
 
     /// Make `count` items available before the current read location
     fn rewind(&mut self, count: usize) {
@@ -632,16 +518,12 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Place data back into the read stream
-    // TODO(port): narrow error set
-    pub fn unget(&mut self, src: &[T]) -> Result<(), AllocError>
-    where
-        T: Copy,
-    {
+    pub fn unget(&mut self, src: &[T]) -> Result<(), AllocError> {
         self.ensure_unused_capacity(src.len())?;
 
         self.rewind(src.len());
 
-        // PORT NOTE: reshaped for borrowck — copy into first chunk in a scoped
+        // reshaped for borrowck — copy into first chunk in a scoped
         // block, drop borrow, then re-borrow for the wrapped chunk.
         let slice_len = {
             let s = self.readable_slice_mut(0);
@@ -658,10 +540,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns the item at `offset`.
     /// Asserts offset is within bounds.
-    pub fn peek_item(&self, offset: usize) -> T
-    where
-        T: Copy,
-    {
+    pub fn peek_item(&self, offset: usize) -> T {
         debug_assert!(offset < self.count);
 
         let mut index = self.head + offset;
@@ -733,45 +612,59 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
         self.count -= 1;
     }
+}
 
-    /// Pump data from a reader into a writer
-    /// stops when reader returns 0 bytes (EOF)
-    /// Buffer size must be set before calling; a buffer length of 0 is invalid.
-    // TODO(port): `src_reader: anytype, dest_writer: *std.Io.Writer`. Phase B:
-    // bind to `bun_io::Read`/`bun_io::Write` (or whatever the byte-stream traits
-    // land as). Stubbed with generic bounds matching the called methods.
-    pub fn pump<R, W, E>(&mut self, mut src_reader: R, dest_writer: &mut W) -> Result<(), E>
-    where
-        R: FnMut(&mut [T]) -> Result<usize, E>,
-        W: FnMut(&[T]) -> Result<usize, E>,
-    {
-        debug_assert!(self.buf_len() > 0);
-        loop {
-            if self.writable_length() > 0 {
-                // PORT NOTE: reshaped for borrowck.
-                let n = {
-                    let ws = self.writable_slice(0);
-                    src_reader(ws)?
-                };
-                if n == 0 {
-                    break; // EOF
-                }
-                self.update(n);
-            }
-            let written = {
-                let rs = self.readable_slice(0);
-                dest_writer(rs)?
-            };
-            self.discard(written);
-        }
-        // flush remaining data
-        while self.readable_length() > 0 {
-            let written = {
-                let rs = self.readable_slice(0);
-                dest_writer(rs)?
-            };
-            self.discard(written);
-        }
+// ── Reader/Writer adapters ────────────────────────────────────────────────────
+
+impl<B: LinearFifoBuffer<u8>> std::io::Read for LinearFifo<u8, B> {
+    /// Drains up to `dst.len()` buffered bytes. `Ok(0)` means
+    /// the fifo is empty (EOF, never an error).
+    #[inline]
+    fn read(&mut self, dst: &mut [u8]) -> std::io::Result<usize> {
+        Ok(LinearFifo::read(self, dst))
+    }
+}
+
+impl<B: LinearFifoBuffer<u8>> std::io::Write for LinearFifo<u8, B> {
+    /// Appends the buffer, growing if `.Dynamic`. Fixed-capacity buffers
+    /// follow the `std::io::Write` contract: write what fits and return the
+    /// count (`Ok(0)` when full — `write_all` turns that into `WriteZero`).
+    /// `ErrorKind::OutOfMemory` is reserved for dynamic-growth allocation
+    /// failure.
+    #[inline]
+    fn write(&mut self, src: &[u8]) -> std::io::Result<usize> {
+        let src = if B::DYNAMIC {
+            src
+        } else {
+            &src[..src.len().min(self.writable_length())]
+        };
+        LinearFifo::write(self, src)
+            .map_err(|AllocError| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+        Ok(src.len())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Enables `write!(fifo, ...)`.
+impl<B: LinearFifoBuffer<u8>> core::fmt::Write for LinearFifo<u8, B> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        LinearFifo::write(self, s.as_bytes()).map_err(|AllocError| core::fmt::Error)
+    }
+}
+
+/// Canonical in-tree byte sink (re-exported as
+/// `bun_io::Write`), so a `LinearFifo<u8, _>` can be passed to every
+/// `impl bun_io::Write` consumer. `written_len` keeps its panicking default:
+/// a fifo drains, so it does not track total bytes written.
+impl<B: LinearFifoBuffer<u8>> bun_core::write::Write for LinearFifo<u8, B> {
+    /// Appends the whole buffer, growing if `.Dynamic`.
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), bun_core::Error> {
+        LinearFifo::write(self, buf)?;
         Ok(())
     }
 }
@@ -783,6 +676,29 @@ mod tests {
     use super::*;
 
     type DynFifoU8 = LinearFifo<u8, DynamicBuffer<u8>>;
+
+    // Drives `realign()` down its wrapped-rotation branch (the `else` arm with
+    // the tmp scratch loop). Growing a wrapped Dynamic fifo is the only path
+    // that reaches it: write 8, read 6, write 5 leaves head=6 count=7 in an
+    // 8-slot buffer, then a further write forces a grow → realign.
+    #[test]
+    fn realign_wrapped_rotation_preserves_contents() {
+        let mut fifo = DynFifoU8::init();
+        fifo.write(b"abcdefgh").unwrap();
+        for _ in 0..6 {
+            fifo.read_item().unwrap();
+        }
+        fifo.write(b"ijklm").unwrap();
+        assert_eq!(fifo.buf_len(), 8);
+        assert!(fifo.buf_len() - fifo.head < fifo.count, "must be wrapped");
+
+        fifo.write(b"nop").unwrap();
+
+        assert_eq!(fifo.head, 0);
+        let mut out = [0u8; 16];
+        let n = fifo.read(&mut out);
+        assert_eq!(&out[..n], b"ghijklmnop");
+    }
 
     #[test]
     fn discard_zero_from_empty_buffer_should_not_error_on_overflow() {
@@ -852,45 +768,69 @@ mod tests {
             assert_eq!(b"ab", &result[..n]);
         }
 
-        fifo.shrink(0);
-
-        // TODO(port): writer().print / reader().readUntilDelimiterOrEof tests
-        // depend on the std.Io adapter port.
-
-        // TODO(port): pump test depends on std.io.fixedBufferStream port.
-    }
-
-    // `inline for ([_]type{u1,u8,u16,u64}) |T|` × `inline for (buffer types)`
-    // — expanded for one representative element type; the rest are mechanical.
-    // TODO(port): macro-generate the full T×buffer_type matrix in Phase B.
-    #[test]
-    fn linear_fifo_generic_u8_static() {
-        let mut fifo = LinearFifo::<u8, StaticBuffer<u8, 32>>::init();
-
-        fifo.write(&[0, 1, 1, 0, 1]).unwrap();
-        assert_eq!(5usize, fifo.readable_length());
-
         {
-            assert_eq!(0u8, fifo.read_item().unwrap());
-            assert_eq!(1u8, fifo.read_item().unwrap());
-            assert_eq!(1u8, fifo.read_item().unwrap());
-            assert_eq!(0u8, fifo.read_item().unwrap());
-            assert_eq!(1u8, fifo.read_item().unwrap());
+            use core::fmt::Write as _;
+            write!(fifo, "{}, {}!", "Hello", "World").unwrap();
+            let mut result = [0u8; 30];
+            let n = fifo.read(&mut result);
+            assert_eq!(b"Hello, World!", &result[..n]);
             assert_eq!(0usize, fifo.readable_length());
         }
 
         {
-            fifo.write_item(1).unwrap();
-            fifo.write_item(1).unwrap();
-            fifo.write_item(1).unwrap();
+            std::io::Write::write_all(&mut fifo, b"This is a test").unwrap();
+            let mut drained = Vec::new();
+            std::io::Read::read_to_end(&mut fifo, &mut drained).unwrap();
+            let words: Vec<&[u8]> = drained.split(|&c| c == b' ').collect();
+            assert_eq!(vec![&b"This"[..], b"is", b"a", b"test"], words);
+        }
+    }
+
+    // Shared body for the T×buffer_type matrix below.
+    fn run_generic_fifo_test<T, B>(mut fifo: LinearFifo<T, B>)
+    where
+        T: Copy + PartialEq + core::fmt::Debug + From<u8>,
+        B: LinearFifoBuffer<T>,
+    {
+        let zero = T::from(0u8);
+        let one = T::from(1u8);
+
+        fifo.write(&[zero, one, one, zero, one]).unwrap();
+        assert_eq!(5usize, fifo.readable_length());
+
+        {
+            assert_eq!(zero, fifo.read_item().unwrap());
+            assert_eq!(one, fifo.read_item().unwrap());
+            assert_eq!(one, fifo.read_item().unwrap());
+            assert_eq!(zero, fifo.read_item().unwrap());
+            assert_eq!(one, fifo.read_item().unwrap());
+            assert_eq!(0usize, fifo.readable_length());
+        }
+
+        {
+            fifo.write_item(one).unwrap();
+            fifo.write_item(one).unwrap();
+            fifo.write_item(one).unwrap();
             assert_eq!(3usize, fifo.readable_length());
         }
 
         {
-            let mut read_buf = [0u8; 3];
+            let mut read_buf = [zero; 3];
             let n = fifo.read(&mut read_buf);
             assert_eq!(3usize, n); // NOTE: It should be the number of items.
         }
+    }
+
+    // The element types are crossed with both buffer kinds.
+    #[test]
+    fn linear_fifo_generic_matrix() {
+        macro_rules! per_type {
+            ($($T:ty),* $(,)?) => {$(
+                run_generic_fifo_test(LinearFifo::<$T, StaticBuffer<$T, 32>>::init());
+                run_generic_fifo_test(LinearFifo::<$T, DynamicBuffer<$T>>::init());
+            )*};
+        }
+        per_type!(u8, u16, u64);
     }
 
     // 16-slot static buffer: `POWERS_OF_TWO` is true, matching the in-tree
@@ -1028,5 +968,3 @@ mod tests {
         }
     }
 }
-
-// ported from: src/collections/linear_fifo.zig

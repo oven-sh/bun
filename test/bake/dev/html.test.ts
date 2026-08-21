@@ -279,3 +279,94 @@ devTest("error report endpoint handles stack frames with very long absolute path
     await dev.fetch("/").expect.toInclude("<h1>Error Report</h1>");
   },
 });
+
+devTest("error report endpoint rejects requests whose origin header does not match the dev server", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Origin Check</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    function u32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(n >>> 0, 0);
+      return b;
+    }
+    function str32(s: string) {
+      const bytes = Buffer.from(s, "utf8");
+      return Buffer.concat([u32(bytes.length), bytes]);
+    }
+    const body = Buffer.concat([str32("Error"), str32("origin-check-message"), str32(dev.baseUrl + "/"), u32(0)]);
+
+    const crossOrigin = await dev.fetch("/_bun/report_error", {
+      method: "POST",
+      headers: { Origin: "http://other-page.example" },
+      body,
+    });
+    expect(await crossOrigin.text()).toBe("Blocked: Origin header does not match the dev server");
+    expect(crossOrigin.status).toBe(403);
+
+    const sameOrigin = await dev.fetch("/_bun/report_error", {
+      method: "POST",
+      headers: { Origin: dev.baseUrl },
+      body,
+    });
+    expect(sameOrigin.status).toBe(200);
+
+    await dev.fetch("/").expect.toInclude("<h1>Origin Check</h1>");
+  },
+});
+
+devTest("error report endpoint blanks stray non-text bytes in reported frames", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Frame Bytes</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    function u32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(n >>> 0, 0);
+      return b;
+    }
+    function i32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeInt32LE(n, 0);
+      return b;
+    }
+    function bytes32(bytes: Buffer) {
+      return Buffer.concat([u32(bytes.length), bytes]);
+    }
+    function str32(s: string) {
+      return bytes32(Buffer.from(s, "utf8"));
+    }
+
+    const functionName = Buffer.concat([Buffer.from("fnstart"), Buffer.from([0x9b]), Buffer.from("fnend")]);
+    const body = Buffer.concat([
+      str32("Error"),
+      str32("frame-bytes-message"),
+      str32(dev.baseUrl + "/"),
+      u32(1),
+      i32(1),
+      i32(1),
+      bytes32(functionName),
+      str32("foo.ts"),
+    ]);
+
+    const res = await dev.fetch("/_bun/report_error", { method: "POST", body });
+    const reply = Buffer.from(await res.arrayBuffer());
+    expect(reply.includes(Buffer.from("fnstart fnend", "latin1"))).toBe(true);
+    expect(reply.includes(0x9b)).toBe(false);
+    expect(res.status).toBe(200);
+
+    await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
+  },
+});

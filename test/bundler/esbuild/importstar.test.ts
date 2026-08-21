@@ -358,7 +358,7 @@ describe("bundler", () => {
     },
     dce: true,
     run: {
-      stdout: '{"z":4,"x":1}',
+      stdout: '{"x":1,"z":4}',
     },
   });
   itBundled("importstar/ImportExportStarAmbiguousError", {
@@ -1424,7 +1424,81 @@ describe("bundler", () => {
     },
     run: {
       file: "/test.js",
-      stdout: '{"inner":{"b":456},"a":123}',
+      stdout: '{"a":123,"inner":{"b":456}}',
+    },
+  });
+  itBundled("importstar/NamespaceOwnKeysSorted", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './leaf'
+        console.log(Object.keys(ns).join(','))
+        console.log(Reflect.ownKeys(ns).join(','))
+        import * as chain from './chain'
+        console.log(Object.keys(chain).join(','))
+      `,
+      "/leaf.js": /* js */ `
+        export const zed = 1
+        export const Alpha = 2
+        export const beta = 3
+        export default 4
+        export const _under = 5
+        export const $dollar = 6
+      `,
+      "/chain.js": /* js */ `
+        export * from './leaf'
+        export const mid = 0
+      `,
+    },
+    run: {
+      stdout: [
+        "$dollar,Alpha,_under,beta,default,zed",
+        "$dollar,Alpha,_under,beta,default,zed",
+        "$dollar,Alpha,_under,beta,mid,zed",
+      ].join("\n"),
+    },
+  });
+  itBundled("importstar/ExportStarAsNamespaceSorted", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from './mid'
+        console.log(JSON.stringify(ns))
+      `,
+      "/mid.js": /* js */ `
+        export * as ns from './leaf'
+      `,
+      "/leaf.js": /* js */ `
+        export const b = 2
+        export const a = 1
+        export default "dflt"
+      `,
+    },
+    run: {
+      stdout: '{"a":1,"b":2,"default":"dflt"}',
+    },
+  });
+  itBundled("importstar/CjsEntryPointExportsSorted", {
+    files: {
+      "/entry.js": /* js */ `
+        export const top = 0
+        import * as inner from './leaf'
+        export { inner }
+        export { default as innerDefault } from './leaf'
+      `,
+      "/leaf.js": /* js */ `
+        export const b = 2
+        export const a = 1
+        export default "d"
+      `,
+    },
+    format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        console.log(JSON.stringify(require('./out.js')))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"inner":{"a":1,"b":2,"default":"d"},"innerDefault":"d","top":0}',
     },
   });
 });

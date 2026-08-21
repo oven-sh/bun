@@ -1,28 +1,24 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
-};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
 pub struct Subshell {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Subshell>,
-    pub io: IO,
-    pub state: SubshellState,
-    pub exit_code: ExitCode,
+    pub(crate) io: IO,
+    pub(crate) state: SubshellState,
+    pub(crate) exit_code: ExitCode,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
 pub enum SubshellState {
     #[default]
     Idle,
-    Expanding,
     Exec,
-    WaitWriteErr,
     Done,
 }
 
@@ -38,7 +34,7 @@ impl Subshell {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Subshell(Subshell {
-            base: Base::new(StateKind::Subshell, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             state: SubshellState::Idle,
@@ -46,7 +42,7 @@ impl Subshell {
         }))
     }
 
-    /// Zig `Subshell.initDupeShellState` — dupe the parent env and `init`.
+    /// Dupe the parent env and `init`.
     /// Called by Stmt/Binary via `Interpreter::spawn_expr`. Pipeline does
     /// NOT use this (it dupes per-child itself and calls `init` directly).
     ///
@@ -82,7 +78,7 @@ impl Subshell {
         log!("Subshell {} next state={}", this, state_tag);
         match interp.as_subshell(this).state {
             SubshellState::Idle => {
-                // Spec (Subshell.zig start()): spawn Script directly with
+                // Spawn Script directly with
                 // `this.base.shell`. The env was already duped at construction
                 // (by `init_dupe_shell_state` or by Pipeline) — do NOT dupe
                 // again here.
@@ -92,37 +88,18 @@ impl Subshell {
                 };
                 let script_node: *const ast::Script = &raw const node.get().script;
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
-                // TODO(port): apply `(*node).redirect` / `redirect_flags`
-                // to `io` once IOWriter redirect open is wired.
+                // `node.redirect` is always `None` here: the parser rejects
+                // subshells with redirections ("Subshells with redirections
+                // are currently not supported", shell_parser/parse.rs).
                 let script = Script::init(interp, shell, script_node, this, io);
                 Script::start(interp, script)
             }
-            SubshellState::Expanding | SubshellState::Exec => Yield::suspended(),
-            SubshellState::WaitWriteErr => Yield::suspended(),
+            SubshellState::Exec => Yield::suspended(),
             SubshellState::Done => {
                 let exit = interp.as_subshell(this).exit_code;
                 interp.child_done(parent, this, exit)
             }
         }
-    }
-
-    /// Spec: Subshell.zig `onIOWriterChunk` (lines 163-174).
-    pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
-        this: NodeId,
-        _written: usize,
-        _err: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        debug_assert!(matches!(
-            interp.as_subshell(this).state,
-            SubshellState::WaitWriteErr
-        ));
-        let (parent, exit) = {
-            let me = interp.as_subshell_mut(this);
-            me.state = SubshellState::Done;
-            (me.base.parent, me.exit_code)
-        };
-        interp.child_done(parent, this, exit)
     }
 
     pub(crate) fn child_done(
@@ -154,5 +131,3 @@ impl Subshell {
         me.base.end_scope();
     }
 }
-
-// ported from: src/shell/states/Subshell.zig

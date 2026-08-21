@@ -37,7 +37,7 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) 
     })
 }
 
-pub(crate) fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     match this.metadata {
         Metadata::Build => BuildMessage::create(global_object, this),
         Metadata::Resolve(_) => ResolveMessage::create(global_object, &this, b""),
@@ -89,5 +89,3 @@ pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue>
     let msgs: &[Msg] = this.msgs.as_slice();
     JSValue::create_array_from_iter(global, msgs.iter(), |msg| msg_to_js(msg.clone(), global))
 }
-
-// ported from: src/logger_jsc/logger_jsc.zig

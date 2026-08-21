@@ -6,15 +6,15 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_ast::{Ref, Stmt};
-use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::{FeatureFlags, Output};
-// PORT NOTE: `bun.ast.Index` is mirrored as both `crate::Index`
+// Note: `bun.ast.Index` is mirrored as both `crate::Index`
 // (`bun_ast::Index`) and `bun_ast::Index` via a
 // TYPE_ONLY split. `CssImportOrderKind::SourceIndex` carries the js_parser
 // flavor because its sole producer (`findImportedFilesInCSSOrder`) constructs
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
-use bun_core::{immutable as strings, string_joiner::StringJoiner};
+use bun_core::{string_joiner::StringJoiner, strings};
 use bun_sourcemap as source_map;
 
 use crate::analyze_transpiled_module;
@@ -32,18 +32,21 @@ use crate::{
 use crate::IndexInt;
 
 pub struct ChunkImport {
-    pub chunk_index: u32,
-    pub import_kind: ImportKind,
+    pub(crate) chunk_index: u32,
+    pub(crate) import_kind: ImportKind,
 }
 
-// TODO(port): arena lifetime — string/slice fields below borrow from the bundler arena
-// (no deinit in Zig). Currently uses &'static [u8] / Box<[T]> as placeholders;
-// should thread a `'bump` lifetime or use arena slice newtypes.
+// Lifetime note: string/slice fields below conceptually borrow from the
+// bundler arena. The borrow is erased to
+// `&'static [u8]` (the arena is owned by `BundleV2` and outlives every
+// `Chunk`; see the lifetime-erasure note on `LinkerGraph::bump`) or owns a
+// `Box<[T]>` instead of threading a `'bump` lifetime through the chunk
+// pipeline.
 pub struct Chunk {
     /// This is a random string and is used to represent the output path of this
     /// chunk before the final output path has been computed. See OutputPiece
     /// for more info on this technique.
-    pub unique_key: &'static [u8],
+    pub(crate) unique_key: &'static [u8],
 
     /// Maps source index to bytes contributed to this chunk's output (for metafile).
     /// The value is updated during parallel chunk generation to track bytesInOutput.
@@ -51,47 +54,42 @@ pub struct Chunk {
     /// only `fetch_add` the per-source counters (see
     /// `generate_compile_result_for_{js,css}_chunk`), so the value type is
     /// `AtomicUsize` rather than `usize` to avoid materializing aliased `&mut`.
-    pub files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
+    pub(crate) files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
 
     /// We must not keep pointers to this type until all chunks have been allocated.
-    // TODO(port): was `= undefined` in Zig (set before use)
-    pub entry_bits: AutoBitSet,
+    pub(crate) entry_bits: AutoBitSet,
 
-    /// PORT NOTE: Zig stored this as an arena-owned `[]const u8` (linker arena);
-    /// the Rust `Chunk` owns it as a `Box<[u8]>` so dropping the chunk slice
-    /// frees it (matches `c.arena().dupe(u8, ..)` ownership without leaking).
-    pub final_rel_path: Box<[u8]>,
+    /// Owned as a `Box<[u8]>` so dropping the chunk slice frees it.
+    pub(crate) final_rel_path: Box<[u8]>,
     /// The path template used to generate `final_rel_path`
-    pub template: PathTemplate,
+    pub(crate) template: PathTemplate,
 
     /// For code splitting
-    pub cross_chunk_imports: Vec<ChunkImport>,
+    pub(crate) cross_chunk_imports: Vec<ChunkImport>,
 
     pub content: Content,
 
     pub entry_point: EntryPoint,
 
-    pub output_source_map: source_map::SourceMapPieces,
+    pub(crate) output_source_map: source_map::SourceMapPieces,
 
     pub intermediate_output: IntermediateOutput,
-    pub isolated_hash: u64,
+    pub(crate) isolated_hash: u64,
 
-    // TODO(port): was `= undefined` in Zig (set before use). The Zig field is
-    // the `renamer.Renamer` union; the Rust enum borrows from the symbol table
-    // (`Renamer<'r,'src>`), which can't live in a 'static-ish struct yet.
-    // `ChunkRenamer` is an owned-erased placeholder (see `crate::bun_renamer`).
-    pub renamer: bun_renamer::ChunkRenamer,
+    // Set before use. The borrowed enum (`Renamer<'r,'src>`)
+    // borrows from the symbol table and so can't live in this owning struct.
+    // `ChunkRenamer` is the owning equivalent (see `crate::bun_renamer`).
+    pub(crate) renamer: bun_renamer::ChunkRenamer,
 
     pub compile_results_for_chunk: CompileResultSlots,
 
     /// Pre-built JSON fragment for this chunk's metafile output entry.
     /// Generated during parallel chunk generation, joined at the end.
-    /// PORT NOTE: owned `Box<[u8]>` (was arena-owned `[]const u8` in Zig).
-    pub metafile_chunk_json: Box<[u8]>,
+    pub(crate) metafile_chunk_json: Box<[u8]>,
 
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
-    pub flags: Flags,
+    pub(crate) flags: Flags,
 }
 
 bitflags::bitflags! {
@@ -114,8 +112,8 @@ impl Default for Content {
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
 // fields (`Layers::Borrowed`, `ChunkRenamer` arena)
 // point into bundler-arena storage that outlives the
-// pool join and is only mutated by the owning task. Zig has no Send/Sync
-// distinction; mirror `InputFile`'s blanket impls (bundle_v2.rs).
+// pool join and is only mutated by the owning task; this mirrors
+// `InputFile`'s blanket impls (bundle_v2.rs).
 //
 // CONCURRENCY: during the `generate_compile_result_for_*_chunk` fan-out, many
 // `PendingPartRange` tasks share ONE `*mut Chunk` and each writes a disjoint
@@ -123,10 +121,10 @@ impl Default for Content {
 // (UnsafeCell-per-slot) so the per-task write is routed through interior
 // mutability and never requires an aliased `&mut Chunk` /
 // `&mut [CompileResult]` — see [`Chunk::write_compile_result_slot`].
-// `files_with_parts_in_chunk` values are bumped via atomic RMW (Zig
-// `@atomicRmw`); the renamer is fully populated before fan-out and treated as
+// `files_with_parts_in_chunk` values are bumped via atomic RMW;
+// the renamer is fully populated before fan-out and treated as
 // read-only by the printer.
-// TODO(ub-audit): `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
+// Caveat: `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
 // so the per-chunk renamer is reborrowed mutably from each part-range task;
 // the printer never writes through it, but the borrow should become `&'r`.
 unsafe impl Send for Chunk {}
@@ -135,11 +133,11 @@ unsafe impl Send for Chunk {}
 // `files_with_parts_in_chunk` atomic counters; the remaining fields are
 // frozen before fan-out and read single-threaded after the pool join —
 // **except** `renamer`, which the per-part-range printer reborrows `&mut`
-// from each worker (read-only in practice). See `TODO(ub-audit)` above:
+// from each worker (read-only in practice). See the renamer caveat above:
 // once `Renamer<'r>` borrows `&'r` instead of `&'r mut`, this caveat (and
 // the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
 // away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
-// the Zig single-pointer fan-out it ports.
+// the single-pointer fan-out the workers use.
 unsafe impl Sync for Chunk {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
@@ -147,7 +145,7 @@ unsafe impl Sync for Chunk {}
 /// Allocated single-threaded in `generate_chunks_in_parallel` *before* the
 /// `generate_compile_result_for_*_chunk` fan-out, written concurrently by
 /// worker threads at **disjoint** indices (one slot per `PendingPartRange.i`),
-/// then read single-threaded after `worker_pool.wait_for_all()`. Wrapping each
+/// then read single-threaded after the batch's `group.wait()`. Wrapping each
 /// slot in `UnsafeCell` makes the per-task write sound through a shared view —
 /// worker callbacks never need to materialize an aliased `&mut Chunk` or
 /// `&mut [CompileResult]` to publish their result.
@@ -156,12 +154,12 @@ unsafe impl Sync for Chunk {}
 pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
 
 // SAFETY: writes target disjoint slots (unique `i` per task); reads happen
-// only after the pool join (happens-before via `wait_for_all`).
+// only after the pool join (happens-before via the batch's `group.wait()`).
 // `CompileResult` itself is `Send`.
 unsafe impl Sync for CompileResultSlots {}
 
 impl CompileResultSlots {
-    pub fn new(len: usize) -> Self {
+    pub(crate) fn new(len: usize) -> Self {
         let mut v = Vec::with_capacity(len);
         v.resize_with(len, || UnsafeCell::new(CompileResult::default()));
         Self(v.into_boxed_slice())
@@ -172,16 +170,19 @@ impl CompileResultSlots {
         self.0.len()
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Post-join read view. Single-threaded callers only (after `wait_for_all`).
+    /// Post-join read view. Single-threaded callers only (after the batch's `group.wait()`).
     #[inline]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &CompileResult> + '_ {
         // SAFETY: reads happen only after the pool join; no concurrent writer.
         self.0.iter().map(|c| unsafe { &*c.get() })
+    }
+
+    /// Post-join exclusive access to one slot (e.g. to transfer ownership of
+    /// the result out of the chunk). `&mut self` proves no concurrent writer,
+    /// so `UnsafeCell::get_mut` needs no unsafe here.
+    #[inline]
+    pub fn get_mut(&mut self, i: usize) -> &mut CompileResult {
+        self.0[i].get_mut()
     }
 }
 
@@ -199,7 +200,6 @@ impl Default for Chunk {
         Chunk {
             unique_key: b"",
             files_with_parts_in_chunk: ArrayHashMap::new(),
-            // Zig: `entry_bits: AutoBitSet = undefined` — static-arm zero init.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             final_rel_path: Box::default(),
             template: PathTemplate::default(),
@@ -236,7 +236,11 @@ impl Chunk {
     /// - No two concurrent callers may pass the same `i` for the same `chunk`.
     /// - No reader may observe slot `i` until after the worker-pool join.
     #[inline]
-    pub unsafe fn write_compile_result_slot(chunk: *mut Chunk, i: usize, result: CompileResult) {
+    pub(crate) unsafe fn write_compile_result_slot(
+        chunk: *mut Chunk,
+        i: usize,
+        result: CompileResult,
+    ) {
         // SAFETY: per fn contract — `chunk` is live, `i` in-bounds, slot
         // exclusively owned by this caller.
         unsafe {
@@ -264,13 +268,13 @@ impl Chunk {
     }
 
     #[inline]
-    pub fn is_entry_point(&self) -> bool {
+    pub(crate) fn is_entry_point(&self) -> bool {
         self.entry_point.is_entry_point()
     }
 
     /// Returns the HTML closing tag that must be escaped when this chunk's content
     /// is inlined into a standalone HTML file (e.g. "</script" for JS, "</style" for CSS).
-    pub fn closing_tag_for_content(&self) -> &'static [u8] {
+    pub(crate) fn closing_tag_for_content(&self) -> &'static [u8] {
         match self.content {
             Content::Javascript(_) => b"</script",
             Content::Css(_) => b"</style",
@@ -278,56 +282,53 @@ impl Chunk {
         }
     }
 
-    pub fn get_js_chunk_for_html<'a>(&self, chunks: &'a mut [Chunk]) -> Option<&'a mut Chunk> {
+    pub(crate) fn get_js_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
+        // Non-entry chunks created under code splitting carry a default
+        // entry_point_id of 0, so the id alone is ambiguous; require
+        // is_entry_point to find the actual entry chunk.
         let entry_point_id = self.entry_point.entry_point_id();
-        for other in chunks.iter_mut() {
-            if matches!(other.content, Content::Javascript(_)) {
-                if other.entry_point.entry_point_id() == entry_point_id {
-                    return Some(other);
-                }
+        for other in chunks.iter() {
+            if matches!(other.content, Content::Javascript(_))
+                && other.entry_point.is_entry_point()
+                && other.entry_point.entry_point_id() == entry_point_id
+            {
+                return Some(other);
             }
         }
         None
     }
 
-    pub fn get_css_chunk_for_html<'a>(&self, chunks: &'a mut [Chunk]) -> Option<&'a mut Chunk> {
+    pub(crate) fn get_css_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
-        // PORT NOTE: reshaped for borrowck — Zig calls getJSChunkForHTML(chunks) and then
-        // indexes into the same `chunks`. Here we scan immutably for the JS chunk, copy the
-        // css-chunk index into a local, drop the borrow, then re-borrow mutably.
         let entry_point_id = self.entry_point.entry_point_id();
-        let css_idx: Option<usize> = 'find: {
-            for other in chunks.iter() {
-                if let Content::Javascript(js) = &other.content {
-                    if other.entry_point.entry_point_id() == entry_point_id {
-                        let css_chunk_indices = &js.css_chunks[..];
-                        if !css_chunk_indices.is_empty() {
-                            break 'find Some(css_chunk_indices[0] as usize);
-                        }
-                        break 'find None;
+        for other in chunks.iter() {
+            if let Content::Javascript(js) = &other.content {
+                if other.entry_point.is_entry_point()
+                    && other.entry_point.entry_point_id() == entry_point_id
+                {
+                    if let Some(&css_idx) = js.css_chunks.first() {
+                        return Some(&chunks[css_idx as usize]);
                     }
+                    break;
                 }
             }
-            None
-        };
-        if let Some(idx) = css_idx {
-            return Some(&mut chunks[idx]);
         }
         // Fallback: match by entry_point_id for cases without a JS chunk.
-        for other in chunks.iter_mut() {
-            if matches!(other.content, Content::Css(_)) {
-                if other.entry_point.entry_point_id() == entry_point_id {
-                    return Some(other);
-                }
+        for other in chunks.iter() {
+            if matches!(other.content, Content::Css(_))
+                && other.entry_point.is_entry_point()
+                && other.entry_point.entry_point_id() == entry_point_id
+            {
+                return Some(other);
             }
         }
         None
     }
 
     #[inline]
-    pub fn entry_bits(&self) -> &AutoBitSet {
+    pub(crate) fn entry_bits(&self) -> &AutoBitSet {
         &self.entry_bits
     }
 }
@@ -340,7 +341,7 @@ pub(crate) struct Order {
 }
 
 impl Order {
-    pub(crate) fn less_than(_ctx: Order, a: Order, b: Order) -> bool {
+    fn less_than(_ctx: Order, a: Order, b: Order) -> bool {
         (a.distance < b.distance) || (a.distance == b.distance && a.tie_breaker < b.tie_breaker)
     }
 
@@ -348,8 +349,7 @@ impl Order {
     /// equidistant to an entry point, then break the tie by sorting on the
     /// stable source index derived from the DFS over all entry points.
     pub(crate) fn sort(a: &mut [Order]) {
-        // std.sort.pdq → unstable sort
-        a.sort_unstable_by(|a, b| {
+        index_sort::sort_slice_unstable_by(a, |a, b| {
             if Order::less_than(Order::default(), *a, *b) {
                 core::cmp::Ordering::Less
             } else if Order::less_than(Order::default(), *b, *a) {
@@ -386,9 +386,7 @@ pub enum IntermediateOutput {
 /// Owns the joined output buffer alongside the `OutputPiece` slices that
 /// point into it.
 ///
-/// PORT NOTE: In Zig, `breakOutputIntoPieces` calls `j.done(alloc)` with the
-/// per-worker arena, so the joined buffer outlives the chunk by construction
-/// and `OutputPiece.data` stays valid. The Rust `StringJoiner::done()`
+/// Note: `StringJoiner::done()`
 /// returns a `Box<[u8]>`; if that box is dropped at the end of
 /// `break_output_into_pieces`, every piece's `data` slice dangles (ASAN
 /// use-after-poison in `generate_isolated_hash`). Keep the box alive next to
@@ -416,43 +414,82 @@ impl OutputPieces {
     }
 
     #[inline]
-    pub(crate) fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.pieces.len()
     }
 }
 
 pub struct CodeResult {
     pub buffer: Box<[u8]>,
-    pub shifts: Vec<source_map::SourceMapShifts>,
+    pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
-// PORT NOTE: Zig used `std.mem.Allocator`; the Rust crate exposes a global
-// mimalloc — we don't need a vtable here yet. `()` is kept as a token so the
-// caller's `Option<&DynAlloc>` plumbing matches the Zig signature; the actual
+/// What the paths `code()` writes over a chunk's references to other outputs
+/// are relative to. A public path makes them outdir-relative either way.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ReferencePathStyle {
+    /// The directory of the chunk being emitted, as in esbuild.
+    ImporterRelative,
+    /// The outdir, wherever the emitting chunk lands (`bun build --compile`).
+    OutdirRelative,
+}
+
+impl ReferencePathStyle {
+    /// An executable loads every chunk from one virtual root, except for the
+    /// browser chunks a server build emits for its HTML imports: those are
+    /// served over HTTP.
+    pub(crate) fn for_chunk(chunk: &Chunk, compile: bool) -> ReferencePathStyle {
+        if compile
+            && !chunk
+                .flags
+                .contains(Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            ReferencePathStyle::OutdirRelative
+        } else {
+            ReferencePathStyle::ImporterRelative
+        }
+    }
+}
+
+/// Whether `code()` records how far each path it writes moves the text after it
+/// (`CodeResult::shifts`, which the chunk's source map is corrected with) and
+/// appends the `//# debugId` comment. Only wanted for a chunk that gets a map.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SourceMapShiftTracking {
+    Disabled,
+    Enabled,
+}
+
+impl SourceMapShiftTracking {
+    pub(crate) fn for_source_map(source_map: options::SourceMapOption) -> SourceMapShiftTracking {
+        if source_map == options::SourceMapOption::None {
+            SourceMapShiftTracking::Disabled
+        } else {
+            SourceMapShiftTracking::Enabled
+        }
+    }
+}
+
+// We don't need an allocator vtable here yet. `()` is kept as a token for the
+// caller's `Option<&DynAlloc>` plumbing; the actual
 // allocation goes through `alloc_buf` (global mimalloc) regardless. Real
 // arena threading (page_allocator vs default_allocator) lands when
 // `bun_alloc::Allocator` is a stable trait object.
 type DynAlloc = ();
 
-/// `arena.alloc(u8, n)` — until `DynAlloc` is a real trait object, route
-/// through the global arena. PERF(port): Zig picked page_allocator for
-/// `n >= 512KiB`; mimalloc handles large allocations via mmap already so this
-/// is a behavior match in practice.
+/// Until `DynAlloc` is a real trait object, route
+/// through the global arena; mimalloc handles large allocations via mmap
+/// already. Returns an empty `Vec` with `n` bytes of capacity for the caller to fill and commit.
 #[inline]
-fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
-    // Zero-fill is required for soundness: `set_len` over uninit bytes violates
-    // `Vec`'s safety contract, and `into_boxed_slice` may shrink-realloc (memcpy
-    // of uninit). The memset cost is negligible next to the subsequent memcpy
-    // that fully overwrites the buffer.
+fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Vec<u8>, AllocError> {
     let mut v: Vec<u8> = Vec::new();
     v.try_reserve_exact(n).map_err(|_| AllocError)?;
-    v.resize(n, 0);
-    Ok(v.into_boxed_slice())
+    Ok(v)
 }
 
-/// Extract the `OutputFile` index from a trailing `AdditionalFile` entry.
-/// Zig: `files.last().output_file` (untagged-union field read; bundler always
-/// pushes `.output_file = …` for asset additional-files, see bundle_v2.zig).
+/// Extract the `OutputFile` index from a trailing `AdditionalFile` entry
+/// (the bundler always pushes `.output_file = …` for asset additional-files,
+/// see bundle_v2.rs).
 #[inline]
 fn additional_output_file_index(f: &AdditionalFile) -> usize {
     match *f {
@@ -464,9 +501,9 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
 }
 
 impl IntermediateOutput {
-    pub fn allocator_for_size(_size: usize) -> &'static DynAlloc {
-        // PERF(port): Zig picks page_allocator for large buffers vs mimalloc default.
-        // TODO(port): expose page_allocator / default_allocator as &'static dyn Allocator
+    pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
+        // mimalloc serves large allocations via mmap already, so the global
+        // allocator suffices (see `alloc_buf`).
         &()
     }
 
@@ -524,7 +561,7 @@ impl IntermediateOutput {
         dst
     }
 
-    pub fn get_size(&self) -> usize {
+    pub(crate) fn get_size(&self) -> usize {
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let mut total: usize = 0;
@@ -545,21 +582,20 @@ impl IntermediateOutput {
         parse_graph: &Graph,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
-        // PORT NOTE: Zig passed `*Chunk` / `[]Chunk` (freely aliased — `chunk`
-        // is `&chunks[i]`). The body only reads both, so take `&` to avoid
+        // Note: `chunk` aliases `&chunks[i]`. The body only reads both, so
+        // take `&` to avoid
         // overlapping `&mut Chunk` + `&mut [Chunk]` UB at every call site.
         chunk: &Chunk,
         chunks: &[Chunk],
-        // PORT NOTE: `?*usize` in Zig — accept both `&mut usize` and
-        // `Option<&mut usize>` so call sites that ported either way compile.
+        // Accept both `&mut usize` and
+        // `Option<&mut usize>` so call sites spelled either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
-        force_absolute_path: bool,
-        enable_source_map_shifts: bool,
+        reference_path_style: ReferencePathStyle,
+        shift_tracking: SourceMapShiftTracking,
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
-        // switch (enable_source_map_shifts) { inline else => |b| ... }
-        if enable_source_map_shifts {
-            self.code_with_source_map_shifts::<true>(
+        match shift_tracking {
+            SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -567,11 +603,10 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 None,
-            )
-        } else {
-            self.code_with_source_map_shifts::<false>(
+            ),
+            SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -579,9 +614,9 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 None,
-            )
+            ),
         }
     }
 
@@ -590,25 +625,25 @@ impl IntermediateOutput {
     /// resolved to inline code content instead of file paths. Asset references
     /// are resolved to data: URIs from url_for_css.
     #[allow(clippy::too_many_arguments)]
-    pub fn code_standalone<'d>(
+    pub(crate) fn code_standalone<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         parse_graph: &Graph,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
-        // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.
+        // See `code()` note — `chunk` aliases `chunks[i]`; body is read-only.
         chunk: &Chunk,
         chunks: &[Chunk],
-        // PORT NOTE: `?*usize` in Zig — accept both `&mut usize` and
-        // `Option<&mut usize>` so call sites that ported either way compile.
+        // Accept both `&mut usize` and
+        // `Option<&mut usize>` so call sites spelled either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
-        force_absolute_path: bool,
-        enable_source_map_shifts: bool,
+        reference_path_style: ReferencePathStyle,
+        shift_tracking: SourceMapShiftTracking,
         standalone_chunk_contents: &[Option<Box<[u8]>>],
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
-        if enable_source_map_shifts {
-            self.code_with_source_map_shifts::<true>(
+        match shift_tracking {
+            SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -616,11 +651,10 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 Some(standalone_chunk_contents),
-            )
-        } else {
-            self.code_with_source_map_shifts::<false>(
+            ),
+            SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -628,31 +662,30 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 Some(standalone_chunk_contents),
-            )
+            ),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
+    pub(crate) fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         graph: &Graph,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
-        // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.
+        // See `code()` note — `chunk` aliases `chunks[i]`; body is read-only.
         chunk: &Chunk,
         chunks: &[Chunk],
         display_size: Option<&mut usize>,
-        force_absolute_path: bool,
+        reference_path_style: ReferencePathStyle,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     ) -> Result<CodeResult, AllocError> {
         // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
         // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
         // `bun_alloc::alloc_slice` surfaces are tracked upstream.
-        // TODO(port): MultiArrayList SoA accessors — assuming `.items(.field)` → method returning slice
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
@@ -673,7 +706,6 @@ impl IntermediateOutput {
                 };
 
                 if ENABLE_SOURCE_MAP_SHIFTS {
-                    // PERF(port): was assume_capacity
                     shifts.push(shift);
                 }
 
@@ -684,6 +716,13 @@ impl IntermediateOutput {
                 if from_chunk_dir == b"." {
                     from_chunk_dir = b"";
                 }
+
+                // esbuild's `pathBetweenChunks`: with a public path configured, every
+                // reference is `publicPath + outdir-relative path`. Importer-relative
+                // paths would escape the prefix from chunks in subdirectories.
+                let use_outdir_relative_path = from_chunk_dir.is_empty()
+                    || reference_path_style == ReferencePathStyle::OutdirRelative
+                    || !import_prefix.is_empty();
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
@@ -750,7 +789,6 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    // TODO(port): std.fmt.count → counting writer; assuming bun_core::fmt::count
                                     count += bun_core::fmt::count(format_args!(
                                         "{}",
                                         HTMLImportManifest::format_escaped_json(
@@ -767,7 +805,7 @@ impl IntermediateOutput {
 
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
-                                if from_chunk_dir.is_empty() || force_absolute_path {
+                                if use_outdir_relative_path {
                                     file_path
                                 } else {
                                     bun_paths::resolve_path::relative_platform_buf::<
@@ -790,7 +828,6 @@ impl IntermediateOutput {
 
                 let debug_id_len = if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID
                 {
-                    // TODO(port): std.fmt.count → counting writer
                     bun_core::fmt::count(format_args!(
                         "\n//# debugId={}\n",
                         source_map::DebugIDFormatter {
@@ -802,8 +839,11 @@ impl IntermediateOutput {
                 };
 
                 let arena = allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
-                let mut total_buf = alloc_buf(*arena, count + debug_id_len)?;
-                let mut remain: &mut [u8] = &mut total_buf;
+                let total_len = count + debug_id_len;
+                let mut total_buf = alloc_buf(*arena, total_len)?;
+                // SAFETY: the loop below only copies bytes into `remain`; only the prefix it wrote is committed.
+                let mut remain: &mut [u8] =
+                    unsafe { &mut bun_core::vec::spare_bytes_mut(&mut total_buf)[..total_len] };
 
                 for piece in pieces.slice() {
                     let data = piece.data();
@@ -855,7 +895,6 @@ impl IntermediateOutput {
                                             _ => {}
                                         }
                                         shift.after.advance(content);
-                                        // PERF(port): was assume_capacity
                                         shifts.push(shift);
                                     }
                                     // For chunk content, escape closing tags (</script, </style)
@@ -914,7 +953,6 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    // TODO(port): std.io.fixedBufferStream → write into &mut [u8]
                                     let mut cursor: &mut [u8] = remain;
                                     let before_len = cursor.len();
                                     HTMLImportManifest::write_escaped_json(
@@ -925,22 +963,23 @@ impl IntermediateOutput {
                                         &mut cursor,
                                     )
                                     .expect("unreachable");
-                                    let pos = before_len - cursor.len();
-                                    remain = &mut remain[pos..];
+                                    let written = before_len - cursor.len();
 
                                     if ENABLE_SOURCE_MAP_SHIFTS {
+                                        // The placeholder was an HtmlImport unique key, which has
+                                        // the same UNIQUE_KEY_LEN as this chunk's own key.
                                         shift.before.advance(chunk.unique_key);
-                                        // PERF(port): was assume_capacity
+                                        shift.after.advance(&remain[..written]);
                                         shifts.push(shift);
                                     }
+                                    remain = &mut remain[written..];
                                     continue;
                                 }
                                 _ => unreachable!(),
                             };
 
                             // normalize windows paths to '/'
-                            // Zig does `@constCast(file_path)` and mutates the bundler-owned
-                            // storage in place. In Rust the source slices are reachable only
+                            // The source slices are reachable only
                             // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
                             // shared-provenance pointer is UB regardless of whether the write
                             // happens. Copy into a pooled scratch buffer and normalise that.
@@ -953,7 +992,7 @@ impl IntermediateOutput {
                             };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
-                                if from_chunk_dir.is_empty() || force_absolute_path {
+                                if use_outdir_relative_path {
                                     file_path
                                 } else {
                                     bun_paths::resolve_path::relative_platform_buf::<
@@ -984,7 +1023,6 @@ impl IntermediateOutput {
                             }
 
                             if ENABLE_SOURCE_MAP_SHIFTS {
-                                // PERF(port): was assume_capacity
                                 shifts.push(shift);
                             }
                         }
@@ -1009,10 +1047,13 @@ impl IntermediateOutput {
                 }
 
                 debug_assert!(remain.is_empty());
-                debug_assert!(total_buf.len() == count + debug_id_len);
+                let written = total_len - remain.len();
+                // SAFETY: `remain` advanced past exactly the `written` bytes the loop initialized.
+                unsafe { bun_core::vec::commit_spare(&mut total_buf, written) };
+                debug_assert!(total_buf.len() == total_len);
 
                 Ok(CodeResult {
-                    buffer: total_buf,
+                    buffer: total_buf.into_boxed_slice(),
                     shifts: if ENABLE_SOURCE_MAP_SHIFTS {
                         shifts
                     } else {
@@ -1031,18 +1072,16 @@ impl IntermediateOutput {
                 let buffer = 'brk: {
                     if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID {
                         // This comment must go before the //# sourceMappingURL comment
-                        // TODO(port): graph.heap.arena() — arena arena from Graph
                         let mut debug_id_fmt = Vec::new();
-                        write!(
+                        let _ = write!(
                             &mut debug_id_fmt,
                             "\n//# debugId={}\n",
                             source_map::DebugIDFormatter {
                                 id: chunk.isolated_hash
                             }
-                        )
-                        .ok();
+                        );
 
-                        let _ = arena; // PORT NOTE: StringJoiner::done* allocates from global mimalloc; arena token is plumbing-only.
+                        let _ = arena; // Note: StringJoiner::done* allocates from global mimalloc; arena token is plumbing-only.
                         break 'brk joiner.done_with_end(&debug_id_fmt)?;
                     }
 
@@ -1070,14 +1109,16 @@ impl IntermediateOutput {
 /// When a file wants a path to an emitted chunk, it emits the unique key
 /// in hex followed by the kind of path it wants:
 ///
-///     `74f92237f4a85a6aA00000009` --> `./some-asset.png`
-///      ^--------------^|^------- .query.index
-///      unique_key      .query.kind
+/// ```text
+/// `74f92237f4a85a6aA00000009` --> `./some-asset.png`
+///  ^--------------^|^------- .query.index
+///  unique_key      .query.kind
+/// ```
 ///
 /// An output piece is the concatenation of source code text and an output
 /// path, in that order. An array of pieces makes up an entire file.
 ///
-/// PORT NOTE: Zig split ptr+u32 len to shave 8 bytes. The Rust port stores a
+/// Note: stores a
 /// `RawSlice` (encapsulates the unsafe re-borrow) — the per-chunk piece count
 /// is bounded by the number of unique-key boundaries, so the extra word per
 /// piece is negligible against the safety win.
@@ -1109,22 +1150,22 @@ pub struct Query(u32);
 impl Query {
     const INDEX_MASK: u32 = (1 << 29) - 1;
 
-    pub const NONE: Query = Query(0);
+    pub(crate) const NONE: Query = Query(0);
 
-    pub fn new(index: u32, kind: QueryKind) -> Query {
+    pub(crate) fn new(index: u32, kind: QueryKind) -> Query {
         debug_assert!(index <= Self::INDEX_MASK);
         Query((index & Self::INDEX_MASK) | ((kind as u32) << 29))
     }
 
     #[inline]
-    pub fn index(self) -> u32 {
+    pub(crate) fn index(self) -> u32 {
         self.0 & Self::INDEX_MASK
     }
 
     #[inline]
-    pub fn kind(self) -> QueryKind {
-        // Zig `enum(u3)` type-checks the field on assignment so 5..=7 are
-        // unrepresentable; match exhaustively (out-of-range tag would be UB).
+    pub(crate) fn kind(self) -> QueryKind {
+        // Tags 5..=7 are never assigned; match exhaustively
+        // (an out-of-range tag would be a bug, not UB).
         match (self.0 >> 29) as u8 {
             0 => QueryKind::None,
             1 => QueryKind::Asset,
@@ -1155,7 +1196,7 @@ impl QueryKind {
     /// Single-ASCII-letter tag used in the [`UniqueKey`] wire format.
     /// `None` has no on-the-wire encoding.
     #[inline]
-    pub(crate) const fn letter(self) -> u8 {
+    const fn letter(self) -> u8 {
         match self {
             QueryKind::Asset => b'A',
             QueryKind::Chunk => b'C',
@@ -1186,8 +1227,7 @@ pub(crate) const UNIQUE_KEY_LEN: usize = UNIQUE_KEY_PREFIX_LEN + 1 + 8;
 /// 25-byte unique-key wire format `{hex16(prefix)}{KIND}{index:08}` shared by
 /// every emitter (ParseTask file/napi/sqlite loaders, server-component
 /// boundaries, HTML-import manifest, chunk IDs) and consumed by exactly one
-/// scanner (`LinkerContext::break_output_into_pieces`). Mirrors Zig
-/// `"{f}{LETTER}{d:0>8}"` with `bun.fmt.hexIntLower` byte-for-byte.
+/// scanner (`LinkerContext::break_output_into_pieces`).
 #[derive(Clone, Copy)]
 pub(crate) struct UniqueKey {
     pub prefix: u64,
@@ -1208,30 +1248,29 @@ impl fmt::Display for UniqueKey {
     }
 }
 
-/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, is_html: bool }
+/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, _: u1 }
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct EntryPoint(u64);
 
 /// so `EntryPoint` can be a u64
-// TODO(port): Rust has no native u30 — using u32 with mask. Zig: `pub const ID = u30;`
 pub(crate) type EntryPointId = u32;
 
 impl EntryPoint {
     const ENTRY_POINT_ID_MASK: u64 = (1 << 30) - 1;
+    const IS_ENTRY_POINT_BIT: u64 = 1 << 62;
 
-    pub fn new(
-        source_index: u32,
-        entry_point_id: u32,
-        is_entry_point: bool,
-        is_html: bool,
-    ) -> Self {
+    /// The chunk that entry point `entry_point_id` itself produces.
+    pub(crate) fn entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
+        EntryPoint(Self::non_entry_point(source_index, entry_point_id).0 | Self::IS_ENTRY_POINT_BIT)
+    }
+
+    /// A chunk generated on behalf of `entry_point_id` (code-split, dev-server
+    /// CSS/HTML) that is not itself an entry point.
+    pub(crate) fn non_entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
         debug_assert!((entry_point_id as u64) <= Self::ENTRY_POINT_ID_MASK);
         EntryPoint(
-            (source_index as u64)
-                | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32)
-                | ((is_entry_point as u64) << 62)
-                | ((is_html as u64) << 63),
+            (source_index as u64) | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32),
         )
     }
 
@@ -1246,19 +1285,8 @@ impl EntryPoint {
     }
 
     #[inline]
-    pub fn is_entry_point(self) -> bool {
-        (self.0 >> 62) & 1 != 0
-    }
-
-    #[inline]
-    pub fn is_html(self) -> bool {
-        (self.0 >> 63) & 1 != 0
-    }
-
-    // Zig callers mutate packed fields directly (e.g. `chunk.entry_point.is_entry_point = true`).
-    #[inline]
-    pub fn set_source_index(&mut self, v: u32) {
-        self.0 = (self.0 & !0xFFFF_FFFF) | (v as u64);
+    pub(crate) fn is_entry_point(self) -> bool {
+        self.0 & Self::IS_ENTRY_POINT_BIT != 0
     }
 
     #[inline]
@@ -1267,45 +1295,37 @@ impl EntryPoint {
         self.0 = (self.0 & !(Self::ENTRY_POINT_ID_MASK << 32))
             | (((v as u64) & Self::ENTRY_POINT_ID_MASK) << 32);
     }
-
-    #[inline]
-    pub fn set_is_entry_point(&mut self, v: bool) {
-        self.0 = (self.0 & !(1 << 62)) | ((v as u64) << 62);
-    }
-
-    #[inline]
-    pub fn set_is_html(&mut self, v: bool) {
-        self.0 = (self.0 & !(1 << 63)) | ((v as u64) << 63);
-    }
 }
 
 #[derive(Default)]
 pub struct JavaScriptChunk {
-    pub files_in_chunk_order: Box<[IndexInt]>,
+    pub(crate) files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
-    // TODO(port): Zig uses ArrayHashMapUnmanaged(Ref, string, Ref.ArrayHashCtx, false) — custom hash ctx
-    pub exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
-    pub imports_from_other_chunks: ImportsFromOtherChunks,
-    pub cross_chunk_prefix_stmts: Vec<Stmt>,
-    pub cross_chunk_suffix_stmts: Vec<Stmt>,
+    // The map hashes via `Ref`'s `Hash` impl. Values
+    // are `&'static`-erased slices into bundler-owned storage (see the
+    // lifetime note on `Chunk`).
+    pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
+    pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
+    pub(crate) cross_chunk_prefix_stmts: Vec<Stmt>,
+    pub(crate) cross_chunk_suffix_stmts: Vec<Stmt>,
 
     /// Indexes to CSS chunks. Currently this will only ever be zero or one
     /// items long, but smarter css chunking will allow multiple js entry points
     /// share a css file, or have an entry point contain multiple css files.
     ///
     /// Mutated while sorting chunks in `computeChunks`
-    pub css_chunks: Box<[u32]>,
+    pub(crate) css_chunks: Box<[u32]>,
 
     /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
-    pub module_info_bytes: Option<Box<[u8]>>,
+    pub(crate) module_info_bytes: Option<Box<[u8]>>,
     /// Unserialized ModuleInfo for deferred serialization (after chunk paths are resolved)
-    pub module_info: Option<Box<analyze_transpiled_module::ModuleInfo>>,
+    pub(crate) module_info: Option<Box<analyze_transpiled_module::ModuleInfo>>,
 }
 
 pub struct CssChunk {
-    pub imports_in_chunk_in_order: Vec<CssImportOrder>,
+    pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder>,
     /// When creating a chunk, this is to be an uninitialized slice with
     /// length of `imports_in_chunk_in_order`
     ///
@@ -1314,12 +1334,12 @@ pub struct CssChunk {
     ///
     /// When we go through the `prepareCssAstsForChunk()` step, each import will
     /// create a shallow copy of the file's AST (just dereferencing the pointer).
-    pub asts: Box<[bun_css::BundlerStyleSheet]>,
+    pub(crate) asts: Box<[bun_css::BundlerStyleSheet]>,
 }
 
 impl Drop for CssChunk {
     fn drop(&mut self) {
-        // Zig `asts: []BundlerStyleSheet` is an arena slice of bitwise shallow
+        // `asts` is a slice of bitwise shallow
         // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
         // alias the same source AST's heap buffers when a file is imported more
         // than once, so element-wise drop would double-free.
@@ -1329,17 +1349,11 @@ impl Drop for CssChunk {
     }
 }
 
-/// Zig: `const CssImportKind = enum { source_index, external_path, import_layers }` is the
-/// (private) tag enum for `CssImportOrder.kind: union(enum) { ... }`. In Rust the tagged
-/// union is `CssImportOrderKind`; callers that switch on `css_import.kind` reference it via
-/// the Zig-spelled name, so re-export it here.
-pub type CssImportKind = CssImportOrderKind;
-
 pub struct CssImportOrder {
-    pub conditions: Vec<bun_css::ImportConditions>,
-    pub condition_import_records: Vec<ImportRecord>,
+    pub(crate) conditions: Vec<bun_css::ImportConditions>,
+    pub(crate) condition_import_records: Vec<ImportRecord>,
 
-    pub kind: CssImportOrderKind,
+    pub(crate) kind: CssImportOrderKind,
 }
 
 impl Drop for CssImportOrder {
@@ -1370,11 +1384,11 @@ pub enum CssImportOrderKind {
     SourceIndex(Index),
 }
 
-// TODO(port): bun.ptr.Cow(Vec<LayerName>, { copy = deepCloneInfallible, deinit = clearAndFree })
-// LayerName payload allocations live in the arena, so the Zig deinit is a shallow clearAndFree.
-// `std::borrow::Cow<'_, Vec<_>>` requires `Vec: Clone` (not implemented). Port the
-// Zig `bun.ptr.Cow` shape directly: a tag + raw pointer for the borrowed arm. Should
-// thread `'bump` (arena-borrowed) and confirm Clone semantics match deepCloneInfallible.
+// Copy-on-write list of layer names.
+// `std::borrow::Cow<'_, Vec<_>>` requires `Vec: Clone` (not implemented), so this
+// is a hand-rolled Cow: a tag + raw pointer for the borrowed
+// arm. LayerName payload allocations live in the arena, so dropping the owned
+// arm is a shallow free and `to_owned` deep-clones element-wise.
 pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
     Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
@@ -1390,28 +1404,28 @@ impl Layers {
         }
     }
 
-    /// Zig: `Chunk.CssImportOrder.Layers.borrow(ptr)` — Cow::Borrowed.
+    /// Cow::Borrowed constructor.
     ///
     /// Takes `NonNull` (not `&Vec`) because the sole caller in
     /// `findImportedFilesInCSSOrder.rs` type-puns the lifetime-erased shadow
     /// `crate::bun_css::LayerName` to the real `::bun_css::LayerName` via a
     /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
     /// The pointee is arena-owned storage that outlives the chunk pipeline
-    /// (see TODO(port) above re: `'bump`); `BackRef` encapsulates that
+    /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
     /// invariant so `inner()`/`to_owned()` deref sites are safe.
     #[inline]
     pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
         Layers::Borrowed(bun_ptr::BackRef::from(p))
     }
 
-    /// Zig: `bun.ptr.Cow.replace` — drop owned (arena-backed, so no-op) and
+    /// Drop owned (arena-backed, so no-op) and
     /// install a fresh owned value.
     #[inline]
     pub(crate) fn replace(&mut self, new: Vec<bun_css::LayerName>) {
         *self = Layers::Owned(new);
     }
 
-    /// Zig: `bun.ptr.Cow.toOwned` — if borrowed, deep-clone into an owned
+    /// If borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
     pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
         if let Layers::Borrowed(p) = *self {
@@ -1425,13 +1439,10 @@ impl Layers {
 }
 
 impl CssImportOrder {
-    // TODO(port): hasher: anytype — Zig hasher protocol has .update([]const u8)
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // TODO: conditions, condition_import_records
 
-        // Zig: bun.writeAnyToHasher(hasher, std.meta.activeTag(this.kind)) — feeds the small-int
-        // tag bytes. core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 instead.
-        // TODO(port): activeTag byte width — Zig's Tag(union) here is u2; u8 keeps hash stable.
+        // core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 tag instead.
         let tag: u8 = match &self.kind {
             CssImportOrderKind::Layers(_) => 0,
             CssImportOrderKind::ExternalPath(_) => 1,
@@ -1454,9 +1465,8 @@ impl CssImportOrder {
                 hasher.update(b"\x00");
             }
             CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
-            // PORT NOTE: `Index` is a `#[repr(transparent)]` u32 newtype but
-            // doesn't impl `AsBytes`; hash the inner u32 (Zig hashed the
-            // `Index.Int` bytes directly).
+            // Note: `Index` is a `#[repr(transparent)]` u32 newtype but
+            // doesn't impl `AsBytes`; hash the inner u32.
             CssImportOrderKind::SourceIndex(idx) => {
                 bun_core::write_any_to_hasher(hasher, idx.get())
             }
@@ -1475,7 +1485,7 @@ impl CssImportOrder {
 #[allow(dead_code)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
-    // PORT NOTE: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
+    // Note: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
     // so coupling the borrow lifetime to the struct param (`&'a LinkerContext<'a>`)
     // forces every caller's `&CssImportOrder` and `&LinkerContext` to share one
     // region. The Display impl only reads `ctx.parse_graph` (a raw `*mut Graph`),
@@ -1523,36 +1533,26 @@ pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_impo
 
 #[derive(Default, Clone)]
 pub struct CrossChunkImportItem {
-    pub export_alias: Box<[u8]>,
-    pub r#ref: Ref,
+    pub(crate) export_alias: Box<[u8]>,
+    pub(crate) r#ref: Ref,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
 #[derive(Default)]
 pub struct CrossChunkImport {
-    pub chunk_index: IndexInt,
-    pub sorted_import_items: core::mem::ManuallyDrop<CrossChunkImportItemList>,
+    pub(crate) chunk_index: IndexInt,
+    pub(crate) sorted_import_items: core::mem::ManuallyDrop<CrossChunkImportItemList>,
 }
 
 pub mod cross_chunk_import {
     pub(crate) type ItemList = super::CrossChunkImportItemList;
 }
 
-impl CrossChunkImportItem {
-    pub fn less_than(_: (), a: &CrossChunkImportItem, b: &CrossChunkImportItem) -> bool {
-        strings::order(&a.export_alias, &b.export_alias) == core::cmp::Ordering::Less
-    }
-}
-
 impl CrossChunkImport {
-    pub fn less_than(_: (), a: &CrossChunkImport, b: &CrossChunkImport) -> bool {
-        a.chunk_index < b.chunk_index
-    }
-
-    pub fn sorted_cross_chunk_imports(
+    pub(crate) fn sorted_cross_chunk_imports(
         list: &mut Vec<CrossChunkImport>,
         chunks: &mut [Chunk],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
 
@@ -1566,9 +1566,9 @@ impl CrossChunkImport {
                 item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
                 debug_assert!(!item.export_alias.is_empty());
             }
-            import_items
-                .slice_mut()
-                .sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
+            index_sort::sort_slice_by(import_items.slice_mut(), |a, b| {
+                strings::order(&a.export_alias, &b.export_alias)
+            });
 
             list.push(CrossChunkImport {
                 chunk_index,
@@ -1576,7 +1576,7 @@ impl CrossChunkImport {
             });
         }
 
-        list.sort_by_key(|a| a.chunk_index);
+        index_sort::sort_slice_by(list, |a, b| a.chunk_index.cmp(&b.chunk_index));
         Ok(())
     }
 }
@@ -1592,21 +1592,17 @@ pub enum Content {
 
 impl Content {
     #[inline]
-    pub fn is_javascript(&self) -> bool {
+    pub(crate) fn is_javascript(&self) -> bool {
         matches!(self, Content::Javascript(_))
     }
     #[inline]
-    pub fn is_css(&self) -> bool {
+    pub(crate) fn is_css(&self) -> bool {
         matches!(self, Content::Css(_))
-    }
-    #[inline]
-    pub fn is_html(&self) -> bool {
-        matches!(self, Content::Html)
     }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
     bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk);
 
-    pub fn sourcemap(&self, default: options::SourceMapOption) -> options::SourceMapOption {
+    pub(crate) fn sourcemap(&self, default: options::SourceMapOption) -> options::SourceMapOption {
         match self {
             Content::Javascript(_) => default,
             Content::Css(_) => options::SourceMapOption::None, // TODO: css source maps
@@ -1614,7 +1610,7 @@ impl Content {
         }
     }
 
-    pub fn loader(&self) -> Loader {
+    pub(crate) fn loader(&self) -> Loader {
         match self {
             Content::Javascript(_) => Loader::Js,
             Content::Css(_) => Loader::Css,
@@ -1622,7 +1618,7 @@ impl Content {
         }
     }
 
-    pub fn ext(&self) -> &'static [u8] {
+    pub(crate) fn ext(&self) -> &'static [u8] {
         match self {
             Content::Javascript(_) => b"js",
             Content::Css(_) => b"css",
@@ -1630,11 +1626,6 @@ impl Content {
         }
     }
 }
-
-// Re-exports (Zig: pub const X = ...)
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;
 
 pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;
@@ -1648,13 +1639,6 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub(crate) fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
-            match self {
-                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-                ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
-                ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
-            }
-        }
         pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
@@ -1664,5 +1648,3 @@ pub mod bun_renamer {
         }
     }
 }
-
-// ported from: src/bundler/Chunk.zig

@@ -55,14 +55,18 @@ function notImplemented() {
  * @typedef {import('events').EventEmitter} EventEmitter
  */
 
+function closeEmptyBody(controller) {
+  controller.close();
+}
+
 class BodyReadable extends ReadableFromWeb {
   #response;
   #bodyUsed;
 
   constructor(response, options = {}) {
-    var { body } = response;
-    if (!body) throw new Error("Response body is null");
-    super(options, body);
+    // A response with no body (204, HEAD) still gets a body, as in undici:
+    // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L118-L126
+    super(options, response.body ?? new ReadableStream({ start: closeEmptyBody }));
 
     this.#response = response;
     this.#bodyUsed = response.bodyUsed;
@@ -190,30 +194,23 @@ async function request(
     }
   } else throw new TypeError("url must be a string, URL, or UrlObject");
 
-  if (typeof url === "string" && query) url = new URL(url);
-  if (typeof url === "object" && url !== null && query) {
-    const existingParams = new URLSearchParams(url.search);
+  let effectiveUrl = url;
+  if (query) {
+    const parsedUrl = typeof url === "string" ? new URL(url) : new URL(url.href);
+    const existingParams = new URLSearchParams(parsedUrl.search);
     const newParams = new URLSearchParams(query);
     for (const [key, value] of newParams) {
       existingParams.set(key, value);
     }
-    url.search = existingParams.toString();
+    parsedUrl.search = existingParams.toString();
+    effectiveUrl = parsedUrl;
   }
 
   method = method && typeof method === "string" ? method.toUpperCase() : null;
   // idempotent = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent;
 
-  if (inputBody && (method === "GET" || method === "HEAD")) {
+  if (inputBody != null && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");
-  }
-
-  if (inputBody && inputBody.read && inputBody instanceof Readable) {
-    // Collect readable stream into a buffer for fetch() body
-    const chunks = [];
-    for await (const chunk of inputBody) {
-      chunks.push(typeof chunk === "string" ? $Buffer.from(chunk) : chunk);
-    }
-    inputBody = $Buffer.concat(chunks);
   }
 
   if (maxRedirections != null && (!Number.isInteger(maxRedirections) || maxRedirections < 0)) {
@@ -228,7 +225,7 @@ async function request(
   const followRedirects = maxRedirections != null && maxRedirections > 0;
 
   /** @type {Response} */
-  const resp = await fetch(url, {
+  const resp = await fetch(effectiveUrl, {
     signal,
     method,
     headers: inputHeaders || kEmptyObject,
@@ -246,7 +243,7 @@ async function request(
     throw new Error(`Request failed with status code ${statusCode}`);
   }
 
-  const body = resp.body ? new BodyReadable(resp) : Readable.from([]);
+  const body = new BodyReadable(resp);
 
   // Strip content-encoding/content-length for auto-decompressed non-HEAD responses
   const responseHeaders = headers.toJSON();
@@ -276,6 +273,10 @@ async function stream(url, factoryOrOptions, callbackOrFactory, maybeCallback) {
     callback = maybeCallback;
   } else {
     callback = callbackOrFactory;
+  }
+
+  if (typeof factory !== "function") {
+    throw new TypeError("stream: factory must be a function");
   }
 
   const doStream = async () => {
@@ -315,24 +316,14 @@ async function stream(url, factoryOrOptions, callbackOrFactory, maybeCallback) {
 
     const effectiveMethod = method ? method.toUpperCase() : "GET";
 
-    if (inputBody && (effectiveMethod === "GET" || effectiveMethod === "HEAD")) {
+    if (inputBody != null && (effectiveMethod === "GET" || effectiveMethod === "HEAD")) {
       throw new Error("Body not allowed for GET or HEAD requests");
-    }
-
-    // Collect Readable body into a Buffer for fetch()
-    let resolvedBody = inputBody ?? null;
-    if (resolvedBody && resolvedBody.read && resolvedBody instanceof Readable) {
-      const chunks = [];
-      for await (const chunk of resolvedBody) {
-        chunks.push(typeof chunk === "string" ? $Buffer.from(chunk) : chunk);
-      }
-      resolvedBody = $Buffer.concat(chunks);
     }
 
     const resp = await fetch(effectiveUrl, {
       method: effectiveMethod,
       headers: inputHeaders || kEmptyObject,
-      body: resolvedBody,
+      body: inputBody ?? null,
       signal: signal || undefined,
       redirect: "manual",
       keepalive: !reset,
@@ -473,7 +464,7 @@ function pipeline(url, opts = {}, handler) {
       effectiveUrl = parsed.toString();
     }
 
-    if (reqBody && (method === "GET" || method === "HEAD")) {
+    if (reqBody != null && (method === "GET" || method === "HEAD")) {
       throw new Error("Body not allowed for GET or HEAD requests");
     }
 
@@ -497,14 +488,19 @@ function pipeline(url, opts = {}, handler) {
       throw new Error(`Request failed with status code ${resp.status}`);
     }
 
-    const body = resp.body ? new BodyReadable(resp) : Readable.from([]);
-    srcStream = handler({
-      statusCode: resp.status,
-      headers: responseHeaders,
-      opaque: opts.opaque,
-      body,
-      context: opts.context ?? kEmptyObject,
-    });
+    const body = new BodyReadable(resp);
+    try {
+      srcStream = handler({
+        statusCode: resp.status,
+        headers: responseHeaders,
+        opaque: opts.opaque,
+        body,
+        context: opts.context ?? kEmptyObject,
+      });
+    } catch (err) {
+      if (resp.body) await resp.body.cancel(err);
+      throw err;
+    }
 
     if (!srcStream || !$isCallable(srcStream.on)) {
       throw new InvalidReturnValueError("expected the handler to return a stream");
@@ -579,10 +575,14 @@ function _openSocket({ hostname, port, tls: useTls, servername, signal, tlsOptio
     }
     let socket;
     const connectEvent = useTls ? "secureConnect" : "connect";
+    const onAbort = () => {
+      if (socket) socket.destroy(new RequestAbortedError("Request aborted"));
+    };
     const cleanup = () => {
       if (!socket) return;
       socket.removeListener("error", onError);
       socket.removeListener(connectEvent, onConnect);
+      if (signal) signal.removeEventListener?.("abort", onAbort);
     };
     const onError = err => {
       cleanup();
@@ -605,7 +605,7 @@ function _openSocket({ hostname, port, tls: useTls, servername, signal, tlsOptio
     socket.once(connectEvent, onConnect);
     socket.once("error", onError);
     if (signal) {
-      signal.addEventListener?.("abort", () => socket.destroy(new RequestAbortedError("Request aborted")), {
+      signal.addEventListener?.("abort", onAbort, {
         once: true,
       });
     }
@@ -629,6 +629,7 @@ function _readResponseHead(socket, signal) {
       const idx = buf.indexOf("\r\n\r\n");
       if (idx === -1) {
         if (buf.length > 64 * 1024) {
+          socket.destroy();
           cleanup();
           reject(new HTTPParserError("Response head exceeded 64KB"));
         }
@@ -840,17 +841,8 @@ async function _doRequest(origin, opts) {
   let inputBody = opts.body ?? null;
   const signal = opts.signal || undefined;
 
-  if (inputBody && (method === "GET" || method === "HEAD")) {
+  if (inputBody != null && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");
-  }
-
-  // Collect Readable body into a Buffer for fetch()
-  if (inputBody && inputBody.read && inputBody instanceof Readable) {
-    const chunks = [];
-    for await (const chunk of inputBody) {
-      chunks.push(typeof chunk === "string" ? $Buffer.from(chunk) : chunk);
-    }
-    inputBody = $Buffer.concat(chunks);
   }
 
   const maxRedirections = opts.maxRedirections;
@@ -874,7 +866,7 @@ async function _doRequest(origin, opts) {
     throw new Error(`Request failed with status code ${statusCode}`);
   }
 
-  const body = resp.body ? new BodyReadable(resp) : Readable.from([]);
+  const body = new BodyReadable(resp);
 
   const responseHeaders = headers.toJSON();
   if (method !== "HEAD" && responseHeaders["content-encoding"]) {
@@ -892,11 +884,133 @@ async function _doRequest(origin, opts) {
   };
 }
 
+async function _doDispatch(origin, opts, handler) {
+  if (!handler || typeof handler !== "object") {
+    throw new InvalidArgumentError("handler must be an object");
+  }
+
+  const resolvedOrigin = _parseOrigin(opts.origin ?? origin).replace(/\/$/, "");
+  const path = opts.path || "/";
+  let url = resolvedOrigin + path;
+
+  if (opts.query) {
+    const parsedUrl = new URL(url);
+    const existingParams = new URLSearchParams(parsedUrl.search);
+    const newParams = new URLSearchParams(opts.query);
+    for (const [key, value] of newParams) {
+      existingParams.set(key, value);
+    }
+    parsedUrl.search = existingParams.toString();
+    url = parsedUrl.toString();
+  }
+
+  const method = (opts.method || "GET").toUpperCase();
+  const inputHeaders = opts.headers || kEmptyObject;
+  let inputBody = opts.body ?? null;
+
+  if (inputBody != null && (method === "GET" || method === "HEAD")) {
+    const err = new Error("Body not allowed for GET or HEAD requests");
+    if ($isCallable(handler.onError)) handler.onError(err);
+    return false;
+  }
+
+  const abortController = new AbortController();
+  if (opts.signal) {
+    if (opts.signal.aborted) {
+      const err = new RequestAbortedError("Request aborted");
+      if ($isCallable(handler.onError)) handler.onError(err);
+      return false;
+    }
+    opts.signal.addEventListener?.("abort", () => abortController.abort());
+  }
+
+  if ($isCallable(handler.onConnect)) {
+    handler.onConnect(err => abortController.abort(err));
+  }
+
+  const maxRedirections = opts.maxRedirections;
+  const followRedirects = maxRedirections != null && maxRedirections > 0;
+
+  try {
+    const resp = await fetch(url, {
+      method,
+      headers: inputHeaders,
+      body: inputBody,
+      signal: abortController.signal,
+      redirect: followRedirects ? "follow" : "manual",
+      maxRedirects: followRedirects ? maxRedirections : undefined,
+      keepalive: !opts.reset,
+    });
+
+    const rawHeaders = [];
+    for (const [key, value] of resp.headers.entries()) {
+      rawHeaders.push($Buffer.from(key), $Buffer.from(value));
+    }
+
+    let resumeFn = () => {};
+    if ($isCallable(handler.onHeaders)) {
+      const proceed = handler.onHeaders(resp.status, rawHeaders, resumeFn, resp.statusText);
+      if (proceed === false) {
+        // backpressure
+      }
+    }
+
+    if (resp.body) {
+      for await (const chunk of resp.body) {
+        if ($isCallable(handler.onData)) {
+          const chunkBuf = $Buffer.isBuffer(chunk) ? chunk : $Buffer.from(chunk);
+          const proceed = handler.onData(chunkBuf);
+          if (proceed === false) {
+            // backpressure
+          }
+        }
+      }
+    }
+
+    if ($isCallable(handler.onComplete)) {
+      handler.onComplete([]);
+    }
+    return true;
+  } catch (err) {
+    if ($isCallable(handler.onError)) {
+      handler.onError(err);
+    }
+    return false;
+  }
+}
+
 class Agent extends Dispatcher {
   #options;
+  #closed;
+
   constructor(options = {}) {
     super();
     this.#options = options;
+    this.#closed = false;
+  }
+
+  dispatch(opts, handler) {
+    if (this.#closed) {
+      const err = new ClientClosedError("The agent is closed");
+      if (handler && $isCallable(handler.onError)) handler.onError(err);
+      return false;
+    }
+    const origin = opts.origin;
+    if (!origin) {
+      const err = new InvalidArgumentError("opts.origin is required for Agent.dispatch");
+      if (handler && $isCallable(handler.onError)) handler.onError(err);
+      return false;
+    }
+    _doDispatch(origin, opts, handler);
+    return true;
+  }
+
+  async close() {
+    this.#closed = true;
+  }
+
+  async destroy() {
+    this.#closed = true;
   }
 }
 
@@ -910,6 +1024,16 @@ class Pool extends Dispatcher {
     this.#origin = _parseOrigin(origin);
     this.#options = options;
     this.#closed = false;
+  }
+
+  dispatch(opts, handler) {
+    if (this.#closed) {
+      const err = new ClientClosedError("The pool is closed");
+      if (handler && $isCallable(handler.onError)) handler.onError(err);
+      return false;
+    }
+    _doDispatch(this.#origin, opts, handler);
+    return true;
   }
 
   async request(opts, callback) {
@@ -926,6 +1050,22 @@ class Pool extends Dispatcher {
       return;
     }
     return _doRequest(this.#origin, opts);
+  }
+
+  stream(opts, factory, callback) {
+    if (this.#closed) {
+      const err = new ClientClosedError("The pool is closed");
+      if ($isCallable(callback)) { callback(err, null); return; }
+      return Promise.reject(err);
+    }
+    return stream(this.#origin, opts, factory, callback);
+  }
+
+  pipeline(opts, handler) {
+    if (this.#closed) {
+      throw new ClientClosedError("The pool is closed");
+    }
+    return pipeline(this.#origin, opts, handler);
   }
 
   async close() {
@@ -951,6 +1091,16 @@ class Client extends Dispatcher {
     this.#closed = false;
   }
 
+  dispatch(opts, handler) {
+    if (this.#closed) {
+      const err = new ClientClosedError("The client is closed");
+      if (handler && $isCallable(handler.onError)) handler.onError(err);
+      return false;
+    }
+    _doDispatch(this.#origin, opts, handler);
+    return true;
+  }
+
   async request(opts, callback) {
     if (this.#closed) {
       const err = new ClientClosedError("The client is closed");
@@ -965,6 +1115,22 @@ class Client extends Dispatcher {
       return;
     }
     return _doRequest(this.#origin, opts);
+  }
+
+  stream(opts, factory, callback) {
+    if (this.#closed) {
+      const err = new ClientClosedError("The client is closed");
+      if ($isCallable(callback)) { callback(err, null); return; }
+      return Promise.reject(err);
+    }
+    return stream(this.#origin, opts, factory, callback);
+  }
+
+  pipeline(opts, handler) {
+    if (this.#closed) {
+      throw new ClientClosedError("The client is closed");
+    }
+    return pipeline(this.#origin, opts, handler);
   }
 
   async close() {
@@ -1153,6 +1319,10 @@ function buildConnector(_options = {}) {
   };
 }
 
+function dispatch(options, handler) {
+  return getGlobalDispatcher().dispatch(options, handler);
+}
+
 // Update the exports to match the exact structure
 const moduleExports = {
   Agent,
@@ -1165,6 +1335,7 @@ const moduleExports = {
   createRedirectInterceptor,
   DecoratorHandler,
   deleteCookie,
+  dispatch,
   Dispatcher,
   EnvHttpProxyAgent,
   ErrorEvent,

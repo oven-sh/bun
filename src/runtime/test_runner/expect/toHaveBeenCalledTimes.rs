@@ -1,15 +1,14 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_have_been_called_times(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = frame.arguments_old::<1>();
-    let arguments: &[JSValue] = arguments_.slice();
+    let arguments: &[JSValue] = frame.arguments();
     let (this, calls, _value) = this.mock_prologue(
         global,
         frame.this(),
@@ -24,9 +23,9 @@ pub(crate) fn to_have_been_called_times(
         )));
     }
 
-    let times = arguments[0].coerce::<i32>(global)?;
+    let times = arguments[0].to_int64();
 
-    let mut pass = i32::try_from(calls.get_length(global)?).unwrap() == times;
+    let mut pass = calls.get_length(global)? as i64 == times;
 
     let not = this.flags.get().not();
     if not {
@@ -38,32 +37,32 @@ pub(crate) fn to_have_been_called_times(
 
     // handle failure
     if not {
-        let signature: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", true);
-        return this.throw_fmt(
+        let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", true);
+        return throw!(
+            this,
             global,
             signature,
             concat!(
                 "\n\n",
-                "Expected number of calls: not <green>{d}<r>\n",
-                "Received number of calls: <red>{d}<r>\n"
+                "Expected number of calls: not <green>{}<r>\n",
+                "Received number of calls: <red>{}<r>\n"
             ),
-            format_args!("{}, {}", times, calls.get_length(global)?),
+            times,
+            calls.get_length(global)?,
         );
-        // TODO(refactor): Expect.throw signature — Zig passes (fmt_literal, args_tuple); Rust
-        // side likely wants a single format_args!. Reconcile.
     }
 
-    let signature: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
-    this.throw_fmt(
+    let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
+    throw!(
+        this,
         global,
         signature,
         concat!(
             "\n\n",
-            "Expected number of calls: <green>{d}<r>\n",
-            "Received number of calls: <red>{d}<r>\n"
+            "Expected number of calls: <green>{}<r>\n",
+            "Received number of calls: <red>{}<r>\n"
         ),
-        format_args!("{}, {}", times, calls.get_length(global)?),
+        times,
+        calls.get_length(global)?,
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenCalledTimes.zig

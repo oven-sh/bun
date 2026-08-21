@@ -55,9 +55,8 @@ pub struct ParentDeathWatchdog;
 /// convention for "terminated because the controlling end went away".
 pub const EXIT_CODE: u8 = 128 + 1;
 
-// PORT NOTE: Zig used plain `var` globals (unsynchronized). Converted to
-// atomics/OnceLock per docs/PORTING.md §Global mutable state — same
-// single-writer-at-startup discipline, but no `static mut` aliasing.
+// Atomics/OnceLock with single-writer-at-startup discipline (see
+// docs/PORTING.md §Global mutable state).
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static ORIGINAL_PPID: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
 
@@ -136,7 +135,7 @@ pub fn pop_sync_pgid() {
 /// Scoped to the `spawnSync` script(s) — does NOT call `kill_descendants()`,
 /// which is rooted at `getpid()` and would take out unrelated `Bun.spawn`
 /// siblings when `spawnSync` is reached from inside a live VM (e.g.
-/// `ffi.zig:getSystemRootDirOnce` shelling out to `xcrun`).
+/// FFI's system-root-dir lookup shelling out to `xcrun`).
 pub fn kill_sync_script_tree() {
     #[cfg(unix)]
     {
@@ -165,7 +164,6 @@ fn kill_sync_pgroups_and_descendants() {
     }
 }
 
-// TODO(port): move to <aio>_sys
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     // safe: no args; no preconditions.
@@ -289,6 +287,10 @@ pub fn enable() {
     }
 }
 
+/// Windows-only primitive; POSIX cleanup is the exit-time tree walk above.
+#[inline]
+pub fn ensure_kill_on_close_job() {}
+
 /// Register `EVFILT_PROC`/`NOTE_EXIT` for the original parent on the main
 /// event loop's kqueue. Called from `VirtualMachine.init` once the uws loop is
 /// up. macOS-only; no-op elsewhere and on subsequent calls.
@@ -348,8 +350,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
     }
 }
 
-/// `FilePoll.Owner` dispatch target — see the `ParentDeathWatchdog` arm in
-/// `posix_event_loop.zig`'s `onUpdate`. The kqueue `NOTE_EXIT` for our parent
+/// `FilePoll.Owner` dispatch target — invoked from the event loop's
+/// `ParentDeathWatchdog` poll arm. The kqueue `NOTE_EXIT` for our parent
 /// fired.
 pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
     // Global.exit → Bun__onExit → on_process_exit → kill_descendants.
@@ -381,7 +383,7 @@ extern "C" fn on_process_exit() {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
-pub(crate) fn kill_descendants() {
+fn kill_descendants() {
     #[cfg(unix)]
     {
         let self_pid = getpid();
@@ -532,10 +534,6 @@ fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
     to_kill.push(root);
     let _ = to_visit.try_reserve(1);
     to_visit.push(root);
-    // PORT NOTE: Zig swallowed OOM on the to_visit push; Rust push() after a
-    // failed try_reserve would still attempt (and abort on OOM). In practice
-    // a 1-element reserve never fails; matching exact Zig OOM semantics is
-    // not worth the complexity here.
 
     let mut buf: [libc::pid_t; 4096] = [0; 4096];
     while !to_visit.is_empty() && to_kill.len() < 4096 {
@@ -614,12 +612,10 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
         // Format: "pid (comm) state ppid …". `comm` may contain spaces and
         // parens; the *last* ')' terminates it. Field 1 after that is state,
         // field 2 is ppid.
-        let Some(rparen) = stat.iter().rposition(|&b| b == b')') else {
+        let Some(rparen) = bun_core::strings::last_index_of_char(stat, b')') else {
             return 0;
         };
-        let mut it = stat[rparen + 1..]
-            .split(|&b| b == b' ')
-            .filter(|s| !s.is_empty());
+        let mut it = bun_core::strings::tokenize(&stat[rparen + 1..], b" ");
         let _ = it.next(); // state
         let Some(ppid_str) = it.next() else {
             return 0;
@@ -680,7 +676,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         let mut w = &mut path_buf[..];
         write!(w, "/proc/{}/task", parent).ok()?;
         let n = 64 - w.len();
-        // PORT NOTE: reshaped for borrowck — recompute slice after write.
+        // Reshaped for borrowck — recompute slice after write.
         &path_buf[..n]
     };
 
@@ -688,7 +684,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    // PORT NOTE: Zig `defer task_fd.close()`; `Fd` is Copy and does not impl Drop.
+    // `Fd` is Copy and does not impl Drop, so close explicitly via a guard.
     let _task_fd_guard = scopeguard::guard(task_fd, |fd| {
         let _ = bun_sys::close(fd);
     });
@@ -699,7 +695,6 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
     let mut read_buf = [0u8; 32 * 1024];
     let mut it = bun_sys::dir_iterator::iterate(task_fd);
     loop {
-        // `it.next()` → `Maybe(?Entry)`; `.unwrap() catch null` → error/None both stop.
         let entry = match it.next() {
             Ok(Some(e)) => e,
             _ => break,
@@ -720,9 +715,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         let Some(data) = read_file_once(children_path, &mut read_buf) else {
             continue;
         };
-        let tok = data
-            .split(|&b| b == b' ' || b == b'\n')
-            .filter(|s| !s.is_empty());
+        let tok = bun_core::strings::tokenize_any(data, b" \n");
         for pid_str in tok {
             if written >= out.len() {
                 break;
@@ -749,8 +742,8 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     let _guard = scopeguard::guard(fd, |fd| {
         let _ = bun_sys::close(fd);
     });
-    // Zig `file.readAll(buf)` — fixed-buffer read-until-EOF-or-full. The Rust
-    // `File::read_all` grows a `Vec`, which would allocate; do the loop here.
+    // Fixed-buffer read-until-EOF-or-full. `File::read_all` grows a `Vec`,
+    // which would allocate; do the loop here.
     let mut written = 0usize;
     while written < buf.len() {
         match bun_sys::read(fd, &mut buf[written..]) {
@@ -761,5 +754,3 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     }
     Some(&buf[..written])
 }
-
-// ported from: src/aio/ParentDeathWatchdog.zig

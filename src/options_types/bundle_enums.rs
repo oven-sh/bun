@@ -1,4 +1,4 @@
-//! Pure enum/struct option types extracted from `bundler/options.zig` so
+//! Pure enum/struct bundler option types, kept here so
 //! `cli/` and other tiers can reference them without depending on `bundler/`.
 //! Aliased back at original locations — call sites unchanged.
 //!
@@ -7,9 +7,7 @@
 //! `from_api`, `API_NAMES`) remain here as sealed extension traits.
 
 use crate::schema::api;
-use bun_ast::{Loader, LoaderOptional, Target};
-use bun_collections;
-use phf;
+use bun_ast::{Loader, Target};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -45,16 +43,22 @@ impl Format {
     }
 
     #[inline]
-    pub fn is_esm(self) -> bool {
-        self == Format::Esm
-    }
-
-    #[inline]
     pub fn is_always_strict_mode(self) -> bool {
         self == Format::Esm
     }
 
-    pub const MAP: phf::Map<&'static [u8], Format> = phf::phf_map! {
+    pub const MAP: __ComptimeStringMap_FORMAT_MAP = __ComptimeStringMap_FORMAT_MAP(());
+
+    // `to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate.
+
+    pub fn from_string(slice: &[u8]) -> Option<Format> {
+        Self::MAP.get(slice).copied()
+    }
+}
+
+bun_core::comptime_string_map! {
+    #[doc(hidden)]
+    pub static FORMAT_MAP: Format = {
         b"esm" => Format::Esm,
         b"cjs" => Format::Cjs,
         b"iife" => Format::Iife,
@@ -62,22 +66,11 @@ impl Format {
         // TODO: Disable this outside of debug builds
         b"internal_bake_dev" => Format::InternalBakeDev,
     };
-
-    // `fromJS` alias to `bundler_jsc/options_jsc.zig` deleted — see PORTING.md
-    // (`to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate).
-
-    pub fn from_string(slice: &[u8]) -> Option<Format> {
-        // Zig: Map.getWithEql(slice, bun.strings.eqlComptime) — eqlComptime is
-        // exact byte equality, which is phf's default lookup.
-        Self::MAP.get(slice).copied()
-    }
 }
 
 #[derive(Default)]
 pub struct WindowsOptions {
     pub hide_console: bool,
-    // TODO(port): lifetime — Zig `?[]const u8` fields with no `deinit` in this
-    // file; conservatively owned as Box<[u8]> here.
     pub icon: Option<Box<[u8]>>,
     pub title: Option<Box<[u8]>>,
     pub publisher: Option<Box<[u8]>>,
@@ -93,12 +86,8 @@ pub enum BundlePackage {
     Never,
 }
 
-pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
-
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 
-/// `bundler/options.zig:1815` `BundleOptions.ForceNodeEnv`.
-///
 /// Set by the process environment to override the JSX configuration. When
 /// `Unspecified`, tsconfig.json drives the choice between "react-jsx" and
 /// "react-jsx-dev-runtime".
@@ -111,7 +100,7 @@ pub enum ForceNodeEnv {
     Production,
 }
 
-/// `bundler/options.zig` `ModuleType` — package.json `"type"` field.
+/// package.json `"type"` field.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum ModuleType {
@@ -122,7 +111,12 @@ pub enum ModuleType {
 }
 
 impl ModuleType {
-    pub const LIST: phf::Map<&'static [u8], ModuleType> = phf::phf_map! {
+    pub const LIST: __ComptimeStringMap_MODULE_TYPE_LIST = __ComptimeStringMap_MODULE_TYPE_LIST(());
+}
+
+bun_core::comptime_string_map! {
+    #[doc(hidden)]
+    pub static MODULE_TYPE_LIST: ModuleType = {
         b"commonjs" => ModuleType::Cjs,
         b"module" => ModuleType::Esm,
     };
@@ -134,8 +128,6 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for bun_ast::Target {}
     impl Sealed for bun_ast::Loader {}
-    impl Sealed for bun_ast::LoaderOptional {}
-    impl Sealed for bun_ast::ImportKind {}
 }
 
 /// `schema::api`-coupled methods on [`bun_ast::Target`]. Import alongside
@@ -150,7 +142,7 @@ impl TargetExt for Target {
         match self {
             Target::Node => api::Target::node,
             Target::Browser => api::Target::browser,
-            Target::Bun | Target::BakeServerComponentsSsr => api::Target::bun,
+            Target::Bun | Target::ServerComponentsSsr => api::Target::bun,
             Target::BunMacro => api::Target::bun_macro,
         }
     }
@@ -168,7 +160,8 @@ impl TargetExt for Target {
 
 // ─── Loader: schema-coupled extension methods ─────────────────────────────
 
-pub const LOADER_API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map! {
+bun_core::comptime_string_map! {
+pub static LOADER_API_NAMES: api::Loader = {
     b"js" => api::Loader::js,
     b"mjs" => api::Loader::js,
     b"cjs" => api::Loader::js,
@@ -184,6 +177,7 @@ pub const LOADER_API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map!
     b"toml" => api::Loader::toml,
     b"yaml" => api::Loader::yaml,
     b"json5" => api::Loader::json5,
+    b"xml" => api::Loader::xml,
     b"wasm" => api::Loader::wasm,
     b"node" => api::Loader::napi,
     b"dataurl" => api::Loader::dataurl,
@@ -196,6 +190,7 @@ pub const LOADER_API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map!
     b"md" => api::Loader::md,
     b"markdown" => api::Loader::md,
 };
+}
 
 /// `schema::api`-coupled methods on [`bun_ast::Loader`].
 pub trait LoaderExt: sealed::Sealed {
@@ -218,6 +213,7 @@ impl LoaderExt for Loader {
             Loader::Toml => api::Loader::toml,
             Loader::Yaml => api::Loader::yaml,
             Loader::Json5 => api::Loader::json5,
+            Loader::Xml => api::Loader::xml,
             Loader::Wasm => api::Loader::wasm,
             Loader::Napi => api::Loader::napi,
             Loader::Base64 => api::Loader::base64,
@@ -242,6 +238,7 @@ impl LoaderExt for Loader {
             api::Loader::toml => Loader::Toml,
             api::Loader::yaml => Loader::Yaml,
             api::Loader::json5 => Loader::Json5,
+            api::Loader::xml => Loader::Xml,
             api::Loader::wasm => Loader::Wasm,
             api::Loader::napi => Loader::Napi,
             api::Loader::base64 => Loader::Base64,
@@ -256,55 +253,13 @@ impl LoaderExt for Loader {
     }
 }
 
-/// `schema::api`-coupled methods on [`bun_ast::LoaderOptional`].
-pub trait LoaderOptionalExt: sealed::Sealed {
-    fn from_api(loader: api::Loader) -> LoaderOptional;
-}
-
-impl LoaderOptionalExt for LoaderOptional {
-    fn from_api(loader: api::Loader) -> LoaderOptional {
-        if loader == api::Loader::_none {
-            LoaderOptional::NONE
-        } else {
-            LoaderOptional::from_loader(Loader::from_api(loader))
-        }
-    }
-}
-
-// ─── ImportKind: schema-coupled extension methods ─────────────────────────
-
-/// `schema::api`-coupled methods on [`bun_ast::ImportKind`].
-pub trait ImportKindExt: sealed::Sealed {
-    fn to_api(self) -> api::ImportKind;
-}
-
-impl ImportKindExt for bun_ast::ImportKind {
-    fn to_api(self) -> api::ImportKind {
-        use bun_ast::ImportKind;
-        // TODO(port): source Zig references `ImportKind.entry_point` which is not a declared variant
-        // (only entry_point_run / entry_point_build exist). This compiles in Zig only because the
-        // function is never analyzed. Mapping both entry-point variants to api::ImportKind::entry_point.
-        match self {
-            ImportKind::EntryPointRun | ImportKind::EntryPointBuild => api::ImportKind::entry_point,
-            ImportKind::Stmt => api::ImportKind::stmt,
-            ImportKind::Require => api::ImportKind::require,
-            ImportKind::Dynamic => api::ImportKind::dynamic,
-            ImportKind::RequireResolve => api::ImportKind::require_resolve,
-            ImportKind::At => api::ImportKind::at,
-            ImportKind::Url => api::ImportKind::url,
-            _ => api::ImportKind::internal,
-        }
-    }
-}
-
 // ─── move-in: TYPE_ONLY from bun_runtime::bake::framework ──────────────────────────
 
-/// `bake/bake.zig` `Framework.BuiltInModule` — virtual module backing for a
+/// Virtual module backing for a
 /// framework-declared built-in: either an import path to redirect to, or
 /// inline source code.
 #[derive(Clone, Debug)]
 pub enum BuiltInModule {
-    // TODO(port): lifetime — Zig `[]const u8`; arena-owned in bake.UserOptions.
     Import(Box<[u8]>),
     Code(Box<[u8]>),
 }
@@ -323,5 +278,3 @@ impl From<bun_ast::ExportsKind> for ModuleType {
         }
     }
 }
-
-// ported from: src/options_types/BundleEnums.zig

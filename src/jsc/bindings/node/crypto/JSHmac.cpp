@@ -44,18 +44,25 @@ void JSHmac::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
 }
 
+template<typename Visitor>
+void JSHmac::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSHmac* thisObject = uncheckedDowncast<JSHmac>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
+}
+
+DEFINE_VISIT_CHILDREN(JSHmac);
+
 template<typename, JSC::SubspaceAccess mode>
 JSC::GCClient::IsoSubspace* JSHmac::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
 
-    return WebCore::subspaceForImpl<JSHmac, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSHmac.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSHmac = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSHmac.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSHmac = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSHmac, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSHmac, m_subspaceForJSHmac));
 }
 
 JSHmac* JSHmac::create(JSC::VM& vm, JSC::Structure* structure)
@@ -88,6 +95,9 @@ void JSHmac::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const St
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize HMAC context"_s);
         return;
     }
+
+    m_sizeForGC = sizeof(HMAC_CTX);
+    globalObject->vm().heap.reportExtraMemoryAllocated(this, m_sizeForGC);
 }
 
 bool JSHmac::update(std::span<const uint8_t> input)
@@ -104,8 +114,8 @@ bool JSHmac::update(std::span<const uint8_t> input)
 void JSHmacPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSHmac::info(), JSHmacPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSHmac::info(), JSHmacPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -114,8 +124,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the HMAC instance
-    JSValue thisHmac = callFrame->thisValue();
-    JSHmac* hmac = dynamicDowncast<JSHmac>(thisHmac);
+    JSHmac* hmac = dynamicDowncast<JSHmac>(callFrame->thisValue());
+    if (!hmac) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "Hmac"_s);
+    }
 
     // Check if the HMAC is already finalized
     if (hmac->m_finalized) {
@@ -217,10 +229,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     if (hmac->m_ctx) {
         if (!hmac->m_ctx.digestInto(&mdBuffer)) {
             hmac->m_ctx.reset();
+            hmac->m_sizeForGC = 0;
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to digest HMAC"_s);
             return {};
         }
         hmac->m_ctx.reset();
+        hmac->m_sizeForGC = 0;
     }
 
     // We shouldn't set finalized if coming from _flush, but this
@@ -297,7 +311,7 @@ JSC_DEFINE_HOST_FUNCTION(callHmac, (JSC::JSGlobalObject * globalObject, JSC::Cal
 
 JSC::Structure* JSHmacConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 void setupJSHmacClassStructure(JSC::LazyClassStructure::Initializer& init)

@@ -18,6 +18,7 @@ using namespace JSC;
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
+JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
 
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsJSValue(BunString specifier, JSC::JSGlobalObject*, bool use_dirname);
@@ -35,10 +36,10 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
 namespace Zig {
 
-void generateNativeModule_NodeModule(                                     
-  JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     
+JSC::JSObject *generateNativeModule_NodeModule(
+  JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,
   Vector<JSC::Identifier, 4> &exportNames,
-  JSC::MarkedArgumentBuffer &exportValues);  
+  JSC::MarkedArgumentBuffer &exportValues);
 
 
 } // namespace Zig

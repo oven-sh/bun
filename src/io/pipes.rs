@@ -15,7 +15,7 @@ pub enum PollOrFd {
 }
 
 impl PollOrFd {
-    pub fn tag_name(&self) -> &'static str {
+    pub(crate) fn tag_name(&self) -> &'static str {
         match self {
             PollOrFd::Poll(_) => "poll",
             PollOrFd::Fd(_) => "fd",
@@ -23,13 +23,13 @@ impl PollOrFd {
         }
     }
 
-    pub fn set_owner(&mut self, owner: Owner) {
+    pub(crate) fn set_owner(&mut self, owner: Owner) {
         if let PollOrFd::Poll(poll) = self {
             poll.set_owner(owner);
         }
     }
 
-    pub fn get_fd(&self) -> Fd {
+    pub(crate) fn get_fd(&self) -> Fd {
         match self {
             PollOrFd::Closed => Fd::INVALID,
             PollOrFd::Fd(fd) => *fd,
@@ -44,16 +44,13 @@ impl PollOrFd {
         }
     }
 
-    pub fn get_poll_mut(&mut self) -> Option<FilePollRef> {
+    pub(crate) fn get_poll_mut(&mut self) -> Option<FilePollRef> {
         match self {
             PollOrFd::Poll(poll) => Some(*poll),
             _ => None,
         }
     }
 
-    // TODO(port): Zig's `comptime onCloseFn: anytype` allowed passing `void` for
-    // "no callback" (checked via `@TypeOf(onCloseFn) != void`). Represented here
-    // as `Option<F>`; callers that passed `{}` should pass `None::<fn(*mut c_void)>`.
     pub fn close_impl<F>(
         &mut self,
         ctx: Option<*mut c_void>,
@@ -80,7 +77,7 @@ impl PollOrFd {
             // 7) ON ANOTHER THREAD: close(3) = 0,
             // 8) kevent(2, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, 0) = 0
             // 9) ??? No more events for fd 2
-            // PORT NOTE: reshaped for borrowck — take ownership of the Box before
+            // Take ownership of the Box before
             // calling deinit_force_unregister, then leave self = Closed.
             let old = core::mem::replace(self, PollOrFd::Closed);
             if let PollOrFd::Poll(poll) = old {
@@ -92,7 +89,7 @@ impl PollOrFd {
                         close_async = false;
                     }
                 }
-                // Consumes the underlying allocation (Zig: poll.deinitForceUnregister()).
+                // Consumes the underlying allocation.
                 poll.deinit_force_unregister();
             }
         }
@@ -116,9 +113,8 @@ impl PollOrFd {
                 }
             }
             if let Some(f) = on_close_fn {
-                // SAFETY: Zig: onCloseFn(@ptrCast(@alignCast(ctx.?))) — caller
-                // guarantees ctx is Some and properly aligned for the callback's
-                // expected pointee type.
+                // SAFETY: caller guarantees ctx is Some and properly aligned
+                // for the callback's expected pointee type.
                 f(ctx.expect("ctx must be Some when on_close_fn is provided"));
             }
         } else {
@@ -126,7 +122,7 @@ impl PollOrFd {
         }
     }
 
-    pub fn close<F>(&mut self, ctx: Option<*mut c_void>, on_close_fn: Option<F>)
+    pub(crate) fn close<F>(&mut self, ctx: Option<*mut c_void>, on_close_fn: Option<F>)
     where
         F: FnOnce(*mut c_void),
     {
@@ -144,11 +140,45 @@ pub enum ReadState {
     /// Neither EOF nor EAGAIN
     Progress,
 
-    /// Received a 0-byte read
+    /// Received a 0-byte read, or the reader's limit or byte budget is used up: nothing more will be read
     Eof,
 
     /// Received an EAGAIN
     Drained,
 }
 
-// ported from: src/io/pipes.zig
+/// One delivery from a `BufferedReader`. The variant says who owns the bytes, so a consumer never has to work that out from the pointer.
+pub enum Chunk<'a> {
+    /// The loop's shared scratch: gone once `on_read_chunk` returns. Copy what you keep.
+    Scratch(&'a [u8]),
+    /// The reader's own buffer, which it clears and reuses after the call. Copy what you keep, or `take()` it when moving beats copying.
+    Buffer(&'a mut Vec<u8>),
+    /// The reader is finished with these bytes (EOF, limit, error, budget): yours to move.
+    Owned(Vec<u8>),
+}
+
+impl Chunk<'_> {
+    /// The bytes as an owned `Vec`, moving rather than copying where the variant allows.
+    pub fn take(self) -> Vec<u8> {
+        match self {
+            Chunk::Scratch(bytes) => bytes.to_vec(),
+            Chunk::Buffer(buffer) => core::mem::take(buffer),
+            Chunk::Owned(buffer) => buffer,
+        }
+    }
+
+    pub fn is_owned(&self) -> bool {
+        matches!(self, Chunk::Owned(_))
+    }
+}
+
+impl core::ops::Deref for Chunk<'_> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Chunk::Scratch(bytes) => bytes,
+            Chunk::Buffer(buffer) => buffer,
+            Chunk::Owned(buffer) => buffer,
+        }
+    }
+}

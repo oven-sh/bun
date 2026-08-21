@@ -6,12 +6,7 @@ pub mod code_coverage;
 pub mod internal_jsc;
 #[path = "JSSourceMap.rs"]
 pub mod js_source_map;
-pub mod source_provider;
 
 // ---- public surface ---------------------------------------------------------
 
-pub use code_coverage::{
-    ByteRangeMapping, ByteRangeMappingHashMap, Fraction, Report as CoverageReport,
-};
 pub use js_source_map::JSSourceMap;
-pub use source_provider::BakeSourceProvider;

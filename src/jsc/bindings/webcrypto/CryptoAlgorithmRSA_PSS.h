@@ -41,10 +41,7 @@ public:
     static Ref<CryptoAlgorithm> create();
 
     static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoAlgorithmRsaPssParams&, const CryptoKeyRSA&, const Vector<uint8_t>&);
-    static ExceptionOr<Vector<uint8_t>> platformSignWithAlgorithm(const CryptoAlgorithmRsaPssParams&, CryptoAlgorithmIdentifier, const CryptoKeyRSA&, const Vector<uint8_t>&);
-
     static ExceptionOr<bool> platformVerify(const CryptoAlgorithmRsaPssParams&, const CryptoKeyRSA&, const Vector<uint8_t>&, const Vector<uint8_t>&);
-    static ExceptionOr<bool> platformVerifyWithAlgorithm(const CryptoAlgorithmRsaPssParams&, CryptoAlgorithmIdentifier, const CryptoKeyRSA&, const Vector<uint8_t>&, const Vector<uint8_t>&);
 
 private:
     CryptoAlgorithmRSA_PSS() = default;

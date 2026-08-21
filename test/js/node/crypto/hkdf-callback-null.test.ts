@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
+import "harness";
 import crypto from "node:crypto";
 
 // Test that callback receives null (not undefined) for error on success
@@ -20,4 +21,51 @@ test("crypto.hkdf callback should pass null (not undefined) on success", async (
   });
 
   await promise;
+});
+
+test("crypto.hkdfSync only accepts a secret KeyObject as ikm", () => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+
+  expect(() => crypto.hkdfSync("sha256", publicKey, "salt", "info", 16)).toThrowWithCode(
+    TypeError,
+    "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+  );
+  expect(() => crypto.hkdfSync("sha256", publicKey, "salt", "info", 16)).toThrow(
+    "Invalid key object type public, expected secret.",
+  );
+
+  expect(() => crypto.hkdfSync("sha256", privateKey, "salt", "info", 16)).toThrowWithCode(
+    TypeError,
+    "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+  );
+  expect(() => crypto.hkdfSync("sha256", privateKey, "salt", "info", 16)).toThrow(
+    "Invalid key object type private, expected secret.",
+  );
+
+  expect(crypto.hkdfSync("sha256", crypto.createSecretKey(Buffer.alloc(32, 7)), "salt", "info", 16)).toBeInstanceOf(
+    ArrayBuffer,
+  );
+});
+
+test("crypto.hkdf only accepts a secret KeyObject as ikm", () => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const callback = jest.fn();
+
+  expect(() => crypto.hkdf("sha256", publicKey, "salt", "info", 16, callback)).toThrowWithCode(
+    TypeError,
+    "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+  );
+  expect(() => crypto.hkdf("sha256", publicKey, "salt", "info", 16, callback)).toThrow(
+    "Invalid key object type public, expected secret.",
+  );
+
+  expect(() => crypto.hkdf("sha256", privateKey, "salt", "info", 16, callback)).toThrowWithCode(
+    TypeError,
+    "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE",
+  );
+  expect(() => crypto.hkdf("sha256", privateKey, "salt", "info", 16, callback)).toThrow(
+    "Invalid key object type private, expected secret.",
+  );
+
+  expect(callback).toHaveBeenCalledTimes(0);
 });

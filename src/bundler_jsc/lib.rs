@@ -13,10 +13,7 @@ pub mod source_map_mode_jsc;
 #[path = "options_jsc.rs"]
 pub mod options_jsc;
 
-#[path = "PluginRunner.rs"]
-pub mod PluginRunner;
-
-// LAYERING: `output_file_jsc` (port of `src/bundler_jsc/output_file_jsc.zig`)
+// LAYERING: `output_file_jsc`
 // constructs `webcore::Blob`/`Store`, `api::BuildArtifact`, and
 // `node::PathOrFileDescriptor`. Those types live in `bun_runtime`, which is
 // not a dependency of this crate. The module has been moved to
@@ -24,7 +21,7 @@ pub mod PluginRunner;
 // `bun_bundler_jsc::output_file_jsc`, so no re-export is needed.
 
 #[path = "analyze_jsc.rs"]
-pub mod analyze_jsc;
+pub(crate) mod analyze_jsc;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `JSBundleCompletionTask` was MOVED to `bun_runtime::api::js_bundle_completion_task`

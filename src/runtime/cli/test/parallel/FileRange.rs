@@ -4,8 +4,8 @@
 
 #[derive(Copy, Clone)]
 pub struct FileRange {
-    pub lo: u32,
-    pub hi: u32,
+    pub(crate) lo: u32,
+    pub(crate) hi: u32,
 }
 
 impl FileRange {
@@ -44,5 +44,3 @@ impl FileRange {
         Some(stolen)
     }
 }
-
-// ported from: src/cli/test/parallel/FileRange.zig

@@ -12,7 +12,9 @@ use core::sync::atomic::Ordering;
 
 #[cfg(target_os = "macos")]
 use bun_core::Output;
-use bun_sys::{self, Fd, FdExt as _};
+#[cfg(unix)]
+use bun_sys::FdExt as _;
+use bun_sys::{self, Fd};
 
 #[cfg(not(windows))]
 use crate::posix_spawn::posix_spawn;
@@ -39,14 +41,13 @@ pub type FdT = i32;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub type PidFdType = FdT;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
-pub type PidFdType = (); // u0 in Zig
+pub type PidFdType = ();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rusage — platform-uniform resource-usage struct
 //
-// One Bun-level type per target, mirroring Zig's `bun.spawn.Rusage`
-// (process.zig:72-97). On every Unix this is `libc::rusage` — Rust's libc
-// crate, unlike Zig's `std.posix`, *does* define `rusage` on FreeBSD with
+// One Bun-level type per target. On every Unix this is `libc::rusage` —
+// the libc crate defines `rusage` on FreeBSD with
 // the standard `ru_*` field names, so no hand-rolled FreeBSD struct is
 // needed. On Windows it is the value-typed `WinRusage` below (NOT
 // `uv_rusage_t` — that is vendor FFI ABI in `bun_libuv_sys` and stays
@@ -56,19 +57,19 @@ pub type PidFdType = (); // u0 in Zig
 
 #[derive(Default, Clone, Copy)]
 pub struct WinTimeval {
-    pub sec: i64,
-    pub usec: i64,
+    pub(crate) sec: i64,
+    pub(crate) usec: i64,
 }
 
 #[derive(Default, Clone, Copy)]
 pub struct WinRusage {
-    pub utime: WinTimeval,
-    pub stime: WinTimeval,
-    pub maxrss: u64,
-    // ixrss, idrss, isrss, minflt, majflt, nswap: u0 in Zig — zero-sized, omitted
-    pub inblock: u64,
-    pub oublock: u64,
-    // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: u0 in Zig — zero-sized, omitted
+    pub(crate) utime: WinTimeval,
+    pub(crate) stime: WinTimeval,
+    pub(crate) maxrss: u64,
+    // ixrss, idrss, isrss, minflt, majflt, nswap: always zero — omitted
+    pub(crate) inblock: u64,
+    pub(crate) oublock: u64,
+    // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: always zero — omitted
 }
 
 pub type IoCounters = bun_windows_sys::IO_COUNTERS;
@@ -109,13 +110,12 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     } != 0
     {
         // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
-        // 10 ticks. The Zig spec (process.zig:53) computes the sub-second part
-        // as `temp % 1_000_000`, which is unit-mismatched: it takes a 100-ns
-        // tick count modulo a microsecond denominator, so a 178 125 µs run
-        // (1_781_250 ticks) reports as 781_250 µs. That over-report is what
-        // tips the "does not use 100% cpu > install" test (`cpuTime.total <
-        // 750_000`) on Windows aarch64. Diverge from spec and convert
-        // correctly: `(ticks % 10_000_000) / 10`.
+        // 10 ticks. A `temp % 1_000_000` computation here would be
+        // unit-mismatched (a 100-ns tick count modulo a microsecond
+        // denominator): a 178 125 µs run (1_781_250 ticks) would report as
+        // 781_250 µs, which is what tips the "does not use 100% cpu >
+        // install" test (`cpuTime.total < 750_000`) on Windows aarch64.
+        // Convert correctly: `(ticks % 10_000_000) / 10`.
         let mut temp: u64 =
             ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
         if temp > 0 {
@@ -137,7 +137,7 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
         return usage_info;
     };
-    usage_info.maxrss = (memory.PeakWorkingSetSize / 1024) as u64;
+    usage_info.maxrss = memory.PeakWorkingSetSize as u64;
 
     usage_info
 }
@@ -157,23 +157,23 @@ pub fn rusage_zeroed() -> Rusage {
 
 /// Platform-uniform field accessors over [`Rusage`]. The underlying alias has
 /// divergent field names (`ru_*` on every Unix `libc::rusage`; bare names on
-/// `WinRusage` with several `u0`/absent counters). This trait gives JS-facing
-/// getters one cfg-free body, matching the Zig spec's uniform names.
+/// `WinRusage` with several always-zero/absent counters). This trait gives
+/// JS-facing getters one cfg-free body with uniform names.
 pub trait RusageFields {
     fn utime_sec(&self) -> i64;
     fn utime_usec(&self) -> i64;
     fn stime_sec(&self) -> i64;
     fn stime_usec(&self) -> i64;
-    fn maxrss_(&self) -> f64;
-    fn ixrss_(&self) -> f64;
-    fn nswap_(&self) -> f64;
-    fn inblock_(&self) -> f64;
-    fn oublock_(&self) -> f64;
-    fn msgsnd_(&self) -> f64;
-    fn msgrcv_(&self) -> f64;
-    fn nsignals_(&self) -> f64;
-    fn nvcsw_(&self) -> f64;
-    fn nivcsw_(&self) -> f64;
+    fn maxrss(&self) -> f64;
+    fn ixrss(&self) -> f64;
+    fn nswap(&self) -> f64;
+    fn inblock(&self) -> f64;
+    fn oublock(&self) -> f64;
+    fn msgsnd(&self) -> f64;
+    fn msgrcv(&self) -> f64;
+    fn nsignals(&self) -> f64;
+    fn nvcsw(&self) -> f64;
+    fn nivcsw(&self) -> f64;
 }
 
 #[cfg(unix)]
@@ -196,44 +196,50 @@ impl RusageFields for libc::rusage {
     fn stime_usec(&self) -> i64 {
         self.ru_stime.tv_usec as i64
     }
+    /// Bytes. `ru_maxrss` is bytes on Apple platforms but kilobytes on
+    /// Linux/BSD.
     #[inline]
-    fn maxrss_(&self) -> f64 {
-        self.ru_maxrss as f64
+    fn maxrss(&self) -> f64 {
+        if cfg!(target_vendor = "apple") {
+            self.ru_maxrss as f64
+        } else {
+            (self.ru_maxrss as f64) * 1024.0
+        }
     }
     #[inline]
-    fn ixrss_(&self) -> f64 {
+    fn ixrss(&self) -> f64 {
         self.ru_ixrss as f64
     }
     #[inline]
-    fn nswap_(&self) -> f64 {
+    fn nswap(&self) -> f64 {
         self.ru_nswap as f64
     }
     #[inline]
-    fn inblock_(&self) -> f64 {
+    fn inblock(&self) -> f64 {
         self.ru_inblock as f64
     }
     #[inline]
-    fn oublock_(&self) -> f64 {
+    fn oublock(&self) -> f64 {
         self.ru_oublock as f64
     }
     #[inline]
-    fn msgsnd_(&self) -> f64 {
+    fn msgsnd(&self) -> f64 {
         self.ru_msgsnd as f64
     }
     #[inline]
-    fn msgrcv_(&self) -> f64 {
+    fn msgrcv(&self) -> f64 {
         self.ru_msgrcv as f64
     }
     #[inline]
-    fn nsignals_(&self) -> f64 {
+    fn nsignals(&self) -> f64 {
         self.ru_nsignals as f64
     }
     #[inline]
-    fn nvcsw_(&self) -> f64 {
+    fn nvcsw(&self) -> f64 {
         self.ru_nvcsw as f64
     }
     #[inline]
-    fn nivcsw_(&self) -> f64 {
+    fn nivcsw(&self) -> f64 {
         self.ru_nivcsw as f64
     }
 }
@@ -256,44 +262,44 @@ impl RusageFields for WinRusage {
         self.stime.usec
     }
     #[inline]
-    fn maxrss_(&self) -> f64 {
+    fn maxrss(&self) -> f64 {
         self.maxrss as f64
     }
-    // Zig declares these as `u0` on Windows — always zero.
+    // These counters do not exist on Windows — always zero.
     #[inline]
-    fn ixrss_(&self) -> f64 {
+    fn ixrss(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn nswap_(&self) -> f64 {
+    fn nswap(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn inblock_(&self) -> f64 {
+    fn inblock(&self) -> f64 {
         self.inblock as f64
     }
     #[inline]
-    fn oublock_(&self) -> f64 {
+    fn oublock(&self) -> f64 {
         self.oublock as f64
     }
     #[inline]
-    fn msgsnd_(&self) -> f64 {
+    fn msgsnd(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn msgrcv_(&self) -> f64 {
+    fn msgrcv(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn nsignals_(&self) -> f64 {
+    fn nsignals(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn nvcsw_(&self) -> f64 {
+    fn nvcsw(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn nivcsw_(&self) -> f64 {
+    fn nivcsw(&self) -> f64 {
         0.0
     }
 }
@@ -310,6 +316,10 @@ pub struct PosixSpawnOptions {
     pub extra_fds: Box<[PosixStdio]>,
     pub cwd: Box<[u8]>,
     pub detached: bool,
+    /// Run the child as this user id (`setuid` after fork, like libuv/Node).
+    pub uid: Option<u32>,
+    /// Run the child as this group id (`setgid` after fork, like libuv/Node).
+    pub gid: Option<u32>,
     pub windows: (),
     pub argv0: Option<*const c_char>,
     pub stream: bool,
@@ -341,6 +351,9 @@ pub struct PosixSpawnOptions {
     /// no-orphans mode is enabled (see `ParentDeathWatchdog`), else 0 (no
     /// PDEATHSIG). Not exposed to JS yet.
     pub linux_pdeathsig: Option<u8>,
+    /// Linux only. Directory fd of a cgroup the child starts inside
+    /// (`CLONE_INTO_CGROUP`, else a pre-exec `cgroup.procs` write). Caller owns the fd.
+    pub cgroup_fd: Option<Fd>,
 }
 
 impl Default for PosixSpawnOptions {
@@ -353,6 +366,8 @@ impl Default for PosixSpawnOptions {
             extra_fds: Box::default(),
             cwd: Box::default(),
             detached: false,
+            uid: None,
+            gid: None,
             windows: (),
             argv0: None,
             stream: true,
@@ -364,12 +379,13 @@ impl Default for PosixSpawnOptions {
             pty_slave_fd: -1,
             pseudoconsole: (),
             linux_pdeathsig: None,
+            cgroup_fd: None,
         }
     }
 }
 
 impl PosixSpawnOptions {
-    /// No-op — matches Zig `PosixSpawnOptions.deinit` (process.zig:1104).
+    /// No-op.
     /// Exists for cfg-parity with `WindowsSpawnOptions::deinit`, which closes
     /// heap-allocated `uv::Pipe` handles on the spawn error path.
     #[inline]
@@ -414,6 +430,10 @@ pub enum PosixStdio {
     Inherit,
     Ignore,
     Buffer,
+    /// Like `Buffer` at indices >= 3 (creates a socketpair) but the parent
+    /// end is returned as `ExtraPipe::UnownedFd`: the caller owns and closes
+    /// it. Only valid in `extra_fds`.
+    SocketFd,
     Ipc,
     Pipe(Fd),
     // TODO: remove this entry, it doesn't seem to be used
@@ -444,7 +464,8 @@ pub struct PosixSpawnResult {
     pub stdin: Option<Fd>,
     pub stdout: Option<Fd>,
     pub stderr: Option<Fd>,
-    pub ipc: Option<Fd>,
+    #[cfg(not(windows))]
+    pub(crate) ipc: Option<Fd>,
     pub extra_pipes: Vec<ExtraPipe>,
     pub memfds: [bool; 3],
     // ESRCH can happen when requesting the pidfd
@@ -453,8 +474,9 @@ pub struct PosixSpawnResult {
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
 pub enum ExtraPipe {
-    /// We created this fd (e.g. socketpair for `"pipe"`); expose it via
-    /// `Subprocess.stdio[N]` and close it in `finalizeStreams`.
+    /// We created this fd (e.g. socketpair for `"pipe"`); `finalizeStreams`
+    /// closes it. Downgraded to `UnownedFd` once `.stdio` is read (the caller
+    /// then owns the raw number and is responsible for closing it).
     OwnedFd(Fd),
     /// The caller supplied this fd in the stdio array; expose it via
     /// `Subprocess.stdio[N]` but never close it — the caller retains ownership.
@@ -474,29 +496,20 @@ impl ExtraPipe {
 }
 
 impl PosixSpawnResult {
-    pub fn close(&mut self) {
-        for item in self.extra_pipes.iter() {
-            match item {
-                ExtraPipe::OwnedFd(f) => f.close(),
-                ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
-            }
-        }
-        self.extra_pipes.clear();
-        self.extra_pipes.shrink_to_fit();
-    }
-
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
-        // pidfd_nonblock only supported in 5.10+. The Zig path consults
-        // `analytics.kernel_version()` (semver compare); until that helper is
-        // ported, optimistically request NONBLOCK and rely on the EINVAL retry
-        // below to fall back on older kernels.
-        // TODO(port): wire bun_analytics::kernel_version() once available.
-        bun_sys::O::NONBLOCK as u32
+        // PIDFD_NONBLOCK is only supported on kernel 5.10+ (the EINVAL retry
+        // in `pifd_from_pid` still covers misdetection by retrying with 0).
+        let kernel = bun_core::linux_kernel_version();
+        if (kernel.major, kernel.minor) >= (5, 10) {
+            bun_sys::O::NONBLOCK as u32
+        } else {
+            0
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
+    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENOSYS,
@@ -559,43 +572,31 @@ impl PosixSpawnResult {
             Ok(fd) => Ok(fd.native()),
         }
     }
-
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
-        Err(bun_sys::Error::from_code(
-            bun_sys::E::ENOSYS,
-            bun_sys::Tag::pidfd_open,
-        ))
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // spawn_process_posix — the fd/action plumbing + posix_spawn call
 // ──────────────────────────────────────────────────────────────────────────
 
-// Apple `<spawn.h>` extensions not exported by the `libc` crate (Zig: `bun.c.*`).
+// Apple `<spawn.h>` extensions not exported by the `libc` crate.
 #[cfg(target_os = "macos")]
-pub(crate) const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
+const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
 #[cfg(target_os = "macos")]
-pub(crate) const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
+const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
-/// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
-/// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`
-/// runs on *every* exit (set CLOEXEC on `to_set_cloexec`, then close
-/// `to_close_at_end`); the `errdefer` additionally closes `to_close_on_error`
-/// on error returns. `on_error` is disarmed on the success path.
+/// RAII fd cleanup for `spawn_process_posix`. On *every* exit it sets
+/// CLOEXEC on `to_set_cloexec`, then closes `to_close_at_end`; on error
+/// returns it additionally closes `to_close_on_error`. `on_error` is
+/// disarmed on the success path.
 ///
 /// This exists so that bare `?` on `actions.*` propagates without leaking
 /// the parent-side socketpair ends pushed earlier in the loop.
 ///
-/// PORT NOTE (intentional divergence): Zig's `errdefer` only fires on
-/// error-union returns (`try` failures), *not* on `return .{.err = ..}` value
-/// returns — so in the spec, socketpair/set_nonblocking/spawn_z value-error
-/// paths leak `to_close_on_error`. This guard initializes `on_error = true`
-/// and is only disarmed after `spawn_z` succeeds, deliberately widening the
-/// cleanup to cover those value-error returns as well. The fds in
-/// `to_close_on_error` are parent-side ends never handed back to the caller on
-/// any error path, so closing them is the correct behavior.
+/// The guard initializes `on_error = true` and is only disarmed after
+/// `spawn_z` succeeds, so socketpair/set_nonblocking/spawn_z value-error
+/// returns (`return Ok(Err(..))`) are covered as well as `?` failures. The
+/// fds in `to_close_on_error` are parent-side ends never handed back to the
+/// caller on any error path, so closing them is the correct behavior.
 #[cfg(unix)]
 struct PosixSpawnFdGuard {
     to_set_cloexec: Vec<Fd>,
@@ -631,7 +632,7 @@ pub unsafe fn spawn_process_posix(
     options: &PosixSpawnOptions,
     argv: Argv,
     envp: Envp,
-) -> Result<bun_sys::Result<PosixSpawnResult>, bun_core::Error> {
+) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
     // defer actions.deinit() — Drop
@@ -671,7 +672,6 @@ pub unsafe fn spawn_process_posix(
         }
 
         if options.detached {
-            // TODO(port): @hasDecl check — assume present on platforms that define it.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
@@ -691,6 +691,9 @@ pub unsafe fn spawn_process_posix(
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;
     attr.new_process_group = options.new_process_group;
+    attr.uid = options.uid;
+    attr.gid = options.gid;
+    attr.cgroup_fd = options.cgroup_fd.map_or(-1, |fd| fd.native());
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
@@ -712,9 +715,7 @@ pub unsafe fn spawn_process_posix(
     }
     let mut spawned = PosixSpawnResult::default();
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
-    // errdefer extra_fds.deinit() — Vec drops on ?
-    // PERF(port): was stack-fallback allocator (2048)
-    // Zig `defer` + `errdefer` cleanup → owned by an RAII guard so every `?`
+    // Cleanup is owned by an RAII guard so every `?`
     // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
     let mut cleanup = PosixSpawnFdGuard {
         to_set_cloexec: Vec::new(),
@@ -732,8 +733,8 @@ pub unsafe fn spawn_process_posix(
     }
 
     let stdio_options: [&PosixStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
-    // PORT NOTE: reshaped for borrowck — Zig holds [3]*?bun.FD into spawned;
-    // we index spawned.{stdin,stdout,stderr} via a helper closure instead.
+    // Reshaped for borrowck: we
+    // index spawned.{stdin,stdout,stderr} via a helper closure.
     let mut dup_stdout_to_stderr: bool = false;
 
     // The label is only referenced from the Linux memfd fast-path below.
@@ -765,7 +766,12 @@ pub unsafe fn spawn_process_posix(
                 }
             }
             PosixStdio::Inherit => {
-                actions.inherit(fileno)?;
+                // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
+                if bun_sys::get_fcntl_flags(fileno).is_err() {
+                    actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                } else {
+                    actions.inherit(fileno)?;
+                }
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
@@ -885,6 +891,10 @@ pub unsafe fn spawn_process_posix(
                 actions.dup2(*fd, fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }
+            PosixStdio::SocketFd => {
+                // Rejected at i < 3 in Stdio::extract(); unreachable here.
+                unreachable!("SocketFd at stdin/stdout/stderr");
+            }
         }
     }
 
@@ -904,7 +914,10 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ignore => {
-                actions.open_z(fileno, c"/dev/null", bun_sys::O::RDWR as u32, 0o664)?;
+                // Node leaves "ignore" at an extra slot closed in the child;
+                // only fds 0-2 need a /dev/null placeholder. Close explicitly:
+                // the post-exec close-range floor only covers higher fds.
+                actions.close(fileno)?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Path(path) => {
@@ -916,7 +929,7 @@ pub unsafe fn spawn_process_posix(
                 )?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
-            PosixStdio::Ipc | PosixStdio::Buffer => {
+            PosixStdio::Ipc | PosixStdio::Buffer | PosixStdio::SocketFd => {
                 let is_ipc = matches!(ipc, PosixStdio::Ipc);
                 let fds: [Fd; 2] =
                     match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, is_ipc) {
@@ -937,6 +950,13 @@ pub unsafe fn spawn_process_posix(
                 if fds[1] != fileno {
                     actions.close(fds[1])?;
                 }
+                // SocketFd: push as OwnedFd here so every error path between
+                // spawn and returning the JS Subprocess (to_close_on_error
+                // above, and the Writable::init error arm's finalize_streams
+                // in js_bun_spawn_bindings.rs) still closes it. The caller's
+                // "I own this fd" contract only begins once they can read
+                // .stdio[i]; the OwnedFd -> UnownedFd downgrade happens in
+                // js_bun_spawn_bindings.rs after all fallible init succeeds.
                 extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
             }
             PosixStdio::Pipe(fd) => {

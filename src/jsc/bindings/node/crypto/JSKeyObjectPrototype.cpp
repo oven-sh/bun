@@ -26,8 +26,8 @@ static const JSC::HashTableValue JSKeyObjectPrototypeTableValues[] = {
 void JSKeyObjectPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSKeyObjectPrototype::info(), JSKeyObjectPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSKeyObjectPrototype::info(), JSKeyObjectPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsKeyObjectPrototype_equals, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -65,7 +65,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsKeyObjectPrototype_type, (JSGlobalObject * globalObje
 
     JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(JSValue::decode(thisValue));
     if (!keyObject) {
-        return JSValue::encode(jsUndefined());
+        return ERR::INVALID_THIS(scope, globalObject, "KeyObject"_s);
     }
 
     KeyObject& handle = keyObject->handle();

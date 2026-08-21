@@ -1,27 +1,30 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
-static JS_TYPE_OF_MAP: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
-    b"function" => b"function",
-    b"object" => b"object",
-    b"bigint" => b"bigint",
-    b"boolean" => b"boolean",
-    b"number" => b"number",
-    b"string" => b"string",
-    b"symbol" => b"symbol",
-    b"undefined" => b"undefined",
-};
+bun_core::comptime_string_map! {
+    static JS_TYPE_OF_MAP: &'static [u8] = {
+        b"function" => b"function",
+        b"object" => b"object",
+        b"bigint" => b"bigint",
+        b"boolean" => b"boolean",
+        b"number" => b"number",
+        b"string" => b"string",
+        b"symbol" => b"symbol",
+        b"undefined" => b"undefined",
+    };
+}
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
 pub(crate) fn to_be_type_of(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let (this, value, not) = this.matcher_prelude(global, frame.this(), "toBeTypeOf", "")?;
-    let _arguments = frame.arguments_old::<1>();
-    let arguments = _arguments.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toBeTypeOf() requires 1 argument")));
@@ -74,7 +77,7 @@ pub(crate) fn to_be_type_of(
     }
 
     let mut formatter = super::make_formatter(global);
-    // PORT NOTE: ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
+    // ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
     // so `received` and `expected_str` can coexist in one format_args!.
     let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
@@ -83,37 +86,33 @@ pub(crate) fn to_be_type_of(
 
     if not {
         let signature = get_signature("toBeTypeOf", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected type: not <green>{}<r>\n",
-                    "Received type: <red>\"{}\"<r>\nReceived value: <red>{}<r>\n",
-                ),
-                expected_str,
-                bstr::BStr::new(what_is_the_type),
-                received,
-            ),
-        );
-    }
-
-    let signature = get_signature("toBeTypeOf", "", false);
-    this.throw(
-        global,
-        signature,
-        format_args!(
             concat!(
                 "\n\n",
-                "Expected type: <green>{}<r>\n",
+                "Expected type: not <green>{}<r>\n",
                 "Received type: <red>\"{}\"<r>\nReceived value: <red>{}<r>\n",
             ),
             expected_str,
             bstr::BStr::new(what_is_the_type),
             received,
+        );
+    }
+
+    let signature = get_signature("toBeTypeOf", "", false);
+    throw!(
+        this,
+        global,
+        signature,
+        concat!(
+            "\n\n",
+            "Expected type: <green>{}<r>\n",
+            "Received type: <red>\"{}\"<r>\nReceived value: <red>{}<r>\n",
         ),
+        expected_str,
+        bstr::BStr::new(what_is_the_type),
+        received,
     )
 }
-
-// ported from: src/test_runner/expect/toBeTypeOf.zig

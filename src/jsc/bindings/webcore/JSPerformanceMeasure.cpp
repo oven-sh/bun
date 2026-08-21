@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSPerformanceMeasure.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
@@ -55,7 +54,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceMeasurePrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceMeasurePrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMeasurePrototype>(vm)) JSPerformanceMeasurePrototype(vm, globalObject, structure);
+        JSPerformanceMeasurePrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceMeasurePrototype))) JSPerformanceMeasurePrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -69,7 +68,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -93,11 +92,7 @@ template<> JSValue JSPerformanceMeasureDOMConstructor::prototypeForStructure(JSC
 
 template<> void JSPerformanceMeasureDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "PerformanceMeasure"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSPerformanceMeasure::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "PerformanceMeasure"_s, JSPerformanceMeasure::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -112,8 +107,8 @@ const ClassInfo JSPerformanceMeasurePrototype::s_info = { "PerformanceMeasure"_s
 void JSPerformanceMeasurePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceMeasure::info(), JSPerformanceMeasurePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceMeasure::info(), JSPerformanceMeasurePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSPerformanceMeasure::s_info = { "PerformanceMeasure"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMeasure) };
@@ -172,12 +167,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasure_detail, (JSGlobalObject * lexicalG
 
 JSC::GCClient::IsoSubspace* JSPerformanceMeasure::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceMeasure, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceMeasure.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMeasure = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceMeasure.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMeasure = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceMeasure, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceMeasure, m_subspaceForPerformanceMeasure));
 }
 
 template<typename Visitor>

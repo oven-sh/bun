@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
@@ -46,6 +46,43 @@ describe("basic autoinstall", () => {
       });
     }
   }
+});
+
+// In auto-install mode the project's own package.json is the lockfile's root
+// package (resolution tag `root`, not `npm`). With a name and an exact version
+// present, resolving any missing bare specifier used to read that resolution
+// through the npm union accessor: "assertion failed: self.tag == Tag::Npm".
+test("auto-install in a project whose package.json has a name and version", async () => {
+  const requests: string[] = [];
+  using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requests.push(new URL(req.url).pathname);
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  using dir = tempDir("autoinstall-root-name-version", {
+    "package.json": JSON.stringify({ name: "myapp", version: "1.0.0" }),
+    "index.js": `import "pkg-that-does-not-exist-anywhere";\n`,
+    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The resolver must get as far as asking the (local) registry for the
+  // missing package, then report it as missing instead of dying while
+  // re-parsing the project's own package.json.
+  expect(requests).toContain("/pkg-that-does-not-exist-anywhere");
+  expect(stderr).toContain("Cannot find package 'pkg-that-does-not-exist-anywhere'");
+  expect(exitCode).toBe(1);
 });
 
 test("--install=fallback to install missing packages", async () => {

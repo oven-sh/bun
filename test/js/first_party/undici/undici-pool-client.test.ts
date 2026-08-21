@@ -821,22 +821,234 @@ describe("undici", () => {
     });
   });
 
+  // ---- dispatch ----
+  describe("dispatch", () => {
+    it("Pool.dispatch delivers onConnect, onHeaders, onData, onComplete", async () => {
+      const pool = new Pool(hostUrl);
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        let connected = false;
+        let statusCode = 0;
+        const chunks: Buffer[] = [];
+
+        pool.dispatch(
+          { method: "GET", path: "/get" },
+          {
+            onConnect(abort) {
+              connected = true;
+              expect(typeof abort).toBe("function");
+            },
+            onHeaders(status, headers, resume) {
+              statusCode = status;
+              expect(Array.isArray(headers)).toBe(true);
+              return true;
+            },
+            onData(chunk) {
+              chunks.push(chunk);
+              return true;
+            },
+            onComplete(trailers) {
+              try {
+                expect(connected).toBe(true);
+                expect(statusCode).toBe(200);
+                const json = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                expect(json.url).toBe(`${hostUrl}/get`);
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            },
+            onError(err) {
+              reject(err);
+            },
+          },
+        );
+
+        await promise;
+      } finally {
+        await pool.close();
+      }
+    });
+
+    it("Client.dispatch delivers onConnect, onHeaders, onData, onComplete", async () => {
+      const client = new Client(hostUrl);
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const chunks: Buffer[] = [];
+
+        client.dispatch(
+          { method: "POST", path: "/post", body: "Hello from dispatch" },
+          {
+            onConnect() {},
+            onHeaders(status) {
+              expect(status).toBe(201);
+              return true;
+            },
+            onData(chunk) {
+              chunks.push(chunk);
+              return true;
+            },
+            onComplete() {
+              try {
+                const json = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                expect(json.data).toBe("Hello from dispatch");
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            },
+            onError(err) {
+              reject(err);
+            },
+          },
+        );
+
+        await promise;
+      } finally {
+        await client.close();
+      }
+    });
+
+    it("Agent.dispatch requires opts.origin and dispatches", async () => {
+      const agent = new Agent();
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const chunks: Buffer[] = [];
+
+        agent.dispatch(
+          { origin: hostUrl, method: "GET", path: "/get" },
+          {
+            onConnect() {},
+            onHeaders(status) {
+              expect(status).toBe(200);
+              return true;
+            },
+            onData(chunk) {
+              chunks.push(chunk);
+              return true;
+            },
+            onComplete() {
+              resolve();
+            },
+            onError(err) {
+              reject(err);
+            },
+          },
+        );
+
+        await promise;
+      } finally {
+        await agent.close();
+      }
+    });
+
+    it("Pool.dispatch throws/calls onError when closed", async () => {
+      const pool = new Pool(hostUrl);
+      await pool.close();
+
+      const { promise, resolve } = Promise.withResolvers<Error>();
+      pool.dispatch(
+        { method: "GET", path: "/get" },
+        {
+          onConnect() {},
+          onHeaders() { return true; },
+          onData() { return true; },
+          onComplete() {},
+          onError(err) {
+            resolve(err);
+          },
+        },
+      );
+
+      const err = await promise;
+      expect(err.message).toContain("closed");
+    });
+  });
+
+  // ---- Pool/Client stream & pipeline methods ----
+  describe("Pool and Client stream / pipeline methods", () => {
+    it("pool.stream streams response", async () => {
+      const pool = new Pool(hostUrl);
+      try {
+        const chunks: Buffer[] = [];
+        await pool.stream({ method: "GET", path: "/get" }, ({ statusCode }) => {
+          expect(statusCode).toBe(200);
+          return new Writable({
+            write(chunk, _enc, cb) {
+              chunks.push(chunk);
+              cb();
+            },
+          });
+        });
+        const json = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        expect(json.url).toBe(`${hostUrl}/get`);
+      } finally {
+        await pool.close();
+      }
+    });
+
+    it("client.stream streams response", async () => {
+      const client = new Client(hostUrl);
+      try {
+        const chunks: Buffer[] = [];
+        await client.stream({ method: "GET", path: "/get" }, ({ statusCode }) => {
+          expect(statusCode).toBe(200);
+          return new Writable({
+            write(chunk, _enc, cb) {
+              chunks.push(chunk);
+              cb();
+            },
+          });
+        });
+        const json = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        expect(json.url).toBe(`${hostUrl}/get`);
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  // ---- Edge case regressions ----
+  describe("edge cases and input validations", () => {
+    it("rejects empty string body on GET / HEAD requests", async () => {
+      await expect(undici.request(`${hostUrl}/get`, { method: "GET", body: "" })).rejects.toThrow("Body not allowed");
+      await expect(undici.request(`${hostUrl}/head`, { method: "HEAD", body: "" })).rejects.toThrow("Body not allowed");
+    });
+
+    it("does not mutate original URL instance when query options are passed", async () => {
+      const urlObj = new URL(`${hostUrl}/get?original=yes`);
+      const originalSearch = urlObj.search;
+      await undici.request(urlObj, { query: { extra: "param" } });
+      expect(urlObj.search).toBe(originalSearch);
+    });
+
+    it("stream throws synchronous TypeError when factory is not a function", () => {
+      expect(() => {
+        undici.stream(`${hostUrl}/get`, {} as any, null as any);
+      }).toThrow(TypeError);
+    });
+  });
+
   // ---- Exports ----
   describe("exports", () => {
     it("should export all expected classes and functions", () => {
       expect(undici.Pool).toBeDefined();
       expect(undici.Client).toBeDefined();
       expect(undici.Agent).toBeDefined();
+      expect(undici.Dispatcher).toBeDefined();
       expect(undici.request).toBeDefined();
       expect(undici.stream).toBeDefined();
+      expect(undici.dispatch).toBeDefined();
       expect(typeof undici.Pool).toBe("function");
       expect(typeof undici.Client).toBe("function");
       expect(typeof undici.Agent).toBe("function");
+      expect(typeof undici.Dispatcher).toBe("function");
       expect(typeof undici.request).toBe("function");
       expect(typeof undici.stream).toBe("function");
       expect(typeof undici.pipeline).toBe("function");
       expect(typeof undici.connect).toBe("function");
       expect(typeof undici.upgrade).toBe("function");
+      expect(typeof undici.dispatch).toBe("function");
     });
   });
 });

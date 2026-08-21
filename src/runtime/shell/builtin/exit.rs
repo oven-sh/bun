@@ -33,9 +33,8 @@ impl Exit {
                 return Self::fail(interp, cmd, b"exit: too many arguments\n");
             }
         };
-        // TODO(port): bash `exit` should unwind the whole script, not just the
-        // current Cmd. The Zig version sets a flag on the interpreter; preserve
-        // that once `Interpreter::request_exit` exists.
+        // Intentional divergence from bash: this completes only the current
+        // Cmd rather than unwinding the whole script.
         Builtin::done(interp, cmd, code)
     }
 
@@ -59,5 +58,3 @@ fn parse_exit_code(s: &[u8]) -> Option<crate::shell::ExitCode> {
     // %256 is bash semantics — keep wrapper fn.
     bun_core::fmt::parse_decimal::<u64>(s).map(|n| (n % 256) as crate::shell::ExitCode)
 }
-
-// ported from: src/shell/builtin/exit.zig

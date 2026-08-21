@@ -1,0 +1,8 @@
+{
+  "name": "pnpm-root",
+  "version": "1.0.0",
+  "dependencies": {
+    "a": "",
+    "@scope/x": ""
+  }
+}

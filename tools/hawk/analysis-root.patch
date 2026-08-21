@@ -1,0 +1,17 @@
+diff --git a/src/runtime/Cargo.toml b/src/runtime/Cargo.toml
+--- a/src/runtime/Cargo.toml
++++ b/src/runtime/Cargo.toml
+@@ -10,7 +10,12 @@
+ # rather than an rlib consumed by a separate shim crate, means rustc never
+ # encodes crate metadata for this (by far the largest) crate and cargo never
+ # re-bundles every rlib into a second archive on each rebuild.
+-crate-type = ["staticlib"]
++crate-type = ["staticlib", "rlib"]
++
++# hawk dead-code linter smoke test: throwaway analysis root. See ../../hawk.toml.
++[[bin]]
++name = "bun_hawk_root"
++path = "hawk_root.rs"
+ 
+ [lints]
+ workspace = true

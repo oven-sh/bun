@@ -77,5 +77,5 @@ if (common.hasIPv6) {
 
   assert.throws(() => {
     socket.address();
-  }, /^Error: getsockname EBADF$|Socket is not running/);
+  }, /^Error: getsockname EBADF$/);
 }

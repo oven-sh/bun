@@ -7,35 +7,32 @@ use bun_ast::server_component_boundary;
 use bun_ast::symbol;
 use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
 use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayList, VecExt};
-use bun_core::PathString;
+use bun_core::RawSlice;
 
 use crate::IndexStringMap::IndexStringMap;
 use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, import_record, index, part};
 // `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
-// PORT NOTE: `BundledAstColumns` is emitted by ``
-// on `BundledAst`; un-gating here is paired with that derive landing in
-// `crate::bundled_ast` (same dependency `scanImportsAndExports.rs`
-// already imports as `BundledAstField`).
+// Note: `BundledAstColumns` is emitted by `bun_collections::multi_array_columns!`
+// on `BundledAst` in `crate::bundled_ast` (the same macro output
+// `scanImportsAndExports.rs` already imports as `BundledAstField`).
 bun_core::declare_scope!(LinkerGraph, visible);
 
 pub mod entry_point {
     use bun_collections::MultiArrayList;
-    use bun_core::PathString;
+    use bun_core::RawSlice;
 
     #[derive(Default)]
     pub struct EntryPoint {
-        pub output_path: PathString,
+        pub output_path: RawSlice<u8>,
         pub source_index: crate::IndexInt,
-        pub output_path_was_auto_generated: bool,
     }
 
     pub type List = MultiArrayList<EntryPoint>;
 
     bun_collections::multi_array_columns! {
         pub trait EntryPointColumns for EntryPoint {
-            output_path: PathString,
+            output_path: RawSlice<u8>,
             source_index: crate::IndexInt,
-            output_path_was_auto_generated: bool,
         }
     }
 
@@ -50,23 +47,14 @@ pub mod entry_point {
         None,
         UserSpecified,
         DynamicImport,
-        Html,
     }
     impl Kind {
         #[inline]
-        pub fn is_entry_point(self) -> bool {
+        pub(crate) fn is_entry_point(self) -> bool {
             self != Self::None
         }
         #[inline]
-        pub fn is_user_specified_entry_point(self) -> bool {
-            self == Self::UserSpecified
-        }
-        #[inline]
-        pub fn is_server_entry_point(self) -> bool {
-            self == Self::UserSpecified
-        }
-        #[inline]
-        pub fn output_kind(self) -> crate::options::OutputKind {
+        pub(crate) fn output_kind(self) -> crate::options::OutputKind {
             match self {
                 Self::UserSpecified => crate::options::OutputKind::EntryPoint,
                 _ => crate::options::OutputKind::Chunk,
@@ -84,8 +72,8 @@ pub mod js_meta {
     use crate::{ImportTracker, Index, WrapKind};
 
     pub struct ImportData {
-        pub re_exports: AstVec<Dependency>,
-        pub data: ImportTracker,
+        pub(crate) re_exports: AstVec<Dependency>,
+        pub(crate) data: ImportTracker,
     }
     impl Default for ImportData {
         fn default() -> Self {
@@ -98,8 +86,8 @@ pub mod js_meta {
     pub(crate) type ImportToBind = ImportData;
 
     pub struct ExportData {
-        pub potentially_ambiguous_export_star_refs: AstVec<ImportData>,
-        pub data: ImportTracker,
+        pub(crate) potentially_ambiguous_export_star_refs: AstVec<ImportData>,
+        pub(crate) data: ImportTracker,
     }
     impl Default for ExportData {
         fn default() -> Self {
@@ -120,13 +108,13 @@ pub mod js_meta {
 
     #[derive(Clone, Copy, Default)]
     pub struct Flags {
-        pub is_async_or_has_async_dependency: bool,
-        pub needs_exports_variable: bool,
-        pub force_include_exports_for_entry_point: bool,
-        pub needs_export_symbol_from_runtime: bool,
-        pub did_wrap_dependencies: bool,
-        pub needs_synthetic_default_export: bool,
-        pub wrap: WrapKind,
+        pub(crate) is_async_or_has_async_dependency: bool,
+        pub(crate) needs_exports_variable: bool,
+        pub(crate) force_include_exports_for_entry_point: bool,
+        pub(crate) needs_export_symbol_from_runtime: bool,
+        pub(crate) did_wrap_dependencies: bool,
+        pub(crate) needs_synthetic_default_export: bool,
+        pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;
 
@@ -174,11 +162,6 @@ pub mod js_meta {
             flags: Flags,
         }
     }
-
-    impl JSMeta {
-        pub type Flags = Flags;
-        pub type Wrap = crate::WrapKind;
-    }
 }
 
 pub use entry_point::EntryPoint;
@@ -188,7 +171,7 @@ pub use js_meta::{
 
 pub struct LinkerGraph<'a> {
     pub files: FileList,
-    pub files_live: BitSet,
+    pub(crate) files_live: BitSet,
     /// Per-part liveness — `parts_live[source_index].is_set(part_index)`.
     /// One bitset per source file, sized to that file's `parts.len()`.
     /// Populated by `tree_shaking_and_code_splitting` (regular link) or by
@@ -196,23 +179,23 @@ pub struct LinkerGraph<'a> {
     /// read-only thereafter. Replaces the former `Part::is_live: bool` so the
     /// tree-shaking visited-check doesn't pull a full 272-byte `Part` into
     /// cache for a 1-bit answer.
-    pub parts_live: Vec<AutoBitSet>,
-    pub entry_points: entry_point::List,
-    pub symbols: symbol::Map,
+    pub(crate) parts_live: Vec<AutoBitSet>,
+    pub(crate) entry_points: entry_point::List,
+    pub(crate) symbols: symbol::Map,
 
-    // PORT NOTE: lifetime-erased. Zig stores `std.mem.Allocator`; the Rust
+    // Note: lifetime-erased. The
     // arena is owned by `BundleV2` and outlives every `LinkerGraph` — kept as
     // a raw pointer (matching `LinkerContext.parse_graph: *mut Graph`) so the
     // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
-    // grow a `'bump` parameter yet. TODO(refactor): thread `'bump` once `Chunk`
-    // and `html_import_manifest` gain lifetimes.
-    pub bump: bun_ptr::BackRef<Arena>,
+    // grow a `'bump` parameter; threading `'bump` would require `Chunk` and
+    // `html_import_manifest` to gain lifetimes first.
+    pub(crate) bump: bun_ptr::BackRef<Arena>,
 
-    pub code_splitting: bool,
+    pub(crate) code_splitting: bool,
 
     // This is an alias from Graph
     // it is not a clone!
-    pub ast: MultiArrayList<JSAst<'a>>,
+    pub(crate) ast: MultiArrayList<JSAst<'a>>,
     pub meta: MultiArrayList<JSMeta>,
 
     /// We should avoid traversing all files in the bundle, because the linker
@@ -222,21 +205,21 @@ pub struct LinkerGraph<'a> {
     /// If you need to iterate over all files in the linking operation, iterate
     /// over this array. This array is also sorted in a deterministic ordering
     /// to help ensure deterministic builds (source indices are random).
-    pub reachable_files: Vec<Index>,
+    pub(crate) reachable_files: Vec<Index>,
 
     /// Index from `.parse_graph.input_files` to index in `.files`
-    pub stable_source_indices: Vec<u32>,
+    pub(crate) stable_source_indices: Vec<u32>,
 
-    pub is_scb_bitset: BitSet,
+    pub(crate) is_scb_bitset: BitSet,
 
     /// This is for cross-module inlining of detected inlinable constants
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
-    pub ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
-// linking (matches Zig, which has no Send/Sync). What makes `&LinkerGraph`
+// linking. What makes `&LinkerGraph`
 // sound to hold concurrently:
 //
 // - `bump: *const Arena` is a backref into `BundleV2`; the arena is frozen
@@ -268,31 +251,10 @@ unsafe impl Sync for LinkerGraph<'_> {}
 impl<'a> LinkerGraph<'a> {
     /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
-    pub fn arena(&self) -> &Arena {
+    pub(crate) fn arena(&self) -> &Arena {
         // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the
         // lifetime of the link step that constructed this LinkerGraph.
         self.bump.get()
-    }
-}
-
-impl<'a> LinkerGraph<'a> {
-    pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
-        // TODO(port): narrow error set
-        Ok(LinkerGraph {
-            files: FileList::default(),
-            files_live: BitSet::init_empty(file_count)?,
-            parts_live: Vec::new(),
-            entry_points: entry_point::List::default(),
-            symbols: symbol::Map::default(),
-            bump: bun_ptr::BackRef::new(bump),
-            code_splitting: false,
-            ast: MultiArrayList::default(),
-            meta: MultiArrayList::default(),
-            reachable_files: Vec::new(),
-            stable_source_indices: Vec::new(),
-            is_scb_bitset: BitSet::default(),
-            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
-        })
     }
 }
 
@@ -304,8 +266,8 @@ impl Default for LinkerGraph<'_> {
             parts_live: Vec::new(),
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
-            // PORT NOTE: `bump` is a backref assigned in `init`/`LinkerContext::load`;
-            // dangling sentinel mirrors Zig's `undefined` (never read before assignment).
+            // Note: `bump` is a backref assigned in `init`/`LinkerContext::load`;
+            // dangling sentinel (never read before assignment).
             bump: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
             code_splitting: false,
             ast: MultiArrayList::default(),
@@ -329,14 +291,14 @@ impl Default for LinkerGraph<'_> {
 // thin forwarders for call sites that don't have a split in hand.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
+fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
     named_exports[Index::RUNTIME.get() as usize]
         .get(name)
         .expect("runtime function must be a named export of the runtime module")
         .ref_
 }
 
-pub fn generate_new_symbol(
+pub(crate) fn generate_new_symbol(
     symbols: &mut symbol::Map,
     module_scopes: &mut [bun_ast::Scope],
     source_index: u32,
@@ -345,21 +307,18 @@ pub fn generate_new_symbol(
 ) -> Ref {
     let source_symbols = &mut symbols.symbols_for_source.slice_mut()[source_index as usize];
 
-    // PORT NOTE: Zig built `Ref.init(..)` then assigned `ref.tag = .symbol`.
-    // The Rust `Ref` is a packed `u64` with no public `tag` field, so use
-    // the `Ref::new` constructor that takes the tag explicitly.
     let ref_ = Ref::new(
-        source_symbols.len() as u32, // @truncate (u32 → u31 in pack())
-        source_index,                // @truncate
+        source_symbols.len() as u32, // narrows to u31 in pack()
+        source_index,
         RefTag::Symbol,
     );
 
     // TODO: will this crash on resize due to using threadlocal mimalloc heap?
     source_symbols.push(Symbol {
         kind,
-        // PORT NOTE: `Symbol.original_name` is a `StoreStr` —
-        // arena-owned slice whose lifetime is erased (matches the Zig
-        // `[]const u8`); caller guarantees it outlives the symbol table.
+        // Note: `Symbol.original_name` is a `StoreStr` —
+        // arena-owned slice whose lifetime is erased;
+        // caller guarantees it outlives the symbol table.
         original_name: bun_ast::StoreStr::new(original_name),
         ..Default::default()
     });
@@ -368,7 +327,7 @@ pub fn generate_new_symbol(
     ref_
 }
 
-pub(crate) fn top_level_symbol_to_parts<'a>(
+fn top_level_symbol_to_parts<'a>(
     top_level_symbol_to_parts_overlay: &'a [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &'a [bundled_ast::TopLevelSymbolToParts],
     id: u32,
@@ -383,25 +342,18 @@ pub(crate) fn top_level_symbol_to_parts<'a>(
     &[]
 }
 
-pub(crate) fn add_part_to_file(
+fn add_part_to_file(
     parts: &mut [part::List<'_>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
     id: u32,
     part: Part,
 ) -> Result<u32, bun_alloc::AllocError> {
-    let part_id = parts[id as usize].len() as u32; // @truncate (u32)
+    let part_id = parts[id as usize].len() as u32;
     parts[id as usize].push(part);
 
-    // PORT NOTE: borrowck reshape. The Zig closure simultaneously holds
-    //   * `&mut parts[part_id].declared_symbols`   (column `parts` of `ast`)
-    //   * `&meta.top_level_symbol_to_parts_overlay[id]` (`meta`)
-    //   * `&ast.top_level_symbols_to_parts[id]`    (another `ast` column)
-    // and additionally caches `*?*TopLevelSymbolToParts` across calls.
-    // The two `ast` columns now arrive pre-split, so no detach/reattach is
-    // needed. The overlay-pointer cache is dropped — re-index `meta` each
-    // call (O(1); the cache was a Zig micro-opt that does not survive
-    // Stacked Borrows).
+    // Note: the two `ast` columns arrive pre-split, so no detach/reattach is
+    // needed; re-index `meta` on each call (O(1)).
     let declared_symbols: &mut DeclaredSymbolList =
         &mut parts[id as usize][part_id as usize].declared_symbols;
 
@@ -435,7 +387,7 @@ pub(crate) fn add_part_to_file(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_symbol_import_and_use(
+pub(crate) fn generate_symbol_import_and_use(
     parts: &mut [part::List<'_>],
     ast_flags: &mut [bundled_ast::Flags],
     exports_ref: &[Ref],
@@ -447,7 +399,7 @@ pub fn generate_symbol_import_and_use(
     part_index: u32,
     ref_: Ref,
     use_count: u32,
-    // PORT NOTE: callers are split between `crate::Index` (options_types)
+    // Note: callers are split between `crate::Index` (options_types)
     // and the structurally identical `bun_ast::Index` until the two newtypes
     // unify. Accept either via `Into` and normalize once.
     source_index_to_import_from: impl Into<Index>,
@@ -514,18 +466,18 @@ pub fn generate_symbol_import_and_use(
     debug_assert_eq!(part_ids.len(), new_dependencies.len());
     for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
         *dependency = Dependency {
-            // PORT NOTE: `Dependency.source_index` is the structurally
+            // Note: `Dependency.source_index` is the structurally
             // identical `bun_ast::Index`; convert by value until the
             // two `Index` newtypes unify.
             source_index: bun_ast::Index::init(source_index_to_import_from.get()),
-            part_index: *part_id, // @truncate (already u32)
+            part_index: *part_id, // already u32
         };
     }
     Ok(())
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub fn runtime_function(&self, name: &[u8]) -> Ref {
+    pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
         runtime_function(self.ast.items_named_exports(), name)
     }
 
@@ -533,8 +485,9 @@ impl<'a> LinkerGraph<'a> {
     /// produced by the symbol table itself). Thin wrapper over
     /// [`symbol::Map::get_const`]; callers previously open-coded
     /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
+    #[cfg(debug_assertions)]
     #[inline]
-    pub fn symbol(&self, ref_: Ref) -> &Symbol {
+    pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
         self.symbols
             .get_const(ref_)
             .expect("infallible: ref in symbol table")
@@ -554,9 +507,10 @@ impl<'a> LinkerGraph<'a> {
     /// `unsafe { &mut *get(r) }` call-site obligation.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
-        // SAFETY: see `symbol` for liveness/validity; caller guarantees the
-        // mutated slot is disjoint from any other borrow held at the call site.
+    pub(crate) unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
+        // SAFETY: `ref_` was produced by this symbol table, so `get` is
+        // infallible and points at a live slot; caller guarantees the mutated
+        // slot is disjoint from any other borrow held at the call site.
         unsafe {
             &mut *self
                 .symbols
@@ -565,7 +519,7 @@ impl<'a> LinkerGraph<'a> {
         }
     }
 
-    pub fn generate_new_symbol(
+    pub(crate) fn generate_new_symbol(
         &mut self,
         source_index: u32,
         kind: symbol::Kind,
@@ -580,7 +534,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn generate_runtime_symbol_import_and_use(
+    pub(crate) fn generate_runtime_symbol_import_and_use(
         &mut self,
         source_index: index::Int,
         entry_point_part_index: Index,
@@ -607,7 +561,11 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
+    pub(crate) fn add_part_to_file(
+        &mut self,
+        id: u32,
+        part: Part,
+    ) -> Result<u32, bun_alloc::AllocError> {
         let ast = self.ast.split_mut();
         add_part_to_file(
             ast.parts,
@@ -618,7 +576,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn generate_symbol_import_and_use(
+    pub(crate) fn generate_symbol_import_and_use(
         &mut self,
         source_index: u32,
         part_index: u32,
@@ -644,7 +602,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn top_level_symbol_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
+    pub(crate) fn top_level_symbol_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
         top_level_symbol_to_parts(
             self.meta.items_top_level_symbol_to_parts_overlay(),
             self.ast.items_top_level_symbols_to_parts(),
@@ -655,15 +613,14 @@ impl<'a> LinkerGraph<'a> {
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub fn load(
+    pub(crate) fn load(
         &mut self,
         entry_points: &[Index],
         sources: &[bun_ast::Source],
         server_component_boundaries: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), crate::Error> {
         let scb = server_component_boundaries.slice();
         self.files.set_capacity(sources.len())?;
         self.files.zero();
@@ -671,7 +628,7 @@ impl<'a> LinkerGraph<'a> {
         // SAFETY: capacity reserved above; columns zeroed by `zero()`.
         unsafe { self.files.set_len(sources.len()) };
 
-        // PORT NOTE: `Slice<T>` caches raw column pointers and does not borrow
+        // Note: `Slice<T>` caches raw column pointers and does not borrow
         // `self.files`, so the `split_mut()` borrows (tied to the local
         // `files_slice`) can stay live across other `&mut self.*` accesses
         // below. The columns are not reallocated during `load`.
@@ -690,18 +647,16 @@ impl<'a> LinkerGraph<'a> {
             // SAFETY: capacity reserved; columns initialized below.
             unsafe { self.entry_points.set_len(entry_points.len()) };
 
-            // PORT NOTE: borrowck reshape — Zig held `source_indices` /
-            // `path_strings` / `output_path_was_auto_generated` simultaneously
-            // (disjoint columns of the same `MultiArrayList`). `split_mut()`
-            // hands out all three at once; `self.entry_points` is not
+            // Note: `source_indices` / `path_strings` are disjoint columns of
+            // the same `MultiArrayList`. `split_mut()` hands out both at once;
+            // `self.entry_points` is not
             // reallocated until after `path_strings`/`source_indices` are done
             // with (the next `append_assume_capacity` is within the
             // pre-reserved capacity, so no realloc).
             let mut ep_slice = self.entry_points.slice();
             let ep_cols = ep_slice.split_mut();
             let source_indices: &mut [index::Int] = ep_cols.source_index;
-            let path_strings: &mut [PathString] = ep_cols.output_path;
-            ep_cols.output_path_was_auto_generated.fill(false);
+            let path_strings: &mut [RawSlice<u8>] = ep_cols.output_path;
 
             debug_assert_eq!(entry_points.len(), path_strings.len());
             debug_assert_eq!(entry_points.len(), source_indices.len());
@@ -711,16 +666,14 @@ impl<'a> LinkerGraph<'a> {
                 .zip(source_indices.iter_mut())
             {
                 let source = &sources[i.get() as usize];
-                if cfg!(debug_assertions) {
-                    debug_assert!(source.index.0 == i.get());
-                }
+                debug_assert!(source.index.0 == i.get());
                 entry_point_kinds[source.index.0 as usize] = entry_point::Kind::UserSpecified;
 
                 // Check if this entry point has an original name (from virtual entry resolution)
                 if let Some(original_name) = entry_point_original_names.get(i.get()) {
-                    *path_string = PathString::init(original_name);
+                    *path_string = RawSlice::new(original_name);
                 } else {
-                    *path_string = PathString::init(source.path.text);
+                    *path_string = RawSlice::new(source.path.text);
                 }
 
                 *source_index = source.index.0;
@@ -739,19 +692,13 @@ impl<'a> LinkerGraph<'a> {
 
                 self.entry_points.append_assume_capacity(EntryPoint {
                     source_index: id,
-                    output_path: PathString::init(source.path.text),
-                    output_path_was_auto_generated: true,
+                    output_path: RawSlice::new(source.path.text),
                 });
             }
 
             let import_records_len = self.ast.items_import_records().len();
             self.meta.set_capacity(import_records_len)?;
-            // PORT NOTE: Zig does `meta.len = ast.len; meta.zero()` — a raw
-            // memset(0) is the valid empty state for Zig's unmanaged
-            // containers. Rust `Vec`/`Box` require a non-null dangling
-            // pointer when empty, so zeroed bytes violate their invariants
-            // (`slice::from_raw_parts` null-check trips on first read). Fill
-            // each slot with `Default` instead.
+            // Fill each slot with `Default`.
             let ast_len = self.ast.len();
             debug_assert!(ast_len <= import_records_len);
             for _ in 0..ast_len {
@@ -823,8 +770,7 @@ impl<'a> LinkerGraph<'a> {
         // Setup files
         {
             // set it to max value so that if we access an invalid one, it crashes
-            // PORT NOTE: Zig used `@memset(sliceAsBytes(...), 255)` to fill raw
-            // bytes; here we fill with `Index::INVALID` whose bytes are all
+            // Note: fill with `Index::INVALID` whose bytes are all
             // 0xFF (`#[repr(transparent)]` over `u32::MAX`).
             let stable_source_indices = self
                 .arena()
@@ -842,9 +788,7 @@ impl<'a> LinkerGraph<'a> {
         }
 
         {
-            // PORT NOTE: Zig built a borrowed `Symbol.NestedList` over the
-            // `ast.items(.symbols)` column then `clone`d it (memcpy). The Rust
-            // `Vec::clone` requires `T: Clone` which `Symbol` does not
+            // Note: `Vec::clone` requires `T: Clone` which `Symbol` does not
             // derive (it carries a raw `*const [u8]`), so spell out the
             // bitwise copy explicitly — `Symbol` has no `Drop` impl.
             let src_symbols: &[symbol::List] = self.ast.items_symbols();
@@ -864,25 +808,6 @@ impl<'a> LinkerGraph<'a> {
         }
 
         // TODO: const_values
-        // {
-        //     var const_values = this.const_values;
-        //     var count: usize = 0;
-        //
-        //     for (this.ast.items(.const_values)) |const_value| {
-        //         count += const_value.count();
-        //     }
-        //
-        //     if (count > 0) {
-        //         try const_values.ensureTotalCapacity(this.arena, count);
-        //         for (this.ast.items(.const_values)) |const_value| {
-        //             for (const_value.keys(), const_value.values()) |key, value| {
-        //                 const_values.putAssumeCapacityNoClobber(key, value);
-        //             }
-        //         }
-        //     }
-        //
-        //     this.const_values = const_values;
-        // }
 
         {
             let mut count: usize = 0;
@@ -894,10 +819,7 @@ impl<'a> LinkerGraph<'a> {
                 for ts_enums in self.ast.items_ts_enums().iter() {
                     debug_assert_eq!(ts_enums.keys().len(), ts_enums.values().len());
                     for (key, value) in ts_enums.keys().iter().zip(ts_enums.values().iter()) {
-                        // PERF(port): was assume_capacity_no_clobber
-                        // PORT NOTE: Zig copied the inner `StringHashMap` by
-                        // value (shallow struct copy). Rust clones the backing
-                        // `HashMap`; the per-file maps are not mutated after
+                        // Note: the per-file maps are not mutated after
                         // this point so aliasing is not required.
                         self.ts_enums.put_assume_capacity(*key, value.clone());
                     }
@@ -919,7 +841,6 @@ impl<'a> LinkerGraph<'a> {
                 .expect("unreachable");
             debug_assert_eq!(src.keys().len(), src.values().len());
             for (key, value) in src.keys().iter().zip(src.values().iter()) {
-                // PERF(port): was assume_capacity_no_clobber
                 resolved.put_assume_capacity(
                     key,
                     js_meta::ResolvedExport {
@@ -937,7 +858,7 @@ impl<'a> LinkerGraph<'a> {
         Ok(())
     }
 
-    /// Port of `LinkerGraph.zig:takeAstOwnership`. `clone_ast` left each
+    /// `clone_ast` left each
     /// `PartList`/import-record list with its allocator handle pointing at
     /// the per-worker `mi_heap` that built it; re-tag to `heap` (the
     /// bundle-thread arena) so linker-side `add_part_to_file` pushes call
@@ -945,14 +866,13 @@ impl<'a> LinkerGraph<'a> {
     /// owns `heap`. Zero-copy: only files the linker actually grows pay a
     /// (lazy, mimalloc-internal) cross-heap migration on first realloc.
     ///
-    /// Zig is a release no-op because `BabyList` passes the allocator at each
-    /// `append` call site; the Rust `Vec<T, &Arena>` stores it, so swap here.
-    /// Zig also transfers `part.dependencies` and `symbols`; the Rust port's
+    /// `Vec<T, &Arena>` stores its allocator, so swap it here.
+    /// `part.dependencies` and `symbols` need no transfer:
     /// `DependencyList` is `Vec<_, AstAlloc>` (linker-side grows just route
     /// through whichever thread's `AstAlloc` state is active — `AstAlloc` is a
     /// ZST, so there is nothing to retag) and new symbols feed through
-    /// `self.symbols: symbol::Map` (global) — neither needs transfer here.
-    pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
+    /// `self.symbols: symbol::Map` (global).
+    pub(crate) fn take_ast_ownership(&mut self, heap: &'a Arena) {
         for v in self.ast.items_import_records_mut() {
             bun_alloc::transfer_arena(v, heap);
         }
@@ -961,77 +881,87 @@ impl<'a> LinkerGraph<'a> {
         }
     }
 
-    pub fn propagate_async_dependencies(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        struct State<'a> {
-            visited: AutoBitSet,
-            import_records: &'a [import_record::List<'a>],
-            flags: &'a mut [js_meta::Flags],
+    pub(crate) fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
+        // Explicit-stack postorder DFS (was per-edge recursive). A parent's
+        // flag is read from each child after that child's subtree is fully
+        // processed; `AfterChild` is the resumption point for that read.
+        #[derive(Copy, Clone)]
+        enum Frame {
+            Enter(usize),
+            AfterChild { parent: usize, child: usize },
         }
 
-        impl<'a> State<'a> {
-            pub(crate) fn visit_all(&mut self) {
-                for i in 0..self.import_records.len() {
-                    self.visit(i);
-                }
+        let import_records = self.ast.items_import_records();
+        let flags = self.meta.items_flags_mut();
+        let len = import_records.len();
+        let mut visited = AutoBitSet::init_empty(self.ast.len())?;
+        let mut stack: Vec<Frame> = Vec::new();
+
+        for root in 0..len {
+            if visited.is_set(root) {
+                continue;
             }
+            stack.push(Frame::Enter(root));
 
-            fn visit(&mut self, index: usize) {
-                if self.visited.is_set(index) {
-                    return;
-                }
-                self.visited.set(index);
-                if self.flags[index].is_async_or_has_async_dependency {
-                    return;
-                }
-
-                for import_record in self.import_records[index].as_slice().iter() {
-                    match import_record.kind {
-                        ImportKind::Stmt => {}
-
-                        // Any use of `import()` that makes the parent async will necessarily use
-                        // top-level await, so this will have already been detected by `validateTLA`,
-                        // and `is_async_or_has_async_dependency` will already be true.
-                        //
-                        // We don't want to process these imports here because `import()` can appear in
-                        // non-top-level contexts (like inside an async function) or in contexts that
-                        // don't use `await`, which don't necessarily make the parent module async.
-                        ImportKind::Dynamic => continue,
-
-                        // `require()` cannot import async modules.
-                        ImportKind::Require | ImportKind::RequireResolve => continue,
-
-                        // Entry points; not imports from JS
-                        ImportKind::EntryPointRun | ImportKind::EntryPointBuild => continue,
-                        // CSS imports
-                        ImportKind::At
-                        | ImportKind::AtConditional
-                        | ImportKind::Url
-                        | ImportKind::Composes => continue,
-                        // Other non-JS imports
-                        ImportKind::HtmlManifest | ImportKind::Internal => continue,
+            while let Some(frame) = stack.pop() {
+                match frame {
+                    Frame::AfterChild { parent, child } => {
+                        if flags[child].is_async_or_has_async_dependency {
+                            flags[parent].is_async_or_has_async_dependency = true;
+                        }
                     }
+                    Frame::Enter(index) => {
+                        if visited.is_set(index) {
+                            continue;
+                        }
+                        visited.set(index);
+                        if flags[index].is_async_or_has_async_dependency {
+                            continue;
+                        }
 
-                    let import_index: usize = import_record.source_index.get() as usize;
-                    if import_index >= self.import_records.len() {
-                        continue;
-                    }
-                    self.visit(import_index);
+                        let mark = stack.len();
+                        for import_record in import_records[index].as_slice().iter() {
+                            match import_record.kind {
+                                ImportKind::Stmt => {}
 
-                    if self.flags[import_index].is_async_or_has_async_dependency {
-                        self.flags[index].is_async_or_has_async_dependency = true;
-                        break;
+                                // Any use of `import()` that makes the parent async will necessarily use
+                                // top-level await, so this will have already been detected by `validateTLA`,
+                                // and `is_async_or_has_async_dependency` will already be true.
+                                //
+                                // We don't want to process these imports here because `import()` can appear in
+                                // non-top-level contexts (like inside an async function) or in contexts that
+                                // don't use `await`, which don't necessarily make the parent module async.
+                                ImportKind::Dynamic => continue,
+
+                                // `require()` cannot import async modules.
+                                ImportKind::Require | ImportKind::RequireResolve => continue,
+
+                                // Entry points; not imports from JS
+                                ImportKind::EntryPointRun | ImportKind::EntryPointBuild => continue,
+                                // CSS imports
+                                ImportKind::At
+                                | ImportKind::AtConditional
+                                | ImportKind::Url
+                                | ImportKind::Composes => continue,
+                                // Other non-JS imports
+                                ImportKind::HtmlManifest | ImportKind::Internal => continue,
+                            }
+
+                            let import_index: usize = import_record.source_index.get() as usize;
+                            if import_index >= len {
+                                continue;
+                            }
+                            stack.push(Frame::Enter(import_index));
+                            stack.push(Frame::AfterChild {
+                                parent: index,
+                                child: import_index,
+                            });
+                        }
+                        stack[mark..].reverse();
                     }
                 }
             }
         }
-
-        let mut state = State {
-            visited: AutoBitSet::init_empty(self.ast.len())?,
-            import_records: self.ast.items_import_records(),
-            flags: self.meta.items_flags_mut(),
-        };
-        state.visit_all();
         Ok(())
     }
 }
@@ -1039,11 +969,11 @@ impl<'a> LinkerGraph<'a> {
 pub struct File {
     pub entry_bits: AutoBitSet,
 
-    pub input_file: Index,
+    pub(crate) input_file: Index,
 
     /// The minimum number of links in the module graph to get from an entry point
     /// to this file
-    pub distance_from_entry_point: u32,
+    pub(crate) distance_from_entry_point: u32,
 
     /// This file is an entry point if and only if this is not ".none".
     /// Note that dynamically-imported files are allowed to also be specified by
@@ -1063,21 +993,10 @@ pub struct File {
     pub quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
 }
 
-impl File {
-    pub fn is_entry_point(&self) -> bool {
-        self.entry_point_kind.is_entry_point()
-    }
-
-    pub fn is_user_specified_entry_point(&self) -> bool {
-        self.entry_point_kind.is_user_specified_entry_point()
-    }
-}
-
 impl Default for File {
     fn default() -> Self {
         Self {
-            // PORT NOTE: Zig had `entry_bits: AutoBitSet = undefined` — using an
-            // empty static-arm bitset here; load() overwrites before any read.
+            // Note: empty static-arm bitset; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             input_file: Index::source(0u32),
             distance_from_entry_point: u32::MAX,
@@ -1102,5 +1021,3 @@ bun_collections::multi_array_columns! {
         quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
     }
 }
-
-// ported from: src/bundler/LinkerGraph.zig

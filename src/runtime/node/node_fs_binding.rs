@@ -14,19 +14,13 @@ use crate::node::fs::{
 pub(crate) type NodeFSFunction =
     fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
-// Zig: `const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);`
-// PORT NOTE: Rust has no `DeclEnum`/`@field`/`@typeInfo` reflection. The
-// (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples that the
-// Zig comptime block reflected per `function_name` are spelled out once in
-// `node_fs.rs` (the `NodeFS::dispatch` table + `async_::*` aliases) and reused
-// here via the `node_fs_bindings!` macro at the bottom of this file.
+// The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
+// spelled out once in `node_fs.rs` (the `NodeFS::dispatch` table +
+// `async_::*` aliases) and reused here via the `node_fs_bindings!` macro at
+// the bottom of this file.
 
 /// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
 /// Async calls use a thread pool.
-// Zig: `fn Bindings(comptime function_name) type { return struct { runSync, runAsync } }`
-// PORT NOTE: collapsed to two free generic fns; the `comptime function_name`
-// becomes a `const F: NodeFSFunctionEnum`, and the reflected `Arguments` /
-// return type become `A: FsArgument` / `R: FsReturn`.
 
 /// `Bindings(FunctionEnum).runSync`.
 fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
@@ -82,9 +76,8 @@ fn run_async<A: FsArgument>(
     let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
     slice.will_be_async = true;
 
-    // Zig uses a `deinit: bool` flag + conditional `defer` to keep `slice`
-    // alive past return when ownership transfers to the Task. The Rust port
-    // mirrors this with `ManuallyDrop`: dropped only on the early-return
+    // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
+    // to the Task: dropped only on the early-return
     // error/abort branches; on the success path the Task owns `args` (whose
     // protected JSValues are released by `Drop for ThreadSafe<A>` when the
     // Task completes), and `slice` is intentionally not dropped — its
@@ -109,11 +102,11 @@ fn run_async<A: FsArgument>(
 
     if A::HAVE_ABORT_SIGNAL {
         if let Some(signal) = args.signal() {
-            if let Some(reason) = signal.reason_if_aborted(global) {
+            if let Some(abort_error) = signal.node_abort_error_if_aborted(global) {
                 let promise =
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global,
-                        reason.to_js(global),
+                        abort_error,
                     );
                 args.unprotect();
                 drop(args);
@@ -124,8 +117,8 @@ fn run_async<A: FsArgument>(
         }
     }
 
-    // `switch (comptime function_name) { else => {} }` — the `.cp` /
-    // `.readdir` arms are handled by their dedicated bindings below.
+    // The `cp` / `readdir` operations are handled by their dedicated
+    // bindings below.
     // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     Ok(create_task(global, this, args, vm))
@@ -148,7 +141,7 @@ where
 #[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
 #[derive(Default)]
 pub struct Binding {
-    pub node_fs: JsCell<NodeFS>,
+    pub(crate) node_fs: JsCell<NodeFS>,
 }
 
 impl Binding {
@@ -156,7 +149,7 @@ impl Binding {
     // → provided by `#[bun_jsc::JsClass]` derive.
 
     // `pub const new = bun.TrivialNew(@This());`
-    pub fn new(init: Self) -> Box<Self> {
+    pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
 
@@ -177,21 +170,20 @@ impl Binding {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_dirent(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_dirent(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(crate::node::Dirent::get_constructor(global))
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_stats(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_stats(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(crate::node::StatsSmall::get_constructor(global))
     }
 
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
-    /// `callAsync(.cp)` — `.cp`'s `Task.create` (Zig) takes the parser arena as
-    /// a 5th arg. The Rust `AsyncCpTask::create` copies its paths via
-    /// `to_thread_safe()` instead, so the arena is dropped with `slice`.
-    pub fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    /// `callAsync(.cp)` — `AsyncCpTask::create` copies its paths via
+    /// `to_thread_safe()`, so the arena is dropped with `slice`.
+    pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -219,7 +211,11 @@ impl Binding {
     }
 
     /// `callSync(.cp)`.
-    pub fn cp_sync(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn cp_sync(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
@@ -240,7 +236,11 @@ impl Binding {
 
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
-    pub fn readdir(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn readdir(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -264,7 +264,10 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        if rd_args.recursive {
+        // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
+        let is_bunfs = bun_standalone_graph::Graph::get().is_some()
+            && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
+        if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
         }
         Ok(async_::Readdir::create(global, this, rd_args, vm))
@@ -272,7 +275,11 @@ impl Binding {
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
     /// through `FsArgument`/`dispatch`; call the inherent method directly.
-    pub fn watch(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn watch(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
@@ -295,7 +302,7 @@ impl Binding {
     }
 
     /// `callSync(.watchFile)`.
-    pub fn watch_file(
+    pub(crate) fn watch_file(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -318,34 +325,10 @@ impl Binding {
             Ok(res) => Ok(res),
         }
     }
-
-    /// `callSync(.unwatchFile)` — `Arguments == void`.
-    pub fn unwatch_file(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // SAFETY: JS-thread borrow of the per-thread VM.
-        let vm: &VirtualMachine = global.bun_vm();
-        let _slice = ArgumentsSlice::init(vm, frame.arguments());
-
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-
-        match this
-            .node_fs
-            .with_mut(|nfs| nfs.unwatch_file((), Flavor::Sync))
-        {
-            Err(ref err) => Err(global.throw_value(err.to_js(global))),
-            Ok(()) => Ok(JSValue::UNDEFINED),
-        }
-    }
 }
 
-/// Generates the `pub const <name> = call{Async,Sync}(.<fn>)` block from the
-/// Zig. Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple that the
-/// Zig comptime reflection derived from `@typeInfo(NodeFS.<fn>)`.
+/// Generates the `pub const <name> = call{Async,Sync}(.<fn>)` block.
+/// Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple for one op.
 macro_rules! node_fs_bindings {
     ( $( $sync:ident / $async_:ident => $F:ident, $Args:ty, $Ret:ty ; )* ) => {
         impl Binding {
@@ -411,7 +394,7 @@ node_fs_bindings! {
 // `readdirSync` goes through the generic sync path; only the async side is
 // special-cased above.
 impl Binding {
-    pub const readdir_sync: NodeFSFunction =
+    pub(crate) const readdir_sync: NodeFSFunction =
         call_sync::<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>();
     // pub const statfs = callAsync(.statfs);
     // pub const statfsSync = callSync(.statfs);
@@ -430,20 +413,71 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     Binding::to_js_boxed(module, global)
 }
 
+/// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
+/// exact argument parser `fs.rm` uses and return the parsed options, so node's
+/// `internal/fs/utils` `validateRmOptionsSync` tests exercise the production
+/// validation (including its rejection of own-but-`undefined` booleans).
+#[bun_jsc::host_fn]
+pub(crate) fn rm_options_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: `bun_vm()` returns the live VM; borrowed only while parsing on
+    // the JS thread (same contract as `run_sync` above).
+    let vm: &VirtualMachine = global.bun_vm();
+    let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    let parsed = args::Rm::from_js(global, &mut slice)?;
+    let obj = JSValue::create_empty_object(global, 4);
+    obj.put(
+        global,
+        b"retryDelay",
+        JSValue::js_number(parsed.retry_delay as f64),
+    );
+    obj.put(
+        global,
+        b"maxRetries",
+        JSValue::js_number(parsed.max_retries as f64),
+    );
+    obj.put(global, b"recursive", JSValue::js_boolean(parsed.recursive));
+    obj.put(global, b"force", JSValue::js_boolean(parsed.force));
+    Ok(obj)
+}
+
+/// Test-only (`bun:internal-for-testing`): run a flags value through the same
+/// parser `fs.open` uses and return the numeric O_* mask, so node's
+/// `internal/fs/utils` `stringToFlags` tests can assert the production mapping.
+#[bun_jsc::host_fn]
+pub(crate) fn string_to_flags_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    use crate::node::types::FileSystemFlags;
+    let [val] = frame.arguments_as_array::<1>();
+    let flags = FileSystemFlags::from_js(global, val)?.unwrap_or(FileSystemFlags::R);
+    // On Windows the internal bun.O bits are POSIX-shaped and translated to the
+    // MSVCRT `_O_*` values at the open boundary; node's stringToFlags and
+    // fs.constants both speak MSVCRT, so translate here too.
+    #[cfg(windows)]
+    let bits = bun_sys::windows::libuv::O::from_bun_o(flags.as_int());
+    #[cfg(not(windows))]
+    let bits = flags.as_int();
+    Ok(JSValue::js_number_from_int32(bits))
+}
+
 #[bun_jsc::host_fn]
 pub(crate) fn create_memfd_for_testing(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
+    let [size_arg] = frame.arguments_as_array::<1>();
 
-    if arguments.len < 1 {
+    if frame.arguments_count() < 1 {
         return Ok(JSValue::UNDEFINED);
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
-        let _ = arguments;
+        let _ = size_arg;
         return Err(global.throw(format_args!(
             "memfd_create is not implemented on this platform"
         )));
@@ -451,7 +485,7 @@ pub(crate) fn create_memfd_for_testing(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let size = arguments.ptr[0].to_int64();
+        let size = size_arg.to_int64();
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size);
@@ -461,5 +495,3 @@ pub(crate) fn create_memfd_for_testing(
         }
     }
 }
-
-// ported from: src/runtime/node/node_fs_binding.zig

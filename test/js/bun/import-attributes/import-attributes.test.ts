@@ -1,4 +1,4 @@
-import { bunExe, tempDirWithFiles } from "harness";
+import { bunExe, tempDir, tempDirWithFiles } from "harness";
 import * as path from "path";
 
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
@@ -354,7 +354,7 @@ describe("?raw", () => {
     test(name, async () => {
       const filename = "abcd.js";
       const code = "export const a = 'demo';";
-      const question_raw = tempDirWithFiles("import-attributes", {
+      await using question_raw = tempDir("import-attributes", {
         [filename]: code,
       });
       expect(await fn(question_raw, null, filename + "?raw")).toEqual({ default: code });

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-bash-zig-build.js"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-bash-guard.js"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit-zig-format.js"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit-format.js"
           }
         ]
       }

@@ -1,10 +1,6 @@
 use core::marker::PhantomData;
 
-// PORT NOTE: JSRef.zig stores `jsc.Strong.Optional`, not `jsc.Strong`. The
-// methods below (`get() -> Option`, `has()`, `try_swap()`) live on the
-// Optional wrapper, so import it under the local name `Strong`.
-use crate::strong::Optional as Strong;
-use crate::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue, Strong};
 
 /// Holds a reference to a JSValue with lifecycle management.
 ///
@@ -66,8 +62,9 @@ use crate::{JSGlobalObject, JSValue};
 ///   The JSValue may become invalid if the object is collected.
 ///   Use `try_get()` to safely check if the value is still alive.
 ///
-/// - **Strong**: Holds a Strong reference that prevents garbage collection.
-///   The JavaScript object will stay alive as long as this reference exists.
+/// - **Strong**: Holds a [`Strong`] reference that prevents garbage collection.
+///   The JavaScript object will stay alive as long as this reference exists, and a
+///   `Strong` always holds a value, so this state is never empty (`try_get()` is `Some`).
 ///   Released by dropping/overwriting the `JsRef`, or by `finalize()`.
 ///
 /// - **Finalized**: The reference has been finalized (object was GC'd or explicitly cleaned up).
@@ -97,8 +94,8 @@ use crate::{JSGlobalObject, JSValue};
 /// See ServerWebSocket, UDPSocket, MySQLConnection, and ValkeyClient for examples.
 ///
 /// `JsRef` is `!Send + !Sync` (transitively via `JSValue` and `Strong`): the
-/// `HandleSlot` backing `Strong` is owned by the VM's `HandleSet` and must be
-/// dropped on the JS thread.
+/// `StrongRootBlock` slot backing `Strong` hangs off the per-VM JSVMClientData
+/// and must be dropped on the JS thread.
 pub enum JsRef {
     Weak(JSValue),
     Strong(Strong),
@@ -108,8 +105,6 @@ pub enum JsRef {
 // Belt-and-suspenders: JSValue and Strong are already !Send/!Sync, but make it
 // explicit so a future refactor of those types cannot accidentally make JsRef
 // sendable.
-// TODO(port): if a zero-cost marker is preferred over auto-trait inference,
-// wrap in a struct with `PhantomData<*const ()>`.
 const _: PhantomData<*const ()> = PhantomData;
 
 impl JsRef {
@@ -130,21 +125,21 @@ impl JsRef {
     pub fn try_get(&self) -> Option<JSValue> {
         match self {
             JsRef::Weak(weak) => {
-                if weak.is_empty_or_undefined_or_null() {
+                if weak.is_empty_or_undefined_or_null() || !weak.is_live_cell() {
                     None
                 } else {
                     Some(*weak)
                 }
             }
-            JsRef::Strong(strong) => strong.get(),
+            JsRef::Strong(strong) => Some(strong.get()),
             JsRef::Finalized => None,
         }
     }
 
     /// `try_get().unwrap_or(JSValue::UNDEFINED)`. Convenience for callers that
-    /// previously stored a bare `JSValue` field (Zig `this.js_value`) and read
-    /// it unconditionally — the `JsRef` wrapper was added on the Rust side for
-    /// GC-safety, so `get()` recovers the original ergonomics.
+    /// previously stored a bare `JSValue` field and read it unconditionally —
+    /// the `JsRef` wrapper was added for GC-safety, so `get()` recovers the
+    /// original ergonomics.
     pub fn get(&self) -> JSValue {
         self.try_get().unwrap_or(JSValue::UNDEFINED)
     }
@@ -154,9 +149,8 @@ impl JsRef {
         match self {
             JsRef::Weak(_) => {}
             JsRef::Strong(_) => {
-                // PORT NOTE: Zig calls `this.strong.deinit()` here. In Rust,
-                // `Strong`'s `Drop` deallocates the HandleSlot when `*self` is
-                // overwritten below, so the explicit call is elided.
+                // `Strong`'s `Drop` releases the block slot when `*self` is
+                // overwritten below, so no explicit deinit is needed.
             }
             JsRef::Finalized => {
                 return;
@@ -179,6 +173,9 @@ impl JsRef {
             JsRef::Weak(weak) => {
                 debug_assert!(!weak.is_empty_or_undefined_or_null());
                 let weak = *weak;
+                if !weak.is_live_cell() {
+                    return;
+                }
                 *self = JsRef::Strong(Strong::create(weak, global));
             }
             JsRef::Strong(_) => {}
@@ -192,12 +189,11 @@ impl JsRef {
         match self {
             JsRef::Weak(_) => {}
             JsRef::Strong(strong) => {
-                let value = strong.try_swap().unwrap_or(JSValue::UNDEFINED);
+                let value = strong.get();
                 value.ensure_still_alive();
-                // PORT NOTE: Zig calls `strong.deinit()` here; in Rust the old
-                // `Strong` is dropped by the assignment below.
-                // PORT NOTE: reshaped for borrowck — `strong` borrow ends at
-                // last use above, permitting reassignment of `*self`.
+                // The old `Strong` is dropped by the assignment below; the
+                // `strong` borrow ends at its last use above, permitting
+                // reassignment of `*self`.
                 *self = JsRef::Weak(value);
             }
             JsRef::Finalized => {}
@@ -207,15 +203,19 @@ impl JsRef {
     pub fn is_empty(&self) -> bool {
         match self {
             JsRef::Weak(weak) => weak.is_empty_or_undefined_or_null(),
-            JsRef::Strong(strong) => !strong.has(),
+            JsRef::Strong(_) => false,
             JsRef::Finalized => true,
         }
+    }
+
+    pub fn is_finalized(&self) -> bool {
+        matches!(self, JsRef::Finalized)
     }
 
     pub fn is_not_empty(&self) -> bool {
         match self {
             JsRef::Weak(weak) => !weak.is_empty_or_undefined_or_null(),
-            JsRef::Strong(strong) => strong.has(),
+            JsRef::Strong(_) => true,
             JsRef::Finalized => false,
         }
     }
@@ -226,9 +226,8 @@ impl JsRef {
     }
 
     pub fn finalize(&mut self) {
-        // PORT NOTE: Zig calls `self.deinit()` then sets `.finalized`. In Rust,
-        // overwriting `*self` drops the prior variant (releasing the `Strong`
-        // HandleSlot via its `Drop`), so the explicit deinit step is elided.
+        // Overwriting `*self` drops the prior variant (releasing the `Strong`
+        // block slot via its `Drop`), so no explicit deinit step is needed.
         // External `jsref.deinit()` callers become `*jsref = JsRef::empty()`.
         *self = JsRef::Finalized;
     }
@@ -240,7 +239,7 @@ impl JsRef {
                 *weak = value;
             }
             JsRef::Strong(strong) => {
-                if strong.get() != Some(value) {
+                if strong.get() != value {
                     strong.set(global, value);
                 }
             }
@@ -257,4 +256,25 @@ impl Default for JsRef {
     }
 }
 
-// ported from: src/jsc/JSRef.zig
+/// Forwarding accessors for the common `JsCell<JsRef>` field shape, so call
+/// sites read `field.try_get()` / `field.get_or_undefined()` instead of the
+/// double-step `field.get().try_get()` / `field.get().get()`.
+pub trait JsCellRefExt {
+    /// [`JsRef::try_get`] on the contained ref: the live `JSValue`, or `None`
+    /// if empty/finalized.
+    fn try_get(&self) -> Option<JSValue>;
+    /// [`JsRef::get`] on the contained ref: `try_get().unwrap_or(UNDEFINED)`.
+    fn get_or_undefined(&self) -> JSValue;
+}
+
+impl JsCellRefExt for crate::JsCell<JsRef> {
+    #[inline]
+    fn try_get(&self) -> Option<JSValue> {
+        self.get().try_get()
+    }
+
+    #[inline]
+    fn get_or_undefined(&self) -> JSValue {
+        self.get().get()
+    }
+}

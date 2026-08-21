@@ -3,7 +3,7 @@ import { decodeSerializedError } from "bake/error-serialization.ts";
 import { Subprocess, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunExe, bunEnv as env, isPosix, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, tempDir, tmpdirSync } from "harness";
 import path, { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -513,6 +513,45 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     ws.close();
   });
 
+  test("sends exactly one clientNavigated event per SetUrl message", async () => {
+    // https://github.com/oven-sh/bun/issues/32080
+    // Request "/" first so its route bundle takes index 0 and "/second" below
+    // deterministically gets index 1, even when this test runs in isolation.
+    await fetch(serverUrl.href).then(r => r.blob());
+
+    const connectedEventPromise = session.waitForEvent("BunFrontendDevServer.clientConnected");
+    const ws = await createHMRClient();
+    try {
+      const { connectionId } = await connectedEventPromise;
+
+      const navigated: any[] = [];
+      const { promise: sawSentinelNavigation, resolve, reject } = Promise.withResolvers<void>();
+      session.addEventListener("BunFrontendDevServer.clientNavigated", (params: any) => {
+        if (params.connectionId !== connectionId) return;
+        navigated.push(params);
+        if (params.url === "/does-not-exist") resolve();
+      });
+      ws.addEventListener("close", e => reject(new Error(`HMR socket closed unexpectedly: ${e.code}`)));
+      ws.addEventListener("error", () => reject(new Error("HMR socket error")));
+
+      // Navigate to a matched route, then to an unknown one. The server handles
+      // the messages in order and emits inspector events synchronously, so once
+      // the event for the unknown route arrives, every event for "/second" has
+      // been delivered.
+      ws.send("n" + "/second");
+      ws.send("n" + "/does-not-exist");
+      await sawSentinelNavigation;
+
+      expect(navigated).toEqual([
+        { serverId: expect.any(Number), connectionId, url: "/second", routeBundleId: 1 },
+        // Failed lookups report a single event with no routeBundleId.
+        { serverId: expect.any(Number), connectionId, url: "/does-not-exist" },
+      ]);
+    } finally {
+      ws.close();
+    }
+  });
+
   test("should notify on consoleLog events", async () => {
     await fetch(serverUrl.href).then(r => r.blob());
 
@@ -954,6 +993,131 @@ function decodeGraphUpdate(buffer) {
     clientEdges,
   };
 }
+
+// The BunFrontendDevServer and HTTPServer inspector agents used to null their
+// frontend dispatcher in willDestroyFrontendAndBackend, which runs on every
+// frontend disconnect. Because the dispatcher was only ever created in the
+// agent's constructor, a second inspector client that reconnected and called
+// enable() would never receive any events: m_enabled flipped back to true but
+// every emitter still bailed on the null dispatcher guard.
+test("BunFrontendDevServer and HTTPServer domains keep emitting after an inspector reconnect", async () => {
+  using dir = tempDir("bun-frontend-dev-server-reconnect", {
+    "index.html": `<!doctype html><script type="module" src="./app.ts"></script><h1>x</h1>`,
+    "app.ts": `export const x: number = 0;`,
+    "server.ts": `
+      import html from "./index.html";
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: {
+          "/": html,
+          // Each inspector session hits this to make the HTTPServer agent emit
+          // HTTPServer.listen / HTTPServer.close for a throwaway server.
+          "/ping-http-agent": () => {
+            Bun.serve({ port: 0, fetch: () => new Response("") }).stop();
+            return new Response("ok");
+          },
+        },
+      });
+      console.log("SERVER_URL=" + server.url);
+    `,
+  });
+
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", join(String(dir), "server.ts")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  async function readUntil(stream: ReadableStream, regex: RegExp) {
+    let text = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of stream) {
+      text += decoder.decode(chunk);
+      const m = text.match(regex);
+      if (m) return m[1];
+    }
+    throw new Error(`did not find ${regex} in:\n${text}`);
+  }
+
+  const inspectorUrl = await readUntil(child.stderr, /(ws:\/\/[^\s]+)/);
+  const serverUrl = await readUntil(child.stdout, /SERVER_URL=(http:\/\/[^\s]+)/);
+
+  // Force the dev server to materialize so /_bun/hmr accepts connections.
+  await fetch(serverUrl).then(r => r.blob());
+  const hmrUrl = new URL(serverUrl);
+  hmrUrl.protocol = "ws:";
+  hmrUrl.pathname = "/_bun/hmr";
+
+  async function session() {
+    const ws = new WebSocket(inspectorUrl);
+    const opened = Promise.withResolvers<void>();
+    ws.addEventListener("open", () => opened.resolve());
+    ws.addEventListener("error", e => opened.reject(e));
+    await opened.promise;
+
+    let nextId = 1;
+    const pending = new Map<number, (msg: any) => void>();
+    const firstDevServerEvent = Promise.withResolvers<string>();
+    const firstHttpServerEvent = Promise.withResolvers<string>();
+    ws.addEventListener("message", ({ data }) => {
+      const msg = JSON.parse(String(data));
+      if (msg.id !== undefined) pending.get(msg.id)?.(msg);
+      else if (msg.method?.startsWith("BunFrontendDevServer.")) firstDevServerEvent.resolve(msg.method);
+      else if (msg.method?.startsWith("HTTPServer.")) firstHttpServerEvent.resolve(msg.method);
+    });
+    const send = (method: string) => {
+      const id = nextId++;
+      const { promise, resolve } = Promise.withResolvers<any>();
+      pending.set(id, resolve);
+      ws.send(JSON.stringify({ id, method }));
+      return promise;
+    };
+
+    await send("Inspector.enable");
+    await send("BunFrontendDevServer.enable");
+    await send("HTTPServer.enable");
+    await send("Inspector.initialized");
+
+    // Opening an HMR WebSocket emits BunFrontendDevServer.clientConnected;
+    // hitting /ping-http-agent starts and stops a Bun.serve instance, emitting
+    // HTTPServer.listen. If either agent's dispatcher is gone the
+    // corresponding promise resolves to the timeout sentinel instead.
+    const hmr = new WebSocket(hmrUrl);
+    hmr.binaryType = "arraybuffer";
+    const hmrOpen = Promise.withResolvers<void>();
+    hmr.addEventListener("open", () => hmrOpen.resolve());
+    hmr.addEventListener("error", e => hmrOpen.reject(e));
+    await hmrOpen.promise;
+    await fetch(new URL("/ping-http-agent", serverUrl)).then(r => r.blob());
+
+    const timeout = Bun.sleep(3000).then(() => "timeout: no events");
+    const result = {
+      devServer: await Promise.race([firstDevServerEvent.promise, timeout]),
+      httpServer: await Promise.race([firstHttpServerEvent.promise, timeout]),
+    };
+    hmr.close();
+
+    const closed = Promise.withResolvers<void>();
+    ws.addEventListener("close", () => closed.resolve());
+    ws.close();
+    await closed.promise;
+    return result;
+  }
+
+  // The first session has always worked; the second and third sessions
+  // previously received zero events from either domain for the rest of the
+  // process.
+  const expected = {
+    devServer: "BunFrontendDevServer.clientConnected",
+    httpServer: "HTTPServer.listen",
+  };
+  expect(await session()).toEqual(expected);
+  expect(await session()).toEqual(expected);
+  expect(await session()).toEqual(expected);
+});
 
 function decodeAndAppendServerError(r: DataViewReader) {
   const owner = r.u32();

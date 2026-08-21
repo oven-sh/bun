@@ -16,9 +16,6 @@
 #include "JavaScriptCore/ModuleProgramCodeBlock.h"
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
-#include "JavaScriptCore/Watchdog.h"
-
-#include "../vm/SigintWatcher.h"
 
 namespace Bun {
 using namespace NodeVM;
@@ -94,7 +91,9 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
 
-    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), Identifier::fromString(vm, identifier()));
+    // The source type only feeds AbstractModuleRecord::moduleType(), which the loader attaches to
+    // errors as the failing module's kind; a vm.SyntheticModule is a JavaScript module in that sense.
+    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), Identifier::fromString(vm, identifier()), SourceProviderSourceType::Module);
 
     m_moduleRecord.set(vm, this, moduleRecord);
 
@@ -110,7 +109,9 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
         exportSymbolTable->set(NoLockingNecessary, exportIdentifier.releaseImpl().get(), SymbolTableEntry(VarOffset(offset)));
     }
 
-    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsTDZValue(), moduleRecord);
+    // V8 initializes synthetic-module exports to undefined (reading one
+    // before setExport() yields undefined), unlike TDZ which would throw.
+    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsUndefined(), moduleRecord);
     moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
 }
 
@@ -184,7 +185,9 @@ JSValue NodeVMSyntheticModule::evaluate(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_status != Status::Linked) {
+    // NodeVMModule::evaluate flips the status to Evaluating before invoking
+    // the user's evaluation steps (it is the only caller of this method).
+    if (m_status != Status::Evaluating) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be linked before evaluating"_s);
         return {};
     }

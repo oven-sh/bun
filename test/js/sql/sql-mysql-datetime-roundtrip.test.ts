@@ -27,12 +27,8 @@ function assertRoundTrip(stdout: string, stderr: string, TZ: string) {
   // On a round-trip mismatch the fixture writes `FAIL TZ=… offsetMin=…` plus the
   // per-row `diffMin` breakdown to stderr, then exits 1. Assert it's empty so a
   // CI failure surfaces *which* dates drifted and by how much, not just a bare
-  // "CONNECTED" vs "OK" mismatch. (ASAN emits a harmless interposition warning.)
-  const diagnostics = stderr
-    .split(/\r?\n/)
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(diagnostics).toBe("");
+  // "CONNECTED" vs "OK" mismatch.
+  expect(stderr).toBe("");
   // "OK TZ=<tz>" only prints when all three Dates round-trip to the same instant.
   expect(stdout).toContain(`OK TZ=${TZ}`);
   // And the child runtime must actually have adopted the injected timezone —

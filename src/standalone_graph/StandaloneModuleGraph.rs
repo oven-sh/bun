@@ -2,7 +2,6 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
-use bun_collections::VecExt;
 use core::mem::size_of;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -11,7 +10,7 @@ use std::sync::Arc;
 use bun_ast::Loader;
 use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
-use bun_core::{Environment, Error as BunError, Output, err};
+use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
@@ -24,8 +23,10 @@ use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 
-// TODO(port): bun_webcore::Blob — `cached_blob` is only ever set from
-// `bun_runtime` (higher tier); model as opaque erased pointer here.
+bun_core::declare_scope!(StandaloneModuleGraph, hidden);
+
+// `bun_webcore::Blob` lives in a higher tier and `cached_blob` is only ever
+// set from `bun_runtime`, so it is modeled as an opaque erased pointer here.
 bun_opaque::opaque_ffi! {
     /// Opaque stand-in for `bun_webcore::Blob`. Only stored as `NonNull<Blob>`.
     pub struct Blob;
@@ -39,6 +40,8 @@ pub struct StandaloneModuleGraph {
     /// them under Stacked/Tree Borrows and make the later foreign write UB.
     pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
+    /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
+    pub dirs: StringArrayHashMap<()>,
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
@@ -58,10 +61,9 @@ pub const BASE_PATH: &str = "/$bunfs/";
 #[cfg(windows)]
 pub const BASE_PATH: &str = "B:\\~BUN\\";
 
-// TODO(port): Zig version takes `target: Environment.OperatingSystem` + `comptime suffix`
-// and concatenates at comptime. Rust cannot const-concat with a runtime enum branch
-// nor across a `const fn` boundary. Could expose as a `macro_rules!` over
-// `const_format::concatcp!`; for now we materialize the two call-sites directly.
+// Rust cannot const-concat with a runtime enum branch nor across a `const fn`
+// boundary, so the two call-site combinations are materialized directly with
+// `const_format::concatcp!`.
 #[cfg(windows)]
 pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 #[cfg(not(windows))]
@@ -72,12 +74,11 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
-// TODO(port): Zig used a nested `Instance` struct holding a static var. Model
-// as a process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
-// `get()` returns a raw `*mut` to mirror Zig's `?*StandaloneModuleGraph`; callers
-// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. TODO(refactor):
-// push interior mutability down to those per-`File` fields (`UnsafeCell<…>`) so
-// read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
+// A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
+// `get()` returns a raw `*mut`; callers
+// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. A future reshape
+// could push interior mutability down to those per-`File` fields (`UnsafeCell<…>`)
+// so read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
 struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
 // SAFETY: the graph is populated once at startup before any worker threads;
 // post-init mutation is limited to per-`File` lazy fields. NOTE: `INIT_LOCK`
@@ -90,12 +91,18 @@ static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
 
 impl StandaloneModuleGraph {
     pub fn get() -> Option<*mut StandaloneModuleGraph> {
-        // Mirrors Zig's `?*StandaloneModuleGraph`: a raw pointer with no
-        // uniqueness invariant. Do NOT hand out `&'static mut` here — multiple
+        // A raw pointer with no uniqueness invariant. Do NOT hand out
+        // `&'static mut` here — multiple
         // callers (resolver, sourcemap loader, worker threads) may hold the
         // result concurrently, and overlapping `&mut` is UB regardless of
         // whether either side writes.
         INSTANCE.get().map(|cell| cell.0.get())
+    }
+
+    /// Read-only lookups. Use `get()` when mutating per-`File` lazy caches.
+    pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
+        // SAFETY: `Instance` is `Sync`; the `&self` methods touch only the immutable tables.
+        INSTANCE.get().map(|cell| unsafe { &*cell.0.get() })
     }
 
     pub fn set(instance: StandaloneModuleGraph) -> *mut StandaloneModuleGraph {
@@ -104,10 +111,9 @@ impl StandaloneModuleGraph {
     }
 }
 
-// TODO(port): Zig `targetBasePublicPath(target, comptime suffix: [:0]const u8) [:0]const u8`
-// concatenates at comptime via `++`. A runtime `suffix: &[u8]` parameter cannot be
-// const-concatenated. All Zig callers pass either `""` or `"root/"`, so the runtime
-// variant special-cases those two literals.
+// A runtime `suffix: &[u8]` parameter cannot be
+// const-concatenated. All callers pass either `""` or `"root/"`, so the runtime
+// variant special-cases those two literals (`unreachable!` guards anything new).
 pub fn target_base_public_path(
     target: bun_core::Environment::OperatingSystem,
     suffix: &'static [u8],
@@ -145,9 +151,9 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
 }
 
 impl StandaloneModuleGraph {
-    // TODO(port): interior mutability — Zig returns `*File` and callers mutate
-    // `wtf_string` / `cached_blob`. Using `&mut self` here may force callers to
-    // hold `&mut StandaloneModuleGraph`; could switch to `UnsafeCell` fields.
+    // Callers mutate `wtf_string` / `cached_blob`, so these accessors take
+    // `&mut self`. Switching to `UnsafeCell` per-`File`
+    // fields would let read-only paths take `&self`; see the `Instance` note above.
     pub fn entry_point(&mut self) -> &mut File {
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
@@ -160,35 +166,128 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
-    pub fn stat(&mut self, name: &[u8]) -> Option<Stat> {
-        let file = self.find(name)?;
-        Some(file.stat())
+    fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+        #[cfg(windows)]
+        {
+            let mut buf = PathBuffer::uninit();
+            return self.files.get(normalize_file_key(name, &mut buf));
+        }
+        #[cfg(not(windows))]
+        self.files.get(name)
+    }
+
+    pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        self.lookup_file(name)
+    }
+
+    pub fn contains_file(&self, name: &[u8]) -> bool {
+        self.find_ref(name).is_some()
+    }
+
+    pub fn stat(&self, name: &[u8]) -> Option<Stat> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        if let Some(file) = self.lookup_file(name) {
+            return Some(file.stat());
+        }
+        if self.find_dir(name) {
+            return Some(dir_stat());
+        }
+        None
+    }
+
+    fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+        #[cfg(windows)]
+        let name = normalize_file_key(name, buf);
+        #[cfg(not(windows))]
+        let _ = buf;
+        let mut name = name;
+        while name.last() == Some(&b'/') {
+            name = &name[..name.len() - 1];
+        }
+        name
+    }
+
+    pub fn find_dir(&self, name: &[u8]) -> bool {
+        if !is_bun_standalone_file_path(name) {
+            return false;
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        self.dirs.contains_key(name)
+    }
+
+    /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
+    pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        if !self.dirs.contains_key(name) {
+            return None;
+        }
+        let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 1);
+        prefix.extend_from_slice(name);
+        prefix.push(b'/');
+
+        let mut seen: StringArrayHashMap<bool> = StringArrayHashMap::new();
+        let mut push = |key: &[u8], is_dir: bool| {
+            if key.len() <= prefix.len() || !key.starts_with(&prefix) {
+                return;
+            }
+            let rel = &key[prefix.len()..];
+            if recursive {
+                let _ = seen.put(rel, is_dir);
+            } else if let Some(sep) = strings::index_of_char(rel, b'/') {
+                let _ = seen.put(&rel[..sep as usize], true);
+            } else {
+                let _ = seen.put(rel, is_dir);
+            }
+        };
+        for key in self.files.keys() {
+            push(key, false);
+        }
+        for key in self.dirs.keys() {
+            push(key, true);
+        }
+
+        let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
+        for (k, v) in seen.iter() {
+            out.push((Box::<[u8]>::from(&k[..]), *v));
+        }
+        Some(out)
     }
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
         {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            return self.files.get_mut(normalized);
+            let mut buf = PathBuffer::uninit();
+            return self.files.get_mut(normalize_file_key(name, &mut buf));
         }
         #[cfg(not(windows))]
-        {
-            self.files.get_mut(name)
-        }
+        self.files.get_mut(name)
     }
+}
+
+#[cfg(windows)]
+fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    let input = strings::paths::without_nt_prefix::<u8>(name);
+    path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
 // startup, never freed). The raw-pointer / `Cell` fields it carries are
 // `bun_runtime`-owned caches (`cached_blob`, `wtf_string`, source-map state)
 // that are only ever touched from the JS main thread under the API lock; the
-// resolver-facing read path below touches none of them. Zig stored this as a
-// plain `*StandaloneModuleGraph` shared across worker threads with no
-// synchronization; mirror that here so the `Send + Sync` supertrait on
-// `bun_resolver::StandaloneModuleGraph` is satisfied.
+// resolver-facing read path below touches none of them. The graph pointer is
+// shared across worker threads through the resolver, which is why the
+// `Send + Sync` supertrait on `bun_resolver::StandaloneModuleGraph` must be
+// satisfied.
 unsafe impl Send for StandaloneModuleGraph {}
 // SAFETY: see `Send` impl — post-init mutation is confined to per-`File` lazy caches on the JS thread.
 unsafe impl Sync for StandaloneModuleGraph {}
@@ -203,24 +302,11 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
-        #[cfg(windows)]
-        let file = {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            self.files.get(normalized)
-        };
-        #[cfg(not(windows))]
-        let file = self.files.get(name);
-        file.map(|f| f.name)
+        self.lookup_file(name).map(|f| f.name)
     }
 
     fn find(&self, name: &[u8]) -> Option<&[u8]> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
-        <Self as bun_resolver::StandaloneModuleGraph>::find_assume_standalone_path(self, name)
+        self.find_ref(name).map(|f| f.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
@@ -278,9 +364,10 @@ pub enum ModuleFormat {
 
 #[cfg(target_os = "macos")]
 mod macho {
-    // TODO(port): move to standalone_graph_sys
+    // Declared inline rather than in a dedicated `*_sys` crate: this crate is
+    // the symbol's only consumer.
     unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // align(1) in Zig
+        pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
     }
 
     /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
@@ -334,7 +421,8 @@ mod pe {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 mod elf {
-    // TODO(port): move to standalone_graph_sys
+    // Declared inline rather than in a dedicated `*_sys` crate: this crate is
+    // the symbol's only consumer.
     unsafe extern "C" {
         pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
@@ -354,12 +442,17 @@ mod elf {
         if vaddr == 0 {
             return None;
         }
-        // BUN_COMPILED.size holds the virtual address of the appended data.
-        // The kernel mapped it via PT_LOAD, so we can dereference directly.
+        // BUN_COMPILED.size holds the link-time virtual address of the
+        // appended data. For a PIE executable (mandatory on Android) the
+        // kernel maps every PT_LOAD at that vaddr plus a load bias, which is
+        // `dlpi_addr` of the object containing BUN_COMPILED itself; for
+        // non-PIE it is 0.
         // Format at target: [u64 payload_len][payload bytes]
         // Synthesize a `*mut u8` directly so the provenance carries write
         // permission for the in-place bytecode mutation done by JSC.
-        let target = vaddr as *mut u8;
+        let load_bias =
+            bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
+        let target = (vaddr as usize).wrapping_add(load_bias) as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
@@ -376,11 +469,9 @@ pub struct File {
     pub loader: Loader,
     pub contents: &'static ZStr,
     pub sourcemap: LazySourceMap,
-    // TODO(port): lifetime — assigned in runtime/api/ (out of crate)
     pub cached_blob: Option<NonNull<Blob>>,
     pub encoding: Encoding,
     pub wtf_string: BunString,
-    // TODO(port): Zig type is []u8 (mutable) obtained via @constCast on section bytes.
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
@@ -397,8 +488,7 @@ impl File {
     }
 
     pub fn stat(&self) -> Stat {
-        // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-        let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut result: Stat = bun_core::ffi::zeroed();
         result.st_size = self.contents.len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
@@ -426,8 +516,12 @@ impl File {
         // We don't want this to free.
         self.wtf_string.dupe_ref()
     }
+}
 
-    // TODO(port): move to *_jsc — `pub const blob = @import("../runtime/api/standalone_graph_jsc.zig").fileBlob;`
+fn dir_stat() -> Stat {
+    let mut result: Stat = bun_core::ffi::zeroed();
+    result.st_mode = (libc::S_IFDIR | 0o755) as _;
+    result
 }
 
 pub enum LazySourceMap {
@@ -459,20 +553,19 @@ impl LazySourceMap {
                 let ism = SourceMap::InternalSourceMap {
                     data: blob.as_ptr(),
                 };
-                // PORT NOTE: `from_internal` fills `internal = Some(ism)` +
+                // Note: `from_internal` fills `internal = Some(ism)` +
                 // `input_line_count = ism.input_line_count()` and defaults the rest.
                 let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
                 let source_files_count = serialized.source_files_count();
-                // TODO(port): Zig allocated a single `[]?[]u8` of len*2 and reinterpreted
-                // the first half as `[][]const u8` for file_names. Rust splits into two
-                // separate Vecs to avoid the punning.
-                // PERF(port): `external_source_names` is `Vec<Box<[u8]>>` so we
-                // copy the section bytes; Zig held a borrowed slice. Could switch
+                // PERF: `external_source_names` is `Vec<Box<[u8]>>` so we
+                // copy the section bytes. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
-                let decompressed_contents_slice: Vec<Option<Vec<u8>>> =
-                    vec![None; source_files_count];
+                let decompressed_contents_slice: Vec<std::sync::OnceLock<Vec<u8>>> =
+                    std::iter::repeat_with(std::sync::OnceLock::new)
+                        .take(source_files_count)
+                        .collect();
                 for i in 0..source_files_count {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
                     // (disjoint from bytecode); StringPointer offsets were serialized by
@@ -494,16 +587,17 @@ impl LazySourceMap {
                 });
 
                 stored.external_source_names = file_names;
-                // Zig: `.underlying_provider = .{ .data = @truncate(@intFromPtr(data)) }`
-                // (kind = .zig, load_hint = .none implicit). `from_provider` packs the
-                // same triple into the `SourceContentPtr` bitfield.
+                // `from_provider` stores the pointer as a raw address in
+                // `SourceContentPtr.data`; the provider dispatch is never
+                // invoked for this type-punned pointer (guarded by
+                // `is_standalone_module_graph`).
                 stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
                     bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
                 );
                 stored.is_standalone_module_graph = true;
 
                 let parsed = Arc::new(stored);
-                // PERF(port): Zig did parsed.ref() (intrusive) to never free; Arc clone held in self.
+                // The Arc clone held in self keeps the parsed map alive.
                 *self = LazySourceMap::Parsed(Arc::clone(&parsed));
                 Some(parsed)
             }
@@ -540,20 +634,21 @@ impl StandaloneModuleGraph {
         raw_ptr: *mut u8,
         raw_len: usize,
         offsets: Offsets,
-    ) -> Result<StandaloneModuleGraph, BunError> {
+    ) -> crate::Result<StandaloneModuleGraph> {
         if raw_len == 0 {
             return Ok(StandaloneModuleGraph {
                 bytes: core::ptr::slice_from_raw_parts(NonNull::<u8>::dangling().as_ptr(), 0),
                 files: StringArrayHashMap::new(),
+                dirs: StringArrayHashMap::new(),
                 entry_point_id: 0,
                 compile_exec_argv: b"",
                 flags: Flags::default(),
             });
         }
 
-        // Zig's `raw_bytes: []u8` aliases freely — this function hands out read-only subslices
+        // This function hands out read-only subslices
         // (name/contents/sourcemap) AND writable subslices (bytecode/module_info, which JSC
-        // mutates in place) into the same allocation. In Rust we must not derive the writable
+        // mutates in place) into the same allocation. We must not derive the writable
         // ones from a `&[u8]` reborrow (writing through const-derived provenance is UB), and we
         // must not hold a long-lived `&[u8]` that *spans* a writable subrange (a foreign write
         // would invalidate it under Stacked/Tree Borrows). Keep `(raw_ptr, raw_len)` raw and
@@ -564,8 +659,7 @@ impl StandaloneModuleGraph {
         // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
         // from bytecode/module_info, serialized by `to_bytes`.
         let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
-        // PORT NOTE: StandaloneModuleGraph.zig:309 builds `[]align(1) const CompiledModuleGraphFile`
-        // because the modules blob sits at an arbitrary byte offset in the section. In Rust,
+        // Note: the modules blob sits at an arbitrary byte offset in the section, and
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
         // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
         // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
@@ -573,9 +667,7 @@ impl StandaloneModuleGraph {
         let modules_list_base = modules_list_bytes.as_ptr();
 
         if offsets.entry_point_id as usize > modules_list_count {
-            return Err(err!(
-                "Corrupted module graph: entry point ID is greater than module list count"
-            ));
+            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
         }
 
         let mut modules = StringArrayHashMap::<File>::new();
@@ -601,7 +693,6 @@ impl StandaloneModuleGraph {
                     slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
                 )
             };
-            // PERF(port): was putAssumeCapacity
             let _ = modules.put(
                 name.as_bytes(),
                 File {
@@ -610,7 +701,9 @@ impl StandaloneModuleGraph {
                     contents,
                     sourcemap: if module.sourcemap.length > 0 {
                         LazySourceMap::Serialized(SerializedSourceMap {
-                            // TODO(port): @alignCast — alignment of source map bytes
+                            // `&[u8]` is align(1), and every structured read
+                            // from these bytes (header / StringPointer tables)
+                            // goes through `read_unaligned` in SerializedSourceMap.
                             bytes: sourcemap_bytes,
                         })
                     } else {
@@ -647,11 +740,26 @@ impl StandaloneModuleGraph {
 
         modules.lock_pointers(); // make the pointers stable forever
 
+        // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
+        let mut dirs = StringArrayHashMap::<()>::new();
+        for key in modules.keys() {
+            let mut rest: &[u8] = key;
+            while let Some(sep) = strings::last_index_of_char(rest, b'/') {
+                rest = &rest[..sep as usize];
+                if rest.len() < BASE_PUBLIC_PATH.len() || dirs.contains_key(rest) {
+                    break;
+                }
+                let _ = dirs.put(rest, ());
+            }
+        }
+        dirs.lock_pointers();
+
         Ok(StandaloneModuleGraph {
             // Stored as a raw fat pointer — `byte_count` covers the writable
             // bytecode/module_info regions, so a `&'static [u8]` here would alias them.
             bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
+            dirs,
             entry_point_id: offsets.entry_point_id,
             // SAFETY: read-only argv string subrange, disjoint from writable regions.
             compile_exec_argv: unsafe {
@@ -717,11 +825,9 @@ pub(crate) fn to_bytes(
     output_format: Format,
     compile_exec_argv: &[u8],
     flags: Flags,
-) -> Result<Vec<u8>, BunError> {
-    // TODO(port): bun_perf::PerfEvent::StandaloneModuleGraph_serialize — generated
-    // enum is still a `_Stub` placeholder; restore the trace call once the generator emits
-    // real variants.
-    // let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraph_serialize);
+) -> crate::Result<Vec<u8>> {
+    // RAII trace handle ends on drop.
+    let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
 
     let mut entry_point_id: Option<usize> = None;
     let mut string_builder = bun_core::StringBuilder::default();
@@ -729,7 +835,7 @@ pub(crate) fn to_bytes(
     for output_file in output_files {
         string_builder.count_z(&output_file.dest_path);
         string_builder.count_z(prefix);
-        if let options::OutputValue::Buffer { bytes } = &output_file.value {
+        if let options::OutputFileValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
                 // This is an over-estimation to ensure that we allocate
                 // enough memory for the source-map contents. Calculating
@@ -773,18 +879,27 @@ pub(crate) fn to_bytes(
 
     let mut source_map_header_list: Vec<u8> = Vec::new();
     let mut source_map_string_list: Vec<u8> = Vec::new();
-    // PERF(port): was arena bulk-free (source_map_arena)
 
     for output_file in output_files {
         if !output_file.output_kind.is_file_in_standalone_mode() {
             continue;
         }
 
-        let options::OutputValue::Buffer { bytes: buf_bytes } = &output_file.value else {
+        let options::OutputFileValue::Buffer { bytes: buf_bytes } = &output_file.value else {
             continue;
         };
 
         let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
+
+        // Windows: store the key with `/`. The template printer emits native
+        // `\` into `dest_path`, but `find_assume_standalone_path` normalizes
+        // lookups to `/`, so a `\` key would miss (ENOENT). `src/bundler/Chunk.rs`
+        // only normalizes a scratch copy, so we re-normalize here.
+        #[cfg(windows)]
+        let mut dest_path_buf = PathBuffer::uninit();
+        #[cfg(windows)]
+        let dest_path: &[u8] =
+            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut dest_path_buf);
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
@@ -861,50 +976,41 @@ pub(crate) fn to_bytes(
             break 'brk StringPointer::default();
         };
 
-        // PORT NOTE: Zig used `bun.sys.File.makeOpen` (open, on-fail mkdir parent +
-        // retry). `src/sys/File.rs` is still cfg-gated upstream, so the
-        // `make_open` body is inlined here against the live `bun_sys` stub
-        // surface (`openat` / `make_path` / `File::write_all`).
-        // Zig: `if (comptime bun.Environment.is_canary or bun.Environment.isDebug)`
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
+                // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
+                // every `..` segment here so the on-disk dump can't escape
+                // `dump_code_dir` (the join would otherwise normalize `..` above it).
+                let mut dump_rel: Vec<u8> = Vec::new();
+                options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
+                    .expect("write to Vec<u8>");
                 let mut path_buf = bun_paths::path_buffer_pool::get();
                 let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                     dump_code_dir,
                     &mut path_buf[..],
-                    &[dest_path],
+                    &[&dump_rel],
                 );
 
                 // Scoped block to handle dump failures without skipping module emission
                 'dump: {
                     let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
-                    // Inline of `bun.sys.File.makeOpen(dest_z, flags, 0o664)`:
-                    let file = match Syscall::openat(Fd::cwd(), dest_z, flags, 0o664) {
-                        Ok(fd) => bun_sys::File::from_fd(fd),
-                        Err(_first_err) => {
-                            let dir_path = path::resolve_path::dirname::<path::platform::Auto>(
-                                dest_z.as_bytes(),
+                    let file = match bun_sys::File::make_open(dest_z.as_bytes(), flags, 0o664) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            bun_core::pretty_errorln!(
+                                "<r><red>error<r><d>:<r> failed to open {}: {}",
+                                bstr::BStr::new(dest_path),
+                                e
                             );
-                            let _ = bun_sys::Dir::cwd().make_path(dir_path);
-                            match Syscall::openat(Fd::cwd(), dest_z, flags, 0o664) {
-                                Ok(fd) => bun_sys::File::from_fd(fd),
-                                Err(e) => {
-                                    Output::pretty_errorln(format_args!(
-                                        "<r><red>error<r><d>:<r> failed to open {}: {}",
-                                        bstr::BStr::new(dest_path),
-                                        e
-                                    ));
-                                    break 'dump;
-                                }
-                            }
+                            break 'dump;
                         }
                     };
                     if let Err(e) = file.write_all(buf_bytes) {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r><d>:<r> failed to write {}: {}",
                             bstr::BStr::new(dest_path),
                             e
-                        ));
+                        );
                         break 'dump;
                     }
                 }
@@ -961,7 +1067,6 @@ pub(crate) fn to_bytes(
         };
 
         if output_file.source_map_index != u32::MAX {
-            // PERF(port): Zig used defer clearRetainingCapacity + arena.reset(.retain_capacity)
             serialize_json_source_map_for_standalone(
                 &mut source_map_header_list,
                 &mut source_map_string_list,
@@ -974,13 +1079,11 @@ pub(crate) fn to_bytes(
             source_map_header_list.clear();
             source_map_string_list.clear();
         }
-        // PERF(port): was appendAssumeCapacity
         modules.push(module);
     }
 
     // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
-    // invariants; reinterpreting its backing storage as bytes is the same as Zig's
-    // `std.mem.sliceAsBytes`.
+    // invariants; reinterpreting its backing storage as bytes is sound.
     let modules_as_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts(
             modules.as_ptr().cast::<u8>(),
@@ -995,28 +1098,37 @@ pub(crate) fn to_bytes(
         flags,
     };
 
-    // SAFETY: `Offsets` is `#[repr(C)]` POD; same `sliceAsBytes` rationale as above.
+    // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.
     let offsets_as_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts((&raw const offsets).cast::<u8>(), size_of::<Offsets>())
     };
     let _ = string_builder.append(offsets_as_bytes);
     let _ = string_builder.append(TRAILER);
 
-    // SAFETY: string_builder.ptr was set by allocate() above.
-    let output_bytes = unsafe {
-        core::slice::from_raw_parts_mut(string_builder.ptr.unwrap().as_ptr(), string_builder.len)
-    };
-
     #[cfg(debug_assertions)]
     {
-        // An expensive sanity check:
-        // TODO(port): from_bytes wants &'static mut; debug-only sanity check elided.
-        // let mut graph = StandaloneModuleGraph::from_bytes(output_bytes, offsets)?;
-        // debug_assert_eq!(graph.files.count(), modules.len());
+        // An expensive sanity check: round-trip
+        // the serialized bytes and verify the module count survives. The graph
+        // only borrows the builder's buffer transiently — it is unlocked and
+        // dropped before the buffer is moved out below.
+        let graph = StandaloneModuleGraph::from_bytes(
+            string_builder.ptr.unwrap().as_ptr(),
+            string_builder.len,
+            offsets,
+        )?;
+        debug_assert_eq!(graph.files.count(), modules.len());
+        graph.files.unlock_pointers();
+        graph.dirs.unlock_pointers();
     }
 
-    // TODO(port): StringBuilder owns the buffer; return it as Vec<u8>.
-    Ok(output_bytes.to_vec())
+    // StringBuilder owns the buffer; hand it back without copying. `cap` may
+    // exceed `len` (sourcemap capacity is over-estimated above), so truncate
+    // the reconstituted Vec down to the written prefix — the `[len, cap)` tail
+    // is never read.
+    let len = string_builder.len;
+    let mut output = string_builder.move_to_slice().into_vec();
+    output.truncate(len);
+    Ok(output)
 }
 
 pub(crate) type InjectOptions = WindowsOptions;
@@ -1067,31 +1179,72 @@ impl CompileResult {
     }
 }
 
-pub(crate) fn inject(
+/// The temp copy of the executable that `inject` wrote the module graph into:
+/// its open fd plus the absolute path it was created at, which the caller
+/// renames into place (an fd cannot be mapped back to a path on every
+/// filesystem).
+pub(crate) struct Injected<'a> {
+    pub fd: Fd,
+    pub temp_path: &'a ZStr,
+}
+
+impl<'a> Injected<'a> {
+    /// `zname` was opened relative to `cwd` (or is already absolute); pin it in
+    /// `temp_path_buf` so a later `chdir` cannot retarget the rename/unlink.
+    fn new(fd: Fd, cwd: &[u8], zname: &ZStr, temp_path_buf: &'a mut PathBuffer) -> Injected<'a> {
+        let len = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+            cwd,
+            &mut temp_path_buf[..],
+            &[zname.as_bytes()],
+        )
+        .len();
+        Injected {
+            fd,
+            temp_path: ZStr::from_buf(&temp_path_buf[..], len),
+        }
+    }
+}
+
+pub(crate) fn inject<'a>(
     bytes: &[u8],
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
-) -> Fd {
-    let _ = inject_options;
+    temp_path_buf: &'a mut PathBuffer,
+) -> Option<Injected<'a>> {
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
+        Ok(len) => &cwd_buf[..len],
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> failed to get the current directory\n{}",
+                err
+            );
+            return None;
+        }
+    };
     let mut buf = PathBuffer::uninit();
-    // PORT NOTE: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
+    // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
     let mut zname_owned: Option<Box<[u8]>> = None;
     let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
         &mut buf[..],
-        // i64 → u64 bitcast (Zig: `@bitCast`).
-        bun_core::time::milli_timestamp() as u64,
+        // tmpname OR's this seed with nano_timestamp(). milli_timestamp() is a
+        // bit-subset of nanos and so adds zero entropy; fast_random() is seeded
+        // from the OS CSPRNG per process, which keeps concurrent
+        // `bun build --compile` invocations from colliding on the same temp
+        // name in a shared cwd (the per-process counter is always 0 here).
+        bun_core::fast_random(),
     ) {
         Ok(n) => n,
         Err(e) => {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> failed to get temporary file name: {}",
                 bstr::BStr::new(e.name())
-            ));
-            return Fd::INVALID;
+            );
+            return None;
         }
     };
 
@@ -1124,15 +1277,14 @@ pub(crate) fn inject(
             // retain the pointers past return.
             if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
                 let e = w::Win32Error::get();
-                // Zig prints `@errorName(err)` (e.g. `AccessDenied`); map the
-                // Win32 code through the errno table so users see a name, not
-                // a raw integer.
-                Output::pretty_errorln(format_args!(
+                // Map the Win32 code through the errno table so users see a
+                // name, not a raw integer.
+                bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {:?}",
                     e.to_system_errno()
                         .unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
-                ));
-                return Fd::invalid();
+                );
+                return None;
             }
             let out = &out_buf[..zname.len()];
             let file = match Syscall::open_file_at_windows(
@@ -1147,11 +1299,11 @@ pub(crate) fn inject(
             ) {
                 Ok(f) => f,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
                         e
-                    ));
-                    return Fd::invalid();
+                    );
+                    return None;
                 }
             };
 
@@ -1207,8 +1359,7 @@ pub(crate) fn inject(
                                         zname.as_bytes(),
                                         &[0],
                                     ]);
-                                    // PORT NOTE: Zig leaked the concat buffer here. PORTING.md
-                                    // §Forbidden bans `mem::forget`; the buffer is parked in
+                                    // Note: the concat buffer is parked in
                                     // `zname_owned` (declared at fn entry) so it outlives the
                                     // loop and drops at fn exit.
                                     let len = zname_z.len().saturating_sub(1);
@@ -1226,11 +1377,14 @@ pub(crate) fn inject(
                                 bun_sys::E::EPERM | bun_sys::E::EAGAIN | bun_sys::E::EBUSY => {
                                     continue;
                                 }
-                                _ => break,
+                                _ => {}
                             }
                         }
-                        // PORT NOTE: Zig falls through to `unreachable` on retry == 2; the
-                        // print+return above is dead code in Zig too (kept for diff parity).
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
+                            err
+                        );
+                        return None;
                     }
                 }
             }
@@ -1252,12 +1406,12 @@ pub(crate) fn inject(
                             }
                         }
 
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}",
                             err
-                        ));
+                        );
                         cleanup(zname, fd);
-                        return Fd::INVALID;
+                        return None;
                     }
                 }
             }
@@ -1270,12 +1424,12 @@ pub(crate) fn inject(
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
             if let Err(e) = bun_sys::copy_file(self_fd, fd) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     e
-                ));
+                );
                 cleanup(zname, fd);
-                return Fd::INVALID;
+                return None;
             }
 
             break 'brk fd;
@@ -1288,118 +1442,113 @@ pub(crate) fn inject(
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!(
-                        "Error reading standalone module graph: {}",
-                        err
-                    ));
+                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
                 Ok(f) => f,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
-                        "Error initializing standalone module graph: {}",
-                        e
-                    ));
+                    bun_core::pretty_errorln!("Error initializing standalone module graph: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             if let Err(e) = macho_file.write_section(bytes) {
-                Output::pretty_errorln(format_args!(
-                    "Error writing standalone module graph: {}",
-                    e
-                ));
+                bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                Output::pretty_errorln(format_args!(
-                    "Error seeking to start of temporary file: {}",
-                    err
-                ));
+                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
-            // PERF(port): Zig used writer.adaptToNewApi(&buffer) with a 512KB stack
-            // buffer. `std::io::BufWriter` heap-allocates the buffer instead.
             let mut buffered_writer = std::io::BufWriter::with_capacity(
                 512 * 1024,
                 bun_sys::FileWriter(cloned_executable_fd),
             );
             if let Err(e) = macho_file.build_and_sign(&mut buffered_writer) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "Error writing standalone module graph: {}",
                     bstr::BStr::new(e.name())
-                ));
+                );
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
-                Output::pretty_errorln(format_args!(
-                    "Error flushing standalone module graph: {}",
-                    e
-                ));
+                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         CompileTargetOs::Windows => {
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!(
-                        "Error reading standalone module graph: {}",
-                        err
-                    ));
+                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
                 Ok(f) => f,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!("Error initializing PE file: {}", e));
+                    bun_core::pretty_errorln!("Error initializing PE file: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
+            if inject_options.hide_console {
+                if let Err(e) = pe_file.set_subsystem(bun_pe::IMAGE_SUBSYSTEM_WINDOWS_GUI) {
+                    bun_core::pretty_errorln!("Error setting PE subsystem: {}", e);
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                }
+            }
             // Always strip authenticode when adding .bun section for --compile
-            if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
-                Output::pretty_errorln(format_args!("Error adding Bun section to PE file: {}", e));
+            if let Err(e) = pe_file.add_bun_section(bytes) {
+                bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                Output::pretty_errorln(format_args!(
-                    "Error seeking to start of temporary file: {}",
-                    err
-                ));
+                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             let mut writer = bun_sys::FileWriter(cloned_executable_fd);
             if let Err(e) = pe_file.write(&mut writer) {
-                Output::pretty_errorln(format_args!(
-                    "Error writing PE file: {}",
-                    bstr::BStr::new(e.name())
-                ));
+                bun_core::pretty_errorln!("Error writing PE file: {}", bstr::BStr::new(e.name()));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
+            }
+            // Truncate to the in-memory PE size; Authenticode strip can make it shorter than the base.
+            if let Err(err) = Syscall::ftruncate(
+                cloned_executable_fd,
+                i64::try_from(pe_file.len()).expect("int cast"),
+            ) {
+                bun_core::pretty_errorln!("Error truncating PE file: {}", err);
+                cleanup(zname, cloned_executable_fd);
+                return None;
             }
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
@@ -1407,64 +1556,75 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!("Error reading executable: {}", err));
+                    bun_core::pretty_errorln!("Error reading executable: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
 
             let mut elf_file = match bun_elf::ElfFile::init(input_bytes) {
                 Ok(f) => f,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!("Error initializing ELF file: {}", e));
+                    bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
 
             elf_file.normalize_interpreter();
 
             if let Err(e) = elf_file.write_bun_section(bytes) {
-                Output::pretty_errorln(format_args!("Error writing .bun section to ELF: {}", e));
+                bun_core::pretty_errorln!("Error writing .bun section to ELF: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                Output::pretty_errorln(format_args!(
-                    "Error seeking to start of temporary file: {}",
-                    err
-                ));
+                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             // Write the modified ELF data back to the file
             let write_file = bun_sys::File::borrow(&cloned_executable_fd);
             if let Err(err) = write_file.write_all(&elf_file.data) {
-                Output::pretty_errorln(format_args!("Error writing ELF file: {}", err));
+                bun_core::pretty_errorln!("Error writing ELF file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             // Truncate the file to the exact size of the modified ELF
-            let _ = Syscall::ftruncate(
+            if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,
                 i64::try_from(elf_file.data.len()).expect("int cast"),
-            );
+            ) {
+                bun_core::pretty_errorln!("Error truncating ELF file: {}", err);
+                cleanup(zname, cloned_executable_fd);
+                return None;
+            }
 
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         _ => {
             let total_byte_count: usize;
@@ -1475,12 +1635,12 @@ pub(crate) fn inject(
                     + match Syscall::set_file_offset_to_end_windows(cloned_executable_fd) {
                         Ok(v) => v,
                         Err(e) => {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}",
                                 e
-                            ));
+                            );
                             cleanup(zname, cloned_executable_fd);
-                            return Fd::invalid();
+                            return None;
                         }
                     };
             }
@@ -1490,9 +1650,9 @@ pub(crate) fn inject(
                     let fstat = match Syscall::fstat(cloned_executable_fd) {
                         Ok(res) => res,
                         Err(err) => {
-                            Output::pretty_errorln(format_args!("{}", err));
+                            bun_core::pretty_errorln!("{}", err);
                             cleanup(zname, cloned_executable_fd);
-                            return Fd::INVALID;
+                            return None;
                         }
                     };
                     break 'brk fstat.st_size.max(0);
@@ -1510,12 +1670,13 @@ pub(crate) fn inject(
                 //  written into the gap.
                 //
                 if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, seek_position) {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "{}\nwhile seeking to end of temporary file (pos: {})",
-                        err, seek_position
-                    ));
+                        err,
+                        seek_position
+                    );
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             }
 
@@ -1524,12 +1685,12 @@ pub(crate) fn inject(
                 match Syscall::write(cloned_executable_fd, remain) {
                     Ok(written) => remain = &remain[written..],
                     Err(err) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r><d>:<r> failed to write to temporary file\n{}",
                             err
-                        ));
+                        );
                         cleanup(zname, cloned_executable_fd);
-                        return Fd::INVALID;
+                        return None;
                     }
                 }
             }
@@ -1542,7 +1703,12 @@ pub(crate) fn inject(
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
     }
 }
@@ -1550,15 +1716,15 @@ pub(crate) fn inject(
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
 pub use bun_options_types::compile_target::CompileTarget;
 
-/// Port of `CompileTarget.downloadToPath` (CompileTarget.zig). Moved up from
-/// `bun_options_types` (T3) so it can name `bun_http::AsyncHTTP` directly
+/// Moved up from `bun_options_types` (T3) so it can name
+/// `bun_http::AsyncHTTP` directly
 /// instead of routing through `extern "Rust"` shims; the only callers are the
 /// two `download*` fns below in this crate.
 pub(crate) fn download_to_path(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader<'_>,
+    env: &mut bun_dotenv::Loader,
     dest_z: &ZStr,
-) -> Result<(), BunError> {
+) -> crate::Result<()> {
     bun_http::http_thread::init(&Default::default());
     let mut refresher = bun_core::Progress::Progress::default();
 
@@ -1573,16 +1739,17 @@ pub(crate) fn download_to_path(
             Ok(s) => s,
             Err(err) => {
                 // Return error without printing - let caller decide how to handle
-                return Err(err);
+                return Err(err.into());
             }
         };
         let url_str_copy: Box<[u8]> = Box::from(url_str);
         let url = bun_url::URL::parse(&url_str_copy);
         {
-            // TODO(port): errdefer progress.end() — `start` returns `&mut Node`
-            // borrowing `refresher`, so a scopeguard capturing it would alias.
-            // Could reshape with a guard that re-borrows on drop.
-            // PORT NOTE: reshaped for borrowck — `get_http_proxy_for` borrows
+            // The unconditional
+            // `progress.end()` below is sufficient: no fallible call sits between
+            // `refresher.start` and it, so every exit path (including the
+            // error returns after it) ends the node exactly once.
+            // Note: reshaped for borrowck — `get_http_proxy_for` borrows
             // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
             let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
@@ -1593,7 +1760,6 @@ pub(crate) fn download_to_path(
                 url,
                 Default::default(),
                 b"",
-                &raw mut *compressed_archive_bytes,
                 b"",
                 http_proxy,
                 None,
@@ -1602,22 +1768,22 @@ pub(crate) fn download_to_path(
             async_http.client.progress_node =
                 core::ptr::NonNull::new(core::ptr::from_mut(progress));
             async_http.client.flags.reject_unauthorized = reject_unauthorized;
-            let send_result = async_http.send_sync();
+            let send_result = async_http.send_sync(&mut compressed_archive_bytes);
 
             progress.end();
-            let status_code = send_result?.status_code as u16;
+            let status_code = send_result?.status_code() as u16;
 
             match status_code {
                 404 => {
                     // Return error without printing - let caller handle the messaging
-                    return Err(err!("TargetNotFound"));
+                    return Err(crate::Error::TargetNotFound);
                 }
                 403 | 429 | 499..=599 => {
                     // Return error without printing - let caller handle the messaging
-                    return Err(err!("NetworkError"));
+                    return Err(crate::Error::NetworkError);
                 }
                 200 => {}
-                _ => return Err(err!("NetworkError")),
+                _ => return Err(crate::Error::NetworkError),
             }
         }
 
@@ -1628,20 +1794,22 @@ pub(crate) fn download_to_path(
 
             if compressed_archive_bytes.list.is_empty() {
                 // Return error without printing - let caller handle the messaging
-                return Err(err!("InvalidResponse"));
+                return Err(crate::Error::InvalidResponse);
             }
 
             {
-                // PORT NOTE: reshaped for borrowck — `refresher.start` borrows
+                // Note: reshaped for borrowck — `refresher.start` borrows
                 // `refresher` mutably; do gunzip work first, drive progress around it.
                 refresher.start(b"Decompressing", 0);
-                let gunzip_result = (|| -> Result<(), BunError> {
+                let gunzip_result = (|| -> crate::Result<()> {
                     let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
                         compressed_archive_bytes.list.as_slice(),
                         &mut tarball_bytes,
                     )
-                    .map_err(|_| err!("InvalidResponse"))?;
-                    gunzip.read_all(true).map_err(|_| err!("InvalidResponse"))?;
+                    .map_err(|_| crate::Error::InvalidResponse)?;
+                    gunzip
+                        .read_all(true)
+                        .map_err(|_| crate::Error::InvalidResponse)?;
                     Ok(())
                 })();
                 refresher.root.end();
@@ -1675,7 +1843,7 @@ pub(crate) fn download_to_path(
                 if extract_res.is_err() {
                     refresher.root.end();
                     // Return error without printing - let caller handle the messaging
-                    return Err(err!("ExtractionFailed"));
+                    return Err(crate::Error::ExtractionFailed);
                 }
 
                 let mut did_retry = false;
@@ -1699,7 +1867,7 @@ pub(crate) fn download_to_path(
                         }
                         refresher.root.end();
                         // Return error without printing - let caller handle the messaging
-                        return Err(err!("ExtractionFailed"));
+                        return Err(crate::Error::ExtractionFailed);
                     }
                     break;
                 }
@@ -1715,7 +1883,7 @@ pub(crate) fn download_to_path(
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
-    root_dir: Fd, // TODO(port): was std.fs.Dir
+    root_dir: Fd,
     module_prefix: &[u8],
     outfile: &[u8],
     env: &mut bun_dotenv::Loader,
@@ -1724,10 +1892,9 @@ pub fn to_executable(
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
     flags: Flags,
-) -> Result<CompileResult, BunError> {
+) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
-    // TODO(port): narrow error set
     let bytes = match to_bytes(
         module_prefix,
         output_files,
@@ -1748,9 +1915,8 @@ pub fn to_executable(
     }
     // bytes drops at end of scope
 
-    // PORT NOTE: Zig tracked `free_self_exe` to decide whether the slice was
-    // allocator-owned. `ZBox` always owns its bytes and drops on scope exit,
-    // so the flag is unnecessary.
+    // `ZBox` always owns its bytes and drops on scope exit, so no
+    // ownership flag is needed.
     let self_exe: bun_core::ZBox = if let Some(path) = self_exe_path {
         bun_core::ZBox::from_vec_with_nul(path.to_vec())
     } else if target.is_default() {
@@ -1765,7 +1931,6 @@ pub fn to_executable(
         }
     } else {
         let mut exe_path_buf = PathBuffer::uninit();
-        // TODO(port): std.fmt.allocPrintSentinel — build NUL-terminated owned string.
         let mut version_str: Vec<u8> = Vec::new();
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
@@ -1777,34 +1942,28 @@ pub fn to_executable(
 
         if needs_download {
             if let Err(e) = download_to_path(target, env, dest_z) {
-                return Ok(if e == err!("TargetNotFound") {
-                    CompileResult::fail_fmt(format_args!(
+                return Ok(match e {
+                    crate::Error::TargetNotFound => CompileResult::fail_fmt(format_args!(
                         "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
                         target
-                    ))
-                } else if e == err!("NetworkError") {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::NetworkError => CompileResult::fail_fmt(format_args!(
                         "Network error downloading executable for '{}'. Check your internet connection and proxy settings.",
                         target
-                    ))
-                } else if e == err!("InvalidResponse") {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::InvalidResponse => CompileResult::fail_fmt(format_args!(
                         "Downloaded file for '{}' appears to be corrupted. Please try again.",
                         target
-                    ))
-                } else if e == err!("ExtractionFailed") {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(
                         "Failed to extract executable for '{}'. The download may be incomplete.",
                         target
-                    ))
-                } else if e == err!("UnsupportedTarget") {
-                    CompileResult::fail_fmt(format_args!("Target '{}' is not supported", target))
-                } else {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    _ => CompileResult::fail_fmt(format_args!(
                         "Failed to download '{}': {}",
                         target,
                         bstr::BStr::new(e.name())
-                    ))
+                    )),
                 });
             }
         }
@@ -1812,12 +1971,23 @@ pub fn to_executable(
         bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     };
 
-    let fd = inject(&bytes, &self_exe, windows_options, target);
-    // PORT NOTE: Zig's `defer if (fd != invalid) fd.close()` reads `fd` at scope exit
-    // after later reassignments. A scopeguard closure capturing `fd` by value would not
-    // observe those writes; capturing by `&mut` conflicts with later uses. Explicit
-    // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
-    // (both error and success paths) to match Zig behavior.
+    let mut temp_path_buf = bun_paths::path_buffer_pool::get();
+    let Some(injected) = inject(
+        &bytes,
+        &self_exe,
+        windows_options,
+        target,
+        &mut temp_path_buf,
+    ) else {
+        // inject() has already printed the specific error.
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "failed to write compiled executable {}",
+            bstr::BStr::new(outfile)
+        )));
+    };
+    let fd = injected.fd;
+    // Closed explicitly at every return below rather than by a guard: on Windows
+    // the handle has to be closed mid-function, before `MoveFileExW`.
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]
@@ -1828,20 +1998,7 @@ pub fn to_executable(
 
     #[cfg(windows)]
     {
-        // Get the current path of the temp file
-        let mut temp_buf = PathBuffer::uninit();
-        let temp_path = match bun_sys::get_fd_path(fd, &mut temp_buf) {
-            Ok(p) => p,
-            Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "Failed to get temp file path: {}",
-                    bstr::BStr::new(e.name())
-                )));
-            }
-        };
+        let temp_path: &[u8] = injected.temp_path.as_bytes();
 
         // Build the absolute destination path
         // On Windows, we need an absolute path for MoveFileExW
@@ -1850,9 +2007,7 @@ pub fn to_executable(
         let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
             Ok(len) => &cwd_buf[..len],
             Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
+                fd.close();
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to get current directory: {}",
                     bstr::BStr::new(e.name())
@@ -1886,7 +2041,7 @@ pub fn to_executable(
         // SAFETY: NUL-terminated wide strings constructed above. Pass the
         // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
         // provenance covers the trailing NUL at index `len` that the W-suffix
-        // API will read — matches Zig's `buf[0..len :0].ptr` sentinel slice.
+        // API will read.
         if unsafe {
             windows::kernel32::MoveFileExW(
                 temp_buf_u16.as_ptr(),
@@ -1898,6 +2053,7 @@ pub fn to_executable(
         } == windows::FALSE
         {
             let werr = windows::Win32Error::get();
+            let _ = Syscall::unlink(injected.temp_path);
             if let Some(sys_err) = werr.to_system_errno() {
                 if sys_err == bun_sys::SystemErrno::EISDIR {
                     return Ok(CompileResult::fail_fmt(format_args!(
@@ -1941,7 +2097,7 @@ pub fn to_executable(
             ) {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to set Windows metadata: {}",
-                    e.name()
+                    e
                 )));
             }
         }
@@ -1950,26 +2106,7 @@ pub fn to_executable(
 
     #[cfg(not(windows))]
     {
-        let mut buf2 = PathBuffer::uninit();
-        // PORT NOTE: borrowck — `get_fd_path` returns `&mut [u8]` borrowing `buf2`;
-        // copy it into an owned buffer so `temp_posix_buf` can also borrow `buf2`'s
-        // sibling without overlap.
-        let temp_location: Vec<u8> = match bun_sys::get_fd_path(fd, &mut buf2) {
-            Ok(p) => p.to_vec(),
-            Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to get path for fd: {}",
-                    e
-                )));
-            }
-        };
-        // TODO(port): std.posix.toPosixPath — copy into NUL-terminated fixed buffer.
-        // `resolve_path::z` does the same (copy + NUL) and yields `&ZStr`.
-        let mut temp_posix_buf = PathBuffer::uninit();
-        let temp_posix = path::resolve_path::z(&temp_location, &mut temp_posix_buf);
+        let temp_posix = injected.temp_path;
         let outfile_basename = bun_paths::basename(outfile);
         let mut outfile_posix_buf = PathBuffer::uninit();
         let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
@@ -1981,7 +2118,7 @@ pub fn to_executable(
 
             let _ = Syscall::unlink(temp_posix);
 
-            if e == err!("IsDir") || e == err!("EISDIR") {
+            if e.get_errno() == bun_errno::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
                     bstr::BStr::new(outfile)
@@ -1989,16 +2126,14 @@ pub fn to_executable(
             } else {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "failed to rename {} to {}: {}",
-                    bstr::BStr::new(&temp_location),
+                    bstr::BStr::new(temp_posix.as_bytes()),
                     bstr::BStr::new(outfile),
                     bstr::BStr::new(e.name())
                 )));
             }
         }
 
-        if fd != Fd::INVALID {
-            fd.close();
-        }
+        fd.close();
         Ok(CompileResult::Success)
     }
 }
@@ -2006,16 +2141,14 @@ pub fn to_executable(
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
-    pub fn from_executable() -> Result<Option<*mut StandaloneModuleGraph>, BunError> {
+    pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
         #[cfg(target_os = "macos")]
         {
             let Some((base, len)) = macho::get_data() else {
                 return Ok(None);
             };
             if len < size_of::<Offsets>() + TRAILER.len() {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph is too small to be valid"
-                ));
+                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
                 return Ok(None);
             }
             // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
@@ -2027,9 +2160,7 @@ impl StandaloneModuleGraph {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
             if trailer_bytes != TRAILER {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph has invalid trailer"
-                ));
+                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
@@ -2044,9 +2175,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             };
             if len < size_of::<Offsets>() + TRAILER.len() {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph is too small to be valid"
-                ));
+                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
                 return Ok(None);
             }
             // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
@@ -2058,9 +2187,7 @@ impl StandaloneModuleGraph {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
             if trailer_bytes != TRAILER {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph has invalid trailer"
-                ));
+                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
@@ -2075,9 +2202,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             };
             if len < size_of::<Offsets>() + TRAILER.len() {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph is too small to be valid"
-                ));
+                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
                 return Ok(None);
             }
             // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
@@ -2089,9 +2214,7 @@ impl StandaloneModuleGraph {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
             if trailer_bytes != TRAILER {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph has invalid trailer"
-                ));
+                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
@@ -2117,7 +2240,8 @@ impl StandaloneModuleGraph {
     /// The pages are clean file-backed COW, so any later read (lazy require,
     /// stack-trace source lookup) faults back in transparently from the
     /// executable on disk. Only applies when running as a compiled
-    /// standalone binary.
+    /// standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
+    /// skips the hint.
     pub fn hint_source_pages_dont_need() {
         #[cfg(windows)]
         {
@@ -2149,7 +2273,11 @@ impl StandaloneModuleGraph {
 
             #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
             {
-                if len == 0 {
+                if len == 0
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
+                        .get()
+                        .unwrap_or(false)
+                {
                     return;
                 }
 
@@ -2158,8 +2286,8 @@ impl StandaloneModuleGraph {
                 let end_unaligned = base as usize + len;
                 let end = (end_unaligned + page - 1) & !(page - 1);
 
-                // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
-                // best-effort hint, so call libc directly and just log on failure.
+                // This is a best-effort hint, so call libc madvise directly and
+                // just log on failure rather than treating errors as fatal.
                 // SAFETY: start..end covers a mapped range of the executable image.
                 let rc = unsafe {
                     libc::madvise(
@@ -2169,16 +2297,18 @@ impl StandaloneModuleGraph {
                     )
                 };
                 if rc != 0 {
-                    Output::debug_warn(format_args!(
+                    bun_core::scoped_log!(
+                        StandaloneModuleGraph,
                         "hintSourcePagesDontNeed: madvise failed errno={}",
                         bun_sys::last_errno()
-                    ));
+                    );
                     return;
                 }
-                Output::debug_warn(format_args!(
+                bun_core::scoped_log!(
+                    StandaloneModuleGraph,
                     "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
                     end - start
-                ));
+                );
             }
         }
     }
@@ -2190,7 +2320,7 @@ fn from_bytes_alloc(
     raw_ptr: *mut u8,
     raw_len: usize,
     offsets: Offsets,
-) -> Result<*mut StandaloneModuleGraph, BunError> {
+) -> crate::Result<*mut StandaloneModuleGraph> {
     let graph = StandaloneModuleGraph::from_bytes(raw_ptr, raw_len, offsets)?;
     Ok(StandaloneModuleGraph::set(graph))
 }
@@ -2237,8 +2367,7 @@ impl SerializedSourceMap {
         Some(&self.bytes[start..][..head.map_bytes_length as usize])
     }
 
-    // PORT NOTE: Zig types these arrays as `[]align(1) const StringPointer` because the
-    // serialized byte buffer carries no alignment guarantee. Materializing a Rust
+    // Note: the serialized byte buffer carries no alignment guarantee. Materializing a
     // `&[StringPointer]` would require `align_of::<StringPointer>() == 4` alignment
     // (UB otherwise), so expose count + indexed unaligned reads instead.
 
@@ -2266,19 +2395,15 @@ pub struct SerializedSourceMapLoaded {
     /// Only decompress source code once! Once a file is decompressed,
     /// it is stored here. Decompression failures are stored as an empty
     /// string, which will be treated as "no contents".
-    pub decompressed_files: Box<[Option<Vec<u8>>]>,
+    pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
 }
 
 pub(crate) fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
-) -> Result<(), BunError> {
+) -> crate::Result<()> {
     use bun_ast::ExprData as AstData;
-
-    // PERF(port): Zig threaded an arena allocator through; here we own a local
-    // bump arena and drop it on return (matches `defer arena.free`).
-    let arena = bun_alloc::Arena::new();
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
     let mut log = bun_ast::Log::init();
@@ -2287,103 +2412,99 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     // of the parse, so we need to remember to reset the ast store
     let _reset_guard = bun_ast::StoreResetGuard::new();
 
-    let json = bun_parsers::json::parse::<false>(&json_src, &mut log, &arena)
-        .map_err(|_| err!("InvalidSourceMap"))?;
+    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log)
+        .map_err(|_| crate::Error::InvalidSourceMap)?;
+    let json = parsed.root;
 
     let mappings_str = json
         .get(b"mappings")
-        .ok_or_else(|| err!("InvalidSourceMap"))?;
-    if !matches!(mappings_str.data, AstData::EString(_)) {
-        return Err(err!("InvalidSourceMap"));
-    }
+        .ok_or(crate::Error::InvalidSourceMap)?;
+    let map_vlq: &[u8] = mappings_str
+        .as_utf8_string_literal()
+        .ok_or(crate::Error::InvalidSourceMap)?;
     let sources_content = match json
         .get(b"sourcesContent")
-        .ok_or_else(|| err!("InvalidSourceMap"))?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
-        AstData::EArray(arr) => arr,
-        _ => return Err(err!("InvalidSourceMap")),
+        AstData::EArrayJSON(arr) => arr,
+        _ => return Err(crate::Error::InvalidSourceMap),
     };
+    let sources_content = sources_content.get();
     let sources_paths = match json
         .get(b"sources")
-        .ok_or_else(|| err!("InvalidSourceMap"))?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
-        AstData::EArray(arr) => arr,
-        _ => return Err(err!("InvalidSourceMap")),
+        AstData::EArrayJSON(arr) => arr,
+        _ => return Err(crate::Error::InvalidSourceMap),
     };
-    if sources_content.items.len_u32() != sources_paths.items.len_u32() {
-        return Err(err!("InvalidSourceMap"));
+    let sources_paths = sources_paths.get();
+    if sources_content.items().len() != sources_paths.items().len() {
+        return Err(crate::Error::InvalidSourceMap);
     }
 
-    // SAFETY: matched `EString` above; `StoreRef` derefs `&mut` into the arena node.
-    let mut mappings_e_string = mappings_str
-        .data
-        .e_string()
-        .expect("infallible: variant checked");
-    let map_vlq: &[u8] = mappings_e_string.slice(&arena);
-    let map_blob =
-        SourceMap::InternalSourceMap::from_vlq(map_vlq, 0).map_err(|_| err!("InvalidSourceMap"))?;
+    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
+        .map_err(|_| crate::Error::InvalidSourceMap)?;
 
-    header_list.extend_from_slice(&u32::to_le_bytes(sources_paths.items.len_u32()));
-    header_list.extend_from_slice(
-        &u32::try_from(map_blob.len())
-            .expect("int cast")
-            .to_le_bytes(),
-    );
+    // Every offset/length in the serialized map is a u32 `StringPointer`;
+    // anything that cannot be represented is a build error, not a crash.
+    let map_blob_len_u32 =
+        u32::try_from(map_blob.len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
+    let sources_len_u32 =
+        u32::try_from(sources_paths.items().len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
+    header_list.extend_from_slice(&sources_len_u32.to_le_bytes());
+    header_list.extend_from_slice(&map_blob_len_u32.to_le_bytes());
 
     let string_payload_start_location = size_of::<u32>()
         + size_of::<u32>()
-        + size_of::<StringPointer>() * (sources_content.items.len_u32() as usize) * 2 // path + source
+        + size_of::<StringPointer>() * sources_content.items().len() * 2 // path + source
         + map_blob.len();
 
-    for item in sources_paths.items.slice() {
-        let AstData::EString(s) = item.data else {
-            return Err(err!("InvalidSourceMap"));
-        };
-
-        let decoded = s.string_cloned(&arena).map_err(|_| err!("OutOfMemory"))?;
+    for item in sources_paths.items() {
+        let decoded = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
 
         let offset = string_payload.len();
         string_payload.extend_from_slice(decoded);
 
         let slice = StringPointer {
-            offset: u32::try_from(offset + string_payload_start_location).expect("int cast"),
-            length: u32::try_from(string_payload.len() - offset).expect("int cast"),
+            offset: u32::try_from(offset + string_payload_start_location)
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
+            length: u32::try_from(string_payload.len() - offset)
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());
     }
 
-    for item in sources_content.items.slice() {
-        let AstData::EString(s) = item.data else {
-            return Err(err!("InvalidSourceMap"));
-        };
-
-        let utf8 = s.string_cloned(&arena).map_err(|_| err!("OutOfMemory"))?;
+    for item in sources_content.items() {
+        let utf8 = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
 
         let offset = string_payload.len();
 
         let bound = bun_zstd::compress_bound(utf8.len());
-        // SAFETY: zstd writes only into the spare slice and reports the byte
-        // count on success; on error we commit 0 and `Output::panic` diverges.
-        unsafe {
-            bun_core::vec::fill_spare(string_payload, bound, |spare| {
-                match bun_zstd::compress(spare, utf8, Some(1)) {
-                    bun_zstd::Result::Err(err_msg) => {
-                        Output::panic(format_args!(
-                            "Unexpected error compressing sourcemap: {}",
-                            bstr::BStr::new(err_msg.as_bytes())
-                        ));
-                    }
-                    bun_zstd::Result::Success(n) => (n, ()),
-                }
-            })
-        };
+        // `ZSTD_compressBound` returns an *error code* (a value near
+        // `usize::MAX`) when the input size exceeds `ZSTD_MAX_INPUT_SIZE`;
+        // feeding that to `Vec::reserve` below would abort with a capacity
+        // overflow instead of failing the build.
+        if bun_zstd::is_error(bound) {
+            return Err(crate::Error::SourceMapTooLarge);
+        }
+        string_payload.reserve(bound);
+        if let bun_zstd::Result::Err(err_msg) =
+            bun_zstd::compress_append(string_payload, utf8, Some(1))
+        {
+            Output::panic(format_args!(
+                "Unexpected error compressing sourcemap: {}",
+                bstr::BStr::new(err_msg.as_bytes())
+            ));
+        }
 
         let slice = StringPointer {
-            offset: u32::try_from(offset + string_payload_start_location).expect("int cast"),
-            length: u32::try_from(string_payload.len() - offset).expect("int cast"),
+            offset: u32::try_from(offset + string_payload_start_location)
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
+            length: u32::try_from(string_payload.len() - offset)
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());
@@ -2394,5 +2515,3 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     debug_assert!(header_list.len() == string_payload_start_location);
     Ok(())
 }
-
-// ported from: src/standalone_graph/StandaloneModuleGraph.zig

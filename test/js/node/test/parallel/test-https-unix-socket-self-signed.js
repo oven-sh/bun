@@ -1,6 +1,7 @@
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
+if (common.isWindows)
+  common.skip('Bun does not support listening on a Windows named pipe yet');
 
 if (!common.hasCrypto)
   common.skip('missing crypto');

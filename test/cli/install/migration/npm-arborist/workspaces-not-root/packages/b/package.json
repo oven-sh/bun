@@ -1,0 +1,7 @@
+{
+  "name": "b",
+  "version": "1.2.3",
+  "dependencies": {
+    "abbrev": ""
+  }
+}

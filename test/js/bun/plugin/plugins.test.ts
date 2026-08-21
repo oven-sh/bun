@@ -1,6 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -197,7 +198,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe } from "harness";
+import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -344,7 +345,7 @@ export default Hello;
 });
 
 describe("errors", () => {
-  it.todo("valid loaders work", () => {
+  it("valid loaders work", () => {
     const validLoaders = ["js", "jsx", "ts", "tsx"];
     const inputs = ["export default 'hi';", "export default 'hi';", "export default 'hi';", "export default 'hi';"];
     for (let i = 0; i < validLoaders.length; i++) {
@@ -364,6 +365,42 @@ describe("errors", () => {
     expect(() => {
       plugin(opts as any);
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
+  });
+
+  it("handles 'target' that throws while being coerced to a string", () => {
+    let called = false;
+    const opts = {
+      setup: () => {
+        called = true;
+      },
+      target: {
+        [Symbol.toPrimitive]: () => ({}),
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("Symbol.toPrimitive returned an object");
+    expect(called).toBe(false);
+  });
+
+  it("handles a 'target' whose toString throws", () => {
+    let called = false;
+    const opts = {
+      setup: () => {
+        called = true;
+      },
+      target: {
+        toString() {
+          throw new Error("target toString error");
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("target toString error");
+    expect(called).toBe(false);
   });
 
   it("invalid loaders throw", () => {
@@ -509,6 +546,86 @@ describe("errors", () => {
   });
 });
 
+describe("object loader with a throwing exports getter", () => {
+  // The result object's "exports" getter throws while the module loader reads
+  // it. Run in a subprocess: the unfixed runtime segfaults instead of
+  // surfacing the getter's error.
+  const throwingExportsResult = `
+    const result = { loader: "object" };
+    Object.defineProperty(result, "exports", {
+      enumerable: true,
+      get() {
+        throw new Error("exports getter threw");
+      },
+    });
+    return result;
+  `;
+
+  async function expectCleanFailure(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("failed: exports getter threw\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
+  it.concurrent("rejects import() of a build.module result", async () => {
+    await expectCleanFailure(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.module("virt-mod", () => { ${throwingExportsResult} });
+        },
+      });
+      try {
+        await import("virt-mod");
+        console.log("imported");
+      } catch (e) {
+        console.log("failed:", e?.message);
+      }
+    `);
+  });
+
+  it.concurrent("throws from require() of a build.module result", async () => {
+    await expectCleanFailure(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.module("virt-mod", () => { ${throwingExportsResult} });
+        },
+      });
+      try {
+        require("virt-mod");
+        console.log("required");
+      } catch (e) {
+        console.log("failed:", e?.message);
+      }
+    `);
+  });
+
+  it.concurrent("rejects import() of a build.onLoad result", async () => {
+    await expectCleanFailure(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.onResolve({ filter: /.*/, namespace: "virtns" }, args => ({ path: args.path, namespace: "virtns" }));
+          build.onLoad({ filter: /.*/, namespace: "virtns" }, () => { ${throwingExportsResult} });
+        },
+      });
+      try {
+        await import("virtns:mod");
+        console.log("imported");
+      } catch (e) {
+        console.log("failed:", e?.message);
+      }
+    `);
+  });
+});
+
 it("require(...).default without __esModule", () => {
   {
     const { default: mod } = require("my-virtual-module-with-default");
@@ -549,6 +666,34 @@ it("recursion throws stack overflow", () => {
   }
 });
 
+it("onResolve callbacks registered while a path is resolving only apply to later resolutions", () => {
+  Bun.plugin({
+    name: "registers another onResolve while resolving",
+    setup(builder) {
+      builder.onResolve({ filter: /.*/, namespace: "regduring" }, () => {
+        Bun.plugin({
+          name: "registered during resolution",
+          setup(inner) {
+            inner.onResolve({ filter: /.*/, namespace: "regduring" }, ({ path }) => ({
+              path,
+              namespace: "regduring",
+            }));
+          },
+        });
+        return undefined;
+      });
+
+      builder.onLoad({ filter: /.*/, namespace: "regduring" }, ({ path }) => ({
+        contents: `export default ${JSON.stringify(path)};`,
+        loader: "js",
+      }));
+    },
+  });
+
+  expect(() => require("regduring:first")).toThrow();
+  expect(require("regduring:second").default).toBe("second");
+});
+
 it("recursion throws stack overflow at entry point", () => {
   const result = Bun.spawnSync({
     cmd: [bunExe(), "--preload=./plugin-recursive-fixture.ts", "plugin-recursive-fixture-run.ts"],
@@ -559,4 +704,235 @@ it("recursion throws stack overflow at entry point", () => {
   });
 
   expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
+});
+
+it.concurrent("onResolve can redirect a specifier to a real file in the file namespace", async () => {
+  using dir = tempDir("plugin-onresolve-file-namespace", {
+    "real.js": `export const value = "redirected";`,
+    "entry.js": `
+      import { join } from "node:path";
+
+      const target = join(import.meta.dir, "real.js");
+
+      Bun.plugin({
+        name: "redirect-to-file",
+        setup(build) {
+          build.onResolve({ filter: /^implicit\\.mod$/ }, () => ({ path: target }));
+          build.onResolve({ filter: /^explicit\\.mod$/ }, () => ({ path: target, namespace: "file" }));
+          build.onResolve({ filter: /^empty-namespace\\.mod$/ }, () => ({ path: target, namespace: "" }));
+          build.onResolve({ filter: /^custom\\.mod$/ }, () => ({ path: "inner", namespace: "custom" }));
+          build.onLoad({ filter: /.*/, namespace: "custom" }, ({ path }) => ({
+            contents: "export const value = " + JSON.stringify("custom:" + path) + ";",
+            loader: "js",
+          }));
+        },
+      });
+
+      async function attempt(fn) {
+        try {
+          return await fn();
+        } catch (error) {
+          return "threw: " + error.message;
+        }
+      }
+
+      console.log(
+        JSON.stringify({
+          dynamicImport: await attempt(async () => (await import("implicit.mod")).value),
+          explicitFileNamespace: await attempt(async () => (await import("explicit.mod")).value),
+          emptyNamespace: await attempt(async () => (await import("empty-namespace.mod")).value),
+          customNamespace: await attempt(async () => (await import("custom.mod")).value),
+          requireComputed: await attempt(() => require("implicit" + ".mod").value),
+          resolveSync: await attempt(() => Bun.resolveSync("implicit.mod", import.meta.dir)),
+          importMetaResolve: await attempt(() => import.meta.resolve("implicit.mod")),
+        }),
+      );
+    `,
+  });
+
+  const target = resolve(String(dir), "real.js");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The fixture catches its own failures, so empty stdout means it crashed.
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    dynamicImport: "redirected",
+    explicitFileNamespace: "redirected",
+    emptyNamespace: "redirected",
+    // A non-file namespace still round-trips through onLoad as "namespace:path".
+    customNamespace: "custom:inner",
+    requireComputed: "redirected",
+    resolveSync: target,
+    importMetaResolve: Bun.pathToFileURL(target).href,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("a no-op onResolve that returns args.path unchanged is transparent", async () => {
+  using dir = tempDir("plugin-onresolve-no-op", {
+    "preload.js": `
+      Bun.plugin({
+        name: "no-op",
+        setup(build) {
+          build.onResolve({ filter: /\\.js$/ }, args => ({ path: args.path }));
+          build.onResolve({ filter: /\\.ts$/, namespace: "file" }, args => ({ path: args.path, namespace: "file" }));
+        },
+      });
+    `,
+    "dep.ts": `export const value = "dep";`,
+    "entry.js": `
+      import { value } from "./dep.ts";
+      console.log("entry ran:" + value);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() || stderr).toBe("entry ran:dep");
+  expect(exitCode).toBe(0);
+});
+
+// Spawned in a subprocess because clearAll() would wipe the plugins the rest of this file relies on.
+describe.concurrent("Bun.plugin.clearAll()", () => {
+  async function run(src: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+  }
+
+  it("re-registering a namespaced onLoad plugin after clearAll() works", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      function register() {
+        Bun.plugin({
+          name: "p",
+          setup(b) {
+            b.onResolve({ filter: /.*/, namespace: "myns" }, ({ path }) => ({ path, namespace: "myns" }));
+            b.onLoad({ filter: /.*/, namespace: "myns" }, () => ({ contents: "export default 1;", loader: "js" }));
+          },
+        });
+      }
+      for (let i = 0; i < 50; i++) {
+        register();
+        Bun.plugin.clearAll();
+      }
+      register();
+      const m = await import("myns:hello");
+      console.log("result=" + m.default);
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=1", stderr: "", exitCode: 0 });
+  });
+
+  it("re-registering a namespaced onResolve plugin after clearAll() drops the old callback", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      Bun.plugin({
+        name: "old",
+        setup(b) {
+          b.onResolve({ filter: /.*/, namespace: "myns" }, () => {
+            throw new Error("stale onResolve callback ran");
+          });
+        },
+      });
+      Bun.plugin.clearAll();
+      Bun.plugin({
+        name: "new",
+        setup(b) {
+          b.onResolve({ filter: /.*/, namespace: "myns" }, ({ path }) => ({ path, namespace: "myns" }));
+          b.onLoad({ filter: /.*/, namespace: "myns" }, () => ({ contents: "export default 2;", loader: "js" }));
+        },
+      });
+      const m = await import("myns:hello");
+      console.log("result=" + m.default);
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=2", stderr: "", exitCode: 0 });
+  });
+
+  // A namespace registered after clearAll() takes the index of a namespace that
+  // was cleared, so it must not inherit that namespace's callbacks.
+  it("a fresh namespace does not inherit a cleared plugin's callbacks", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const calls = { oldResolve: 0, newResolve: 0, newLoad: 0 };
+
+      Bun.plugin({
+        name: "old",
+        setup(b) {
+          b.onResolve({ filter: /.*/, namespace: "aa" }, ({ path }) => {
+            calls.oldResolve++;
+            return { path, namespace: "aa" };
+          });
+          b.onLoad({ filter: /.*/, namespace: "aa" }, () => ({ contents: "export default 'old';", loader: "js" }));
+        },
+      });
+
+      Bun.plugin.clearAll();
+
+      Bun.plugin({
+        name: "new",
+        setup(b) {
+          b.onResolve({ filter: /.*/, namespace: "bb" }, ({ path }) => {
+            calls.newResolve++;
+            return { path, namespace: "bb" };
+          });
+          b.onLoad({ filter: /.*/, namespace: "bb" }, () => {
+            calls.newLoad++;
+            return { contents: "export default 'new';", loader: "js" };
+          });
+        },
+      });
+
+      const loaded = (await import("bb:hello")).default;
+      console.log(JSON.stringify({ calls, loaded }));
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ calls: { oldResolve: 0, newResolve: 1, newLoad: 1 }, loaded: "new" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // clearAll() frees the virtual module map, so the flag selecting how that map
+  // is keyed goes with it. A stale flag trips an assertion on the next resolve.
+  it("resets the virtual module lookup mode", async () => {
+    using dir = tempDir("plugin-clear-all-virtual", {
+      "sibling.mjs": `export default 1;`,
+      "entry.mjs": `
+        import { mock } from "bun:test";
+        mock.module(new URL("./virtual-module.js", import.meta.url).href, () => ({ default: 1 }));
+        Bun.plugin.clearAll();
+        await import("./sibling.mjs");
+        console.log("ok");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

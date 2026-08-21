@@ -50,16 +50,21 @@ struct dyld_shared_cache_dylib_text_info {
 typedef void (^dsc_callback)(const struct dyld_shared_cache_dylib_text_info*);
 
 // Forward-declare the real symbol so the interpose table can reference it.
+// Our own calls to it reach the system symbol: dyld does not interpose the
+// image that defines the __interpose tuple (see Apple's dyld-interposing.h).
 extern int dyld_shared_cache_iterate_text(const uuid_t, dsc_callback);
 
 static int shim_iterate(const uuid_t uuid, dsc_callback cb) {
-  (void)uuid;
   typedef const struct mach_header* (*get_hdr_fn)(void);
   get_hdr_fn get_hdr = (get_hdr_fn)dlsym(RTLD_DEFAULT, "_dyld_get_dyld_header");
   const struct mach_header* hdr = get_hdr ? get_hdr() : NULL;
   size_t len;
   const void* cacheStart = _dyld_get_shared_cache_range(&len);
-  if (!hdr || !cacheStart || !cb) return -1;
+  // _dyld_get_dyld_header only exists on newer macOS. On older releases the
+  // real iterate has no 26.4 deadlock, so delegate rather than return -1
+  // (ASAN CHECK_EQ(res, 0) aborts otherwise). Mirrors the upstream fix.
+  if (!hdr || !cacheStart) return dyld_shared_cache_iterate_text(uuid, cb);
+  if (!cb) return -1;
 
   struct dyld_shared_cache_dylib_text_info info;
   memset(&info, 0, sizeof(info));
@@ -72,7 +77,7 @@ static int shim_iterate(const uuid_t uuid, dsc_callback cb) {
 
 // DYLD_INTERPOSE: tells dyld to redirect calls to the original symbol (from
 // any image, including the ASAN runtime) to our replacement. The original
-// pointer here is linker-resolved to the system's symbol; we never call it.
+// pointer here is linker-resolved to the system's symbol.
 __attribute__((used, section("__DATA,__interpose")))
 static struct { const void* replacement; const void* original; } interpose_tbl[] = {
   { (const void*)(uintptr_t)&shim_iterate,

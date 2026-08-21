@@ -1,18 +1,13 @@
-//! JSC host fns extracted from `src/install/npm.zig` so that `install/` has
-//! no `JSValue`/`JSGlobalObject`/`CallFrame` references. Each enum keeps a
-//! `pub const jsFunction… = @import(...)` alias so call sites and the
-//! `$newZigFunction("npm.zig", "…")` codegen path are unchanged.
+//! JSC host fns for `bun_install::npm`, kept here so that `install/` has
+//! no `JSValue`/`JSGlobalObject`/`CallFrame` references.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` will wrap these into the
-// `JSHostFn` ABI for `JSFunction::create`. Until that lands, the bodies are
-// plain `JSHostFnZig`-shaped fns (compile-checked, not yet ABI-wrapped).
 pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
-    let args = frame.arguments_old::<1>();
+    let [arg] = frame.arguments_as_array::<1>();
     let mut operating_system = npm::OperatingSystem::NONE.negatable();
-    let mut iter = args.ptr[0].array_iterator(global)?;
+    let mut iter = arg.array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
         operating_system.apply(slice.slice());
@@ -32,9 +27,9 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
 
 pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
-    let args = frame.arguments_old::<1>();
+    let [arg] = frame.arguments_as_array::<1>();
     let mut architecture = npm::Architecture::NONE.negatable();
-    let mut iter = args.ptr[0].array_iterator(global)?;
+    let mut iter = arg.array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
         architecture.apply(slice.slice());
@@ -58,10 +53,10 @@ pub fn package_manifest_bindings_generate(global: &JSGlobalObject) -> JSValue {
 }
 
 /// Formerly `npm.PackageManifest.bindings` — testing-only (`internal-for-testing.ts`).
-pub struct ManifestBindings;
+pub(crate) struct ManifestBindings;
 
 impl ManifestBindings {
-    pub fn generate(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
         use bun_jsc::JSFunction;
         let obj = JSValue::create_empty_object(global, 1);
         obj.put(
@@ -81,19 +76,18 @@ impl ManifestBindings {
     }
 }
 
-// PORT NOTE: lives at module scope (not `impl ManifestBindings`) because the
+// Lives at module scope (not `impl ManifestBindings`) because the
 // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
 // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
 #[bun_jsc::host_fn]
-pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bstr::BStr;
-    use bun_core::{String as BunString, strings};
+    use bun_core::String as BunString;
     use bun_install::npm;
     use bun_jsc::JsError;
     use std::io::Write as _;
 
-    let args = frame.arguments_old::<2>();
-    let args = args.slice();
+    let args = frame.arguments();
     if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
         return Err(global.throw(format_args!(
             "expected manifest filename and registry string arguments"
@@ -109,8 +103,6 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
     let registry_str = scopeguard::guard(args[1].to_bun_string(global)?, |s| s.deref());
     let registry = registry_str.to_utf8();
 
-    // PORT NOTE: Zig used `std.fs.cwd().openFile`; PORTING.md bans std::fs, so go
-    // through bun_sys (read-only open).
     let manifest_file = match bun_sys::openat_a(
         bun_sys::Fd::cwd(),
         manifest_filename.slice(),
@@ -127,33 +119,19 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
         }
     };
 
-    // PORT NOTE: Zig built a borrowing `bun.URL` struct literal (host/hostname/
-    // href/origin/protocol all slicing `registry`). The Rust `Scope.url` field
-    // is `OwnedURL`, which stores only the href buffer and re-derives components
-    // via `URL::parse` on demand. `load_by_file`/`read_all` only consult
-    // `scope.url_hash` and `scope.url.href().len()`, so copying the raw href is
-    // sufficient and drops the unsafe lifetime-extension hack the earlier draft
-    // needed.
-    let scope = npm::registry::Scope {
-        url_hash: npm::registry::Scope::hash(strings::without_trailing_slash(registry.slice())),
-        url: bun_url::OwnedURL::from_href(Box::from(registry.slice())),
-        ..Default::default()
-    };
+    let mut scope = npm::registry::Scope::default();
+    scope.set_url(Box::from(registry.slice()));
 
-    let maybe_package_manifest = match npm::package_manifest::Serializer::load_by_file(
-        &scope,
-        // PORT NOTE: Zig wrapped std.fs.File via `bun.sys.File.from(...)`; we already
-        // opened a bun_sys::File above, so pass directly.
-        &manifest_file,
-    ) {
-        Ok(m) => m,
-        Err(err) => {
-            return Err(global.throw(format_args!(
-                "failed to load manifest file: {}",
-                BStr::new(err.name())
-            )));
-        }
-    };
+    let maybe_package_manifest =
+        match npm::package_manifest::Serializer::load_by_file(&scope, &manifest_file) {
+            Ok(m) => m,
+            Err(err) => {
+                return Err(global.throw(format_args!(
+                    "failed to load manifest file: {}",
+                    BStr::new(err.name())
+                )));
+            }
+        };
 
     let package_manifest: npm::PackageManifest = match maybe_package_manifest {
         Some(m) => m,
@@ -194,5 +172,3 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
     let mut result = BunString::borrow_utf8(&buf);
     bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut result, global)
 }
-
-// ported from: src/install_jsc/npm_jsc.zig

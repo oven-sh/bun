@@ -6,15 +6,13 @@ pub enum AuthenticationState {
     Ok,
     Sasl(SASL),
     Md5,
+    ClearText,
 }
 
 impl AuthenticationState {
-    pub fn zero(&mut self) {
-        // PORT NOTE: Zig explicitly called sasl.deinit() before reassigning;
-        // in Rust, assigning into *self drops the previous variant (and thus
-        // SASL's Drop impl) automatically.
+    pub(crate) fn zero(&mut self) {
+        // Assigning into *self drops the previous variant (and thus SASL's
+        // Drop impl) automatically; no explicit deinit is needed.
         *self = AuthenticationState::None;
     }
 }
-
-// ported from: src/sql_jsc/postgres/AuthenticationState.zig

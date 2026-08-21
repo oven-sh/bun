@@ -127,52 +127,50 @@ function getAzureVmSize(os, arch, tier = "build") {
 }
 
 /**
+ * The single host image every build lane runs on. All targets below —
+ * linux x64/aarch64 × gnu/musl, darwin, windows, freebsd, android — are
+ * cross-compiled from this debian-13 aarch64 box via --target/--sysroot
+ * (scripts/build/config.ts + flags.ts) so one AMI serves every build.
+ * @type {Platform}
+ */
+const buildHostPlatform = { os: "linux", arch: "aarch64", distro: "debian", release: "13" };
+
+/**
  * @type {Platform[]}
  */
 const buildPlatforms = [
-  // macOS is cross-compiled from glibc amazonlinux (clang --target + the
-  // Apple SDK fetched by xmac + ld64.lld — see scripts/build/macos-sdk.ts and
-  // scripts/build/flags.ts). There is no native macOS build lane: the mac
+  // macOS is cross-compiled from the debian-13 aarch64 host (clang --target +
+  // the Apple SDK fetched by xmac + ld64.lld — see scripts/build/macos-sdk.ts
+  // and scripts/build/flags.ts). There is no native macOS build lane: the mac
   // fleet only runs tests, against these artifacts (see testPlatforms), and
   // these are the darwin artifacts the release ships.
-  { os: "darwin", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "darwin", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
-  // Android: cross-compiled from glibc amazonlinux via NDK sysroot. Host arch
-  // matches target arch so only --abi/--target/--sysroot are cross.
-  { os: "linux", arch: "aarch64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "x64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  // FreeBSD: cross-compiled from glibc amazonlinux via base.txz sysroot,
-  // same model as Android. Target os/arch are explicit.
-  { os: "freebsd", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "freebsd", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  // Windows is cross-compiled from glibc amazonlinux (clang-cl --target +
-  // the xwin MSVC/SDK sysroot + lld-link — see scripts/build/winsysroot.ts
-  // and scripts/build/flags.ts), the same model as macOS above. There is no
-  // native Windows build lane: the Windows fleet only runs tests, signing,
-  // and baseline verification, against these artifacts (see testPlatforms),
-  // and these are the Windows artifacts the release ships. All three lanes
-  // build without LTO for now: the windows x64 cross toolchain supports
-  // ThinLTO + cross-language LTO (--lto=on), but LLVM's thin backends
-  // miscompile JSC on x86-64 at -O1+, so it is not the default — see the
-  // ltoDefault comment in scripts/build/config.ts.
-  { os: "windows", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
-  {
-    os: "windows",
-    arch: "x64",
-    baseline: true,
-    crossCompile: true,
-    distro: "amazonlinux",
-    release: "2023",
-    features: ["docker"],
-  },
-  { os: "windows", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "darwin", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
+  { os: "darwin", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
+  { os: "linux", arch: "aarch64", distro: "debian", release: "13" },
+  { os: "linux", arch: "x64", distro: "debian", release: "13" },
+  // asan x64 cross-builds from the arm64 host too; if install_cross_compiler_rt()
+  // can't fetch amd64 libclang-rt on arm64, this lane may need an x64 host as
+  // the one exception — see scripts/bootstrap.sh.
+  { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
+  // Android: cross-compiled from the debian-13 aarch64 host via NDK sysroot.
+  { os: "linux", arch: "aarch64", abi: "android", distro: "debian", release: "13" },
+  { os: "linux", arch: "x64", abi: "android", distro: "debian", release: "13" },
+  // FreeBSD: cross-compiled from the debian-13 aarch64 host via base.txz
+  // sysroot, same model as Android. Target os/arch are explicit.
+  { os: "freebsd", arch: "x64", distro: "debian", release: "13" },
+  { os: "freebsd", arch: "aarch64", distro: "debian", release: "13" },
+  // Windows is cross-compiled from the debian-13 aarch64 host (clang-cl
+  // --target + the xwin MSVC/SDK sysroot + lld-link — see
+  // scripts/build/winsysroot.ts and scripts/build/flags.ts), the same model
+  // as macOS above. There is no native Windows build lane: the Windows fleet
+  // only runs tests, signing, and baseline verification, against these
+  // artifacts (see testPlatforms), and these are the Windows artifacts the
+  // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
+  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
+  { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
+  { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
 
 /**
@@ -188,21 +186,21 @@ const testPlatforms = [
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
   // lanes — see buildPlatforms).
+  // These three version-specific lanes run on main and on opt-in (see
+  // darwinTestsEnabled). PR builds instead get one aarch64 lane that any mac
+  // agent of that arch can take (prDarwinTestPlatforms), so the whole arm64
+  // pool serves one PR lane and the whole x64 pool the other.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
-  { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
 
@@ -298,15 +296,28 @@ function getImageName(platform, options) {
 }
 
 /**
- * @param {number} [limit]
- * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
+ * @link https://buildkite.com/docs/pipelines/configure/retry#retry-attributes-automatic-retry-attributes
  */
 function getRetry() {
   return {
     manual: {
       permit_on_passed: true,
     },
-    automatic: false,
+    // Self-heal agent/infra loss, and only that. Conditions within one rule
+    // are ANDed, so `signal_reason` scopes each rule to the failure mode it
+    // names: `none` is an agent that dropped its connection mid-job,
+    // `agent_stop` is a graceful agent restart mid-job, `process_run_error`
+    // is the bootstrap failing before the command ever ran. A blanket
+    // `exit_status: -1` / `255` also matches `cancel`, which is what a
+    // `timeout_in_minutes` kill records, so a timed-out shard would be
+    // re-queued just to time out again on the next agent. User-canceled
+    // builds are state=canceled and never auto-retry regardless of these
+    // rules.
+    automatic: [
+      { exit_status: -1, signal_reason: "none", limit: 1 },
+      { signal_reason: "agent_stop", limit: 2 },
+      { signal_reason: "process_run_error", limit: 1 },
+    ],
   };
 }
 
@@ -334,8 +345,6 @@ function getPriority() {
 /**
  * @typedef {Object} Ec2Options
  * @property {string} instanceType
- * @property {number} cpuCount
- * @property {number} threadsPerCore
  * @property {boolean} dryRun
  */
 
@@ -347,7 +356,7 @@ function getPriority() {
  */
 function getEc2Agent(platform, options, ec2Options) {
   const { os, arch, abi, distro, release, crossCompile } = platform;
-  const { instanceType, cpuCount, threadsPerCore } = ec2Options;
+  const { instanceType } = ec2Options;
   // Cross-compiled targets run on a Linux EC2 box; the agent tag must match
   // the host (`linux`), not the target.
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
@@ -361,8 +370,6 @@ function getEc2Agent(platform, options, ec2Options) {
     robobun2: true,
     "image-name": getImageName(platform, options),
     "instance-type": instanceType,
-    "cpu-count": cpuCount,
-    "threads-per-core": threadsPerCore,
     "preemptible": false,
   };
 }
@@ -372,74 +379,17 @@ function getEc2Agent(platform, options, ec2Options) {
  * @param {PipelineOptions} options
  * @returns {string}
  */
-function getCppAgent(platform, options) {
-  const { arch } = platform;
-
-  // Every build lane runs on the Linux EC2 fleet — darwin and windows are
-  // cross-compiled (the mac/windows fleets only run tests, signing, and
-  // baseline verification).
-  return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
-  });
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {string}
- */
-function getLinkBunAgent(platform, options) {
-  const { arch } = platform;
-
-  return getEc2Agent(platform, options, {
-    // Full LTO with libbun_rust.a as bitcode peaks >31 GiB on aarch64; xlarge OOMs.
-    instanceType: arch === "aarch64" ? "r8g.2xlarge" : "r7i.2xlarge",
-  });
-}
-
-/**
- * Linux box that cross-compiles libbun_rust.a for every linux/freebsd
- * target. The image must have rustup + the pinned `rust-toolchain.toml`
- * nightly preinstalled (with the `rust-src` component and every target
- * triple in `rustup target add` form — bootstrap.sh handles this).
- * @returns {Platform}
- */
-function getRustPlatform() {
-  return {
-    os: "linux",
-    arch: "aarch64",
-    abi: "musl",
-    distro: "alpine",
-    release: "3.23",
-  };
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Agent}
- */
-function getRustAgent(platform, options) {
-  const { os } = platform;
-
-  // Windows: cargo's `*-pc-windows-msvc` build needs the xwin MSVC/SDK
-  // sysroot and clang-cl env that configure sets up on the amazonlinux
-  // image (cc-crate build scripts compile target C with it), so the rust
-  // step runs on the same image/fleet as the windows cpp/link steps rather
-  // than the shared alpine rust box. cargo build is wide — size for cores.
-  if (os === "windows") {
-    return getEc2Agent(platform, options, {
-      instanceType: platform.arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
-    });
-  }
-
-  // Linux (gnu/musl/android), FreeBSD, and macOS: cross-compile from one
-  // Linux aarch64 box. `aarch64/x86_64-apple-darwin` are Tier 2 targets with
-  // prebuilt std and a staticlib needs no Mach-O link (see
-  // rustCanCrossFromLinux()). cargo build is wide (1 codegen unit per crate ×
-  // ~80 crates), so size for cores. ASAN doubles the IR — bigger box.
-  return getEc2Agent(getRustPlatform(), options, {
-    instanceType: platform.profile === "asan" ? "r8g.4xlarge" : "r8g.2xlarge",
+function getBuildAgent(platform, options) {
+  // Every build lane runs on the single debian-13 aarch64 host image
+  // (buildHostPlatform) and cross-compiles to its target; the target's
+  // os/arch only affect build args, not agent tags or image-name.
+  const { os, arch, abi, profile } = platform;
+  // Lanes without LTO (see ltoDefault in scripts/build/config.ts): rustc does its own fat LTO + codegen inside cargo, so the C++ compile overlapping it costs ~20s on 16 vCPUs; give them 32.
+  const nonLto =
+    profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
+  return getEc2Agent(buildHostPlatform, options, {
+    // Replaces the c8g.4xlarge (C++) + r8g.2xlarge (cargo + ThinLTO link; r8g.4xlarge for asan) pair.
+    instanceType: nonLto ? "r8g.8xlarge" : "r8g.4xlarge",
   });
 }
 
@@ -461,7 +411,7 @@ function getTestAgent(platform, options) {
       queue: `test-${os}`,
       os,
       arch,
-      ...(arch === "aarch64" ? { "release-tier": tier } : {}),
+      ...(arch === "aarch64" && tier ? { "release-tier": tier } : {}),
     };
   }
 
@@ -469,8 +419,6 @@ function getTestAgent(platform, options) {
   if (os === "windows") {
     return getEc2Agent(platform, options, {
       instanceType: getAzureVmSize(os, arch, "test"),
-      cpuCount: 2,
-      threadsPerCore: 1,
     });
   }
 
@@ -487,14 +435,10 @@ function getTestAgent(platform, options) {
       // agent. r-family has 4× the RAM at the same vCPU.
       return getEc2Agent(platform, options, {
         instanceType: "r8g.2xlarge",
-        cpuCount: 2,
-        threadsPerCore: 1,
       });
     }
     return getEc2Agent(platform, options, {
       instanceType: musl ? "m8g.xlarge" : "c8g.xlarge",
-      cpuCount: 2,
-      threadsPerCore: 1,
     });
   }
 
@@ -502,14 +446,10 @@ function getTestAgent(platform, options) {
     // Same rationale as the aarch64 asan branch above.
     return getEc2Agent(platform, options, {
       instanceType: "r7i.2xlarge",
-      cpuCount: 2,
-      threadsPerCore: 1,
     });
   }
   return getEc2Agent(platform, options, {
     instanceType: musl ? "m7i.xlarge" : "c7i.xlarge",
-    cpuCount: 2,
-    threadsPerCore: 1,
   });
 }
 
@@ -524,36 +464,20 @@ function getTestAgent(platform, options) {
  *
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only"} mode
+ * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
  * @returns {string}
  */
 function getBuildArgs(target, options, mode) {
-  const { os, arch, abi, baseline, profile, crossCompile } = target;
+  const { os, arch, abi, baseline, profile } = target;
   const { canary } = options;
 
   const args = [`--profile=ci-${mode}`];
 
-  // rust-only cross-compiles (linux host → linux/freebsd targets); os/arch/abi
-  // must all be explicit — host detection (detectLinuxAbi checks
-  // /etc/alpine-release) would report the build box's abi (Alpine→musl), not
-  // the target's. cpp-only/link-only: native build.
-  if (crossCompile) {
-    // macOS/Windows cross: every step (cpp/rust/link) runs on a Linux host,
-    // so the target os/arch are always explicit.
-    args.push(`--os=${os}`, `--arch=${arch}`);
-  } else if (mode === "rust-only" && os !== "darwin" && os !== "windows") {
-    args.push(`--os=${os}`, `--arch=${arch}`);
-    if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
-  } else if (abi === "musl") {
-    args.push("--abi=musl");
-  } else if (abi === "android") {
-    // Android cross-compiles C++ from a glibc host: arch/abi must be explicit
-    // (host detection would report the build box's gnu/x64, not the target).
-    args.push(`--os=${os}`, `--arch=${arch}`, "--abi=android");
-  } else if (os === "freebsd") {
-    // FreeBSD cross-compiles C++ from a Linux host: os/arch must be explicit.
-    args.push(`--os=${os}`, `--arch=${arch}`);
-  }
+  // All build lanes share a debian-13 arm64 host, so host detection cannot
+  // infer the target triple — always pass os/arch (and abi on linux).
+  args.push(`--os=${os}`, `--arch=${arch}`);
+  if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
+
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
 
@@ -569,7 +493,7 @@ function getBuildArgs(target, options, mode) {
 /**
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only"} mode
+ * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
  * @returns {string}
  */
 function getBuildCommand(target, options, mode) {
@@ -586,76 +510,34 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
+ * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
+ *
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildCppStep(platform, options) {
-  const { os, arch } = platform;
-  // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm
-  // (.buildkite/Dockerfile); best-effort install covers older images, and
-  // `|| true` keeps a missing package manager from failing the step — the
-  // build's own "nasm not found" error is clearer.
+function getBuildBunStep(platform, options) {
+  const { arch } = platform;
+  // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.
   const nasmSetup =
-    os === "windows" && arch === "x64"
+    arch === "x64"
       ? [
-          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || true",
+          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || brew install nasm || true",
         ]
       : [];
   return {
-    key: `${getTargetKey(platform)}-build-cpp`,
-    label: `${getTargetLabel(platform)} - build-cpp`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    // cpp-only builds deps + bun's C++ in one ninja graph (ninja pulls
-    // everything the archive transitively needs). The old two-command
-    // split (--target bun, --target dependencies) was a cmake artifact.
-    command: [...nasmSetup, getBuildCommand(platform, options, "cpp-only")],
-  };
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getBuildRustStep(platform, options) {
-  return {
-    key: `${getTargetKey(platform)}-build-rust`,
-    retry: getRetry(),
-    label: `${getTargetLabel(platform)} - build-rust`,
-    agents: getRustAgent(platform, options),
-    cancel_on_build_failing: isMergeQueue(),
-    // cargo cross-compiles via --os/--arch (mapped to `--target <triple>`
-    // in build args). The agent image has the pinned nightly + `rustup
-    // target add` for every triple preinstalled.
-    command: getBuildCommand(platform, options, "rust-only"),
-    timeout_in_minutes: 35,
-  };
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getLinkBunStep(platform, options) {
-  return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-rust`],
-    agents: getLinkBunAgent(platform, options),
+    agents: getBuildAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 60,
     env: {
       // ASAN runtime settings — unrelated to build config, affects the
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
-    // link-only downloads artifacts from the sibling build-cpp and
-    // build-rust steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
-    command: getBuildCommand(platform, options, "link-only"),
+    command: [...nasmSetup, getBuildCommand(platform, options, "build")],
   };
 }
 
@@ -688,11 +570,30 @@ function getTargetTriplet(platform) {
  * @returns {boolean}
  */
 function needsBaselineVerification(platform) {
-  const { os, arch, baseline } = platform;
-  if (os === "linux") return (arch === "x64" && baseline) || arch === "aarch64";
-  if (os === "windows") return arch === "x64" && baseline;
+  const { os, arch, abi, profile } = platform;
+  // asan never ships. x64-android is emulator-only; aarch64-android keeps its
+  // static LSE/SVE scan via --skip-emulation in getVerifyBaselineStep().
+  if (profile === "asan") return false;
+  if (os === "linux") return (arch === "x64" && abi !== "android") || arch === "aarch64";
+  if (os === "windows") return arch === "x64";
   return false;
 }
+
+// Ubuntu 20.04's qemu 4.2 mis-emulates concurrent atomics in same-arch user mode; after #34009
+// (mimalloc per-thread heaps) the SIMD baseline test segfaults/deadlocks in `_mi_theap_init`
+// ~10-20% of x64 runs and ~5% of aarch64 runs. qemu 9.1 is 40/40 green. Static-pie binaries.
+const PINNED_QEMU = {
+  x64: {
+    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-x86_64-9.1.0.tar.xz",
+    sha256: "1ac92f632417d981810fda891e4a1b20f2d71f50f9ec705532afa8162b449c70",
+    binary: "qemu-linux-x86_64-9.1.0/bin/qemu-x86_64",
+  },
+  aarch64: {
+    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-aarch64-9.1.0.tar.xz",
+    sha256: "5a82a96ac74932a802fb5753673beff27359faea8736286477b0bf2c268fd06d",
+    binary: "qemu-linux-aarch64-9.1.0/bin/qemu-aarch64",
+  },
+};
 
 /**
  * Returns the emulator binary name for the given platform.
@@ -702,13 +603,13 @@ function needsBaselineVerification(platform) {
  */
 function getEmulatorBinary(platform) {
   const { os, arch } = platform;
-  if (os === "windows") return "sde-external/sde.exe";
-  if (arch === "aarch64") return "qemu-aarch64-static";
-  return "qemu-x86_64-static";
+  // Intel SDE is baked into the Windows image by scripts/bootstrap.ps1
+  // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
+  // that blocks non-browser clients, so it cannot be downloaded at job time.
+  if (os === "windows") return "C:\\intel-sde\\sde.exe";
+  // Fetched into the checkout root by the setup command below (see PINNED_QEMU).
+  return `./${PINNED_QEMU[arch].binary}`;
 }
-
-const SDE_VERSION = "9.58.0-2025-06-16";
-const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERSION}-win.tar.xz`;
 
 /**
  * @param {Platform} platform
@@ -717,7 +618,26 @@ const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERS
  */
 function hasWebKitChanges(options) {
   const { changedFiles = [] } = options;
+  // Kept pointing at the removed SetupWebKit.cmake (always false) until
+  // verify-baseline.ts's --jit-stress path is fixed: it runs wasm fixtures
+  // without BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING / parsed //@ flags, so
+  // fixtures using wasm-GC types (bbq-osr-with-exceptions,
+  // omg-tail-call-clobber-scratch-register) fail to parse under it.
   return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+}
+
+/**
+ * Host platform the verify-baseline step runs on — per-TARGET-arch, not the
+ * shared arm64 build host. Reuses test-fleet images (debian-13 / win-2019) so
+ * no extra bake is needed; getPipeline() keys its build-image depends_on on this.
+ * @param {Platform} platform
+ * @returns {Platform}
+ */
+function getVerifyBaselineHost(platform) {
+  const { os, arch, abi } = platform;
+  if (os === "windows") return { os: "windows", arch, release: "2019" };
+  if (abi === "musl") return { os: "linux", arch, abi: "musl", distro: "alpine", release: "3.23" };
+  return { os: "linux", arch, distro: "debian", release: "13" };
 }
 
 /**
@@ -726,11 +646,14 @@ function hasWebKitChanges(options) {
  * @returns {Step}
  */
 function getVerifyBaselineStep(platform, options) {
-  const { os } = platform;
+  const { os, abi } = platform;
   const targetKey = getTargetKey(platform);
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
   const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
+  // Android binaries need /system/bin/linker64 + a bionic sysroot, neither of which exist on the
+  // build host, so qemu-user cannot load them; only the static instruction scan is meaningful.
+  const skipEmulationFlag = abi === "android" ? " --skip-emulation" : "";
 
   // Scan bun-profile, not bun. The stripped binary has no .symtab (ELF) and
   // no companion .pdb (PE) — the static scanner would emit <no-symbol@addr>
@@ -742,32 +665,39 @@ function getVerifyBaselineStep(platform, options) {
   const setupCommands =
     os === "windows"
       ? [
+          // cmd.exe batch does not stop on error: without `|| exit /b 1` a
+          // failed line is ignored and only the last command's exit code
+          // becomes the step result.
           `echo Downloading build artifacts...`,
-          `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun`,
+          `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun || exit /b 1`,
           `echo Extracting ${profileDir}.zip...`,
-          `tar -xf ${profileDir}.zip`,
-          `echo Downloading Intel SDE...`,
-          `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
-          `echo Extracting Intel SDE...`,
-          `7z x -y sde.tar.xz`,
-          `7z x -y sde.tar`,
-          `ren sde-external-${SDE_VERSION}-win sde-external`,
+          `tar -xf ${profileDir}.zip || exit /b 1`,
         ]
       : [
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
           `unzip -o '${profileDir}.zip'`,
           `chmod +x ${profileDir}/${profileExe}`,
+          // Linux lanes pin a known-good qemu (see PINNED_QEMU). sha256 check makes a
+          // truncated/hijacked download a hard failure before anything runs under it.
+          ...(abi === "android"
+            ? [] // --skip-emulation: no emulator needed
+            : [
+                `curl -fsSL --retry 5 --connect-timeout 15 --max-time 120 -o ./qemu.tar.xz '${PINNED_QEMU[platform.arch].url}'`,
+                `echo '${PINNED_QEMU[platform.arch].sha256}  ./qemu.tar.xz' | sha256sum -c -`,
+                `tar -xJf ./qemu.tar.xz '${PINNED_QEMU[platform.arch].binary}'`,
+              ]),
         ];
 
-  // Windows: the emulator phase runs bun-profile.exe under Intel SDE, so the
-  // step needs a real Windows machine even though the artifact is built on
-  // Linux. Everything else verifies on the same Linux fleet that linked it.
+  // verify-baseline is not a build lane: it stays on a host whose arch matches
+  // the TARGET so PINNED_QEMU's host-arch-specific static binaries keep working
+  // (the link agent is now always arm64 and can't run the x86_64-host qemu).
+  const host = getVerifyBaselineHost(platform);
   const agents =
     os === "windows"
-      ? getEc2Agent({ os: "windows", arch: platform.arch, release: "2019" }, options, {
-          instanceType: getAzureVmSize("windows", platform.arch),
-        })
-      : getLinkBunAgent(platform, options);
+      ? getEc2Agent(host, options, { instanceType: getAzureVmSize("windows", platform.arch) })
+      : getEc2Agent(host, options, {
+          instanceType: platform.arch === "aarch64" ? "r8g.2xlarge" : "r7i.2xlarge",
+        });
 
   return {
     key: `${targetKey}-verify-baseline`,
@@ -779,9 +709,88 @@ function getVerifyBaselineStep(platform, options) {
     timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
     command: [
       ...setupCommands,
-      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml`,
-      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${jitStressFlag}`,
+      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --arch ${platform.arch} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}`,
     ],
+  };
+}
+
+/**
+ * Targets whose build lane cross-compiles (so `canTraceOrderFile()` is false)
+ * but whose test fleet is native. A `-trace-order` step runs there, downloads
+ * the cross-built `bun-profile`, traces it, and uploads the `.order` artifact
+ * that the next build's `inheritOrderFile()` picks up. One build of lag.
+ *
+ * linux-aarch64 is absent because its build lane runs on the aarch64 host and
+ * traces itself; `packageAndUpload()` is its sole publisher.
+ *
+ * The `on` platforms are entries of `testPlatforms`, so the step runs on an
+ * image that exists. The windows tracer is built on the test VM for whichever
+ * architecture it is running on (scripts/orderfile/functrace-windows.c), so each
+ * windows target traces on its own arch's fleet.
+ */
+const traceOrderTargets = [
+  { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
+  { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
+  { os: "windows", arch: "x64", on: { os: "windows", arch: "x64", release: "2019", tier: "oldest" } },
+  { os: "windows", arch: "aarch64", on: { os: "windows", arch: "aarch64", release: "11", tier: "latest" } },
+];
+
+/**
+ * Trace the symbol order file for a cross-compiled target on a native-arch
+ * host, so the next build's `inheritOrderFile()` has something to download.
+ *
+ * The build lane cross-compiles from the aarch64 `buildHostPlatform` and cannot
+ * run the binary it linked. This step runs on the target-arch test fleet,
+ * downloads that lane's unstripped `bun-profile`, runs it under `scripts/
+ * orderfile/generate.ts` (the traced binary doubles as the interpreter), and
+ * uploads the result.
+ *
+ * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
+ * no consumer. Soft-fail: the order file is an optimization, and a broken
+ * tracer must not fail a build.
+ *
+ * Windows agents run commands under cmd.exe (see getVerifyBaselineStep for the
+ * `|| exit /b 1` convention). The generator compiles the tracer there, which
+ * takes clang-cl or a Visual Studio environment; the image has both, and
+ * vs-shell.ps1 provides the latter the same way it does for the test runner.
+ * The profile zip carries the two maps the generator resolves addresses with
+ * (packageAndUpload in scripts/build/ci.ts; scripts/orderfile/windows-symbols.ts).
+ * @param {Target} target
+ * @param {Platform} tracePlatform
+ * @param {PipelineOptions} options
+ * @returns {CommandStep}
+ */
+function getTraceOrderStep(target, tracePlatform, options) {
+  const { os } = target;
+  const targetKey = getTargetKey(target);
+  const triplet = getTargetTriplet(target);
+  const profileDir = `${triplet}-profile`;
+  const generate = `scripts/orderfile/generate.ts --build-dir=${profileDir} --out=${triplet}.order`;
+  return {
+    key: `${targetKey}-trace-order`,
+    label: `${getTargetLabel(target)} - trace-order`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: getTestAgent(tracePlatform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    soft_fail: true,
+    timeout_in_minutes: 15,
+    command:
+      os === "windows"
+        ? [
+            `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun || exit /b 1`,
+            `tar -xf ${profileDir}.zip || exit /b 1`,
+            `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 .\\${profileDir}\\bun-profile.exe ${generate} || exit /b 1`,
+            `buildkite-agent artifact upload ${triplet}.order`,
+          ]
+        : [
+            `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+            `unzip -o '${profileDir}.zip'`,
+            `chmod +x ${profileDir}/bun-profile`,
+            `./${profileDir}/bun-profile ${generate}`,
+            `buildkite-agent artifact upload '${triplet}.order'`,
+          ],
   };
 }
 
@@ -812,6 +821,16 @@ function getTestBunStep(platform, options, testOptions = {}) {
   } else {
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
+    // source-tree lints and build-script unit tests that never touch the built
+    // binary; run in .github/workflows/source-lints.yml instead
+    args.push("--exclude=internal/source-lints");
+  }
+
+  // The untiered darwin lane PR builds get (see prDarwinTestPlatforms) skips
+  // the ~1% of files that take 10s or more; they are ~60% of a shard's wall
+  // time and still run on every other PR lane and on main's darwin lanes.
+  if (os === "darwin" && !platform.tier) {
+    args.push("--skip-slower-than=10000");
   }
 
   const depends = [];
@@ -827,9 +846,23 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
-    timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
+    timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      // Platform smoke check: runner.node.mjs asserts the agent matches what
+      // this step targets before running any test (see assertExpectedPlatform).
+      // `release` is only asserted where the lane pins an exact version:
+      // darwin aarch64 "previous" and darwin x64 intentionally float across
+      // macOS versions, and the windows "2019" label doesn't match the
+      // kernel-style version the agent reports.
+      EXPECTED_PLATFORM_OS: platform.os,
+      EXPECTED_PLATFORM_ARCH: platform.arch,
+      ...(platform.abi ? { EXPECTED_PLATFORM_ABI: platform.abi } : {}),
+      ...(platform.os === "linux" && platform.distro ? { EXPECTED_PLATFORM_DISTRO: platform.distro } : {}),
+      ...(platform.os === "linux" ||
+      (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
+        ? { EXPECTED_PLATFORM_RELEASE: platform.release }
+        : {}),
     },
     command:
       os === "windows"
@@ -839,6 +872,31 @@ function getTestBunStep(platform, options, testOptions = {}) {
 }
 
 /**
+ * CI image lifecycle
+ * ------------------
+ * Build/test agents boot from pre-baked cloud images (AWS AMIs for Linux,
+ * Azure Shared Image Gallery for Windows). The image a job requests is
+ * `${getImageKey(platform)}-v${N}`, where N is the `# Version:` comment at the
+ * top of scripts/bootstrap.sh (Linux) or scripts/bootstrap.ps1 (Windows).
+ *
+ * To change what's installed on a CI machine:
+ *
+ *   1. Edit bootstrap.sh / bootstrap.ps1 and bump its `# Version:` line.
+ *   2. Open a PR whose **commit subject** contains `[build images]` (or
+ *      `[build linux images]` / `[build windows images]` to scope it). This
+ *      bakes throwaway `…-build-<buildNumber>` images and runs the full
+ *      build+test pipeline against them so you can verify the change.
+ *   3. Once green, amend/force-push the subject to `[publish images]` (or the
+ *      scoped variant). This bakes the real `…-vN` images that normal CI will
+ *      pick up. Publishing replaces the live tag in place — for Windows it
+ *      deletes the existing gallery version before the new one finishes — so
+ *      don't cancel a publish run mid-bake.
+ *   4. Merge the PR **after** the publish run is green. By then the `…-vN`
+ *      images already exist, so the post-merge `main` build runs immediately
+ *      instead of everyone waiting 2-3 h on a bake.
+ *
+ * These tags are ignored on `main` — image bakes happen on the PR only.
+ *
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
@@ -946,11 +1004,7 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
   return {
     key: "binary-size",
     label: `${getBuildkiteEmoji("package")} binary-size`,
-    agents: getEc2Agent(
-      buildPlatforms.find(p => p.os === "linux" && p.arch === "aarch64" && p.distro === "amazonlinux"),
-      options,
-      { instanceType: "c8g.large" },
-    ),
+    agents: getEc2Agent(buildHostPlatform, options, { instanceType: "c8g.large" }),
     depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
     allow_dependency_failure: true,
     soft_fail: !!options.skipSizeCheck,
@@ -966,27 +1020,30 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
 const BINARY_SIZE_THRESHOLD_MB = 0.5;
 
 /**
- * @param {Platform[]} buildPlatforms
+ * @param {Platform[]} releasePlatforms
  * @param {PipelineOptions} options
- * @param {{ signed: boolean }} [extra]
+ * @param {{ signed?: boolean, testStepKeys?: string[] }} [extra]
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
+function getReleaseStep(releasePlatforms, options, { signed = false, testStepKeys = [] } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
   // When signing ran, depend on windows-sign instead of the raw Windows builds
   // so we wait for signed artifacts before releasing.
   const depends_on = signed
-    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
-    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+    ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
+    : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+
+  // Gate canary upload on green tests. A red test lane leaves the artifacts in
+  // Buildkite but skips the GitHub/S3 upload; the next green main push ships.
+  // [skip tests] on main still lets the release run (testStepKeys is empty).
+  depends_on.push(...testStepKeys);
 
   return {
     key: "release",
     label: getBuildkiteEmoji("rocket"),
-    agents: {
-      queue: "test-darwin",
-    },
+    agents: getEc2Agent(buildHostPlatform, options, { instanceType: "c8g.large" }),
     depends_on,
     env: {
       CANARY: revision,
@@ -1340,6 +1397,8 @@ async function getPipelineOptions() {
     };
   }
 
+  // BUILDKITE_MESSAGE is the commit subject line only — option tags like
+  // [publish images] must appear in the subject, not the commit body.
   const commitMessage = getCommitMessage();
 
   /**
@@ -1358,6 +1417,23 @@ async function getPipelineOptions() {
   const isCanary =
     !parseBoolean(getEnv("RELEASE", false) || "false") &&
     !/\[(release|build release|release build)\]/i.test(commitMessage);
+
+  let buildImages = parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i);
+  let publishImages = parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i);
+  let imageFilter = (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase();
+
+  // Image bake/publish is meant to happen on the PR; the squash-merge commit
+  // subject often still carries the [publish images] tag, which would re-run
+  // the multi-hour bake on main and (because publish replaces the live image
+  // tag) briefly delete the images CI runs on. Ignore the tag on main and run
+  // a normal build instead.
+  if (isMainBranch() && (buildImages || publishImages)) {
+    console.log(`Ignoring [${publishImages || buildImages}] on main branch — images are built and published from PRs.`);
+    buildImages = false;
+    publishImages = false;
+    imageFilter = undefined;
+  }
+
   return {
     canary: isCanary ? canary : 0,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
@@ -1366,10 +1442,10 @@ async function getPipelineOptions() {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
+    buildImages,
     dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
-    imageFilter: (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
+    publishImages,
+    imageFilter,
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1395,16 +1471,14 @@ async function getPipeline(options = {}) {
   }
 
   const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages, imageFilter } = options;
+  // Every build lane runs on buildHostPlatform (see getBuildAgent),
+  // so the build-image set is exactly {buildHostPlatform} ∪ testPlatforms' native
+  // images — buildPlatforms entries encode TARGET os/arch/abi, not a host image.
   const imagePlatforms = new Map(
     buildImages || publishImages
-      ? [...buildPlatforms, ...testPlatforms]
-          // darwin: no cloud images. freebsd and crossCompile platforms:
-          // they build on a linux host image (getImageKey maps them to the
-          // matching linux key, which the real linux entries already cover),
-          // so no separate image is baked for them — and letting them through
-          // would overwrite the linux entry with a windows/freebsd-flavored
-          // platform under the same key.
-          .filter(({ os, crossCompile }) => os !== "darwin" && os !== "freebsd" && !crossCompile)
+      ? [buildHostPlatform, ...testPlatforms]
+          // darwin: no cloud images (bare-metal test fleet only).
+          .filter(({ os }) => os !== "darwin")
           .filter(({ os, distro }) => !imageFilter || os === imageFilter || distro === imageFilter)
           .map(platform => [getImageKey(platform), platform])
       : [],
@@ -1445,32 +1519,43 @@ async function getPipeline(options = {}) {
 
     steps.push(
       ...relevantBuildPlatforms.map(target => {
-        const imageKey = getImageKey(target);
-        const rustImageKey = getImageKey(getRustPlatform());
-        const dependsOn = imagePlatforms.has(rustImageKey) ? [`${rustImageKey}-build-image`] : [];
+        // build-bun always runs on buildHostPlatform regardless of
+        // target, so the only build-image dependency is the host's.
+        const imageKey = getImageKey(buildHostPlatform);
+        const dependsOn = [];
         if (imagePlatforms.has(imageKey)) {
           dependsOn.push(`${imageKey}-build-image`);
         }
-        // Windows builds are cross-compiled on Linux, but steps that end up in
-        // this group still run on native Windows machines: the test shards
-        // (merged in below by group label) and x64-baseline's verify-baseline
-        // emulator phase. On [build images] runs they request the freshly
-        // baked native Windows image, so wait for that bake too.
-        if (target.os === "windows") {
-          const nativeWindowsPlatform = testPlatforms.find(p => p.os === "windows" && p.arch === target.arch);
-          const nativeImageKey = nativeWindowsPlatform && getImageKey(nativeWindowsPlatform);
-          if (nativeImageKey && imagePlatforms.has(nativeImageKey)) {
-            dependsOn.push(`${nativeImageKey}-build-image`);
-          }
-        }
 
-        const steps = [];
-        steps.push(getBuildCppStep(target, options));
-        steps.push(getBuildRustStep(target, options));
-        steps.push(getLinkBunStep(target, options));
+        const steps = [getBuildBunStep(target, options)];
 
         if (needsBaselineVerification(target)) {
-          steps.push(getVerifyBaselineStep(target, options));
+          // verify-baseline runs on a per-target-arch native host (see
+          // getVerifyBaselineHost), not buildHostPlatform; its image dep goes
+          // on the step itself so build-bun doesn't wait for it.
+          const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
+          const verifyDeps =
+            verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
+          steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
+        }
+
+        // Seed the symbol order file for a cross-compiled target on its native
+        // test fleet (see getTraceOrderStep). Always on main so the inheritance
+        // chain stays fed, and anywhere else on commit-message opt-in so a PR
+        // that changes the tracer can prove the step works before merge — the
+        // same `[generate symbol order]` tag ci.ts already honours. Release
+        // profile only — usesOrderFile() is false under a sanitizer anyway.
+        const traceOn = traceOrderTargets.find(
+          t =>
+            t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
+        );
+        if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
+          // The trace host's image, same as verify-baseline: on the step, so
+          // build-bun doesn't wait for it. Darwin has no cloud image.
+          const traceImageKey = getImageKey(traceOn.on);
+          const traceDeps =
+            traceImageKey !== imageKey && imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
+          steps.push(getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps));
         }
 
         return getStepWithDependsOn(
@@ -1485,20 +1570,48 @@ async function getPipeline(options = {}) {
     );
   }
 
-  if (!isMainBranch()) {
+  // Tests run on main too so the canary release step below can gate on them.
+  // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
+  // on main along with its build.
+  // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
+  /** @type {Platform[]} */
+  const prDarwinTestPlatforms = [
+    { os: "darwin", arch: "aarch64", release: "any" },
+    { os: "darwin", arch: "x64", release: "any" },
+  ];
+  const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  const relevantTestPlatforms = (
+    includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
+  )
+    .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
+    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms);
+  /** @type {string[]} */
+  const testStepKeys = [];
+  {
     const { skipTests, forceTests, testFiles } = options;
     if (!skipTests || forceTests) {
       steps.push(
-        ...testPlatforms.map(target => ({
-          key: getTargetKey(target),
-          group: getTargetLabel(target),
-          steps: [getTestBunStep(target, options, { testFiles, buildId })],
-        })),
+        ...relevantTestPlatforms.map(target => {
+          const step = getTestBunStep(target, options, { testFiles, buildId });
+          testStepKeys.push(step.key);
+          // Test shards run on their native platform image; on [build images]
+          // runs they must wait for that freshly-baked image before starting.
+          const imageKey = getImageKey(target);
+          const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
+          return getStepWithDependsOn(
+            {
+              key: getPlatformKey(target),
+              group: getPlatformLabel(target),
+              steps: [step],
+            },
+            ...dependsOn,
+          );
+        }),
       );
     }
   }
 
-  // Binary-size tracking covers the artifacts that ship.
+  // Binary-size tracking: main records the baseline, PRs enforce the threshold.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
   if (!buildId && strippedPlatforms.length) {
     steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
@@ -1523,7 +1636,7 @@ async function getPipeline(options = {}) {
   }
 
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows }));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows, testStepKeys }));
   }
 
   /** @type {Map<string, GroupStep>} */

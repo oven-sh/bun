@@ -248,12 +248,7 @@ const JSC::ClassInfo JSBufferList::s_info = { "BufferList"_s, &Base::s_info, nul
 
 JSC::GCClient::IsoSubspace* JSBufferList::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSBufferList, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBufferList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBufferList = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBufferList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBufferList = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSBufferList, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBufferList, m_subspaceForBufferList));
 }
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferListPrototype, JSBufferListPrototype::Base);
@@ -428,7 +423,7 @@ static const HashTableValue JSBufferListPrototypeTableValues[]
 void JSBufferListPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSBufferList::info(), JSBufferListPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSBufferList::info(), JSBufferListPrototypeTableValues, *this);
     ASSERT(inherits(info()));
 }
 
@@ -456,15 +451,6 @@ JSC::EncodedJSValue JSBufferListConstructor::construct(JSC::JSGlobalObject* lexi
     return JSC::JSValue::encode(bufferList);
 }
 
-void JSBufferListConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype)
-{
-}
-
 const ClassInfo JSBufferListConstructor::s_info = { "BufferList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferListConstructor) };
-
-JSValue getBufferList(Zig::GlobalObject* globalObject)
-{
-    return static_cast<Zig::GlobalObject*>(globalObject)->JSBufferList();
-}
 
 } // namespace Zig

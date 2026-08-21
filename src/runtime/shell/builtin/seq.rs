@@ -15,7 +15,6 @@ enum State {
 
 pub struct Seq {
     state: State,
-    buf: Vec<u8>,
     start: f32,
     end: f32,
     increment: f32,
@@ -23,20 +22,17 @@ pub struct Seq {
     /// argv outlives the builtin — `RawSlice` invariant.
     separator: bun_ptr::RawSlice<u8>,
     terminator: bun_ptr::RawSlice<u8>,
-    fixed_width: bool,
 }
 
 impl Default for Seq {
     fn default() -> Self {
         Self {
             state: State::Idle,
-            buf: Vec::new(),
             start: 1.0,
             end: 1.0,
             increment: 1.0,
             separator: bun_ptr::RawSlice::new(b"\n"),
             terminator: bun_ptr::RawSlice::EMPTY,
-            fixed_width: false,
         }
     }
 }
@@ -85,7 +81,6 @@ impl Seq {
                 continue;
             }
             if arg == b"-w" || arg == b"--fixed-width" {
-                Self::state_mut(interp, cmd).fixed_width = true;
                 idx += 1;
                 continue;
             }
@@ -162,9 +157,8 @@ impl Seq {
 
     fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
         let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
-        // PORT NOTE: reshaped for borrowck — render entirely into a local
-        // Vec, then either enqueue it or write_no_io it. Zig wrote each
-        // number directly when !needs_io; we buffer once for simplicity.
+        // Render entirely into a local Vec, then either enqueue it or
+        // write_no_io it; we buffer once for simplicity.
         let (start, end, incr, sep, term) = {
             let me = Self::state_mut(interp, cmd);
             (me.start, me.end, me.increment, me.separator, me.terminator)
@@ -176,7 +170,8 @@ impl Seq {
         } else {
             current >= end
         } {
-            // TODO(port): verify Rust `{}` f32 formatting matches Zig `{d}`.
+            // Rust `{}` for f32 prints the shortest decimal that round-trips
+            // (no exponent, no trailing ".0").
             let _ = write!(&mut out, "{}", current);
             out.extend_from_slice(sep.slice());
             let next = current + incr;
@@ -193,15 +188,11 @@ impl Seq {
 
         Self::state_mut(interp, cmd).state = State::Done;
         if needs_io {
-            Self::state_mut(interp, cmd).buf = out;
             let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            // PORT NOTE: reshaped for borrowck — clone the slice so the &mut
-            // on stdout doesn't alias `buf`.
-            let buf = Self::state_mut(interp, cmd).buf.clone();
             return Builtin::of_mut(interp, cmd)
                 .stdout
-                .enqueue(child, &buf, safeguard);
+                .enqueue(child, &out, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
         Builtin::done(interp, cmd, 0)
@@ -213,8 +204,7 @@ impl Seq {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(e) = e {
-            e.deref();
+        if let Some(_err) = e {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }
@@ -232,5 +222,3 @@ impl Seq {
 fn parse_f32(bytes: &[u8]) -> Option<f32> {
     bun_core::fmt::parse_f32(bytes)
 }
-
-// ported from: src/shell/builtin/seq.zig

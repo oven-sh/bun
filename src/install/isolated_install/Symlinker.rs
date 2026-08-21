@@ -2,21 +2,20 @@ use bun_core::strings;
 use bun_paths;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
-pub struct Symlinker {
-    // TODO(port): bun.Path/RelPath/AbsPath are comptime-config generic (`.{ .sep = .auto }`);
-    // mapped to non-generic bun_paths types here — may need a `<const SEP: Sep>` param.
-    pub dest: bun_paths::Path,
-    pub target: bun_paths::RelPath,
-    pub fallback_junction_target: bun_paths::AbsPath,
+pub(crate) struct Symlinker {
+    pub(crate) dest: bun_paths::Path,
+    pub(crate) target: bun_paths::RelPath,
+    #[cfg(windows)]
+    pub(crate) fallback_junction_target: bun_paths::AbsPath,
 }
 
 impl Symlinker {
-    // PORT NOTE: `&mut self` (vs Zig `*const`) because `Path::slice_z()` writes
+    // `&mut self` because `Path::slice_z()` writes
     // the trailing NUL into its pooled buffer and so requires `&mut`.
-    pub fn symlink(&mut self) -> bun_sys::Result<()> {
+    pub(crate) fn symlink(&mut self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
-            // PORT NOTE: borrowck — `slice_z()` mut-borrows each path to write
+            // borrowck — `slice_z()` mut-borrows each path to write
             // the trailing NUL; bind the fallback first so all three borrows
             // are live disjointly when passed to `symlink_or_junction`.
             let fallback = self.fallback_junction_target.slice_z();
@@ -32,28 +31,12 @@ impl Symlinker {
         }
     }
 
-    pub fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<()> {
+    // Ok(true) when a link was written.
+    pub(crate) fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<bool> {
         match strategy {
-            Strategy::IgnoreFailure => {
-                return match self.symlink() {
-                    Ok(()) => Ok(()),
-                    Err(symlink_err) => match symlink_err.get_errno() {
-                        Errno::ENOENT => {
-                            let Some(dest_parent) = self.dest.dirname() else {
-                                return Ok(());
-                            };
-
-                            let _ = Fd::cwd().make_path(dest_parent);
-                            let _ = self.symlink();
-                            return Ok(());
-                        }
-                        _ => Ok(()),
-                    },
-                };
-            }
             Strategy::ExpectMissing => {
                 return match self.symlink() {
-                    Ok(()) => Ok(()),
+                    Ok(()) => Ok(true),
                     Err(symlink_err1) => match symlink_err1.get_errno() {
                         Errno::ENOENT => {
                             let Some(dest_parent) = self.dest.dirname() else {
@@ -61,11 +44,11 @@ impl Symlinker {
                             };
 
                             let _ = Fd::cwd().make_path(dest_parent);
-                            return self.symlink();
+                            return self.symlink().map(|()| true);
                         }
                         Errno::EEXIST => {
                             let _ = Fd::cwd().delete_tree(self.dest.slice_z());
-                            return self.symlink();
+                            return self.symlink().map(|()| true);
                         }
                         _ => Err(symlink_err1),
                     },
@@ -79,7 +62,7 @@ impl Symlinker {
                         Err(readlink_err) => {
                             return match readlink_err.get_errno() {
                                 Errno::ENOENT => match self.symlink() {
-                                    Ok(()) => Ok(()),
+                                    Ok(()) => Ok(true),
                                     Err(symlink_err) => match symlink_err.get_errno() {
                                         Errno::ENOENT => {
                                             let Some(dest_parent) = self.dest.dirname() else {
@@ -87,7 +70,7 @@ impl Symlinker {
                                             };
 
                                             let _ = Fd::cwd().make_path(dest_parent);
-                                            return self.symlink();
+                                            return self.symlink().map(|()| true);
                                         }
                                         _ => Err(symlink_err),
                                     },
@@ -117,10 +100,10 @@ impl Symlinker {
                                         false
                                     };
                                     if is_dir {
-                                        return Ok(());
+                                        return Ok(false);
                                     }
                                     let _ = bun_sys::unlink(self.dest.slice_z());
-                                    return self.symlink();
+                                    return self.symlink().map(|()| true);
                                 }
                             };
                         }
@@ -131,14 +114,14 @@ impl Symlinker {
                 current_link = strings::without_trailing_slash(current_link);
 
                 if strings::eql_long(current_link, self.target.slice_z().as_bytes(), true) {
-                    return Ok(());
+                    return Ok(false);
                 }
 
                 #[cfg(windows)]
                 {
                     if strings::eql_long(current_link, self.fallback_junction_target.slice(), true)
                     {
-                        return Ok(());
+                        return Ok(false);
                     }
 
                     // this existing link is pointing to the wrong package.
@@ -160,7 +143,7 @@ impl Symlinker {
                     let _ = bun_sys::unlink(self.dest.slice_z());
                 }
 
-                return self.symlink();
+                return self.symlink().map(|()| true);
             }
         }
     }
@@ -170,7 +153,4 @@ impl Symlinker {
 pub enum Strategy {
     ExpectExisting,
     ExpectMissing,
-    IgnoreFailure,
 }
-
-// ported from: src/install/isolated_install/Symlinker.zig

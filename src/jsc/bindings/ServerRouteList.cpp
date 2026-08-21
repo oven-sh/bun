@@ -77,12 +77,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<ServerRouteList, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForServerRouteList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerRouteList = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForServerRouteList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForServerRouteList = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<ServerRouteList, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForServerRouteList, m_subspaceForServerRouteList));
     }
 
     DECLARE_INFO;
@@ -186,7 +181,7 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         auto* prototype = zigGlobalObject->m_JSBunRequestParamsPrototype.get(zigGlobalObject);
         unsigned inlineCapacity = std::min(identifiers.size(), static_cast<size_t>(JSC::JSFinalObject::maxInlineCapacity));
-        auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(FinalObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(FinalObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
 
         if (identifiers.size() < JSC::JSFinalObject::maxInlineCapacity) {
             PropertyOffset offset;
@@ -250,7 +245,7 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
     auto* params = paramsObjectForRoute(vm, globalObject, index, req);
 
     JSBunRequest* request = JSBunRequest::create(vm, structure, requestPtr, params);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     *requestObject = JSValue::encode(request);
 
     JSValue callback = m_routes.at(index).get();
@@ -309,7 +304,7 @@ JSObject* createJSBunRequestParamsPrototype(JSC::VM& vm, Zig::GlobalObject* glob
 {
     auto* prototype = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     prototype->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("RequestParams"_s)), JSC::PropertyAttribute::DontEnum | 0);
-    auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(FinalObjectType, JSC::JSFinalObject::StructureFlags), JSFinalObject::info(), NonArray);
+    auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(FinalObjectType, JSC::JSFinalObject::StructureFlags), JSFinalObject::info(), NonArray);
     structure->setMayBePrototype(true);
     return JSC::constructEmptyObject(vm, structure);
 }

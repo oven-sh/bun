@@ -12,7 +12,6 @@ use bun_paths::resolve_path::{join_abs_string_z, platform};
 use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
-use bun_threading::Mutex;
 
 use crate::bun_fs::FileSystem;
 
@@ -23,73 +22,11 @@ use crate::lifecycle_script_runner::{
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
-use bun_install::lockfile::{self, Lockfile, Package};
-use bun_install::{
-    PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash, invalid_package_id,
-};
-
-#[derive(Default)]
-pub struct LifecycleScriptTimeLog {
-    mutex: Mutex,
-    list: Vec<LifecycleScriptTimeLogEntry>,
-}
-
-pub struct LifecycleScriptTimeLogEntry {
-    // PORT NOTE: Zig borrowed the lockfile string buffer (`string`). The Rust
-    // `LifecycleScriptSubprocess.package_name` is owned (`Box<[u8]>`) and freed
-    // on `destroy`, so the log entry must own its copy to avoid a dangling
-    // borrow. The list is at most a few dozen entries per install.
-    pub package_name: Box<[u8]>,
-    pub script_id: u8,
-    /// nanosecond duration
-    pub duration: u64,
-}
-
-impl LifecycleScriptTimeLog {
-    pub fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
-        self.mutex.lock();
-        // TODO(port): consider `Mutex<Vec<Entry>>` so the guard scopes the borrow
-        self.list.push(entry);
-        self.mutex.unlock();
-    }
-
-    /// this can be called if .start was never called
-    pub fn print_and_deinit(self) {
-        if cfg!(debug_assertions) {
-            if !self.mutex.try_lock() {
-                panic!("LifecycleScriptTimeLog.print is not intended to be thread-safe");
-            }
-            self.mutex.unlock();
-        }
-
-        if !self.list.is_empty() {
-            let longest: &LifecycleScriptTimeLogEntry = 'longest: {
-                let mut i: usize = 0;
-                let mut longest: u64 = self.list[0].duration;
-                for (j, item) in self.list.iter().enumerate().skip(1) {
-                    if item.duration > longest {
-                        i = j;
-                        longest = item.duration;
-                    }
-                }
-                break 'longest &self.list[i];
-            };
-
-            // extra \n will print a blank line after this one
-            Output::warn(format_args!(
-                "{}'s {} script took {}\n\n",
-                BStr::new(&longest.package_name),
-                lockfile::Scripts::NAMES[longest.script_id as usize],
-                bun_fmt::fmt_duration_one_decimal(longest.duration),
-            ));
-            Output::flush();
-        }
-        // self.list dropped here (was `log.list.deinit(allocator)`)
-    }
-}
+use bun_install::lockfile::{Lockfile, Package};
+use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
 
 impl PackageManager {
-    pub fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
+    pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
         if self.preinstall_state.len() >= count {
             return;
         }
@@ -100,31 +37,29 @@ impl PackageManager {
         // expandToCapacity + @memset(.., .unknown)
         self.preinstall_state
             .resize(self.preinstall_state.capacity(), PreinstallState::Unknown);
-        let _ = offset; // PORT NOTE: resize already fills [offset..] with Unknown
+        let _ = offset; // resize already fills [offset..] with Unknown
     }
 
-    /// PORT NOTE: Zig `setPreinstallState(this, package_id, lockfile, value)` — the
-    /// separate `lockfile` parameter only feeds `lockfile.packages.len` into
-    /// `ensurePreinstallStateListCapacity`. Every Rust caller passes
-    /// `self.lockfile` (or an alias of it), which would alias `&mut self`; the
-    /// parameter is dropped here and `self.lockfile` is read directly to keep
+    /// A separate `lockfile` parameter would only feed `lockfile.packages.len` into
+    /// `ensurePreinstallStateListCapacity`. Every caller passes
+    /// `self.lockfile` (or an alias of it), which would alias `&mut self`;
+    /// `self.lockfile` is read directly instead to keep
     /// borrowck happy.
-    pub fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
+    pub(crate) fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
         let count = self.lockfile.packages.len();
         self.ensure_preinstall_state_list_capacity(count);
         self.preinstall_state[package_id as usize] = value;
     }
 
-    pub fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
+    pub(crate) fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
         if (package_id as usize) >= self.preinstall_state.len() {
             return PreinstallState::Unknown;
         }
         self.preinstall_state[package_id as usize]
     }
 
-    /// PORT NOTE: Zig `determinePreinstallState(manager, pkg, lockfile, …)` — the
-    /// separate `lockfile` parameter is always `manager.lockfile` at every call
-    /// site in the Rust port; collapsed onto `self.lockfile` to avoid the
+    /// A separate `lockfile` parameter would always be `manager.lockfile` at every call
+    /// site; collapsed onto `self.lockfile` to avoid the
     /// `&mut self` / `&self.lockfile` aliasing borrowck rejects.
     pub fn determine_preinstall_state(
         &mut self,
@@ -145,7 +80,6 @@ impl PackageManager {
                     if self.lockfile.patched_dependencies.len() == 0 {
                         break 'brk None;
                     }
-                    // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...))
                     let mut name_and_version: Vec<u8> = Vec::new();
                     write!(
                         &mut name_and_version,
@@ -169,8 +103,7 @@ impl PackageManager {
                     else {
                         break 'brk None;
                     };
-                    // Zig: `defer out_name_and_version_hash.* = name_and_version_hash;`
-                    // Runs on every exit path after this point.
+                    // `*out_name_and_version_hash` is set on every exit path after this point.
                     if patched_dep.patchfile_hash_is_null {
                         *out_name_and_version_hash = Some(name_and_version_hash);
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::CalcPatchHash);
@@ -225,7 +158,12 @@ impl PackageManager {
                     return PreinstallState::Extract;
                 }
 
-                if directories::is_folder_in_cache(self, folder_path) {
+                let in_cache = if patch_hash.is_some() {
+                    directories::is_folder_in_cache(self, folder_path)
+                } else {
+                    directories::is_package_in_cache(self, folder_path, pkg.resolution.tag)
+                };
+                if in_cache {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }
@@ -246,9 +184,10 @@ impl PackageManager {
                                  Bun. Please file a GitHub issue."
                             )
                         });
-                    // Zig: `allocator.dupeZ(u8, folder_path[..idx])` — owned NUL-terminated copy.
+                    // Owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
-                    if directories::is_folder_in_cache(self, &non_patched_path) {
+                    if directories::is_package_in_cache(self, &non_patched_path, pkg.resolution.tag)
+                    {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
                         // yay step 1 is already done for us
                         return PreinstallState::ApplyPatch;
@@ -265,13 +204,13 @@ impl PackageManager {
         }
     }
 
-    pub fn has_no_more_pending_lifecycle_scripts(&mut self) -> bool {
+    pub(crate) fn has_no_more_pending_lifecycle_scripts(&mut self) -> bool {
         self.report_slow_lifecycle_scripts();
         self.pending_lifecycle_script_tasks.load(Ordering::Relaxed) == 0
     }
 
-    pub fn tick_lifecycle_scripts(&mut self) {
-        // PORT NOTE: reshaped for borrowck — `self.event_loop.tick_once(self)`
+    pub(crate) fn tick_lifecycle_scripts(&mut self) {
+        // reshaped for borrowck — `self.event_loop.tick_once(self)`
         // would borrow `self` twice. Erase `self` to a raw context pointer
         // first; `tick_once` only forwards it opaquely to task callbacks.
         let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
@@ -281,7 +220,7 @@ impl PackageManager {
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
         Output::flush();
-        // PORT NOTE: see `tick_lifecycle_scripts` — `is_done` callback reborrows
+        // see `tick_lifecycle_scripts` — `is_done` callback reborrows
         // `self` (the struct that owns `event_loop`), so use the raw-pointer
         // `tick_raw` variant which only holds `&mut event_loop` between
         // `is_done` calls.
@@ -299,7 +238,7 @@ impl PackageManager {
         }
     }
 
-    pub fn report_slow_lifecycle_scripts(&mut self) {
+    pub(crate) fn report_slow_lifecycle_scripts(&mut self) {
         let log_level = self.options.log_level;
         if log_level == LogLevel::Silent {
             return;
@@ -339,23 +278,23 @@ impl PackageManager {
             let package_name: &[u8] = &longest_running.package_name;
 
             if !(package_name.len() > 1 && package_name[package_name.len() - 1] == b's') {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "{}'s postinstall cost you {}\n",
                     BStr::new(package_name),
                     bun_fmt::fmt_duration_one_decimal(time_running),
-                ));
+                );
             } else {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "{}' postinstall cost you {}\n",
                     BStr::new(package_name),
                     bun_fmt::fmt_duration_one_decimal(time_running),
-                ));
+                );
             }
             Output::flush();
         }
     }
 
-    pub fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
+    pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
         let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
             FileSystem::instance().top_level_dir(),
             &[b"binding.gyp"],
@@ -365,7 +304,7 @@ impl PackageManager {
         // need to clone because this is a copy before Lockfile.cleanWithLogger
         let name = root_package.name.slice(buf);
 
-        // Zig: `bun.AbsPath(.{ .sep = .auto })` — `AutoAbsPath` is the SEP=auto alias.
+        // `AutoAbsPath` is the SEP=auto alias.
         let mut top_level_dir = AutoAbsPath::init_top_level_dir();
         // `defer top_level_dir.deinit()` — handled by Drop
 
@@ -404,8 +343,7 @@ impl PackageManager {
         optional: bool,
         foreground: bool,
         install_ctx: Option<InstallCtx<'_>>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), crate::Error> {
         let log_level = self.options.log_level;
         let mut any_scripts = false;
         for maybe_item in list.items.iter() {
@@ -420,7 +358,7 @@ impl PackageManager {
 
         self.ensure_temp_node_gyp_script()?;
 
-        // PORT NOTE: `list` is moved into `spawn_package_scripts` below; copy
+        // `list` is moved into `spawn_package_scripts` below; copy
         // `cwd` out so the PATH builder can borrow it independently.
         let cwd_owned: Vec<u8> = list.cwd.as_bytes().to_vec();
         let cwd: &[u8] = &cwd_owned;
@@ -430,11 +368,11 @@ impl PackageManager {
         let mut script_env = env_loader.map.clone_with_allocator()?;
         // `defer script_env.map.deinit()` — handled by Drop
 
-        // PORT NOTE: `script_env.put` below needs `&mut`; copy PATH out so the
+        // `script_env.put` below needs `&mut`; copy PATH out so the
         // shared borrow does not span it.
         let original_path: Vec<u8> = script_env.get(b"PATH").unwrap_or(b"").to_vec();
 
-        // Zig: `bun.EnvPath(.{})` — `EnvPathOptions` is currently fieldless.
+        // `EnvPathOptions` is currently fieldless.
         let mut path = EnvPath::init_capacity(
             original_path.len() + 1 + b"node_modules/.bin".len() + cwd.len() + 1,
         )?;
@@ -454,9 +392,7 @@ impl PackageManager {
         path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
 
-        // Zig: `try script_env.createNullDelimitedEnvMap(this.allocator)` —
-        // allocated with the manager-lifetime allocator and never freed in this
-        // scope; ownership transfers to `LifecycleScriptSubprocess`, which
+        // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
         // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
         // this stack frame (freed by the subprocess's `Drop`).
@@ -499,11 +435,11 @@ impl PackageManager {
         Ok(())
     }
 
-    pub fn find_trusted_dependencies_from_update_requests(
+    pub(crate) fn find_trusted_dependencies_from_update_requests(
         &mut self,
-    ) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
-        // find all deps originating from --trust packages from cli
-        let mut set: ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> = ArrayHashMap::default();
+    ) -> ArrayHashMap<PackageID, ()> {
+        // find all packages originating from --trust packages from cli
+        let mut set: ArrayHashMap<PackageID, ()> = ArrayHashMap::default();
         if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
             let root_id = self
                 .root_package_id
@@ -520,19 +456,7 @@ impl PackageManager {
                             continue;
                         }
 
-                        let entry = handle_oom(
-                            set.get_or_put(root_dep.name_hash as TruncatedPackageNameHash),
-                        );
-                        if !entry.found_existing {
-                            *entry.value_ptr = Box::from(
-                                root_dep
-                                    .name
-                                    .slice(self.lockfile.buffers.string_bytes.as_slice()),
-                            );
-                            let dependency_slice =
-                                self.lockfile.packages.items_dependencies()[package_id as usize];
-                            add_dependencies_to_set(&mut set, &self.lockfile, dependency_slice);
-                        }
+                        add_package_to_set(&mut set, &self.lockfile, package_id);
                         break;
                     }
                 }
@@ -544,46 +468,40 @@ impl PackageManager {
     }
 }
 
-fn add_dependencies_to_set(
-    names: &mut ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
+fn add_package_to_set(
+    set: &mut ArrayHashMap<PackageID, ()>,
     lockfile: &Lockfile,
-    dependencies_slice: lockfile::DependencySlice,
+    package_id: PackageID,
 ) {
-    let begin = dependencies_slice.off;
-    let end = begin.saturating_add(dependencies_slice.len);
-    let mut dep_id = begin;
-    while dep_id < end {
-        let package_id = lockfile.buffers.resolutions[dep_id as usize];
-        if package_id == invalid_package_id {
+    if handle_oom(set.get_or_put(package_id)).found_existing {
+        return;
+    }
+    let mut stack: Vec<PackageID> = vec![package_id];
+    while let Some(current) = stack.pop() {
+        let dependencies_slice = lockfile.packages.items_dependencies()[current as usize];
+        let begin = dependencies_slice.off;
+        let end = begin.saturating_add(dependencies_slice.len);
+        let mut dep_id = begin;
+        while dep_id < end {
+            let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
+            if dep_package_id != invalid_package_id
+                && !handle_oom(set.get_or_put(dep_package_id)).found_existing
+            {
+                stack.push(dep_package_id);
+            }
             dep_id += 1;
-            continue;
         }
-
-        let dep = &lockfile.buffers.dependencies[dep_id as usize];
-        let entry = handle_oom(names.get_or_put(dep.name_hash as TruncatedPackageNameHash));
-        if !entry.found_existing {
-            *entry.value_ptr = Box::from(dep.name.slice(lockfile.buffers.string_bytes.as_slice()));
-            let dependency_slice = lockfile.packages.items_dependencies()[package_id as usize];
-            add_dependencies_to_set(names, lockfile, dependency_slice);
-        }
-        dep_id += 1;
     }
 }
 
 use bun_install::LogLevel;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. The `impl PackageManager` bodies
-// above are the canonical port; these thin shims keep the
+// Free-function re-export surface. The `impl PackageManager` bodies
+// above are canonical; these thin shims keep the
 // `pub use lifecycle::{...}` re-exports in `PackageManager.rs` resolving the
 // same way `PackageManagerDirectories.rs` / `PackageManagerEnqueue.rs` do.
 // ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-pub fn ensure_preinstall_state_list_capacity(this: &mut PackageManager, count: usize) {
-    this.ensure_preinstall_state_list_capacity(count)
-}
 
 #[inline]
 pub fn set_preinstall_state(
@@ -608,49 +526,3 @@ pub fn determine_preinstall_state(
 ) -> PreinstallState {
     this.determine_preinstall_state(pkg, out_name_and_version_hash, out_patchfile_hash)
 }
-
-#[inline]
-pub fn has_no_more_pending_lifecycle_scripts(this: &mut PackageManager) -> bool {
-    this.has_no_more_pending_lifecycle_scripts()
-}
-
-#[inline]
-pub fn tick_lifecycle_scripts(this: &mut PackageManager) {
-    this.tick_lifecycle_scripts()
-}
-
-#[inline]
-pub fn sleep(this: &mut PackageManager) {
-    this.sleep()
-}
-
-#[inline]
-pub fn report_slow_lifecycle_scripts(this: &mut PackageManager) {
-    this.report_slow_lifecycle_scripts()
-}
-
-#[inline]
-pub fn load_root_lifecycle_scripts(this: &mut PackageManager, root_package: &Package) {
-    this.load_root_lifecycle_scripts(root_package)
-}
-
-#[inline]
-pub fn spawn_package_lifecycle_scripts(
-    this: &mut PackageManager,
-    ctx: Command::Context<'_>,
-    list: ScriptsList,
-    optional: bool,
-    foreground: bool,
-    install_ctx: Option<InstallCtx<'_>>,
-) -> Result<(), bun_core::Error> {
-    this.spawn_package_lifecycle_scripts(ctx, list, optional, foreground, install_ctx)
-}
-
-#[inline]
-pub fn find_trusted_dependencies_from_update_requests(
-    this: &mut PackageManager,
-) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
-    this.find_trusted_dependencies_from_update_requests()
-}
-
-// ported from: src/install/PackageManager/PackageManagerLifecycle.zig

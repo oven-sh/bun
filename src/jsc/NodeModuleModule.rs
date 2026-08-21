@@ -1,6 +1,6 @@
 use crate::{
-    self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, StringJsc,
-    Strong, VirtualMachineRef as VirtualMachine,
+    self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
+    VirtualMachineRef as VirtualMachine,
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
@@ -8,16 +8,16 @@ use bun_core::{OwnedString, String as BunString, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 
-// `bun.schema.api.Loader` — bindgen-emitted enum from `src/options_types/schema.zig`.
-// Mirrored as a transparent `u8` because the schema enum is *open* in Zig
-// (`enum(u8) { …, _ }`) and the FFI caller may hand us discriminants outside
+// `bun.schema.api.Loader` — bindgen-emitted schema enum.
+// Mirrored as a transparent `u8` because the schema enum is *open*
+// and the FFI caller may hand us discriminants outside
 // the closed Rust `api::Loader` set; transmuting an unknown tag would be UB.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct ApiLoader(pub u8);
 impl ApiLoader {
-    /// schema.zig:326 — `_none = 254`.
-    pub(crate) const NONE: Self = Self(api::Loader::_none as u8);
+    /// `_none = 254`.
+    const NONE: Self = Self(api::Loader::_none as u8);
 
     /// Reconstruct the closed schema enum. Only valid when `self != NONE` is
     /// already established and the C++ caller honoured the `BunLoaderType`
@@ -30,13 +30,11 @@ impl ApiLoader {
     }
 }
 
-// Zig: `export const NodeModuleModule__findPath = jsc.host_fn.wrap3(findPath);`
-// `wrap3` emits an `extern "C" fn(*JSGlobalObject, bun.String, ?*JSArray) -> JSValue` shim
-// that forwards to `findPath` via `toJSHostCall`. The C++ caller (NodeModuleModule.cpp
+// The C++ caller (NodeModuleModule.cpp
 // `jsFunctionFindPath`) does the CallFrame → (BunString, JSArray*) extraction itself and
 // invokes this with the coerced args directly — there is no CallFrame here.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn NodeModuleModule__findPath(
+extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
     request_bun_str: BunString,
     paths_maybe: *mut JSArray,
@@ -54,7 +52,6 @@ fn find_path(
     request_bun_str: BunString,
     paths_maybe: Option<&JSArray>,
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (8192 bytes) — profile if it shows up on a hot path.
     let request_slice = request_bun_str.to_utf8();
     let request = request_slice.slice();
 
@@ -68,10 +65,10 @@ fn find_path(
         'found: {
             let mut iter = paths.iterator(global)?;
             while let Some(path) = iter.next()? {
-                // Zig: `defer cur_path.deref()` — `OwnedString` releases the +1 from `fromJS`.
+                // `OwnedString` releases the +1 from `from_js` on drop.
                 let cur_path = OwnedString::new(BunString::from_js(path, global)?);
 
-                if let Some(found) = find_path_inner(request_bun_str, cur_path.get(), global) {
+                if let Some(found) = find_path_inner(request_bun_str, cur_path.get(), global)? {
                     break 'found Some(found);
                 }
             }
@@ -79,7 +76,7 @@ fn find_path(
             break 'found None;
         }
     } else {
-        find_path_inner(request_bun_str, BunString::static_(b""), global)
+        find_path_inner(request_bun_str, BunString::static_(b""), global)?
     };
 
     if let Some(str) = found.as_mut() {
@@ -93,34 +90,24 @@ fn find_path_inner(
     request: BunString,
     cur_path: BunString,
     global: &JSGlobalObject,
-) -> Option<BunString> {
+) -> JsResult<Option<BunString>> {
     // SAFETY: zero-init is the documented `ErrorableString` "empty" state; the
     // callee fully overwrites it on both ok/err paths.
     let mut errorable: ErrorableString = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // `bun_core::String` is `Copy` — passing by value here mirrors Zig's
-    // by-value struct copy with no refcount change.
-    match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
+    // `bun_core::String` is `Copy` — passing by value makes no refcount change.
+    VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         &mut errorable,
         global,
         request,
         cur_path,
         None,
-        false,
-        true,
-    ) {
-        Ok(()) => {}
-        Err(JsError::Thrown) => {
-            // TODO sus — Zig clears the pending exception here.
-            global.clear_exception();
-            return None;
-        }
-        Err(_) => return None,
-    }
-    errorable.unwrap().ok()
+        crate::virtual_machine::ResolveMode::RequireResolve,
+    )?;
+    Ok(errorable.unwrap().ok())
 }
 
-pub fn _stat(path: &[u8]) -> i32 {
-    // PERF(port): Zig passed the slice straight through; `exists_at_type`
+pub fn stat(path: &[u8]) -> i32 {
+    // PERF: `exists_at_type`
     // takes a `&ZStr`, so we copy into a NUL-terminated heap buffer here.
     let zpath = bun_core::ZBox::from_bytes(path);
     match bun_sys::exists_at_type(bun_sys::Fd::cwd(), &zpath) {
@@ -143,8 +130,6 @@ impl Default for CustomLoader {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
 // params are by-value `JSValue`/scalars → `safe fn`.
 unsafe extern "C" {
@@ -162,7 +147,7 @@ unsafe extern "C" {
 }
 
 // Memory management is complicated because JSValues are stored in gc-visitable
-// WriteBarriers in C++ but the hash map for extensions is in Zig for flexibility.
+// WriteBarriers in C++ but the hash map for extensions is in Rust for flexibility.
 fn on_require_extension_modify(
     global: &JSGlobalObject,
     str: &[u8],
@@ -176,7 +161,7 @@ fn on_require_extension_modify(
     let gop = vm.commonjs_custom_extensions.get_or_put(str)?;
     if !gop.found_existing {
         // `gop.key_ptr` already owns a duped `Box<[u8]>` (StringArrayHashMap
-        // boxes the key on insert), so the Zig `dupe` is implicit.
+        // boxes the key on insert).
         if is_built_in {
             vm.has_mutated_built_in_extensions += 1;
         }
@@ -198,9 +183,8 @@ fn on_require_extension_modify(
         }
     }
 
-    // Zig `defer vm.transpiler.resolver.opts.extra_cjs_extensions = list.keys()`.
-    // PERF(port): Zig aliased the map's key storage directly; the resolver's
-    // `extra_cjs_extensions` is owned `Box<[Box<[u8]>]>` here, so we clone.
+    // PERF: the resolver's
+    // `extra_cjs_extensions` is owned `Box<[Box<[u8]>]>`, so we clone the keys.
     vm.transpiler.resolver.opts.extra_cjs_extensions = vm
         .commonjs_custom_extensions
         .keys()
@@ -218,16 +202,15 @@ fn on_require_extension_modify_non_function(
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
 
     if let Some(prev) = vm.commonjs_custom_extensions.fetch_swap_remove(str) {
-        // `prev.key: Box<[u8]>` — freed on drop (Zig: `allocator.free(prev.key)`).
+        // `prev.key: Box<[u8]>` — freed on drop.
         if is_built_in {
             vm.has_mutated_built_in_extensions -= 1;
         }
-        // `prev.value` drops here; `Strong`'s `Drop` impl is the Zig `deinit`.
+        // `prev.value` drops here, releasing any held `Strong`.
         drop(prev);
     }
 
-    // Zig `defer vm.transpiler.resolver.opts.extra_cjs_extensions = list.keys()`.
-    // PERF(port): see `on_require_extension_modify`.
+    // PERF: see `on_require_extension_modify`.
     vm.transpiler.resolver.opts.extra_cjs_extensions = vm
         .commonjs_custom_extensions
         .keys()
@@ -256,13 +239,12 @@ pub fn find_longest_registered_extension<'a>(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModify(
+extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,
     str: &BunString,
     loader: ApiLoader,
     value: JSValue,
 ) {
-    // PERF(port): was stack-fallback (8192 bytes) — profile if it shows up on a hot path.
     let str_slice = str.to_utf8();
     if on_require_extension_modify(global, str_slice.slice(), loader, value).is_err() {
         bun_core::out_of_memory();
@@ -270,15 +252,12 @@ pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModify(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
+extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
     str: &BunString,
 ) {
-    // PERF(port): was stack-fallback (8192 bytes) — profile if it shows up on a hot path.
     let str_slice = str.to_utf8();
     if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {
         bun_core::out_of_memory();
     }
 }
-
-// ported from: src/jsc/NodeModuleModule.zig

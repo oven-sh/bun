@@ -6,9 +6,8 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
 use crate::JsResult;
 
-// PORTING.md §Dispatch: Zig used `comptime test_kind: enum {...}` — Rust
-// `adt_const_params` is unstable, so the enum is passed as a runtime value
-// (the bodies branch on it anyway; no codegen difference for this fn).
+// `adt_const_params` is unstable, so the test kind is passed as a runtime
+// value (the bodies branch on it anyway; no codegen difference for this fn).
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub(crate) enum TestKind {
     Normal,
@@ -24,9 +23,9 @@ pub(crate) enum TestCategory {
     ParserOptions,
 }
 
-// `#[bun_jsc::host_fn]` proc-macro not yet available; wrappers are plain fns
-// for now and re-gain the attribute when bun_jsc::host_fn lands.
-// TODO(port): bun_jsc::host_fn (proc-macro attribute)
+// These test-only wrappers are consumed as plain safe fns through
+// `dispatch_js2native.rs` re-exports, so they don't use the
+// `#[bun_jsc::host_fn]` C-ABI shim.
 
 pub fn minify_error_test_with_options(
     global: &JSGlobalObject,
@@ -85,7 +84,7 @@ fn eat_string_arg(
     Ok(OwnedString::new(arg.to_bun_string(global)?))
 }
 
-pub(crate) fn testing_impl(
+fn testing_impl(
     global: &JSGlobalObject,
     frame: &CallFrame,
     test_kind: TestKind,
@@ -99,18 +98,17 @@ pub(crate) fn testing_impl(
     use bun_jsc::{LogJsc as _, StringJsc as _};
 
     let arena = Arena::new();
-    // PERF(port): was arena bulk-free — CSS parser allocates into this bump
+    // The CSS parser allocates into this bump arena; freed when it drops.
     //
     // SAFETY: `StyleSheet::parse` requires `&'static Bump` / `ParserOptions<'static>`
-    // because the rule tree stores lifetime-erased refs (see css_parser.rs PORT
-    // NOTE on `'bump` threading). The arena strictly outlives every value parsed
+    // because the rule tree stores lifetime-erased refs (see the css_parser.rs
+    // notes on `'bump` threading). The arena strictly outlives every value parsed
     // out of it below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
-    let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
     // raw `*mut VirtualMachine` as a shared ref for the slice's lifetime.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
     let source_bunstr = eat_string_arg(
         &mut arguments,
         global,
@@ -240,7 +238,7 @@ fn parser_options_from_js(
         if val.is_array() {
             let mut iter = val.array_iterator(global)?;
             while let Some(item) = iter.next()? {
-                // Zig: `defer bunstr.deref()` — release the +1 ref each iteration.
+                // `OwnedString` releases the +1 ref at the end of each iteration.
                 let bunstr = OwnedString::new(item.to_bun_string(global)?);
                 let str = bunstr.to_utf8();
                 if str.slice() == b"DEEP_SELECTOR_COMBINATOR" {
@@ -257,26 +255,14 @@ fn parser_options_from_js(
         }
     }
 
-    // if (try jsobj.getTruthy(globalThis, "css_modules")) |val| {
-    //     opts.css_modules = bun.css.css_modules.Config{
-    //
-    //     };
-    //     if (val.isObject()) {
-    //         if (try val.getTruthy(globalThis, "pure")) |pure_val| {
-    //             opts.css_modules.pure = pure_val.toBoolean();
-    //         }
-    //     }
-    // }
-
     Ok(())
 }
 
 fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers> {
     let mut targets = Browsers::default();
 
-    // Zig spec (css_internals.zig:188-256) unrolls this 9×; collapse to a
-    // table-driven loop. Key order preserved so JS getter/exception ordering
-    // matches the spec exactly.
+    // Table-driven loop. Key order matters: it determines JS getter/exception
+    // ordering.
     for (key, slot) in [
         ("android", &mut targets.android),
         ("chrome", &mut targets.chrome),
@@ -291,7 +277,7 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
         if let Some(val) = jsobj.get_truthy(global, key)? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
-                    // note: Rust `as` saturates on overflow/NaN where Zig is UB
+                    // `as` saturates on overflow/NaN
                     *slot = Some(value as u32);
                 }
             }
@@ -309,18 +295,17 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     use bun_jsc::{LogJsc as _, StringJsc as _};
 
     let arena = Arena::new();
-    // PERF(port): was arena bulk-free — StyleAttribute::parse allocates its
+    // StyleAttribute::parse allocates its
     // AST into this bump; freed when `arena` drops at end of scope.
     //
     // SAFETY: `StyleAttribute` stores `DeclarationBlock<'static>` (lifetime
-    // erased crate-wide until 'bump threads through the rule tree — see
-    // css_parser.rs PORT NOTE). The arena strictly outlives the parsed
+    // erased crate-wide until 'bump threads through the rule tree — see the
+    // css_parser.rs notes). The arena strictly outlives the parsed
     // `stylesheet` below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
-    let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
     let source_bunstr = eat_string_arg(&mut arguments, global, "attrTest", 3, 0, "source")?;
     let source = source_bunstr.to_utf8();
 
@@ -373,8 +358,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             ) {
                 Ok(r) => r,
                 Err(_e) => {
-                    // Zig: bun.handleErrorReturnTrace(e, @errorReturnTrace()); return .js_undefined;
-                    // TODO(port): handleErrorReturnTrace — debug-only error trace dump; no Rust equivalent yet
+                    // The error is intentionally swallowed here.
                     return Ok(JSValue::UNDEFINED);
                 }
             };
@@ -389,5 +373,3 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         }
     }
 }
-
-// ported from: src/css_jsc/css_internals.zig

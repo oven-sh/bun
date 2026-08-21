@@ -306,12 +306,13 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     auto targetValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (targetValue) {
-        if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
-            String targetString = targetJSString->value(globalObject);
-            if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
-                JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
-                return {};
-            }
+        auto* targetJSString = targetValue.toStringOrNull(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        String targetString = targetJSString->value(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
+            JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
+            return {};
         }
     }
 
@@ -426,12 +427,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSModuleMock, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSModuleMock.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSModuleMock = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSModuleMock.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSModuleMock = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSModuleMock, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSModuleMock, m_subspaceForJSModuleMock));
     }
 
     void finishCreation(JSC::VM&);
@@ -462,7 +458,7 @@ JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject
 
 Structure* JSModuleMock::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
@@ -503,7 +499,7 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 }
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
-extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -658,15 +654,21 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
+                            // Read every export before overriding any, so a throwing getter leaves the
+                            // namespace untouched.
+                            MarkedArgumentBuffer values;
+                            values.ensureCapacity(names.size());
                             for (auto& name : names) {
-                                // consistent with regular esm handling code
-                                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                                 JSValue value = object->get(globalObject, name);
-                                if (scope.exception()) [[unlikely]] {
-                                    (void)scope.tryClearException();
-                                    value = jsUndefined();
-                                }
-                                moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                                RETURN_IF_EXCEPTION(scope, {});
+                                values.append(value);
+                            }
+                            if (values.hasOverflowed()) [[unlikely]] {
+                                throwOutOfMemoryError(globalObject, scope);
+                                return {};
+                            }
+                            for (size_t i = 0; i < names.size(); ++i) {
+                                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
 
@@ -815,6 +817,12 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String pathString = path->toWTFString(BunString::ZeroCopy);
 
+    JSC::MarkedArgumentBuffer matchedCallbacks;
+    matchedCallbacks.ensureCapacity(filters.size());
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     for (size_t i = 0; i < filters.size(); i++) {
         if (!filters[i].get()->match(globalObject, pathString, 0)) {
             continue;
@@ -823,6 +831,15 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         if (!function) [[unlikely]] {
             continue;
         }
+        matchedCallbacks.append(function);
+    }
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    for (size_t i = 0; i < matchedCallbacks.size(); i++) {
+        auto* function = matchedCallbacks.at(i).getObject();
 
         JSC::MarkedArgumentBuffer arguments;
 
@@ -963,13 +980,8 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(globalObject);
-    global->onLoadPlugins.fileNamespace.clear();
-    global->onResolvePlugins.fileNamespace.clear();
-    global->onLoadPlugins.groups.clear();
-    global->onResolvePlugins.namespaces.clear();
-
-    delete global->onLoadPlugins.virtualModules;
-    global->onLoadPlugins.virtualModules = nullptr;
+    global->onLoadPlugins.clear();
+    global->onResolvePlugins.clear();
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

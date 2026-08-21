@@ -12,11 +12,12 @@ use bun_install::{
     Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash,
 };
 // `lockfile.packages.items_name()` is provided by an extension trait on
-// `MultiArrayList<Package>` (Zig: `lockfile.packages.items(.name)`).
+// `MultiArrayList<Package>`.
 pub struct UpdateRequest {
-    // TODO(port): lifetime — Zig leaks these (no deinit); using &'static for now
+    // CLI positionals are
+    // process-lifetime, hence `&'static`.
     pub name: &'static [u8],
-    pub name_hash: PackageNameHash,
+    pub(crate) name_hash: PackageNameHash,
     pub version: dependency::Version,
     /// Backing buffer for `version.literal` (and friends) — either a leaked
     /// CLI positional (truly process-lifetime) or the active lockfile's
@@ -28,13 +29,14 @@ pub struct UpdateRequest {
     /// type map: `[]const u8` struct-field, never freed, points into a buffer
     /// owned elsewhere → `RawSlice<u8>` (centralises the outlives-holder
     /// invariant; see `version_buf()`).
-    pub version_buf: bun_ptr::RawSlice<u8>,
-    pub package_id: PackageID,
-    pub is_aliased: bool,
+    pub(crate) version_buf: bun_ptr::RawSlice<u8>,
+    pub(crate) package_id: PackageID,
+    pub(crate) is_aliased: bool,
     pub failed: bool,
-    /// This must be cloned to handle when the AST store resets
-    // TODO(port): lifetime — ARENA-owned (AST Expr.Data store); raw ptr per LIFETIMES.tsv
-    pub e_string: Option<*mut js_ast::E::String>,
+    /// This must be cloned to handle when the AST store resets.
+    /// ARENA-owned (AST `Expr.Data` store) — raw pointer per LIFETIMES.tsv;
+    /// only valid while the store that allocated it is alive.
+    pub(crate) e_string: Option<*mut js_ast::E::String>,
 }
 
 impl Default for UpdateRequest {
@@ -53,6 +55,16 @@ impl Default for UpdateRequest {
 }
 
 pub type Array = Vec<UpdateRequest>;
+
+/// name_hash -> first position in PackageManager::update_requests; rebuilt by set_update_requests, read once per lockfile row during resolution.
+#[derive(Default)]
+pub struct UpdateRequestIndex(
+    bun_collections::HashMap<
+        PackageNameHash,
+        u32,
+        bun_collections::IdentityContext<PackageNameHash>,
+    >,
+);
 
 /// Park CLI-lifetime bytes in a process-lifetime static so LSan sees them as
 /// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
@@ -85,7 +97,7 @@ impl UpdateRequest {
     }
 
     #[inline]
-    pub fn matches(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
+    pub(crate) fn matches(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
         self.name_hash
             == if self.name.is_empty() {
                 StringBuilder::string_hash(dependency.version.literal.slice(string_buf))
@@ -94,7 +106,7 @@ impl UpdateRequest {
             }
     }
 
-    pub fn get_name(&self) -> &[u8] {
+    pub(crate) fn get_name(&self) -> &[u8] {
         if self.is_aliased {
             self.name
         } else {
@@ -103,7 +115,7 @@ impl UpdateRequest {
     }
 
     /// If `self.package_id` is not `invalid_package_id`, it must be less than `lockfile.packages.len`.
-    pub fn get_name_in_lockfile<'a>(&'a self, lockfile: &'a Lockfile) -> Option<&'a [u8]> {
+    pub(crate) fn get_name_in_lockfile<'a>(&'a self, lockfile: &'a Lockfile) -> Option<&'a [u8]> {
         if self.package_id == INVALID_PACKAGE_ID {
             None
         } else {
@@ -116,7 +128,7 @@ impl UpdateRequest {
     ///
     /// `self` needs to be a pointer! If `self` is a copy and the name returned from
     /// resolved_name is inlined, you will return a pointer to stack memory.
-    pub fn get_resolved_name<'a>(&'a self, lockfile: &'a Lockfile) -> &'a [u8] {
+    pub(crate) fn get_resolved_name<'a>(&'a self, lockfile: &'a Lockfile) -> &'a [u8] {
         if self.is_aliased {
             self.name
         } else if let Some(name) = self.get_name_in_lockfile(lockfile) {
@@ -126,8 +138,7 @@ impl UpdateRequest {
         }
     }
 
-    // NOTE: `pub const fromJS = @import("../../install_jsc/update_request_jsc.zig").fromJS;`
-    // deleted — in Rust, `from_js` lives on an extension trait in the `*_jsc` crate.
+    // NOTE: `from_js` lives on an extension trait in the `*_jsc` crate.
 
     pub fn parse<'a>(
         pm: Option<&mut PackageManager>,
@@ -139,8 +150,6 @@ impl UpdateRequest {
         Self::parse_with_error(pm, log, positionals, update_requests, subcommand, true)
             .unwrap_or_else(|_| Global::crash())
     }
-
-    // TODO(port): narrow error set — only `UnrecognizedDependencyFormat` is returned
     pub fn parse_with_error<'a>(
         mut pm: Option<&mut PackageManager>,
         log: &mut Log,
@@ -148,7 +157,7 @@ impl UpdateRequest {
         update_requests: &'a mut Array,
         subcommand: Subcommand,
         fatal: bool,
-    ) -> Result<&'a mut [UpdateRequest], bun_core::Error> {
+    ) -> crate::Result<&'a mut [UpdateRequest]> {
         // first one is always either:
         // add
         // remove
@@ -159,7 +168,7 @@ impl UpdateRequest {
                 // buffer of `input.len` bytes is always sufficient. Previously this was a
                 // fixed `[2048]u8` stack array which overflowed for longer positionals.
                 let mut temp = vec![0u8; input.len()];
-                // std.mem.replace(u8, input, "\\\\", "/", temp) — returns replacement count
+                // `strings::replace` returns the replacement count.
                 let len = strings::replace(&input, b"\\\\", b"/", &mut temp);
                 let new_len = input.len() - len;
                 let input2 = &mut temp[..new_len];
@@ -230,9 +239,8 @@ impl UpdateRequest {
                     );
                 }
 
-                return Err(bun_core::err!("UnrecognizedDependencyFormat"));
+                return Err(crate::Error::UnrecognizedDependencyFormat);
             };
-            // TODO(port): Dependency.Version tag/value layout — Zig uses separate .tag + .value union
             if alias.is_some() && version.tag == dependency::version::Tag::Git {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
@@ -270,7 +278,7 @@ impl UpdateRequest {
                     );
                 }
 
-                return Err(bun_core::err!("UnrecognizedDependencyFormat"));
+                return Err(crate::Error::UnrecognizedDependencyFormat);
             }
 
             let mut request = UpdateRequest {
@@ -299,8 +307,43 @@ impl UpdateRequest {
     }
 }
 
+impl PackageManager {
+    pub(crate) fn set_update_requests(&mut self, updates: Vec<UpdateRequest>) {
+        let mut index = UpdateRequestIndex::default();
+        for (i, r) in updates.iter().enumerate().rev() {
+            index.0.insert(r.name_hash, i as u32);
+        }
+        self.update_request_index = index;
+        self.update_requests = updates.into_boxed_slice();
+    }
+
+    pub(crate) fn index_of_update_request(
+        &self,
+        name_hash: PackageNameHash,
+        name: &[u8],
+    ) -> Option<usize> {
+        let first = *self.update_request_index.0.get(&name_hash)? as usize;
+        let same_name = |r: &UpdateRequest| r.name.is_empty() || r.name == name;
+        if same_name(&self.update_requests[first]) {
+            return Some(first);
+        }
+        self.update_requests[first + 1..]
+            .iter()
+            .position(|r| r.name_hash == name_hash && same_name(r))
+            .map(|offset| first + 1 + offset)
+    }
+
+    /// For callers that only have the name; lockfile-driven callers pass the hash they already hold.
+    pub(crate) fn index_of_update_request_named(&self, name: &[u8]) -> Option<usize> {
+        self.index_of_update_request(bun_semver::string::Builder::string_hash(name), name)
+    }
+
+    #[inline]
+    pub(crate) fn is_update_request(&self, name_hash: PackageNameHash, name: &[u8]) -> bool {
+        self.index_of_update_request(name_hash, name).is_some()
+    }
+}
+
 pub use super::Subcommand;
 pub use bun_install::package_manager::Options;
 pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;
-
-// ported from: src/install/PackageManager/UpdateRequest.zig

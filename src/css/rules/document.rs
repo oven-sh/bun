@@ -7,9 +7,9 @@ use crate::{PrintErr, Printer};
 /// is allowed since Firefox was the only browser that ever implemented this rule.
 pub struct MozDocumentRule<R> {
     /// Nested rules within the `@-moz-document` rule.
-    pub rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<R> MozDocumentRule<R> {
@@ -29,12 +29,9 @@ impl<R> MozDocumentRule<R> {
     where
         R: crate::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             rules: self.rules.deep_clone(bump),
             loc: self.loc,
         }
     }
 }
-
-// ported from: src/css/rules/document.zig

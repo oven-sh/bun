@@ -7,5 +7,3 @@ pub enum SSLMode {
     VerifyCa = 3,
     VerifyFull = 4,
 }
-
-// ported from: src/sql/postgres/SSLMode.zig

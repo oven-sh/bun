@@ -1,15 +1,18 @@
 #include "root.h"
 
+#include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSDestructibleObject.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/Identifier.h"
 
 #include <JavaScriptCore/ObjectConstructor.h>
 
+#include "BunTTYState.h"
 #include "ProcessBindingTTYWrap.h"
 #include "NodeTTYModule.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/JSTypedArrays.h>
 
 #ifndef WIN32
 #include <errno.h>
@@ -123,17 +126,12 @@ public:
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
 
-        return WebCore::subspaceForImpl<TTYWrapObject, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForTTYWrapObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTTYWrapObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForTTYWrapObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTTYWrapObject = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<TTYWrapObject, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTTYWrapObject, m_subspaceForTTYWrapObject));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSObject* prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static void destroy(JSC::JSCell* cell)
@@ -154,6 +152,8 @@ public:
 
 #if OS(WINDOWS)
     UV::TTY* handle;
+#else
+    BunTTYState ttyState {};
 #endif
 
 private:
@@ -185,10 +185,6 @@ const ClassInfo TTYWrapObject::s_info = {
     &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TTYWrapObject)
 };
 
-JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-
-extern "C" int Bun__ttySetMode(int fd, int mode);
-
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
 #if OS(WINDOWS)
@@ -203,8 +199,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (callFrame->argumentCount() != 2) {
-        throwTypeError(globalObject, scope, "Expected 2 arguments"_s);
+    if (callFrame->argumentCount() != 3) {
+        throwTypeError(globalObject, scope, "Expected 3 arguments"_s);
         return {};
     }
 
@@ -222,7 +218,16 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int mode_ = mode.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    int err = Bun__ttySetMode(fdToUse, mode_);
+
+    // The per-stream state buffer node:tty hands back on every call. Holding it
+    // in JS keeps its lifetime tied to the stream that owns the mode. Validated
+    // after the coercions above so a detach triggered from inside them is caught.
+    auto* state = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(2));
+    if (!state || state->isDetached() || state->length() < Bun__ttyStateSize()) {
+        throwTypeError(globalObject, scope, "state must be a Uint8Array of rawModeStateSize bytes"_s);
+        return {};
+    }
+    int err = Bun__ttySetMode(fdToUse, mode_, state->typedVector(), 1);
     return JSValue::encode(jsNumber(err));
 #endif
 }
@@ -259,7 +264,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     int err = uv_tty_set_mode(ttyWrap->handle->tty(), mode.toInt32(globalObject));
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd, mode.toInt32(globalObject));
+    int err = Bun__ttySetMode(fd, mode.toInt32(globalObject), &ttyWrap->ttyState, 1);
 #endif
     return JSValue::encode(jsNumber(err));
 }
@@ -348,7 +353,7 @@ public:
 
     static TTYWrapPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        TTYWrapPrototype* prototype = new (NotNull, JSC::allocateCell<TTYWrapPrototype>(vm)) TTYWrapPrototype(vm, structure);
+        TTYWrapPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(TTYWrapPrototype))) TTYWrapPrototype(vm, structure);
         prototype->finishCreation(vm, globalObject);
         return prototype;
     }
@@ -364,8 +369,8 @@ public:
     {
         Base::finishCreation(vm);
 
-        reifyStaticProperties(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::reifyStaticPropertyTable(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 
     TTYWrapPrototype(JSC::VM& vm, JSC::Structure* structure)
@@ -394,7 +399,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -502,6 +507,8 @@ JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "setRawMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "rawModeStateSize"_s)), jsNumber(static_cast<unsigned>(Bun__ttyStateSize())), 0);
 
     return obj;
 }

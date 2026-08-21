@@ -1,5 +1,5 @@
-// HTTP/3 C ABI for Zig. Mirrors the uws_* surface in libuwsockets.cpp 1:1
-// (same parameter shapes, same callback signatures) so the Zig side can
+// HTTP/3 C ABI. Mirrors the uws_* surface in libuwsockets.cpp 1:1
+// (same parameter shapes, same callback signatures) so the caller can
 // pattern-match NewApp/NewResponse without protocol-specific branches.
 // Kept in its own TU so HTTP/1.1 and HTTP/3 stay file-level separable.
 
@@ -161,6 +161,11 @@ void uws_h3_res_mark_wrote_content_length_header(uws_h3_res_t* res)
     ((Http3Response*)res)->getHttpResponseData()->state |= Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
 }
 
+void uws_h3_res_mark_wrote_date_header(uws_h3_res_t* res)
+{
+    ((Http3Response*)res)->getHttpResponseData()->state |= Http3ResponseData::HTTP_WROTE_DATE_HEADER;
+}
+
 void uws_h3_res_write_mark(uws_h3_res_t* res) { ((Http3Response*)res)->writeMark(); }
 void uws_h3_res_flush_headers(uws_h3_res_t* res, bool) { ((Http3Response*)res)->flushHeaders(); }
 
@@ -223,7 +228,7 @@ bool uws_h3_res_is_corked(uws_h3_res_t*) { return false; }
 uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest, int* port, bool* is_ipv6)
 {
     /* Mirror uws_res_get_remote_address_info: stringify with inet_ntop so the
-     * Zig side gets a text slice, not raw in_addr bytes. */
+     * caller gets a text slice, not raw in_addr bytes. */
     static thread_local char b[64];
     int len = 0, ipv6 = 0;
     us_quic_socket_t* qs = us_quic_stream_socket((us_quic_stream_t*)res);
@@ -257,7 +262,7 @@ bool uws_h3_req_is_ancient(uws_h3_req_t*) { return false; }
 bool uws_h3_req_get_yield(uws_h3_req_t* req) { return ((Http3Request*)req)->getYield(); }
 void uws_h3_req_set_yield(uws_h3_req_t* req, bool y) { ((Http3Request*)req)->setYield(y); }
 
-/* Zig declares these as [*]const u8 (non-null many-pointer); a default-
+/* The FFI contract requires a non-null pointer; a default-
  * constructed string_view has data() == nullptr, so normalise empties. */
 static inline size_t ffi_sv(std::string_view v, const char** dest)
 {
@@ -295,11 +300,6 @@ size_t uws_h3_req_get_query(uws_h3_req_t* req, const char* key, size_t key_len, 
     return ffi_sv(key ? ((Http3Request*)req)->getQuery(sv(key, key_len))
                       : ((Http3Request*)req)->getQuery(),
         dest);
-}
-
-size_t uws_h3_req_get_parameter(uws_h3_req_t* req, unsigned short index, const char** dest)
-{
-    return ffi_sv(((Http3Request*)req)->getParameter(index), dest);
 }
 
 #pragma clang attribute pop

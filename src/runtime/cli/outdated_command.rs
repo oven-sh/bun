@@ -10,11 +10,9 @@ use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
-    self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
-use bun_paths::{self as path, PathBuffer};
-use bun_resolver::fs::FileSystem;
 use bun_wyhash::hash;
 
 use crate::Command;
@@ -51,27 +49,26 @@ impl<'a> FilterType<'a> {
             FilterType::Name(pattern)
         }
     }
-    // *NOTE*: Currently `deinit` does nothing since name and path are not
-    // allocated (Zig `deinit` was a no-op → no Drop impl needed).
+    // *NOTE*: name and path are not allocated → no Drop impl needed.
 }
 
 impl OutdatedCommand {
-    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        Output::prettyln(format_args!(
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
+        bun_core::prettyln!(
             "<r><b>bun outdated <r><d>v{}<r>",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
-        let silent = cli.silent;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, cli, Subcommand::Outdated) {
                 Ok(v) => v,
                 Err(err) => {
                     if !silent {
-                        if err == bun_core::err!("MissingPackageJSON") {
+                        if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing outdated", ());
                         }
                         Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
@@ -89,10 +86,9 @@ impl OutdatedCommand {
         ctx: Command::Context,
         original_cwd: &[u8],
         manager: &mut PackageManager,
-    ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig calls
-        // `manager.lockfile.loadFromCwd(manager, alloc, manager.log, true)` which
-        // aliases `*PackageManager` with its `*Lockfile` field. Project disjoint
+    ) -> crate::Result<()> {
+        // Reshaped for borrowck — `load_from_cwd` would otherwise alias
+        // `PackageManager` with its `lockfile` field. Project disjoint
         // raw pointers from the singleton first; `load_from_cwd` only reads
         // `manager.options` / migration helpers and never re-borrows
         // `manager.lockfile` through the `pm` argument.
@@ -106,19 +102,22 @@ impl OutdatedCommand {
         // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
         let log = unsafe { &mut *log_ptr };
         match lockfile.load_from_cwd::<true>(
-            // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
-            // fields disjoint from `lockfile` (Zig invariant).
+            // SAFETY: see comment above — `load_from_cwd` accesses `manager`
+            // fields disjoint from `lockfile`.
             Some(unsafe { &mut *pm_ptr }),
             log,
         ) {
             LoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());
+                    bun_core::note!("run 'bun install' first");
                 }
                 Global::crash();
             }
             LoadResult::Err(cause) => {
-                if not_silent {
+                if not_silent
+                    && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
+                {
                     match cause.step {
                         LoadStep::OpenFile => Output::err_generic(
                             "failed to open lockfile: {s}",
@@ -148,8 +147,7 @@ impl OutdatedCommand {
                 Global::crash();
             }
             LoadResult::Ok(_) => {
-                // PORT NOTE: Zig reassigns `manager.lockfile = ok.lockfile`
-                // (pointer field). `load_from_cwd(&mut self, ..)` populates the
+                // `load_from_cwd(&mut self, ..)` populates the
                 // lockfile in place, so the `ok.lockfile: &mut Lockfile` reborrow
                 // is the same storage and no reassignment is needed.
             }
@@ -165,148 +163,38 @@ impl OutdatedCommand {
     fn outdated_dispatch<const ENABLE_ANSI_COLORS: bool>(
         original_cwd: &[u8],
         manager: &mut PackageManager,
-    ) -> Result<(), bun_core::Error> {
-        if !manager.options.filter_patterns.is_empty() {
-            let filters = manager.options.filter_patterns;
-            let workspace_pkg_ids = Self::find_matching_workspaces(original_cwd, manager, filters);
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &workspace_pkg_ids, true)
-        } else if manager.options.do_.recursive() {
-            let all_workspaces = Self::get_all_workspaces(manager);
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&all_workspaces),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &all_workspaces, true)
-        } else {
-            let root_pkg_id = manager
-                .root_package_id
-                .get(&manager.lockfile, manager.workspace_name_hash);
-            if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
-                return Ok(());
-            }
-            let ids = [root_pkg_id];
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&ids),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &ids, false)
-        }
-    }
-
-    fn get_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_resolutions = packages.items_resolution();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-        workspace_pkg_ids
-    }
-
-    fn find_matching_workspaces(
-        original_cwd: &[u8],
-        manager: &PackageManager,
-        filters: &[&[u8]],
-    ) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-
-        let converted_filters: Vec<WorkspaceFilter> = filters
-            .iter()
-            .map(|filter| {
-                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
-            })
-            .collect();
-        // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
-
-        // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
-        // process-singleton is populated; mirrors Zig `FileSystem.instance.top_level_dir`.
-        let top_level_dir = FileSystem::get().top_level_dir;
-
-        // move all matched workspaces to front of array
-        let mut i: usize = 0;
-        while i < workspace_pkg_ids.len() {
-            let workspace_pkg_id = workspace_pkg_ids[i];
-
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[workspace_pkg_id as usize];
-                            let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => {
-                                    // Borrow the field in-place so the returned slice (which may
-                                    // point into the inline small-string storage) stays valid.
-                                    res.workspace().slice(string_buf)
-                                }
-                                resolution::Tag::Root => top_level_dir,
-                                _ => unreachable!(),
-                            };
-
-                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
-                                path::platform::Posix,
-                            >(
-                                top_level_dir, &mut path_buf.0, &[res_path]
-                            );
-
-                            if !glob::r#match(
-                                pattern,
-                                strings::without_trailing_slash(abs_res_path),
-                            )
-                            .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
-                            if !glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
-                    }
-                }
-                true
-            };
-
-            if matched {
-                i += 1;
+    ) -> crate::Result<()> {
+        let (workspace_pkg_ids, was_filtered) =
+            if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {
+                let ids = WorkspaceFilter::select_workspaces(
+                    &manager.lockfile,
+                    manager.options.filter_patterns,
+                    original_cwd,
+                );
+                (ids, true)
             } else {
-                workspace_pkg_ids.swap_remove(i);
-            }
+                let root_pkg_id = manager
+                    .root_package_id
+                    .get(&manager.lockfile, manager.workspace_name_hash);
+                if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
+                    return Ok(());
+                }
+                (vec![root_pkg_id], false)
+            };
+        populate_manifest_cache::populate_manifest_cache(
+            manager,
+            populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
+        )?;
+        // The table covers what could be checked; what could not follows it.
+        Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(
+            manager,
+            &workspace_pkg_ids,
+            was_filtered,
+        )?;
+        if populate_manifest_cache::print_fetch_failures(manager)? {
+            Global::crash();
         }
-
-        workspace_pkg_ids
+        Ok(())
     }
 
     fn group_catalog_dependencies(
@@ -415,7 +303,7 @@ impl OutdatedCommand {
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
         was_filtered: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let package_patterns: Option<Vec<FilterType<'_>>> = 'package_patterns: {
             let args = manager.options.positionals.get(1..).unwrap_or(&[]);
             if args.is_empty() {
@@ -454,8 +342,8 @@ impl OutdatedCommand {
         let mut max_workspace: usize = 0;
         let mut has_filtered_versions: bool = false;
 
-        // PORT NOTE: reshaped for borrowck — Zig threads `*PackageManager`
-        // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
+        // Reshaped for borrowck — `manifests.byNameAllowExpired` would
+        // otherwise alias the receiver.
         // Hoist the four scalars that path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows
         // (`&mut manager.manifests` against `&manager.lockfile` /
@@ -528,7 +416,6 @@ impl OutdatedCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
@@ -700,7 +587,6 @@ impl OutdatedCommand {
         table.print_column_names();
 
         // Print grouped items sorted by behavior type
-        // PERF(port): was `inline for` over a comptime tuple.
         for group_behavior in [
             Behavior::PROD,
             Behavior::DEV,
@@ -728,7 +614,6 @@ impl OutdatedCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
@@ -771,104 +656,100 @@ impl OutdatedCommand {
                         ""
                     };
 
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
-                    Output::pretty(format_args!(
-                        "{}<d>{}<r>",
-                        BStr::new(package_name),
-                        behavior_str
-                    ));
+                    bun_core::pretty!("{}<d>{}<r>", BStr::new(package_name), behavior_str);
                     for _ in package_name.len() + behavior_str.len()
                         ..package_column_inside_length + COLUMN_RIGHT_PAD
                     {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                 }
 
                 {
                     // current version
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                     write!(version_buf, "{}", current_version.fmt(string_buf))
                         .expect("OOM writing version");
-                    Output::pretty(format_args!("{}", version_buf));
+                    bun_core::pretty!("{}", version_buf);
                     for _ in version_buf.len()..current_column_inside_length + COLUMN_RIGHT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                 }
 
                 {
                     // update version
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     let update_filtered = update.latest_is_filtered();
                     if let Some(uv) = update.unwrap() {
                         write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "{}",
                             uv.version
                                 .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        ));
+                        );
                     } else {
                         write!(version_buf, "{}", current_version.fmt(string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!("<d>{}<r>", version_buf));
+                        bun_core::pretty!("<d>{}<r>", version_buf);
                     }
                     let mut update_version_len = version_buf.len();
                     if update_filtered {
-                        Output::pretty(format_args!(" <blue>*<r>"));
+                        bun_core::pretty!(" <blue>*<r>");
                         update_version_len += " *".len();
                     }
                     for _ in update_version_len..update_column_inside_length + COLUMN_RIGHT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                 }
 
                 {
                     // latest version
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     let latest_filtered = latest.latest_is_filtered();
                     if let Some(lv) = latest.unwrap() {
                         write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "{}",
                             lv.version
                                 .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        ));
+                        );
                     } else {
                         write!(version_buf, "{}", current_version.fmt(string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!("<d>{}<r>", version_buf));
+                        bun_core::pretty!("<d>{}<r>", version_buf);
                     }
                     let mut latest_version_len = version_buf.len();
                     if latest_filtered {
-                        Output::pretty(format_args!(" <blue>*<r>"));
+                        bun_core::pretty!(" <blue>*<r>");
                         latest_version_len += " *".len();
                     }
                     for _ in latest_version_len..latest_column_inside_length + COLUMN_RIGHT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                 }
 
                 if show_workspace_column {
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
 
                     let workspace_name: &[u8] = if let Some(names) = &item.grouped_workspace_names {
@@ -877,34 +758,26 @@ impl OutdatedCommand {
                         manager.lockfile.packages.items_name()[item.workspace_pkg_id as usize]
                             .slice(string_buf)
                     };
-                    Output::pretty(format_args!("{}", BStr::new(workspace_name)));
+                    bun_core::pretty!("{}", BStr::new(workspace_name));
 
                     for _ in workspace_name.len()..workspace_column_inside_length + COLUMN_RIGHT_PAD
                     {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                 }
 
-                Output::pretty(format_args!("{}\n", symbols.vertical_edge()));
+                bun_core::pretty!("{}\n", symbols.vertical_edge());
             }
         }
 
         table.print_bottom_line_separator();
 
         if has_filtered_versions {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>"
-            ));
+            );
         }
 
         Ok(())
     }
 }
-
-type _AssertImports = (
-    package_manager::WorkspaceFilter,
-    package_manager::ManifestCacheOptions<'static>,
-    bun_install::package_manifest_map::CacheBehavior,
-);
-
-// ported from: src/cli/outdated_command.zig

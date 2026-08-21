@@ -1,3 +1,9 @@
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // MySQLRequestQueue.clean() iterated the live queue while running reject
 // callbacks. rejectWithJSValue() runs JS via event_loop.runCallback(), whose
 // exit() drains microtasks when the outer entered_event_loop_count is 0.
@@ -6,11 +12,14 @@
 // requests out from under the outer loop; when the outer loop resumed it
 // called LinearFifo.discard(1) on an empty fifo (debug assert -> panic) and
 // deref() on an already-deref'd request (release -> double free / UAF).
-//
-// Uses a minimal mock MySQL server so it can run without Docker.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import path from "node:path";
+
+// Absolute path so the spawned fixture (which lives in a temp dir) can import
+// the shared frame builders instead of inlining Buffer construction.
+const wireFrames = path.join(import.meta.dir, "wire-frames.ts");
 
 // The failure mode is a debug assert in LinearFifo.discard() (and a UAF under
 // ASAN); in release builds the underflow is UB and may not crash, so only run
@@ -19,34 +28,16 @@ test.skipIf(!isDebug && !isASAN)(
   "MySQL: clean() is safe when reject callback re-enters via connection.close()",
   async () => {
     using dir = tempDir("mysql-clean-reentry", {
-      "fixture.js": /* js */ `
-      const net = require("net");
-      const { SQL } = require("bun");
-
-      function u16le(n) { return Buffer.from([n & 0xff, (n >> 8) & 0xff]); }
-      function u24le(n) { return Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff]); }
-      function u32le(n) { return Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff]); }
-      function packet(seq, payload) { return Buffer.concat([u24le(payload.length), Buffer.from([seq]), payload]); }
-
-      const SERVER_CAPS = (1 << 9) | (1 << 15) | (1 << 19) | (1 << 21) | (1 << 24);
-      function handshakeV10() {
-        const authData1 = Buffer.alloc(8, 0x61);
-        const authData2 = Buffer.alloc(13, 0x62);
-        authData2[12] = 0;
-        return packet(0, Buffer.concat([
-          Buffer.from([10]), Buffer.from("mock-5.7.0\\0"), u32le(1), authData1,
-          Buffer.from([0]), u16le(SERVER_CAPS & 0xffff), Buffer.from([0x2d]),
-          u16le(0x0002), u16le((SERVER_CAPS >>> 16) & 0xffff), Buffer.from([21]),
-          Buffer.alloc(10, 0), authData2, Buffer.from("mysql_native_password\\0"),
-        ]));
-      }
-      function okPacket(seq) { return packet(seq, Buffer.from([0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00])); }
+      "fixture.ts": /* js */ `
+      import net from "node:net";
+      import { SQL } from "bun";
+      import { mysqlHandshakeV10, mysqlOkPacket } from ${JSON.stringify(wireFrames)};
 
       let socketRef;
       const server = net.createServer(socket => {
         socketRef = socket;
         let buffered = Buffer.alloc(0), authed = false;
-        socket.write(handshakeV10());
+        socket.write(mysqlHandshakeV10());
         socket.on("data", chunk => {
           buffered = Buffer.concat([buffered, chunk]);
           while (buffered.length >= 4) {
@@ -54,7 +45,7 @@ test.skipIf(!isDebug && !isASAN)(
             if (buffered.length < 4 + len) break;
             const seq = buffered[3];
             buffered = buffered.subarray(4 + len);
-            if (!authed) { authed = true; socket.write(okPacket(seq + 1)); }
+            if (!authed) { authed = true; socket.write(mysqlOkPacket(seq + 1)); }
             // Never respond to queries -> they stay in the native request queue.
           }
         });
@@ -127,7 +118,7 @@ test.skipIf(!isDebug && !isASAN)(
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
+      cmd: [bunExe(), "fixture.ts"],
       env: {
         ...bunEnv,
         // A crash here writes a multi-GB core dump that outlives the default
@@ -138,6 +129,7 @@ test.skipIf(!isDebug && !isASAN)(
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
+      timeout: 60_000,
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

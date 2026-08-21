@@ -1,9 +1,7 @@
-//! Port of `std.MultiArrayList` with the following Bun-specific additions:
+//! A struct-of-arrays `MultiArrayList` with the following Bun-specific additions:
 //!
 //! * `zero` method to zero-initialize memory.
 //! * `memory_cost` method, which returns the memory usage in bytes.
-//!
-//! Synchronized with std as of Zig 0.14.1.
 //!
 //! A MultiArrayList stores a list of a struct type. Instead of storing a
 //! single list of items, MultiArrayList stores separate lists for each field
@@ -58,7 +56,7 @@ use std::alloc::{Allocator, Global};
 use bun_alloc::AllocError;
 
 /// Declares typed column-accessor extension traits for a `MultiArrayList<$T>`
-/// element struct, mirroring Zig's `list.items(.field)` calling convention.
+/// element struct.
 ///
 /// ```ignore
 /// multi_array_columns! {
@@ -246,7 +244,7 @@ macro_rules! __mal_column_impl {
 /// cached in fixed-size `[_; MAX_FIELDS]` arrays so `Slice<T>` can be a plain
 /// value type without a `where [(); field_count::<T>()]:` bound propagating to
 /// every caller.
-pub(crate) const MAX_FIELDS: usize = 32;
+const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
 
@@ -257,7 +255,7 @@ use crate::const_str_eq;
 /// callers routinely use lifetime-carrying field types (`&'a [u8]`, `Ref<'a>`).
 #[inline(always)]
 const fn type_id_of<F: ?Sized>() -> TypeId {
-    core::intrinsics::type_id::<F>()
+    const { core::intrinsics::type_id::<F>() }
 }
 
 /// Reflected fields of `T` (struct only). Panics at const-eval for non-structs.
@@ -270,7 +268,7 @@ const fn fields_of<T>() -> &'static [core::mem::type_info::Field] {
 
 /// Number of fields in `T`.
 #[inline(always)]
-pub(crate) const fn field_count<T>() -> usize {
+const fn field_count<T>() -> usize {
     fields_of::<T>().len()
 }
 
@@ -297,7 +295,7 @@ const fn align_sort_key(size: usize, struct_align: usize) -> usize {
         return 1;
     }
     // Largest power of two dividing `size`.
-    let pow2 = size & size.wrapping_neg();
+    let pow2 = size.isolate_lowest_one();
     if pow2 < struct_align {
         pow2
     } else {
@@ -346,7 +344,7 @@ impl<T> Reflected<T> {
         let mut i = 0;
         while i < n {
             let f = &fields[i];
-            let size = match f.ty.info().size {
+            let size = match f.ty.size() {
                 Some(s) => s,
                 None => panic!("MultiArrayList: field type must be Sized"),
             };
@@ -361,7 +359,7 @@ impl<T> Reflected<T> {
         out
     };
 
-    /// Zig `sizes`: `(SIZES_BYTES, SIZES_FIELDS)` — field sizes sorted by
+    /// `(SIZES_BYTES, SIZES_FIELDS)` — field sizes sorted by
     /// alignment descending, paired with the original field index at each
     /// sorted position. Stable sort so equal-alignment fields keep order.
     const SIZES: ([usize; MAX_FIELDS], [usize; MAX_FIELDS]) = {
@@ -539,7 +537,6 @@ impl<'a, F> ColMut<'a, F> {
 }
 
 /// Index-based comparison context for `sort` / `sort_span` / `sort_unstable`.
-/// Zig: `ctx: anytype` with `fn lessThan(ctx, a_index: usize, b_index: usize) bool`.
 pub trait SortContext {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool;
 }
@@ -588,13 +585,6 @@ impl<T> Copy for Slice<T> {}
 // ───────────────────────────── Slice ─────────────────────────────
 
 impl<T> Slice<T> {
-    pub const EMPTY: Self = Self {
-        ptrs: [Reflected::<T>::DANGLING; MAX_FIELDS],
-        len: 0,
-        capacity: 0,
-        _marker: PhantomData,
-    };
-
     /// Build a `Slice` over a raw buffer. `INVARIANT:column_base` applies.
     #[inline]
     fn from_raw(bytes: NonNull<u8>, len: usize, cap: usize) -> Self {
@@ -615,11 +605,6 @@ impl<T> Slice<T> {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     /// Typed column base for field `fi`. Substitutes a properly-aligned
@@ -702,7 +687,7 @@ impl<T> Slice<T> {
         Reflected::<T>::META[field_index].size
     }
 
-    pub fn set(&mut self, index: usize, elem: T) {
+    pub(crate) fn set(&mut self, index: usize, elem: T) {
         assert!(
             index < self.len,
             "MultiArrayList::Slice::set: index out of bounds"
@@ -715,9 +700,8 @@ impl<T> Slice<T> {
     /// The returned value is a **bitwise copy** — the SoA storage retains
     /// ownership of every field. Dropping the gathered struct would free
     /// columns the storage still owns (double-free on next `get` / `Drop`),
-    /// so it is wrapped in `ManuallyDrop`. Zig has no destructors so the
-    /// by-value copy is harmless there.
-    pub fn get(&self, index: usize) -> ManuallyDrop<T> {
+    /// so it is wrapped in `ManuallyDrop`.
+    pub(crate) fn get(&self, index: usize) -> ManuallyDrop<T> {
         assert!(
             index < self.len,
             "MultiArrayList::Slice::get: index out of bounds"
@@ -725,7 +709,7 @@ impl<T> Slice<T> {
         ManuallyDrop::new(self.gather(index))
     }
 
-    pub fn to_multi_array_list(self) -> MultiArrayList<T> {
+    pub(crate) fn to_multi_array_list(self) -> MultiArrayList<T> {
         if Reflected::<T>::COUNT == 0 || self.capacity == 0 {
             return MultiArrayList::default();
         }
@@ -872,16 +856,6 @@ impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
     }
 }
 
-impl<T> MultiArrayList<T, Global> {
-    pub const EMPTY: Self = Self {
-        bytes: Reflected::<T>::DANGLING,
-        len: 0,
-        capacity: 0,
-        alloc: Global,
-        _marker: PhantomData,
-    };
-}
-
 impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Construct an empty list backed by `alloc`.
     #[inline]
@@ -899,11 +873,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     #[inline]
@@ -979,13 +948,13 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Extend the list by 1 element. Allocates more memory as necessary.
-    pub fn push(&mut self, elem: T) -> Result<(), AllocError> {
+    pub(crate) fn push(&mut self, elem: T) -> Result<(), AllocError> {
         self.ensure_unused_capacity(1)?;
         self.append_assume_capacity(elem);
         Ok(())
     }
 
-    /// Alias for [`push`] (Zig: `append`).
+    /// Alias for [`push`].
     #[inline]
     pub fn append(&mut self, elem: T) -> Result<(), AllocError> {
         self.push(elem)
@@ -1000,24 +969,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         s.set(self.len - 1, elem);
     }
 
-    /// Extend the list by 1 element, returning the newly reserved
-    /// index with uninitialized data.
-    /// Allocates more memory as necessary.
-    pub fn add_one(&mut self) -> Result<usize, AllocError> {
-        self.ensure_unused_capacity(1)?;
-        Ok(self.add_one_assume_capacity())
-    }
-
-    /// Extend the list by 1 element, asserting `self.capacity`
-    /// is sufficient to hold an additional item. Returns the
-    /// newly reserved index with uninitialized data.
-    pub fn add_one_assume_capacity(&mut self) -> usize {
-        debug_assert!(self.len < self.capacity);
-        let index = self.len;
-        self.len += 1;
-        index
-    }
-
     /// Remove and return the last element from the list, or return `None` if list is empty.
     /// Invalidates pointers to fields of the removed element.
     pub fn pop(&mut self) -> Option<T> {
@@ -1030,27 +981,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Some(ManuallyDrop::into_inner(val))
     }
 
-    /// Inserts an item into an ordered list. Shifts all elements
-    /// after and including the specified index back by one and
-    /// sets the given index to the specified element. May reallocate
-    /// and invalidate iterators.
-    pub fn insert(&mut self, index: usize, elem: T) -> Result<(), AllocError> {
-        self.ensure_unused_capacity(1)?;
-        self.insert_assume_capacity(index, elem);
-        Ok(())
-    }
-
-    /// Inserts an item into an ordered list which has room for it.
-    pub fn insert_assume_capacity(&mut self, index: usize, elem: T) {
-        debug_assert!(self.len < self.capacity);
-        debug_assert!(index <= self.len);
-        let tail = self.len - index;
-        self.len += 1;
-        let mut s = self.slice();
-        s.copy_rows_within(index, index + 1, tail);
-        s.scatter(index, elem);
-    }
-
     pub fn append_list_assume_capacity(&mut self, other: &Self) {
         let offset = self.len;
         self.len += other.len;
@@ -1060,37 +990,33 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// Remove the specified item from the list, swapping the last
     /// item in the list into its position. Fast, but does not
-    /// retain list ordering.
-    pub fn swap_remove(&mut self, index: usize) {
+    /// retain list ordering. Returns the removed element, like [`pop`](Self::pop).
+    pub fn swap_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
             "MultiArrayList::swap_remove: index out of bounds"
         );
         let last = self.len - 1;
         let mut s = self.slice();
+        let removed = s.gather(index);
         s.copy_rows_within(last, index, 1);
         self.len -= 1;
+        removed
     }
 
     /// Remove the specified item from the list, shifting items
-    /// after it to preserve order.
-    pub fn ordered_remove(&mut self, index: usize) {
+    /// after it to preserve order. Returns the removed element, like [`pop`](Self::pop).
+    pub fn ordered_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
             "MultiArrayList::ordered_remove: index out of bounds"
         );
         let tail = self.len - 1 - index;
         let mut s = self.slice();
+        let removed = s.gather(index);
         s.copy_rows_within(index + 1, index, tail);
         self.len -= 1;
-    }
-
-    /// Adjust the list's length to `new_len`.
-    /// Does not initialize added items, if any.
-    pub fn resize(&mut self, new_len: usize) -> Result<(), AllocError> {
-        self.ensure_total_capacity(new_len)?;
-        self.len = new_len;
-        Ok(())
+        removed
     }
 
     /// Attempt to reduce allocated capacity to `new_len`.
@@ -1116,7 +1042,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.capacity = new_len;
     }
 
-    pub fn clear_and_free(&mut self) {
+    pub(crate) fn clear_and_free(&mut self) {
         self.free_allocated_bytes();
         self.bytes = Reflected::<T>::DANGLING;
         self.len = 0;
@@ -1143,11 +1069,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             }
         }
         self.len = 0;
-    }
-
-    /// Reduce length to `new_len`.
-    pub fn shrink_retaining_capacity(&mut self, new_len: usize) {
-        self.len = new_len;
     }
 
     /// Invalidates all element pointers.
@@ -1212,22 +1133,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
-    /// Stable sort of `[a, b)` by index-based context.
-    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
-        self.sort_internal::<C, true>(a, b, ctx);
-    }
-
-    /// Unstable sort by index-based context.
-    pub fn sort_unstable<C: SortContext>(&mut self, ctx: &C) {
-        self.sort_internal::<C, false>(0, self.len, ctx);
-    }
-
-    /// Unstable sort of `[a, b)` by index-based context.
-    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
-        self.sort_internal::<C, false>(a, b, ctx);
-    }
-
-    pub fn capacity_in_bytes(capacity: usize) -> usize {
+    pub(crate) fn capacity_in_bytes(capacity: usize) -> usize {
         Reflected::<T>::ELEM_BYTES * capacity
     }
 
@@ -1278,9 +1184,9 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
 impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
     fn drop(&mut self) {
-        // Zig `deinit(self, gpa)`: `gpa.free(self.allocatedBytes())` — slab
-        // only, no per-element destructors. This is **intentionally preserved**:
-        // [`clone`] is a bitwise SoA memcpy (Zig semantics), so two live lists
+        // Frees the slab only — no per-element destructors. This is
+        // **intentionally preserved**:
+        // [`clone`] is a bitwise SoA memcpy, so two live lists
         // can alias the same column heap pointers — see `bundle_v2.rs`
         // `clone_ast` / `deinit_without_freeing_arena`, which drains exactly
         // one alias and relies on the other dropping slab-only. Running
@@ -1296,7 +1202,7 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
 
 // ───────────────────────────── helpers ─────────────────────────────
 
-/// `std.atomic.cache_line` — **128** on x86_64 and aarch64, all native targets.
+/// Conservative cache-line size — **128** on x86_64 and aarch64, all native targets.
 const CACHE_LINE: usize = 128;
 
 const fn init_capacity<T>() -> usize {
@@ -1506,12 +1412,10 @@ mod tests {
         // (i.e. a `u64`-aligned dangling base, not `NonNull::<u8>::dangling()`).
         let list = MultiArrayList::<Foo>::default();
         assert_eq!(list.items::<"c", u64>(), &[] as &[u64]);
-        let s = Slice::<Foo>::EMPTY;
-        assert_eq!(s.items::<"c", u64>(), &[] as &[u64]);
     }
 
     #[test]
-    fn insert_ordered_remove_memmove() {
+    fn ordered_remove_memmove() {
         let mut list = MultiArrayList::<Foo>::default();
         for i in 0..6u32 {
             list.push(Foo {
@@ -1521,20 +1425,51 @@ mod tests {
             })
             .unwrap();
         }
-        list.insert(
-            2,
-            Foo {
-                a: 99,
-                b: 99,
-                c: 99,
-            },
-        )
-        .unwrap();
-        assert_eq!(list.items::<"a", u32>(), &[0, 1, 99, 2, 3, 4, 5]);
-        list.ordered_remove(2);
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4, 5]);
-        list.swap_remove(1);
-        assert_eq!(list.items::<"a", u32>(), &[0, 5, 2, 3, 4]);
+        assert_eq!(list.ordered_remove(2), Foo { a: 2, b: 2, c: 2 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 1, 3, 4, 5]);
+        assert_eq!(list.swap_remove(1), Foo { a: 1, b: 1, c: 1 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5, 3, 4]);
+        assert_eq!(list.items::<"c", u64>(), &[0, 5, 3, 4]);
+        // Removing the last row swaps it with itself / shifts nothing.
+        assert_eq!(list.swap_remove(3), Foo { a: 4, b: 4, c: 4 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5, 3]);
+        assert_eq!(list.ordered_remove(2), Foo { a: 3, b: 3, c: 3 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5]);
+    }
+
+    struct Owning {
+        name: Box<[u8]>,
+        n: u32,
+    }
+
+    // Under Miri this also checks that every `name` is freed exactly once.
+    #[test]
+    fn remove_returns_owned_element() {
+        let mut list = MultiArrayList::<Owning>::default();
+        for i in 0..4u32 {
+            list.push(Owning {
+                name: vec![b'a' + i as u8; 3].into_boxed_slice(),
+                n: i,
+            })
+            .unwrap();
+        }
+
+        let removed = list.swap_remove(1);
+        assert_eq!(&*removed.name, b"bbb");
+        assert_eq!(removed.n, 1);
+        assert_eq!(list.items::<"n", u32>(), &[0, 3, 2]);
+        drop(removed);
+
+        let removed = list.ordered_remove(0);
+        assert_eq!(&*removed.name, b"aaa");
+        assert_eq!(list.items::<"n", u32>(), &[3, 2]);
+        assert_eq!(&*list.items::<"name", Box<[u8]>>()[0], b"ddd");
+        assert_eq!(&*list.items::<"name", Box<[u8]>>()[1], b"ccc");
+        drop(removed);
+
+        list.drop_elements();
+        assert_eq!(list.len(), 0);
     }
 
     #[test]
@@ -1565,5 +1500,3 @@ mod tests {
         assert_eq!(list.items::<"c", u64>(), &[0, 10, 20, 30, 40]);
     }
 }
-
-// ported from: src/collections/multi_array_list.zig

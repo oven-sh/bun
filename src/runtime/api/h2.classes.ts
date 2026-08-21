@@ -33,6 +33,10 @@ export default [
         fn: "getCurrentState",
         length: 0,
       },
+      getFrameCounters: {
+        fn: "getFrameCounters",
+        length: 0,
+      },
       settings: {
         fn: "updateSettings",
         length: 1,
@@ -68,6 +72,10 @@ export default [
       noTrailers: {
         fn: "noTrailers",
         length: 1,
+      },
+      setStreamReading: {
+        fn: "setStreamReading",
+        length: 2,
       },
       setStreamPriority: {
         fn: "setStreamPriority",
@@ -121,6 +129,10 @@ export default [
         fn: "getNextStream",
         length: 0,
       },
+      pushPromise: {
+        fn: "pushPromise",
+        length: 4,
+      },
     },
     finalize: true,
     construct: true,
@@ -145,6 +157,7 @@ export default [
       "onAltSvc",
       "onOrigin",
       "onFrameError",
+      "onStreamPush",
     ],
   }),
 ];

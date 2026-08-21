@@ -13,7 +13,7 @@ namespace Inspector {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorHTTPServerAgent);
 
-// Zig bindings implementation
+// Rust bindings implementation
 extern "C" {
 void Bun__HTTPServerAgent__setEnabled(Inspector::InspectorHTTPServerAgent* agent);
 
@@ -44,8 +44,7 @@ void InspectorHTTPServerAgent::didCreateFrontendAndBackend()
 
 void InspectorHTTPServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    m_frontendDispatcher = nullptr;
-    m_enabled = false;
+    disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::enable()
@@ -65,43 +64,6 @@ Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::disable()
 
     m_enabled = false;
     Bun__HTTPServerAgent__setEnabled(nullptr);
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::startListening(int serverId)
-{
-    if (!m_enabled)
-        return {};
-
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::stopListening(int serverId)
-{
-    if (!m_enabled)
-        return {};
-
-    // TODO:
-    // Bun__HTTPServerAgentStopListening(this, serverId);
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::getRequestBody(int requestId, int serverId)
-{
-    if (!m_enabled)
-        return {};
-
-    // TODO:
-    // Bun__HTTPServerAgentGetRequestBody(this, requestId, serverId);
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::getResponseBody(int requestId, int serverId)
-{
-    if (!m_enabled)
-        return {};
-    // TODO:
-    // Bun__HTTPServerAgentGetResponseBody(this, requestId, serverId);
     return {};
 }
 
@@ -177,10 +139,10 @@ void InspectorHTTPServerAgent::requestHandlerException(Ref<Protocol::HTTPServer:
 
 }
 
-// Zig API implementation
+// Rust-facing C API implementation
 extern "C" {
 
-// Functions for Zig to call to notify about HTTP server events
+// Functions for the Rust side to call to notify about HTTP server events
 
 typedef int ServerId;
 typedef int HotReloadId;
@@ -199,7 +161,7 @@ typedef int RequestId;
     agent->serverStopped(serverId, timestamp);
 }
 
-// This matches the Route extern struct in Zig
+// This matches the Route extern struct on the Rust side
 struct Route {
     enum class Type : uint8_t {
         Default = 1,

@@ -420,11 +420,7 @@ impl Watcher {
                 continue;
             }
 
-            // The watchlist owns the stored descriptor on every platform
-            // (`FdOwnership::Watcher`); shutdown closes the same column. Closing
-            // it is also what drops the kqueue registration. inotify and
-            // ReadDirectoryChangesW watch by path, so there is nothing else to
-            // unregister here.
+            // The watchlist owns the stored descriptor (`FdOwnership::Watcher`).
             if fds[item as usize].is_valid() {
                 let _ = bun_sys::close(fds[item as usize]);
             }

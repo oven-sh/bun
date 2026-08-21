@@ -1816,6 +1816,7 @@ impl Task {
                             Some(p) => p,
                             None => &raw const node_modules_path,
                         };
+                    let seen_count_before_link = seen.len();
                     let mut bin_linker = bin_real::Linker {
                         bin,
                         global_bin_path: manager_ref.options.bin_path,
@@ -1841,9 +1842,18 @@ impl Task {
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
                             strings::StringOrTinyString::init(dep_name);
-                        // a stale error from the redirect attempt would make
-                        // the retry delete its own link and fail the install
-                        bin_linker.err = None;
+                        // Clear a stale redirect-attempt error only when the
+                        // attempt failed before it linked anything (`seen`
+                        // unchanged): left set, it would make the retry delete
+                        // its own link. Once a dest is in `seen` the retry
+                        // skips it, so the error must stay and be reported.
+                        if bin_linker
+                            .seen
+                            .as_deref()
+                            .is_some_and(|seen| seen.len() == seen_count_before_link)
+                        {
+                            bin_linker.err = None;
+                        }
                         bin_linker.skipped_due_to_missing_bin = false;
 
                         if manager_ref.options.log_level.is_verbose() {
@@ -2394,6 +2404,7 @@ impl<'a> Installer<'a> {
                 Some(p) => p,
                 None => &raw const node_modules_path,
             };
+            let seen_count_before_link = seen.len();
             let mut bin_linker = bin_real::Linker {
                 bin,
                 global_bin_path: self.manager().options.bin_path,
@@ -2422,9 +2433,18 @@ impl<'a> Installer<'a> {
             {
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
-                // a stale error from the redirect attempt would make the
-                // retry delete its own link and fail the install
-                bin_linker.err = None;
+                // Clear a stale redirect-attempt error only when the attempt
+                // failed before it linked anything (`seen` unchanged): left
+                // set, it would make the retry delete its own link. Once a
+                // dest is in `seen` the retry skips it, so the error must
+                // stay and be reported.
+                if bin_linker
+                    .seen
+                    .as_deref()
+                    .is_some_and(|seen| seen.len() == seen_count_before_link)
+                {
+                    bin_linker.err = None;
+                }
                 bin_linker.skipped_due_to_missing_bin = false;
 
                 if self.manager().options.log_level.is_verbose() {
@@ -2553,8 +2573,8 @@ impl<'a> Installer<'a> {
                     dep_pkg_id,
                 );
                 // The peer has no symlink in this node_modules, so the link
-                // target is the peer's real location: its store entry, or the
-                // package directory itself for workspace and link: packages.
+                // target is the peer's store entry, or the declaring entry's
+                // node_modules for workspace and link: packages.
                 let mut target_node_modules_path = DefaultAbsPath::init_top_level_dir();
                 let target_package_name = match replacement_entry_id {
                     Some(replacement_entry_id) => {
@@ -2598,6 +2618,7 @@ impl<'a> Installer<'a> {
                     },
                 };
 
+                let seen_count_before_link = seen.len();
                 let mut bin_linker = bin_real::Linker {
                     bin,
                     global_bin_path: self.manager().options.bin_path,
@@ -2628,9 +2649,18 @@ impl<'a> Installer<'a> {
                     own_store_node_modules_path = p;
                     bin_linker.target_node_modules_path = &raw const own_store_node_modules_path;
                     bin_linker.target_package_name = package_name;
-                    // a stale error from the redirect attempt would make the
-                    // retry delete its own link and fail the install
-                    bin_linker.err = None;
+                    // Clear a stale redirect-attempt error only when the
+                    // attempt failed before it linked anything (`seen`
+                    // unchanged): left set, it would make the retry delete
+                    // its own link. Once a dest is in `seen` the retry skips
+                    // it, so the error must stay and be reported.
+                    if bin_linker
+                        .seen
+                        .as_deref()
+                        .is_some_and(|seen| seen.len() == seen_count_before_link)
+                    {
+                        bin_linker.err = None;
+                    }
                     bin_linker.skipped_due_to_missing_bin = false;
 
                     if self.manager().options.log_level.is_verbose() {

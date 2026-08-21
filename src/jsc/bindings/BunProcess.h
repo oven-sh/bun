@@ -45,6 +45,9 @@ public:
 
     DECLARE_EXPORT_INFO;
     bool m_reportOnUncaughtException = false;
+    // Slot holds internal/uncaught_exception_capture's dispatcher, whose return value (unlike a
+    // user callback's) says whether the exception was handled.
+    bool m_uncaughtExceptionCaptureCallbackIsInternal = false;
 
     static void destroy(JSC::JSCell* cell)
     {
@@ -150,5 +153,8 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // process.nextTick drain and, via $newCppFunction, by the node-style
 // callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+// Used via $newCppFunction by internal/uncaught_exception_capture; false when a user callback owns the slot.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetInternalUncaughtExceptionCaptureCallback);
 
 } // namespace Bun

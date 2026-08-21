@@ -1,4 +1,5 @@
 import { spawn } from "bun";
+import { familySync, MUSL } from "detect-libc";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, readdirSorted, toMatchNodeModulesAt } from "harness";
@@ -270,6 +271,26 @@ describe("bun install --cpu and --os flags", () => {
     expect(exitCode).toBe(1);
     expect(stderrText).toContain("Invalid operating system");
     expect(stderrText).toContain("invalid-os");
+  });
+
+  it("should error on invalid libc", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "test-invalid-libc", version: "1.0.0", dependencies: {} }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--libc", "uclibc"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderrText).toContain("Invalid libc");
+    expect(stderrText).toContain("uclibc");
+    expect(exitCode).toBe(1);
   });
 
   it("should skip installing packages with negated CPU/OS", async () => {
@@ -684,7 +705,6 @@ describe("bun install --cpu and --os flags", () => {
 
     if (process.platform === "linux") {
       // without --libc, the host's libc family decides
-      const { familySync, MUSL } = require("detect-libc");
       const hostIsMusl = familySync() === MUSL;
       setHandler(dummyRegistry([], { "1.0.0": { os: ["linux"], libc: [hostIsMusl ? "glibc" : "musl"] } }));
       await rm(join(package_dir, "node_modules"), { recursive: true, force: true });

@@ -65,7 +65,7 @@ impl Default for Meta {
 }
 
 impl Meta {
-    /// Does the `cpu` arch and `os` match the requirements listed in the package?
+    /// Do the `cpu` arch, `os` and (on Linux) `libc` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
     pub fn is_disabled(&self, cpu: Architecture, os: OperatingSystem) -> bool {
         !self.arch.is_match(cpu) || !self.os.is_match(os) || !self.libc_matches_host()

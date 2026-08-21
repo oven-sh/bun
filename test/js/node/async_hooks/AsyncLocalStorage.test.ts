@@ -1363,8 +1363,8 @@ describe.concurrent("unhandledRejection async context", () => {
 
   // --unhandled-rejections=strict routes the rejection into uncaughtException. Node
   // keeps the promise's context installed across the whole per-mode dispatch
-  // (lib/internal/process/promises.js), so the uncaughtException handler sees it too —
-  // but it drains microtasks outside that window, so a continuation registered with no
+  // (lib/internal/process/promises.js), so the uncaughtException handler sees it too.
+  // It drains microtasks outside that window, so a continuation registered with no
   // context must not pick the store up.
   test.each(runtimes)(
     "--unhandled-rejections=strict keeps the context for uncaughtException only (%s)",
@@ -1401,7 +1401,7 @@ describe.concurrent("unhandledRejection async context", () => {
   );
 
   // A throwing unhandledRejection listener halts iteration (subsequent listeners are
-  // skipped) and reaches uncaughtException with the slot cleared — in Node too, even
+  // skipped) and reaches uncaughtException with the slot cleared. Node does the same, even
   // with a persistent top-level enterWith("Y"), so the observable semantic is
   // "undefined", not "whatever the drain's ambient was". The strict-mode direct
   // dispatch above is the only path where uncaughtException sees the promise's context.

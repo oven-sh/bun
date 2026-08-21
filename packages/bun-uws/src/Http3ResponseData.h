@@ -59,6 +59,22 @@ struct Http3ResponseData {
     BackPressure backpressure;
     bool endAfterDrain = false;
 
+    /* WebTransport. Set once the extended CONNECT on this stream has been
+     * upgraded; until then all three are inert and cost a request nothing
+     * beyond their size. The capsule buffer is separate from `backpressure`
+     * because capsules arrive on the same stream as the request body did and
+     * a session has no body — reusing the buffer would only tangle the two
+     * lifetimes together. */
+    void *wtUserData = nullptr;
+    WTF::Vector<char, 32> wtCapsule;
+    /* Bytes of a capsule body we are dropping unread still to come. */
+    uint64_t wtSkip = 0;
+    /* What the peer's close capsule said, held until on_stream_close reports
+     * it. Zero and empty when the session ended without one, which is what a
+     * connection going away looks like from here. */
+    WTF::Vector<char, 32> wtCloseReason;
+    uint32_t wtCloseCode = 0;
+
     uint64_t offset = 0;
     uint64_t totalSize = 0;
     uint8_t state = 0;
@@ -87,6 +103,11 @@ struct Http3ResponseData {
         hdrs.shrink(0);
         backpressure.clear();
         endAfterDrain = false;
+        wtUserData = nullptr;
+        wtCapsule.shrink(0);
+        wtSkip = 0;
+        wtCloseReason.shrink(0);
+        wtCloseCode = 0;
         offset = 0;
         totalSize = 0;
         state = HTTP_RESPONSE_PENDING;

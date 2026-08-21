@@ -732,6 +732,12 @@ export const defines: Flag[] = [
       "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
       "NOMINMAX",
       "BUILDING_JSCONLY__",
+      // Adds es_webtransport_server / es_max_webtransport_server_streams to
+      // struct lsquic_engine_settings. quic.c, node_quic_shim.c and the H3 C
+      // ABI all include lsquic.h and take sizeof() that struct, so this has to
+      // match the value the lsquic dep itself was built with — a mismatch is a
+      // silent ABI split rather than a link error. See scripts/build/deps/lsquic.ts.
+      "LSQUIC_WEBTRANSPORT_SERVER_SUPPORT=1",
     ],
     desc: "Core bun defines (always on)",
   },

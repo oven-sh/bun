@@ -46,9 +46,13 @@ struct us_quic_header_t {
  * via a thread-safe static local so quic.c stays free of pthread/call_once. */
 void us_quic_global_init(void);
 
+/* `webtransport` decides the SETTINGS this server advertises, so it has to be
+ * known here rather than when a route is registered: lsquic reads the engine
+ * settings once, in lsquic_engine_new. Off means the connection is ordinary
+ * HTTP/3 and pays nothing for the extension. */
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
-    unsigned int ext_size, unsigned int idle_timeout_s);
+    unsigned int ext_size, unsigned int idle_timeout_s, int webtransport);
 
 /* Send GOAWAY on every connection and stop accepting new ones; the engine and
  * timer keep running so in-flight streams drain. */
@@ -160,6 +164,47 @@ void us_quic_loop_flush_if_pending(struct us_loop_t *loop);
 /* Incoming headers — valid from on_stream_headers until on_stream_close. */
 unsigned int us_quic_stream_header_count(us_quic_stream_t *s);
 const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsigned int i);
+
+/* ───── WebTransport over HTTP/3 (draft-ietf-webtrans-http3) ─────
+ *
+ * A session *is* the extended-CONNECT stream it was negotiated on. Datagrams
+ * name their session by that stream's quarter stream id (stream id / 4) as a
+ * varint prefix, per RFC 9297 — which is the whole of how one connection's
+ * sessions are told apart, and why there is no separate session handle here.
+ *
+ * Only the datagram half is implemented. WebTransport streams need the peer's
+ * 0x41 stream-type parsing on top, which lsquic can do but nothing above this
+ * layer asks for yet.
+ */
+
+/* Largest datagram payload this layer will queue, after the quarter-stream-id
+ * prefix. Chosen to fit a 1280-byte IPv6 minimum MTU with room for the QUIC
+ * and DATAGRAM framing, so a forwarded payload never provokes fragmentation
+ * or a silent drop deeper down. */
+#define US_QUIC_WT_MAX_DATAGRAM 1200
+
+/* Sessions one connection may open, advertised as WT_MAX_SESSIONS. A browser
+ * opens one per `new WebTransport(...)`, and a page holding more than a
+ * handful is doing something other than what this is for; the cap is a bound
+ * on the per-connection session array rather than a quota anyone should meet. */
+#define US_QUIC_WT_MAX_SESSIONS 16
+
+/* Promote a CONNECT stream to a WebTransport session. Call it after the 2xx
+ * response headers have gone out. Returns 0, or -1 if the peer did not
+ * negotiate the extension or the session table could not grow. */
+int us_quic_stream_accept_webtransport(us_quic_stream_t *s);
+int us_quic_stream_is_webtransport(us_quic_stream_t *s);
+
+/* Queue one datagram on `s`'s session. Returns `len` when it was queued, 0
+ * when the queue is full — drop it, this path is unreliable by construction
+ * and a late datagram is worth less than the next one — or -1 when `s` is not
+ * a session or `len` exceeds US_QUIC_WT_MAX_DATAGRAM. */
+int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int len);
+
+/* Datagrams the peer sent on a session. Not called for datagrams naming a
+ * session this connection does not have. */
+void us_quic_socket_context_on_wt_datagram(us_quic_socket_context_t *ctx,
+    void (*on_datagram)(us_quic_stream_t *, const char *, unsigned int));
 
 /* Connection accessors */
 void *us_quic_socket_ext(us_quic_socket_t *s);

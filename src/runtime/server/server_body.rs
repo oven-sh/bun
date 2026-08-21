@@ -2293,6 +2293,11 @@ where
             self.write_ws_handler_slots(server_js, global);
         }
 
+        if let Some(wt) = new_config.webtransport_handler.take() {
+            self.config.webtransport_handler = Some(wt);
+            self.write_wt_handler_slots(server_js, global);
+        }
+
         // These get re-applied when we set the static routes again.
         if let Some(dev_server) = self.dev_server.as_deref_mut() {
             // Prevent a use-after-free in the hash table keys.

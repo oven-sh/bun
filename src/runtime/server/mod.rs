@@ -97,6 +97,14 @@ pub use html_bundle::HTMLBundle;
 pub mod server_web_socket;
 pub use server_web_socket::ServerWebSocket;
 
+#[path = "WebTransportSession.rs"]
+pub mod web_transport_session;
+pub use web_transport_session::WebTransportSession;
+
+#[path = "WebTransportServerContext.rs"]
+pub mod web_transport_server_context;
+pub use web_transport_server_context::WebTransportHandler;
+
 #[path = "NodeHTTPResponse.rs"]
 pub mod node_http_response;
 pub use node_http_response::NodeHTTPResponse;
@@ -613,8 +621,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 /// `JSValue::ZERO` slots are cheap no-ops on both sides (the C++
 /// `gcProtect`/`gcUnprotect` early-return on non-cells), so there is no need
 /// to branch on `is_empty()`.
-pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_value::Protected; 10] {
+pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_value::Protected; 13] {
     let ws = config.websocket.as_ref().map(|w| &w.handler);
+    let wt = config.webtransport_handler.as_ref();
     let z = JSValue::ZERO;
     [
         config.on_request,
@@ -627,6 +636,9 @@ pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_val
         ws.map_or(z, |h| h.on_error),
         ws.map_or(z, |h| h.on_ping),
         ws.map_or(z, |h| h.on_pong),
+        wt.map_or(z, |h| h.on_open),
+        wt.map_or(z, |h| h.on_datagram),
+        wt.map_or(z, |h| h.on_close),
     ]
     .map(JSValue::protected)
 }
@@ -2312,6 +2324,32 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .set(web_socket_server_context::HandlerFlags::SSL, SSL);
         }
 
+        // --- 2b. WebTransport ---
+        // A catch-all CONNECT route rather than one per path: WebTransport's
+        // CONNECT carries no body and no status worth choosing, so the only
+        // decision is accept or refuse and the `open` handler is where it
+        // belongs. Ordinary HTTP/3 on this server routes as before — CONNECT
+        // is a method nothing else here answers.
+        if Self::HAS_H3 && self.config.webtransport_handler.is_some() {
+            if let Some(h3_app) = self.h3_app {
+                // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                let h3_app = bun_opaque::opaque_deref_mut(h3_app);
+                h3_app.connect(b"/*", self_ptr, |server: &mut Self, req, res| {
+                    let global = server.global_this();
+                    let Some(handler) = server.config.webtransport_handler.as_ref() else {
+                        res.write_status(b"501 Not Implemented");
+                        res.end(b"", false);
+                        return;
+                    };
+                    WebTransportSession::accept(global, handler, req, res);
+                });
+                h3_app.on_webtransport(
+                    web_transport_session::on_datagram,
+                    web_transport_session::on_close,
+                );
+            }
+        }
+
         // --- 3. Register compiled user routes & track "/*" coverage ---
         let mut star_methods_covered_by_user = http_method::Set::empty();
         let mut has_any_user_route_for_star_path = false;
@@ -2805,7 +2843,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             if Self::HAS_H3 && this_ref.config.http3 {
                 let idle_timeout = this_ref.config.idle_timeout as u32;
-                let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout) {
+                let webtransport = this_ref.config.webtransport;
+                let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout, webtransport) {
                     Some(a) => Some(a),
                     None => {
                         if !global.has_exception() {
@@ -3192,7 +3231,8 @@ mod cached_values {
         ($ty:literal) => {
             bun_jsc::codegen_cached_accessors!(
                 $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
-                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong
+                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong,
+                wtOnOpen, wtOnDatagram, wtOnClose
             );
         };
     }
@@ -3252,6 +3292,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     slot_setter!(js_gc_ws_on_error_set, ws_on_error_set_cached);
     slot_setter!(js_gc_ws_on_ping_set, ws_on_ping_set_cached);
     slot_setter!(js_gc_ws_on_pong_set, ws_on_pong_set_cached);
+    slot_setter!(js_gc_wt_on_open_set, wt_on_open_set_cached);
+    slot_setter!(js_gc_wt_on_datagram_set, wt_on_datagram_set_cached);
+    slot_setter!(js_gc_wt_on_close_set, wt_on_close_set_cached);
 
     /// Mirror all 7 `Handler.on_*` shadows into the wrapper's `m_wsOn*`
     /// WriteBarrier slots, applying the async-context wrap (deferred from
@@ -3291,6 +3334,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         wrap_handler_slot(error, server_js, global, Self::js_gc_ws_on_error_set);
         wrap_handler_slot(ping, server_js, global, Self::js_gc_ws_on_ping_set);
         wrap_handler_slot(pong, server_js, global, Self::js_gc_ws_on_pong_set);
+    }
+
+    /// The `wtOn*` counterpart of [`Self::write_ws_handler_slots`]. Same
+    /// contract: writes every slot, so a reload that drops the handler block
+    /// drops the previous roots with it.
+    pub(crate) fn write_wt_handler_slots(&mut self, server_js: JSValue, global: &JSGlobalObject) {
+        let mut zeros = [JSValue::ZERO; 3];
+        let [open, datagram, close] = match self.config.webtransport_handler.as_mut() {
+            Some(h) => [&mut h.on_open, &mut h.on_datagram, &mut h.on_close],
+            None => zeros.each_mut(),
+        };
+        wrap_handler_slot(open, server_js, global, Self::js_gc_wt_on_open_set);
+        wrap_handler_slot(datagram, server_js, global, Self::js_gc_wt_on_datagram_set);
+        wrap_handler_slot(close, server_js, global, Self::js_gc_wt_on_close_set);
     }
 }
 

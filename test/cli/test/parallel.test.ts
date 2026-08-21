@@ -127,6 +127,28 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
   expect(exitCode).toBe(1);
 });
 
+// SIGUSR2 is 12 on Linux and 31 on macOS: the label must use the OS's name
+// for the number the worker died from, not the Linux name for that number.
+test.skipIf(isWindows)("--parallel labels a worker killed by a signal with the OS's name for it", async () => {
+  using dir = tempDir("parallel-signal-name", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+    "usr2.test.js": `import {test} from "bun:test"; test("usr2",()=>process.kill(process.pid, "SIGUSR2"));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("(worker crashed: SIGUSR2)");
+  expect(stderr).toContain("Ran 2 tests across 2 files.");
+  expect(exitCode).toBe(1);
+});
+
 // Concurrency is proven deterministically by the lazy-spawn PID-count tests
 // below; the timing-based "faster than serial" assertion was load-sensitive
 // and removed.

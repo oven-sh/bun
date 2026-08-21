@@ -1130,31 +1130,31 @@ impl FromJsEnum for bun_sys::SignalCode {
         }
         let s = bun_string_jsc::from_js(v, global)?;
         let utf8 = s.to_utf8();
-        let hit = bun_sys::signal_code::from_name(utf8.slice());
+        let hit = bun_core::SignalCode::from_name(utf8.slice());
         drop(utf8);
         s.deref();
-        match hit {
-            Some(code) => Ok(code),
-            None => {
-                // Expected-names list
-                // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
-                // canonical signal X-macro so names are never re-spelled.
-                let names = &bun_core::SIGNAL_NAMES[1..];
-                let mut one_of = std::string::String::from("'");
-                for (i, entry) in names.iter().enumerate() {
-                    one_of.push_str(entry);
-                    one_of.push('\'');
-                    if i < names.len() - 2 {
-                        one_of.push_str(", '");
-                    } else if i == names.len() - 2 {
-                        one_of.push_str(" or '");
-                    }
+        let Some(code) = hit else {
+            // Expected-names list
+            // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
+            // canonical signal X-macro so names are never re-spelled.
+            let names = &bun_core::SIGNAL_NAMES[1..];
+            let mut one_of = std::string::String::from("'");
+            for (i, entry) in names.iter().enumerate() {
+                one_of.push_str(entry);
+                one_of.push('\'');
+                if i < names.len() - 2 {
+                    one_of.push_str(", '");
+                } else if i == names.len() - 2 {
+                    one_of.push_str(" or '");
                 }
-                Err(global.throw_invalid_arguments(format_args!(
-                    "{property_name} must be one of {one_of}"
-                )))
             }
-        }
+            return Err(global
+                .throw_invalid_arguments(format_args!("{property_name} must be one of {one_of}")));
+        };
+        // Known name, but not a signal on this platform (e.g. SIGPWR on macOS).
+        bun_sys::SignalCode::from_canonical(code).ok_or_else(|| {
+            ErrorCode::UNKNOWN_SIGNAL.throw(global, format_args!("Unknown signal: {}", code.name()))
+        })
     }
 }
 

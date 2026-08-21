@@ -1411,16 +1411,8 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_signal_code(&self, global: &JSGlobalObject) -> JSValue {
         if let Some(signal) = self.process().signal_code() {
-            // `process.signal_code()` returns the tier-0 `bun_core::SignalCode`
-            // (bare `#[repr(u8)]` discriminant); name/exit-code helpers live on
-            // `bun_sys::SignalCode`.
-            let sys_sig = bun_sys::SignalCode(signal as u8);
-            if let Some(name) = sys_sig.name() {
-                use bun_jsc::ZigStringJsc as _;
-                return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
-            } else {
-                return JSValue::js_number(signal as u32 as f64);
-            }
+            use bun_jsc::ZigStringJsc as _;
+            return bun_jsc::zig_string::ZigString::init(signal.name().as_bytes()).to_js(global);
         }
 
         JSValue::NULL

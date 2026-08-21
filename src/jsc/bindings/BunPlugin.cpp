@@ -657,10 +657,15 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                             // Read every export before overriding any, so a throwing getter leaves the
                             // namespace untouched.
                             MarkedArgumentBuffer values;
+                            values.ensureCapacity(names.size());
                             for (auto& name : names) {
                                 JSValue value = object->get(globalObject, name);
                                 RETURN_IF_EXCEPTION(scope, {});
                                 values.append(value);
+                            }
+                            if (values.hasOverflowed()) [[unlikely]] {
+                                throwOutOfMemoryError(globalObject, scope);
+                                return {};
                             }
                             for (size_t i = 0; i < names.size(); ++i) {
                                 moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
